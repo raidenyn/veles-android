@@ -12,12 +12,12 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
-import me.nagaev.veles.viewmodel.PermissionsViewModel
+import me.nagaev.veles.viewmodel.PermissionsActions
+import me.nagaev.veles.viewmodel.UiState
+import me.nagaev.veles.viewmodel.UiViewModel
 
 class MainActivity : ComponentActivity() {
-    private val viewModel: PermissionsViewModel by viewModels()
+    private val viewModel: UiViewModel by viewModels()
 
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,7 +27,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val widthSizeClass = calculateWindowSizeClass(this).widthSizeClass
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-            VelesApp(widthSizeClass)
+            VelesApp(
+                uiState = uiState,
+                permissionsActions = viewModel.permissions,
+                widthSizeClass = widthSizeClass
+            )
         }
     }
 }
@@ -36,6 +40,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ReplyAppPreview() {
     VelesApp(
+        uiState = UiState.Mocked,
+        permissionsActions = PermissionsActions.Mocked,
         widthSizeClass = WindowWidthSizeClass.Medium,
     )
 }

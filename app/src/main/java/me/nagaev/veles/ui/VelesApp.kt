@@ -15,9 +15,14 @@ import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
 import me.nagaev.veles.ui.components.AppNavRail
 import me.nagaev.veles.ui.theme.VelesTheme
+import me.nagaev.veles.viewmodel.PermissionsActions
+import me.nagaev.veles.viewmodel.UiState
+import androidx.compose.material3.Surface
 
 @Composable
 fun VelesApp(
+    uiState: UiState,
+    permissionsActions: PermissionsActions,
     widthSizeClass: WindowWidthSizeClass,
 ) {
     VelesTheme {
@@ -29,40 +34,17 @@ fun VelesApp(
         val coroutineScope = rememberCoroutineScope()
 
         val navBackStackEntry by navController.currentBackStackEntryAsState()
-        val currentRoute =
-            navBackStackEntry?.destination?.route ?: VelesDestinations.HOME_ROUTE
+        val currentRoute = navBackStackEntry?.destination
 
         val isExpandedScreen = widthSizeClass == WindowWidthSizeClass.Expanded
         val sizeAwareDrawerState = rememberSizeAwareDrawerState(isExpandedScreen)
 
-        ModalNavigationDrawer(
-            drawerContent = {
-                AppDrawer(
-                    drawerState = sizeAwareDrawerState,
-                    currentRoute = currentRoute,
-                    navigateToHome = navigationActions.navigateToHome,
-                    navigateToInterests = navigationActions.navigateToInterests,
-                    closeDrawer = { coroutineScope.launch { sizeAwareDrawerState.close() } }
-                )
-            },
-            drawerState = sizeAwareDrawerState,
-            // Only enable opening the drawer via gestures if the screen is not expanded
-            gesturesEnabled = !isExpandedScreen
-        ) {
-            Row {
-                if (isExpandedScreen) {
-                    AppNavRail(
-                        currentRoute = currentRoute,
-                        navigateToHome = navigationActions.navigateToHome,
-                        navigateToInterests = navigationActions.navigateToInterests,
-                    )
-                }
-                VelesNavGraph(
-                    isExpandedScreen = isExpandedScreen,
-                    navController = navController,
-                    openDrawer = { coroutineScope.launch { sizeAwareDrawerState.open() } },
-                )
-            }
+        Surface {
+            VelesNavGraph(
+                uiState = uiState,
+                permissionsActions = permissionsActions,
+                navController = navController,
+            )
         }
     }
 }

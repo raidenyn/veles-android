@@ -3,9 +3,8 @@ package me.nagaev.veles.ui.components
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ListAlt
-import androidx.compose.material.icons.filled.Home
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
@@ -18,15 +17,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import me.nagaev.veles.R
-import me.nagaev.veles.ui.VelesDestinations
+import me.nagaev.veles.ui.Route
+import me.nagaev.veles.ui.TOP_LEVEL_ROUTES
+import me.nagaev.veles.ui.TopLevelRoute
 import me.nagaev.veles.ui.theme.VelesTheme
 
 @Composable
 fun AppNavRail(
-    currentRoute: String,
-    navigateToHome: () -> Unit,
-    navigateToInterests: () -> Unit,
-    modifier: Modifier = Modifier
+    currentRoute: Route,
+    navigateTo: (destination: Route) -> Unit,
+    modifier: Modifier = Modifier,
+    destinations: List<TopLevelRoute> = TOP_LEVEL_ROUTES,
 ) {
     NavigationRail(
         header = {
@@ -40,20 +41,20 @@ fun AppNavRail(
         modifier = modifier
     ) {
         Spacer(Modifier.weight(1f))
-        NavigationRailItem(
-            selected = currentRoute == VelesDestinations.HOME_ROUTE,
-            onClick = navigateToHome,
-            icon = { Icon(Icons.Filled.Home, stringResource(R.string.menu_home)) },
-            label = { Text(stringResource(R.string.menu_home)) },
-            alwaysShowLabel = false
-        )
-        NavigationRailItem(
-            selected = currentRoute == VelesDestinations.INTERESTS_ROUTE,
-            onClick = navigateToInterests,
-            icon = { Icon(Icons.AutoMirrored.Filled.ListAlt, stringResource(R.string.menu_gallery)) },
-            label = { Text(stringResource(R.string.menu_gallery)) },
-            alwaysShowLabel = false
-        )
+        LazyColumn {
+            items(items = destinations) { destination ->
+                val selected = currentRoute == destination.route
+                val icon = if (selected) destination.selectedIcon else destination.unselectedIcon
+
+                NavigationRailItem(
+                    selected = currentRoute == destination.route,
+                    onClick = { navigateTo(destination.route) },
+                    icon = { Icon(icon, stringResource(destination.iconTextId)) },
+                    label = { Text(stringResource(destination.iconTextId)) },
+                    alwaysShowLabel = false
+                )
+            }
+        }
         Spacer(Modifier.weight(1f))
     }
 }
@@ -64,9 +65,8 @@ fun AppNavRail(
 fun PreviewAppNavRail() {
     VelesTheme {
         AppNavRail(
-            currentRoute = VelesDestinations.HOME_ROUTE,
-            navigateToHome = {},
-            navigateToInterests = {},
+            currentRoute = Route.Permissions,
+            navigateTo = {},
         )
     }
 }

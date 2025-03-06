@@ -1,22 +1,30 @@
 package me.nagaev.veles.ui
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
+import kotlinx.serialization.Serializable
+import me.nagaev.veles.R
 
-/**
- * Destinations used in the [VelesApp].
- */
-object VelesDestinations {
-    const val HOME_ROUTE = "home"
-    const val INTERESTS_ROUTE = "interests"
+sealed interface Route {
+    @Serializable data object Permissions : Route
 }
+
+data class TopLevelRoute(
+    val route: Route,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector,
+    val iconTextId: Int
+)
 
 /**
  * Models the navigation actions in the app.
  */
-class VelesNavigationActions(navController: NavHostController) {
-    val navigateToHome: () -> Unit = {
-        navController.navigate(VelesDestinations.HOME_ROUTE) {
+class VelesNavigationActions(private val navController: NavHostController) {
+    fun navigateTo(destination: TopLevelRoute) {
+        navController.navigate(destination.route) {
             // Pop up to the start destination of the graph to
             // avoid building up a large stack of destinations
             // on the back stack as users select items
@@ -30,13 +38,13 @@ class VelesNavigationActions(navController: NavHostController) {
             restoreState = true
         }
     }
-    val navigateToInterests: () -> Unit = {
-        navController.navigate(VelesDestinations.INTERESTS_ROUTE) {
-            popUpTo(navController.graph.findStartDestination().id) {
-                saveState = true
-            }
-            launchSingleTop = true
-            restoreState = true
-        }
-    }
 }
+
+val TOP_LEVEL_ROUTES = listOf(
+    TopLevelRoute(
+        route = Route.Permissions,
+        selectedIcon = Icons.Filled.Home,
+        unselectedIcon = Icons.Filled.Home,
+        iconTextId = R.string.menu_home
+    ),
+)

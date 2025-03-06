@@ -7,26 +7,26 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import me.nagaev.veles.ui.permissions.PermissionsScreen
-
-const val POST_ID = "postId"
+import me.nagaev.veles.viewmodel.PermissionsActions
+import me.nagaev.veles.viewmodel.UiState
 
 @Composable
 fun VelesNavGraph(
-    isExpandedScreen: Boolean,
+    uiState: UiState,
+    permissionsActions: PermissionsActions,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
-    openDrawer: () -> Unit = {},
-    startDestination: String = VelesDestinations.HOME_ROUTE,
+    startDestination: Route = Route.Permissions,
 ) {
     NavHost(
+        modifier = modifier,
         navController = navController,
         startDestination = startDestination,
-        modifier = modifier
     ) {
-        composable(VelesDestinations.HOME_ROUTE) {
+        composable<Route.Permissions> {
             PermissionsScreen(
-                isExpandedScreen = isExpandedScreen,
-                openDrawer = openDrawer
+                uiState = uiState.permissions,
+                actions = permissionsActions,
             )
         }
     }
