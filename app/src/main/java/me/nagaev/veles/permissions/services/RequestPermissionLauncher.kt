@@ -1,9 +1,7 @@
 package me.nagaev.veles.permissions.services
 
 import androidx.activity.ComponentActivity
-import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityOptionsCompat
 
 class RequestPermissionLauncher(
     val launch: (permission: String, callback: (Boolean) -> Unit) -> Unit

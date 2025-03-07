@@ -1,7 +1,5 @@
 package me.nagaev.veles.permissions.services
 
-import kotlinx.coroutines.delay
-
 interface PermissionsProvider {
     val providers: Map<PermissionType, PermissionProvider>
 }
@@ -22,27 +20,3 @@ interface PermissionProvider {
 
     suspend fun revoke()
 }
-
-class MockedPermissionsProvider: PermissionsProvider {
-    override val providers: Map<PermissionType, PermissionProvider> = mapOf(
-        PermissionType.ACCESS_NOTIFICATIONS to MockedPermissionProvider(),
-        PermissionType.SEND_NOTIFICATIONS to MockedPermissionProvider()
-    )
-}
-
-class MockedPermissionProvider: PermissionProvider {
-    private var isGranted = false
-
-    override fun isGranted(): Boolean = isGranted
-
-    override suspend fun request() {
-        delay(1000)
-        isGranted = true
-    }
-
-    override suspend fun revoke() {
-        isGranted = false
-    }
-}
-
-
