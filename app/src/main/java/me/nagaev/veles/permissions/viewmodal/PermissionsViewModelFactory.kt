@@ -1,33 +1,32 @@
-package me.nagaev.veles.viewmodel
+package me.nagaev.veles.permissions.viewmodal
 
-import android.app.Activity
 import androidx.activity.ComponentActivity
-import androidx.activity.result.ActivityResultLauncher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import me.nagaev.veles.services.AccessNotificationPermissionProvider
-import me.nagaev.veles.services.ActivityProvider
-import me.nagaev.veles.services.ActivityProviderImpl
-import me.nagaev.veles.services.PermissionType
-import me.nagaev.veles.services.PermissionsProvider
-import me.nagaev.veles.services.PermissionsProviderImpl
-import me.nagaev.veles.services.RequestPermissionLauncher
-import me.nagaev.veles.services.SendNotificationPermissionProvider
+import me.nagaev.veles.permissions.services.AccessNotificationPermissionProvider
+import me.nagaev.veles.permissions.services.ActivityProvider
+import me.nagaev.veles.permissions.services.ActivityProviderImpl
+import me.nagaev.veles.permissions.services.PermissionType
+import me.nagaev.veles.permissions.services.PermissionsProvider
+import me.nagaev.veles.permissions.services.PermissionsProviderImpl
+import me.nagaev.veles.permissions.services.RequestPermissionLauncher
+import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
 
-class UiViewModelFactory(
+class PermissionsViewModelFactory(
     private val activity: ComponentActivity,
     private val requestPermissionLauncher: RequestPermissionLauncher
 ): ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return if (modelClass.isAssignableFrom(UiViewModel::class.java)) {
+        return if (modelClass.isAssignableFrom(PermissionsViewModel::class.java)) {
             create() as T
         } else {
             throw IllegalArgumentException("ViewModel Not Found")
         }
     }
 
-    private fun create(): UiViewModel {
+    private fun create(): PermissionsViewModel {
+        // TODO: change to DI on growing
         val activityProvider: ActivityProvider = ActivityProviderImpl(activity)
         val accessNotificationPermissionProvider =
             AccessNotificationPermissionProvider(activityProvider)
@@ -41,6 +40,6 @@ class UiViewModelFactory(
             )
         )
 
-        return UiViewModel(permissionsProvider)
+        return PermissionsViewModel(permissionsProvider)
     }
 }

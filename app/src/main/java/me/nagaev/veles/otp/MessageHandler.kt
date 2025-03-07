@@ -1,7 +1,5 @@
-package me.nagaev.veles
+package me.nagaev.veles.otp
 
-import android.Manifest
-import android.R.attr.text
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,11 +8,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.util.Log
-import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import me.nagaev.veles.R
 import java.math.BigDecimal
 
 
@@ -153,7 +150,8 @@ class OtpNotifierImpl(
             .setSmallIcon(R.drawable.ic_menu_camera)
             .setContentTitle(title)
             .setContentText(text)
-            .addAction(R.drawable.ic_menu_camera, "Copy ${message.otp.value}",
+            .addAction(
+                R.drawable.ic_menu_camera, "Copy ${message.otp.value}",
                 copyPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 

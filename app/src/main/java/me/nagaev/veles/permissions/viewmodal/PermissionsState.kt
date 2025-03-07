@@ -1,6 +1,6 @@
-package me.nagaev.veles.viewmodel
+package me.nagaev.veles.permissions.viewmodal
 
-import me.nagaev.veles.services.PermissionType
+import me.nagaev.veles.permissions.services.PermissionType
 
 data class PermissionsState (
     val permissions: Map<PermissionType, Permission>

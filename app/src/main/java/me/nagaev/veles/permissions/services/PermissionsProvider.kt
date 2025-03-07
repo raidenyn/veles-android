@@ -1,4 +1,4 @@
-package me.nagaev.veles.services
+package me.nagaev.veles.permissions.services
 
 import kotlinx.coroutines.delay
 

@@ -1,4 +1,4 @@
-package me.nagaev.veles.services
+package me.nagaev.veles.permissions.services
 
 import android.content.Intent
 import android.content.Intent.FLAG_ACTIVITY_NEW_TASK

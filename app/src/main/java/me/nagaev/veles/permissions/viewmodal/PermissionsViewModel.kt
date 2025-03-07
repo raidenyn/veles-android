@@ -1,11 +1,12 @@
-package me.nagaev.veles.viewmodel
+package me.nagaev.veles.permissions.viewmodal
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.CoroutineScope
-import me.nagaev.veles.services.PermissionProvider
-import me.nagaev.veles.services.PermissionType
-import me.nagaev.veles.services.PermissionsProvider
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import me.nagaev.veles.permissions.services.PermissionProvider
+import me.nagaev.veles.permissions.services.PermissionType
+import me.nagaev.veles.permissions.services.PermissionsProvider
 import kotlinx.coroutines.launch
 
 interface PermissionsActions {
@@ -25,35 +26,33 @@ typealias RequestPermission = (type: PermissionType) -> Unit
 typealias RevokePermission = (type: PermissionType) -> Unit
 
 class PermissionsViewModel(
-    private val viewModelScope: CoroutineScope,
-    private val state: GetState<PermissionsState>,
-    private val update: UpdateState<PermissionsState>,
     private val permissionsProvider: PermissionsProvider
-): PermissionsActions {
+): ViewModel(), PermissionsActions {
+    private val _uiState = MutableStateFlow(PermissionsState.Init)
+    val uiState: StateFlow<PermissionsState> = _uiState
+
     init {
         updatePermissionsState()
     }
 
      fun updatePermissionsState() {
-        update(
-            state().copy(
+         _uiState.value =
+            uiState.value.copy(
                 permissions = permissionsProvider.providers.entries.associate {
                     it.key to Permission(it.key, it.value.isGranted())
                 }
             )
-        )
     }
 
     private fun unsetPermissionState(type: PermissionType) {
-        update(
-            state().let { it ->
+        _uiState.value =
+            uiState.value.let { it ->
                 it.copy(
                     permissions = it.permissions.toMutableMap().also {
                         it[type] = Permission(type, null)
                     }
                 )
             }
-        )
     }
 
     private fun execute(type: PermissionType, method: suspend (PermissionProvider) -> Unit) {
@@ -67,10 +66,10 @@ class PermissionsViewModel(
     }
 
     override val requestPermission: RequestPermission = { type ->
-        execute(type, { provider -> provider.request() })
+        execute(type) { provider -> provider.request() }
     }
 
     override val revokePermission: RevokePermission = { type ->
-        execute(type, { provider -> provider.revoke() })
+        execute(type) { provider -> provider.revoke() }
     }
 }

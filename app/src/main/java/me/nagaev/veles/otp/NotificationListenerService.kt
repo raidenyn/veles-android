@@ -1,13 +1,9 @@
-package me.nagaev.veles
+package me.nagaev.veles.otp
 
-import android.app.Activity
-import android.app.PendingIntent
 import android.content.Intent
-import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import androidx.appcompat.app.AppCompatActivity
 
 class NotificationListener : NotificationListenerService() {
 

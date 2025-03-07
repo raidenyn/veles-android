@@ -1,4 +1,4 @@
-package me.nagaev.veles.ui.theme
+package me.nagaev.veles.common.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme

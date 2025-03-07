@@ -17,7 +17,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Veles">
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".permissions.PermissionsActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -27,7 +27,7 @@
             </intent-filter>
         </activity>
 
-        <service android:name=".NotificationListener"
+        <service android:name=".otp.NotificationListener"
             android:exported="false"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
@@ -43,7 +43,7 @@
             </meta-data>
         </service>
 
-        <receiver android:name=".CopyDataReceiver" />
+        <receiver android:name=".otp.CopyDataReceiver" />
     </application>
 
 </manifest>

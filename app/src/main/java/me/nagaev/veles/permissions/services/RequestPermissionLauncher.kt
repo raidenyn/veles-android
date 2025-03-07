@@ -1,4 +1,4 @@
-package me.nagaev.veles.services
+package me.nagaev.veles.permissions.services
 
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
