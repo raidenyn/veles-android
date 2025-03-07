@@ -11,6 +11,10 @@ enum class PermissionType {
     SEND_NOTIFICATIONS
 }
 
+class PermissionsProviderImpl(
+    override val providers: Map<PermissionType, PermissionProvider>
+): PermissionsProvider
+
 interface PermissionProvider {
     fun isGranted(): Boolean
 

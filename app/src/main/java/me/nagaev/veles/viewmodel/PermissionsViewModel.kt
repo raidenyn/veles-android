@@ -34,7 +34,7 @@ class PermissionsViewModel(
         updatePermissionsState()
     }
 
-    private fun updatePermissionsState() {
+     fun updatePermissionsState() {
         update(
             state().copy(
                 permissions = permissionsProvider.providers.entries.associate {

@@ -6,6 +6,7 @@ import me.nagaev.veles.services.MockedPermissionsProvider
 import me.nagaev.veles.services.PermissionsProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import me.nagaev.veles.services.ActivityProvider
 
 typealias UpdateState<TState> = (state: TState) -> Unit
 typealias GetState<TState> = () -> TState
