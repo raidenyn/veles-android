@@ -15,9 +15,10 @@ fun VelesApp(
     VelesTheme {
         Surface {
             PermissionsScreen(
-                uiState = permissionsState,
+                state = permissionsState,
                 actions = permissionsActions,
             )
+
         }
     }
 }

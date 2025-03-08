@@ -66,9 +66,8 @@ class MessageSourceFiltrationImpl(
     )
 
     override fun onMessageReceived(message: Message): MessageHandlingResult {
-        messageHandler.onMessageReceived(message)
-
-        TODO("Add real filtration")
+        // TODO("Add real filtration")
+        return messageHandler.onMessageReceived(message)
     }
 }
 
@@ -147,11 +146,11 @@ class OtpNotifierImpl(
             PendingIntent.getBroadcast(context, 0, copyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_menu_camera)
+            .setSmallIcon(R.drawable.ic_otp_message)
             .setContentTitle(title)
             .setContentText(text)
             .addAction(
-                R.drawable.ic_menu_camera, "Copy ${message.otp.value}",
+                R.drawable.ic_otp_message, "Copy ${message.otp.value}",
                 copyPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 

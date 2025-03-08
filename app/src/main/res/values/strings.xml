@@ -13,4 +13,7 @@
     <string name="permissions">Permissions</string>
     <string name="access_notification_permission_description">The app needs an access to another apps messages to catch bank messages and present them in the better way</string>
     <string name="send_notification_permission_description">The app needs sending notification permission to send its own messages</string>
+    <string name="notification_listener_service_name">OTP_Listener</string>
+    <string name="notification_listener_connected">notification_listener_connected</string>
+    <string name="notification_listener_preferences">notification_listener_preferences</string>
 </resources>

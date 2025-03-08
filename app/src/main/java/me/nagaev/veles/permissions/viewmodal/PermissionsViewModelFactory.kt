@@ -1,8 +1,9 @@
 package me.nagaev.veles.permissions.viewmodal
 
-import androidx.activity.ComponentActivity
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import me.nagaev.veles.common.NotificationStatePreferences
 import me.nagaev.veles.permissions.services.AccessNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.ActivityProvider
 import me.nagaev.veles.permissions.services.ActivityProviderImpl
@@ -13,7 +14,7 @@ import me.nagaev.veles.permissions.services.RequestPermissionLauncher
 import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
 
 class PermissionsViewModelFactory(
-    private val activity: ComponentActivity,
+    private val activity: Activity,
     private val requestPermissionLauncher: RequestPermissionLauncher
 ): ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
@@ -40,6 +41,11 @@ class PermissionsViewModelFactory(
             )
         )
 
-        return PermissionsViewModel(permissionsProvider)
+        val notificationStatePreferences = NotificationStatePreferences(activity)
+
+        return PermissionsViewModel(
+            permissionsProvider,
+            notificationStatePreferences
+        )
     }
 }

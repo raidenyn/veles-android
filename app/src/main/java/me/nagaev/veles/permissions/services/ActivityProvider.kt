@@ -1,16 +1,16 @@
 package me.nagaev.veles.permissions.services
 
-import androidx.activity.ComponentActivity
+import android.app.Activity
 
 interface ActivityProvider {
-    fun getActivity(): ComponentActivity
+    fun getActivity(): Activity
 }
 
 class ActivityProviderImpl(
-    private val activity: ComponentActivity
+    private val activity: Activity
 ) : ActivityProvider {
 
-    override fun getActivity(): ComponentActivity {
+    override fun getActivity(): Activity {
         return activity
     }
 }

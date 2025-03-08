@@ -29,6 +29,7 @@
 
         <service android:name=".otp.NotificationListener"
             android:exported="false"
+            android:label="@string/notification_listener_service_name"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

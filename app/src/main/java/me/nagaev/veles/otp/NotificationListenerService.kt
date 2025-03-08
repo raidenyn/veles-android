@@ -4,8 +4,11 @@ import android.content.Intent
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import me.nagaev.veles.common.NotificationStatePreferences
 
 class NotificationListener : NotificationListenerService() {
+
+    private val state = NotificationStatePreferences(this)
 
     override fun onCreate() {
         Log.d("NotificationListener", "Created")
@@ -22,17 +25,19 @@ class NotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         Log.d("NotificationListener", "ListenerConnected")
+        state.saveConnectionState(true)
 
         super.onListenerConnected()
     }
 
     override fun onListenerDisconnected() {
         Log.d("NotificationListener", "ListenerDisconnected")
+        state.saveConnectionState(false)
 
         super.onListenerConnected()
     }
 
-    val messageHandler: MessageHandler = run {
+    private val messageHandler: MessageHandler = run {
         val notifier = OtpNotifierImpl(this)
         val otpParser = MessageUobOtpParsingImpl(notifier)
         //val dedup = MessageDeduplicationImpl(otpParser)

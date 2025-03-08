@@ -8,6 +8,7 @@ import me.nagaev.veles.permissions.services.PermissionProvider
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
 import kotlinx.coroutines.launch
+import me.nagaev.veles.common.NotificationStatePreferences
 
 interface PermissionsActions {
     val requestPermission: RequestPermission
@@ -26,7 +27,8 @@ typealias RequestPermission = (type: PermissionType) -> Unit
 typealias RevokePermission = (type: PermissionType) -> Unit
 
 class PermissionsViewModel(
-    private val permissionsProvider: PermissionsProvider
+    private val permissionsProvider: PermissionsProvider,
+    private val notificationStatePreferences: NotificationStatePreferences,
 ): ViewModel(), PermissionsActions {
     private val _uiState = MutableStateFlow(PermissionsState.Init)
     val uiState: StateFlow<PermissionsState> = _uiState
@@ -40,7 +42,8 @@ class PermissionsViewModel(
             uiState.value.copy(
                 permissions = permissionsProvider.providers.entries.associate {
                     it.key to Permission(it.key, it.value.isGranted())
-                }
+                },
+                notificationListenerEnabled = notificationStatePreferences.getConnectionState()
             )
     }
 

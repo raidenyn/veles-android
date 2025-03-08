@@ -19,7 +19,7 @@ import me.nagaev.veles.permissions.viewmodal.PermissionsState
 
 @Composable
 fun PermissionsScreen(
-    uiState: PermissionsState,
+    state: PermissionsState,
     actions: PermissionsActions,
     modifier: Modifier = Modifier
 ) {
@@ -31,8 +31,18 @@ fun PermissionsScreen(
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.primary
             )
+            Text(
+                modifier = Modifier.padding(10.dp),
+                text =
+                    if (state.notificationListenerEnabled)
+                        "Notification listener enabled"
+                    else
+                        "Notification listener not enabled",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary
+            )
             PermissionsList(
-                permissions = uiState.permissions,
+                permissions = state.permissions,
                 actions = actions,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -44,7 +54,7 @@ fun PermissionsScreen(
 @Composable
 fun PermissionsScreenPreview() {
     PermissionsScreen(
-        uiState = PermissionsState.Mocked,
+        state = PermissionsState.Mocked,
         actions = PermissionsActions.Mocked,
     )
 }
