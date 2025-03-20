@@ -4,11 +4,26 @@ import android.content.Intent
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import me.nagaev.veles.common.NotificationStatePreferences
+import me.nagaev.veles.otp.handlers.Message
+import me.nagaev.veles.otp.handlers.MessageHandler
+import me.nagaev.veles.otp.handlers.MessageHandlingResult
+import me.nagaev.veles.otp.handlers.UobOtpMessageHandler
+import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
 
-class NotificationListener : NotificationListenerService() {
+class NotificationListener(
+    state: NotificationStatePreferences? = null,
+    messageHandler: MessageHandler? = null
+): NotificationListenerService() {
 
-    private val state = NotificationStatePreferences(this)
+    private val state = state ?: NotificationStatePreferences(this)
+    private val messageHandler: MessageHandler = messageHandler ?: run {
+        val notifier = UserNotifierOtpMessageHandler(this)
+        val otpParser = UobOtpMessageHandler(notifier)
+        otpParser
+    }
+
 
     override fun onCreate() {
         Log.d("NotificationListener", "Created")
@@ -37,22 +52,14 @@ class NotificationListener : NotificationListenerService() {
         super.onListenerConnected()
     }
 
-    private val messageHandler: MessageHandler = run {
-        val notifier = OtpNotifierImpl(this)
-        val otpParser = MessageUobOtpParsingImpl(notifier)
-        //val dedup = MessageDeduplicationImpl(otpParser)
-        val filter = MessageSourceFiltrationImpl(otpParser)
-        filter
-    }
-
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn?.let {
             val packageName = it.packageName ?: ""
             val extras = it.notification?.extras
 
             // Extract data from notification extras as needed
-            val title = extras?.getCharSequence("android.title").toString()
-            val text = extras?.getCharSequence("android.text").toString()
+            val title = extras?.getCharSequence(NotificationCompat.EXTRA_TITLE).toString()
+            val text = extras?.getCharSequence(NotificationCompat.EXTRA_TEXT).toString()
 
             Log.d("NotificationListener", "Title: $title, Text: $text, Package: $packageName, Timestamp: ${it.postTime}, Key: ${it.key}")
 
