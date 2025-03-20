@@ -8,7 +8,7 @@ import androidx.activity.viewModels
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
-import me.nagaev.veles.permissions.ui.VelesApp
+import me.nagaev.veles.permissions.ui.VelesPermissionsApp
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModel
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModelFactory
 
@@ -23,7 +23,7 @@ class PermissionsActivity : ComponentActivity() {
 
         setContent {
             val permissionsState by viewModel.uiState.collectAsStateWithLifecycle()
-            VelesApp(
+            VelesPermissionsApp(
                 permissionsState = permissionsState,
                 permissionsActions = viewModel,
             )

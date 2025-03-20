@@ -9,10 +9,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import me.nagaev.veles.R
+import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.PermissionsList
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
@@ -32,12 +34,12 @@ fun PermissionsScreen(
                 color = MaterialTheme.colorScheme.primary
             )
             Text(
-                modifier = Modifier.padding(10.dp),
+                modifier = Modifier.padding(10.dp).testTag(TestTags.NOTIFICATION_LISTENER_STATUS),
                 text =
                     if (state.notificationListenerEnabled)
                         "Notification listener enabled"
                     else
-                        "Notification listener not enabled",
+                        "Notification listener disabled",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.secondary
             )

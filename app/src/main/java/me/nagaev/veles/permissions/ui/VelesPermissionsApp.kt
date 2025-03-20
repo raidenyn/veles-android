@@ -8,7 +8,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
 
 @Composable
-fun VelesApp(
+fun VelesPermissionsApp(
     permissionsState: PermissionsState,
     permissionsActions: PermissionsActions,
 ) {
@@ -26,7 +26,7 @@ fun VelesApp(
 @Preview(showBackground = true)
 @Composable
 fun VelesAppPreview() {
-    VelesApp(
+    VelesPermissionsApp(
         permissionsState = PermissionsState.Mocked,
         permissionsActions = PermissionsActions.Mocked,
     )

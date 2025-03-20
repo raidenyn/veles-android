@@ -11,9 +11,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import me.nagaev.veles.R
+import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.viewmodal.Permission
 import me.nagaev.veles.permissions.viewmodal.RequestPermission
@@ -52,7 +54,7 @@ fun AccessNotificationPermission(
                 color = MaterialTheme.colorScheme.primary
             )
             SwitchWithLoader(
-                modifier = Modifier.wrapContentSize(),
+                modifier = Modifier.wrapContentSize().testTag(TestTags.PERMISSION_STATUS(permission.type)),
                 checked = permission.granted,
                 onCheckedChange = {
                     if (it) {
