@@ -12,7 +12,6 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.verify
 import me.nagaev.veles.common.NotificationStatePreferences
-import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
@@ -98,7 +97,8 @@ class NotificationListenerTest {
         notification.extras = bundle
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
-        val service = NotificationListener(state, messageHandler)
+        val service = NotificationListener(state, messageHandler, ownPackageName = "com.external.bank")
+        service.onCreate()
         service.onNotificationPosted(statusBarNotification)
 
         verify {
@@ -129,6 +129,7 @@ class NotificationListenerTest {
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
         val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg)
+        service.onCreate()
         service.onNotificationPosted(sbn)
 
         assertEquals(MessageHandlingResult.ACCEPTED, TestResultFlow.current.value?.result)
@@ -151,6 +152,7 @@ class NotificationListenerTest {
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
         val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
+        service.onCreate()
         service.onNotificationPosted(sbn)
 
         assertNull(TestResultFlow.current.value)
