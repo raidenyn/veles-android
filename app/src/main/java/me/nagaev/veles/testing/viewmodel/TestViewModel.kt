@@ -36,4 +36,9 @@ class TestViewModel(
     fun send() {
         sender.post(_uiState.value.inputText)
     }
+
+    override fun onCleared() {
+        super.onCleared()
+        TestResultFlow.current.value = null
+    }
 }

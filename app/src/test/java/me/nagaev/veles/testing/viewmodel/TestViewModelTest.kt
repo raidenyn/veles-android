@@ -87,4 +87,11 @@ class TestViewModelTest {
         TestResultFlow.current.value = result
         assertEquals(result, viewModel.uiState.value.lastResult)
     }
+
+    @Test
+    fun `onCleared resets TestResultFlow to null`() {
+        TestResultFlow.current.value = TestResult(MessageHandlingResult.ACCEPTED, 1000L)
+        TestViewModel::class.java.getDeclaredMethod("onCleared").also { it.isAccessible = true }.invoke(viewModel)
+        assertNull(TestResultFlow.current.value)
+    }
 }
