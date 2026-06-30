@@ -21,6 +21,7 @@ abstract class BankHandlerDatabase : RoomDatabase() {
                     BankHandlerDatabase::class.java,
                     "bank_handler_configs.db"
                 )
+                    .allowMainThreadQueries()
                     .addCallback(SeedCallback())
                     .build()
                     .also { INSTANCE = it }

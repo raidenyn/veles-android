@@ -54,7 +54,7 @@ class NotificationListener(
     override fun onListenerDisconnected() {
         Log.d("NotificationListener", "ListenerDisconnected")
         state.saveConnectionState(false)
-        super.onListenerConnected()
+        super.onListenerDisconnected()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
