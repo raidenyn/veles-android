@@ -20,23 +20,25 @@ class NotificationListener(
 ) : NotificationListenerService() {
 
     private val state = state ?: NotificationStatePreferences(this)
-    private val messageHandler: MessageHandler = messageHandler ?: run {
-        val notifier = UserNotifierOtpMessageHandler(this)
-        val repository = BankHandlerRepository(this)
-        val handlers = repository.getAll().map { config ->
-            RegexMessageHandler(
-                otpRegex = config.otpRegex,
-                moneyRegex = config.moneyRegex,
-                merchantRegex = config.merchantRegex,
-                notifier = notifier
-            )
-        }
-        CompositeMessageHandler(handlers)
-    }
+    private val injectedHandler: MessageHandler? = messageHandler
+    private lateinit var messageHandler: MessageHandler
 
     override fun onCreate() {
-        Log.d("NotificationListener", "Created")
         super.onCreate()
+        Log.d("NotificationListener", "Created")
+        messageHandler = injectedHandler ?: run {
+            val notifier = UserNotifierOtpMessageHandler(this)
+            val repository = BankHandlerRepository(this)
+            val handlers = repository.getAll().map { config ->
+                RegexMessageHandler(
+                    otpRegex = config.otpRegex,
+                    moneyRegex = config.moneyRegex,
+                    merchantRegex = config.merchantRegex,
+                    notifier = notifier
+                )
+            }
+            CompositeMessageHandler(handlers)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
