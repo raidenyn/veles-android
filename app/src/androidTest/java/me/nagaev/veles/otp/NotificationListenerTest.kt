@@ -12,10 +12,13 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.verify
 import me.nagaev.veles.common.NotificationStatePreferences
+import me.nagaev.veles.common.TestResult
+import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.Before
 
@@ -25,6 +28,11 @@ class NotificationListenerTest {
     fun beforeTest() {
         mockkStatic(Log::class)
         every { Log.d(any(), any()) } returns 0
+    }
+
+    @Before
+    fun resetTestResultFlow() {
+        TestResultFlow.current.value = null
     }
 
     @Test
@@ -101,5 +109,50 @@ class NotificationListenerTest {
                 source = expectedSource
             ))
         }
+    }
+
+    @Test
+    fun `onNotificationPosted writes ACCEPTED to TestResultFlow for self-notifications`() {
+        val ownPkg = "me.nagaev.veles"
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "text"
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns ownPkg
+        every { sbn.notification } returns notification
+        notification.extras = bundle
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
+
+        val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg)
+        service.onNotificationPosted(sbn)
+
+        assertEquals(MessageHandlingResult.ACCEPTED, TestResultFlow.current.value?.result)
+    }
+
+    @Test
+    fun `onNotificationPosted does not write to TestResultFlow for external notifications`() {
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "text"
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns "com.some.bank"
+        every { sbn.notification } returns notification
+        notification.extras = bundle
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
+
+        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
+        service.onNotificationPosted(sbn)
+
+        assertNull(TestResultFlow.current.value)
     }
 }

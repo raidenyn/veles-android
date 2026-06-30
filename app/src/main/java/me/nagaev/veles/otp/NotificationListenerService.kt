@@ -6,6 +6,8 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import me.nagaev.veles.common.NotificationStatePreferences
+import me.nagaev.veles.common.TestResult
+import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.handlers.CompositeMessageHandler
 import me.nagaev.veles.otp.handlers.Message
@@ -16,7 +18,8 @@ import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
 
 class NotificationListener(
     state: NotificationStatePreferences? = null,
-    messageHandler: MessageHandler? = null
+    messageHandler: MessageHandler? = null,
+    private val ownPackageName: String? = null
 ) : NotificationListenerService() {
 
     private val state = state ?: NotificationStatePreferences(this)
@@ -76,6 +79,11 @@ class NotificationListener(
             )
 
             val handlingResult = messageHandler.onMessageReceived(message)
+
+            val effectiveOwnPackage = ownPackageName ?: getPackageName()
+            if (message.source == effectiveOwnPackage) {
+                TestResultFlow.current.value = TestResult(handlingResult, System.currentTimeMillis())
+            }
 
             if (handlingResult == MessageHandlingResult.ACCEPTED) {
                 cancelNotification(it.key)
