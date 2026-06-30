@@ -9,7 +9,7 @@ import me.nagaev.veles.common.NotificationStatePreferences
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
-import me.nagaev.veles.otp.handlers.UobOtpMessageHandler
+import me.nagaev.veles.otp.handlers.RegexMessageHandler
 import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
 
 class NotificationListener(
@@ -20,8 +20,12 @@ class NotificationListener(
     private val state = state ?: NotificationStatePreferences(this)
     private val messageHandler: MessageHandler = messageHandler ?: run {
         val notifier = UserNotifierOtpMessageHandler(this)
-        val otpParser = UobOtpMessageHandler(notifier)
-        otpParser
+        RegexMessageHandler(
+            otpRegex = """ (\w{4})-(\d{6}) """,
+            moneyRegex = """of ([A-Z]{3})(\d{1,15}\.\d{1,4}) at""",
+            merchantRegex = """at (.{1,64}) expiring""",
+            notifier = notifier
+        )
     }
 
 
