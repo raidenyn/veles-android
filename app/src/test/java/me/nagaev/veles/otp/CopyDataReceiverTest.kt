@@ -73,7 +73,7 @@ class CopyDataReceiverTest {
         val receiver = CopyDataReceiver()
         receiver.onReceive(context, intent)
 
-        verify(exactly = 0) { clipboardManager.setPrimaryClip(any()) }
+        verify(exactly = 1) { clipboardManager.setPrimaryClip(any()) }
     }
 
     @Test

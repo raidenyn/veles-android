@@ -2,14 +2,18 @@ package me.nagaev.veles.otp.handlers
 
 import android.app.NotificationManager
 import android.content.Context
-import android.content.Intent
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.mockkConstructor
+import androidx.test.core.app.ApplicationProvider
+import io.mockk.spyk
 import io.mockk.verify
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
 import java.math.BigDecimal
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33])
 class UserNotifierOtpMessageHandlerTest {
 
     private val defaultMessage = OtpMessage(
@@ -22,21 +26,17 @@ class UserNotifierOtpMessageHandlerTest {
     @Test
     fun `Valid OTP message handling`() {
         val message = defaultMessage.copy()
-
-        val context = mockk<Context>(relaxed = true)
-        val notificationManager = mockk<NotificationManager>(relaxed = true)
-        val intent = mockk<Intent>(relaxed = true)
-        mockkConstructor(Intent::class)
-        every { anyConstructed<Intent>().setAction(any()) } returns intent
-        every { anyConstructed<Intent>().putExtra(any(), any<String>()) } returns intent
-
-        every { context.getSystemService(Context.NOTIFICATION_SERVICE) } returns notificationManager
-        every { notificationManager.getNotificationChannel(UserNotifierOtpMessageHandler.CHANNEL_ID) } returns null
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notificationManagerSpy = spyk(notificationManager)
 
         val handler = UserNotifierOtpMessageHandler(context)
         handler.onOtpMessageReceived(message)
 
-        verify { notificationManager.createNotificationChannel(any()) }
+        // Verify a notification was posted
+        val shadowNotificationManager = shadowOf(notificationManager)
+        val notifications = shadowNotificationManager.allNotifications
+        assert(notifications.isNotEmpty()) { "Expected at least one notification to be posted" }
     }
 
     @Test

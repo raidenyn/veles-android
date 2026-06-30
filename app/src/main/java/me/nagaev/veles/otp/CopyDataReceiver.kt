@@ -20,7 +20,7 @@ class CopyDataReceiver: BroadcastReceiver() {
                 (systemService as ClipboardManager?)?.let { clipboardService ->
                     val clip = ClipData.newPlainText("OTP", it)
                     clipboardService.setPrimaryClip(clip)
-                    Log.d("CopyDataReceiver", "Copied $it")
+                    Log.d("CopyDataReceiver", "Copied '$it'")
                 }
             }
         }
