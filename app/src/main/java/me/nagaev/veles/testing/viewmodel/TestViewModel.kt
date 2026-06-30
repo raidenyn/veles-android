@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.nagaev.veles.common.TestInputPreferences
 import me.nagaev.veles.common.TestResultFlow
@@ -21,14 +22,14 @@ class TestViewModel(
         viewModelScope.launch(Dispatchers.Unconfined) {
             TestResultFlow.current.collect { result ->
                 result?.let {
-                    _uiState.value = _uiState.value.copy(lastResult = it)
+                    _uiState.update { state -> state.copy(lastResult = it) }
                 }
             }
         }
     }
 
     fun onTextChanged(text: String) {
-        _uiState.value = _uiState.value.copy(inputText = text)
+        _uiState.update { it.copy(inputText = text) }
         preferences.save(text)
     }
 
