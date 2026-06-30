@@ -15,6 +15,7 @@ import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
 import me.nagaev.veles.otp.handlers.RegexMessageHandler
 import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
+import me.nagaev.veles.testing.TestNotificationSender
 
 class NotificationListener(
     state: NotificationStatePreferences? = null,
@@ -81,7 +82,8 @@ class NotificationListener(
             val handlingResult = messageHandler.onMessageReceived(message)
 
             val effectiveOwnPackage = ownPackageName ?: getPackageName()
-            if (message.source == effectiveOwnPackage) {
+            val channelId = it.notification?.channelId
+            if (message.source == effectiveOwnPackage && channelId == TestNotificationSender.CHANNEL_ID) {
                 TestResultFlow.current.value = TestResult(handlingResult, System.currentTimeMillis())
             }
 

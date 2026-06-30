@@ -16,6 +16,8 @@ import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
+import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
+import me.nagaev.veles.testing.TestNotificationSender
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -126,6 +128,7 @@ class NotificationListenerTest {
         every { sbn.packageName } returns ownPkg
         every { sbn.notification } returns notification
         notification.extras = bundle
+        every { notification.channelId } returns TestNotificationSender.CHANNEL_ID
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
         val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg)
@@ -133,6 +136,31 @@ class NotificationListenerTest {
         service.onNotificationPosted(sbn)
 
         assertEquals(MessageHandlingResult.ACCEPTED, TestResultFlow.current.value?.result)
+    }
+
+    @Test
+    fun `onNotificationPosted does not write to TestResultFlow for OTP output notifications`() {
+        val ownPkg = "me.nagaev.veles"
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "text"
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns ownPkg
+        every { sbn.notification } returns notification
+        notification.extras = bundle
+        every { notification.channelId } returns UserNotifierOtpMessageHandler.CHANNEL_ID
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
+
+        val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg)
+        service.onCreate()
+        service.onNotificationPosted(sbn)
+
+        assertNull(TestResultFlow.current.value)
     }
 
     @Test
