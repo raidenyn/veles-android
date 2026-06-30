@@ -83,7 +83,7 @@ private fun ResultBadge(result: TestResult) {
 @Composable
 fun TestScreenPreview() {
     TestScreen(
-        state = TestState(inputText = "Never share OTP with anyone. Use SMS-OTP HStX-079853 for your purchase of THB319.93 at AMP*AIS SERVICES expiring at 02-Mar-2025 9:23PM BKK time."),
+        state = TestState(inputText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573."),
         onTextChanged = {},
         onSend = {}
     )

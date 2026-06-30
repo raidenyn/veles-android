@@ -11,5 +11,8 @@ class TestInputPreferences(private val context: Context) {
         prefs.edit().putString("test_input_text", text).apply()
     }
 
-    fun load(): String = prefs.getString("test_input_text", "") ?: ""
+    fun load(): String = prefs.getString(
+        "test_input_text",
+        "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573."
+    ) ?: ""
 }
