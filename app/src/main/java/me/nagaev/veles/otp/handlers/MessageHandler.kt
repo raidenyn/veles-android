@@ -1,13 +1,12 @@
 package me.nagaev.veles.otp.handlers
 
-
 interface MessageHandler {
     fun onMessageReceived(message: Message): MessageHandlingResult
 }
 
 enum class MessageHandlingResult {
     ACCEPTED,
-    FILTERED
+    FILTERED,
 }
 
 data class Message(
@@ -20,5 +19,5 @@ data class Message(
      */
     val source: String,
     val title: String,
-    val text: String
+    val text: String,
 )

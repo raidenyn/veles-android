@@ -3,8 +3,8 @@ package me.nagaev.veles.otp
 import android.app.Notification
 import android.content.Intent
 import android.os.Bundle
-import android.service.notification.StatusBarNotification
 import android.service.notification.NotificationListenerService.START_REDELIVER_INTENT
+import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.mockk.every
@@ -22,11 +22,10 @@ import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
 import me.nagaev.veles.testing.TestNotificationSender
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Test
 import org.junit.Before
+import org.junit.Test
 
 class NotificationListenerTest {
-
     @Before
     fun beforeTest() {
         mockkStatic(Log::class)
@@ -111,12 +110,14 @@ class NotificationListenerTest {
         service.onNotificationPosted(statusBarNotification)
 
         verify {
-            messageHandler.onMessageReceived(Message(
-                key = expectedKey,
-                title = expectedTitle,
-                text = expectedText,
-                source = expectedSource
-            ))
+            messageHandler.onMessageReceived(
+                Message(
+                    key = expectedKey,
+                    title = expectedTitle,
+                    text = expectedText,
+                    source = expectedSource,
+                ),
+            )
         }
     }
 

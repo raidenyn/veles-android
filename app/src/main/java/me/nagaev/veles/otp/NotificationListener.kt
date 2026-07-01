@@ -23,9 +23,8 @@ import me.nagaev.veles.testing.TestNotificationSender
 class NotificationListener(
     state: NotificationStatePreferences? = null,
     messageHandler: MessageHandler? = null,
-    private val ownPackageName: String? = null
+    private val ownPackageName: String? = null,
 ) : NotificationListenerService() {
-
     private val state = state ?: NotificationStatePreferences(this)
     private val injectedHandler: MessageHandler? = messageHandler
     private lateinit var messageHandler: MessageHandler
@@ -36,19 +35,24 @@ class NotificationListener(
         messageHandler = injectedHandler ?: run {
             val notifier = UserNotifierOtpMessageHandler(this)
             val repository = BankHandlerRepository(this)
-            val handlers = repository.getAll().map { config ->
-                RegexMessageHandler(
-                    otpRegex = config.otpRegex,
-                    moneyRegex = config.moneyRegex,
-                    merchantRegex = config.merchantRegex,
-                    notifier = notifier
-                )
-            }
+            val handlers =
+                repository.getAll().map { config ->
+                    RegexMessageHandler(
+                        otpRegex = config.otpRegex,
+                        moneyRegex = config.moneyRegex,
+                        merchantRegex = config.merchantRegex,
+                        notifier = notifier,
+                    )
+                }
             CompositeMessageHandler(handlers)
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(
+        intent: Intent?,
+        flags: Int,
+        startId: Int,
+    ): Int {
         super.onStartCommand(intent, flags, startId)
         Log.d("NotificationListener", "Started: $startId")
         return START_REDELIVER_INTENT
@@ -78,18 +82,19 @@ class NotificationListener(
             val notification = it.notification
             if (RedactionDetector.isRedacted(it)) {
                 RedactionStateFlow.current.value = RedactionState.Hidden
-            } else if (notification?.visibility == Notification.VISIBILITY_SECRET
-                && RedactionStateFlow.current.value == RedactionState.Hidden
+            } else if (notification?.visibility == Notification.VISIBILITY_SECRET &&
+                RedactionStateFlow.current.value == RedactionState.Hidden
             ) {
                 RedactionStateFlow.current.value = RedactionState.Readable
             }
 
-            val message = Message(
-                key = it.key,
-                source = packageName,
-                title = title,
-                text = text
-            )
+            val message =
+                Message(
+                    key = it.key,
+                    source = packageName,
+                    title = title,
+                    text = text,
+                )
 
             val handlingResult = messageHandler.onMessageReceived(message)
 

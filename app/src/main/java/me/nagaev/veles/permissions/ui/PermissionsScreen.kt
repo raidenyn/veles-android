@@ -17,7 +17,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import me.nagaev.veles.R
-import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.PermissionsList
 import me.nagaev.veles.permissions.ui.components.RedactionSection
@@ -29,7 +28,7 @@ fun PermissionsScreen(
     state: PermissionsState,
     actions: PermissionsActions,
     onNavigateToTest: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         Column {
@@ -37,17 +36,18 @@ fun PermissionsScreen(
                 modifier = Modifier.padding(10.dp).statusBarsPadding(),
                 text = stringResource(id = R.string.permissions),
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary,
             )
             Text(
                 modifier = Modifier.padding(10.dp).testTag(TestTags.NOTIFICATION_LISTENER_STATUS),
                 text =
-                    if (state.notificationListenerEnabled)
-                        "Notification listener enabled"
-                    else
-                        "Notification listener disabled",
+                if (state.notificationListenerEnabled) {
+                    "Notification listener enabled"
+                } else {
+                    "Notification listener disabled"
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.secondary
+                color = MaterialTheme.colorScheme.secondary,
             )
             RedactionSection(
                 state = state.redactionState,
@@ -58,7 +58,7 @@ fun PermissionsScreen(
             Spacer(Modifier.height(4.dp))
             TextButton(
                 onClick = onNavigateToTest,
-                modifier = Modifier.padding(horizontal = 10.dp)
+                modifier = Modifier.padding(horizontal = 10.dp),
             ) {
                 Text("Test")
             }

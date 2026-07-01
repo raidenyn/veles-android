@@ -72,7 +72,7 @@ val DarkColors = darkColorScheme(
 @Composable
 fun VelesTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     val colorScheme = run {
         val context = LocalContext.current
@@ -83,6 +83,6 @@ fun VelesTheme(
         colorScheme = colorScheme,
         shapes = VelesShapes,
         typography = VelesTypography,
-        content = content
+        content = content,
     )
 }

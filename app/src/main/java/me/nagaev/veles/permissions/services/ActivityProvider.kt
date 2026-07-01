@@ -7,11 +7,7 @@ interface ActivityProvider {
 }
 
 class ActivityProviderImpl(
-    private val activity: Activity
+    private val activity: Activity,
 ) : ActivityProvider {
-
-    override fun getActivity(): Activity {
-        return activity
-    }
+    override fun getActivity(): Activity = activity
 }
-

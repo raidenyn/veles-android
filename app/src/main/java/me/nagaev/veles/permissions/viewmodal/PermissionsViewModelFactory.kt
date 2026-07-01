@@ -18,15 +18,12 @@ import me.nagaev.veles.testing.TestNotificationSender
 
 class PermissionsViewModelFactory(
     private val activity: Activity,
-    private val requestPermissionLauncher: RequestPermissionLauncher
-): ViewModelProvider.Factory {
+    private val requestPermissionLauncher: RequestPermissionLauncher,
+) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return if (modelClass.isAssignableFrom(PermissionsViewModel::class.java)) {
-            create() as T
-        } else {
-            throw IllegalArgumentException("ViewModel Not Found")
-        }
+        require(modelClass.isAssignableFrom(PermissionsViewModel::class.java)) { "ViewModel Not Found" }
+        return create() as T
     }
 
     private fun create(): PermissionsViewModel {
@@ -36,19 +33,22 @@ class PermissionsViewModelFactory(
         val sendNotificationPermissionProvider =
             SendNotificationPermissionProvider(activityProvider, requestPermissionLauncher)
 
-        val permissionsProvider: PermissionsProvider = PermissionsProviderImpl(
-            providers = mapOf(
-                PermissionType.ACCESS_NOTIFICATIONS to accessNotificationPermissionProvider,
-                PermissionType.SEND_NOTIFICATIONS to sendNotificationPermissionProvider
+        val permissionsProvider: PermissionsProvider =
+            PermissionsProviderImpl(
+                providers =
+                mapOf(
+                    PermissionType.ACCESS_NOTIFICATIONS to accessNotificationPermissionProvider,
+                    PermissionType.SEND_NOTIFICATIONS to sendNotificationPermissionProvider,
+                ),
             )
-        )
 
         val notificationStatePreferences = NotificationStatePreferences(activity)
         val testNotificationSender = TestNotificationSender(activity)
-        val componentName = android.content.ComponentName(
-            activity.packageName,
-            "me.nagaev.veles.otp.NotificationListener",
-        )
+        val componentName =
+            android.content.ComponentName(
+                activity.packageName,
+                "me.nagaev.veles.otp.NotificationListener",
+            )
         val redactionPath = NotificationRedactionPath.from(Build.MANUFACTURER, componentName)
         val openSettings: (android.content.Intent) -> Unit = { intent -> activity.startActivity(intent) }
 

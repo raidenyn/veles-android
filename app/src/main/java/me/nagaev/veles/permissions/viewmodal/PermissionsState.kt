@@ -11,23 +11,26 @@ data class PermissionsState(
 ) {
     companion object {
         val Init = PermissionsState(emptyMap(), notificationListenerEnabled = false)
-        val Mocked = PermissionsState(
-            mapOf(
-                PermissionType.ACCESS_NOTIFICATIONS to Permission(
-                    PermissionType.ACCESS_NOTIFICATIONS,
-                    true
+        val Mocked =
+            PermissionsState(
+                mapOf(
+                    PermissionType.ACCESS_NOTIFICATIONS to
+                        Permission(
+                            PermissionType.ACCESS_NOTIFICATIONS,
+                            true,
+                        ),
+                    PermissionType.SEND_NOTIFICATIONS to
+                        Permission(
+                            PermissionType.SEND_NOTIFICATIONS,
+                            false,
+                        ),
                 ),
-                PermissionType.SEND_NOTIFICATIONS to Permission(
-                    PermissionType.SEND_NOTIFICATIONS,
-                    false
-                )
-            ),
-            notificationListenerEnabled = false
-        )
+                notificationListenerEnabled = false,
+            )
     }
 }
 
 data class Permission(
     val type: PermissionType,
-    val granted: Boolean?
+    val granted: Boolean?,
 )

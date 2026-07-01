@@ -6,24 +6,25 @@ import android.provider.Settings
 import android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
 import me.nagaev.veles.otp.NotificationListener
 
-
 class AccessNotificationPermissionProvider(
-    private val activityProvider: ActivityProvider
-): PermissionProvider {
+    private val activityProvider: ActivityProvider,
+) : PermissionProvider {
     companion object {
         const val ENABLED_NOTIFICATION_LISTENERS = "enabled_notification_listeners"
     }
 
-    private val _listenerName = NotificationListener::class.java.let {
-        it.canonicalName
-    }
+    private val _listenerName =
+        NotificationListener::class.java.let {
+            it.canonicalName
+        }
 
     override fun isGranted(): Boolean {
         val activity = activityProvider.getActivity()
-        val str = Settings.Secure.getString(
-            activity.contentResolver,
-            ENABLED_NOTIFICATION_LISTENERS
-        )
+        val str =
+            Settings.Secure.getString(
+                activity.contentResolver,
+                ENABLED_NOTIFICATION_LISTENERS,
+            )
         val permissionClassName = activity.packageName + "/" + _listenerName
         return str.contains(permissionClassName)
     }

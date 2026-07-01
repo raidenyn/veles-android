@@ -5,7 +5,6 @@ import org.junit.Before
 import org.junit.Test
 
 class RedactionStateFlowTest {
-
     @Before
     fun reset() {
         RedactionStateFlow.current.value = RedactionState.Unknown

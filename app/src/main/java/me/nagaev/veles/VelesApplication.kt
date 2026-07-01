@@ -10,7 +10,7 @@ class VelesApplication : Application() {
         // This method fires once as well as constructor
         // & here we have application context
 
-        //Method calls
+        // Method calls
         Log.d("VelesApplication", "Veles started")
     }
 }

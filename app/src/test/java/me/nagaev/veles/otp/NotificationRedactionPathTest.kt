@@ -12,7 +12,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class NotificationRedactionPathTest {
-
     private val componentName = ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener")
 
     @Test
@@ -65,7 +64,7 @@ class NotificationRedactionPathTest {
     fun `OxygenOS settings intent matches StockAndroid intent action`() {
         assertEquals(
             NotificationRedactionPath.StockAndroid.settingsIntent(componentName).action,
-            NotificationRedactionPath.OxygenOS.settingsIntent(componentName).action
+            NotificationRedactionPath.OxygenOS.settingsIntent(componentName).action,
         )
     }
 }

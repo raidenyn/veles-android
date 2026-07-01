@@ -12,5 +12,5 @@ data class BankHandlerConfig(
     val moneyRegex: String,
     val merchantRegex: String,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
 )

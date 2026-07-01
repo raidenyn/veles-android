@@ -31,6 +31,13 @@ style:
   ForbiddenComment:
     active: false
 
+naming:
+  FunctionNaming:
+    # Compose @Composable functions are PascalCase by convention; detekt's
+    # default [a-z][a-zA-Z0-9]* pattern misfires on them. Allow PascalCase so
+    # the rule still catches genuinely malformed names without flagging Compose.
+    functionPattern: '[a-z][a-zA-Z0-9]*|[A-Z][a-zA-Z0-9]*'
+
 exceptions:
   SwallowedException:
     active: false

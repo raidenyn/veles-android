@@ -15,10 +15,10 @@ data class OtpMessage(
 
 data class Otp(
     val value: String,
-    val id: String
+    val id: String,
 )
 
 data class Money(
     val amount: BigDecimal,
-    val currencyCode: String
+    val currencyCode: String,
 )
