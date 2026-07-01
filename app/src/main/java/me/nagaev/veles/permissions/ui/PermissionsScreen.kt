@@ -2,7 +2,9 @@ package me.nagaev.veles.permissions.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
@@ -15,8 +17,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import me.nagaev.veles.R
+import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.PermissionsList
+import me.nagaev.veles.permissions.ui.components.RedactionSection
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
 
@@ -45,6 +49,13 @@ fun PermissionsScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.secondary
             )
+            RedactionSection(
+                state = state.redactionState,
+                settingsLocation = state.redactionSettingsLocation,
+                onOpenSettings = actions.openRedactionSettings,
+                onTestSensitiveReading = actions.testSensitiveReading,
+            )
+            Spacer(Modifier.height(4.dp))
             TextButton(
                 onClick = onNavigateToTest,
                 modifier = Modifier.padding(horizontal = 10.dp)

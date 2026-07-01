@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import io.mockk.mockk
 import io.mockk.verify
+import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
@@ -179,5 +180,85 @@ class VelesPermissionsAppTests {
         composeTestRule
             .onNodeWithTag(TestTags.NOTIFICATION_LISTENER_STATUS)
             .assertTextContains("disabled", substring = true)
+    }
+
+    @Test
+    fun `redaction section shows collapsed readable status`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState = permissionsState.copy(
+                    redactionState = RedactionState.Readable,
+                    redactionSettingsLocation = "Settings > Sensitive notifications",
+                ),
+                permissionsActions = permissionsActions
+            )
+        }
+        composeTestRule
+            .onNodeWithTag(TestTags.REDACTION_STATUS)
+            .assertTextContains("Readable", substring = true)
+    }
+
+    @Test
+    fun `redaction section shows hidden status when Hidden`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState = permissionsState.copy(
+                    redactionState = RedactionState.Hidden,
+                    redactionSettingsLocation = "Settings > Enhanced Notifications",
+                ),
+                permissionsActions = permissionsActions
+            )
+        }
+        composeTestRule
+            .onNodeWithTag(TestTags.REDACTION_STATUS)
+            .assertTextContains("off", substring = true)
+        composeTestRule.onNodeWithTag(TestTags.REDACTION_OPEN_SETTINGS).assertExists()
+        composeTestRule.onNodeWithTag(TestTags.REDACTION_TEST_BUTTON).assertExists()
+    }
+
+    @Test
+    fun `redaction section shows unknown status initially`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState = permissionsState.copy(
+                    redactionState = RedactionState.Unknown,
+                    redactionSettingsLocation = "",
+                ),
+                permissionsActions = permissionsActions
+            )
+        }
+        composeTestRule
+            .onNodeWithTag(TestTags.REDACTION_STATUS)
+            .assertTextContains("Not yet checked", substring = true)
+        composeTestRule.onNodeWithTag(TestTags.REDACTION_TEST_BUTTON).assertExists()
+    }
+
+    @Test
+    fun `clicking test button calls testSensitiveReading`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState = permissionsState.copy(
+                    redactionState = RedactionState.Unknown,
+                ),
+                permissionsActions = permissionsActions
+            )
+        }
+        composeTestRule.onNodeWithTag(TestTags.REDACTION_TEST_BUTTON).performClick()
+        verify { permissionsActions.testSensitiveReading() }
+    }
+
+    @Test
+    fun `clicking open settings calls openRedactionSettings when Hidden`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState = permissionsState.copy(
+                    redactionState = RedactionState.Hidden,
+                    redactionSettingsLocation = "Settings > Enhanced Notifications",
+                ),
+                permissionsActions = permissionsActions
+            )
+        }
+        composeTestRule.onNodeWithTag(TestTags.REDACTION_OPEN_SETTINGS).performClick()
+        verify { permissionsActions.openRedactionSettings() }
     }
 }
