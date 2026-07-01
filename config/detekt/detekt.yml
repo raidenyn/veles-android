@@ -1,0 +1,48 @@
+# detekt configuration — builds upon the default config.
+# Rules not listed here keep their defaults. This file starts permissive
+# to avoid a large initial failure surface; tighten over time.
+
+complexity:
+  LongMethod:
+    threshold: 120
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 8
+  ComplexCondition:
+    threshold: 6
+  CyclomaticComplexMethod:
+    threshold: 20
+  TooManyFunctions:
+    thresholdInFiles: 15
+    thresholdInClasses: 15
+
+style:
+  MagicNumber:
+    ignoreNumbers: ['-1', '0', '1', '2', '1000']
+    ignoreEnums: true
+    ignorePropertyDeclaration: true
+    ignoreConstantDeclaration: true
+  ReturnCount:
+    max: 4
+  WildcardImport:
+    active: false
+  MaxLineLength:
+    maxLineLength: 140
+  ForbiddenComment:
+    active: false
+
+exceptions:
+  SwallowedException:
+    active: false
+
+empty-blocks:
+  EmptyFunctionBlock:
+    active: false
+
+potential-bugs:
+  UnsafeCallOnNullableType:
+    active: false
+
+formatting:
+  MaximumLineLength:
+    maxLineLength: 140
