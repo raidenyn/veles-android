@@ -1,11 +1,14 @@
 package me.nagaev.veles.otp
 
+import android.app.Notification
 import android.content.Intent
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import me.nagaev.veles.common.NotificationStatePreferences
+import me.nagaev.veles.common.RedactionState
+import me.nagaev.veles.common.RedactionStateFlow
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.config.BankHandlerRepository
@@ -71,6 +74,15 @@ class NotificationListener(
             val text = extras?.getCharSequence(NotificationCompat.EXTRA_TEXT).toString()
 
             Log.d("NotificationListener", "Title: $title, Text: $text, Package: $packageName, Timestamp: ${it.postTime}, Key: ${it.key}")
+
+            val notification = it.notification
+            if (RedactionDetector.isRedacted(it)) {
+                RedactionStateFlow.current.value = RedactionState.Hidden
+            } else if (notification?.visibility == Notification.VISIBILITY_SECRET
+                && RedactionStateFlow.current.value == RedactionState.Hidden
+            ) {
+                RedactionStateFlow.current.value = RedactionState.Readable
+            }
 
             val message = Message(
                 key = it.key,

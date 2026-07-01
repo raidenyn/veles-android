@@ -12,6 +12,8 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.verify
 import me.nagaev.veles.common.NotificationStatePreferences
+import me.nagaev.veles.common.RedactionState
+import me.nagaev.veles.common.RedactionStateFlow
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
@@ -34,6 +36,11 @@ class NotificationListenerTest {
     @Before
     fun resetTestResultFlow() {
         TestResultFlow.current.value = null
+    }
+
+    @Before
+    fun resetRedactionStateFlow() {
+        RedactionStateFlow.current.value = RedactionState.Unknown
     }
 
     @Test
@@ -184,5 +191,81 @@ class NotificationListenerTest {
         service.onNotificationPosted(sbn)
 
         assertNull(TestResultFlow.current.value)
+    }
+
+    @Test
+    fun `onNotificationPosted sets RedactionStateFlow to Hidden when secret notification is redacted`() {
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "Sensitive notification content hidden"
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns "com.some.bank"
+        every { sbn.notification } returns notification
+        every { notification.visibility } returns Notification.VISIBILITY_SECRET
+        notification.extras = bundle
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
+
+        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
+        service.onCreate()
+        service.onNotificationPosted(sbn)
+
+        assertEquals(RedactionState.Hidden, RedactionStateFlow.current.value)
+    }
+
+    @Test
+    fun `onNotificationPosted sets RedactionStateFlow to Readable when previously Hidden and secret notification has digits`() {
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        RedactionStateFlow.current.value = RedactionState.Hidden
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "Your OTP is 123456"
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns "com.some.bank"
+        every { sbn.notification } returns notification
+        every { notification.visibility } returns Notification.VISIBILITY_SECRET
+        notification.extras = bundle
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
+
+        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
+        service.onCreate()
+        service.onNotificationPosted(sbn)
+
+        assertEquals(RedactionState.Readable, RedactionStateFlow.current.value)
+    }
+
+    @Test
+    fun `onNotificationPosted does not set Readable from a public notification when Hidden`() {
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        RedactionStateFlow.current.value = RedactionState.Hidden
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "some non-secret text"
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns "com.some.bank"
+        every { sbn.notification } returns notification
+        every { notification.visibility } returns Notification.VISIBILITY_PUBLIC
+        notification.extras = bundle
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
+
+        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
+        service.onCreate()
+        service.onNotificationPosted(sbn)
+
+        assertEquals(RedactionState.Hidden, RedactionStateFlow.current.value)
     }
 }
