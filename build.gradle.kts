@@ -5,7 +5,7 @@ plugins {
     alias(libs.plugins.compose) apply false
     alias(libs.plugins.ksp) apply false
     alias(libs.plugins.spotless)
-    alias(libs.plugins.detekt)
+    alias(libs.plugins.detekt) apply false
 }
 
 spotless {
@@ -16,9 +16,4 @@ spotless {
         trimTrailingWhitespace()
         endWithNewline()
     }
-}
-
-detekt {
-    buildUponDefaultConfig = true
-    config.setFrom("config/detekt/detekt.yml")
 }
