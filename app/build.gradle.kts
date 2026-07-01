@@ -48,6 +48,11 @@ android {
             merges += "META-INF/LICENSE-notice.md"
         }
     }
+    lint {
+        baseline = file("lint-baseline.xml")
+        abortOnError = true
+        warningsAsErrors = false
+    }
 }
 
 dependencies {
