@@ -218,7 +218,6 @@ class NotificationListenerTest {
         every { sbn.key } returns "key"
         every { sbn.packageName } returns "com.some.bank"
         every { sbn.notification } returns notification
-        every { notification.visibility } returns Notification.VISIBILITY_SECRET
         notification.extras = bundle
         every { RedactionDetector.isRedacted(any()) } returns true
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
@@ -245,7 +244,7 @@ class NotificationListenerTest {
         every { sbn.key } returns "key"
         every { sbn.packageName } returns "com.some.bank"
         every { sbn.notification } returns notification
-        every { notification.visibility } returns Notification.VISIBILITY_SECRET
+        notification.visibility = Notification.VISIBILITY_SECRET
         notification.extras = bundle
         every { RedactionDetector.isRedacted(any()) } returns false
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
@@ -272,7 +271,7 @@ class NotificationListenerTest {
         every { sbn.key } returns "key"
         every { sbn.packageName } returns "com.some.bank"
         every { sbn.notification } returns notification
-        every { notification.visibility } returns Notification.VISIBILITY_PUBLIC
+        notification.visibility = Notification.VISIBILITY_PUBLIC
         notification.extras = bundle
         every { RedactionDetector.isRedacted(any()) } returns false
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
