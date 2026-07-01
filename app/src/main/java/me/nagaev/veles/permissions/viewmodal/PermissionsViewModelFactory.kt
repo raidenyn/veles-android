@@ -1,9 +1,11 @@
 package me.nagaev.veles.permissions.viewmodal
 
 import android.app.Activity
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import me.nagaev.veles.common.NotificationStatePreferences
+import me.nagaev.veles.otp.NotificationRedactionPath
 import me.nagaev.veles.permissions.services.AccessNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.ActivityProvider
 import me.nagaev.veles.permissions.services.ActivityProviderImpl
@@ -12,6 +14,7 @@ import me.nagaev.veles.permissions.services.PermissionsProvider
 import me.nagaev.veles.permissions.services.PermissionsProviderImpl
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
 import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
+import me.nagaev.veles.testing.TestNotificationSender
 
 class PermissionsViewModelFactory(
     private val activity: Activity,
@@ -27,7 +30,6 @@ class PermissionsViewModelFactory(
     }
 
     private fun create(): PermissionsViewModel {
-        // TODO: change to DI on growing
         val activityProvider: ActivityProvider = ActivityProviderImpl(activity)
         val accessNotificationPermissionProvider =
             AccessNotificationPermissionProvider(activityProvider)
@@ -42,10 +44,21 @@ class PermissionsViewModelFactory(
         )
 
         val notificationStatePreferences = NotificationStatePreferences(activity)
+        val testNotificationSender = TestNotificationSender(activity)
+        val componentName = android.content.ComponentName(
+            activity.packageName,
+            "me.nagaev.veles.otp.NotificationListener",
+        )
+        val redactionPath = NotificationRedactionPath.from(Build.MANUFACTURER, componentName)
+        val openSettings: (android.content.Intent) -> Unit = { intent -> activity.startActivity(intent) }
 
         return PermissionsViewModel(
             permissionsProvider,
-            notificationStatePreferences
+            notificationStatePreferences,
+            testNotificationSender,
+            redactionPath,
+            componentName,
+            openSettings,
         )
     }
 }
