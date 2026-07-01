@@ -43,6 +43,3 @@ potential-bugs:
   UnsafeCallOnNullableType:
     active: false
 
-formatting:
-  MaximumLineLength:
-    maxLineLength: 140
