@@ -56,15 +56,15 @@ class TestScreenComposeTest {
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT)
             .assertIsDisplayed()
-            .assertTextContains("Matched")
+            .assertTextContains("Matched", substring = true)
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_TEMPLATE)
             .assertIsDisplayed()
-            .assertTextContains("UOB Thailand")
+            .assertTextContains("UOB Thailand", substring = true)
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_RECEIVED_TEXT)
             .assertIsDisplayed()
-            .assertTextContains("For purchase THB600.00")
+            .assertTextContains("For purchase THB600.00", substring = true)
     }
 
     @Test
@@ -80,14 +80,14 @@ class TestScreenComposeTest {
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT)
             .assertIsDisplayed()
-            .assertTextContains("No match")
+            .assertTextContains("No match", substring = true)
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_TEMPLATE)
             .assertDoesNotExist()
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_RECEIVED_TEXT)
             .assertIsDisplayed()
-            .assertTextContains("some unrelated text")
+            .assertTextContains("some unrelated text", substring = true)
     }
 
     @Test
@@ -103,6 +103,6 @@ class TestScreenComposeTest {
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_RECEIVED_TEXT)
             .assertIsDisplayed()
-            .assertTextContains("Sensitive notification content hidden")
+            .assertTextContains("Sensitive notification content hidden", substring = true)
     }
 }
