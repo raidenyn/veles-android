@@ -60,4 +60,23 @@ class CompositeMessageHandlerTest {
 
         assert(result == MessageHandlingResult.FILTERED)
     }
+
+    @Test
+    fun `first handler matches propagates its matched template name`() {
+        val matchedResult = MessageHandlingResult(
+            MessageHandlingResult.Status.ACCEPTED,
+            "UOB Thailand",
+        )
+        val first =
+            mockk<MessageHandler> {
+                every { onMessageReceived(message) } returns matchedResult
+            }
+        val second = mockk<MessageHandler>()
+
+        val result = CompositeMessageHandler(listOf(first, second)).onMessageReceived(message)
+
+        assert(result == matchedResult)
+        assert(result.matchedTemplateName == "UOB Thailand")
+        verify(exactly = 0) { second.onMessageReceived(any()) }
+    }
 }
