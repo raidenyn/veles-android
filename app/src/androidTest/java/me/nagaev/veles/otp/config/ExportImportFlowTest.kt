@@ -3,12 +3,10 @@ package me.nagaev.veles.otp.config
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -176,10 +174,10 @@ class ExportImportFlowTest {
         composeRule.waitUntil(5000) { vm.state.value.importReview != null }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("Import 2 configs?").assertExists()
-        composeRule.onNodeWithText("New:").assertExists()
-        composeRule.onNodeWithText("Brand New Bank").assertExists()
-        composeRule.onNodeWithText("Will replace:").assertExists()
+        composeRule.onAllNodesWithText("Import 2 configs?").assertCountEquals(1)
+        composeRule.onAllNodesWithText("New:").assertCountEquals(1)
+        composeRule.onAllNodesWithText("Brand New Bank").assertCountEquals(1)
+        composeRule.onAllNodesWithText("Will replace:").assertCountEquals(1)
         composeRule.onAllNodesWithText("Existing Bank").assertCountEquals(2)
     }
 
