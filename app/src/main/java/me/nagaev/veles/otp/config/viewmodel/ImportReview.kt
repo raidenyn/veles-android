@@ -11,7 +11,6 @@ data class ImportReview(
     val totalConfigs: Int get() = toInsert.size + toOverwrite.size
 
     companion object {
-        fun from(diff: ConfigImporter.Diff): ImportReview =
-            ImportReview(diff.toInsert, diff.toOverwrite)
+        fun from(diff: ConfigImporter.Diff): ImportReview = ImportReview(diff.toInsert, diff.toOverwrite)
     }
 }

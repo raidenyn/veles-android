@@ -1,14 +1,17 @@
 package me.nagaev.veles.otp.config
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.config.ui.BankConfigsScreen
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsViewModel
@@ -42,7 +45,7 @@ class ExportImportFlowTest {
         field.isAccessible = true
         field.set(null, db)
         repository = BankHandlerRepository(context)
-        vm = BankConfigsViewModel(repository)
+        vm = BankConfigsViewModel(repository, ioDispatcher = Dispatchers.Main)
         composeRule.setContent {
             BankConfigsScreen(
                 state = vm.state.collectAsStateWithLifecycle().value,
@@ -94,7 +97,7 @@ class ExportImportFlowTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_EXPORT_DIALOG).assertIsDisplayed()
-        composeRule.onNodeWithText("UOB Thailand").assertIsDisplayed()
+        composeRule.onAllNodesWithText("UOB Thailand").assertCountEquals(2)
     }
 
     @Test
@@ -175,7 +178,7 @@ class ExportImportFlowTest {
         composeRule.onNodeWithText("New:").assertIsDisplayed()
         composeRule.onNodeWithText("Brand New Bank").assertIsDisplayed()
         composeRule.onNodeWithText("Will replace:").assertIsDisplayed()
-        composeRule.onNodeWithText("Existing Bank").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Existing Bank").assertCountEquals(2)
     }
 
     @Test

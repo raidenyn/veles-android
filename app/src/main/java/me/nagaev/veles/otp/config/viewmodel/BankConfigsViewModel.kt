@@ -11,11 +11,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.config.io.ConfigImporter
 import me.nagaev.veles.otp.config.io.ConfigSerializer
+import java.io.IOException
 
+@Suppress("TooManyFunctions")
 class BankConfigsViewModel(
     private val repository: BankHandlerRepository,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -96,7 +99,7 @@ class BankConfigsViewModel(
                     out.use { it.write(json.toByteArray()) }
                     true
                 }
-            } catch (e: Exception) {
+            } catch (e: IOException) {
                 false
             }
             _state.update {
@@ -144,7 +147,7 @@ class BankConfigsViewModel(
                 _state.update {
                     it.copy(importReview = ImportReview.from(diff))
                 }
-            } catch (e: Exception) {
+            } catch (e: SerializationException) {
                 _state.update { it.copy(message = "Import failed: invalid file") }
             }
         }

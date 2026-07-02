@@ -1,9 +1,9 @@
 package me.nagaev.veles.otp.config.io
 
+import me.nagaev.veles.otp.config.BankHandlerConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import me.nagaev.veles.otp.config.BankHandlerConfig
 
 class ConfigImporterTest {
     private val existing = BankHandlerConfig(
@@ -16,8 +16,7 @@ class ConfigImporterTest {
         updatedAt = 1000L,
     )
 
-    private fun json(name: String, otp: String = "x") =
-        BankConfigJson(name, RegexJson(otp, "amt", "mer"))
+    private fun json(name: String, otp: String = "x") = BankConfigJson(name, RegexJson(otp, "amt", "mer"))
 
     @Test
     fun `diff classifies names not present locally as toInsert`() {

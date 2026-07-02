@@ -33,6 +33,7 @@ import me.nagaev.veles.otp.config.viewmodel.BankConfigsState
 import me.nagaev.veles.otp.config.viewmodel.ExportSelection
 import me.nagaev.veles.otp.config.viewmodel.ImportReview
 
+@Suppress("LongParameterList")
 @Composable
 fun BankConfigsScreen(
     state: BankConfigsState,

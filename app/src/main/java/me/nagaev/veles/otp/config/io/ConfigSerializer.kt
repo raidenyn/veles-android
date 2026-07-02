@@ -26,6 +26,5 @@ object ConfigSerializer {
         return json.encodeToString(listSerializer, payload)
     }
 
-    fun fromJson(text: String): List<BankConfigJson> =
-        json.decodeFromString(listSerializer, text)
+    fun fromJson(text: String): List<BankConfigJson> = json.decodeFromString(listSerializer, text)
 }
