@@ -17,6 +17,10 @@ class BankConfigsViewModel(
     val state: StateFlow<BankConfigsState> = _state
 
     init {
+        refresh()
+    }
+
+    fun refresh() {
         viewModelScope.launch { reload() }
     }
 

@@ -71,4 +71,16 @@ class BankConfigsViewModelTest {
         coVerify(exactly = 2) { repository.getAllSuspend() }
         assert(vm.state.value.deleteTarget == null)
     }
+
+    @Test
+    fun `refresh reloads configs from repository`() {
+        val vm = BankConfigsViewModel(repository)
+        val updatedConfig = config.copy(name = "Updated Bank")
+        coEvery { repository.getAllSuspend() } returns listOf(updatedConfig)
+
+        vm.refresh()
+
+        coVerify(exactly = 2) { repository.getAllSuspend() }
+        assert(vm.state.value.configs == listOf(updatedConfig))
+    }
 }
