@@ -28,6 +28,7 @@ fun PermissionsScreen(
     state: PermissionsState,
     actions: PermissionsActions,
     onNavigateToTest: () -> Unit,
+    onNavigateToBankConfigs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -62,6 +63,12 @@ fun PermissionsScreen(
             ) {
                 Text("Test")
             }
+            TextButton(
+                onClick = onNavigateToBankConfigs,
+                modifier = Modifier.padding(horizontal = 10.dp),
+            ) {
+                Text("Bank Configs")
+            }
             PermissionsList(
                 permissions = state.permissions,
                 actions = actions,
@@ -78,5 +85,6 @@ fun PermissionsScreenPreview() {
         state = PermissionsState.Mocked,
         actions = PermissionsActions.Mocked,
         onNavigateToTest = {},
+        onNavigateToBankConfigs = {},
     )
 }
