@@ -7,6 +7,8 @@ object TestTags {
     const val TEST_INPUT = "test_input"
     const val TEST_SEND_BUTTON = "test_send_button"
     const val TEST_RESULT = "test_result"
+    const val TEST_RESULT_TEMPLATE = "test_result_template"
+    const val TEST_RESULT_RECEIVED_TEXT = "test_result_received_text"
     const val REDACTION_OPEN_SETTINGS = "redaction_open_settings"
     val PERMISSION_STATUS = { state: PermissionType -> "permission_status_$state" }
 

@@ -76,21 +76,39 @@ class TestViewModelTest {
     @Test
     fun `TestResultFlow update sets lastResult in state`() {
         assertNull(viewModel.uiState.value.lastResult)
-        val result = TestResult(MessageHandlingResult.ACCEPTED, 1000L)
+        val result = TestResult(
+            handlingResult = MessageHandlingResult.ACCEPTED,
+            receivedText = "text",
+            receivedTitle = "title",
+            sourcePackage = "pkg",
+            timestamp = 1000L,
+        )
         TestResultFlow.current.value = result
         assertEquals(result, viewModel.uiState.value.lastResult)
     }
 
     @Test
     fun `TestResultFlow FILTERED result sets lastResult in state`() {
-        val result = TestResult(MessageHandlingResult.FILTERED, 2000L)
+        val result = TestResult(
+            handlingResult = MessageHandlingResult.FILTERED,
+            receivedText = "text",
+            receivedTitle = "title",
+            sourcePackage = "pkg",
+            timestamp = 2000L,
+        )
         TestResultFlow.current.value = result
         assertEquals(result, viewModel.uiState.value.lastResult)
     }
 
     @Test
     fun `onCleared resets TestResultFlow to null`() {
-        TestResultFlow.current.value = TestResult(MessageHandlingResult.ACCEPTED, 1000L)
+        TestResultFlow.current.value = TestResult(
+            handlingResult = MessageHandlingResult.ACCEPTED,
+            receivedText = "text",
+            receivedTitle = "title",
+            sourcePackage = "pkg",
+            timestamp = 1000L,
+        )
         TestViewModel::class.java
             .getDeclaredMethod("onCleared")
             .also { it.isAccessible = true }

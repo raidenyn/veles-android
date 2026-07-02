@@ -4,9 +4,16 @@ interface MessageHandler {
     fun onMessageReceived(message: Message): MessageHandlingResult
 }
 
-enum class MessageHandlingResult {
-    ACCEPTED,
-    FILTERED,
+data class MessageHandlingResult(
+    val status: Status,
+    val matchedTemplateName: String?,
+) {
+    enum class Status { ACCEPTED, FILTERED }
+
+    companion object {
+        val ACCEPTED = MessageHandlingResult(Status.ACCEPTED, null)
+        val FILTERED = MessageHandlingResult(Status.FILTERED, null)
+    }
 }
 
 data class Message(

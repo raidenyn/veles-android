@@ -11,6 +11,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.mockkStatic
+import io.mockk.spyk
 import io.mockk.unmockkAll
 import io.mockk.verify
 import me.nagaev.veles.common.NotificationStatePreferences
@@ -154,7 +155,46 @@ class NotificationListenerTest {
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        assertEquals(MessageHandlingResult.ACCEPTED, TestResultFlow.current.value?.result)
+        val testResult = TestResultFlow.current.value
+        assertEquals(MessageHandlingResult.ACCEPTED, testResult?.handlingResult)
+        assertEquals("text", testResult?.receivedText)
+        assertEquals("title", testResult?.receivedTitle)
+        assertEquals(ownPkg, testResult?.sourcePackage)
+    }
+
+    @Test
+    fun `onNotificationPosted writes matched template name and received text to TestResultFlow for self-notifications`() {
+        val ownPkg = "me.nagaev.veles"
+        val expectedText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp."
+        val matchedResult = MessageHandlingResult(
+            MessageHandlingResult.Status.ACCEPTED,
+            "UOB Thai",
+        )
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "UOB"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns expectedText
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns ownPkg
+        every { sbn.notification } returns notification
+        notification.extras = bundle
+        every { notification.channelId } returns TestNotificationSender.CHANNEL_ID
+        every { messageHandler.onMessageReceived(any()) } returns matchedResult
+
+        val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg)
+        service.onCreate()
+        service.onNotificationPosted(sbn)
+
+        val testResult = TestResultFlow.current.value
+        assertEquals(matchedResult, testResult?.handlingResult)
+        assertEquals("UOB Thai", testResult?.handlingResult?.matchedTemplateName)
+        assertEquals(expectedText, testResult?.receivedText)
+        assertEquals("UOB", testResult?.receivedTitle)
+        assertEquals(ownPkg, testResult?.sourcePackage)
     }
 
     @Test
@@ -281,5 +321,37 @@ class NotificationListenerTest {
         service.onNotificationPosted(sbn)
 
         assertEquals(RedactionState.Hidden, RedactionStateFlow.current.value)
+    }
+
+    @Test
+    fun `onNotificationPosted cancels original notification when handler accepts with non-null template name`() {
+        val expectedKey = "key"
+        val matchedResult = MessageHandlingResult(
+            MessageHandlingResult.Status.ACCEPTED,
+            "UOB Thai",
+        )
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "UOB"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "text"
+        every { sbn.key } returns expectedKey
+        every { sbn.packageName } returns "com.external.bank"
+        every { sbn.notification } returns notification
+        notification.extras = bundle
+        every { messageHandler.onMessageReceived(any()) } returns matchedResult
+
+        val service = spyk(
+            NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles"),
+        )
+        service.onCreate()
+        every { service.cancelNotification(expectedKey) } returns Unit
+
+        service.onNotificationPosted(sbn)
+
+        verify { service.cancelNotification(expectedKey) }
     }
 }

@@ -38,6 +38,7 @@ class NotificationListener(
             val handlers =
                 repository.getAll().map { config ->
                     RegexMessageHandler(
+                        name = config.name,
                         otpRegex = config.otpRegex,
                         moneyRegex = config.moneyRegex,
                         merchantRegex = config.merchantRegex,
@@ -101,10 +102,16 @@ class NotificationListener(
             val effectiveOwnPackage = ownPackageName ?: getPackageName()
             val channelId = it.notification?.channelId
             if (message.source == effectiveOwnPackage && channelId == TestNotificationSender.CHANNEL_ID) {
-                TestResultFlow.current.value = TestResult(handlingResult, System.currentTimeMillis())
+                TestResultFlow.current.value = TestResult(
+                    handlingResult = handlingResult,
+                    receivedText = message.text,
+                    receivedTitle = message.title,
+                    sourcePackage = message.source,
+                    timestamp = System.currentTimeMillis(),
+                )
             }
 
-            if (handlingResult == MessageHandlingResult.ACCEPTED) {
+            if (handlingResult.status == MessageHandlingResult.Status.ACCEPTED) {
                 cancelNotification(it.key)
             }
         }

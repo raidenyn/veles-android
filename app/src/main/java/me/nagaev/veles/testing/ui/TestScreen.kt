@@ -62,23 +62,57 @@ fun TestScreen(
         }
         state.lastResult?.let { result ->
             Spacer(Modifier.height(16.dp))
-            ResultBadge(result)
+            ResultCard(result)
         }
     }
 }
 
 @Composable
-private fun ResultBadge(result: TestResult) {
-    val (label, color) = when (result.result) {
-        MessageHandlingResult.ACCEPTED -> "Matched ✓" to MATCHED_COLOR
-        MessageHandlingResult.FILTERED -> "No match" to MaterialTheme.colorScheme.onSurfaceVariant
+private fun ResultCard(result: TestResult) {
+    val (statusLabel, statusColor) = when (result.handlingResult.status) {
+        MessageHandlingResult.Status.ACCEPTED -> "Matched ✓" to MATCHED_COLOR
+        MessageHandlingResult.Status.FILTERED -> "No match" to MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(
-        text = label,
-        color = color,
-        style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier.testTag(TestTags.TEST_RESULT),
-    )
+    Column {
+        Text(
+            text = statusLabel,
+            color = statusColor,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.testTag(TestTags.TEST_RESULT),
+        )
+        result.handlingResult.matchedTemplateName?.let { name ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Template: $name",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(TestTags.TEST_RESULT_TEMPLATE),
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Received: ${result.receivedText}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag(TestTags.TEST_RESULT_RECEIVED_TEXT),
+        )
+        if (result.receivedTitle.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Title: ${result.receivedTitle}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (result.sourcePackage.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Source: ${result.sourcePackage}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 @Preview(showBackground = true)
@@ -86,7 +120,19 @@ private fun ResultBadge(result: TestResult) {
 @Suppress("MaxLineLength")
 fun TestScreenPreview() {
     TestScreen(
-        state = TestState(inputText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573."),
+        state = TestState(
+            inputText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone.",
+            lastResult = TestResult(
+                handlingResult = MessageHandlingResult(
+                    MessageHandlingResult.Status.ACCEPTED,
+                    "UOB Thai",
+                ),
+                receivedText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp.",
+                receivedTitle = "UOB",
+                sourcePackage = "com.uob.th",
+                timestamp = 1000L,
+            ),
+        ),
         onTextChanged = {},
         onSend = {},
     )

@@ -5,8 +5,9 @@ class CompositeMessageHandler(
 ) : MessageHandler {
     override fun onMessageReceived(message: Message): MessageHandlingResult {
         for (handler in handlers) {
-            if (handler.onMessageReceived(message) == MessageHandlingResult.ACCEPTED) {
-                return MessageHandlingResult.ACCEPTED
+            val result = handler.onMessageReceived(message)
+            if (result.status == MessageHandlingResult.Status.ACCEPTED) {
+                return result
             }
         }
         return MessageHandlingResult.FILTERED
