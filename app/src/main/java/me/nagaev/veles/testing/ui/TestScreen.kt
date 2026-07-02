@@ -69,7 +69,7 @@ fun TestScreen(
 
 @Composable
 private fun ResultBadge(result: TestResult) {
-    val (label, color) = when (result.result.status) {
+    val (label, color) = when (result.handlingResult.status) {
         MessageHandlingResult.Status.ACCEPTED -> "Matched ✓" to MATCHED_COLOR
         MessageHandlingResult.Status.FILTERED -> "No match" to MaterialTheme.colorScheme.onSurfaceVariant
     }

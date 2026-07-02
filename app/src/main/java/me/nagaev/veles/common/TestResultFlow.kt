@@ -4,7 +4,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
 
 data class TestResult(
-    val result: MessageHandlingResult,
+    val handlingResult: MessageHandlingResult,
+    val receivedText: String,
+    val receivedTitle: String,
+    val sourcePackage: String,
     val timestamp: Long,
 )
 

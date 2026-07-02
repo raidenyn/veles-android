@@ -102,7 +102,13 @@ class NotificationListener(
             val effectiveOwnPackage = ownPackageName ?: getPackageName()
             val channelId = it.notification?.channelId
             if (message.source == effectiveOwnPackage && channelId == TestNotificationSender.CHANNEL_ID) {
-                TestResultFlow.current.value = TestResult(handlingResult, System.currentTimeMillis())
+                TestResultFlow.current.value = TestResult(
+                    handlingResult = handlingResult,
+                    receivedText = "",
+                    receivedTitle = "",
+                    sourcePackage = "",
+                    timestamp = System.currentTimeMillis(),
+                )
             }
 
             if (handlingResult == MessageHandlingResult.ACCEPTED) {

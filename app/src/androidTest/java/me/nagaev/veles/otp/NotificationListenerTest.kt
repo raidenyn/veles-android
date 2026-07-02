@@ -154,7 +154,7 @@ class NotificationListenerTest {
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        assertEquals(MessageHandlingResult.ACCEPTED, TestResultFlow.current.value?.result)
+        assertEquals(MessageHandlingResult.ACCEPTED, TestResultFlow.current.value?.handlingResult)
     }
 
     @Test

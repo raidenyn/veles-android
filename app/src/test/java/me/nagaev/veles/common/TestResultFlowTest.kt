@@ -19,14 +19,26 @@ class TestResultFlowTest {
 
     @Test
     fun `emitting ACCEPTED result updates current value`() {
-        val result = TestResult(MessageHandlingResult.ACCEPTED, 1000L)
+        val result = TestResult(
+            handlingResult = MessageHandlingResult.ACCEPTED,
+            receivedText = "text",
+            receivedTitle = "title",
+            sourcePackage = "pkg",
+            timestamp = 1000L,
+        )
         TestResultFlow.current.value = result
         assertEquals(result, TestResultFlow.current.value)
     }
 
     @Test
     fun `emitting FILTERED result updates current value`() {
-        val result = TestResult(MessageHandlingResult.FILTERED, 2000L)
+        val result = TestResult(
+            handlingResult = MessageHandlingResult.FILTERED,
+            receivedText = "text",
+            receivedTitle = "title",
+            sourcePackage = "pkg",
+            timestamp = 2000L,
+        )
         TestResultFlow.current.value = result
         assertEquals(result, TestResultFlow.current.value)
     }
