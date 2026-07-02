@@ -11,5 +11,5 @@ data class BankConfigEditState(
     val moneyRegexError: String? = null,
     val merchantRegexError: String? = null,
     val isSaving: Boolean = false,
-    val savedSuccessfully: Boolean = false
+    val savedSuccessfully: Boolean = false,
 )

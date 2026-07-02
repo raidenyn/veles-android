@@ -10,7 +10,7 @@ import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 
 class BankConfigsViewModel(
-    private val repository: BankHandlerRepository
+    private val repository: BankHandlerRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(BankConfigsState())

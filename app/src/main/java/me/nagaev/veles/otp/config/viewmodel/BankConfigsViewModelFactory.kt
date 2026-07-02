@@ -9,6 +9,5 @@ class BankConfigsViewModelFactory(context: Context) : ViewModelProvider.Factory 
     private val repository = BankHandlerRepository(context)
 
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        BankConfigsViewModel(repository) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>): T = BankConfigsViewModel(repository) as T
 }

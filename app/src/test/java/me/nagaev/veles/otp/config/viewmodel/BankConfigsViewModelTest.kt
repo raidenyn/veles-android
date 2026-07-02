@@ -25,7 +25,7 @@ class BankConfigsViewModelTest {
         moneyRegex = """([A-Z]{3})(\d+)""",
         merchantRegex = """at (.+)""",
         createdAt = 1000L,
-        updatedAt = 1000L
+        updatedAt = 1000L,
     )
 
     @Before

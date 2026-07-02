@@ -65,15 +65,17 @@ fun VelesPermissionsApp(
                         onEdit = { id -> navController.navigate("bank-config-edit?id=$id") },
                         onRequestDelete = vm::requestDelete,
                         onCancelDelete = vm::cancelDelete,
-                        onConfirmDelete = vm::confirmDelete
+                        onConfirmDelete = vm::confirmDelete,
                     )
                 }
                 composable(
                     route = "bank-config-edit?id={id}",
-                    arguments = listOf(navArgument("id") {
-                        type = NavType.LongType
-                        defaultValue = -1L
-                    })
+                    arguments = listOf(
+                        navArgument("id") {
+                            type = NavType.LongType
+                            defaultValue = -1L
+                        },
+                    ),
                 ) { backStackEntry ->
                     val rawId = backStackEntry.arguments?.getLong("id") ?: -1L
                     val configId: Long? = if (rawId == -1L) null else rawId
@@ -89,7 +91,7 @@ fun VelesPermissionsApp(
                         onMoneyRegexChanged = vm::onMoneyRegexChanged,
                         onMerchantRegexChanged = vm::onMerchantRegexChanged,
                         onSave = vm::save,
-                        onNavigateBack = { navController.popBackStack() }
+                        onNavigateBack = { navController.popBackStack() },
                     )
                 }
             }

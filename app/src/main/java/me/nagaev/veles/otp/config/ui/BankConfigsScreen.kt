@@ -35,20 +35,20 @@ fun BankConfigsScreen(
     onRequestDelete: (BankHandlerConfig) -> Unit,
     onCancelDelete: () -> Unit,
     onConfirmDelete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp)
-                .statusBarsPadding()
+                .statusBarsPadding(),
         ) {
             Text(
                 text = "Bank Configs",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 10.dp)
+                modifier = Modifier.padding(vertical = 10.dp),
             )
             TextButton(onClick = onAdd) {
                 Text("Add")
@@ -57,7 +57,7 @@ fun BankConfigsScreen(
                 CircularProgressIndicator(
                     modifier = Modifier
                         .align(Alignment.CenterHorizontally)
-                        .padding(top = 32.dp)
+                        .padding(top = 32.dp),
                 )
             } else {
                 LazyColumn {
@@ -65,7 +65,7 @@ fun BankConfigsScreen(
                         BankConfigRow(
                             config = config,
                             onEdit = { onEdit(config.id) },
-                            onDelete = { onRequestDelete(config) }
+                            onDelete = { onRequestDelete(config) },
                         )
                     }
                 }
@@ -82,7 +82,7 @@ fun BankConfigsScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = onCancelDelete) { Text("Cancel") }
-                }
+                },
             )
         }
     }
@@ -92,18 +92,18 @@ fun BankConfigsScreen(
 private fun BankConfigRow(
     config: BankHandlerConfig,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = config.name,
             style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
         )
         IconButton(onClick = onEdit) {
             Icon(Icons.Default.Edit, contentDescription = "Edit ${config.name}")
@@ -124,7 +124,7 @@ fun BankConfigsScreenPreview() {
         moneyRegex = """of ([A-Z]{3})(\d+)""",
         merchantRegex = """at (.+) expiring""",
         createdAt = 0L,
-        updatedAt = 0L
+        updatedAt = 0L,
     )
     BankConfigsScreen(
         state = BankConfigsState(configs = listOf(config)),
@@ -132,6 +132,6 @@ fun BankConfigsScreenPreview() {
         onEdit = {},
         onRequestDelete = {},
         onCancelDelete = {},
-        onConfirmDelete = {}
+        onConfirmDelete = {},
     )
 }

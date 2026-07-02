@@ -20,6 +20,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import me.nagaev.veles.otp.config.viewmodel.BankConfigEditState
 
+@Suppress("LongParameterList")
 @Composable
 fun BankConfigEditScreen(
     state: BankConfigEditState,
@@ -30,7 +31,7 @@ fun BankConfigEditScreen(
     onMerchantRegexChanged: (String) -> Unit,
     onSave: () -> Unit,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     LaunchedEffect(state.savedSuccessfully) {
         if (state.savedSuccessfully) onNavigateBack()
@@ -41,13 +42,13 @@ fun BankConfigEditScreen(
             .fillMaxSize()
             .padding(horizontal = 16.dp)
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState()),
     ) {
         Text(
             text = if (isNew) "New Bank Config" else "Edit Bank Config",
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(vertical = 10.dp)
+            modifier = Modifier.padding(vertical = 10.dp),
         )
         OutlinedTextField(
             value = state.name,
@@ -55,7 +56,7 @@ fun BankConfigEditScreen(
             label = { Text("Name") },
             isError = state.nameError != null,
             supportingText = state.nameError?.let { error -> { Text(error) } },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -64,7 +65,7 @@ fun BankConfigEditScreen(
             label = { Text("OTP Regex") },
             isError = state.otpRegexError != null,
             supportingText = state.otpRegexError?.let { error -> { Text(error) } },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -73,7 +74,7 @@ fun BankConfigEditScreen(
             label = { Text("Money Regex") },
             isError = state.moneyRegexError != null,
             supportingText = state.moneyRegexError?.let { error -> { Text(error) } },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -82,13 +83,13 @@ fun BankConfigEditScreen(
             label = { Text("Merchant Regex") },
             isError = state.merchantRegexError != null,
             supportingText = state.merchantRegexError?.let { error -> { Text(error) } },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = onSave,
             enabled = !state.isSaving,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Save")
         }
@@ -103,7 +104,7 @@ fun BankConfigEditScreenPreview() {
             name = "UOB Thailand",
             otpRegex = """ (\w{4})-(\d{6}) """,
             moneyRegex = """of ([A-Z]{3})(\d+)""",
-            merchantRegex = """at (.+) expiring"""
+            merchantRegex = """at (.+) expiring""",
         ),
         isNew = false,
         onNameChanged = {},
@@ -111,6 +112,6 @@ fun BankConfigEditScreenPreview() {
         onMoneyRegexChanged = {},
         onMerchantRegexChanged = {},
         onSave = {},
-        onNavigateBack = {}
+        onNavigateBack = {},
     )
 }

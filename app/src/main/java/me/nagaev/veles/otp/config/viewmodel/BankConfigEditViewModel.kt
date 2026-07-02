@@ -8,10 +8,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
+import java.util.regex.PatternSyntaxException
 
 class BankConfigEditViewModel(
     private val repository: BankHandlerRepository,
-    private val configId: Long?
+    private val configId: Long?,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(BankConfigEditState())
@@ -28,7 +29,7 @@ class BankConfigEditViewModel(
                             otpRegex = config.otpRegex,
                             moneyRegex = config.moneyRegex,
                             merchantRegex = config.merchantRegex,
-                            originalCreatedAt = config.createdAt
+                            originalCreatedAt = config.createdAt,
                         )
                     }
                 }
@@ -54,7 +55,7 @@ class BankConfigEditViewModel(
                     nameError = nameError,
                     otpRegexError = otpRegexError,
                     moneyRegexError = moneyRegexError,
-                    merchantRegexError = merchantRegexError
+                    merchantRegexError = merchantRegexError,
                 )
             }
             return
@@ -72,8 +73,8 @@ class BankConfigEditViewModel(
                         moneyRegex = s.moneyRegex,
                         merchantRegex = s.merchantRegex,
                         createdAt = s.originalCreatedAt ?: now,
-                        updatedAt = now
-                    )
+                        updatedAt = now,
+                    ),
                 )
             } else {
                 repository.insert(
@@ -83,8 +84,8 @@ class BankConfigEditViewModel(
                         moneyRegex = s.moneyRegex,
                         merchantRegex = s.merchantRegex,
                         createdAt = now,
-                        updatedAt = now
-                    )
+                        updatedAt = now,
+                    ),
                 )
             }
             _state.update { it.copy(isSaving = false, savedSuccessfully = true) }
@@ -97,7 +98,7 @@ class BankConfigEditViewModel(
         try {
             Regex(pattern)
             null
-        } catch (e: Exception) {
+        } catch (e: java.util.regex.PatternSyntaxException) {
             "Invalid regex"
         }
     }
