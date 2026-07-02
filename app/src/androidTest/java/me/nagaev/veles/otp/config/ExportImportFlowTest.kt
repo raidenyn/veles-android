@@ -172,7 +172,7 @@ class ExportImportFlowTest {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
         vm.onImportUri(context, uri)
-        composeRule.waitForIdle()
+        composeRule.waitUntil(5000) { vm.state.value.importReview != null }
 
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_DIALOG).assertIsDisplayed()
         composeRule.onNodeWithText("New:").assertIsDisplayed()
@@ -225,10 +225,10 @@ class ExportImportFlowTest {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
         vm.onImportUri(context, uri)
-        composeRule.waitForIdle()
+        composeRule.waitUntil(5000) { vm.state.value.importReview != null }
 
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_CONFIRM).performClick()
-        composeRule.waitForIdle()
+        composeRule.waitUntil(5000) { vm.state.value.importReview == null }
 
         kotlinx.coroutines.runBlocking {
             val all = repository.getAllSuspend()
@@ -286,7 +286,7 @@ class ExportImportFlowTest {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
         vm.onImportUri(context, uri)
-        composeRule.waitForIdle()
+        composeRule.waitUntil(5000) { vm.state.value.importReview != null }
 
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_CANCEL).performClick()
         composeRule.waitForIdle()
@@ -304,7 +304,7 @@ class ExportImportFlowTest {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, "{not json")
         vm.onImportUri(context, uri)
-        composeRule.waitForIdle()
+        composeRule.waitUntil(5000) { vm.state.value.message != null }
 
         assertNull(vm.state.value.importReview)
         assertNotNull(vm.state.value.message)
