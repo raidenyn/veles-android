@@ -1,6 +1,7 @@
 package me.nagaev.veles.otp.config
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -8,7 +9,6 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +48,7 @@ class ExportImportFlowTest {
         vm = BankConfigsViewModel(repository, ioDispatcher = Dispatchers.Main)
         composeRule.setContent {
             BankConfigsScreen(
-                state = vm.state.collectAsStateWithLifecycle().value,
+                state = vm.state.collectAsState().value,
                 onAdd = {},
                 onEdit = {},
                 onRequestDelete = vm::requestDelete,
@@ -173,6 +173,7 @@ class ExportImportFlowTest {
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
         vm.onImportUri(context, uri)
         composeRule.waitUntil(5000) { vm.state.value.importReview != null }
+        composeRule.waitForIdle()
 
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_DIALOG).assertIsDisplayed()
         composeRule.onNodeWithText("New:").assertIsDisplayed()
@@ -226,9 +227,11 @@ class ExportImportFlowTest {
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
         vm.onImportUri(context, uri)
         composeRule.waitUntil(5000) { vm.state.value.importReview != null }
+        composeRule.waitForIdle()
 
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_CONFIRM).performClick()
         composeRule.waitUntil(5000) { vm.state.value.importReview == null }
+        composeRule.waitForIdle()
 
         kotlinx.coroutines.runBlocking {
             val all = repository.getAllSuspend()
@@ -287,6 +290,7 @@ class ExportImportFlowTest {
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
         vm.onImportUri(context, uri)
         composeRule.waitUntil(5000) { vm.state.value.importReview != null }
+        composeRule.waitForIdle()
 
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_CANCEL).performClick()
         composeRule.waitForIdle()
@@ -305,6 +309,7 @@ class ExportImportFlowTest {
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, "{not json")
         vm.onImportUri(context, uri)
         composeRule.waitUntil(5000) { vm.state.value.message != null }
+        composeRule.waitForIdle()
 
         assertNull(vm.state.value.importReview)
         assertNotNull(vm.state.value.message)
