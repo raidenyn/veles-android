@@ -80,7 +80,7 @@ fun VelesPermissionsApp(
                     val createDocumentLauncher = rememberLauncherForActivityResult(
                         contract = ActivityResultContracts.CreateDocument("application/json"),
                     ) { uri ->
-                        if (uri != null) vm.writeExportToUri(context, uri)
+                        if (uri != null) vm.writeExportToUri(context, uri) else vm.cancelExport()
                     }
                     val openDocumentLauncher = rememberLauncherForActivityResult(
                         contract = ActivityResultContracts.OpenDocument(),

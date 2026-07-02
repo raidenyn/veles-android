@@ -11,6 +11,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -156,6 +157,44 @@ class BankConfigsViewModelTest {
         vm.writeExportToUri(context, android.net.Uri.parse("content://x/y"))
         assertTrue(out.toString().contains("Test Bank"))
         assertNull(vm.state.value.pendingExportJson)
+    }
+
+    @Test
+    fun `cancelExport clears pending export state`() {
+        val vm = BankConfigsViewModel(repository)
+        vm.onExportRequested()
+        vm.confirmExportSelection()
+        assertNotNull(vm.state.value.pendingExportJson)
+        assertNotNull(vm.state.value.pendingExportCount)
+        vm.cancelExport()
+        assertNull(vm.state.value.pendingExportJson)
+        assertNull(vm.state.value.pendingExportCount)
+    }
+
+    @Test
+    fun `writeExportToUri with null stream sets Export failed message and clears pending state`() {
+        val context = mockk<Context>()
+        every { context.contentResolver.openOutputStream(any()) } returns null
+        val vm = BankConfigsViewModel(repository, testDispatcher)
+        vm.onExportRequested()
+        vm.confirmExportSelection()
+        vm.writeExportToUri(context, android.net.Uri.parse("content://x/y"))
+        assertEquals("Export failed", vm.state.value.message)
+        assertNull(vm.state.value.pendingExportJson)
+        assertNull(vm.state.value.pendingExportCount)
+    }
+
+    @Test
+    fun `writeExportToUri catches IOException and reports failure`() {
+        val context = mockk<Context>()
+        every { context.contentResolver.openOutputStream(any()) } throws IOException("denied")
+        val vm = BankConfigsViewModel(repository, testDispatcher)
+        vm.onExportRequested()
+        vm.confirmExportSelection()
+        vm.writeExportToUri(context, android.net.Uri.parse("content://x/y"))
+        assertEquals("Export failed", vm.state.value.message)
+        assertNull(vm.state.value.pendingExportJson)
+        assertNull(vm.state.value.pendingExportCount)
     }
 
     @Test

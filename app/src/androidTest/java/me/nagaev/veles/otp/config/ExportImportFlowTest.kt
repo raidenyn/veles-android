@@ -1,7 +1,6 @@
 package me.nagaev.veles.otp.config
 
 import androidx.activity.ComponentActivity
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -9,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.config.ui.BankConfigsScreen
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsViewModel
@@ -45,7 +45,7 @@ class ExportImportFlowTest {
         vm = BankConfigsViewModel(repository)
         composeRule.setContent {
             BankConfigsScreen(
-                state = vm.state.collectAsState().value,
+                state = vm.state.collectAsStateWithLifecycle().value,
                 onAdd = {},
                 onEdit = {},
                 onRequestDelete = vm::requestDelete,
@@ -66,6 +66,9 @@ class ExportImportFlowTest {
     @After
     fun tearDown() {
         db.close()
+        val field = BankHandlerDatabase::class.java.getDeclaredField("INSTANCE")
+        field.isAccessible = true
+        field.set(null, null)
     }
 
     @Test

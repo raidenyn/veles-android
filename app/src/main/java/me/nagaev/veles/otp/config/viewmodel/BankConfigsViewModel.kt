@@ -89,18 +89,40 @@ class BankConfigsViewModel(
         val json = _state.value.pendingExportJson ?: return
         val count = _state.value.pendingExportCount ?: 0
         viewModelScope.launch {
-            withContext(ioDispatcher) {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(json.toByteArray())
+            val success = try {
+                withContext(ioDispatcher) {
+                    val out = context.contentResolver.openOutputStream(uri)
+                        ?: return@withContext false
+                    out.use { it.write(json.toByteArray()) }
+                    true
                 }
+            } catch (e: Exception) {
+                false
             }
             _state.update {
-                it.copy(
-                    pendingExportJson = null,
-                    pendingExportCount = null,
-                    message = "Exported $count configs",
-                )
+                if (success) {
+                    it.copy(
+                        pendingExportJson = null,
+                        pendingExportCount = null,
+                        message = "Exported $count configs",
+                    )
+                } else {
+                    it.copy(
+                        pendingExportJson = null,
+                        pendingExportCount = null,
+                        message = "Export failed",
+                    )
+                }
             }
+        }
+    }
+
+    fun cancelExport() {
+        _state.update {
+            it.copy(
+                pendingExportJson = null,
+                pendingExportCount = null,
+            )
         }
     }
 
