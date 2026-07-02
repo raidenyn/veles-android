@@ -11,13 +11,11 @@ import me.nagaev.veles.otp.NotificationRedactionPath
 import me.nagaev.veles.permissions.services.PermissionProvider
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
-import me.nagaev.veles.testing.TestNotificationSender
 
 interface PermissionsActions {
     val requestPermission: RequestPermission
     val revokePermission: RevokePermission
     val openRedactionSettings: () -> Unit
-    val testSensitiveReading: () -> Unit
 
     companion object {
         val Mocked: PermissionsActions =
@@ -25,7 +23,6 @@ interface PermissionsActions {
                 override val requestPermission: RequestPermission = {}
                 override val revokePermission: RevokePermission = {}
                 override val openRedactionSettings: () -> Unit = {}
-                override val testSensitiveReading: () -> Unit = {}
             }
     }
 }
@@ -36,7 +33,6 @@ typealias RevokePermission = (type: PermissionType) -> Unit
 class PermissionsViewModel(
     private val permissionsProvider: PermissionsProvider,
     private val notificationStatePreferences: NotificationStatePreferences,
-    private val testNotificationSender: TestNotificationSender,
     private val redactionPath: NotificationRedactionPath,
     private val componentName: android.content.ComponentName,
     private val openSettings: (android.content.Intent) -> Unit,
@@ -103,9 +99,5 @@ class PermissionsViewModel(
 
     override val openRedactionSettings: () -> Unit = {
         openSettings(redactionPath.settingsIntent(componentName))
-    }
-
-    override val testSensitiveReading: () -> Unit = {
-        testNotificationSender.postSecretProbe()
     }
 }

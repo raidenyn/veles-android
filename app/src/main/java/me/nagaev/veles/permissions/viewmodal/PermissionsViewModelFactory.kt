@@ -14,7 +14,6 @@ import me.nagaev.veles.permissions.services.PermissionsProvider
 import me.nagaev.veles.permissions.services.PermissionsProviderImpl
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
 import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
-import me.nagaev.veles.testing.TestNotificationSender
 
 class PermissionsViewModelFactory(
     private val activity: Activity,
@@ -43,7 +42,6 @@ class PermissionsViewModelFactory(
             )
 
         val notificationStatePreferences = NotificationStatePreferences(activity)
-        val testNotificationSender = TestNotificationSender(activity)
         val componentName =
             android.content.ComponentName(
                 activity.packageName,
@@ -55,7 +53,6 @@ class PermissionsViewModelFactory(
         return PermissionsViewModel(
             permissionsProvider,
             notificationStatePreferences,
-            testNotificationSender,
             redactionPath,
             componentName,
             openSettings,
