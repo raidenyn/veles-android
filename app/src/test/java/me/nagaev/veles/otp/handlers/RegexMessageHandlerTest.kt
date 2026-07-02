@@ -6,6 +6,7 @@ import io.mockk.verify
 import org.junit.Test
 import java.math.BigDecimal
 
+@Suppress("MaxLineLength")
 class RegexMessageHandlerTest {
     private companion object {
         const val OTP_REGEX = """ (\w{4})-(\d{6}) """
@@ -13,15 +14,15 @@ class RegexMessageHandlerTest {
         const val MERCHANT_REGEX = """at (.{1,64}) expiring"""
     }
 
-    private val defaultMessage = Message(
-        key = "123456",
-        source = "line",
-        title = "OTP Code",
-        text = "Never share OTP with anyone. Use SMS-OTP HStX-079853 for your purchase of THB319.93 at AMP*AIS SERVICES expiring at 02-Mar-2025 9:23PM BKK time."
-    )
+    private val defaultMessage =
+        Message(
+            key = "123456",
+            source = "line",
+            title = "OTP Code",
+            text = "Never share OTP with anyone. Use SMS-OTP HStX-079853 for your purchase of THB319.93 at AMP*AIS SERVICES expiring at 02-Mar-2025 9:23PM BKK time.",
+        )
 
-    private fun handler(notifier: OtpMessageHandler) =
-        RegexMessageHandler(OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
+    private fun handler(notifier: OtpMessageHandler) = RegexMessageHandler(OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
 
     @Test
     fun `Valid OTP message processing`() {
@@ -37,8 +38,8 @@ class RegexMessageHandlerTest {
                     id = defaultMessage.key.hashCode(),
                     otp = Otp(value = "079853", id = "HStX"),
                     pay = Money(amount = BigDecimal("319.93"), currencyCode = "THB"),
-                    merchant = "AMP*AIS SERVICES"
-                )
+                    merchant = "AMP*AIS SERVICES",
+                ),
             )
         }
     }
@@ -167,8 +168,8 @@ class RegexMessageHandlerTest {
                     id = defaultMessage.key.hashCode(),
                     otp = Otp(value = "079853", id = "HStX"),
                     pay = Money(amount = BigDecimal("999999999999999.9999"), currencyCode = "THB"),
-                    merchant = "AMP*AIS SERVICES"
-                )
+                    merchant = "AMP*AIS SERVICES",
+                ),
             )
         }
     }

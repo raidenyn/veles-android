@@ -40,7 +40,7 @@ fun VelesPermissionsApp(
                         state = permissionsState,
                         actions = permissionsActions,
                         onNavigateToTest = { navController.navigate("test") },
-                        onNavigateToBankConfigs = { navController.navigate("bank-configs") }
+                        onNavigateToBankConfigs = { navController.navigate("bank-configs") },
                     )
                 }
                 composable("test") {
@@ -51,7 +51,7 @@ fun VelesPermissionsApp(
                     TestScreen(
                         state = testState,
                         onTextChanged = testViewModel::onTextChanged,
-                        onSend = testViewModel::send
+                        onSend = testViewModel::send,
                     )
                 }
                 composable("bank-configs") {

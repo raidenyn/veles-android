@@ -10,9 +10,10 @@ class CompositeMessageHandlerTest {
 
     @Test
     fun `first handler matches returns ACCEPTED and does not call second`() {
-        val first = mockk<MessageHandler> {
-            every { onMessageReceived(message) } returns MessageHandlingResult.ACCEPTED
-        }
+        val first =
+            mockk<MessageHandler> {
+                every { onMessageReceived(message) } returns MessageHandlingResult.ACCEPTED
+            }
         val second = mockk<MessageHandler>()
 
         val result = CompositeMessageHandler(listOf(first, second)).onMessageReceived(message)
@@ -23,12 +24,14 @@ class CompositeMessageHandlerTest {
 
     @Test
     fun `first filtered second matches returns ACCEPTED`() {
-        val first = mockk<MessageHandler> {
-            every { onMessageReceived(message) } returns MessageHandlingResult.FILTERED
-        }
-        val second = mockk<MessageHandler> {
-            every { onMessageReceived(message) } returns MessageHandlingResult.ACCEPTED
-        }
+        val first =
+            mockk<MessageHandler> {
+                every { onMessageReceived(message) } returns MessageHandlingResult.FILTERED
+            }
+        val second =
+            mockk<MessageHandler> {
+                every { onMessageReceived(message) } returns MessageHandlingResult.ACCEPTED
+            }
 
         val result = CompositeMessageHandler(listOf(first, second)).onMessageReceived(message)
 
@@ -37,12 +40,14 @@ class CompositeMessageHandlerTest {
 
     @Test
     fun `all handlers filtered returns FILTERED`() {
-        val first = mockk<MessageHandler> {
-            every { onMessageReceived(message) } returns MessageHandlingResult.FILTERED
-        }
-        val second = mockk<MessageHandler> {
-            every { onMessageReceived(message) } returns MessageHandlingResult.FILTERED
-        }
+        val first =
+            mockk<MessageHandler> {
+                every { onMessageReceived(message) } returns MessageHandlingResult.FILTERED
+            }
+        val second =
+            mockk<MessageHandler> {
+                every { onMessageReceived(message) } returns MessageHandlingResult.FILTERED
+            }
 
         val result = CompositeMessageHandler(listOf(first, second)).onMessageReceived(message)
 
