@@ -17,7 +17,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import me.nagaev.veles.R
-import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.PermissionsList
 import me.nagaev.veles.permissions.ui.components.RedactionSection
