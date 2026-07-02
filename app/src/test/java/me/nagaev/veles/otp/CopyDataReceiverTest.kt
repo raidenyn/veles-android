@@ -10,8 +10,8 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.verify
 import me.nagaev.veles.otp.CopyDataReceiver.Companion.EXTRA_COPY_TEXT
-import org.junit.Test
 import org.junit.Before
+import org.junit.Test
 
 class CopyDataReceiverTest {
     private val context = mockk<Context>(relaxed = true)

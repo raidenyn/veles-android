@@ -11,8 +11,8 @@ import kotlin.coroutines.resume
 
 class SendNotificationPermissionProvider(
     private val activityProvider: ActivityProvider,
-    private val requestPermissionLauncher: RequestPermissionLauncher
-): PermissionProvider {
+    private val requestPermissionLauncher: RequestPermissionLauncher,
+) : PermissionProvider {
     override fun isGranted(): Boolean {
         with(NotificationManagerCompat.from(activityProvider.getActivity())) {
             return areNotificationsEnabled()
@@ -25,17 +25,18 @@ class SendNotificationPermissionProvider(
                 when {
                     ContextCompat.checkSelfPermission(
                         this,
-                        Manifest.permission.POST_NOTIFICATIONS
+                        Manifest.permission.POST_NOTIFICATIONS,
                     ) == PackageManager.PERMISSION_GRANTED
-                        -> cont.resume(Unit)
-                    else -> requestPermissionLauncher.launch(
-                        Manifest.permission.POST_NOTIFICATIONS
-                    ) { granted ->
-                        if (!granted) {
-                            showAppSettings()
+                    -> cont.resume(Unit)
+                    else ->
+                        requestPermissionLauncher.launch(
+                            Manifest.permission.POST_NOTIFICATIONS,
+                        ) { granted ->
+                            if (!granted) {
+                                showAppSettings()
+                            }
+                            cont.resume(Unit)
                         }
-                        cont.resume(Unit)
-                    }
                 }
             } else {
                 showAppSettings()
@@ -50,10 +51,11 @@ class SendNotificationPermissionProvider(
 
     private fun showAppSettings() {
         with(activityProvider.getActivity()) {
-            val settingsIntent: Intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-            //.putExtra(Settings.EXTRA_CHANNEL_ID, MY_CHANNEL_ID)
+            val settingsIntent: Intent =
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            // .putExtra(Settings.EXTRA_CHANNEL_ID, MY_CHANNEL_ID)
             startActivity(settingsIntent)
         }
     }

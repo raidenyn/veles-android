@@ -3,13 +3,15 @@ package me.nagaev.veles.otp
 import android.app.Notification
 import android.content.Intent
 import android.os.Bundle
-import android.service.notification.StatusBarNotification
 import android.service.notification.NotificationListenerService.START_REDELIVER_INTENT
+import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
 import io.mockk.mockkStatic
+import io.mockk.unmockkAll
 import io.mockk.verify
 import me.nagaev.veles.common.NotificationStatePreferences
 import me.nagaev.veles.common.RedactionState
@@ -20,17 +22,23 @@ import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
 import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
 import me.nagaev.veles.testing.TestNotificationSender
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Test
 import org.junit.Before
+import org.junit.Test
 
 class NotificationListenerTest {
-
     @Before
     fun beforeTest() {
         mockkStatic(Log::class)
         every { Log.d(any(), any()) } returns 0
+        mockkObject(RedactionDetector)
+    }
+
+    @After
+    fun afterTest() {
+        unmockkAll()
     }
 
     @Before
@@ -45,7 +53,9 @@ class NotificationListenerTest {
 
     @Test
     fun `onCreate service initialization`() {
-        val service = NotificationListener()
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
         service.onCreate()
     }
 
@@ -111,12 +121,14 @@ class NotificationListenerTest {
         service.onNotificationPosted(statusBarNotification)
 
         verify {
-            messageHandler.onMessageReceived(Message(
-                key = expectedKey,
-                title = expectedTitle,
-                text = expectedText,
-                source = expectedSource
-            ))
+            messageHandler.onMessageReceived(
+                Message(
+                    key = expectedKey,
+                    title = expectedTitle,
+                    text = expectedText,
+                    source = expectedSource,
+                ),
+            )
         }
     }
 
@@ -206,8 +218,8 @@ class NotificationListenerTest {
         every { sbn.key } returns "key"
         every { sbn.packageName } returns "com.some.bank"
         every { sbn.notification } returns notification
-        every { notification.visibility } returns Notification.VISIBILITY_SECRET
         notification.extras = bundle
+        every { RedactionDetector.isRedacted(any()) } returns true
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
 
         val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
@@ -232,8 +244,9 @@ class NotificationListenerTest {
         every { sbn.key } returns "key"
         every { sbn.packageName } returns "com.some.bank"
         every { sbn.notification } returns notification
-        every { notification.visibility } returns Notification.VISIBILITY_SECRET
+        notification.visibility = Notification.VISIBILITY_SECRET
         notification.extras = bundle
+        every { RedactionDetector.isRedacted(any()) } returns false
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
         val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")
@@ -258,8 +271,9 @@ class NotificationListenerTest {
         every { sbn.key } returns "key"
         every { sbn.packageName } returns "com.some.bank"
         every { sbn.notification } returns notification
-        every { notification.visibility } returns Notification.VISIBILITY_PUBLIC
+        notification.visibility = Notification.VISIBILITY_PUBLIC
         notification.extras = bundle
+        every { RedactionDetector.isRedacted(any()) } returns false
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
 
         val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles")

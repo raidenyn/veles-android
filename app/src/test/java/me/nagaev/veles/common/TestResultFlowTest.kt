@@ -7,7 +7,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class TestResultFlowTest {
-
     @Before
     fun setUp() {
         TestResultFlow.current.value = null

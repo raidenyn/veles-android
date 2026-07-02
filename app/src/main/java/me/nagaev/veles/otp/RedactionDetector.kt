@@ -9,12 +9,13 @@ object RedactionDetector {
 
     fun isRedacted(sbn: StatusBarNotification): Boolean {
         val notification = sbn.notification ?: return false
-        val text = notification.extras
-            ?.getCharSequence(NotificationCompat.EXTRA_TEXT)
-            ?.toString()
-            .orEmpty()
-        return notification.visibility == Notification.VISIBILITY_SECRET
-            && text.isNotBlank()
-            && DIGIT_RUN.find(text) == null
+        val text =
+            notification.extras
+                ?.getCharSequence(NotificationCompat.EXTRA_TEXT)
+                ?.toString()
+                .orEmpty()
+        return notification.visibility == Notification.VISIBILITY_SECRET &&
+            text.isNotBlank() &&
+            DIGIT_RUN.find(text) == null
     }
 }

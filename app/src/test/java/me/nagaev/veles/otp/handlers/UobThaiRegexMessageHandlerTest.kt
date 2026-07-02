@@ -6,6 +6,7 @@ import io.mockk.verify
 import org.junit.Test
 import java.math.BigDecimal
 
+@Suppress("MaxLineLength")
 class UobThaiRegexMessageHandlerTest {
     private companion object {
         const val OTP_REGEX = """\((OTP=)(\d{6})\)"""
@@ -13,15 +14,15 @@ class UobThaiRegexMessageHandlerTest {
         const val MERCHANT_REGEX = """ at (.+?):"""
     }
 
-    private val defaultMessage = Message(
-        key = "123456",
-        source = "com.uob.th",
-        title = "UOB",
-        text = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573."
-    )
+    private val defaultMessage =
+        Message(
+            key = "123456",
+            source = "com.uob.th",
+            title = "UOB",
+            text = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573.",
+        )
 
-    private fun handler(notifier: OtpMessageHandler) =
-        RegexMessageHandler(OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
+    private fun handler(notifier: OtpMessageHandler) = RegexMessageHandler(OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
 
     @Test
     fun `Valid OTP message processing`() {
@@ -37,8 +38,8 @@ class UobThaiRegexMessageHandlerTest {
                     id = defaultMessage.key.hashCode(),
                     otp = Otp(value = "511066", id = "OTP="),
                     pay = Money(amount = BigDecimal("600.00"), currencyCode = "THB"),
-                    merchant = "WWWSFCINEMACITYCOMCORP"
-                )
+                    merchant = "WWWSFCINEMACITYCOMCORP",
+                ),
             )
         }
     }

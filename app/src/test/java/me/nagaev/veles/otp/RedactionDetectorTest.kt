@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
 import android.service.notification.StatusBarNotification
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertFalse
@@ -18,7 +17,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class RedactionDetectorTest {
-
     private lateinit var context: Context
     private val notificationManager: NotificationManager
         get() = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -28,20 +26,34 @@ class RedactionDetectorTest {
         context = ApplicationProvider.getApplicationContext()
         if (notificationManager.getNotificationChannel("test") == null) {
             notificationManager.createNotificationChannel(
-                NotificationChannel("test", "test", NotificationManager.IMPORTANCE_HIGH)
+                NotificationChannel("test", "test", NotificationManager.IMPORTANCE_HIGH),
             )
         }
     }
 
-    private fun sbn(visibility: Int, text: CharSequence?): StatusBarNotification {
-        val notification = Notification.Builder(context, "test")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("title")
-            .setContentText(text)
-            .setVisibility(visibility)
-            .build()
+    private fun sbn(
+        visibility: Int,
+        text: CharSequence?,
+    ): StatusBarNotification {
+        val notification =
+            Notification
+                .Builder(context, "test")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("title")
+                .setContentText(text)
+                .setVisibility(visibility)
+                .build()
         return StatusBarNotification(
-            "pkg", "pkg", 1, "tag", 0, 0, 0, notification, android.os.Process.myUserHandle(), 0L
+            "pkg",
+            "pkg",
+            1,
+            "tag",
+            0,
+            0,
+            0,
+            notification,
+            android.os.Process.myUserHandle(),
+            0L,
         )
     }
 

@@ -11,8 +11,8 @@ import me.nagaev.veles.R
 import me.nagaev.veles.otp.CopyDataReceiver
 
 class UserNotifierOtpMessageHandler(
-    private val context: Context
-): OtpMessageHandler {
+    private val context: Context,
+) : OtpMessageHandler {
     companion object {
         const val CHANNEL_ID = "HandyOTPMessageChannel"
     }
@@ -21,26 +21,30 @@ class UserNotifierOtpMessageHandler(
         val text = "OTP: ${message.otp.value}, Pay: ${message.pay.amount} ${message.pay.currencyCode}"
         val title = message.merchant
 
-        val copyIntent = Intent(context, CopyDataReceiver::class.java).apply {
-            action = "Copy"
-            putExtra(CopyDataReceiver.EXTRA_COPY_TEXT, message.otp.value)
-        }
+        val copyIntent =
+            Intent(context, CopyDataReceiver::class.java).apply {
+                action = "Copy"
+                putExtra(CopyDataReceiver.EXTRA_COPY_TEXT, message.otp.value)
+            }
         val copyPendingIntent: PendingIntent =
             PendingIntent.getBroadcast(
                 context,
                 0,
                 copyIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
 
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_otp_message)
-            .setContentTitle(title)
-            .setContentText(text)
-            .addAction(
-                R.drawable.ic_otp_message, "Copy ${message.otp.value}",
-                copyPendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+        val builder =
+            NotificationCompat
+                .Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_otp_message)
+                .setContentTitle(title)
+                .setContentText(text)
+                .addAction(
+                    R.drawable.ic_otp_message,
+                    "Copy ${message.otp.value}",
+                    copyPendingIntent,
+                ).setPriority(NotificationCompat.PRIORITY_HIGH)
 
         with(NotificationManagerCompat.from(context)) {
             if (areNotificationsEnabled()) {
@@ -61,9 +65,10 @@ class UserNotifierOtpMessageHandler(
         }
 
         val importance = NotificationManager.IMPORTANCE_HIGH
-        val channel = NotificationChannel(CHANNEL_ID, "Handy OTP", importance).apply {
-            description = "Show handy OTP passwords from banks"
-        }
+        val channel =
+            NotificationChannel(CHANNEL_ID, "Handy OTP", importance).apply {
+                description = "Show handy OTP passwords from banks"
+            }
 
         notificationManager.createNotificationChannel(channel)
     }

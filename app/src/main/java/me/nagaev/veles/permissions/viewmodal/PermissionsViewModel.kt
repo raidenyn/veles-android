@@ -20,12 +20,13 @@ interface PermissionsActions {
     val testSensitiveReading: () -> Unit
 
     companion object {
-        val Mocked: PermissionsActions = object : PermissionsActions {
-            override val requestPermission: RequestPermission = {}
-            override val revokePermission: RevokePermission = {}
-            override val openRedactionSettings: () -> Unit = {}
-            override val testSensitiveReading: () -> Unit = {}
-        }
+        val Mocked: PermissionsActions =
+            object : PermissionsActions {
+                override val requestPermission: RequestPermission = {}
+                override val revokePermission: RevokePermission = {}
+                override val openRedactionSettings: () -> Unit = {}
+                override val testSensitiveReading: () -> Unit = {}
+            }
     }
 }
 
@@ -39,8 +40,8 @@ class PermissionsViewModel(
     private val redactionPath: NotificationRedactionPath,
     private val componentName: android.content.ComponentName,
     private val openSettings: (android.content.Intent) -> Unit,
-) : ViewModel(), PermissionsActions {
-
+) : ViewModel(),
+    PermissionsActions {
     private val _uiState = MutableStateFlow(PermissionsState.Init)
     val uiState: StateFlow<PermissionsState> = _uiState
 
@@ -48,10 +49,11 @@ class PermissionsViewModel(
         updatePermissionsState()
         viewModelScope.launch {
             RedactionStateFlow.current.collect { state ->
-                _uiState.value = _uiState.value.copy(
-                    redactionState = state,
-                    redactionSettingsLocation = redactionPath.settingsLocation,
-                )
+                _uiState.value =
+                    _uiState.value.copy(
+                        redactionState = state,
+                        redactionSettingsLocation = redactionPath.settingsLocation,
+                    )
             }
         }
     }
@@ -59,7 +61,8 @@ class PermissionsViewModel(
     fun updatePermissionsState() {
         _uiState.value =
             uiState.value.copy(
-                permissions = permissionsProvider.providers.entries.associate {
+                permissions =
+                permissionsProvider.providers.entries.associate {
                     it.key to Permission(it.key, it.value.isGranted())
                 },
                 notificationListenerEnabled = notificationStatePreferences.getConnectionState(),
@@ -69,16 +72,18 @@ class PermissionsViewModel(
 
     private fun unsetPermissionState(type: PermissionType) {
         _uiState.value =
-            uiState.value.let { it ->
-                it.copy(
-                    permissions = it.permissions.toMutableMap().also {
-                        it[type] = Permission(type, null)
-                    }
-                )
-            }
+            uiState.value.copy(
+                permissions =
+                uiState.value.permissions.toMutableMap().also {
+                    it[type] = Permission(type, null)
+                },
+            )
     }
 
-    private fun execute(type: PermissionType, method: suspend (PermissionProvider) -> Unit) {
+    private fun execute(
+        type: PermissionType,
+        method: suspend (PermissionProvider) -> Unit,
+    ) {
         permissionsProvider.providers[type]?.let {
             unsetPermissionState(type)
             viewModelScope.launch {
