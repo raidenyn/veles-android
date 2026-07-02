@@ -104,9 +104,9 @@ class NotificationListener(
             if (message.source == effectiveOwnPackage && channelId == TestNotificationSender.CHANNEL_ID) {
                 TestResultFlow.current.value = TestResult(
                     handlingResult = handlingResult,
-                    receivedText = "",
-                    receivedTitle = "",
-                    sourcePackage = "",
+                    receivedText = message.text,
+                    receivedTitle = message.title,
+                    sourcePackage = message.source,
                     timestamp = System.currentTimeMillis(),
                 )
             }
