@@ -11,6 +11,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.mockkStatic
+import io.mockk.spyk
 import io.mockk.unmockkAll
 import io.mockk.verify
 import me.nagaev.veles.common.NotificationStatePreferences
@@ -320,5 +321,37 @@ class NotificationListenerTest {
         service.onNotificationPosted(sbn)
 
         assertEquals(RedactionState.Hidden, RedactionStateFlow.current.value)
+    }
+
+    @Test
+    fun `onNotificationPosted cancels original notification when handler accepts with non-null template name`() {
+        val expectedKey = "key"
+        val matchedResult = MessageHandlingResult(
+            MessageHandlingResult.Status.ACCEPTED,
+            "UOB Thai",
+        )
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "UOB"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "text"
+        every { sbn.key } returns expectedKey
+        every { sbn.packageName } returns "com.external.bank"
+        every { sbn.notification } returns notification
+        notification.extras = bundle
+        every { messageHandler.onMessageReceived(any()) } returns matchedResult
+
+        val service = spyk(
+            NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles"),
+        )
+        service.onCreate()
+        every { service.cancelNotification(expectedKey) } returns Unit
+
+        service.onNotificationPosted(sbn)
+
+        verify { service.cancelNotification(expectedKey) }
     }
 }

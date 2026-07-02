@@ -111,7 +111,7 @@ class NotificationListener(
                 )
             }
 
-            if (handlingResult == MessageHandlingResult.ACCEPTED) {
+            if (handlingResult.status == MessageHandlingResult.Status.ACCEPTED) {
                 cancelNotification(it.key)
             }
         }
