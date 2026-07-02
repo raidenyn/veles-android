@@ -1,8 +1,11 @@
 package me.nagaev.veles.permissions.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -73,6 +76,24 @@ fun VelesPermissionsApp(
                         lifecycleOwner.lifecycle.addObserver(observer)
                         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                     }
+
+                    val createDocumentLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.CreateDocument("application/json"),
+                    ) { uri ->
+                        if (uri != null) vm.writeExportToUri(context, uri) else vm.cancelExport()
+                    }
+                    val openDocumentLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.OpenDocument(),
+                    ) { uri ->
+                        if (uri != null) vm.onImportUri(context, uri)
+                    }
+
+                    LaunchedEffect(state.pendingExportJson) {
+                        if (state.pendingExportJson != null) {
+                            createDocumentLauncher.launch("veles-bank-configs.json")
+                        }
+                    }
+
                     BankConfigsScreen(
                         state = state,
                         onAdd = { navController.navigate("bank-config-edit") },
@@ -80,6 +101,14 @@ fun VelesPermissionsApp(
                         onRequestDelete = vm::requestDelete,
                         onCancelDelete = vm::cancelDelete,
                         onConfirmDelete = vm::confirmDelete,
+                        onExport = vm::onExportRequested,
+                        onToggleExportItem = vm::toggleExportItem,
+                        onCancelExportSelection = vm::cancelExportSelection,
+                        onConfirmExportSelection = vm::confirmExportSelection,
+                        onImport = { openDocumentLauncher.launch(arrayOf("application/json", "*/*")) },
+                        onConfirmImport = vm::confirmImport,
+                        onCancelImport = vm::cancelImport,
+                        onDismissMessage = vm::dismissMessage,
                     )
                 }
                 composable(

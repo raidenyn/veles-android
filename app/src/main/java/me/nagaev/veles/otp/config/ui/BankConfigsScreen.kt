@@ -1,5 +1,6 @@
 package me.nagaev.veles.otp.config.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -22,11 +24,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsState
+import me.nagaev.veles.otp.config.viewmodel.ExportSelection
+import me.nagaev.veles.otp.config.viewmodel.ImportReview
 
+@Suppress("LongParameterList")
 @Composable
 fun BankConfigsScreen(
     state: BankConfigsState,
@@ -35,6 +42,14 @@ fun BankConfigsScreen(
     onRequestDelete: (BankHandlerConfig) -> Unit,
     onCancelDelete: () -> Unit,
     onConfirmDelete: () -> Unit,
+    onExport: () -> Unit,
+    onToggleExportItem: (String) -> Unit,
+    onCancelExportSelection: () -> Unit,
+    onConfirmExportSelection: () -> Unit,
+    onImport: () -> Unit,
+    onConfirmImport: () -> Unit,
+    onCancelImport: () -> Unit,
+    onDismissMessage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -50,8 +65,19 @@ fun BankConfigsScreen(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(vertical = 10.dp),
             )
-            TextButton(onClick = onAdd) {
-                Text("Add")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(onClick = onAdd) { Text("Add") }
+                TextButton(
+                    onClick = onExport,
+                    modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_BUTTON),
+                ) { Text("Export") }
+                TextButton(
+                    onClick = onImport,
+                    modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_BUTTON),
+                ) { Text("Import") }
             }
             if (state.isLoading) {
                 CircularProgressIndicator(
@@ -85,7 +111,115 @@ fun BankConfigsScreen(
                 },
             )
         }
+
+        if (state.exportSelection != null) {
+            ExportSelectionDialog(
+                selection = state.exportSelection,
+                onToggle = onToggleExportItem,
+                onConfirm = onConfirmExportSelection,
+                onDismiss = onCancelExportSelection,
+            )
+        }
+
+        if (state.importReview != null) {
+            ImportReviewDialog(
+                review = state.importReview!!,
+                onConfirm = onConfirmImport,
+                onDismiss = onCancelImport,
+            )
+        }
+
+        if (state.message != null) {
+            AlertDialog(
+                onDismissRequest = onDismissMessage,
+                confirmButton = {
+                    TextButton(onClick = onDismissMessage) { Text("OK") }
+                },
+                title = { Text("Veles") },
+                text = { Text(state.message!!) },
+            )
+        }
     }
+}
+
+@Composable
+private fun ExportSelectionDialog(
+    selection: ExportSelection,
+    onToggle: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_DIALOG),
+        title = { Text("Export configs") },
+        text = {
+            Column {
+                selection.items.forEach { name ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = name in selection.checked,
+                            onCheckedChange = { onToggle(name) },
+                        )
+                        Text(name, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_CONFIRM),
+            ) { Text("Export") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun ImportReviewDialog(
+    review: ImportReview,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_DIALOG),
+        title = { Text("Import ${review.totalConfigs} configs?") },
+        text = {
+            Column {
+                if (review.toInsert.isNotEmpty()) {
+                    Text("New:", style = MaterialTheme.typography.titleSmall)
+                    review.toInsert.forEach { Text("- ${it.name}") }
+                }
+                if (review.toOverwrite.isNotEmpty()) {
+                    Text("Will replace:", style = MaterialTheme.typography.titleSmall)
+                    review.toOverwrite.forEach { (existing, _) ->
+                        Text("- ${existing.name}")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_CONFIRM),
+            ) { Text("Import") }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_CANCEL),
+            ) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -133,5 +267,13 @@ fun BankConfigsScreenPreview() {
         onRequestDelete = {},
         onCancelDelete = {},
         onConfirmDelete = {},
+        onExport = {},
+        onToggleExportItem = {},
+        onCancelExportSelection = {},
+        onConfirmExportSelection = {},
+        onImport = {},
+        onConfirmImport = {},
+        onCancelImport = {},
+        onDismissMessage = {},
     )
 }
