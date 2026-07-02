@@ -9,6 +9,7 @@ import java.math.BigDecimal
 @Suppress("MaxLineLength")
 class UobThaiRegexMessageHandlerTest {
     private companion object {
+        const val HANDLER_NAME = "UOB Thai"
         const val OTP_REGEX = """\((OTP=)(\d{6})\)"""
         const val MONEY_REGEX = """purchase ([A-Z]{3})(\d{1,15}\.\d{1,4})"""
         const val MERCHANT_REGEX = """ at (.+?):"""
@@ -22,7 +23,7 @@ class UobThaiRegexMessageHandlerTest {
             text = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573.",
         )
 
-    private fun handler(notifier: OtpMessageHandler) = RegexMessageHandler(OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
+    private fun handler(notifier: OtpMessageHandler) = RegexMessageHandler(HANDLER_NAME, OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
 
     @Test
     fun `Valid OTP message processing`() {
@@ -31,7 +32,7 @@ class UobThaiRegexMessageHandlerTest {
 
         val result = handler(otpMessageHandler).onMessageReceived(defaultMessage)
 
-        assert(result == MessageHandlingResult.ACCEPTED)
+        assert(result.status == MessageHandlingResult.Status.ACCEPTED)
         verify {
             otpMessageHandler.onOtpMessageReceived(
                 OtpMessage(
@@ -78,5 +79,16 @@ class UobThaiRegexMessageHandlerTest {
 
         assert(result == MessageHandlingResult.FILTERED)
         verify(exactly = 0) { otpMessageHandler.onOtpMessageReceived(any()) }
+    }
+
+    @Test
+    fun `matched result carries the handler name`() {
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+        every { otpMessageHandler.onOtpMessageReceived(any()) } returns Unit
+
+        val result = handler(otpMessageHandler).onMessageReceived(defaultMessage)
+
+        assert(result.status == MessageHandlingResult.Status.ACCEPTED)
+        assert(result.matchedTemplateName == HANDLER_NAME)
     }
 }

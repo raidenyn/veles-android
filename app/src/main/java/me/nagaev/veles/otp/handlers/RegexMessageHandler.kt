@@ -3,6 +3,7 @@ package me.nagaev.veles.otp.handlers
 import java.math.BigDecimal
 
 class RegexMessageHandler(
+    private val name: String,
     otpRegex: String,
     moneyRegex: String,
     merchantRegex: String,
@@ -35,7 +36,7 @@ class RegexMessageHandler(
                     merchant = merchant,
                 ),
             )
-            MessageHandlingResult.ACCEPTED
+            MessageHandlingResult(MessageHandlingResult.Status.ACCEPTED, name)
         } else {
             MessageHandlingResult.FILTERED
         }

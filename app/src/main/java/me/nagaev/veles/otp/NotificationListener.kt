@@ -38,6 +38,7 @@ class NotificationListener(
             val handlers =
                 repository.getAll().map { config ->
                     RegexMessageHandler(
+                        name = config.name,
                         otpRegex = config.otpRegex,
                         moneyRegex = config.moneyRegex,
                         merchantRegex = config.merchantRegex,

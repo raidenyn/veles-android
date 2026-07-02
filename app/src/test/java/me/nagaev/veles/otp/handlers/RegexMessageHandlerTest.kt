@@ -9,6 +9,7 @@ import java.math.BigDecimal
 @Suppress("MaxLineLength")
 class RegexMessageHandlerTest {
     private companion object {
+        const val HANDLER_NAME = "UOB Thailand"
         const val OTP_REGEX = """ (\w{4})-(\d{6}) """
         const val MONEY_REGEX = """of ([A-Z]{3})(\d{1,15}\.\d{1,4}) at"""
         const val MERCHANT_REGEX = """at (.{1,64}) expiring"""
@@ -22,7 +23,7 @@ class RegexMessageHandlerTest {
             text = "Never share OTP with anyone. Use SMS-OTP HStX-079853 for your purchase of THB319.93 at AMP*AIS SERVICES expiring at 02-Mar-2025 9:23PM BKK time.",
         )
 
-    private fun handler(notifier: OtpMessageHandler) = RegexMessageHandler(OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
+    private fun handler(notifier: OtpMessageHandler) = RegexMessageHandler(HANDLER_NAME, OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
 
     @Test
     fun `Valid OTP message processing`() {
@@ -31,7 +32,7 @@ class RegexMessageHandlerTest {
 
         val result = handler(otpMessageHandler).onMessageReceived(defaultMessage)
 
-        assert(result == MessageHandlingResult.ACCEPTED)
+        assert(result.status == MessageHandlingResult.Status.ACCEPTED)
         verify {
             otpMessageHandler.onOtpMessageReceived(
                 OtpMessage(
@@ -137,7 +138,7 @@ class RegexMessageHandlerTest {
 
         val result = handler(otpMessageHandler).onMessageReceived(message)
 
-        assert(result == MessageHandlingResult.ACCEPTED)
+        assert(result.status == MessageHandlingResult.Status.ACCEPTED)
         verify(exactly = 1) { otpMessageHandler.onOtpMessageReceived(any()) }
     }
 
@@ -161,7 +162,7 @@ class RegexMessageHandlerTest {
 
         val result = handler(otpMessageHandler).onMessageReceived(message)
 
-        assert(result == MessageHandlingResult.ACCEPTED)
+        assert(result.status == MessageHandlingResult.Status.ACCEPTED)
         verify {
             otpMessageHandler.onOtpMessageReceived(
                 OtpMessage(
@@ -220,5 +221,16 @@ class RegexMessageHandlerTest {
 
         assert(result == MessageHandlingResult.FILTERED)
         verify(exactly = 0) { otpMessageHandler.onOtpMessageReceived(any()) }
+    }
+
+    @Test
+    fun `matched result carries the handler name`() {
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+        every { otpMessageHandler.onOtpMessageReceived(any()) } returns Unit
+
+        val result = handler(otpMessageHandler).onMessageReceived(defaultMessage)
+
+        assert(result.status == MessageHandlingResult.Status.ACCEPTED)
+        assert(result.matchedTemplateName == HANDLER_NAME)
     }
 }
