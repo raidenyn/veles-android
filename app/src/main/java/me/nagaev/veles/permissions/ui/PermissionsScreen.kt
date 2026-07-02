@@ -54,7 +54,6 @@ fun PermissionsScreen(
                 state = state.redactionState,
                 settingsLocation = state.redactionSettingsLocation,
                 onOpenSettings = actions.openRedactionSettings,
-                onTestSensitiveReading = actions.testSensitiveReading,
             )
             Spacer(Modifier.height(4.dp))
             TextButton(
