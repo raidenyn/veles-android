@@ -22,24 +22,26 @@ import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
 import me.nagaev.veles.testing.viewmodel.TestState
 
+private val MATCHED_COLOR = Color(0xFF4CAF50)
+
 @Composable
 fun TestScreen(
     state: TestState,
     onTextChanged: (String) -> Unit,
     onSend: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp)
-            .statusBarsPadding()
+            .statusBarsPadding(),
     ) {
         Text(
             text = "Test",
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(vertical = 10.dp)
+            modifier = Modifier.padding(vertical = 10.dp),
         )
         OutlinedTextField(
             value = state.inputText,
@@ -48,13 +50,13 @@ fun TestScreen(
             minLines = 3,
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag(TestTags.TEST_INPUT)
+                .testTag(TestTags.TEST_INPUT),
         )
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = onSend,
             enabled = state.inputText.isNotBlank(),
-            modifier = Modifier.testTag(TestTags.TEST_SEND_BUTTON)
+            modifier = Modifier.testTag(TestTags.TEST_SEND_BUTTON),
         ) {
             Text("Send")
         }
@@ -68,23 +70,24 @@ fun TestScreen(
 @Composable
 private fun ResultBadge(result: TestResult) {
     val (label, color) = when (result.result) {
-        MessageHandlingResult.ACCEPTED -> "Matched ✓" to Color(0xFF4CAF50)
+        MessageHandlingResult.ACCEPTED -> "Matched ✓" to MATCHED_COLOR
         MessageHandlingResult.FILTERED -> "No match" to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Text(
         text = label,
         color = color,
         style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier.testTag(TestTags.TEST_RESULT)
+        modifier = Modifier.testTag(TestTags.TEST_RESULT),
     )
 }
 
 @Preview(showBackground = true)
 @Composable
+@Suppress("MaxLineLength")
 fun TestScreenPreview() {
     TestScreen(
         state = TestState(inputText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573."),
         onTextChanged = {},
-        onSend = {}
+        onSend = {},
     )
 }

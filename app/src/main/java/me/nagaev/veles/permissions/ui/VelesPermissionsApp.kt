@@ -31,7 +31,7 @@ fun VelesPermissionsApp(
                     PermissionsScreen(
                         state = permissionsState,
                         actions = permissionsActions,
-                        onNavigateToTest = { navController.navigate("test") }
+                        onNavigateToTest = { navController.navigate("test") },
                     )
                 }
                 composable("test") {
@@ -42,7 +42,7 @@ fun VelesPermissionsApp(
                     TestScreen(
                         state = testState,
                         onTextChanged = testViewModel::onTextChanged,
-                        onSend = testViewModel::send
+                        onSend = testViewModel::send,
                     )
                 }
             }

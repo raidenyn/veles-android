@@ -1,0 +1,52 @@
+# detekt configuration — builds upon the default config.
+# Rules not listed here keep their defaults. This file starts permissive
+# to avoid a large initial failure surface; tighten over time.
+
+complexity:
+  LongMethod:
+    threshold: 120
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 8
+  ComplexCondition:
+    threshold: 6
+  CyclomaticComplexMethod:
+    threshold: 20
+  TooManyFunctions:
+    thresholdInFiles: 15
+    thresholdInClasses: 15
+
+style:
+  MagicNumber:
+    ignoreNumbers: ['-1', '0', '1', '2', '1000']
+    ignoreEnums: true
+    ignorePropertyDeclaration: true
+    ignoreConstantDeclaration: true
+  ReturnCount:
+    max: 4
+  WildcardImport:
+    active: false
+  MaxLineLength:
+    maxLineLength: 140
+  ForbiddenComment:
+    active: false
+
+naming:
+  FunctionNaming:
+    # Compose @Composable functions are PascalCase by convention; detekt's
+    # default [a-z][a-zA-Z0-9]* pattern misfires on them. Allow PascalCase so
+    # the rule still catches genuinely malformed names without flagging Compose.
+    functionPattern: '[a-z][a-zA-Z0-9]*|[A-Z][a-zA-Z0-9]*'
+
+exceptions:
+  SwallowedException:
+    active: false
+
+empty-blocks:
+  EmptyFunctionBlock:
+    active: false
+
+potential-bugs:
+  UnsafeCallOnNullableType:
+    active: false
+

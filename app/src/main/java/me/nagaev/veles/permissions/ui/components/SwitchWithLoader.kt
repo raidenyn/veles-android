@@ -16,11 +16,11 @@ fun SwitchWithLoader(
     modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = modifier.padding(10.dp).wrapContentSize()
+        modifier = modifier.padding(10.dp).wrapContentSize(),
     ) {
         if (checked == null) {
             CircularProgressIndicator(
-                modifier = Modifier.wrapContentSize()
+                modifier = Modifier.wrapContentSize(),
             )
         } else {
             Switch(

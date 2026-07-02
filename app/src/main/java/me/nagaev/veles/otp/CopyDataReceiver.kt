@@ -7,12 +7,15 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 
-class CopyDataReceiver: BroadcastReceiver() {
+class CopyDataReceiver : BroadcastReceiver() {
     companion object {
         const val EXTRA_COPY_TEXT = "CopyText"
     }
 
-    override fun onReceive(context: Context?, intent: Intent?) {
+    override fun onReceive(
+        context: Context?,
+        intent: Intent?,
+    ) {
         Log.d("CopyDataReceiver", "Context $context")
         context?.apply {
             intent?.getStringExtra(EXTRA_COPY_TEXT)?.let {

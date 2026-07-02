@@ -2,7 +2,9 @@ package me.nagaev.veles.permissions.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import me.nagaev.veles.R
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.PermissionsList
+import me.nagaev.veles.permissions.ui.components.RedactionSection
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
 
@@ -25,7 +28,7 @@ fun PermissionsScreen(
     state: PermissionsState,
     actions: PermissionsActions,
     onNavigateToTest: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         Column {
@@ -33,21 +36,29 @@ fun PermissionsScreen(
                 modifier = Modifier.padding(10.dp).statusBarsPadding(),
                 text = stringResource(id = R.string.permissions),
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary,
             )
             Text(
                 modifier = Modifier.padding(10.dp).testTag(TestTags.NOTIFICATION_LISTENER_STATUS),
                 text =
-                    if (state.notificationListenerEnabled)
-                        "Notification listener enabled"
-                    else
-                        "Notification listener disabled",
+                if (state.notificationListenerEnabled) {
+                    "Notification listener enabled"
+                } else {
+                    "Notification listener disabled"
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.secondary
+                color = MaterialTheme.colorScheme.secondary,
             )
+            RedactionSection(
+                state = state.redactionState,
+                settingsLocation = state.redactionSettingsLocation,
+                onOpenSettings = actions.openRedactionSettings,
+                onTestSensitiveReading = actions.testSensitiveReading,
+            )
+            Spacer(Modifier.height(4.dp))
             TextButton(
                 onClick = onNavigateToTest,
-                modifier = Modifier.padding(horizontal = 10.dp)
+                modifier = Modifier.padding(horizontal = 10.dp),
             ) {
                 Text("Test")
             }
