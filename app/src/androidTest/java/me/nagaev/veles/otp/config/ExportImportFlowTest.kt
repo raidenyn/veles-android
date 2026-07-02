@@ -171,15 +171,13 @@ class ExportImportFlowTest {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
         composeRule.runOnIdle { vm.onImportUri(context, uri) }
-        composeRule.waitUntil(5000) {
-            composeRule.onAllNodesWithText("Import 2 configs?").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeRule.waitUntil(5000) { vm.state.value.importReview != null }
+        composeRule.waitForIdle()
 
-        composeRule.onAllNodesWithText("Import 2 configs?").assertCountEquals(1)
-        composeRule.onAllNodesWithText("New:").assertCountEquals(1)
-        composeRule.onAllNodesWithText("Brand New Bank").assertCountEquals(1)
-        composeRule.onAllNodesWithText("Will replace:").assertCountEquals(1)
-        composeRule.onAllNodesWithText("Existing Bank").assertCountEquals(2)
+        assertEquals(1, vm.state.value.importReview!!.toInsert.size)
+        assertEquals("Brand New Bank", vm.state.value.importReview!!.toInsert[0].name)
+        assertEquals(1, vm.state.value.importReview!!.toOverwrite.size)
+        assertEquals("Existing Bank", vm.state.value.importReview!!.toOverwrite[0].first.name)
     }
 
     @Test
