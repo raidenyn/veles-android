@@ -171,11 +171,11 @@ class ExportImportFlowTest {
         )
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
-        vm.onImportUri(context, uri)
+        composeRule.runOnIdle { vm.onImportUri(context, uri) }
         composeRule.waitUntil(5000) { vm.state.value.importReview != null }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_DIALOG).assertIsDisplayed()
+        composeRule.onNodeWithText("Import 2 configs?").assertIsDisplayed()
         composeRule.onNodeWithText("New:").assertIsDisplayed()
         composeRule.onNodeWithText("Brand New Bank").assertIsDisplayed()
         composeRule.onNodeWithText("Will replace:").assertIsDisplayed()
@@ -225,7 +225,7 @@ class ExportImportFlowTest {
         )
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
-        vm.onImportUri(context, uri)
+        composeRule.runOnIdle { vm.onImportUri(context, uri) }
         composeRule.waitUntil(5000) { vm.state.value.importReview != null }
         composeRule.waitForIdle()
 
@@ -288,7 +288,7 @@ class ExportImportFlowTest {
         )
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
-        vm.onImportUri(context, uri)
+        composeRule.runOnIdle { vm.onImportUri(context, uri) }
         composeRule.waitUntil(5000) { vm.state.value.importReview != null }
         composeRule.waitForIdle()
 
@@ -307,7 +307,7 @@ class ExportImportFlowTest {
     fun `import of malformed file shows message and no review dialog`() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, "{not json")
-        vm.onImportUri(context, uri)
+        composeRule.runOnIdle { vm.onImportUri(context, uri) }
         composeRule.waitUntil(5000) { vm.state.value.message != null }
         composeRule.waitForIdle()
 
