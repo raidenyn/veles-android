@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import java.util.logging.Level
 import java.util.logging.Logger
+import java.util.regex.PatternSyntaxException
 
 class HandlerChainReloader(
     private val configs: Flow<List<BankHandlerConfig>>,
@@ -23,6 +24,7 @@ class HandlerChainReloader(
     internal var job: Job? = null
         private set
 
+    @Suppress("TooGenericExceptionCaught") // resilience boundary: must restart on any flow-level failure
     fun start(scope: CoroutineScope) {
         job?.cancel()
         job = scope.launch {
@@ -45,13 +47,17 @@ class HandlerChainReloader(
                             )
                         } catch (e: CancellationException) {
                             throw e
-                        } catch (e: Throwable) {
+                        } catch (e: PatternSyntaxException) {
+                            // A malformed regex in one config must not freeze hot-reload;
+                            // keep the previous chain and let the next edit take effect.
                             logger().log(Level.WARNING, "Failed to rebuild handler chain", e)
                         }
                     }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Throwable) {
+                } catch (e: Exception) {
+                    // Restart on any flow-level failure (e.g. a cursor/DB error during the
+                    // invalidation-tracker re-query). CancellationException is rethrown above.
                     failed = true
                     logger().log(Level.WARNING, "Config flow failed, restarting collector", e)
                     delay(restartBackoffMs)

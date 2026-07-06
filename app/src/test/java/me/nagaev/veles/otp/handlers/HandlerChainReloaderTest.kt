@@ -143,7 +143,7 @@ class HandlerChainReloaderTest {
             collectionCount++
             if (collectionCount == 1) {
                 emit(listOf(bankA))
-                throw RuntimeException("simulated cursor failure")
+                throw java.io.IOException("simulated cursor failure")
             } else {
                 emit(listOf(bankB))
             }
@@ -190,7 +190,7 @@ class HandlerChainReloaderTest {
         var collectionCount = 0
         val alwaysFailing = flow<List<BankHandlerConfig>> {
             collectionCount++
-            throw RuntimeException("always fails")
+            throw java.io.IOException("always fails")
         }
 
         val r = HandlerChainReloader(alwaysFailing, notifier, restartBackoffMs = 1000L)
