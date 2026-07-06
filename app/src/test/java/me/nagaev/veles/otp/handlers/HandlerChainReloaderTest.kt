@@ -3,6 +3,7 @@ package me.nagaev.veles.otp.handlers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.otp.config.BankHandlerConfig
@@ -124,6 +125,55 @@ class HandlerChainReloaderTest {
             // Emit a valid config; the collector recovers and the new chain takes effect.
             flow.value = listOf(bankB)
             assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
+            assertEquals("BankB", r.messageHandler.onMessageReceived(msgB).matchedTemplateName)
+        } finally {
+            r.stop()
+        }
+    }
+
+    @Test
+    fun `start cancels any prior collector so double-start does not orphan the old one`() = runTest(UnconfinedTestDispatcher()) {
+        val flow = MutableStateFlow(listOf(bankA))
+        val r = reloader(flow)
+        r.start(this)
+        // Second start should cancel the first collector; only one collector should remain.
+        r.start(this)
+        try {
+            // Swapping the value must still take effect (single live collector).
+            flow.value = listOf(bankB)
+            assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
+            assertEquals("BankB", r.messageHandler.onMessageReceived(msgB).matchedTemplateName)
+        } finally {
+            r.stop()
+        }
+    }
+
+    @Test
+    fun `flow-level exception is logged and the collector restarts, picking up later emissions`() = runTest(UnconfinedTestDispatcher()) {
+        // A cold flow that emits bankA on the first collection, then throws (simulating a
+        // transient Room/cursor failure). On re-collection it emits bankB — proving the
+        // collector restarted and picked up later emissions instead of dying permanently.
+        var collectionCount = 0
+        val flakyFlow = flow<List<BankHandlerConfig>> {
+            collectionCount++
+            if (collectionCount == 1) {
+                emit(listOf(bankA))
+                throw RuntimeException("simulated cursor failure")
+            } else {
+                emit(listOf(bankB))
+            }
+        }
+
+        val r = HandlerChainReloader(flakyFlow, notifier, restartBackoffMs = 0L)
+        r.start(this)
+        try {
+            // First collection: bankA is emitted, then the flow throws. The collector catches
+            // it, logs, and restarts (backoff = 0 for the test). Second collection emits bankB.
+            assertEquals(
+                "chain should reflect the post-restart emission, proving the flow-level exception did not permanently kill the reloader",
+                MessageHandlingResult.Status.ACCEPTED,
+                r.messageHandler.onMessageReceived(msgB).status,
+            )
             assertEquals("BankB", r.messageHandler.onMessageReceived(msgB).matchedTemplateName)
         } finally {
             r.stop()
