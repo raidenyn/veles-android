@@ -40,7 +40,7 @@ abstract class BankHandlerDatabase : RoomDatabase() {
                     context.applicationContext,
                     BankHandlerDatabase::class.java,
                     "bank_handler_configs.db",
-                ).allowMainThreadQueries()
+                )
                 .addMigrations(MIGRATION_1_2)
                 .addCallback(SeedCallback())
                 .build()
