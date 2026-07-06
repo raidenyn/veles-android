@@ -6,6 +6,10 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import me.nagaev.veles.common.NotificationStatePreferences
 import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.RedactionStateFlow
@@ -13,10 +17,10 @@ import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.handlers.CompositeMessageHandler
+import me.nagaev.veles.otp.handlers.HandlerChainReloader
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
-import me.nagaev.veles.otp.handlers.RegexMessageHandler
 import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
 import me.nagaev.veles.testing.TestNotificationSender
 
@@ -27,26 +31,29 @@ class NotificationListener(
 ) : NotificationListenerService() {
     private val state = state ?: NotificationStatePreferences(this)
     private val injectedHandler: MessageHandler? = messageHandler
-    private lateinit var messageHandler: MessageHandler
+    private var serviceScope: CoroutineScope? = null
+    private var reloader: HandlerChainReloader? = null
 
     override fun onCreate() {
         super.onCreate()
         Log.d("NotificationListener", "Created")
-        messageHandler = injectedHandler ?: run {
-            val notifier = UserNotifierOtpMessageHandler(this)
+        if (injectedHandler == null) {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            serviceScope = scope
             val repository = BankHandlerRepository(this)
-            val handlers =
-                repository.getAll().map { config ->
-                    RegexMessageHandler(
-                        name = config.name,
-                        otpRegex = config.otpRegex,
-                        moneyRegex = config.moneyRegex,
-                        merchantRegex = config.merchantRegex,
-                        notifier = notifier,
-                    )
-                }
-            CompositeMessageHandler(handlers)
+            val notifier = UserNotifierOtpMessageHandler(this)
+            val r = HandlerChainReloader(repository.observeAll(), notifier)
+            r.start(scope)
+            reloader = r
         }
+    }
+
+    override fun onDestroy() {
+        reloader?.stop()
+        serviceScope?.cancel()
+        serviceScope = null
+        reloader = null
+        super.onDestroy()
     }
 
     override fun onStartCommand(
@@ -70,6 +77,9 @@ class NotificationListener(
         state.saveConnectionState(false)
         super.onListenerDisconnected()
     }
+
+    private fun activeHandler(): MessageHandler =
+        injectedHandler ?: reloader?.messageHandler ?: CompositeMessageHandler(emptyList())
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn?.let {
@@ -97,7 +107,7 @@ class NotificationListener(
                     text = text,
                 )
 
-            val handlingResult = messageHandler.onMessageReceived(message)
+            val handlingResult = activeHandler().onMessageReceived(message)
 
             val effectiveOwnPackage = ownPackageName ?: getPackageName()
             val channelId = it.notification?.channelId
