@@ -3,6 +3,9 @@ package me.nagaev.veles.otp.handlers
 import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import me.nagaev.veles.otp.CopyDataReceiver
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -34,6 +37,67 @@ class UserNotifierOtpMessageHandlerTest {
         val shadowNotificationManager = shadowOf(notificationManager)
         val notifications = shadowNotificationManager.allNotifications
         assert(notifications.isNotEmpty()) { "Expected at least one notification to be posted" }
+    }
+
+    @Test
+    fun `Copy PendingIntent is distinct per notification and keeps its own OTP`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val handler = UserNotifierOtpMessageHandler(context)
+
+        val message1 =
+            OtpMessage(
+                id = 1,
+                otp = Otp(value = "111111", id = "1"),
+                pay = Money(amount = BigDecimal(100), currencyCode = "USD"),
+                merchant = "Merchant One",
+            )
+        val message2 =
+            OtpMessage(
+                id = 2,
+                otp = Otp(value = "222222", id = "2"),
+                pay = Money(amount = BigDecimal(200), currencyCode = "USD"),
+                merchant = "Merchant Two",
+            )
+
+        handler.onOtpMessageReceived(message1)
+        handler.onOtpMessageReceived(message2)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val shadowNotificationManager = shadowOf(notificationManager)
+
+        val notification1 = shadowNotificationManager.getNotification(message1.hashCode())
+            ?: error("Expected a notification posted for message1")
+        val notification2 = shadowNotificationManager.getNotification(message2.hashCode())
+            ?: error("Expected a notification posted for message2")
+
+        val copyAction1 = notification1.actions.first()
+        val copyAction2 = notification2.actions.first()
+
+        val pendingIntent1 = copyAction1.actionIntent
+        val pendingIntent2 = copyAction2.actionIntent
+
+        val shadowPendingIntent1 = shadowOf(pendingIntent1)
+        val shadowPendingIntent2 = shadowOf(pendingIntent2)
+
+        // The bug: a hard-coded request code 0 made both PendingIntents collapse into
+        // one; FLAG_UPDATE_CURRENT then overwrote extras, so tapping "Copy" on the older
+        // notification copied the newest OTP. The request code must differ per
+        // notification so each carries its own extras.
+        assertNotEquals(
+            "PendingIntent request codes must differ per notification",
+            shadowPendingIntent1.requestCode,
+            shadowPendingIntent2.requestCode,
+        )
+        assertEquals(
+            "Older notification's copy intent should carry its own OTP, not the newest one",
+            "111111",
+            shadowPendingIntent1.savedIntent.getStringExtra(CopyDataReceiver.EXTRA_COPY_TEXT),
+        )
+        assertEquals(
+            "Newer notification's copy intent should carry its own OTP",
+            "222222",
+            shadowPendingIntent2.savedIntent.getStringExtra(CopyDataReceiver.EXTRA_COPY_TEXT),
+        )
     }
 
     @Test

@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import me.nagaev.veles.R
@@ -24,12 +25,20 @@ class UserNotifierOtpMessageHandler(
         val copyIntent =
             Intent(context, CopyDataReceiver::class.java).apply {
                 action = "Copy"
+                // A unique data URI makes Intent.filterEquals differ per message, so even
+                // if two request codes ever collide the PendingIntents stay distinct and
+                // each keeps its own extras (FLAG_UPDATE_CURRENT would otherwise overwrite
+                // them, making the older notification's Copy action copy the newest OTP).
+                data = Uri.parse("veles://otp/${message.id}")
                 putExtra(CopyDataReceiver.EXTRA_COPY_TEXT, message.otp.value)
             }
         val copyPendingIntent: PendingIntent =
             PendingIntent.getBroadcast(
                 context,
-                0,
+                // Unique request code per notification so each notification owns its own
+                // PendingIntent; otherwise FLAG_UPDATE_CURRENT would overwrite the older
+                // notification's extras and "Copy" would copy the newest OTP.
+                message.id,
                 copyIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
