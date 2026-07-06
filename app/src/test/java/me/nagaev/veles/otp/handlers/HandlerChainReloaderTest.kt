@@ -4,10 +4,14 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -132,23 +136,6 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `start cancels any prior collector so double-start does not orphan the old one`() = runTest(UnconfinedTestDispatcher()) {
-        val flow = MutableStateFlow(listOf(bankA))
-        val r = reloader(flow)
-        r.start(this)
-        // Second start should cancel the first collector; only one collector should remain.
-        r.start(this)
-        try {
-            // Swapping the value must still take effect (single live collector).
-            flow.value = listOf(bankB)
-            assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
-            assertEquals("BankB", r.messageHandler.onMessageReceived(msgB).matchedTemplateName)
-        } finally {
-            r.stop()
-        }
-    }
-
-    @Test
     fun `flow-level exception is logged and the collector restarts, picking up later emissions`() = runTest(UnconfinedTestDispatcher()) {
         // A cold flow that emits bankA on the first collection, then throws (simulating a
         // transient Room/cursor failure). On re-collection it emits bankB — proving the
@@ -178,5 +165,48 @@ class HandlerChainReloaderTest {
         } finally {
             r.stop()
         }
+    }
+
+    @Test
+    fun `start cancels any prior collector so double-start does not orphan the old one`() = runTest(UnconfinedTestDispatcher()) {
+        val flow = MutableStateFlow(listOf(bankA))
+        val r = reloader(flow)
+        r.start(this)
+        val firstJob = r.job ?: error("first job should exist after start")
+        assertTrue("first job should be active before second start", firstJob.isActive)
+
+        // Second start should cancel the first collector, not orphan it.
+        r.start(this)
+        assertFalse("prior collector should be cancelled by second start", firstJob.isActive)
+        assertTrue("prior collector should be marked cancelled", firstJob.isCancelled)
+
+        // And the live (second) collector still drives updates from the shared flow.
+        flow.value = listOf(bankB)
+        assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
+        assertEquals("BankB", r.messageHandler.onMessageReceived(msgB).matchedTemplateName)
+        r.stop()
+    }
+
+    @Test
+    fun `stop cancels the restart loop - no further retries after stop`() = runTest(StandardTestDispatcher()) {
+        var collectionCount = 0
+        val alwaysFailing = flow<List<BankHandlerConfig>> {
+            collectionCount++
+            throw RuntimeException("always fails")
+        }
+
+        val r = HandlerChainReloader(alwaysFailing, notifier, restartBackoffMs = 1000L)
+        r.start(this)
+
+        // Advance virtual time enough to trigger a few retry cycles. Each collection throws,
+        // the restart loop logs, delays 1000ms (virtual), then re-collects.
+        advanceTimeBy(3500L)
+        val countAfterRetries = collectionCount
+        assertTrue("restart loop should have retried at least once before stop (got $countAfterRetries)", countAfterRetries >= 2)
+
+        // stop() must cancel the collector so no further retries occur, even after more time passes.
+        r.stop()
+        advanceTimeBy(10000L)
+        assertEquals("no further retries after stop", countAfterRetries, collectionCount)
     }
 }

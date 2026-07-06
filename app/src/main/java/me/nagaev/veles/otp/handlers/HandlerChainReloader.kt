@@ -20,7 +20,8 @@ class HandlerChainReloader(
     var messageHandler: MessageHandler = CompositeMessageHandler(emptyList())
         private set
 
-    private var job: Job? = null
+    internal var job: Job? = null
+        private set
 
     fun start(scope: CoroutineScope) {
         job?.cancel()
