@@ -21,16 +21,15 @@ class HandlerChainReloaderTest {
         override fun onOtpMessageReceived(message: OtpMessage) = Unit
     }
 
-    private fun config(name: String, otp: String, money: String, merchant: String) =
-        BankHandlerConfig(
-            id = 0L,
-            name = name,
-            otpRegex = otp,
-            moneyRegex = money,
-            merchantRegex = merchant,
-            createdAt = 0L,
-            updatedAt = 0L,
-        )
+    private fun config(name: String, otp: String, money: String, merchant: String) = BankHandlerConfig(
+        id = 0L,
+        name = name,
+        otpRegex = otp,
+        moneyRegex = money,
+        merchantRegex = merchant,
+        createdAt = 0L,
+        updatedAt = 0L,
+    )
 
     private val bankA = config("BankA", """ SMS-(\w{3})-(\d{6}) """, """ pay ([A-Z]{3})(\d+\.\d{2}) """, """ at (\w+)""")
     private val bankB = config("BankB", """ CODE-(\w{3})-(\d{4}) """, """ pay ([A-Z]{3})(\d+\.\d{2}) """, """ at (\w+)""")
@@ -38,8 +37,7 @@ class HandlerChainReloaderTest {
     private val msgA = Message("k", "src", "t", "Use SMS-OTP-123456 pay THB100.00 at SHOP")
     private val msgB = Message("k", "src", "t", "Use CODE-OTP-4321 pay USD50.00 at STORE")
 
-    private fun reloader(flow: kotlinx.coroutines.flow.Flow<List<BankHandlerConfig>>) =
-        HandlerChainReloader(flow, notifier)
+    private fun reloader(flow: kotlinx.coroutines.flow.Flow<List<BankHandlerConfig>>) = HandlerChainReloader(flow, notifier)
 
     @Test
     fun `messageHandler defaults to an empty composite that filters everything before start`() {

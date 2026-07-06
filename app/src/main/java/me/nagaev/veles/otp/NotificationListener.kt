@@ -78,8 +78,7 @@ class NotificationListener(
         super.onListenerDisconnected()
     }
 
-    private fun activeHandler(): MessageHandler =
-        injectedHandler ?: reloader?.messageHandler ?: CompositeMessageHandler(emptyList())
+    private fun activeHandler(): MessageHandler = injectedHandler ?: reloader?.messageHandler ?: CompositeMessageHandler(emptyList())
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn?.let {
