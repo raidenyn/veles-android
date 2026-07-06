@@ -161,6 +161,7 @@ package me.nagaev.veles.otp.handlers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import org.junit.Assert.assertEquals
@@ -201,7 +202,7 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `no emission yet - started collector keeps the empty default that filters everything`() = runTest {
+    fun `no emission yet - started collector keeps the empty default that filters everything`() = runTest(UnconfinedTestDispatcher()) {
         val neverEmits = MutableSharedFlow<List<BankHandlerConfig>>() // no replay, no initial value
         val r = reloader(neverEmits)
         r.start(this)
@@ -213,7 +214,7 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `initial emission builds a chain that accepts a matching message`() = runTest {
+    fun `initial emission builds a chain that accepts a matching message`() = runTest(UnconfinedTestDispatcher()) {
         val flow = MutableStateFlow(listOf(bankA))
         val r = reloader(flow)
         r.start(this)
@@ -227,7 +228,7 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `changed config list is picked up - old message no longer matches, new one does`() = runTest {
+    fun `changed config list is picked up - old message no longer matches, new one does`() = runTest(UnconfinedTestDispatcher()) {
         val flow = MutableStateFlow(listOf(bankA))
         val r = reloader(flow)
         r.start(this)
@@ -249,7 +250,7 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `empty emission produces a chain that filters everything`() = runTest {
+    fun `empty emission produces a chain that filters everything`() = runTest(UnconfinedTestDispatcher()) {
         val flow = MutableStateFlow(listOf(bankA))
         val r = reloader(flow)
         r.start(this)
@@ -262,7 +263,7 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `malformed config does not kill the collector and a later fix takes effect`() = runTest {
+    fun `malformed config does not kill the collector and a later fix takes effect`() = runTest(UnconfinedTestDispatcher()) {
         val flow = MutableStateFlow(listOf(bankA))
         val r = reloader(flow)
         r.start(this)
@@ -290,7 +291,7 @@ class HandlerChainReloaderTest {
 ```
 
 Notes:
-- `r.start(this)` is called inside `runTest { ... }`, where `this` is a `TestScope`. `scope.launch` inherits the scope's dispatcher (the test dispatcher), so collection runs on the test scheduler. `MutableStateFlow` emits its current value to a new collector synchronously, and `MutableStateFlow.value =` reassignments are dispatched to that same scheduler within `runTest`, so reads of `r.messageHandler` after an assignment see the rebuilt chain without an explicit `advanceUntilIdle()`.
+- `runTest(UnconfinedTestDispatcher())` makes the test dispatcher unconfined, so `scope.launch` inside `start()` runs its collector eagerly — each `MutableStateFlow` emission is processed before the next statement in the test body executes. Without this, the default `StandardTestDispatcher` would queue the collector and `r.messageHandler` would still read the empty default, causing false failures. This matches the codebase's existing pattern (`BankConfigsViewModelTest` uses `UnconfinedTestDispatcher` + `Dispatchers.setMain`).
 - Each test wraps its assertions in `try { ... } finally { r.stop() }` to cancel the collector before `runTest` finishes, so no suspended `collect` coroutine is left dangling. The `MutableSharedFlow` test (no emission) exercises the spec's "call start, emit nothing" case: the collector suspends waiting for an emission that never comes, and `messageHandler` stays at its empty-composite default.
 
 - [ ] **Step 2: Run the test to verify it fails**
