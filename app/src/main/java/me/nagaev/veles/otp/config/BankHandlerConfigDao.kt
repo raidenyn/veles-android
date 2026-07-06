@@ -9,9 +9,6 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface BankHandlerConfigDao {
-    @Query("SELECT * FROM bank_handler_configs ORDER BY id ASC")
-    fun getAll(): List<BankHandlerConfig>
-
     @Insert
     fun insertAll(vararg configs: BankHandlerConfig)
 

@@ -8,8 +8,6 @@ class BankHandlerRepository(
 ) {
     private val dao = BankHandlerDatabase.getInstance(context).bankHandlerConfigDao()
 
-    fun getAll(): List<BankHandlerConfig> = dao.getAll()
-
     suspend fun getAllSuspend(): List<BankHandlerConfig> = dao.getAllSuspend()
 
     fun observeAll(): Flow<List<BankHandlerConfig>> = dao.observeAll()
