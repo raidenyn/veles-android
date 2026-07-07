@@ -43,6 +43,9 @@ All in `SingletonComponent`.
 - `@Provides @DebugEnabled Boolean` = `BuildConfig.DEBUG` (small `@Qualifier` annotation `@DebugEnabled` defined alongside).
 - `VelesLog` becomes `@Singleton class VelesLog @Inject constructor(sink: LogSink, logConfig: LogConfig, @DebugEnabled debugEnabled: Boolean)`.
 
+### `common/di/DispatchersModule.kt`
+- `@Qualifier annotation class IoDispatcher` and `@Provides @IoDispatcher fun provideIoDispatcher(): CoroutineDispatcher = Dispatchers.IO`. Needed because Hilt ignores Kotlin default parameter values: `BankConfigsViewModel`'s `ioDispatcher: CoroutineDispatcher = Dispatchers.IO` parameter requires a binding. The default value stays so unit tests can keep omitting it.
+
 ### `permissions/di/PermissionsModule.kt`
 - `@Provides fun provideListenerComponentName(@ApplicationContext context: Context): ComponentName` = `ComponentName(context.packageName, "me.nagaev.veles.otp.NotificationListener")`.
 - `@Provides fun provideRedactionPath(componentName: ComponentName): NotificationRedactionPath` = `NotificationRedactionPath.from(Build.MANUFACTURER, componentName)`.
@@ -76,9 +79,9 @@ Consumers (`NotificationListener`, `TestViewModel`, `PermissionsViewModel`) rece
 
 Delete all four factory classes: `BankConfigsViewModelFactory`, `BankConfigEditViewModelFactory`, `TestViewModelFactory`, `PermissionsViewModelFactory`.
 
-- **`BankConfigsViewModel`** → `@HiltViewModel @Inject constructor(repository: BankHandlerRepository)`. The optional `CoroutineDispatcher` parameter keeps its default value; tests still pass it explicitly. Obtained via `hiltViewModel()` in `VelesPermissionsApp`.
-- **`TestViewModel`** → `@HiltViewModel @Inject constructor(preferences: TestInputPreferences, sender: TestNotificationSender, logConfig: LogConfig, testResultFlow: TestResultFlow)`. Note: takes the `LogConfig` interface, not `SharedPreferencesLogConfig`, via the `@Binds` in LoggingModule. Obtained via `hiltViewModel()`.
-- **`BankConfigEditViewModel`** → `@HiltViewModel @Inject constructor(savedStateHandle: SavedStateHandle, repository: BankHandlerRepository)`. Reads `configId: Long?` from `savedStateHandle["configId"]`. The Compose nav route must declare `configId` as a nav argument so it lands in `SavedStateHandle` (adjust the route definition in `VelesPermissionsApp` if it currently passes configId outside nav arguments). Obtained via `hiltViewModel()`.
+- **`BankConfigsViewModel`** → `@HiltViewModel @Inject constructor(repository: BankHandlerRepository, @IoDispatcher ioDispatcher: CoroutineDispatcher = Dispatchers.IO)`. The default value stays for tests; Hilt supplies the binding from `DispatchersModule`. Obtained via `hiltViewModel()` in `VelesPermissionsApp`.
+- **`TestViewModel`** → `@HiltViewModel @Inject constructor(preferences: TestInputPreferences, sender: TestNotificationSender, logConfig: SharedPreferencesLogConfig, testResultFlow: TestResultFlow)`. Keeps the concrete `SharedPreferencesLogConfig` (not the `LogConfig` interface) because it calls `saveRawContentEnabled()`, which only exists on the concrete class. Obtained via `hiltViewModel()`.
+- **`BankConfigEditViewModel`** → `@HiltViewModel @Inject constructor(savedStateHandle: SavedStateHandle, repository: BankHandlerRepository)`. Reads the existing `id` nav argument (already declared in the `bank-config-edit?id={id}` route with `defaultValue = -1L`) from `savedStateHandle.get<Long>("id")`, mapping `-1L` to `null`. Obtained via `hiltViewModel()`.
 - **`PermissionsViewModel`** → assisted injection:
 
 ```kotlin
