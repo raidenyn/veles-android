@@ -56,27 +56,28 @@ class NotificationListenerTest {
         unmockkAll()
     }
 
-    @Before
-    fun resetTestResultFlow() {
-        TestResultFlow.current.value = null
-    }
-
-    @Before
-    fun resetRedactionStateFlow() {
-        RedactionStateFlow.current.value = RedactionState.Unknown
-    }
-
     @Test
     fun `onCreate service initialization`() {
         val messageHandler = mockk<MessageHandler>(relaxed = true)
         val state = mockk<NotificationStatePreferences>(relaxed = true)
-        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles", velesLog = testLog)
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = "me.nagaev.veles",
+            velesLog = testLog,
+            testResultFlow = TestResultFlow(),
+            redactionStateFlow = RedactionStateFlow(),
+        )
         service.onCreate()
     }
 
     @Test
     fun `onStartCommand returns `() {
-        val service = NotificationListener(velesLog = testLog)
+        val service = NotificationListener(
+            velesLog = testLog,
+            testResultFlow = TestResultFlow(),
+            redactionStateFlow = RedactionStateFlow(),
+        )
 
         val intent = mockk<Intent>(relaxed = true)
         val result = service.onStartCommand(intent, 0, 0)
@@ -88,7 +89,12 @@ class NotificationListenerTest {
     fun `onListenerConnected calls saveConnectionState - true`() {
         val state = mockk<NotificationStatePreferences>(relaxed = true)
 
-        val service = NotificationListener(state, velesLog = testLog)
+        val service = NotificationListener(
+            state,
+            velesLog = testLog,
+            testResultFlow = TestResultFlow(),
+            redactionStateFlow = RedactionStateFlow(),
+        )
 
         every { state.saveConnectionState(any()) } returns Unit
 
@@ -101,7 +107,12 @@ class NotificationListenerTest {
     fun `onListenerDisconnected calls saveConnectionState - false`() {
         val state = mockk<NotificationStatePreferences>(relaxed = true)
 
-        val service = NotificationListener(state, velesLog = testLog)
+        val service = NotificationListener(
+            state,
+            velesLog = testLog,
+            testResultFlow = TestResultFlow(),
+            redactionStateFlow = RedactionStateFlow(),
+        )
 
         every { state.saveConnectionState(any()) } returns Unit
 
@@ -131,7 +142,14 @@ class NotificationListenerTest {
         notification.extras = bundle
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = "com.external.bank", velesLog = testLog)
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = "com.external.bank",
+            velesLog = testLog,
+            testResultFlow = TestResultFlow(),
+            redactionStateFlow = RedactionStateFlow(),
+        )
         service.onCreate()
         service.onNotificationPosted(statusBarNotification)
 
@@ -165,11 +183,20 @@ class NotificationListenerTest {
         every { notification.channelId } returns TestNotificationSender.CHANNEL_ID
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg, velesLog = testLog)
+        val testResultFlow = TestResultFlow()
+        val redactionStateFlow = RedactionStateFlow()
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = ownPkg,
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = redactionStateFlow,
+        )
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        val testResult = TestResultFlow.current.value
+        val testResult = testResultFlow.current.value
         assertEquals(MessageHandlingResult.ACCEPTED, testResult?.handlingResult)
         assertEquals("text", testResult?.receivedText)
         assertEquals("title", testResult?.receivedTitle)
@@ -199,11 +226,20 @@ class NotificationListenerTest {
         every { notification.channelId } returns TestNotificationSender.CHANNEL_ID
         every { messageHandler.onMessageReceived(any()) } returns matchedResult
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg, velesLog = testLog)
+        val testResultFlow = TestResultFlow()
+        val redactionStateFlow = RedactionStateFlow()
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = ownPkg,
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = redactionStateFlow,
+        )
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        val testResult = TestResultFlow.current.value
+        val testResult = testResultFlow.current.value
         assertEquals(matchedResult, testResult?.handlingResult)
         assertEquals("UOB Thai", testResult?.handlingResult?.matchedTemplateName)
         assertEquals(expectedText, testResult?.receivedText)
@@ -229,11 +265,20 @@ class NotificationListenerTest {
         every { notification.channelId } returns UserNotifierOtpMessageHandler.CHANNEL_ID
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = ownPkg, velesLog = testLog)
+        val testResultFlow = TestResultFlow()
+        val redactionStateFlow = RedactionStateFlow()
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = ownPkg,
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = redactionStateFlow,
+        )
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        assertNull(TestResultFlow.current.value)
+        assertNull(testResultFlow.current.value)
     }
 
     @Test
@@ -252,11 +297,20 @@ class NotificationListenerTest {
         notification.extras = bundle
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles", velesLog = testLog)
+        val testResultFlow = TestResultFlow()
+        val redactionStateFlow = RedactionStateFlow()
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = "me.nagaev.veles",
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = redactionStateFlow,
+        )
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        assertNull(TestResultFlow.current.value)
+        assertNull(testResultFlow.current.value)
     }
 
     @Test
@@ -276,11 +330,20 @@ class NotificationListenerTest {
         every { RedactionDetector.isRedacted(any()) } returns true
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles", velesLog = testLog)
+        val testResultFlow = TestResultFlow()
+        val redactionStateFlow = RedactionStateFlow()
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = "me.nagaev.veles",
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = redactionStateFlow,
+        )
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        assertEquals(RedactionState.Hidden, RedactionStateFlow.current.value)
+        assertEquals(RedactionState.Hidden, redactionStateFlow.current.value)
     }
 
     @Test
@@ -291,7 +354,9 @@ class NotificationListenerTest {
         val sbn = mockk<StatusBarNotification>(relaxed = true)
         val bundle = mockk<Bundle>(relaxed = true)
 
-        RedactionStateFlow.current.value = RedactionState.Hidden
+        val testResultFlow = TestResultFlow()
+        val redactionStateFlow = RedactionStateFlow()
+        redactionStateFlow.current.value = RedactionState.Hidden
 
         every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
         every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "Your OTP is 123456"
@@ -303,11 +368,18 @@ class NotificationListenerTest {
         every { RedactionDetector.isRedacted(any()) } returns false
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.ACCEPTED
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles", velesLog = testLog)
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = "me.nagaev.veles",
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = redactionStateFlow,
+        )
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        assertEquals(RedactionState.Readable, RedactionStateFlow.current.value)
+        assertEquals(RedactionState.Readable, redactionStateFlow.current.value)
     }
 
     @Test
@@ -318,7 +390,9 @@ class NotificationListenerTest {
         val sbn = mockk<StatusBarNotification>(relaxed = true)
         val bundle = mockk<Bundle>(relaxed = true)
 
-        RedactionStateFlow.current.value = RedactionState.Hidden
+        val testResultFlow = TestResultFlow()
+        val redactionStateFlow = RedactionStateFlow()
+        redactionStateFlow.current.value = RedactionState.Hidden
 
         every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "title"
         every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns "some non-secret text"
@@ -330,11 +404,18 @@ class NotificationListenerTest {
         every { RedactionDetector.isRedacted(any()) } returns false
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
 
-        val service = NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles", velesLog = testLog)
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = "me.nagaev.veles",
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = redactionStateFlow,
+        )
         service.onCreate()
         service.onNotificationPosted(sbn)
 
-        assertEquals(RedactionState.Hidden, RedactionStateFlow.current.value)
+        assertEquals(RedactionState.Hidden, redactionStateFlow.current.value)
     }
 
     @Test
@@ -359,7 +440,14 @@ class NotificationListenerTest {
         every { messageHandler.onMessageReceived(any()) } returns matchedResult
 
         val service = spyk(
-            NotificationListener(state, messageHandler, ownPackageName = "me.nagaev.veles", velesLog = testLog),
+            NotificationListener(
+                state,
+                messageHandler,
+                ownPackageName = "me.nagaev.veles",
+                velesLog = testLog,
+                testResultFlow = TestResultFlow(),
+                redactionStateFlow = RedactionStateFlow(),
+            ),
         )
         service.onCreate()
         every { service.cancelNotification(expectedKey) } returns Unit

@@ -1,9 +1,12 @@
 package me.nagaev.veles.common
 
 import kotlinx.coroutines.flow.MutableStateFlow
+import javax.inject.Inject
+import javax.inject.Singleton
 
 enum class RedactionState { Unknown, Readable, Hidden }
 
-object RedactionStateFlow {
+@Singleton
+class RedactionStateFlow @Inject constructor() {
     val current: MutableStateFlow<RedactionState> = MutableStateFlow(RedactionState.Unknown)
 }

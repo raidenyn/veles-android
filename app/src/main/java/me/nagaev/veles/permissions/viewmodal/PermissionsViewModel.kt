@@ -41,6 +41,7 @@ class PermissionsViewModel @AssistedInject constructor(
     private val notificationStatePreferences: NotificationStatePreferences,
     private val redactionPath: NotificationRedactionPath,
     private val componentName: ComponentName,
+    private val redactionStateFlow: RedactionStateFlow,
     @Assisted private val permissionsProvider: PermissionsProvider,
     @Assisted private val openSettings: (Intent) -> Unit,
 ) : ViewModel(),
@@ -59,7 +60,7 @@ class PermissionsViewModel @AssistedInject constructor(
     init {
         updatePermissionsState()
         viewModelScope.launch {
-            RedactionStateFlow.current.collect { state ->
+            redactionStateFlow.current.collect { state ->
                 _uiState.value =
                     _uiState.value.copy(
                         redactionState = state,

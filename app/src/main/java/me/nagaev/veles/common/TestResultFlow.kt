@@ -2,6 +2,8 @@ package me.nagaev.veles.common
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
+import javax.inject.Inject
+import javax.inject.Singleton
 
 data class TestResult(
     val handlingResult: MessageHandlingResult,
@@ -11,6 +13,7 @@ data class TestResult(
     val timestamp: Long,
 )
 
-object TestResultFlow {
+@Singleton
+class TestResultFlow @Inject constructor() {
     val current: MutableStateFlow<TestResult?> = MutableStateFlow(null)
 }

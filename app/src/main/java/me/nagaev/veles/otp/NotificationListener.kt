@@ -28,6 +28,8 @@ class NotificationListener(
     messageHandler: MessageHandler? = null,
     private val ownPackageName: String? = null,
     velesLog: VelesLog? = null,
+    testResultFlow: TestResultFlow? = null,
+    redactionStateFlow: RedactionStateFlow? = null,
 ) : NotificationListenerService() {
     private val entryPoint: NotificationListenerEntryPoint by lazy {
         EntryPointAccessors.fromApplication(
@@ -45,6 +47,14 @@ class NotificationListener(
     private val logOverride: VelesLog? = velesLog
     private val logger: VelesLog by lazy {
         logOverride ?: entryPoint.velesLog()
+    }
+    private val testResultFlowOverride: TestResultFlow? = testResultFlow
+    private val testResultFlow: TestResultFlow by lazy {
+        testResultFlowOverride ?: entryPoint.testResultFlow()
+    }
+    private val redactionStateFlowOverride: RedactionStateFlow? = redactionStateFlow
+    private val redactionStateFlow: RedactionStateFlow by lazy {
+        redactionStateFlowOverride ?: entryPoint.redactionStateFlow()
     }
 
     override fun onCreate() {
@@ -105,11 +115,11 @@ class NotificationListener(
 
             val notification = it.notification
             if (RedactionDetector.isRedacted(it)) {
-                RedactionStateFlow.current.value = RedactionState.Hidden
+                redactionStateFlow.current.value = RedactionState.Hidden
             } else if (notification?.visibility == Notification.VISIBILITY_SECRET &&
-                RedactionStateFlow.current.value == RedactionState.Hidden
+                redactionStateFlow.current.value == RedactionState.Hidden
             ) {
-                RedactionStateFlow.current.value = RedactionState.Readable
+                redactionStateFlow.current.value = RedactionState.Readable
             }
 
             val message =
@@ -125,7 +135,7 @@ class NotificationListener(
             val effectiveOwnPackage = ownPackageName ?: getPackageName()
             val channelId = it.notification?.channelId
             if (message.source == effectiveOwnPackage && channelId == TestNotificationSender.CHANNEL_ID) {
-                TestResultFlow.current.value = TestResult(
+                testResultFlow.current.value = TestResult(
                     handlingResult = handlingResult,
                     receivedText = message.text,
                     receivedTitle = message.title,

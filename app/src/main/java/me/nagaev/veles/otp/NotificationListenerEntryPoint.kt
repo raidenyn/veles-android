@@ -4,6 +4,8 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import me.nagaev.veles.common.NotificationStatePreferences
+import me.nagaev.veles.common.RedactionStateFlow
+import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
@@ -18,4 +20,8 @@ interface NotificationListenerEntryPoint {
     fun userNotifierOtpMessageHandler(): UserNotifierOtpMessageHandler
 
     fun velesLog(): VelesLog
+
+    fun testResultFlow(): TestResultFlow
+
+    fun redactionStateFlow(): RedactionStateFlow
 }

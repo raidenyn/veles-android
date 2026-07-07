@@ -21,7 +21,6 @@ class PermissionsViewModelRedactionTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        RedactionStateFlow.current.value = RedactionState.Unknown
     }
 
     @After
@@ -35,8 +34,9 @@ class PermissionsViewModelRedactionTest {
         path: NotificationRedactionPath = NotificationRedactionPath.StockAndroid,
         componentName: android.content.ComponentName =
             android.content.ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener"),
+        redactionStateFlow: RedactionStateFlow = RedactionStateFlow(),
         openSettings: (android.content.Intent) -> Unit = {},
-    ): PermissionsViewModel = PermissionsViewModel(prefs, path, componentName, provider, openSettings)
+    ): PermissionsViewModel = PermissionsViewModel(prefs, path, componentName, redactionStateFlow, provider, openSettings)
 
     @Test
     fun `uiState reflects Unknown redaction state initially`() {
@@ -46,8 +46,9 @@ class PermissionsViewModelRedactionTest {
 
     @Test
     fun `uiState reflects Hidden redaction state when flow updates`() {
-        val vm = viewModel()
-        RedactionStateFlow.current.value = RedactionState.Hidden
+        val flow = RedactionStateFlow()
+        val vm = viewModel(redactionStateFlow = flow)
+        flow.current.value = RedactionState.Hidden
         assertEquals(RedactionState.Hidden, vm.uiState.value.redactionState)
     }
 }

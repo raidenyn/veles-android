@@ -19,6 +19,7 @@ class TestViewModel @Inject constructor(
     private val preferences: TestInputPreferences,
     private val sender: TestNotificationSender,
     private val logConfig: SharedPreferencesLogConfig,
+    private val testResultFlow: TestResultFlow,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         TestState(
@@ -30,7 +31,7 @@ class TestViewModel @Inject constructor(
 
     init {
         viewModelScope.launch(Dispatchers.Unconfined) {
-            TestResultFlow.current.collect { result ->
+            testResultFlow.current.collect { result ->
                 result?.let {
                     _uiState.update { state -> state.copy(lastResult = it) }
                 }
@@ -54,6 +55,6 @@ class TestViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        TestResultFlow.current.value = null
+        testResultFlow.current.value = null
     }
 }
