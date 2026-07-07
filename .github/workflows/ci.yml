@@ -25,10 +25,18 @@ jobs:
       - run: ./gradlew detekt
       - name: Guard against raw android.util.Log usage outside LogSink.kt
         run: |
-          if grep -rn "android.util.Log" app/src/main --include=*.kt | grep -v "LogSink.kt"; then
-            echo "::error::Raw android.util.Log usage found outside LogSink.kt. Use VelesLog instead."
-            exit 1
+          fail=0
+          # Catch fully-qualified references and wildcard imports of android.util.Log
+          if grep -rn "android.util.Log\|import android.util\.\*" app/src/main --include=*.kt | grep -v "LogSink.kt"; then
+            echo "::error::Raw android.util.Log usage or wildcard import found outside LogSink.kt. Use VelesLog instead."
+            fail=1
           fi
+          # Catch bare Log.d/w/e/i/v calls (reachable via wildcard import) outside LogSink.kt
+          if grep -rnE "Log\.[dweiv]\(" app/src/main --include=*.kt | grep -v "LogSink.kt"; then
+            echo "::error::Bare Log.d/w/e/i/v call found outside LogSink.kt. Use VelesLog instead."
+            fail=1
+          fi
+          exit $fail
       - run: ./gradlew lintDebug
 
   unit-tests:

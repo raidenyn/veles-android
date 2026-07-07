@@ -39,6 +39,7 @@ style:
       - '**/CopyDataReceiverTest.kt'
     imports:
       - 'android.util.Log'
+      - 'android.util.*'
 
 naming:
   FunctionNaming:
