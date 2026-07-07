@@ -1,9 +1,12 @@
 package me.nagaev.veles.testing.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
@@ -50,6 +53,8 @@ class TestScreenComposeTest {
                 state = TestState(inputText = "input", lastResult = matchedResult),
                 onTextChanged = {},
                 onSend = {},
+                logRawContent = false,
+                onLogRawContentToggled = {},
             )
         }
 
@@ -74,6 +79,8 @@ class TestScreenComposeTest {
                 state = TestState(inputText = "input", lastResult = filteredResult),
                 onTextChanged = {},
                 onSend = {},
+                logRawContent = false,
+                onLogRawContentToggled = {},
             )
         }
 
@@ -97,6 +104,8 @@ class TestScreenComposeTest {
                 state = TestState(inputText = "input", lastResult = redactedResult),
                 onTextChanged = {},
                 onSend = {},
+                logRawContent = false,
+                onLogRawContentToggled = {},
             )
         }
 
@@ -104,5 +113,61 @@ class TestScreenComposeTest {
             .onNodeWithTag(TestTags.TEST_RESULT_RECEIVED_TEXT)
             .assertIsDisplayed()
             .assertTextContains("Sensitive notification content hidden", substring = true)
+    }
+
+    @Test
+    fun `raw content switch is displayed and reflects state when off`() {
+        composeTestRule.setContent {
+            TestScreen(
+                state = TestState(inputText = "input", logRawContent = false),
+                onTextChanged = {},
+                onSend = {},
+                logRawContent = false,
+                onLogRawContentToggled = {},
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.TEST_LOG_RAW_CONTENT_SWITCH)
+            .assertIsDisplayed()
+            .assertIsOff()
+    }
+
+    @Test
+    fun `raw content switch is on when state is true`() {
+        composeTestRule.setContent {
+            TestScreen(
+                state = TestState(inputText = "input", logRawContent = true),
+                onTextChanged = {},
+                onSend = {},
+                logRawContent = true,
+                onLogRawContentToggled = {},
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.TEST_LOG_RAW_CONTENT_SWITCH)
+            .assertIsDisplayed()
+            .assertIsOn()
+    }
+
+    @Test
+    fun `raw content switch click calls onLogRawContentToggled`() {
+        var toggled = false
+        composeTestRule.setContent {
+            TestScreen(
+                state = TestState(inputText = "input", logRawContent = false),
+                onTextChanged = {},
+                onSend = {},
+                logRawContent = false,
+                onLogRawContentToggled = { toggled = true },
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.TEST_LOG_RAW_CONTENT_SWITCH)
+            .performClick()
+
+        assert(toggled) { "onLogRawContentToggled should have been called with true" }
     }
 }
