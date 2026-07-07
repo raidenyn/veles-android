@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import me.nagaev.veles.BuildConfig
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
@@ -67,17 +68,19 @@ fun TestScreen(
             Text("Send")
         }
         Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(
-                checked = logRawContent,
-                onCheckedChange = onLogRawContentToggled,
-                modifier = Modifier.testTag(TestTags.TEST_LOG_RAW_CONTENT_SWITCH),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "Show raw notification content in logs (debug only)",
-                style = MaterialTheme.typography.bodyMedium,
-            )
+        if (BuildConfig.DEBUG) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = logRawContent,
+                    onCheckedChange = onLogRawContentToggled,
+                    modifier = Modifier.testTag(TestTags.TEST_LOG_RAW_CONTENT_SWITCH),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Show raw notification content in logs (debug only)",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
         state.lastResult?.let { result ->
             Spacer(Modifier.height(16.dp))
