@@ -1,10 +1,12 @@
 package me.nagaev.veles
 
 import android.app.Application
+import dagger.hilt.android.HiltAndroidApp
 import me.nagaev.veles.common.AndroidLogSink
 import me.nagaev.veles.common.SharedPreferencesLogConfig
 import me.nagaev.veles.common.VelesLog
 
+@HiltAndroidApp
 class VelesApplication : Application() {
     override fun onCreate() {
         super.onCreate()

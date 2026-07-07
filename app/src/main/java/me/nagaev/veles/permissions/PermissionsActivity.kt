@@ -7,11 +7,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dagger.hilt.android.AndroidEntryPoint
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModel
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModelFactory
 
+@AndroidEntryPoint
 class PermissionsActivity : ComponentActivity() {
     private val viewModel: PermissionsViewModel by viewModels {
         PermissionsViewModelFactory(this, requestPermissionLauncher)
