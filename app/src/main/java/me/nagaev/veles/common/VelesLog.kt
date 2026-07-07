@@ -1,9 +1,14 @@
 package me.nagaev.veles.common
 
-class VelesLog(
+import me.nagaev.veles.common.di.DebugEnabled
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class VelesLog @Inject constructor(
     private val sink: LogSink,
     private val logConfig: LogConfig,
-    private val debugEnabled: Boolean,
+    @DebugEnabled private val debugEnabled: Boolean,
 ) {
     fun d(tag: String, msg: String) {
         if (debugEnabled) sink.d(tag, msg)

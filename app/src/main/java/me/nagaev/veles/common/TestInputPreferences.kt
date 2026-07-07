@@ -1,10 +1,12 @@
 package me.nagaev.veles.common
 
 import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
 
 @Suppress("MaxLineLength")
-class TestInputPreferences(
-    private val context: Context,
+class TestInputPreferences @Inject constructor(
+    @ApplicationContext private val context: Context,
 ) {
     private val prefs by lazy {
         context.getSharedPreferences("test_input_preferences", Context.MODE_PRIVATE)

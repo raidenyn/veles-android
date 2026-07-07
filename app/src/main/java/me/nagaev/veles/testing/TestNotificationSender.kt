@@ -5,10 +5,12 @@ import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import dagger.hilt.android.qualifiers.ApplicationContext
 import me.nagaev.veles.R
+import javax.inject.Inject
 
-class TestNotificationSender(
-    private val context: Context,
+class TestNotificationSender @Inject constructor(
+    @ApplicationContext private val context: Context,
 ) {
     companion object {
         const val CHANNEL_ID = "VelesTestChannel"
