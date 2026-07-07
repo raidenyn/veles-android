@@ -1,5 +1,6 @@
 package me.nagaev.veles.otp.config.viewmodel
 
+import androidx.lifecycle.SavedStateHandle
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -40,7 +41,7 @@ class BankConfigEditViewModelTest {
 
     @Test
     fun `new config starts with empty fields`() {
-        val vm = BankConfigEditViewModel(repository, configId = null)
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         val state = vm.state.value
         assert(state.name == "")
         assert(state.otpRegex == "")
@@ -52,7 +53,7 @@ class BankConfigEditViewModelTest {
     @Test
     fun `existing config loads fields on init`() {
         coEvery { repository.getAllSuspend() } returns listOf(existingConfig)
-        val vm = BankConfigEditViewModel(repository, configId = 42L)
+        val vm = BankConfigEditViewModel(SavedStateHandle(mapOf("id" to 42L)), repository)
         val state = vm.state.value
         assert(state.name == "Test Bank")
         assert(state.otpRegex == """\d{6}""")
@@ -63,7 +64,7 @@ class BankConfigEditViewModelTest {
 
     @Test
     fun `save with blank name sets nameError`() {
-        val vm = BankConfigEditViewModel(repository, configId = null)
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         vm.onOtpRegexChanged("""\d{6}""")
         vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
         vm.onMerchantRegexChanged("""at (.+)""")
@@ -74,7 +75,7 @@ class BankConfigEditViewModelTest {
 
     @Test
     fun `save with invalid OTP regex sets otpRegexError`() {
-        val vm = BankConfigEditViewModel(repository, configId = null)
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         vm.onNameChanged("My Bank")
         vm.onOtpRegexChanged("[invalid")
         vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
@@ -86,7 +87,7 @@ class BankConfigEditViewModelTest {
 
     @Test
     fun `save with blank regex fields sets errors`() {
-        val vm = BankConfigEditViewModel(repository, configId = null)
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         vm.onNameChanged("My Bank")
         vm.save()
         assert(vm.state.value.otpRegexError != null)
@@ -97,7 +98,7 @@ class BankConfigEditViewModelTest {
     @Test
     fun `save valid new config calls insert and sets savedSuccessfully`() {
         coEvery { repository.insert(any()) } returns 1L
-        val vm = BankConfigEditViewModel(repository, configId = null)
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         vm.onNameChanged("My Bank")
         vm.onOtpRegexChanged("""\d{6}""")
         vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
@@ -111,7 +112,7 @@ class BankConfigEditViewModelTest {
     fun `save valid existing config calls update and sets savedSuccessfully`() {
         coEvery { repository.getAllSuspend() } returns listOf(existingConfig)
         coEvery { repository.update(any()) } returns Unit
-        val vm = BankConfigEditViewModel(repository, configId = 42L)
+        val vm = BankConfigEditViewModel(SavedStateHandle(mapOf("id" to 42L)), repository)
         vm.save()
         coVerify { repository.update(any()) }
         assert(vm.state.value.savedSuccessfully)
@@ -119,7 +120,7 @@ class BankConfigEditViewModelTest {
 
     @Test
     fun `changing field clears its error`() {
-        val vm = BankConfigEditViewModel(repository, configId = null)
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         vm.save()
         assert(vm.state.value.nameError != null)
         vm.onNameChanged("My Bank")

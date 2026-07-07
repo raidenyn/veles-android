@@ -36,7 +36,7 @@ class PermissionsViewModelRedactionTest {
         componentName: android.content.ComponentName =
             android.content.ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener"),
         openSettings: (android.content.Intent) -> Unit = {},
-    ): PermissionsViewModel = PermissionsViewModel(provider, prefs, path, componentName, openSettings)
+    ): PermissionsViewModel = PermissionsViewModel(prefs, path, componentName, provider, openSettings)
 
     @Test
     fun `uiState reflects Unknown redaction state initially`() {

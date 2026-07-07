@@ -1,10 +1,12 @@
 package me.nagaev.veles.otp.config
 
 import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
 
-class BankHandlerRepository(
-    context: Context,
+class BankHandlerRepository @Inject constructor(
+    @ApplicationContext context: Context,
 ) {
     private val dao = BankHandlerDatabase.getInstance(context).bankHandlerConfigDao()
 

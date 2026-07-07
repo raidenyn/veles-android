@@ -8,16 +8,30 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
+import dagger.hilt.android.lifecycle.withCreationCallback
+import me.nagaev.veles.permissions.services.AccessNotificationPermissionProvider
+import me.nagaev.veles.permissions.services.ActivityProvider
+import me.nagaev.veles.permissions.services.ActivityProviderImpl
+import me.nagaev.veles.permissions.services.PermissionType
+import me.nagaev.veles.permissions.services.PermissionsProvider
+import me.nagaev.veles.permissions.services.PermissionsProviderImpl
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
+import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModel
-import me.nagaev.veles.permissions.viewmodal.PermissionsViewModelFactory
 
 @AndroidEntryPoint
 class PermissionsActivity : ComponentActivity() {
-    private val viewModel: PermissionsViewModel by viewModels {
-        PermissionsViewModelFactory(this, requestPermissionLauncher)
-    }
+    private val viewModel: PermissionsViewModel by viewModels(
+        extrasProducer = {
+            defaultViewModelCreationExtras.withCreationCallback<PermissionsViewModel.Factory> { factory ->
+                factory.create(
+                    permissionsProvider = buildPermissionsProvider(),
+                    openSettings = { intent -> startActivity(intent) },
+                )
+            }
+        },
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -40,6 +54,19 @@ class PermissionsActivity : ComponentActivity() {
             // after use come back to the app
             viewModel.updatePermissionsState()
         }
+    }
+
+    private fun buildPermissionsProvider(): PermissionsProvider {
+        val activityProvider: ActivityProvider = ActivityProviderImpl(this)
+        return PermissionsProviderImpl(
+            providers =
+            mapOf(
+                PermissionType.ACCESS_NOTIFICATIONS to
+                    AccessNotificationPermissionProvider(activityProvider),
+                PermissionType.SEND_NOTIFICATIONS to
+                    SendNotificationPermissionProvider(activityProvider, requestPermissionLauncher),
+            ),
+        )
     }
 
     private val requestPermissionLauncher = RequestPermissionLauncher.create(this)
