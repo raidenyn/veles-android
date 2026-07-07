@@ -40,10 +40,7 @@ class ExportImportFlowTest {
         db = Room.inMemoryDatabaseBuilder(context, BankHandlerDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        val field = BankHandlerDatabase::class.java.getDeclaredField("INSTANCE")
-        field.isAccessible = true
-        field.set(null, db)
-        repository = BankHandlerRepository(context)
+        repository = BankHandlerRepository(db.bankHandlerConfigDao())
         vm = BankConfigsViewModel(repository, ioDispatcher = Dispatchers.Main)
         composeRule.setContent {
             BankConfigsScreen(
@@ -68,9 +65,6 @@ class ExportImportFlowTest {
     @After
     fun tearDown() {
         db.close()
-        val field = BankHandlerDatabase::class.java.getDeclaredField("INSTANCE")
-        field.isAccessible = true
-        field.set(null, null)
     }
 
     @Test
