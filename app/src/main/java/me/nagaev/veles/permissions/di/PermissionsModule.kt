@@ -10,13 +10,16 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import me.nagaev.veles.otp.NotificationRedactionPath
 
+private const val NOTIFICATION_LISTENER_CLASS_NAME =
+    "me.nagaev.veles.otp.NotificationListener"
+
 @Module
 @InstallIn(SingletonComponent::class)
 object PermissionsModule {
     @Provides
     fun provideListenerComponentName(
         @ApplicationContext context: Context,
-    ): ComponentName = ComponentName(context.packageName, "me.nagaev.veles.otp.NotificationListener")
+    ): ComponentName = ComponentName(context.packageName, NOTIFICATION_LISTENER_CLASS_NAME)
 
     @Provides
     fun provideRedactionPath(componentName: ComponentName): NotificationRedactionPath = NotificationRedactionPath.from(Build.MANUFACTURER, componentName)

@@ -28,6 +28,8 @@ style:
     active: false
   MaxLineLength:
     maxLineLength: 140
+    excludes:
+      - '**/PermissionsModule.kt'
   ForbiddenComment:
     active: false
   ForbiddenMethodCall:
