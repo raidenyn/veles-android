@@ -30,6 +30,15 @@ style:
     maxLineLength: 140
   ForbiddenComment:
     active: false
+  ForbiddenMethodCall:
+    active: false
+  ForbiddenImport:
+    active: true
+    excludes:
+      - '**/LogSink.kt'
+      - '**/CopyDataReceiverTest.kt'
+    imports:
+      - 'android.util.Log'
 
 naming:
   FunctionNaming:
