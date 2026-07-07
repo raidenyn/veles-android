@@ -59,6 +59,8 @@ fun VelesPermissionsApp(
                         state = testState,
                         onTextChanged = testViewModel::onTextChanged,
                         onSend = testViewModel::send,
+                        logRawContent = testState.logRawContent,
+                        onLogRawContentToggled = testViewModel::onLogRawContentToggled,
                     )
                 }
                 composable("bank-configs") {

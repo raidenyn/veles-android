@@ -8,6 +8,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import me.nagaev.veles.common.SharedPreferencesLogConfig
 import me.nagaev.veles.common.TestInputPreferences
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
@@ -24,6 +25,7 @@ class TestViewModelTest {
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var preferences: TestInputPreferences
     private lateinit var sender: TestNotificationSender
+    private lateinit var logConfig: SharedPreferencesLogConfig
     private lateinit var viewModel: TestViewModel
 
     @Before
@@ -32,7 +34,9 @@ class TestViewModelTest {
         TestResultFlow.current.value = null
         preferences = mockk(relaxed = true)
         sender = mockk(relaxed = true)
-        viewModel = TestViewModel(preferences, sender)
+        logConfig = mockk(relaxed = true)
+        every { logConfig.rawContentEnabled } returns false
+        viewModel = TestViewModel(preferences, sender, logConfig)
     }
 
     @After
@@ -50,7 +54,7 @@ class TestViewModelTest {
     @Test
     fun `initial state loads saved text from preferences`() {
         every { preferences.load() } returns "saved message"
-        val vm = TestViewModel(preferences, sender)
+        val vm = TestViewModel(preferences, sender, logConfig)
         assertEquals("saved message", vm.uiState.value.inputText)
     }
 
@@ -114,5 +118,26 @@ class TestViewModelTest {
             .also { it.isAccessible = true }
             .invoke(viewModel)
         assertNull(TestResultFlow.current.value)
+    }
+
+    @Test
+    fun `onLogRawContentToggled persists the value and updates state`() {
+        viewModel.onLogRawContentToggled(true)
+
+        verify { logConfig.saveRawContentEnabled(true) }
+        assertEquals(true, viewModel.uiState.value.logRawContent)
+    }
+
+    @Test
+    fun `initial logRawContent is loaded from logConfig`() {
+        val config = mockk<SharedPreferencesLogConfig>(relaxed = true)
+        every { config.rawContentEnabled } returns true
+        val vm = TestViewModel(
+            preferences = mockk(relaxed = true),
+            sender = mockk(relaxed = true),
+            logConfig = config,
+        )
+
+        assertEquals(true, vm.uiState.value.logRawContent)
     }
 }

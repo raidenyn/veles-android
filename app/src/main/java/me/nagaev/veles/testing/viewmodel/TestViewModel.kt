@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.nagaev.veles.common.SharedPreferencesLogConfig
 import me.nagaev.veles.common.TestInputPreferences
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.testing.TestNotificationSender
@@ -14,8 +15,14 @@ import me.nagaev.veles.testing.TestNotificationSender
 class TestViewModel(
     private val preferences: TestInputPreferences,
     private val sender: TestNotificationSender,
+    private val logConfig: SharedPreferencesLogConfig,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(TestState(inputText = preferences.load()))
+    private val _uiState = MutableStateFlow(
+        TestState(
+            inputText = preferences.load(),
+            logRawContent = logConfig.rawContentEnabled,
+        ),
+    )
     val uiState: StateFlow<TestState> = _uiState
 
     init {
@@ -35,6 +42,11 @@ class TestViewModel(
 
     fun send() {
         sender.post(_uiState.value.inputText)
+    }
+
+    fun onLogRawContentToggled(value: Boolean) {
+        logConfig.saveRawContentEnabled(value)
+        _uiState.update { it.copy(logRawContent = value) }
     }
 
     override fun onCleared() {
