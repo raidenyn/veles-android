@@ -3,6 +3,7 @@ package me.nagaev.veles.testing.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import me.nagaev.veles.common.SharedPreferencesLogConfig
 import me.nagaev.veles.common.TestInputPreferences
 import me.nagaev.veles.testing.TestNotificationSender
 
@@ -15,6 +16,7 @@ class TestViewModelFactory(
         return TestViewModel(
             preferences = TestInputPreferences(context),
             sender = TestNotificationSender(context),
+            logConfig = SharedPreferencesLogConfig(context),
         ) as T
     }
 }

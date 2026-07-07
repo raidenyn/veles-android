@@ -31,6 +31,10 @@ class CopyDataReceiverTest {
 
         mockkStatic(Log::class)
         every { Log.d(any(), any()) } returns 0
+
+        val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
+        every { prefs.getBoolean(any(), any()) } returns false
+        every { context.getSharedPreferences("veles_log_config", Context.MODE_PRIVATE) } returns prefs
     }
 
     @Test
