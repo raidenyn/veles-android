@@ -10,6 +10,8 @@ jobs:
     name: release-build
     if: github.event_name == 'workflow_dispatch' || contains(github.event.label.name, 'release-build')
     runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ github.event_name == 'workflow_dispatch' && secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,6 +21,20 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
+      - name: Decode keystore
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ] || [ -z "${{ secrets.KEY_ALIAS }}" ] || [ -z "${{ secrets.KEY_PASSWORD }}" ]; then
+            echo "::error::KEYSTORE_BASE64 is set but one of KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD is missing."
+            exit 1
+          fi
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+          {
+            echo "VELES_KEYSTORE_FILE=$RUNNER_TEMP/keystore.jks"
+            echo "VELES_KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}"
+            echo "VELES_KEY_ALIAS=${{ secrets.KEY_ALIAS }}"
+            echo "VELES_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"
+          } >> "$GITHUB_ENV"
       - run: ./gradlew assembleRelease
       - name: Rename APK
         run: |
