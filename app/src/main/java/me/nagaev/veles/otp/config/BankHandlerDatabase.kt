@@ -1,8 +1,6 @@
 package me.nagaev.veles.otp.config
 
-import android.content.Context
 import androidx.room.Database
-import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -13,10 +11,7 @@ abstract class BankHandlerDatabase : RoomDatabase() {
     abstract fun bankHandlerConfigDao(): BankHandlerConfigDao
 
     companion object {
-        @Volatile
-        private var INSTANCE: BankHandlerDatabase? = null
-
-        private val MIGRATION_1_2 =
+        internal val MIGRATION_1_2 =
             object : Migration(1, 2) {
                 override fun migrate(db: SupportSQLiteDatabase) {
                     val now = System.currentTimeMillis()
@@ -33,22 +28,9 @@ abstract class BankHandlerDatabase : RoomDatabase() {
                     )
                 }
             }
-
-        fun getInstance(context: Context): BankHandlerDatabase = INSTANCE ?: synchronized(this) {
-            Room
-                .databaseBuilder(
-                    context.applicationContext,
-                    BankHandlerDatabase::class.java,
-                    "bank_handler_configs.db",
-                )
-                .addMigrations(MIGRATION_1_2)
-                .addCallback(SeedCallback())
-                .build()
-                .also { INSTANCE = it }
-        }
     }
 
-    private class SeedCallback : Callback() {
+    internal class SeedCallback : Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) {
             super.onCreate(db)
             val now = System.currentTimeMillis()

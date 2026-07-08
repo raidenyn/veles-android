@@ -1,7 +1,13 @@
 package me.nagaev.veles.permissions.viewmodal
 
+import android.content.ComponentName
+import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -30,21 +36,31 @@ interface PermissionsActions {
 typealias RequestPermission = (type: PermissionType) -> Unit
 typealias RevokePermission = (type: PermissionType) -> Unit
 
-class PermissionsViewModel(
-    private val permissionsProvider: PermissionsProvider,
+@HiltViewModel(assistedFactory = PermissionsViewModel.Factory::class)
+class PermissionsViewModel @AssistedInject constructor(
     private val notificationStatePreferences: NotificationStatePreferences,
     private val redactionPath: NotificationRedactionPath,
-    private val componentName: android.content.ComponentName,
-    private val openSettings: (android.content.Intent) -> Unit,
+    private val componentName: ComponentName,
+    private val redactionStateFlow: RedactionStateFlow,
+    @Assisted private val permissionsProvider: PermissionsProvider,
+    @Assisted private val openSettings: (Intent) -> Unit,
 ) : ViewModel(),
     PermissionsActions {
     private val _uiState = MutableStateFlow(PermissionsState.Init)
     val uiState: StateFlow<PermissionsState> = _uiState
 
+    @AssistedFactory
+    interface Factory {
+        fun create(
+            permissionsProvider: PermissionsProvider,
+            openSettings: (Intent) -> Unit,
+        ): PermissionsViewModel
+    }
+
     init {
         updatePermissionsState()
         viewModelScope.launch {
-            RedactionStateFlow.current.collect { state ->
+            redactionStateFlow.current.collect { state ->
                 _uiState.value =
                     _uiState.value.copy(
                         redactionState = state,

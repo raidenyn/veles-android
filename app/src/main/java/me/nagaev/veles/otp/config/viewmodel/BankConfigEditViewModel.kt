@@ -1,7 +1,9 @@
 package me.nagaev.veles.otp.config.viewmodel
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -9,11 +11,15 @@ import kotlinx.coroutines.launch
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import java.util.regex.PatternSyntaxException
+import javax.inject.Inject
 
-class BankConfigEditViewModel(
+@HiltViewModel
+class BankConfigEditViewModel @Inject constructor(
+    savedStateHandle: SavedStateHandle,
     private val repository: BankHandlerRepository,
-    private val configId: Long?,
 ) : ViewModel() {
+
+    private val configId: Long? = savedStateHandle.get<Long>("id")?.takeIf { it != -1L }
 
     private val _state = MutableStateFlow(BankConfigEditState())
     val state: StateFlow<BankConfigEditState> = _state

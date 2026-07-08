@@ -5,12 +5,12 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import me.nagaev.veles.BuildConfig
-import me.nagaev.veles.common.AndroidLogSink
-import me.nagaev.veles.common.SharedPreferencesLogConfig
+import dagger.hilt.android.EntryPointAccessors
 import me.nagaev.veles.common.VelesLog
 
-class CopyDataReceiver : BroadcastReceiver() {
+class CopyDataReceiver(
+    private val loggerOverride: VelesLog? = null,
+) : BroadcastReceiver() {
     companion object {
         const val EXTRA_COPY_TEXT = "CopyText"
     }
@@ -19,19 +19,21 @@ class CopyDataReceiver : BroadcastReceiver() {
         context: Context?,
         intent: Intent?,
     ) {
-        val logger = context?.let {
-            VelesLog(AndroidLogSink(), SharedPreferencesLogConfig(it), BuildConfig.DEBUG)
-        }
-        logger?.d("CopyDataReceiver", "Context $context")
-        context?.apply {
-            intent?.getStringExtra(EXTRA_COPY_TEXT)?.let {
-                val systemService = getSystemService(Context.CLIPBOARD_SERVICE)
-                (systemService as ClipboardManager?)?.let { clipboardService ->
-                    val clip = ClipData.newPlainText("OTP", it)
-                    clipboardService.setPrimaryClip(clip)
-                    logger?.dCopiedOtp(it)
-                }
+        if (context == null) return
+        val logger = loggerOverride ?: resolveLogger(context)
+        logger.d("CopyDataReceiver", "Context $context")
+        intent?.getStringExtra(EXTRA_COPY_TEXT)?.let {
+            val systemService = context.getSystemService(Context.CLIPBOARD_SERVICE)
+            (systemService as ClipboardManager?)?.let { clipboardService ->
+                val clip = ClipData.newPlainText("OTP", it)
+                clipboardService.setPrimaryClip(clip)
+                logger.dCopiedOtp(it)
             }
         }
     }
+
+    private fun resolveLogger(context: Context): VelesLog = EntryPointAccessors.fromApplication(
+        context.applicationContext,
+        NotificationListenerEntryPoint::class.java,
+    ).velesLog()
 }

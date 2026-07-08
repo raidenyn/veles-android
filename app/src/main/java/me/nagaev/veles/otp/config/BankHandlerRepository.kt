@@ -1,13 +1,11 @@
 package me.nagaev.veles.otp.config
 
-import android.content.Context
 import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
 
-class BankHandlerRepository(
-    context: Context,
+class BankHandlerRepository @Inject constructor(
+    private val dao: BankHandlerConfigDao,
 ) {
-    private val dao = BankHandlerDatabase.getInstance(context).bankHandlerConfigDao()
-
     suspend fun getAllSuspend(): List<BankHandlerConfig> = dao.getAllSuspend()
 
     fun observeAll(): Flow<List<BankHandlerConfig>> = dao.observeAll()

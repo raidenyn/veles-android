@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,16 +13,19 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
+import me.nagaev.veles.common.di.IoDispatcher
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.config.io.ConfigImporter
 import me.nagaev.veles.otp.config.io.ConfigSerializer
 import java.io.IOException
+import javax.inject.Inject
 
 @Suppress("TooManyFunctions")
-class BankConfigsViewModel(
+@HiltViewModel
+class BankConfigsViewModel @Inject constructor(
     private val repository: BankHandlerRepository,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(BankConfigsState())

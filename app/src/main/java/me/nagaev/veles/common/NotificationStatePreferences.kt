@@ -1,10 +1,12 @@
 package me.nagaev.veles.common
 
 import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import me.nagaev.veles.R
+import javax.inject.Inject
 
-class NotificationStatePreferences(
-    private val context: Context,
+class NotificationStatePreferences @Inject constructor(
+    @ApplicationContext private val context: Context,
 ) {
     fun saveConnectionState(state: Boolean) {
         with(context) {

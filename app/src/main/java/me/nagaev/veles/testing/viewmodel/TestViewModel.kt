@@ -2,6 +2,7 @@ package me.nagaev.veles.testing.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,11 +12,14 @@ import me.nagaev.veles.common.SharedPreferencesLogConfig
 import me.nagaev.veles.common.TestInputPreferences
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.testing.TestNotificationSender
+import javax.inject.Inject
 
-class TestViewModel(
+@HiltViewModel
+class TestViewModel @Inject constructor(
     private val preferences: TestInputPreferences,
     private val sender: TestNotificationSender,
     private val logConfig: SharedPreferencesLogConfig,
+    private val testResultFlow: TestResultFlow,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         TestState(
@@ -27,7 +31,7 @@ class TestViewModel(
 
     init {
         viewModelScope.launch(Dispatchers.Unconfined) {
-            TestResultFlow.current.collect { result ->
+            testResultFlow.current.collect { result ->
                 result?.let {
                     _uiState.update { state -> state.copy(lastResult = it) }
                 }
@@ -51,6 +55,6 @@ class TestViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        TestResultFlow.current.value = null
+        testResultFlow.current.value = null
     }
 }

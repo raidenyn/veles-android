@@ -5,26 +5,22 @@ import android.content.Intent
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
+import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import me.nagaev.veles.BuildConfig
-import me.nagaev.veles.common.AndroidLogSink
 import me.nagaev.veles.common.NotificationStatePreferences
 import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.RedactionStateFlow
-import me.nagaev.veles.common.SharedPreferencesLogConfig
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.common.VelesLog
-import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.handlers.CompositeMessageHandler
 import me.nagaev.veles.otp.handlers.HandlerChainReloader
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
-import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
 import me.nagaev.veles.testing.TestNotificationSender
 
 class NotificationListener(
@@ -32,25 +28,45 @@ class NotificationListener(
     messageHandler: MessageHandler? = null,
     private val ownPackageName: String? = null,
     velesLog: VelesLog? = null,
+    testResultFlow: TestResultFlow? = null,
+    redactionStateFlow: RedactionStateFlow? = null,
 ) : NotificationListenerService() {
-    private val state = state ?: NotificationStatePreferences(this)
+    private val entryPoint: NotificationListenerEntryPoint by lazy {
+        EntryPointAccessors.fromApplication(
+            applicationContext,
+            NotificationListenerEntryPoint::class.java,
+        )
+    }
+    private val stateOverride: NotificationStatePreferences? = state
+    private val state: NotificationStatePreferences by lazy {
+        stateOverride ?: entryPoint.notificationStatePreferences()
+    }
     private val injectedHandler: MessageHandler? = messageHandler
     private var serviceScope: CoroutineScope? = null
     private var reloader: HandlerChainReloader? = null
-    private var logger: VelesLog? = velesLog
+    private val logOverride: VelesLog? = velesLog
+    private val logger: VelesLog by lazy {
+        logOverride ?: entryPoint.velesLog()
+    }
+    private val testResultFlowOverride: TestResultFlow? = testResultFlow
+    private val testResultFlow: TestResultFlow by lazy {
+        testResultFlowOverride ?: entryPoint.testResultFlow()
+    }
+    private val redactionStateFlowOverride: RedactionStateFlow? = redactionStateFlow
+    private val redactionStateFlow: RedactionStateFlow by lazy {
+        redactionStateFlowOverride ?: entryPoint.redactionStateFlow()
+    }
 
     override fun onCreate() {
         super.onCreate()
-        if (logger == null) {
-            logger = VelesLog(AndroidLogSink(), SharedPreferencesLogConfig(this), BuildConfig.DEBUG)
-        }
-        logger?.d("NotificationListener", "Created")
+        logger.d("NotificationListener", "Created")
         if (injectedHandler == null) {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             serviceScope = scope
-            val repository = BankHandlerRepository(this)
-            val notifier = UserNotifierOtpMessageHandler(this)
-            val r = HandlerChainReloader(repository.observeAll(), notifier)
+            val r = HandlerChainReloader(
+                entryPoint.bankHandlerRepository().observeAll(),
+                entryPoint.userNotifierOtpMessageHandler(),
+            )
             r.start(scope)
             reloader = r
         }
@@ -70,18 +86,18 @@ class NotificationListener(
         startId: Int,
     ): Int {
         super.onStartCommand(intent, flags, startId)
-        logger?.d("NotificationListener", "Started: $startId")
+        logger.d("NotificationListener", "Started: $startId")
         return START_REDELIVER_INTENT
     }
 
     override fun onListenerConnected() {
-        logger?.d("NotificationListener", "ListenerConnected")
+        logger.d("NotificationListener", "ListenerConnected")
         state.saveConnectionState(true)
         super.onListenerConnected()
     }
 
     override fun onListenerDisconnected() {
-        logger?.d("NotificationListener", "ListenerDisconnected")
+        logger.d("NotificationListener", "ListenerDisconnected")
         state.saveConnectionState(false)
         super.onListenerDisconnected()
     }
@@ -95,15 +111,15 @@ class NotificationListener(
             val title = extras?.getCharSequence(NotificationCompat.EXTRA_TITLE).toString()
             val text = extras?.getCharSequence(NotificationCompat.EXTRA_TEXT).toString()
 
-            logger?.dNotificationLogged(pkg = packageName, title = title, text = text, key = it.key, postTime = it.postTime)
+            logger.dNotificationLogged(pkg = packageName, title = title, text = text, key = it.key, postTime = it.postTime)
 
             val notification = it.notification
             if (RedactionDetector.isRedacted(it)) {
-                RedactionStateFlow.current.value = RedactionState.Hidden
+                redactionStateFlow.current.value = RedactionState.Hidden
             } else if (notification?.visibility == Notification.VISIBILITY_SECRET &&
-                RedactionStateFlow.current.value == RedactionState.Hidden
+                redactionStateFlow.current.value == RedactionState.Hidden
             ) {
-                RedactionStateFlow.current.value = RedactionState.Readable
+                redactionStateFlow.current.value = RedactionState.Readable
             }
 
             val message =
@@ -119,7 +135,7 @@ class NotificationListener(
             val effectiveOwnPackage = ownPackageName ?: getPackageName()
             val channelId = it.notification?.channelId
             if (message.source == effectiveOwnPackage && channelId == TestNotificationSender.CHANNEL_ID) {
-                TestResultFlow.current.value = TestResult(
+                testResultFlow.current.value = TestResult(
                     handlingResult = handlingResult,
                     receivedText = message.text,
                     receivedTitle = message.title,

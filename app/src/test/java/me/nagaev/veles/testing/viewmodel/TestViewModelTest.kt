@@ -26,22 +26,22 @@ class TestViewModelTest {
     private lateinit var preferences: TestInputPreferences
     private lateinit var sender: TestNotificationSender
     private lateinit var logConfig: SharedPreferencesLogConfig
+    private lateinit var testResultFlow: TestResultFlow
     private lateinit var viewModel: TestViewModel
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        TestResultFlow.current.value = null
         preferences = mockk(relaxed = true)
         sender = mockk(relaxed = true)
         logConfig = mockk(relaxed = true)
         every { logConfig.rawContentEnabled } returns false
-        viewModel = TestViewModel(preferences, sender, logConfig)
+        testResultFlow = TestResultFlow()
+        viewModel = TestViewModel(preferences, sender, logConfig, testResultFlow)
     }
 
     @After
     fun tearDown() {
-        TestResultFlow.current.value = null
         Dispatchers.resetMain()
     }
 
@@ -54,7 +54,7 @@ class TestViewModelTest {
     @Test
     fun `initial state loads saved text from preferences`() {
         every { preferences.load() } returns "saved message"
-        val vm = TestViewModel(preferences, sender, logConfig)
+        val vm = TestViewModel(preferences, sender, logConfig, TestResultFlow())
         assertEquals("saved message", vm.uiState.value.inputText)
     }
 
@@ -87,7 +87,7 @@ class TestViewModelTest {
             sourcePackage = "pkg",
             timestamp = 1000L,
         )
-        TestResultFlow.current.value = result
+        testResultFlow.current.value = result
         assertEquals(result, viewModel.uiState.value.lastResult)
     }
 
@@ -100,13 +100,13 @@ class TestViewModelTest {
             sourcePackage = "pkg",
             timestamp = 2000L,
         )
-        TestResultFlow.current.value = result
+        testResultFlow.current.value = result
         assertEquals(result, viewModel.uiState.value.lastResult)
     }
 
     @Test
     fun `onCleared resets TestResultFlow to null`() {
-        TestResultFlow.current.value = TestResult(
+        testResultFlow.current.value = TestResult(
             handlingResult = MessageHandlingResult.ACCEPTED,
             receivedText = "text",
             receivedTitle = "title",
@@ -117,7 +117,7 @@ class TestViewModelTest {
             .getDeclaredMethod("onCleared")
             .also { it.isAccessible = true }
             .invoke(viewModel)
-        assertNull(TestResultFlow.current.value)
+        assertNull(testResultFlow.current.value)
     }
 
     @Test
@@ -136,6 +136,7 @@ class TestViewModelTest {
             preferences = mockk(relaxed = true),
             sender = mockk(relaxed = true),
             logConfig = config,
+            testResultFlow = TestResultFlow(),
         )
 
         assertEquals(true, vm.uiState.value.logRawContent)

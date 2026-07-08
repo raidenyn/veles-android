@@ -8,11 +8,13 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import dagger.hilt.android.qualifiers.ApplicationContext
 import me.nagaev.veles.R
 import me.nagaev.veles.otp.CopyDataReceiver
+import javax.inject.Inject
 
-class UserNotifierOtpMessageHandler(
-    private val context: Context,
+class UserNotifierOtpMessageHandler @Inject constructor(
+    @ApplicationContext private val context: Context,
 ) : OtpMessageHandler {
     companion object {
         const val CHANNEL_ID = "HandyOTPMessageChannel"
