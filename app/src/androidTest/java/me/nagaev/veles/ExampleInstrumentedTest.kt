@@ -1,7 +1,7 @@
 package me.nagaev.veles
 
 import androidx.test.platform.app.InstrumentationRegistry
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
@@ -14,8 +14,8 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        // The debug build uses applicationIdSuffix ".debug", so the package name
-        // is "me.nagaev.veles.debug" in debug and "me.nagaev.veles" in release.
-        assertTrue(appContext.packageName.startsWith("me.nagaev.veles"))
+        // BuildConfig.APPLICATION_ID includes the applicationIdSuffix for debug
+        // ("me.nagaev.veles.debug") and the base id for release ("me.nagaev.veles").
+        assertEquals(BuildConfig.APPLICATION_ID, appContext.packageName)
     }
 }
