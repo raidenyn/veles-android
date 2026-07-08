@@ -71,15 +71,24 @@ small hand-written versionCode mapping.
 
 ## 4. CI
 
-### `ci.yml` — new `release-build` job
+### `release-build.yml` — release build job (opt-in for PRs, automatic on master)
 
-- Runs on every PR/push alongside the existing jobs, so R8 breakage fails PRs.
-- `./gradlew assembleRelease` (unsigned), upload the APK as a workflow artifact.
-- Checkout with `fetch-depth: 0` (also added to jobs whose builds need version info).
+- Runs `./gradlew assembleRelease` (unsigned on PRs, signed on master when secrets exist) and uploads the APK + mapping.txt as a workflow artifact.
+- **Triggers:**
+  - `push: branches: [master]` — catches R8 breakage on every merge to master.
+  - `pull_request: types: [labeled, synchronize]` with label `release-build` — opt-in per PR; the `synchronize` trigger re-runs on new pushes while the label is present.
+  - `workflow_dispatch` — manual run from master (signed when secrets exist).
+- PR builds are always unsigned (secrets are not available on `pull_request` events); signing is gated on `workflow_dispatch` + `github.ref == 'refs/heads/master'`.
+- Checkout with `fetch-depth: 0` (needed by the androidgitversion plugin).
+- APK naming: `Veles-PR{N}-{short-sha}.apk` on PRs, `Veles-{version}-release.apk` on master.
+
+### `ci.yml` — existing jobs (unchanged)
+
+- `lint-check`, `unit-tests`, `instrumented-tests` run on every PR/push as before.
 
 ### New `release.yml` — tag-triggered release
 
-- Trigger: tag push matching `[0-9]*` (plain semver tags).
+- Trigger: tag push matching `[0-9]+.[0-9]+.[0-9]+` (plain semver tags, no `v` prefix).
 - Builds `assembleRelease`. A signing config in Gradle reads the keystore path and
   passwords from environment variables.
 - The workflow decodes a `KEYSTORE_BASE64` secret to a keystore file; other secrets:
@@ -88,7 +97,8 @@ small hand-written versionCode mapping.
   unsigned, still creates the GitHub Release with the APK attached (release notes marked
   as unsigned), and succeeds. Once secrets are added, the same workflow signs with no
   changes.
-- Release creation via `gh release create` with the APK attached.
+- Verifies the built `versionName` matches the tag via `./gradlew -q :app:androidGitVersion`.
+- Release creation via `gh release create` with the APK and `mapping.txt` attached.
 
 ## 5. Testing & Verification
 

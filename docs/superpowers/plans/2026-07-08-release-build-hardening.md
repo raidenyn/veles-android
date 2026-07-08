@@ -298,56 +298,111 @@ git commit -m "feat: derive versionCode/versionName from git tags (#16)"
 
 ---
 
-### Task 4: CI release-build job
+### Task 4: CI release-build workflow
 
 **Files:**
-- Modify: `.github/workflows/ci.yml`
+- Create: `.github/workflows/release-build.yml`
 
 **Interfaces:**
 - Consumes: `./gradlew assembleRelease` producing `app/build/outputs/apk/release/app-release-unsigned.apk` (Task 2); `fetch-depth: 0` requirement (Task 3).
-- Produces: a required-by-convention `release-build` job so R8 breakage fails PRs; a `release-apk` workflow artifact.
+- Produces: a release-build workflow that catches R8 breakage on master pushes, runs as an opt-in on PRs (label `release-build`), and supports manual dispatch from master; a `release-apk` workflow artifact.
 
-- [ ] **Step 1: Add the release-build job**
+- [ ] **Step 1: Create the release-build workflow**
 
-Append to `.github/workflows/ci.yml` (same indentation as the existing jobs, i.e. as a new key under `jobs:`):
+Create `.github/workflows/release-build.yml`:
 
 ```yaml
+name: release-build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+  push:
+    branches: [master]
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
   release-build:
     name: release-build
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+      (github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
     runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && secrets.KEYSTORE_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Decode keystore
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ] || [ -z "${{ secrets.KEY_ALIAS }}" ] || [ -z "${{ secrets.KEY_PASSWORD }}" ]; then
+            echo "::error::KEYSTORE_BASE64 is set but one of KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD is missing."
+            exit 1
+          fi
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+          {
+            echo "VELES_KEYSTORE_FILE=$RUNNER_TEMP/keystore.jks"
+            echo "VELES_KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}"
+            echo "VELES_KEY_ALIAS=${{ secrets.KEY_ALIAS }}"
+            echo "VELES_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"
+          } >> "$GITHUB_ENV"
       - run: ./gradlew assembleRelease
-      - uses: actions/upload-artifact@v4
+      - name: Rename APK
+        run: |
+          APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
+            NAME="Veles-PR${{ github.event.pull_request.number }}-${SHORT_SHA}.apk"
+          else
+            VERSION=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
+            NAME="Veles-${VERSION}-release.apk"
+          fi
+          mv "$APK" "app/build/outputs/apk/release/$NAME"
+          echo "Renamed to $NAME"
+      - uses: actions/upload-artifact@v7
         with:
           name: release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: |
+            app/build/outputs/apk/release/Veles-*.apk
+            app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
 ```
+
+Design notes:
+- `push: branches: [master]` ensures R8 breakage is caught on every merge to master.
+- PR-label opt-in: add the `release-build` label to run the release build on a PR; `synchronize` re-runs on new pushes while the label is present.
+- PR builds are always unsigned (secrets not available on `pull_request` events); signing is gated on `workflow_dispatch` + `github.ref == 'refs/heads/master'`.
+- APK naming: `Veles-PR{N}-{head-sha}.apk` on PRs (uses the PR head SHA, not the ephemeral merge commit); `Veles-{version}-release.apk` on master.
 
 - [ ] **Step 2: Validate the YAML**
 
 ```bash
-python3 -c "import yaml, sys; yaml.safe_load(open('.github/workflows/ci.yml')); print('OK')"
+python3 -c "import yaml, sys; yaml.safe_load(open('.github/workflows/release-build.yml')); print('OK')"
 ```
 
-Expected: `OK`. (If `actionlint` is installed, run `actionlint .github/workflows/ci.yml` too; expected: no output.)
+Expected: `OK`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add .github/workflows/ci.yml
-git commit -m "ci: build unsigned release APK on every PR to catch R8 breakage (#16)"
+git add .github/workflows/release-build.yml
+git commit -m "ci: opt-in release-build workflow with master push trigger (#16)"
 ```
 
-Real verification happens when the PR opens (Task 6): the `release-build` job must be green.
+Real verification happens when the PR opens (Task 6): the `release-build` job runs on master push after merge.
 
 ---
 

@@ -3,15 +3,25 @@ name: release-build
 on:
   workflow_dispatch:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
+  push:
+    branches: [master]
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   release-build:
     name: release-build
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.label.name, 'release-build')
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+      (github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
     runs-on: ubuntu-latest
     env:
-      HAS_KEYSTORE: ${{ github.event_name == 'workflow_dispatch' && secrets.KEYSTORE_BASE64 != '' }}
+      HAS_KEYSTORE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,11 +50,11 @@ jobs:
         run: |
           APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SHORT_SHA=$(git rev-parse --short HEAD)
+            SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
             NAME="Veles-PR${{ github.event.pull_request.number }}-${SHORT_SHA}.apk"
           else
             VERSION=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
-            NAME="Veles-v${VERSION}-release.apk"
+            NAME="Veles-${VERSION}-release.apk"
           fi
           mv "$APK" "app/build/outputs/apk/release/$NAME"
           echo "Renamed to $NAME"
