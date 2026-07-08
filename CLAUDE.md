@@ -8,6 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build debug APK
 ./gradlew assembleDebug
 
+# Build release APK (R8-minified; signed only if VELES_KEYSTORE_* env vars are set)
+./gradlew assembleRelease
+
 # Run unit tests (JVM, no device needed)
 ./gradlew testDebugUnitTest
 
@@ -89,3 +92,11 @@ The app has a built-in test harness for validating handler configs without a rea
 ### Adding a New Bank Handler
 
 Insert a row into the `bank_handler_configs` Room database with the three regexes. For seeding at install time, add an `INSERT` in `BankHandlerDatabase.SeedCallback.onCreate`. No new Kotlin classes are needed.
+
+## Versioning & Releases
+
+`versionCode`/`versionName` are derived from git tags by the `com.gladed.androidgitversion`
+plugin (`codeFormat = "MMNNPP"`; tag `0.0.1` → code 1). Tags are plain semver with no `v`
+prefix. Pushing a `X.Y.Z` tag triggers `.github/workflows/release.yml`, which builds the
+release APK and creates a GitHub Release — signed if the `KEYSTORE_BASE64`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` secrets exist, unsigned otherwise.
