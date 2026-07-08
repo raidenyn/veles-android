@@ -20,10 +20,15 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew assembleRelease
+      - name: Rename APK
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
+          mv "$APK" "app/build/outputs/apk/release/Veles-PR${{ github.event.pull_request.number || 'manual' }}-${SHORT_SHA}.apk"
       - uses: actions/upload-artifact@v7
         with:
           name: release-apk
           path: |
-            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/release/Veles-*.apk
             app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
