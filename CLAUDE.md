@@ -100,3 +100,5 @@ plugin (`codeFormat = "MMNNPP"`; tag `0.0.1` → code 1). Tags are plain semver 
 prefix. Pushing a `X.Y.Z` tag triggers `.github/workflows/release.yml`, which builds the
 release APK and creates a GitHub Release — signed if the `KEYSTORE_BASE64`,
 `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` secrets exist, unsigned otherwise.
+`release-build.yml` runs `assembleRelease` automatically on master pushes and as an opt-in
+on PRs (add the `release-build` label); it can also be triggered manually from master.
