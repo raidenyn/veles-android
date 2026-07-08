@@ -47,6 +47,7 @@ jobs:
           } >> "$GITHUB_ENV"
       - run: ./gradlew assembleRelease
       - name: Rename APK
+        id: apk
         run: |
           APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -57,10 +58,11 @@ jobs:
             NAME="Veles-${VERSION}-release.apk"
           fi
           mv "$APK" "app/build/outputs/apk/release/$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "Renamed to $NAME"
       - uses: actions/upload-artifact@v7
         with:
-          name: release-apk
+          name: ${{ steps.apk.outputs.name }}
           path: |
             app/build/outputs/apk/release/Veles-*.apk
             app/build/outputs/mapping/release/mapping.txt
