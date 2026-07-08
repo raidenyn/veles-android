@@ -1,11 +1,16 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.androidgitversion)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.detekt)
+}
+
+androidGitVersion {
+    codeFormat = "MMNNPP"
 }
 
 detekt {
@@ -21,8 +26,8 @@ android {
         applicationId = "me.nagaev.veles"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = maxOf(androidGitVersion.code(), 1)
+        versionName = androidGitVersion.name()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
