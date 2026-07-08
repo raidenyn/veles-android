@@ -14,6 +14,8 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("me.nagaev.veles", appContext.packageName)
+        // BuildConfig.APPLICATION_ID includes the applicationIdSuffix for debug
+        // ("me.nagaev.veles.debug") and the base id for release ("me.nagaev.veles").
+        assertEquals(BuildConfig.APPLICATION_ID, appContext.packageName)
     }
 }

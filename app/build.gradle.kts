@@ -1,13 +1,16 @@
-import org.jetbrains.kotlin.gradle.internal.resolve.sam.SamConstructorDescriptorKindExclude.excludes
-
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.androidgitversion)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.detekt)
+}
+
+androidGitVersion {
+    codeFormat = "MMNNPP"
 }
 
 detekt {
@@ -23,15 +26,32 @@ android {
         applicationId = "me.nagaev.veles"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = maxOf(androidGitVersion.code(), 1)
+        versionName = androidGitVersion.name()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val releaseKeystore = System.getenv("VELES_KEYSTORE_FILE")
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("VELES_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("VELES_KEY_ALIAS")
+                keyPassword = System.getenv("VELES_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
