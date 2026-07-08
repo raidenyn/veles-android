@@ -2,10 +2,13 @@ name: release-build
 
 on:
   workflow_dispatch:
+  pull_request:
+    types: [labeled]
 
 jobs:
   release-build:
     name: release-build
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.label.name, 'release-build')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
