@@ -22,5 +22,6 @@ object PermissionsModule {
     ): ComponentName = ComponentName(context.packageName, NOTIFICATION_LISTENER_CLASS_NAME)
 
     @Provides
+    @Suppress("MaxLineLength")
     fun provideRedactionPath(componentName: ComponentName): NotificationRedactionPath = NotificationRedactionPath.from(Build.MANUFACTURER, componentName)
 }

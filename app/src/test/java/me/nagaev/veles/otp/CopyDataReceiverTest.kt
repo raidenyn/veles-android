@@ -4,11 +4,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.verify
+import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.otp.CopyDataReceiver.Companion.EXTRA_COPY_TEXT
 import org.junit.Before
 import org.junit.Test
@@ -18,6 +18,7 @@ class CopyDataReceiverTest {
     private val clipboardManager = mockk<ClipboardManager>(relaxed = true)
     private val intent = mockk<Intent>(relaxed = true)
     private val clipData = mockk<ClipData>(relaxed = true)
+    private val logger = mockk<VelesLog>(relaxed = true)
 
     private val testText = "Test text"
 
@@ -28,18 +29,11 @@ class CopyDataReceiverTest {
 
         mockkStatic(ClipData::class)
         every { ClipData.newPlainText(any<String>(), any<String>()) } returns clipData
-
-        mockkStatic(Log::class)
-        every { Log.d(any(), any()) } returns 0
-
-        val prefs = mockk<android.content.SharedPreferences>(relaxed = true)
-        every { prefs.getBoolean(any(), any()) } returns false
-        every { context.getSharedPreferences("veles_log_config", Context.MODE_PRIVATE) } returns prefs
     }
 
     @Test
     fun `Valid Context and Intent with text`() {
-        val receiver = CopyDataReceiver()
+        val receiver = CopyDataReceiver(logger)
         receiver.onReceive(context, intent)
 
         verify { ClipData.newPlainText("OTP", testText) }
@@ -48,7 +42,7 @@ class CopyDataReceiverTest {
 
     @Test
     fun `Null Context`() {
-        val receiver = CopyDataReceiver()
+        val receiver = CopyDataReceiver(logger)
         receiver.onReceive(null, intent)
     }
 
@@ -56,7 +50,7 @@ class CopyDataReceiverTest {
     fun `Null Intent`() {
         val context = mockk<Context>(relaxed = true)
 
-        val receiver = CopyDataReceiver()
+        val receiver = CopyDataReceiver(logger)
         receiver.onReceive(context, null)
     }
 
@@ -64,7 +58,7 @@ class CopyDataReceiverTest {
     fun `Missing EXTRA COPY TEXT`() {
         every { intent.getStringExtra(EXTRA_COPY_TEXT) } returns null
 
-        val receiver = CopyDataReceiver()
+        val receiver = CopyDataReceiver(logger)
         receiver.onReceive(context, intent)
 
         verify(exactly = 0) { clipboardManager.setPrimaryClip(any()) }
@@ -74,7 +68,7 @@ class CopyDataReceiverTest {
     fun `Empty EXTRA COPY TEXT`() {
         every { intent.getStringExtra(EXTRA_COPY_TEXT) } returns ""
 
-        val receiver = CopyDataReceiver()
+        val receiver = CopyDataReceiver(logger)
         receiver.onReceive(context, intent)
 
         verify(exactly = 1) { clipboardManager.setPrimaryClip(any()) }
@@ -84,7 +78,7 @@ class CopyDataReceiverTest {
     fun `Clipboard Service unavailable`() {
         every { context.getSystemService(Context.CLIPBOARD_SERVICE) } returns null
 
-        val receiver = CopyDataReceiver()
+        val receiver = CopyDataReceiver(logger)
         receiver.onReceive(context, intent)
 
         verify(exactly = 0) { clipboardManager.setPrimaryClip(any()) }

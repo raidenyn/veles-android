@@ -21,6 +21,11 @@ import me.nagaev.veles.permissions.viewmodal.PermissionsState
 import org.junit.Rule
 import org.junit.Test
 
+// Uses createComposeRule() (no Hilt host). The NavHost routes for "test" and
+// "bank-configs" call hiltViewModel(), which requires a Hilt Android entry
+// point. Navigating beyond the "permissions" route in this test will fail.
+// To test those routes, switch to createAndroidHiltComposeRule or a
+// @HiltAndroidTest with HiltAndroidRule.
 class VelesPermissionsAppTests {
     @get:Rule
     val composeTestRule = createComposeRule()
