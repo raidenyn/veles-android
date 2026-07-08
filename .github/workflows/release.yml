@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Decode keystore
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+          {
+            echo "VELES_KEYSTORE_FILE=$RUNNER_TEMP/keystore.jks"
+            echo "VELES_KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}"
+            echo "VELES_KEY_ALIAS=${{ secrets.KEY_ALIAS }}"
+            echo "VELES_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"
+          } >> "$GITHUB_ENV"
+      - run: ./gradlew assembleRelease
+      - name: Collect APK
+        id: apk
+        run: |
+          if [ "$HAS_KEYSTORE" = "true" ]; then
+            cp app/build/outputs/apk/release/app-release.apk "veles-$GITHUB_REF_NAME.apk"
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+          else
+            cp app/build/outputs/apk/release/app-release-unsigned.apk "veles-$GITHUB_REF_NAME.apk"
+            echo "suffix= (unsigned)" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "veles-$GITHUB_REF_NAME.apk" \
+            --title "Veles $GITHUB_REF_NAME${{ steps.apk.outputs.suffix }}" \
+            --generate-notes
