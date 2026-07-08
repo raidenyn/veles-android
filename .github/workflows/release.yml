@@ -40,16 +40,12 @@ jobs:
       - run: ./gradlew assembleRelease
       - name: Verify built version matches tag
         run: |
-          BUILT_VERSION=$(aapt2 dump badging app/build/outputs/apk/release/app-release*.apk | sed -n "s/^package: name='\\([^']*\\).*$/\\1/p" | head -1)
-          # Strip .debug suffix if present (debug-only, shouldn't happen in release)
-          BUILT_VERSION="${BUILT_VERSION%.debug}"
-          echo "Built versionName will be derived from tag; checking versionCode via aapt2"
-          BUILT_CODE=$(aapt2 dump badging app/build/outputs/apk/release/app-release*.apk | sed -n "s/^package: name='[^']*' versionCode='\\([0-9]*\\)' versionName='\\([^']*\\)'.*$/\\2/p" | head -1)
-          if [ "$BUILT_CODE" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Built versionName '$BUILT_CODE' does not match tag '$GITHUB_REF_NAME'. The androidgitversion plugin may not see the tag (shallow checkout?)."
+          BUILT_NAME=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
+          if [ "$BUILT_NAME" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Built versionName '$BUILT_NAME' does not match tag '$GITHUB_REF_NAME'. The androidgitversion plugin may not see the tag (shallow checkout?)."
             exit 1
           fi
-          echo "Version match OK: $BUILT_CODE"
+          echo "Version match OK: $BUILT_NAME"
       - name: Collect APK
         id: apk
         run: |
