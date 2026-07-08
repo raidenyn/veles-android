@@ -22,9 +22,16 @@ jobs:
       - run: ./gradlew assembleRelease
       - name: Rename APK
         run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
           APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
-          mv "$APK" "app/build/outputs/apk/release/Veles-PR${{ github.event.pull_request.number || 'manual' }}-${SHORT_SHA}.apk"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            NAME="Veles-PR${{ github.event.pull_request.number }}-${SHORT_SHA}.apk"
+          else
+            VERSION=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
+            NAME="Veles-v${VERSION}-release.apk"
+          fi
+          mv "$APK" "app/build/outputs/apk/release/$NAME"
+          echo "Renamed to $NAME"
       - uses: actions/upload-artifact@v7
         with:
           name: release-apk
