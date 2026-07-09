@@ -14,6 +14,14 @@ class CopyDataReceiver(
     companion object {
         const val EXTRA_COPY_TEXT = "CopyText"
         const val EXTRA_NOTIFICATION_ID = "NotificationId"
+        internal const val CLIP_LABEL = "OTP"
+        private const val CLEAR_DELAY_MILLIS = 2 * 60 * 1000L
+
+        internal fun shouldClearClip(clip: ClipData?, expectedText: String): Boolean {
+            if (clip == null || clip.itemCount == 0) return false
+            if (clip.description.label != CLIP_LABEL) return false
+            return clip.getItemAt(0).text?.toString() == expectedText
+        }
     }
 
     override fun onReceive(
