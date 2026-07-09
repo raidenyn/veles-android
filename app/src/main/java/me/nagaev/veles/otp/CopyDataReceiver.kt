@@ -13,6 +13,7 @@ class CopyDataReceiver(
 ) : BroadcastReceiver() {
     companion object {
         const val EXTRA_COPY_TEXT = "CopyText"
+        const val EXTRA_NOTIFICATION_ID = "NotificationId"
     }
 
     override fun onReceive(
