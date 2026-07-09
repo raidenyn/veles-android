@@ -18,7 +18,6 @@ import java.math.BigDecimal
 class UserNotifierOtpMessageHandlerTest {
     private val defaultMessage =
         OtpMessage(
-            id = 1,
             otp = Otp(value = "123456", id = "123"),
             pay = Money(amount = BigDecimal(100), currencyCode = "USD"),
             merchant = "Test Merchant",
@@ -46,14 +45,12 @@ class UserNotifierOtpMessageHandlerTest {
 
         val message1 =
             OtpMessage(
-                id = 1,
                 otp = Otp(value = "111111", id = "1"),
                 pay = Money(amount = BigDecimal(100), currencyCode = "USD"),
                 merchant = "Merchant One",
             )
         val message2 =
             OtpMessage(
-                id = 2,
                 otp = Otp(value = "222222", id = "2"),
                 pay = Money(amount = BigDecimal(200), currencyCode = "USD"),
                 merchant = "Merchant Two",

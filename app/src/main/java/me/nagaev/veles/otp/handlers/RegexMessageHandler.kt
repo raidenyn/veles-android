@@ -30,7 +30,6 @@ class RegexMessageHandler(
         return if (otp != null && money != null && merchant != null) {
             notifier.onOtpMessageReceived(
                 OtpMessage(
-                    id = message.key.hashCode(),
                     otp = otp,
                     pay = money,
                     merchant = merchant,
