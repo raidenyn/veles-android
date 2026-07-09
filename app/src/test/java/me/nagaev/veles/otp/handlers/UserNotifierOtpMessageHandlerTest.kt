@@ -101,6 +101,51 @@ class UserNotifierOtpMessageHandlerTest {
     }
 
     @Test
+    fun `Copy PendingIntent request code matches the posted notification id`() {
+        val message = defaultMessage.copy()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val handler = UserNotifierOtpMessageHandler(context)
+        handler.onOtpMessageReceived(message)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = shadowOf(notificationManager).getNotification(message.hashCode())
+            ?: error("Expected a notification posted for message")
+
+        val pendingIntent = notification.actions.first().actionIntent
+        val shadowPendingIntent = shadowOf(pendingIntent)
+
+        // Regression guard for the #10 collision: the Copy PendingIntent's request code
+        // must be tied to the exact id passed to notify(), so two notifications that are
+        // distinct in the tray always have distinct Copy actions, and can never fall back
+        // to a value derived from the source notification's (possibly-reused) key.
+        assertEquals(
+            "Copy PendingIntent request code must match the id passed to notify()",
+            message.hashCode(),
+            shadowPendingIntent.requestCode,
+        )
+    }
+
+    @Test
+    fun `Copy intent data URI encodes the notification id`() {
+        val message = defaultMessage.copy()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val handler = UserNotifierOtpMessageHandler(context)
+        handler.onOtpMessageReceived(message)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = shadowOf(notificationManager).getNotification(message.hashCode())
+            ?: error("Expected a notification posted for message")
+
+        val pendingIntent = notification.actions.first().actionIntent
+        val savedIntent = shadowOf(pendingIntent).savedIntent
+
+        assertEquals(
+            "veles://otp/${message.hashCode()}",
+            savedIntent.data.toString(),
+        )
+    }
+
+    @Test
     fun `Copy intent carries the notification id`() {
         val message = defaultMessage.copy()
         val context = ApplicationProvider.getApplicationContext<Context>()
