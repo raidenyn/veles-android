@@ -23,6 +23,7 @@ class UserNotifierOtpMessageHandler @Inject constructor(
     override fun onOtpMessageReceived(message: OtpMessage) {
         val text = "OTP: ${message.otp.value}, Pay: ${message.pay.amount} ${message.pay.currencyCode}"
         val title = message.merchant
+        val notificationId = message.hashCode()
 
         val copyIntent =
             Intent(context, CopyDataReceiver::class.java).apply {
@@ -33,6 +34,7 @@ class UserNotifierOtpMessageHandler @Inject constructor(
                 // them, making the older notification's Copy action copy the newest OTP).
                 data = Uri.parse("veles://otp/${message.id}")
                 putExtra(CopyDataReceiver.EXTRA_COPY_TEXT, message.otp.value)
+                putExtra(CopyDataReceiver.EXTRA_NOTIFICATION_ID, notificationId)
             }
         val copyPendingIntent: PendingIntent =
             PendingIntent.getBroadcast(
@@ -60,8 +62,7 @@ class UserNotifierOtpMessageHandler @Inject constructor(
         with(NotificationManagerCompat.from(context)) {
             if (areNotificationsEnabled()) {
                 tryCreateNotificationChannel()
-                // notificationId is a unique int for each notification that you must define.
-                notify(message.hashCode(), builder.build())
+                notify(notificationId, builder.build())
             }
         }
     }

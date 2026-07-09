@@ -101,6 +101,27 @@ class UserNotifierOtpMessageHandlerTest {
     }
 
     @Test
+    fun `Copy intent carries the notification id`() {
+        val message = defaultMessage.copy()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val handler = UserNotifierOtpMessageHandler(context)
+        handler.onOtpMessageReceived(message)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = shadowOf(notificationManager).getNotification(message.hashCode())
+            ?: error("Expected a notification posted for message")
+
+        val pendingIntent = notification.actions.first().actionIntent
+        val savedIntent = shadowOf(pendingIntent).savedIntent
+
+        assertEquals(
+            "Copy intent must carry the notification id used to post it",
+            message.hashCode(),
+            savedIntent.getIntExtra(CopyDataReceiver.EXTRA_NOTIFICATION_ID, -1),
+        )
+    }
+
+    @Test
     fun `Notification channel creation`() {
         // Ensure that the notification channel is created correctly
         // when it doesn't exist.
