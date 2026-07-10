@@ -21,7 +21,6 @@ class UserNotifierOtpMessageHandlerTest {
 
     private val defaultMessage =
         OtpMessage(
-            id = 1,
             otp = Otp(value = "123456", id = "123"),
             pay = Money(amount = BigDecimal(100), currencyCode = "USD"),
             merchant = "Test Merchant",

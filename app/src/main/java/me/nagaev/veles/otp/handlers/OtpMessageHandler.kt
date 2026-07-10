@@ -7,7 +7,6 @@ interface OtpMessageHandler {
 }
 
 data class OtpMessage(
-    val id: Int,
     val otp: Otp,
     val pay: Money,
     val merchant: String,

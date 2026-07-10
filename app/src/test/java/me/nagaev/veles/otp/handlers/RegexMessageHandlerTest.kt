@@ -36,7 +36,6 @@ class RegexMessageHandlerTest {
         verify {
             otpMessageHandler.onOtpMessageReceived(
                 OtpMessage(
-                    id = defaultMessage.key.hashCode(),
                     otp = Otp(value = "079853", id = "HStX"),
                     pay = Money(amount = BigDecimal("319.93"), currencyCode = "THB"),
                     merchant = "AMP*AIS SERVICES",
@@ -166,7 +165,6 @@ class RegexMessageHandlerTest {
         verify {
             otpMessageHandler.onOtpMessageReceived(
                 OtpMessage(
-                    id = defaultMessage.key.hashCode(),
                     otp = Otp(value = "079853", id = "HStX"),
                     pay = Money(amount = BigDecimal("999999999999999.9999"), currencyCode = "THB"),
                     merchant = "AMP*AIS SERVICES",

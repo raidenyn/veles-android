@@ -36,7 +36,6 @@ class UobThaiRegexMessageHandlerTest {
         verify {
             otpMessageHandler.onOtpMessageReceived(
                 OtpMessage(
-                    id = defaultMessage.key.hashCode(),
                     otp = Otp(value = "511066", id = "OTP="),
                     pay = Money(amount = BigDecimal("600.00"), currencyCode = "THB"),
                     merchant = "WWWSFCINEMACITYCOMCORP",

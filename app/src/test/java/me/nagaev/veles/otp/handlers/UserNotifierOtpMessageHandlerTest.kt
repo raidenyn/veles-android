@@ -18,7 +18,6 @@ import java.math.BigDecimal
 class UserNotifierOtpMessageHandlerTest {
     private val defaultMessage =
         OtpMessage(
-            id = 1,
             otp = Otp(value = "123456", id = "123"),
             pay = Money(amount = BigDecimal(100), currencyCode = "USD"),
             merchant = "Test Merchant",
@@ -46,14 +45,12 @@ class UserNotifierOtpMessageHandlerTest {
 
         val message1 =
             OtpMessage(
-                id = 1,
                 otp = Otp(value = "111111", id = "1"),
                 pay = Money(amount = BigDecimal(100), currencyCode = "USD"),
                 merchant = "Merchant One",
             )
         val message2 =
             OtpMessage(
-                id = 2,
                 otp = Otp(value = "222222", id = "2"),
                 pay = Money(amount = BigDecimal(200), currencyCode = "USD"),
                 merchant = "Merchant Two",
@@ -97,6 +94,51 @@ class UserNotifierOtpMessageHandlerTest {
             "Newer notification's copy intent should carry its own OTP",
             "222222",
             shadowPendingIntent2.savedIntent.getStringExtra(CopyDataReceiver.EXTRA_COPY_TEXT),
+        )
+    }
+
+    @Test
+    fun `Copy PendingIntent request code matches the posted notification id`() {
+        val message = defaultMessage.copy()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val handler = UserNotifierOtpMessageHandler(context)
+        handler.onOtpMessageReceived(message)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = shadowOf(notificationManager).getNotification(message.hashCode())
+            ?: error("Expected a notification posted for message")
+
+        val pendingIntent = notification.actions.first().actionIntent
+        val shadowPendingIntent = shadowOf(pendingIntent)
+
+        // Regression guard for the #10 collision: the Copy PendingIntent's request code
+        // must be tied to the exact id passed to notify(), so two notifications that are
+        // distinct in the tray always have distinct Copy actions, and can never fall back
+        // to a value derived from the source notification's (possibly-reused) key.
+        assertEquals(
+            "Copy PendingIntent request code must match the id passed to notify()",
+            message.hashCode(),
+            shadowPendingIntent.requestCode,
+        )
+    }
+
+    @Test
+    fun `Copy intent data URI encodes the notification id`() {
+        val message = defaultMessage.copy()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val handler = UserNotifierOtpMessageHandler(context)
+        handler.onOtpMessageReceived(message)
+
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = shadowOf(notificationManager).getNotification(message.hashCode())
+            ?: error("Expected a notification posted for message")
+
+        val pendingIntent = notification.actions.first().actionIntent
+        val savedIntent = shadowOf(pendingIntent).savedIntent
+
+        assertEquals(
+            "veles://otp/${message.hashCode()}",
+            savedIntent.data.toString(),
         )
     }
 

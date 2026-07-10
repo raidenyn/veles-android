@@ -32,17 +32,20 @@ class UserNotifierOtpMessageHandler @Inject constructor(
                 // if two request codes ever collide the PendingIntents stay distinct and
                 // each keeps its own extras (FLAG_UPDATE_CURRENT would otherwise overwrite
                 // them, making the older notification's Copy action copy the newest OTP).
-                data = Uri.parse("veles://otp/${message.id}")
+                // Tied to notificationId (not the source notification's key) because the
+                // source key is not guaranteed unique across messages -- see #10.
+                data = Uri.parse("veles://otp/$notificationId")
                 putExtra(CopyDataReceiver.EXTRA_COPY_TEXT, message.otp.value)
                 putExtra(CopyDataReceiver.EXTRA_NOTIFICATION_ID, notificationId)
             }
         val copyPendingIntent: PendingIntent =
             PendingIntent.getBroadcast(
                 context,
-                // Unique request code per notification so each notification owns its own
-                // PendingIntent; otherwise FLAG_UPDATE_CURRENT would overwrite the older
-                // notification's extras and "Copy" would copy the newest OTP.
-                message.id,
+                // Same identity used for notify() below, so two notifications that are
+                // distinct in the tray always have distinct Copy PendingIntents, and vice
+                // versa. Do not derive this from the source notification's key/id/tag --
+                // those can repeat across distinct OTP messages (see #10).
+                notificationId,
                 copyIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
