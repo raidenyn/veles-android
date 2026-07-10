@@ -27,15 +27,14 @@ class OtpNotificationBuilderTest {
     private val testCurrency = "USD"
     private val testNotificationId = 42
 
-    private fun buildNotification(copied: Boolean) =
-        OtpNotificationBuilder(context).build(
-            notificationId = testNotificationId,
-            merchant = testMerchant,
-            otp = testOtp,
-            amountText = testAmount,
-            currencyCode = testCurrency,
-            copied = copied,
-        )
+    private fun buildNotification(copied: Boolean) = OtpNotificationBuilder(context).build(
+        notificationId = testNotificationId,
+        merchant = testMerchant,
+        otp = testOtp,
+        amountText = testAmount,
+        currencyCode = testCurrency,
+        copied = copied,
+    )
 
     @Test
     fun `Action label is Copy OTP when copied is false`() {

@@ -1,5 +1,6 @@
 package me.nagaev.veles.otp.handlers
 
+import android.annotation.SuppressLint
 import android.content.Context
 import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -9,6 +10,7 @@ class UserNotifierOtpMessageHandler @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : OtpMessageHandler {
 
+    @SuppressLint("MissingPermission")
     override fun onOtpMessageReceived(message: OtpMessage) {
         val notificationId = message.hashCode()
 

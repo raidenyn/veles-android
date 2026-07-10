@@ -1,5 +1,6 @@
 package me.nagaev.veles.otp
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipDescription
@@ -34,6 +35,7 @@ class CopyDataReceiver(
         }
     }
 
+    @SuppressLint("MissingPermission")
     override fun onReceive(
         context: Context?,
         intent: Intent?,
