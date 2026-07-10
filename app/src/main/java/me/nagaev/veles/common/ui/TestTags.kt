@@ -20,4 +20,7 @@ object TestTags {
     const val BANK_CONFIG_IMPORT_CONFIRM = "bank_config_import_confirm"
     const val BANK_CONFIG_IMPORT_CANCEL = "bank_config_import_cancel"
     const val BANK_CONFIG_EXPORT_CONFIRM = "bank_config_export_confirm"
+    const val BOTTOM_NAV_BAR = "bottom_nav_bar"
+    val BOTTOM_NAV_ITEM = { route: String -> "bottom_nav_item_$route" }
+    const val BANK_CONFIG_ADD_FAB = "bank_config_add_fab"
 }

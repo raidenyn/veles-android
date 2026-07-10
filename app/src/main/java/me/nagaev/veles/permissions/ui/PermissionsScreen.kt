@@ -2,14 +2,11 @@ package me.nagaev.veles.permissions.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -27,8 +24,6 @@ import me.nagaev.veles.permissions.viewmodal.PermissionsState
 fun PermissionsScreen(
     state: PermissionsState,
     actions: PermissionsActions,
-    onNavigateToTest: () -> Unit,
-    onNavigateToBankConfigs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -55,19 +50,6 @@ fun PermissionsScreen(
                 settingsLocation = state.redactionSettingsLocation,
                 onOpenSettings = actions.openRedactionSettings,
             )
-            Spacer(Modifier.height(4.dp))
-            TextButton(
-                onClick = onNavigateToTest,
-                modifier = Modifier.padding(horizontal = 10.dp),
-            ) {
-                Text("Test")
-            }
-            TextButton(
-                onClick = onNavigateToBankConfigs,
-                modifier = Modifier.padding(horizontal = 10.dp),
-            ) {
-                Text("Bank Configs")
-            }
             PermissionsList(
                 permissions = state.permissions,
                 actions = actions,
@@ -83,7 +65,5 @@ fun PermissionsScreenPreview() {
     PermissionsScreen(
         state = PermissionsState.Mocked,
         actions = PermissionsActions.Mocked,
-        onNavigateToTest = {},
-        onNavigateToBankConfigs = {},
     )
 }
