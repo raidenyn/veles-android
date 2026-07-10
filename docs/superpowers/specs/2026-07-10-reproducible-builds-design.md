@@ -114,6 +114,45 @@ digest, so external verifiers can independently confirm the published file.
   caveats (verification targets tags, not arbitrary commits; the rebuild clone needs full
   history and tags).
 - **README**: short "Verify your download" section under Privacy, linking to the doc.
+- `docs/reproducible-builds.md` also contains the **toolchain upgrade procedure** below, so
+  every future version bump keeps the build reproducible.
+
+### 5. Toolchain upgrade procedure
+
+Every pinned tool has a defined home; upgrading any of them follows one procedure. The pin
+locations:
+
+| Tool | Pinned in | How to bump |
+|---|---|---|
+| Gradle | `gradle/wrapper/gradle-wrapper.properties` | `./gradlew wrapper --gradle-version X.Y.Z` |
+| AGP, Kotlin, KSP, plugins, libraries | `gradle/libs.versions.toml` | Edit the catalog |
+| JDK | `.java-version` (read by CI `setup-java` and by `verify/Dockerfile`) | Edit the file |
+| Android build-tools / platform | `verify/Dockerfile` (+ `buildToolsVersion` in `app/build.gradle.kts` if the audit required pinning it) | Edit both in the same commit |
+| Docker base image | `verify/Dockerfile` (digest-pinned) | Update the digest |
+| `apksigcopier` | `verify/Dockerfile` | Edit the pin |
+
+Procedure for any bump:
+
+1. **Update all pin locations for that tool in a single commit** — the table above says which
+   files move together (e.g. a JDK bump touches only `.java-version` if the Dockerfile derives
+   from it; a build-tools bump touches the Dockerfile and possibly `app/build.gradle.kts`).
+2. **Re-verify determinism locally before merging:** build a release APK from the branch, then
+   run `verify/verify.sh` from the same checkout against it (or equivalently, two clean
+   container builds + byte-compare). A toolchain bump is exactly the kind of change that can
+   break reproducibility (new R8, new resource packer), so this check is not optional.
+3. Merge. The next release's **verify job is the enforcement gate** — if the local check was
+   skipped and the bump broke determinism, the release stays draft and the bump must be fixed
+   before anything ships.
+4. If the audit reveals a tool that produces nondeterministic output at the new version, pin
+   or configure around it and record the finding in `docs/reproducible-builds.md`.
+
+Key property that makes this safe for history: **verification of a tag uses that tag's own
+pins.** `verify/verify.sh` clones the repo at the requested tag inside the container, so the
+Gradle wrapper, version catalog, and gradle config in effect are the tag's own. The Docker
+image itself (JDK, SDK, apksigcopier) must likewise match the tag — so the documented rule is:
+**to verify release `X.Y.Z`, run `verify/verify.sh` from a checkout of tag `X.Y.Z`**, not from
+master. `docs/reproducible-builds.md` and the release-notes blurb state this explicitly.
+Old releases therefore remain verifiable forever, regardless of later toolchain bumps.
 
 ## Error handling
 
@@ -146,6 +185,8 @@ digest, so external verifiers can independently confirm the published file.
 - [ ] Tampering with one byte of the APK makes both verification paths fail.
 - [ ] `SHA256SUMS` attached to releases; `docs/reproducible-builds.md` published; README
       updated; release notes carry verification instructions.
+- [ ] Toolchain upgrade procedure (pin locations + re-verification steps) documented in
+      `docs/reproducible-builds.md`.
 
 ## Out of scope
 
