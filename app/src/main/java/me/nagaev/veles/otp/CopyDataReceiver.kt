@@ -12,9 +12,11 @@ import android.os.PersistableBundle
 import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.EntryPointAccessors
 import me.nagaev.veles.common.VelesLog
+import me.nagaev.veles.otp.handlers.OtpNotificationBuilder
 
 class CopyDataReceiver(
     private val loggerOverride: VelesLog? = null,
+    private val notificationBuilderOverride: OtpNotificationBuilder? = null,
 ) : BroadcastReceiver() {
     companion object {
         const val EXTRA_COPY_TEXT = "CopyText"
@@ -42,6 +44,9 @@ class CopyDataReceiver(
 
         val otp = intent?.getStringExtra(EXTRA_COPY_TEXT) ?: return
         val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+        val merchant = intent.getStringExtra(EXTRA_MERCHANT) ?: ""
+        val amountText = intent.getStringExtra(EXTRA_AMOUNT_TEXT) ?: ""
+        val currencyCode = intent.getStringExtra(EXTRA_CURRENCY_CODE) ?: ""
         val clipboardManager =
             context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
 
@@ -54,7 +59,17 @@ class CopyDataReceiver(
         logger.dCopiedOtp(otp)
 
         if (notificationId != -1) {
-            NotificationManagerCompat.from(context).cancel(notificationId)
+            val notificationBuilder =
+                notificationBuilderOverride ?: OtpNotificationBuilder(context)
+            val notification = notificationBuilder.build(
+                notificationId = notificationId,
+                merchant = merchant,
+                otp = otp,
+                amountText = amountText,
+                currencyCode = currencyCode,
+                copied = true,
+            )
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
         }
 
         Handler(Looper.getMainLooper()).postDelayed({
