@@ -22,7 +22,7 @@ import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.otp.handlers.Message
 import me.nagaev.veles.otp.handlers.MessageHandler
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
-import me.nagaev.veles.otp.handlers.UserNotifierOtpMessageHandler
+import me.nagaev.veles.otp.handlers.OtpNotificationBuilder
 import me.nagaev.veles.testing.TestNotificationSender
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -262,7 +262,7 @@ class NotificationListenerTest {
         every { sbn.packageName } returns ownPkg
         every { sbn.notification } returns notification
         notification.extras = bundle
-        every { notification.channelId } returns UserNotifierOtpMessageHandler.CHANNEL_ID
+        every { notification.channelId } returns OtpNotificationBuilder.CHANNEL_ID
         every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
 
         val testResultFlow = TestResultFlow()
