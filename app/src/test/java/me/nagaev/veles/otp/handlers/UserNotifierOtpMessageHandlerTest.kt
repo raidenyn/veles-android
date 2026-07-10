@@ -2,6 +2,7 @@ package me.nagaev.veles.otp.handlers
 
 import android.app.NotificationManager
 import android.content.Context
+import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
 import me.nagaev.veles.otp.CopyDataReceiver
 import org.junit.Assert.assertEquals
@@ -36,6 +37,30 @@ class UserNotifierOtpMessageHandlerTest {
         val shadowNotificationManager = shadowOf(notificationManager)
         val notifications = shadowNotificationManager.allNotifications
         assert(notifications.isNotEmpty()) { "Expected at least one notification to be posted" }
+    }
+
+    @Test
+    fun `Notification content text and title reflect the OtpMessage`() {
+        val message = defaultMessage.copy()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        val handler = UserNotifierOtpMessageHandler(context)
+        handler.onOtpMessageReceived(message)
+
+        val notification = shadowOf(notificationManager).getNotification(message.hashCode())
+            ?: error("Expected a notification posted for message")
+
+        assertEquals(
+            "Notification title must be the merchant",
+            "Test Merchant",
+            notification.extras.get(NotificationCompat.EXTRA_TITLE),
+        )
+        assertEquals(
+            "Notification text must contain OTP, amount, and currency",
+            "OTP: 123456, Pay: 100 USD",
+            notification.extras.get(NotificationCompat.EXTRA_TEXT),
+        )
     }
 
     @Test
