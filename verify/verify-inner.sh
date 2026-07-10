@@ -28,7 +28,7 @@ echo "==> Building unsigned release APK (no VELES_KEYSTORE_* in this environment
 REBUILT=app/build/outputs/apk/release/app-release-unsigned.apk
 if [ ! -f "$REBUILT" ]; then
   echo "ERROR: $REBUILT not found after build." >&2
-  exit 2
+  exit 1
 fi
 
 if [ -d /out ]; then

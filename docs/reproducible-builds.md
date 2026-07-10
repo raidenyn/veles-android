@@ -24,7 +24,7 @@ gh attestation verify veles-X.Y.Z.apk --repo raidenyn/veles-android
 Requires the [GitHub CLI](https://cli.github.com/). Output ends with
 "Verification succeeded!" and names the workflow and commit.
 
-## Path 2 — zero-trust rebuild (minutes, needs only Docker)
+## Path 2 — zero-trust rebuild (minutes, needs Docker + bash)
 
 ```bash
 git clone https://github.com/raidenyn/veles-android
@@ -36,8 +36,17 @@ verify/verify.sh /path/to/veles-X.Y.Z.apk X.Y.Z
 The script builds a pinned reference environment (exact JDK, Android SDK,
 build-tools), clones and rebuilds the tag inside it, and compares the result to
 your APK with [apksigcopier](https://github.com/obfusk/apksigcopier) — the same
-signature-stripping comparison F-Droid uses. Exit code 0 means verified; it
-prints both SHA-256 digests.
+signature-stripping comparison F-Droid uses. Exit codes:
+
+- **0** — verified (byte-identical or signature-stripped match)
+- **1** — mismatch (the released APK does not correspond to the source)
+- **2** — usage or pin error (bad arguments, missing file, Dockerfile/JDK pin mismatch, image build failure)
+
+It prints both SHA-256 digests on success or mismatch.
+
+Requirements: Docker, plus `bash`, `realpath`, `grep`, and `tr` on the host
+(`realpath` is absent on older macOS — install `coreutils` via Homebrew, or use
+`readlink -f` as a fallback).
 
 `SHA256SUMS` on each release lists the digests of the published artifacts.
 

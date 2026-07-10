@@ -5,17 +5,19 @@ on:
     tags:
       - "[0-9]+\\.[0-9]+\\.[0-9]+"
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
-
 jobs:
   build:
     name: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    outputs:
+      release_id: ${{ steps.create_draft.outputs.release_id }}
+      apk_sha256: ${{ steps.apk.outputs.apk_sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,6 +61,8 @@ jobs:
             echo "suffix= (unsigned)" >> "$GITHUB_OUTPUT"
           fi
           cp app/build/outputs/mapping/release/mapping.txt mapping.txt
+          APK_SHA256=$(sha256sum "veles-$GITHUB_REF_NAME.apk" | awk '{print $1}')
+          echo "apk_sha256=$APK_SHA256" >> "$GITHUB_OUTPUT"
           sha256sum "veles-$GITHUB_REF_NAME.apk" mapping.txt > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
@@ -73,7 +77,14 @@ jobs:
           name: release-apk
           path: veles-${{ github.ref_name }}.apk
           if-no-files-found: error
+      - name: Guard against pre-existing release
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::A release for tag $GITHUB_REF_NAME already exists. Aborting to avoid duplicate drafts." >&2
+            exit 1
+          fi
       - name: Create draft GitHub Release
+        id: create_draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -84,6 +95,9 @@ jobs:
             --title "Veles $GITHUB_REF_NAME${{ steps.apk.outputs.suffix }}" \
             --draft \
             --generate-notes
+          RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq '.id')
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          echo "Created draft release ID: $RELEASE_ID"
       - name: Append verification instructions to release notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,6 +123,8 @@ jobs:
     name: verify reproducibility
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       # Default checkout of the tag ref — brings the TAG'S OWN verify/ toolkit and pins.
       - uses: actions/checkout@v7
@@ -122,10 +138,28 @@ jobs:
 
   publish:
     name: publish
-    needs: verify
+    needs: [build, verify]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_ID: ${{ needs.build.outputs.release_id }}
+      EXPECTED_SHA256: ${{ needs.build.outputs.apk_sha256 }}
     steps:
-      - name: Publish the verified draft release
+      - name: Verify draft asset matches build digest, then publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        run: |
+          # Download the draft release's APK asset and compare its sha256
+          # against the digest computed by the build job. This closes the
+          # artifact-vs-asset gap before making the release public.
+          gh release download "$GITHUB_REF_NAME" --pattern "veles-$GITHUB_REF_NAME.apk" --dir "$RUNNER_TEMP/draft-check"
+          DRAFT_SHA256=$(sha256sum "$RUNNER_TEMP/draft-check/veles-$GITHUB_REF_NAME.apk" | awk '{print $1}')
+          if [ "$DRAFT_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "::error::Draft asset sha256 ($DRAFT_SHA256) does not match build digest ($EXPECTED_SHA256). Aborting publish." >&2
+            exit 1
+          fi
+          echo "Draft asset sha256 matches build digest: $DRAFT_SHA256"
+          # Publish by release ID (unambiguous), not by tag.
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f draft=false
+          echo "Published release $GITHUB_REF_NAME (ID: $RELEASE_ID)"
