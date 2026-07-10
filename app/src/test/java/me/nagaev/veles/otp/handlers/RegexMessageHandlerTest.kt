@@ -231,4 +231,32 @@ class RegexMessageHandlerTest {
         assert(result.status == MessageHandlingResult.Status.ACCEPTED)
         assert(result.matchedTemplateName == HANDLER_NAME)
     }
+
+    @Test
+    fun `matched result carries the extracted otp message`() {
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+        every { otpMessageHandler.onOtpMessageReceived(any()) } returns Unit
+
+        val result = handler(otpMessageHandler).onMessageReceived(defaultMessage)
+
+        assert(
+            result.otpMessage ==
+                OtpMessage(
+                    otp = Otp(value = "079853", id = "HStX"),
+                    pay = Money(amount = BigDecimal("319.93"), currencyCode = "THB"),
+                    merchant = "AMP*AIS SERVICES",
+                ),
+        )
+    }
+
+    @Test
+    fun `filtered result carries no otp message`() {
+        val message = defaultMessage.copy(text = "")
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+        every { otpMessageHandler.onOtpMessageReceived(any()) } returns Unit
+
+        val result = handler(otpMessageHandler).onMessageReceived(message)
+
+        assert(result.otpMessage == null)
+    }
 }

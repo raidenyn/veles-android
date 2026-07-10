@@ -28,14 +28,14 @@ class RegexMessageHandler(
             }
 
         return if (otp != null && money != null && merchant != null) {
-            notifier.onOtpMessageReceived(
+            val otpMessage =
                 OtpMessage(
                     otp = otp,
                     pay = money,
                     merchant = merchant,
-                ),
-            )
-            MessageHandlingResult(MessageHandlingResult.Status.ACCEPTED, name)
+                )
+            notifier.onOtpMessageReceived(otpMessage)
+            MessageHandlingResult(MessageHandlingResult.Status.ACCEPTED, name, otpMessage)
         } else {
             MessageHandlingResult.FILTERED
         }
