@@ -101,4 +101,8 @@ prefix. Pushing a `X.Y.Z` tag triggers `.github/workflows/release.yml`, which bu
 release APK and creates a GitHub Release — signed if the `KEYSTORE_BASE64`,
 `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` secrets exist, unsigned otherwise.
 `release-build.yml` runs `assembleRelease` automatically on master pushes and as an opt-in
-on PRs (add the `release-build` label); it can also be triggered manually from master.
+on PRs (add the `release-build` label); it can also be triggered manually via
+`workflow_dispatch`, which additionally publishes a prerelease GitHub Release (tagged with
+the derived version, titled "(manual build)") — re-dispatching at the same commit replaces
+the previous manual release, but the job aborts rather than overwriting a real tag-triggered
+release.

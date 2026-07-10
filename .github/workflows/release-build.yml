@@ -11,6 +11,9 @@ concurrency:
   group: release-build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   release-build:
     name: release-build
@@ -56,6 +59,7 @@ jobs:
           else
             VERSION=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
             NAME="Veles-${VERSION}-release.apk"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           fi
           mv "$APK" "app/build/outputs/apk/release/$NAME"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
@@ -67,3 +71,33 @@ jobs:
             app/build/outputs/apk/release/Veles-*.apk
             app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
+      - name: Create GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.apk.outputs.version }}"
+          if [ "$HAS_KEYSTORE" = "true" ]; then
+            SUFFIX=""
+          else
+            SUFFIX=" (unsigned)"
+          fi
+
+          if EXISTING_JSON=$(gh release view "$VERSION" --json isPrerelease 2>/dev/null); then
+            IS_PRERELEASE=$(echo "$EXISTING_JSON" | jq -r '.isPrerelease')
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              echo "Replacing previous manual release for $VERSION"
+              gh release delete "$VERSION" --cleanup-tag --yes
+            else
+              echo "::error::A real (non-prerelease) release already exists for version $VERSION. Refusing to overwrite it with a manual build. Push new commits before re-dispatching."
+              exit 1
+            fi
+          fi
+
+          gh release create "$VERSION" \
+            "app/build/outputs/apk/release/${{ steps.apk.outputs.name }}" \
+            "app/build/outputs/mapping/release/mapping.txt" \
+            --title "Veles $VERSION (manual build)$SUFFIX" \
+            --prerelease \
+            --generate-notes \
+            --target "$GITHUB_SHA"
