@@ -1,5 +1,6 @@
 package me.nagaev.veles.permissions.ui.components
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,13 +14,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import me.nagaev.veles.R
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.viewmodal.Permission
 import me.nagaev.veles.permissions.viewmodal.RequestPermission
 import me.nagaev.veles.permissions.viewmodal.RevokePermission
+
+fun getPermissionTitle(type: PermissionType): Int = when (type) {
+    PermissionType.ACCESS_NOTIFICATIONS -> R.string.access_notification_permission_title
+    PermissionType.SEND_NOTIFICATIONS -> R.string.send_notification_permission_title
+}
 
 fun getPermissionDescription(type: PermissionType): Int = when (type) {
     PermissionType.ACCESS_NOTIFICATIONS -> R.string.access_notification_permission_description
@@ -33,6 +41,7 @@ fun AccessNotificationPermission(
     revokePermission: RevokePermission,
 ) {
     Card(
+        shape = MaterialTheme.shapes.small,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -41,16 +50,22 @@ fun AccessNotificationPermission(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                modifier = Modifier
-                    .weight(1f),
-                text = stringResource(id = getPermissionDescription(permission.type)),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(id = getPermissionTitle(permission.type)),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(id = getPermissionDescription(permission.type)),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             SwitchWithLoader(
                 modifier = Modifier.wrapContentSize().testTag(TestTags.PERMISSION_STATUS(permission.type)),
                 checked = permission.granted,
