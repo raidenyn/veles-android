@@ -1,26 +1,38 @@
 package me.nagaev.veles.otp.config.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import me.nagaev.veles.otp.config.viewmodel.BankConfigEditState
 
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "LongMethod")
 @Composable
 fun BankConfigEditScreen(
     state: BankConfigEditState,
@@ -44,12 +56,27 @@ fun BankConfigEditScreen(
             .statusBarsPadding()
             .verticalScroll(rememberScrollState()),
     ) {
-        Text(
-            text = if (isNew) "New Bank Config" else "Edit Bank Config",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(vertical = 10.dp),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(vertical = 8.dp),
+        ) {
+            IconButton(
+                onClick = onNavigateBack,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = if (isNew) "New Template" else "Edit Template",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
         OutlinedTextField(
             value = state.name,
             onValueChange = onNameChanged,
@@ -59,40 +86,69 @@ fun BankConfigEditScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
+        RegexField(
+            caption = "OTP regex — group 1: id, group 2: code",
             value = state.otpRegex,
             onValueChange = onOtpRegexChanged,
-            label = { Text("OTP Regex") },
-            isError = state.otpRegexError != null,
-            supportingText = state.otpRegexError?.let { error -> { Text(error) } },
-            modifier = Modifier.fillMaxWidth(),
+            label = "OTP Regex",
+            error = state.otpRegexError,
         )
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
+        RegexField(
+            caption = "Money regex — group 1: currency, group 2: amount",
             value = state.moneyRegex,
             onValueChange = onMoneyRegexChanged,
-            label = { Text("Money Regex") },
-            isError = state.moneyRegexError != null,
-            supportingText = state.moneyRegexError?.let { error -> { Text(error) } },
-            modifier = Modifier.fillMaxWidth(),
+            label = "Money Regex",
+            error = state.moneyRegexError,
         )
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
+        RegexField(
+            caption = "Merchant regex — group 1: merchant name",
             value = state.merchantRegex,
             onValueChange = onMerchantRegexChanged,
-            label = { Text("Merchant Regex") },
-            isError = state.merchantRegexError != null,
-            supportingText = state.merchantRegexError?.let { error -> { Text(error) } },
-            modifier = Modifier.fillMaxWidth(),
+            label = "Merchant Regex",
+            error = state.merchantRegexError,
         )
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = onSave,
             enabled = !state.isSaving,
+            shape = MaterialTheme.shapes.small,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Save")
         }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun RegexField(
+    caption: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    error: String?,
+) {
+    Column {
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label) },
+            textStyle = LocalTextStyle.current.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+            ),
+            isError = error != null,
+            supportingText = error?.let { message -> { Text(message) } },
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
