@@ -37,7 +37,11 @@ import me.nagaev.veles.BuildConfig
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
+import me.nagaev.veles.otp.handlers.Money
+import me.nagaev.veles.otp.handlers.Otp
+import me.nagaev.veles.otp.handlers.OtpMessage
 import me.nagaev.veles.testing.viewmodel.TestState
+import java.math.BigDecimal
 
 private const val RECEIVED_TEXT_ALPHA = 0.75f
 
@@ -262,6 +266,11 @@ fun TestScreenPreview() {
                 handlingResult = MessageHandlingResult(
                     MessageHandlingResult.Status.ACCEPTED,
                     "UOB Thai",
+                    OtpMessage(
+                        otp = Otp(value = "511066", id = "VjKp"),
+                        pay = Money(amount = BigDecimal("600.00"), currencyCode = "THB"),
+                        merchant = "WWWSFCINEMACITYCOMCORP",
+                    ),
                 ),
                 receivedText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp.",
                 receivedTitle = "UOB",
