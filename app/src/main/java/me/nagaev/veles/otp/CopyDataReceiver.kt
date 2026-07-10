@@ -19,6 +19,9 @@ class CopyDataReceiver(
     companion object {
         const val EXTRA_COPY_TEXT = "CopyText"
         const val EXTRA_NOTIFICATION_ID = "NotificationId"
+        const val EXTRA_MERCHANT = "Merchant"
+        const val EXTRA_AMOUNT_TEXT = "AmountText"
+        const val EXTRA_CURRENCY_CODE = "CurrencyCode"
         internal const val CLIP_LABEL = "OTP"
         private const val CLEAR_DELAY_MILLIS = 2 * 60 * 1000L
 
