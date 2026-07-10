@@ -1,21 +1,33 @@
 package me.nagaev.veles.otp.config.ui
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -25,15 +37,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsState
 import me.nagaev.veles.otp.config.viewmodel.ExportSelection
 import me.nagaev.veles.otp.config.viewmodel.ImportReview
 
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "LongMethod")
 @Composable
 fun BankConfigsScreen(
     state: BankConfigsState,
@@ -59,25 +75,39 @@ fun BankConfigsScreen(
                 .padding(horizontal = 16.dp)
                 .statusBarsPadding(),
         ) {
-            Text(
-                text = "Bank Configs",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 10.dp),
-            )
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 20.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onAdd) { Text("Add") }
-                TextButton(
-                    onClick = onExport,
-                    modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_BUTTON),
-                ) { Text("Export") }
-                TextButton(
+                Text(
+                    text = "Bank Templates",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
                     onClick = onImport,
                     modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_BUTTON),
-                ) { Text("Import") }
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.FileDownload,
+                        contentDescription = "Import templates",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(
+                    onClick = onExport,
+                    modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_BUTTON),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.FileUpload,
+                        contentDescription = "Export templates",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             if (state.isLoading) {
                 CircularProgressIndicator(
@@ -98,11 +128,26 @@ fun BankConfigsScreen(
             }
         }
 
+        FloatingActionButton(
+            onClick = onAdd,
+            shape = RoundedCornerShape(16.dp),
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .testTag(TestTags.BANK_CONFIG_ADD_FAB),
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Add template")
+        }
+
         if (state.deleteTarget != null) {
             AlertDialog(
                 onDismissRequest = onCancelDelete,
+                shape = RoundedCornerShape(8.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                 title = { Text("Delete \"${state.deleteTarget.name}\"?") },
-                text = { Text("This bank config will be permanently removed.") },
+                text = { Text("This template will be permanently removed.") },
                 confirmButton = {
                     TextButton(onClick = onConfirmDelete) { Text("Delete") }
                 },
@@ -132,6 +177,8 @@ fun BankConfigsScreen(
         if (state.message != null) {
             AlertDialog(
                 onDismissRequest = onDismissMessage,
+                shape = RoundedCornerShape(8.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                 confirmButton = {
                     TextButton(onClick = onDismissMessage) { Text("OK") }
                 },
@@ -151,8 +198,10 @@ private fun ExportSelectionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(8.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_DIALOG),
-        title = { Text("Export configs") },
+        title = { Text("Export templates") },
         text = {
             Column {
                 selection.items.forEach { name ->
@@ -191,8 +240,10 @@ private fun ImportReviewDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(8.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_DIALOG),
-        title = { Text("Import ${review.totalConfigs} configs?") },
+        title = { Text("Import ${review.totalConfigs} templates?") },
         text = {
             Column {
                 if (review.toInsert.isNotEmpty()) {
@@ -222,28 +273,80 @@ private fun ImportReviewDialog(
     )
 }
 
+private const val REGEX_PREVIEW_MAX_CHARS = 30
+
 @Composable
 private fun BankConfigRow(
     config: BankHandlerConfig,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Row(
+    Card(
+        shape = MaterialTheme.shapes.small,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(vertical = 4.dp)
+            .clickable(onClick = onEdit),
     ) {
-        Text(
-            text = config.name,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(onClick = onEdit) {
-            Icon(Icons.Default.Edit, contentDescription = "Edit ${config.name}")
-        }
-        IconButton(onClick = onDelete) {
-            Icon(Icons.Default.Delete, contentDescription = "Delete ${config.name}")
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = CircleShape,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = config.name.take(1).uppercase(),
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = config.name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = config.otpRegex.take(REGEX_PREVIEW_MAX_CHARS),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier.size(34.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Edit,
+                    contentDescription = "Edit ${config.name}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(34.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Delete ${config.name}",
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }
