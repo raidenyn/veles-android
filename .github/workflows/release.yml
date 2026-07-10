@@ -7,10 +7,12 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
-  release:
-    name: release
+  build:
+    name: build
     runs-on: ubuntu-latest
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
@@ -46,7 +48,7 @@ jobs:
             exit 1
           fi
           echo "Version match OK: $BUILT_NAME"
-      - name: Collect APK
+      - name: Collect artifacts and checksums
         id: apk
         run: |
           if [ "$HAS_KEYSTORE" = "true" ]; then
@@ -56,12 +58,74 @@ jobs:
             cp app/build/outputs/apk/release/app-release-unsigned.apk "veles-$GITHUB_REF_NAME.apk"
             echo "suffix= (unsigned)" >> "$GITHUB_OUTPUT"
           fi
-      - name: Create GitHub Release
+          cp app/build/outputs/mapping/release/mapping.txt mapping.txt
+          sha256sum "veles-$GITHUB_REF_NAME.apk" mapping.txt > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            veles-${{ github.ref_name }}.apk
+            mapping.txt
+      - name: Upload APK for the verify job
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-apk
+          path: veles-${{ github.ref_name }}.apk
+          if-no-files-found: error
+      - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             "veles-$GITHUB_REF_NAME.apk" \
-            "app/build/outputs/mapping/release/mapping.txt" \
+            mapping.txt \
+            SHA256SUMS \
             --title "Veles $GITHUB_REF_NAME${{ steps.apk.outputs.suffix }}" \
+            --draft \
             --generate-notes
+      - name: Append verification instructions to release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            gh release view "$GITHUB_REF_NAME" --json body -q .body
+            echo
+            echo "## Verify this download"
+            echo
+            echo "One-liner (trusts GitHub):"
+            echo '```'
+            echo "gh attestation verify veles-$GITHUB_REF_NAME.apk --repo $GITHUB_REPOSITORY"
+            echo '```'
+            echo "Zero-trust rebuild (needs only Docker; run from a checkout of tag $GITHUB_REF_NAME):"
+            echo '```'
+            echo "verify/verify.sh veles-$GITHUB_REF_NAME.apk $GITHUB_REF_NAME"
+            echo '```'
+            echo "Details: docs/reproducible-builds.md in this repo."
+          } > notes.md
+          gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+
+  verify:
+    name: verify reproducibility
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      # Default checkout of the tag ref — brings the TAG'S OWN verify/ toolkit and pins.
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-apk
+      - name: Rebuild from source and compare
+        run: |
+          VELES_REPO_URL="https://github.com/$GITHUB_REPOSITORY" \
+            verify/verify.sh "veles-$GITHUB_REF_NAME.apk" "$GITHUB_REF_NAME"
+
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the verified draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
