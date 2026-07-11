@@ -19,6 +19,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 
+object Routes {
+    const val PERMISSIONS = "permissions"
+    const val BANK_CONFIGS = "bank-configs"
+    const val TEST = "test"
+    const val BANK_CONFIG_EDIT = "bank-config-edit?id={id}"
+}
+
 data class BottomNavDestination(
     val route: String,
     val label: String,
@@ -27,10 +34,12 @@ data class BottomNavDestination(
 
 val bottomNavDestinations =
     listOf(
-        BottomNavDestination(route = "permissions", label = "Home", icon = Icons.Filled.Home),
-        BottomNavDestination(route = "bank-configs", label = "Templates", icon = Icons.AutoMirrored.Filled.ListAlt),
-        BottomNavDestination(route = "test", label = "Test", icon = Icons.Filled.Science),
+        BottomNavDestination(route = Routes.PERMISSIONS, label = "Home", icon = Icons.Filled.Home),
+        BottomNavDestination(route = Routes.BANK_CONFIGS, label = "Templates", icon = Icons.AutoMirrored.Filled.ListAlt),
+        BottomNavDestination(route = Routes.TEST, label = "Test", icon = Icons.Filled.Science),
     )
+
+val topLevelRoutes = bottomNavDestinations.map { it.route }.toSet()
 
 @Composable
 fun VelesBottomBar(

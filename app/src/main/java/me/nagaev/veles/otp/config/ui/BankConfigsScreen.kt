@@ -1,9 +1,9 @@
 package me.nagaev.veles.otp.config.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -116,7 +116,9 @@ fun BankConfigsScreen(
                         .padding(top = 32.dp),
                 )
             } else {
-                LazyColumn {
+                LazyColumn(
+                    contentPadding = PaddingValues(bottom = 88.dp),
+                ) {
                     items(state.configs, key = { it.id }) { config ->
                         BankConfigRow(
                             config = config,
@@ -168,7 +170,7 @@ fun BankConfigsScreen(
 
         if (state.importReview != null) {
             ImportReviewDialog(
-                review = state.importReview!!,
+                review = state.importReview,
                 onConfirm = onConfirmImport,
                 onDismiss = onCancelImport,
             )
@@ -183,7 +185,7 @@ fun BankConfigsScreen(
                     TextButton(onClick = onDismissMessage) { Text("OK") }
                 },
                 title = { Text("Veles") },
-                text = { Text(state.message!!) },
+                text = { Text(state.message) },
             )
         }
     }
@@ -273,8 +275,6 @@ private fun ImportReviewDialog(
     )
 }
 
-private const val REGEX_PREVIEW_MAX_CHARS = 30
-
 @Composable
 private fun BankConfigRow(
     config: BankHandlerConfig,
@@ -282,14 +282,14 @@ private fun BankConfigRow(
     onDelete: () -> Unit,
 ) {
     Card(
+        onClick = onEdit,
         shape = MaterialTheme.shapes.small,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clickable(onClick = onEdit),
+            .padding(vertical = 4.dp),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -319,7 +319,7 @@ private fun BankConfigRow(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = config.otpRegex.take(REGEX_PREVIEW_MAX_CHARS),
+                    text = config.otpRegex,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -26,8 +26,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import me.nagaev.veles.common.ui.Routes
 import me.nagaev.veles.common.ui.VelesBottomBar
 import me.nagaev.veles.common.ui.theme.VelesTheme
+import me.nagaev.veles.common.ui.topLevelRoutes
 import me.nagaev.veles.otp.config.ui.BankConfigEditScreen
 import me.nagaev.veles.otp.config.ui.BankConfigsScreen
 import me.nagaev.veles.otp.config.viewmodel.BankConfigEditViewModel
@@ -36,8 +38,6 @@ import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
 import me.nagaev.veles.testing.ui.TestScreen
 import me.nagaev.veles.testing.viewmodel.TestViewModel
-
-private val topLevelRoutes = setOf("permissions", "bank-configs", "test")
 
 @Composable
 fun VelesPermissionsApp(
@@ -86,16 +86,16 @@ private fun VelesNavHost(
 ) {
     NavHost(
         navController = navController,
-        startDestination = "permissions",
+        startDestination = Routes.PERMISSIONS,
         modifier = modifier,
     ) {
-        composable("permissions") {
+        composable(Routes.PERMISSIONS) {
             PermissionsScreen(
                 state = permissionsState,
                 actions = permissionsActions,
             )
         }
-        composable("test") {
+        composable(Routes.TEST) {
             val testViewModel: TestViewModel = hiltViewModel()
             val testState by testViewModel.uiState.collectAsStateWithLifecycle()
             TestScreen(
@@ -106,7 +106,7 @@ private fun VelesNavHost(
                 onLogRawContentToggled = testViewModel::onLogRawContentToggled,
             )
         }
-        composable("bank-configs") {
+        composable(Routes.BANK_CONFIGS) {
             val context = LocalContext.current
             val vm: BankConfigsViewModel = hiltViewModel()
             val state by vm.state.collectAsStateWithLifecycle()
@@ -156,7 +156,7 @@ private fun VelesNavHost(
             )
         }
         composable(
-            route = "bank-config-edit?id={id}",
+            route = Routes.BANK_CONFIG_EDIT,
             arguments = listOf(
                 navArgument("id") {
                     type = NavType.LongType

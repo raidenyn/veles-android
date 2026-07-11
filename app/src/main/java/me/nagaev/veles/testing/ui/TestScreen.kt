@@ -218,6 +218,9 @@ private fun NoMatchCard(
                 receivedText = result.receivedText,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Limitation: TestResult does not record the text that was sent, so the
+            // comparison uses the current inputText. Editing the input after a send
+            // can show a false redaction hint over a stale result.
             if (result.receivedText != typedText) {
                 Spacer(Modifier.height(8.dp))
                 Text(
