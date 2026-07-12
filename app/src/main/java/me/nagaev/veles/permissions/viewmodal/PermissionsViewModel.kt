@@ -171,27 +171,30 @@ class PermissionsViewModel @AssistedInject constructor(
             isVerifying = true
             _uiState.value = uiState.value.copy(sensitiveNotifications = SensitiveNotificationsUiState.Verifying)
             viewModelScope.launch {
-                testResultFlow.current.value = null
-                val sent = testNotificationSender.postProbe()
-                val received =
-                    withTimeoutOrNull(VERIFY_TIMEOUT_MS) {
-                        testResultFlow.current.filterNotNull().first()
+                try {
+                    testResultFlow.current.value = null
+                    val sent = testNotificationSender.postProbe()
+                    val received =
+                        withTimeoutOrNull(VERIFY_TIMEOUT_MS) {
+                            testResultFlow.current.filterNotNull().first()
+                        }
+                    when {
+                        received == null ->
+                            _uiState.value =
+                                uiState.value.copy(sensitiveNotifications = SensitiveNotificationsUiState.Unknown)
+                        received.receivedText == sent -> {
+                            redactionStateFlow.current.value = RedactionState.Readable
+                            updatePermissionsState()
+                        }
+                        else -> {
+                            redactionStateFlow.current.value = RedactionState.Hidden
+                            updatePermissionsState()
+                        }
                     }
-                testNotificationSender.cancelProbe()
-                testResultFlow.current.value = null
-                isVerifying = false
-                when {
-                    received == null ->
-                        _uiState.value =
-                            uiState.value.copy(sensitiveNotifications = SensitiveNotificationsUiState.Unknown)
-                    received.receivedText == sent -> {
-                        redactionStateFlow.current.value = RedactionState.Readable
-                        updatePermissionsState()
-                    }
-                    else -> {
-                        redactionStateFlow.current.value = RedactionState.Hidden
-                        updatePermissionsState()
-                    }
+                } finally {
+                    testNotificationSender.cancelProbe()
+                    testResultFlow.current.value = null
+                    isVerifying = false
                 }
             }
         }
