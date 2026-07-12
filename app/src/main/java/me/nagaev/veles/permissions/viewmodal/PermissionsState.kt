@@ -8,6 +8,7 @@ enum class SensitiveNotificationsUiState {
     Verifying,
     Granted,
     GrantedButRedacted,
+    PairedRestartRequired,
     Unknown,
 }
 

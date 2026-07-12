@@ -19,7 +19,11 @@ import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.NotificationRedactionPath
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
+import me.nagaev.veles.permissions.services.CompanionAssociationService
+import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
+import me.nagaev.veles.permissions.services.PermissionsProviderImpl
+import me.nagaev.veles.permissions.services.SensitiveNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.SensitiveNotificationsGrant
 import me.nagaev.veles.permissions.services.SensitiveNotificationsStatus
 import me.nagaev.veles.testing.TestNotificationSender
@@ -50,6 +54,7 @@ class PermissionsViewModelSensitiveTest {
         testResultFlow,
         mockk<PermissionsProvider>(relaxed = true),
         { _: Intent -> },
+        {},
     )
 
     private fun testResult(text: String) = TestResult(
@@ -179,5 +184,32 @@ class PermissionsViewModelSensitiveTest {
 
         assertEquals(RedactionState.Readable, redactionStateFlow.current.value)
         assertEquals(SensitiveNotificationsUiState.Granted, vm.uiState.value.sensitiveNotifications)
+    }
+
+    @Test
+    fun `PairedRestartRequired when association exists but permission not yet visible`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        every { status.check() } returns SensitiveNotificationsGrant.NotGranted
+        val association = mockk<CompanionAssociationService>(relaxed = true) {
+            every { isSupported() } returns true
+            every { hasAssociation() } returns true
+        }
+        val sensitiveProvider = SensitiveNotificationPermissionProvider(status, association)
+        val permissionsProvider = PermissionsProviderImpl(
+            mapOf(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS to sensitiveProvider),
+        )
+        val vm = PermissionsViewModel(
+            mockk<NotificationStatePreferences>(relaxed = true),
+            NotificationRedactionPath.StockAndroid,
+            ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener"),
+            redactionStateFlow,
+            status,
+            sender,
+            testResultFlow,
+            permissionsProvider,
+            { _: Intent -> },
+            {},
+        )
+        assertEquals(SensitiveNotificationsUiState.PairedRestartRequired, vm.uiState.value.sensitiveNotifications)
     }
 }

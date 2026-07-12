@@ -51,6 +51,7 @@ fun SensitiveNotificationsCard(
     onOpenSettings: () -> Unit,
     onOpenEnhancedSettings: () -> Unit,
     onVerify: () -> Unit,
+    onRestart: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (state == SensitiveNotificationsUiState.NotApplicable ||
@@ -104,6 +105,18 @@ fun SensitiveNotificationsCard(
                     ) { Text("Enable (pair as companion)") }
                     Spacer(Modifier.height(8.dp))
                 }
+                if (state == SensitiveNotificationsUiState.PairedRestartRequired) {
+                    Button(
+                        onClick = onRestart,
+                        shape = MaterialTheme.shapes.small,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        ),
+                        modifier = Modifier.testTag(TestTags.SENSITIVE_RESTART_BUTTON),
+                    ) { Text("Restart Veles") }
+                    Spacer(Modifier.height(8.dp))
+                }
                 if (showFallbacks) {
                     FallbackSection(
                         settingsLocation = settingsLocation,
@@ -147,6 +160,8 @@ private fun StatusRow(state: SensitiveNotificationsUiState) {
                     "Access is granted, but this device still hides sensitive content. Try the options below."
                 SensitiveNotificationsUiState.Unknown ->
                     "Couldn't verify. Check that notification access is enabled, then try again."
+                SensitiveNotificationsUiState.PairedRestartRequired ->
+                    "Paired successfully. Restart Veles to finish enabling sensitive notifications."
                 else -> ""
             },
             fontSize = 13.sp,

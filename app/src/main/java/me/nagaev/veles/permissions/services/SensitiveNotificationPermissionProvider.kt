@@ -7,6 +7,9 @@ class SensitiveNotificationPermissionProvider(
     val cdmSupported: Boolean
         get() = association.isSupported()
 
+    val hasAssociation: Boolean
+        get() = association.hasAssociation()
+
     @Volatile
     var lastOutcome: AssociationOutcome? = null
         private set

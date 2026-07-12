@@ -19,6 +19,7 @@ object TestTags {
     const val SENSITIVE_OPEN_SETTINGS = "sensitive_open_settings"
     const val SENSITIVE_ENHANCED_SETTINGS = "sensitive_enhanced_settings"
     const val SENSITIVE_ADB_COPY = "sensitive_adb_copy"
+    const val SENSITIVE_RESTART_BUTTON = "sensitive_restart_button"
     val PERMISSION_STATUS = { state: PermissionType -> "permission_status_$state" }
 
     const val BANK_CONFIG_EXPORT_BUTTON = "bank_config_export_button"

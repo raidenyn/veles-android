@@ -67,4 +67,12 @@ class NotificationRedactionPathTest {
             NotificationRedactionPath.OxygenOS.settingsIntent(componentName).action,
         )
     }
+
+    @Test
+    fun `StockAndroid settings intent extra is a flattened string`() {
+        val path = NotificationRedactionPath.StockAndroid
+        val intent = path.settingsIntent(componentName)
+        val extra = intent.getStringExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME)
+        assertEquals(componentName.flattenToString(), extra)
+    }
 }

@@ -35,6 +35,7 @@ interface PermissionsActions {
     val openRedactionSettings: () -> Unit
     val openEnhancedNotificationsSettings: () -> Unit
     val verifySensitiveAccess: () -> Unit
+    val restartApp: () -> Unit
 
     companion object {
         val Mocked: PermissionsActions =
@@ -44,6 +45,7 @@ interface PermissionsActions {
                 override val openRedactionSettings: () -> Unit = {}
                 override val openEnhancedNotificationsSettings: () -> Unit = {}
                 override val verifySensitiveAccess: () -> Unit = {}
+                override val restartApp: () -> Unit = {}
             }
     }
 }
@@ -63,6 +65,7 @@ class PermissionsViewModel @AssistedInject constructor(
     private val testResultFlow: TestResultFlow,
     @Assisted private val permissionsProvider: PermissionsProvider,
     @Assisted private val openSettings: (Intent) -> Unit,
+    @Assisted private val restartAppCallback: () -> Unit,
 ) : ViewModel(),
     PermissionsActions {
     companion object {
@@ -78,6 +81,7 @@ class PermissionsViewModel @AssistedInject constructor(
         fun create(
             permissionsProvider: PermissionsProvider,
             openSettings: (Intent) -> Unit,
+            restartApp: () -> Unit,
         ): PermissionsViewModel
     }
 
@@ -117,15 +121,24 @@ class PermissionsViewModel @AssistedInject constructor(
     private fun sensitiveProvider(): SensitiveNotificationPermissionProvider? = permissionsProvider.providers[PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS]
         as? SensitiveNotificationPermissionProvider
 
-    private fun mergedSensitiveState(redaction: RedactionState): SensitiveNotificationsUiState = when (sensitiveStatus.check()) {
-        SensitiveNotificationsGrant.NotApplicable -> SensitiveNotificationsUiState.NotApplicable
-        SensitiveNotificationsGrant.NotGranted -> SensitiveNotificationsUiState.NotGranted
-        is SensitiveNotificationsGrant.Granted ->
-            if (redaction == RedactionState.Hidden) {
-                SensitiveNotificationsUiState.GrantedButRedacted
-            } else {
-                SensitiveNotificationsUiState.Granted
-            }
+    private fun mergedSensitiveState(redaction: RedactionState): SensitiveNotificationsUiState {
+        val grant = sensitiveStatus.check()
+        val hasAssociation = sensitiveProvider()?.hasAssociation == true
+        return when (grant) {
+            SensitiveNotificationsGrant.NotApplicable -> SensitiveNotificationsUiState.NotApplicable
+            SensitiveNotificationsGrant.NotGranted ->
+                if (hasAssociation) {
+                    SensitiveNotificationsUiState.PairedRestartRequired
+                } else {
+                    SensitiveNotificationsUiState.NotGranted
+                }
+            is SensitiveNotificationsGrant.Granted ->
+                if (redaction == RedactionState.Hidden) {
+                    SensitiveNotificationsUiState.GrantedButRedacted
+                } else {
+                    SensitiveNotificationsUiState.Granted
+                }
+        }
     }
 
     private fun unsetPermissionState(type: PermissionType) {
@@ -152,15 +165,7 @@ class PermissionsViewModel @AssistedInject constructor(
     }
 
     override val requestPermission: RequestPermission = { type ->
-        execute(type) { provider ->
-            provider.request()
-            if (type == PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS) {
-                val sensitiveProvider = provider as? SensitiveNotificationPermissionProvider
-                if (sensitiveProvider?.lastOutcome is AssociationOutcome.Associated) {
-                    verifySensitiveAccess()
-                }
-            }
-        }
+        execute(type) { provider -> provider.request() }
     }
 
     override val revokePermission: RevokePermission = { type ->
@@ -174,6 +179,8 @@ class PermissionsViewModel @AssistedInject constructor(
     override val openEnhancedNotificationsSettings: () -> Unit = {
         openSettings(Intent(Settings.ACTION_NOTIFICATION_ASSISTANT_SETTINGS))
     }
+
+    override val restartApp: () -> Unit = { restartAppCallback() }
 
     override val verifySensitiveAccess: () -> Unit = {
         if (!isVerifying) {

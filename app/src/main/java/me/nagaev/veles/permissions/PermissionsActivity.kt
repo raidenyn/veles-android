@@ -1,6 +1,9 @@
 package me.nagaev.veles.permissions
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,7 +34,19 @@ class PermissionsActivity : ComponentActivity() {
             defaultViewModelCreationExtras.withCreationCallback<PermissionsViewModel.Factory> { factory ->
                 factory.create(
                     permissionsProvider = buildPermissionsProvider(),
-                    openSettings = { intent -> startActivity(intent) },
+                    openSettings = { intent ->
+                        try {
+                            startActivity(intent)
+                        } catch (_: ActivityNotFoundException) {
+                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        }
+                    },
+                    restartApp = {
+                        val intent = packageManager.getLaunchIntentForPackage(packageName)!!
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        startActivity(intent)
+                        Runtime.getRuntime().exit(0)
+                    },
                 )
             }
         },

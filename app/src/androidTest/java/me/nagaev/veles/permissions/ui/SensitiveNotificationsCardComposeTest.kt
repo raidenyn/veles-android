@@ -31,6 +31,7 @@ class SensitiveNotificationsCardComposeTest {
                 onOpenSettings = {},
                 onOpenEnhancedSettings = {},
                 onVerify = onVerify,
+                onRestart = {},
             )
         }
     }
