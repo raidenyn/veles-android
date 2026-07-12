@@ -38,9 +38,9 @@ class CompanionAssociationService(
 
     fun isSupported(): Boolean = manager() != null
 
-    fun hasAssociation(): Boolean =
-        manager()?.myAssociations?.any { it.deviceProfile == AssociationRequest.DEVICE_PROFILE_WATCH } == true
+    fun hasAssociation(): Boolean = manager()?.myAssociations?.any { it.deviceProfile == AssociationRequest.DEVICE_PROFILE_WATCH } == true
 
+    @Suppress("TooGenericExceptionCaught") // CDM can throw SecurityException, NPE, etc.
     suspend fun associate(): AssociationOutcome {
         val cdm = manager() ?: return AssociationOutcome.Unsupported
         return try {
@@ -69,7 +69,7 @@ class CompanionAssociationService(
                     },
                 )
             }
-        } catch (e: Exception) {
+        } catch (e: Exception) { // resilience boundary: CDM can throw SecurityException, NPE, etc.
             AssociationOutcome.Failed(e.message)
         }
     }

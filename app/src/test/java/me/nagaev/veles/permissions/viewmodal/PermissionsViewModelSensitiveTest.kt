@@ -3,7 +3,6 @@ package me.nagaev.veles.permissions.viewmodal
 import android.content.ComponentName
 import android.content.Intent
 import io.mockk.every
-import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
@@ -41,27 +40,25 @@ class PermissionsViewModelSensitiveTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(): PermissionsViewModel =
-        PermissionsViewModel(
-            mockk<NotificationStatePreferences>(relaxed = true),
-            NotificationRedactionPath.StockAndroid,
-            ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener"),
-            redactionStateFlow,
-            status,
-            sender,
-            testResultFlow,
-            mockk<PermissionsProvider>(relaxed = true),
-            { _: Intent -> },
-        )
+    private fun viewModel(): PermissionsViewModel = PermissionsViewModel(
+        mockk<NotificationStatePreferences>(relaxed = true),
+        NotificationRedactionPath.StockAndroid,
+        ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener"),
+        redactionStateFlow,
+        status,
+        sender,
+        testResultFlow,
+        mockk<PermissionsProvider>(relaxed = true),
+        { _: Intent -> },
+    )
 
-    private fun testResult(text: String) =
-        TestResult(
-            handlingResult = MessageHandlingResult.FILTERED,
-            receivedText = text,
-            receivedTitle = "Veles Test",
-            sourcePackage = "me.nagaev.veles",
-            timestamp = 1L,
-        )
+    private fun testResult(text: String) = TestResult(
+        handlingResult = MessageHandlingResult.FILTERED,
+        receivedText = text,
+        receivedTitle = "Veles Test",
+        sourcePackage = "me.nagaev.veles",
+        timestamp = 1L,
+    )
 
     @Test
     fun `NotApplicable below API 35`() = runTest {

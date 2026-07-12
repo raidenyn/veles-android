@@ -34,13 +34,12 @@ class TestNotificationSender @Inject constructor(
         NotificationManagerCompat.from(context).cancel(PROBE_NOTIFICATION_ID)
     }
 
-    private fun builder(text: String): NotificationCompat.Builder =
-        NotificationCompat
-            .Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_otp_message)
-            .setContentTitle("Veles Test")
-            .setContentText(text)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+    private fun builder(text: String): NotificationCompat.Builder = NotificationCompat
+        .Builder(context, CHANNEL_ID)
+        .setSmallIcon(R.drawable.ic_otp_message)
+        .setContentTitle("Veles Test")
+        .setContentText(text)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
 
     private fun notify(builder: NotificationCompat.Builder, id: Int) {
         with(NotificationManagerCompat.from(context)) {

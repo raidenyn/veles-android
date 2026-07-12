@@ -8,6 +8,7 @@ import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+@Suppress("MaxLineLength")
 class SensitiveNotificationsStatusTest {
     private val appOps = mockk<AppOpsManager>()
     private val context = mockk<Context> {

@@ -39,6 +39,7 @@ import me.nagaev.veles.permissions.viewmodal.SensitiveNotificationsUiState
 private const val ADB_COMMAND =
     "adb shell appops set me.nagaev.veles RECEIVE_SENSITIVE_NOTIFICATIONS allow"
 
+@Suppress("LongParameterList")
 @Composable
 fun SensitiveNotificationsCard(
     state: SensitiveNotificationsUiState,

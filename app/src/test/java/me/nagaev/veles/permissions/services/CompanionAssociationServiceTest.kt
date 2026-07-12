@@ -18,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.Executor
 
+@Suppress("MaxLineLength")
 class CompanionAssociationServiceTest {
     private val cdm = mockk<CompanionDeviceManager>()
     private val packageManager = mockk<PackageManager> {
@@ -33,8 +34,7 @@ class CompanionAssociationServiceTest {
         every { context.getPackageManager() } returns packageManager
     }
 
-    private fun service(launcher: IntentSenderLauncher = IntentSenderLauncher { _, _ -> }) =
-        CompanionAssociationService(context, launcher, executor = directExecutor, buildRequest = { watchRequest })
+    private fun service(launcher: IntentSenderLauncher = IntentSenderLauncher { _, _ -> }) = CompanionAssociationService(context, launcher, executor = directExecutor, buildRequest = { watchRequest })
 
     private fun watchAssociation(): AssociationInfo = mockk {
         every { deviceProfile } returns AssociationRequest.DEVICE_PROFILE_WATCH

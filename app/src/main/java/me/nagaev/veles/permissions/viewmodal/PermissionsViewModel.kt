@@ -52,6 +52,7 @@ typealias RequestPermission = (type: PermissionType) -> Unit
 typealias RevokePermission = (type: PermissionType) -> Unit
 
 @HiltViewModel(assistedFactory = PermissionsViewModel.Factory::class)
+@Suppress("LongParameterList")
 class PermissionsViewModel @AssistedInject constructor(
     private val notificationStatePreferences: NotificationStatePreferences,
     private val redactionPath: NotificationRedactionPath,
@@ -113,21 +114,19 @@ class PermissionsViewModel @AssistedInject constructor(
             )
     }
 
-    private fun sensitiveProvider(): SensitiveNotificationPermissionProvider? =
-        permissionsProvider.providers[PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS]
-            as? SensitiveNotificationPermissionProvider
+    private fun sensitiveProvider(): SensitiveNotificationPermissionProvider? = permissionsProvider.providers[PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS]
+        as? SensitiveNotificationPermissionProvider
 
-    private fun mergedSensitiveState(redaction: RedactionState): SensitiveNotificationsUiState =
-        when (sensitiveStatus.check()) {
-            SensitiveNotificationsGrant.NotApplicable -> SensitiveNotificationsUiState.NotApplicable
-            SensitiveNotificationsGrant.NotGranted -> SensitiveNotificationsUiState.NotGranted
-            is SensitiveNotificationsGrant.Granted ->
-                if (redaction == RedactionState.Hidden) {
-                    SensitiveNotificationsUiState.GrantedButRedacted
-                } else {
-                    SensitiveNotificationsUiState.Granted
-                }
-        }
+    private fun mergedSensitiveState(redaction: RedactionState): SensitiveNotificationsUiState = when (sensitiveStatus.check()) {
+        SensitiveNotificationsGrant.NotApplicable -> SensitiveNotificationsUiState.NotApplicable
+        SensitiveNotificationsGrant.NotGranted -> SensitiveNotificationsUiState.NotGranted
+        is SensitiveNotificationsGrant.Granted ->
+            if (redaction == RedactionState.Hidden) {
+                SensitiveNotificationsUiState.GrantedButRedacted
+            } else {
+                SensitiveNotificationsUiState.Granted
+            }
+    }
 
     private fun unsetPermissionState(type: PermissionType) {
         _uiState.value =

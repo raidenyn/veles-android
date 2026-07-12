@@ -18,9 +18,9 @@ import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
 import me.nagaev.veles.permissions.services.PermissionsProviderImpl
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
+import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.SensitiveNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.SensitiveNotificationsStatus
-import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModel
 
