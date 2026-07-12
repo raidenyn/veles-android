@@ -36,6 +36,19 @@ Veles is a strictly on-device tool. There are **no backdoors, no advertisements,
 
 Everything Veles does happens locally, inside the Android NotificationListenerService it is granted access to. You can audit the entire source code in this repository.
 
+### Verify your download
+
+Every release can be verified against its source — either in one command
+(trusting GitHub):
+
+```
+gh attestation verify veles-X.Y.Z.apk --repo raidenyn/veles-android
+```
+
+or by rebuilding it bit-for-bit yourself with nothing but Docker. CI refuses to
+publish a release whose APK it cannot independently reproduce. See
+[docs/reproducible-builds.md](docs/reproducible-builds.md).
+
 ## Requirements
 
 - Android device running **Android 13 (API 33)** or newer.

@@ -32,6 +32,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Play "dependency metadata" is encrypted with a Google key and makes the
+    // APK inherently non-reproducible; F-Droid also requires it disabled.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     val releaseKeystore = System.getenv("VELES_KEYSTORE_FILE")
     signingConfigs {
         if (releaseKeystore != null) {
