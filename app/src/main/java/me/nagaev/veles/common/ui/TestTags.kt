@@ -11,7 +11,14 @@ object TestTags {
     const val TEST_RESULT_REDACTION_HINT = "test_result_redaction_hint"
     const val TEST_RESULT_RECEIVED_TEXT = "test_result_received_text"
     const val TEST_LOG_RAW_CONTENT_SWITCH = "test_log_raw_content_switch"
-    const val REDACTION_OPEN_SETTINGS = "redaction_open_settings"
+    const val SENSITIVE_CARD = "sensitive_card"
+    const val SENSITIVE_STATUS = "sensitive_status"
+    const val SENSITIVE_ENABLE_BUTTON = "sensitive_enable_button"
+    const val SENSITIVE_VERIFY_BUTTON = "sensitive_verify_button"
+    const val SENSITIVE_FALLBACKS_TOGGLE = "sensitive_fallbacks_toggle"
+    const val SENSITIVE_OPEN_SETTINGS = "sensitive_open_settings"
+    const val SENSITIVE_ENHANCED_SETTINGS = "sensitive_enhanced_settings"
+    const val SENSITIVE_ADB_COPY = "sensitive_adb_copy"
     val PERMISSION_STATUS = { state: PermissionType -> "permission_status_$state" }
 
     const val BANK_CONFIG_EXPORT_BUTTON = "bank_config_export_button"
