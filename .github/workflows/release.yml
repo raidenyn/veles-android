@@ -165,10 +165,21 @@ jobs:
           # Download the draft release's APK asset and compare its sha256
           # against the digest computed by the build job. This closes the
           # artifact-vs-asset gap before making the release public.
-          gh release download "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "veles-$GITHUB_REF_NAME.apk" \
-            --dir "$RUNNER_TEMP/draft-check"
+          #
+          # We fetch the asset by release ID, not by tag: the release is
+          # still a draft at this point, and draft releases are not
+          # addressable by their tag via GET /releases/tags/{tag} (they
+          # carry a synthetic "untagged-..." tag_name until published).
+          # gh release download <tag> has no draft fallback, so it 404s.
+          # The build job already passed us RELEASE_ID, which is the
+          # unambiguous handle for the draft.
+          APK_ASSET_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq '.assets[] | select(.name == "veles-'"$GITHUB_REF_NAME"'.apk") | .id')
+          [ -n "$APK_ASSET_ID" ] || { echo "::error::Could not find veles-$GITHUB_REF_NAME.apk on draft release $RELEASE_ID"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/draft-check"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$APK_ASSET_ID" \
+            -H "Accept: application/octet-stream" \
+            > "$RUNNER_TEMP/draft-check/veles-$GITHUB_REF_NAME.apk"
           DRAFT_SHA256=$(sha256sum "$RUNNER_TEMP/draft-check/veles-$GITHUB_REF_NAME.apk" | awk '{print $1}')
           if [ "$DRAFT_SHA256" != "$EXPECTED_SHA256" ]; then
             echo "::error::Draft asset sha256 ($DRAFT_SHA256) does not match build digest ($EXPECTED_SHA256). Aborting publish."
