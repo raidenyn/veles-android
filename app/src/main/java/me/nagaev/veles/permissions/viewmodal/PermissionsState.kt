@@ -6,9 +6,9 @@ enum class SensitiveNotificationsUiState {
     NotApplicable,
     NotGranted,
     Verifying,
+    ApplyingGrant,
     Granted,
     GrantedButRedacted,
-    PairedRestartRequired,
     Unknown,
 }
 
@@ -20,6 +20,7 @@ data class PermissionsState(
     val showOnePlusAdbPreStep: Boolean = false,
     val redactionSettingsLocation: String = "",
     val revealSensitiveFallbacks: Boolean = false,
+    val showForceStopButton: Boolean = false,
 ) {
     companion object {
         val Init = PermissionsState(emptyMap(), notificationListenerEnabled = false)

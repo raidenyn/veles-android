@@ -2,6 +2,7 @@ package me.nagaev.veles.permissions.viewmodal
 
 import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,8 +10,13 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -35,7 +41,7 @@ interface PermissionsActions {
     val openRedactionSettings: () -> Unit
     val openEnhancedNotificationsSettings: () -> Unit
     val verifySensitiveAccess: () -> Unit
-    val restartApp: () -> Unit
+    val openAppInfo: () -> Unit
 
     companion object {
         val Mocked: PermissionsActions =
@@ -45,7 +51,7 @@ interface PermissionsActions {
                 override val openRedactionSettings: () -> Unit = {}
                 override val openEnhancedNotificationsSettings: () -> Unit = {}
                 override val verifySensitiveAccess: () -> Unit = {}
-                override val restartApp: () -> Unit = {}
+                override val openAppInfo: () -> Unit = {}
             }
     }
 }
@@ -65,23 +71,28 @@ class PermissionsViewModel @AssistedInject constructor(
     private val testResultFlow: TestResultFlow,
     @Assisted private val permissionsProvider: PermissionsProvider,
     @Assisted private val openSettings: (Intent) -> Unit,
-    @Assisted private val restartAppCallback: () -> Unit,
+    @Assisted private val rebindListener: () -> Unit,
 ) : ViewModel(),
     PermissionsActions {
     companion object {
         private const val VERIFY_TIMEOUT_MS = 5_000L
+        private const val GRANT_POLL_INTERVAL_MS = 1_000L
+        private const val GRANT_POLL_TIMEOUT_MS = 60_000L
+        private const val REBIND_TIMEOUT_MS = 10_000L
     }
 
     private val _uiState = MutableStateFlow(PermissionsState.Init)
     val uiState: StateFlow<PermissionsState> = _uiState
     private var isVerifying = false
+    private var isApplyingGrant = false
+    private var grantApplicationTimedOut = false
 
     @AssistedFactory
     interface Factory {
         fun create(
             permissionsProvider: PermissionsProvider,
             openSettings: (Intent) -> Unit,
-            restartApp: () -> Unit,
+            rebindListener: () -> Unit,
         ): PermissionsViewModel
     }
 
@@ -95,6 +106,7 @@ class PermissionsViewModel @AssistedInject constructor(
     fun updatePermissionsState() {
         val provider = sensitiveProvider()
         val outcome = provider?.lastOutcome
+        val grant = sensitiveStatus.check()
         _uiState.value =
             uiState.value.copy(
                 permissions =
@@ -103,10 +115,12 @@ class PermissionsViewModel @AssistedInject constructor(
                 },
                 notificationListenerEnabled = notificationStatePreferences.getConnectionState(),
                 sensitiveNotifications =
-                if (isVerifying) {
-                    SensitiveNotificationsUiState.Verifying
-                } else {
-                    mergedSensitiveState(redactionStateFlow.current.value)
+                when {
+                    isVerifying -> SensitiveNotificationsUiState.Verifying
+                    isApplyingGrant -> SensitiveNotificationsUiState.ApplyingGrant
+                    grantApplicationTimedOut && grant is SensitiveNotificationsGrant.NotGranted ->
+                        SensitiveNotificationsUiState.Unknown
+                    else -> mergedSensitiveState(grant, redactionStateFlow.current.value)
                 },
                 cdmSupported = provider?.cdmSupported ?: false,
                 showOnePlusAdbPreStep = redactionPath is NotificationRedactionPath.OxygenOS,
@@ -115,20 +129,24 @@ class PermissionsViewModel @AssistedInject constructor(
                 outcome is AssociationOutcome.Cancelled ||
                     outcome is AssociationOutcome.Failed ||
                     outcome is AssociationOutcome.Unsupported,
+                showForceStopButton =
+                grantApplicationTimedOut && grant is SensitiveNotificationsGrant.NotGranted,
             )
     }
 
     private fun sensitiveProvider(): SensitiveNotificationPermissionProvider? = permissionsProvider.providers[PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS]
         as? SensitiveNotificationPermissionProvider
 
-    private fun mergedSensitiveState(redaction: RedactionState): SensitiveNotificationsUiState {
-        val grant = sensitiveStatus.check()
+    private fun mergedSensitiveState(
+        grant: SensitiveNotificationsGrant,
+        redaction: RedactionState,
+    ): SensitiveNotificationsUiState {
         val hasAssociation = sensitiveProvider()?.hasAssociation == true
         return when (grant) {
             SensitiveNotificationsGrant.NotApplicable -> SensitiveNotificationsUiState.NotApplicable
             SensitiveNotificationsGrant.NotGranted ->
                 if (hasAssociation) {
-                    SensitiveNotificationsUiState.PairedRestartRequired
+                    SensitiveNotificationsUiState.ApplyingGrant
                 } else {
                     SensitiveNotificationsUiState.NotGranted
                 }
@@ -165,7 +183,18 @@ class PermissionsViewModel @AssistedInject constructor(
     }
 
     override val requestPermission: RequestPermission = { type ->
-        execute(type) { provider -> provider.request() }
+        execute(type) { provider ->
+            if (type == PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS) {
+                grantApplicationTimedOut = false
+                _uiState.value = uiState.value.copy(showForceStopButton = false)
+            }
+            provider.request()
+            if (type == PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS &&
+                (provider as? SensitiveNotificationPermissionProvider)?.lastOutcome is AssociationOutcome.Associated
+            ) {
+                applyGrantAfterAssociation()
+            }
+        }
     }
 
     override val revokePermission: RevokePermission = { type ->
@@ -180,7 +209,77 @@ class PermissionsViewModel @AssistedInject constructor(
         openSettings(Intent(Settings.ACTION_NOTIFICATION_ASSISTANT_SETTINGS))
     }
 
-    override val restartApp: () -> Unit = { restartAppCallback() }
+    override val openAppInfo: () -> Unit = {
+        openSettings(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.fromParts("package", componentName.packageName, null)),
+        )
+    }
+
+    private fun applyGrantAfterAssociation() {
+        if (isApplyingGrant) return
+        isApplyingGrant = true
+        grantApplicationTimedOut = false
+        _uiState.value =
+            uiState.value.copy(
+                sensitiveNotifications = SensitiveNotificationsUiState.ApplyingGrant,
+                showForceStopButton = false,
+            )
+        viewModelScope.launch {
+            try {
+                val granted =
+                    withTimeoutOrNull(GRANT_POLL_TIMEOUT_MS) {
+                        while (true) {
+                            if (sensitiveStatus.check() is SensitiveNotificationsGrant.Granted) {
+                                return@withTimeoutOrNull true
+                            }
+                            delay(GRANT_POLL_INTERVAL_MS)
+                        }
+                    } == true
+                if (!granted) {
+                    grantApplicationTimedOut = true
+                    _uiState.value =
+                        uiState.value.copy(
+                            sensitiveNotifications = SensitiveNotificationsUiState.Unknown,
+                            showForceStopButton = true,
+                        )
+                    return@launch
+                }
+
+                val rebound = awaitListenerRebind()
+                if (rebound) {
+                    verifySensitiveAccess()
+                } else {
+                    grantApplicationTimedOut = true
+                    _uiState.value =
+                        uiState.value.copy(
+                            sensitiveNotifications = SensitiveNotificationsUiState.Unknown,
+                            showForceStopButton = true,
+                        )
+                }
+            } finally {
+                isApplyingGrant = false
+            }
+        }
+    }
+
+    private suspend fun awaitListenerRebind(): Boolean = coroutineScope {
+        val disconnected =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                notificationStatePreferences.currentConnectionState
+                    .filter { !it }
+                    .first()
+            }
+        rebindListener()
+        val didDisconnect = withTimeoutOrNull(REBIND_TIMEOUT_MS) { disconnected.await() } != null
+        if (!didDisconnect) return@coroutineScope false
+        withTimeoutOrNull(REBIND_TIMEOUT_MS) {
+            notificationStatePreferences.currentConnectionState
+                .filter { it }
+                .first()
+            true
+        } == true
+    }
 
     override val verifySensitiveAccess: () -> Unit = {
         if (!isVerifying) {

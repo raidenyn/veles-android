@@ -108,7 +108,7 @@ On Android 15+, the Home screen shows a sensitive-notifications status card when
 2. Tap **Enable (pair as companion)**. Android only shares sensitive notifications with companion-device apps, so Veles asks to be registered as one. The system dialog will ask you to pick a nearby Bluetooth device — **any** device works (headphones, your car, a real watch). Turn Bluetooth on first. This is why the dialog mentions a watch.
 3. After you pick a device, Veles posts a hidden verification probe through its own test-notification pipeline and checks whether the real text comes back. The card updates automatically: it disappears when access is confirmed, or shows guidance if the device still redacts.
 
-4. After pairing, Veles needs a quick restart to pick up the new permission. Tap **Restart Veles** in the card, or close and reopen the app. On the next launch the permission is active and the card disappears.
+4. Veles waits while Android applies the permission, then reconnects its notification listener and verifies access automatically. If setup times out, the card opens App info so you can tap Force stop and reopen Veles.
 
 If the card says access is granted but content is still redacted, try the Enhanced-notifications fallback below.
 

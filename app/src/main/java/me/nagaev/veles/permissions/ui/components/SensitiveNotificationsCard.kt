@@ -47,11 +47,12 @@ fun SensitiveNotificationsCard(
     settingsLocation: String,
     showOnePlusAdbPreStep: Boolean,
     revealFallbacks: Boolean = false,
+    showForceStopButton: Boolean,
     onEnableViaCompanion: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenEnhancedSettings: () -> Unit,
     onVerify: () -> Unit,
-    onRestart: () -> Unit,
+    onOpenAppInfo: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (state == SensitiveNotificationsUiState.NotApplicable ||
@@ -77,13 +78,37 @@ fun SensitiveNotificationsCard(
         Column(modifier = Modifier.padding(16.dp)) {
             StatusRow(state)
             Spacer(Modifier.height(12.dp))
-            if (state == SensitiveNotificationsUiState.Verifying) {
+            if (state == SensitiveNotificationsUiState.Verifying ||
+                state == SensitiveNotificationsUiState.ApplyingGrant
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Checking…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                    Text(
+                        text = if (state == SensitiveNotificationsUiState.Verifying) {
+                            "Checking…"
+                        } else {
+                            "Finishing setup — Android is applying the permission…"
+                        },
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
                 }
             } else {
+                if (showForceStopButton) {
+                    Text(
+                        text = "Setup is taking longer than expected. Open App info, tap Force stop, then reopen Veles.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = onOpenAppInfo,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.testTag(TestTags.SENSITIVE_FORCE_STOP_BUTTON),
+                    ) { Text("Open App info") }
+                    Spacer(Modifier.height(8.dp))
+                }
                 if (cdmSupported && (state == SensitiveNotificationsUiState.NotGranted || state == SensitiveNotificationsUiState.Unknown)) {
                     Text(
                         text = "Android only shares sensitive notifications with companion-device apps, " +
@@ -103,18 +128,6 @@ fun SensitiveNotificationsCard(
                         ),
                         modifier = Modifier.testTag(TestTags.SENSITIVE_ENABLE_BUTTON),
                     ) { Text("Enable (pair as companion)") }
-                    Spacer(Modifier.height(8.dp))
-                }
-                if (state == SensitiveNotificationsUiState.PairedRestartRequired) {
-                    Button(
-                        onClick = onRestart,
-                        shape = MaterialTheme.shapes.small,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error,
-                            contentColor = MaterialTheme.colorScheme.onError,
-                        ),
-                        modifier = Modifier.testTag(TestTags.SENSITIVE_RESTART_BUTTON),
-                    ) { Text("Restart Veles") }
                     Spacer(Modifier.height(8.dp))
                 }
                 if (showFallbacks) {
@@ -156,12 +169,12 @@ private fun StatusRow(state: SensitiveNotificationsUiState) {
                     "Android hides OTP content from Veles. Bank codes can't be read until access is granted."
                 SensitiveNotificationsUiState.Verifying ->
                     "Checking whether Veles can read sensitive notifications…"
+                SensitiveNotificationsUiState.ApplyingGrant ->
+                    "Finishing setup — Android is applying the permission…"
                 SensitiveNotificationsUiState.GrantedButRedacted ->
                     "Access is granted, but this device still hides sensitive content. Try the options below."
                 SensitiveNotificationsUiState.Unknown ->
                     "Couldn't verify. Check that notification access is enabled, then try again."
-                SensitiveNotificationsUiState.PairedRestartRequired ->
-                    "Paired successfully. Restart Veles to finish enabling sensitive notifications."
                 else -> ""
             },
             fontSize = 13.sp,

@@ -18,8 +18,10 @@ class SensitiveNotificationsCardComposeTest {
     private fun setCard(
         state: SensitiveNotificationsUiState,
         cdmSupported: Boolean = true,
+        showForceStopButton: Boolean = false,
         onEnable: () -> Unit = {},
         onVerify: () -> Unit = {},
+        onOpenAppInfo: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             SensitiveNotificationsCard(
@@ -27,11 +29,12 @@ class SensitiveNotificationsCardComposeTest {
                 cdmSupported = cdmSupported,
                 settingsLocation = "Settings > Notifications",
                 showOnePlusAdbPreStep = false,
+                showForceStopButton = showForceStopButton,
                 onEnableViaCompanion = onEnable,
                 onOpenSettings = {},
                 onOpenEnhancedSettings = {},
                 onVerify = onVerify,
-                onRestart = {},
+                onOpenAppInfo = onOpenAppInfo,
             )
         }
     }
@@ -88,5 +91,27 @@ class SensitiveNotificationsCardComposeTest {
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_CARD).assertIsDisplayed()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ENABLE_BUTTON).assertDoesNotExist()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_VERIFY_BUTTON).assertDoesNotExist()
+    }
+
+    @Test
+    fun applyingGrantShowsProgressWithoutButtons() {
+        setCard(SensitiveNotificationsUiState.ApplyingGrant)
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_CARD).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ENABLE_BUTTON).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_VERIFY_BUTTON).assertDoesNotExist()
+    }
+
+    @Test
+    fun forceStopFallbackOpensAppInfo() {
+        var opened = false
+        setCard(
+            state = SensitiveNotificationsUiState.Unknown,
+            showForceStopButton = true,
+            onOpenAppInfo = { opened = true },
+        )
+
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_FORCE_STOP_BUTTON).performClick()
+
+        assertTrue(opened)
     }
 }

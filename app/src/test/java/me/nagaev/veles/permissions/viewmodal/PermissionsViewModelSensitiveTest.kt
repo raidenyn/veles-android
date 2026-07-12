@@ -2,14 +2,18 @@ package me.nagaev.veles.permissions.viewmodal
 
 import android.content.ComponentName
 import android.content.Intent
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import me.nagaev.veles.common.NotificationStatePreferences
@@ -19,6 +23,7 @@ import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.NotificationRedactionPath
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
+import me.nagaev.veles.permissions.services.AssociationOutcome
 import me.nagaev.veles.permissions.services.CompanionAssociationService
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
@@ -44,17 +49,21 @@ class PermissionsViewModelSensitiveTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(): PermissionsViewModel = PermissionsViewModel(
-        mockk<NotificationStatePreferences>(relaxed = true),
+    private fun viewModel(
+        permissionsProvider: PermissionsProvider = mockk(relaxed = true),
+        rebindListener: () -> Unit = {},
+        notificationStatePreferences: NotificationStatePreferences = mockk(relaxed = true),
+    ): PermissionsViewModel = PermissionsViewModel(
+        notificationStatePreferences,
         NotificationRedactionPath.StockAndroid,
         ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener"),
         redactionStateFlow,
         status,
         sender,
         testResultFlow,
-        mockk<PermissionsProvider>(relaxed = true),
+        permissionsProvider,
         { _: Intent -> },
-        {},
+        rebindListener,
     )
 
     private fun testResult(text: String) = TestResult(
@@ -187,29 +196,109 @@ class PermissionsViewModelSensitiveTest {
     }
 
     @Test
-    fun `PairedRestartRequired when association exists but permission not yet visible`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+    fun `association waits for role grant before rebinding listener`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        var grant: SensitiveNotificationsGrant = SensitiveNotificationsGrant.NotGranted
+        every { status.check() } answers { grant }
+        val association = mockk<CompanionAssociationService>(relaxed = true) {
+            every { isSupported() } returns true
+            every { hasAssociation() } returns true
+        }
+        coEvery { association.associate() } returns AssociationOutcome.Associated
+        val sensitiveProvider = SensitiveNotificationPermissionProvider(status, association)
+        val permissionsProvider = PermissionsProviderImpl(
+            mapOf(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS to sensitiveProvider),
+        )
+        val rebindListener = mockk<() -> Unit>(relaxed = true)
+        val connectionState = MutableStateFlow(true)
+        val notificationStatePreferences = mockk<NotificationStatePreferences>(relaxed = true) {
+            every { getConnectionState() } answers { connectionState.value }
+            every { currentConnectionState } returns connectionState
+        }
+        every { sender.postProbe() } returns "Veles check: code 835201"
+        val vm = viewModel(permissionsProvider, rebindListener, notificationStatePreferences)
+
+        vm.requestPermission(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS)
+        runCurrent()
+
+        assertEquals(SensitiveNotificationsUiState.ApplyingGrant, vm.uiState.value.sensitiveNotifications)
+        verify(exactly = 0) { rebindListener() }
+
+        grant = SensitiveNotificationsGrant.Granted(SensitiveNotificationsGrant.Granted.Via.Role)
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        verify { rebindListener() }
+        connectionState.value = false
+        runCurrent()
+        connectionState.value = true
+        runCurrent()
+        testResultFlow.current.value = testResult("Veles check: code 835201")
+        runCurrent()
+    }
+
+    @Test
+    fun `grant application timeout exposes Force stop fallback`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         every { status.check() } returns SensitiveNotificationsGrant.NotGranted
         val association = mockk<CompanionAssociationService>(relaxed = true) {
             every { isSupported() } returns true
             every { hasAssociation() } returns true
         }
+        coEvery { association.associate() } returns AssociationOutcome.Associated
         val sensitiveProvider = SensitiveNotificationPermissionProvider(status, association)
         val permissionsProvider = PermissionsProviderImpl(
             mapOf(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS to sensitiveProvider),
         )
-        val vm = PermissionsViewModel(
-            mockk<NotificationStatePreferences>(relaxed = true),
-            NotificationRedactionPath.StockAndroid,
-            ComponentName("me.nagaev.veles", "me.nagaev.veles.otp.NotificationListener"),
-            redactionStateFlow,
-            status,
-            sender,
-            testResultFlow,
-            permissionsProvider,
-            { _: Intent -> },
-            {},
+        val vm = viewModel(permissionsProvider)
+
+        vm.requestPermission(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS)
+        runCurrent()
+        advanceTimeBy(60_001)
+        runCurrent()
+
+        assertEquals(SensitiveNotificationsUiState.Unknown, vm.uiState.value.sensitiveNotifications)
+        assertEquals(true, vm.uiState.value.showForceStopButton)
+
+        vm.updatePermissionsState()
+
+        assertEquals(SensitiveNotificationsUiState.Unknown, vm.uiState.value.sensitiveNotifications)
+        assertEquals(true, vm.uiState.value.showForceStopButton)
+    }
+
+    @Test
+    fun `grant application verifies after listener reconnects`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        var grant: SensitiveNotificationsGrant = SensitiveNotificationsGrant.NotGranted
+        every { status.check() } answers { grant }
+        val association = mockk<CompanionAssociationService>(relaxed = true) {
+            every { isSupported() } returns true
+            every { hasAssociation() } returns true
+        }
+        coEvery { association.associate() } returns AssociationOutcome.Associated
+        val sensitiveProvider = SensitiveNotificationPermissionProvider(status, association)
+        val permissionsProvider = PermissionsProviderImpl(
+            mapOf(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS to sensitiveProvider),
         )
-        assertEquals(SensitiveNotificationsUiState.PairedRestartRequired, vm.uiState.value.sensitiveNotifications)
+        val connectionState = MutableStateFlow(true)
+        val notificationStatePreferences = mockk<NotificationStatePreferences>(relaxed = true) {
+            every { getConnectionState() } answers { connectionState.value }
+            every { currentConnectionState } returns connectionState
+        }
+        every { sender.postProbe() } returns "Veles check: code 835201"
+        val vm = viewModel(permissionsProvider, {}, notificationStatePreferences)
+
+        vm.requestPermission(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS)
+        runCurrent()
+        grant = SensitiveNotificationsGrant.Granted(SensitiveNotificationsGrant.Granted.Via.Role)
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        connectionState.value = false
+        runCurrent()
+        connectionState.value = true
+        runCurrent()
+
+        verify { sender.postProbe() }
     }
 }

@@ -2,12 +2,18 @@ package me.nagaev.veles.common
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import me.nagaev.veles.R
 import javax.inject.Inject
 
 class NotificationStatePreferences @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    private val _currentConnectionState = MutableStateFlow(readConnectionState())
+    val currentConnectionState: StateFlow<Boolean> = _currentConnectionState.asStateFlow()
+
     fun saveConnectionState(state: Boolean) {
         with(context) {
             val sharedPref =
@@ -21,9 +27,12 @@ class NotificationStatePreferences @Inject constructor(
                 apply()
             }
         }
+        _currentConnectionState.value = state
     }
 
-    fun getConnectionState(): Boolean {
+    fun getConnectionState(): Boolean = currentConnectionState.value
+
+    private fun readConnectionState(): Boolean {
         with(context) {
             val sharedPref =
                 getSharedPreferences(

@@ -70,11 +70,12 @@ fun PermissionsScreen(
                 settingsLocation = state.redactionSettingsLocation,
                 showOnePlusAdbPreStep = state.showOnePlusAdbPreStep,
                 revealFallbacks = state.revealSensitiveFallbacks,
+                showForceStopButton = state.showForceStopButton,
                 onEnableViaCompanion = { actions.requestPermission(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS) },
                 onOpenSettings = actions.openRedactionSettings,
                 onOpenEnhancedSettings = actions.openEnhancedNotificationsSettings,
                 onVerify = actions.verifySensitiveAccess,
-                onRestart = actions.restartApp,
+                onOpenAppInfo = actions.openAppInfo,
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
             )
         }

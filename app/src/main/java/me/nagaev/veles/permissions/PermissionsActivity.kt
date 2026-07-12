@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.withCreationCallback
+import me.nagaev.veles.otp.NotificationListener
 import me.nagaev.veles.permissions.services.AccessNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.ActivityProvider
 import me.nagaev.veles.permissions.services.ActivityProviderImpl
@@ -41,11 +42,11 @@ class PermissionsActivity : ComponentActivity() {
                             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         }
                     },
-                    restartApp = {
-                        val intent = packageManager.getLaunchIntentForPackage(packageName)!!
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                        startActivity(intent)
-                        Runtime.getRuntime().exit(0)
+                    rebindListener = {
+                        startService(
+                            Intent(this, NotificationListener::class.java)
+                                .setAction(NotificationListener.ACTION_REBIND),
+                        )
                     },
                 )
             }
