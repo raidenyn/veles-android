@@ -230,4 +230,19 @@ class VelesPermissionsAppTests {
         composeTestRule.onNodeWithTag(TestTags.REDACTION_OPEN_SETTINGS).performClick()
         verify { permissionsActions.openRedactionSettings() }
     }
+
+    @Test
+    fun `bottom bar shows three destinations on permissions route`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState = permissionsState,
+                permissionsActions = permissionsActions,
+            )
+        }
+
+        composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_BAR).assertExists()
+        composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("permissions")).assertExists()
+        composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("bank-configs")).assertExists()
+        composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("test")).assertExists()
+    }
 }

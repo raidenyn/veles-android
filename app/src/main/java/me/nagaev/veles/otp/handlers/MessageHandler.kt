@@ -7,6 +7,7 @@ interface MessageHandler {
 data class MessageHandlingResult(
     val status: Status,
     val matchedTemplateName: String?,
+    val otpMessage: OtpMessage? = null,
 ) {
     enum class Status { ACCEPTED, FILTERED }
 

@@ -10,9 +10,13 @@ import androidx.compose.ui.test.performClick
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
+import me.nagaev.veles.otp.handlers.Money
+import me.nagaev.veles.otp.handlers.Otp
+import me.nagaev.veles.otp.handlers.OtpMessage
 import me.nagaev.veles.testing.viewmodel.TestState
 import org.junit.Rule
 import org.junit.Test
+import java.math.BigDecimal
 
 @Suppress("MaxLineLength")
 class TestScreenComposeTest {
@@ -23,6 +27,11 @@ class TestScreenComposeTest {
         handlingResult = MessageHandlingResult(
             MessageHandlingResult.Status.ACCEPTED,
             "UOB Thailand",
+            OtpMessage(
+                otp = Otp(value = "511066", id = "VjKp"),
+                pay = Money(amount = BigDecimal("600.00"), currencyCode = "THB"),
+                merchant = "WWWSFCINEMACITYCOMCORP",
+            ),
         ),
         receivedText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp.",
         receivedTitle = "UOB",
@@ -47,7 +56,7 @@ class TestScreenComposeTest {
     )
 
     @Test
-    fun `matched result renders status - template name and received text`() {
+    fun `matched result renders status - template name - otp and received text`() {
         composeTestRule.setContent {
             TestScreen(
                 state = TestState(inputText = "input", lastResult = matchedResult),
@@ -62,10 +71,11 @@ class TestScreenComposeTest {
             .onNodeWithTag(TestTags.TEST_RESULT)
             .assertIsDisplayed()
             .assertTextContains("Matched", substring = true)
-        composeTestRule
-            .onNodeWithTag(TestTags.TEST_RESULT_TEMPLATE)
-            .assertIsDisplayed()
             .assertTextContains("UOB Thailand", substring = true)
+        composeTestRule
+            .onNodeWithTag(TestTags.TEST_RESULT_OTP)
+            .assertIsDisplayed()
+            .assertTextContains("511066", substring = true)
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_RECEIVED_TEXT)
             .assertIsDisplayed()
@@ -89,7 +99,7 @@ class TestScreenComposeTest {
             .assertIsDisplayed()
             .assertTextContains("No match", substring = true)
         composeTestRule
-            .onNodeWithTag(TestTags.TEST_RESULT_TEMPLATE)
+            .onNodeWithTag(TestTags.TEST_RESULT_OTP)
             .assertDoesNotExist()
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_RECEIVED_TEXT)
@@ -98,7 +108,7 @@ class TestScreenComposeTest {
     }
 
     @Test
-    fun `redacted received text is displayed verbatim`() {
+    fun `redacted received text shows the redaction hint`() {
         composeTestRule.setContent {
             TestScreen(
                 state = TestState(inputText = "input", lastResult = redactedResult),
@@ -113,6 +123,29 @@ class TestScreenComposeTest {
             .onNodeWithTag(TestTags.TEST_RESULT_RECEIVED_TEXT)
             .assertIsDisplayed()
             .assertTextContains("Sensitive notification content hidden", substring = true)
+        composeTestRule
+            .onNodeWithTag(TestTags.TEST_RESULT_REDACTION_HINT)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `no redaction hint when received text matches the typed input`() {
+        composeTestRule.setContent {
+            TestScreen(
+                state = TestState(
+                    inputText = "some unrelated text",
+                    lastResult = filteredResult,
+                ),
+                onTextChanged = {},
+                onSend = {},
+                logRawContent = false,
+                onLogRawContentToggled = {},
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.TEST_RESULT_REDACTION_HINT)
+            .assertDoesNotExist()
     }
 
     @Test

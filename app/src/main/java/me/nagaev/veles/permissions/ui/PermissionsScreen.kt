@@ -1,22 +1,30 @@
 package me.nagaev.veles.permissions.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import me.nagaev.veles.R
+import androidx.compose.ui.unit.sp
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.PermissionsList
 import me.nagaev.veles.permissions.ui.components.RedactionSection
@@ -27,52 +35,96 @@ import me.nagaev.veles.permissions.viewmodal.PermissionsState
 fun PermissionsScreen(
     state: PermissionsState,
     actions: PermissionsActions,
-    onNavigateToTest: () -> Unit,
-    onNavigateToBankConfigs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier = modifier.fillMaxSize()) {
-        Column {
-            Text(
-                modifier = Modifier.padding(10.dp).statusBarsPadding(),
-                text = stringResource(id = R.string.permissions),
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary,
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .statusBarsPadding(),
+    ) {
+        Text(
+            text = "Veles",
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 22.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        ListenerStatusCard(
+            enabled = state.notificationListenerEnabled,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
+        RedactionSection(
+            state = state.redactionState,
+            settingsLocation = state.redactionSettingsLocation,
+            onOpenSettings = actions.openRedactionSettings,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        )
+        Text(
+            text = "PERMISSIONS",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.96.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+        )
+        PermissionsList(
+            permissions = state.permissions,
+            actions = actions,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun ListenerStatusCard(
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        shape = MaterialTheme.shapes.small,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .background(
+                        color = if (enabled) {
+                            MaterialTheme.colorScheme.tertiary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        shape = CircleShape,
+                    ),
             )
-            Text(
-                modifier = Modifier.padding(10.dp).testTag(TestTags.NOTIFICATION_LISTENER_STATUS),
-                text =
-                if (state.notificationListenerEnabled) {
-                    "Notification listener enabled"
-                } else {
-                    "Notification listener disabled"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.secondary,
-            )
-            RedactionSection(
-                state = state.redactionState,
-                settingsLocation = state.redactionSettingsLocation,
-                onOpenSettings = actions.openRedactionSettings,
-            )
-            Spacer(Modifier.height(4.dp))
-            TextButton(
-                onClick = onNavigateToTest,
-                modifier = Modifier.padding(horizontal = 10.dp),
-            ) {
-                Text("Test")
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = if (enabled) {
+                        "Notification listener enabled"
+                    } else {
+                        "Notification listener disabled"
+                    },
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.testTag(TestTags.NOTIFICATION_LISTENER_STATUS),
+                )
+                if (!enabled) {
+                    Text(
+                        text = "Grant notification access below to turn it on",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            TextButton(
-                onClick = onNavigateToBankConfigs,
-                modifier = Modifier.padding(horizontal = 10.dp),
-            ) {
-                Text("Bank Configs")
-            }
-            PermissionsList(
-                permissions = state.permissions,
-                actions = actions,
-                modifier = Modifier.fillMaxSize(),
-            )
         }
     }
 }
@@ -83,7 +135,5 @@ fun PermissionsScreenPreview() {
     PermissionsScreen(
         state = PermissionsState.Mocked,
         actions = PermissionsActions.Mocked,
-        onNavigateToTest = {},
-        onNavigateToBankConfigs = {},
     )
 }

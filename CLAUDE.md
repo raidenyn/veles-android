@@ -65,6 +65,8 @@ The app has a built-in test harness for validating handler configs without a rea
 
 `TestResultFlow` is reset in `TestViewModel.onCleared()` to prevent stale badges on re-entry.
 
+`MessageHandlingResult` carries the extracted `OtpMessage` (`otpMessage` field) when a template matches, which the Test screen result card displays.
+
 ### Package Structure
 
 | Package | Responsibility |
@@ -81,7 +83,12 @@ The app has a built-in test harness for validating handler configs without a rea
 
 ### Navigation
 
-`VelesPermissionsApp` hosts a Compose `NavHost` with two routes: `permissions` (start) → `test`.
+`VelesPermissionsApp` wraps a Compose `NavHost` in a `Scaffold` with a persistent bottom
+`NavigationBar` (`VelesBottomBar` in `common/ui/`) with three destinations: `permissions`
+(Home, start), `bank-configs` (Templates), and `test` (Test). `bank-config-edit?id={id}` is a
+full-screen route that hides the bottom bar. The theme is a static emerald/gold brand palette
+(`Colors.kt`/`Theme.kt`) derived from the launcher icon; Material You dynamic color is
+intentionally not used. The gold "success" accent is mapped onto `colorScheme.tertiary`.
 
 ### Testing Approach
 
