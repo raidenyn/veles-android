@@ -7,6 +7,7 @@ interface PermissionsProvider {
 enum class PermissionType {
     ACCESS_NOTIFICATIONS,
     SEND_NOTIFICATIONS,
+    RECEIVE_SENSITIVE_NOTIFICATIONS,
 }
 
 class PermissionsProviderImpl(

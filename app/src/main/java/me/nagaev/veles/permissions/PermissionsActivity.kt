@@ -12,10 +12,14 @@ import dagger.hilt.android.lifecycle.withCreationCallback
 import me.nagaev.veles.permissions.services.AccessNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.ActivityProvider
 import me.nagaev.veles.permissions.services.ActivityProviderImpl
+import me.nagaev.veles.permissions.services.CompanionAssociationService
+import me.nagaev.veles.permissions.services.IntentSenderLauncher
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
 import me.nagaev.veles.permissions.services.PermissionsProviderImpl
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
+import me.nagaev.veles.permissions.services.SensitiveNotificationPermissionProvider
+import me.nagaev.veles.permissions.services.SensitiveNotificationsStatus
 import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModel
@@ -65,9 +69,15 @@ class PermissionsActivity : ComponentActivity() {
                     AccessNotificationPermissionProvider(activityProvider),
                 PermissionType.SEND_NOTIFICATIONS to
                     SendNotificationPermissionProvider(activityProvider, requestPermissionLauncher),
+                PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS to
+                    SensitiveNotificationPermissionProvider(
+                        SensitiveNotificationsStatus(this),
+                        CompanionAssociationService(this, intentSenderLauncher),
+                    ),
             ),
         )
     }
 
     private val requestPermissionLauncher = RequestPermissionLauncher.create(this)
+    private val intentSenderLauncher = IntentSenderLauncher.create(this)
 }

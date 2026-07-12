@@ -20,7 +20,10 @@ fun PermissionsList(
         modifier = modifier.fillMaxSize(),
         state = rememberLazyListState(),
     ) {
-        items(items = permissions.values.toList(), key = { it.type }) { provider ->
+        items(
+            items = permissions.values.filter { it.type != PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS },
+            key = { it.type },
+        ) { provider ->
             AccessNotificationPermission(
                 permission = provider,
                 requestPermission = actions.requestPermission,
