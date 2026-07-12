@@ -27,11 +27,15 @@ import me.nagaev.veles.permissions.viewmodal.RevokePermission
 fun getPermissionTitle(type: PermissionType): Int = when (type) {
     PermissionType.ACCESS_NOTIFICATIONS -> R.string.access_notification_permission_title
     PermissionType.SEND_NOTIFICATIONS -> R.string.send_notification_permission_title
+    PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS ->
+        throw IllegalArgumentException("RECEIVE_SENSITIVE_NOTIFICATIONS has no list-row title")
 }
 
 fun getPermissionDescription(type: PermissionType): Int = when (type) {
     PermissionType.ACCESS_NOTIFICATIONS -> R.string.access_notification_permission_description
     PermissionType.SEND_NOTIFICATIONS -> R.string.send_notification_permission_description
+    PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS ->
+        throw IllegalArgumentException("RECEIVE_SENSITIVE_NOTIFICATIONS has no list-row description")
 }
 
 @Composable

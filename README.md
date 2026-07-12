@@ -96,11 +96,33 @@ After installing, open **Veles** from your launcher and follow the in-app permis
 
 ---
 
-## Granting access to sensitive notifications
+## Enable sensitive notifications
 
 On Android 15 and later (including OxygenOS 15/16 on OnePlus devices), the OS automatically redacts OTPs, 2FA tokens, and banking content inside notifications before handing them to any `NotificationListenerService`. Without an extra permission, Veles sees only `"Sensitive notification content hidden"` instead of the real text.
 
-To let Veles read the actual notification bodies you must grant the hidden `RECEIVE_SENSITIVE_NOTIFICATIONS` AppOp via ADB. This targets **only** Veles — it does not disable the protection globally.
+### In-app (recommended)
+
+On Android 15+, the Home screen shows a sensitive-notifications status card when access is needed. Grant it from inside the app — no computer required:
+
+1. Open **Veles**. If access is missing, a card showing "Android hides OTP content from Veles" appears at the top of the Home screen.
+2. Tap **Enable (pair as companion)**. Android only shares sensitive notifications with companion-device apps, so Veles asks to be registered as one. The system dialog will ask you to pick a nearby Bluetooth device — **any** device works (headphones, your car, a real watch). Turn Bluetooth on first. This is why the dialog mentions a watch.
+3. After you pick a device, Veles posts a hidden verification probe through its own test-notification pipeline and checks whether the real text comes back. The card updates automatically: it disappears when access is confirmed, or shows guidance if the device still redacts.
+
+4. Veles waits while Android applies the permission, then reconnects its notification listener and verifies access automatically. If setup times out, the card opens App info so you can tap Force stop and reopen Veles.
+
+If the card says access is granted but content is still redacted, try the Enhanced-notifications fallback below.
+
+### Enhanced notifications fallback
+
+Turning off **Enhanced notifications** stops Android from hiding sensitive content, but it's a device-wide switch: it also disables smart replies and notification actions for **all** apps, not just Veles. Use this only if the companion-pairing flow doesn't stick.
+
+1. Open the card's **More options** → **Enhanced notifications settings**, or go to **Settings → Notifications → Enhanced notifications**.
+2. Turn the toggle **OFF**.
+3. Back in Veles, tap **Check now** on the card to verify.
+
+### If the in-app methods fail (adb)
+
+If neither in-app method works, you can grant the hidden `RECEIVE_SENSITIVE_NOTIFICATIONS` AppOp via ADB instead. This targets **only** Veles — it does not disable the protection globally.
 
 The steps below were validated on a **OnePlus 13 running OxygenOS 16.0.801** and should work on any Android 15+ device. On non-OnePlus devices you can skip Step 1.
 

@@ -1,6 +1,9 @@
 package me.nagaev.veles.permissions
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -9,14 +12,19 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.withCreationCallback
+import me.nagaev.veles.otp.NotificationListener
 import me.nagaev.veles.permissions.services.AccessNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.ActivityProvider
 import me.nagaev.veles.permissions.services.ActivityProviderImpl
+import me.nagaev.veles.permissions.services.CompanionAssociationService
+import me.nagaev.veles.permissions.services.IntentSenderLauncher
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
 import me.nagaev.veles.permissions.services.PermissionsProviderImpl
 import me.nagaev.veles.permissions.services.RequestPermissionLauncher
 import me.nagaev.veles.permissions.services.SendNotificationPermissionProvider
+import me.nagaev.veles.permissions.services.SensitiveNotificationPermissionProvider
+import me.nagaev.veles.permissions.services.SensitiveNotificationsStatus
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
 import me.nagaev.veles.permissions.viewmodal.PermissionsViewModel
 
@@ -27,7 +35,19 @@ class PermissionsActivity : ComponentActivity() {
             defaultViewModelCreationExtras.withCreationCallback<PermissionsViewModel.Factory> { factory ->
                 factory.create(
                     permissionsProvider = buildPermissionsProvider(),
-                    openSettings = { intent -> startActivity(intent) },
+                    openSettings = { intent ->
+                        try {
+                            startActivity(intent)
+                        } catch (_: ActivityNotFoundException) {
+                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        }
+                    },
+                    rebindListener = {
+                        startService(
+                            Intent(this, NotificationListener::class.java)
+                                .setAction(NotificationListener.ACTION_REBIND),
+                        )
+                    },
                 )
             }
         },
@@ -65,9 +85,15 @@ class PermissionsActivity : ComponentActivity() {
                     AccessNotificationPermissionProvider(activityProvider),
                 PermissionType.SEND_NOTIFICATIONS to
                     SendNotificationPermissionProvider(activityProvider, requestPermissionLauncher),
+                PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS to
+                    SensitiveNotificationPermissionProvider(
+                        SensitiveNotificationsStatus(this),
+                        CompanionAssociationService(this, intentSenderLauncher),
+                    ),
             ),
         )
     }
 
     private val requestPermissionLauncher = RequestPermissionLauncher.create(this)
+    private val intentSenderLauncher = IntentSenderLauncher.create(this)
 }

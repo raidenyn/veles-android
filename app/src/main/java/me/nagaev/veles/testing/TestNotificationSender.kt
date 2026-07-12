@@ -15,21 +15,37 @@ class TestNotificationSender @Inject constructor(
     companion object {
         const val CHANNEL_ID = "VelesTestChannel"
         private const val NOTIFICATION_ID = 99999
+        private const val PROBE_NOTIFICATION_ID = 99998
+        private const val PROBE_CODE_RANGE_START = 100000
+        private const val PROBE_CODE_RANGE_END = 999999
     }
 
     fun post(text: String) {
-        val builder =
-            NotificationCompat
-                .Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_otp_message)
-                .setContentTitle("Veles Test")
-                .setContentText(text)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+        notify(builder(text), NOTIFICATION_ID)
+    }
 
+    fun postProbe(): String {
+        val text = "Veles check: code ${(PROBE_CODE_RANGE_START..PROBE_CODE_RANGE_END).random()}"
+        notify(builder(text).setVisibility(NotificationCompat.VISIBILITY_SECRET), PROBE_NOTIFICATION_ID)
+        return text
+    }
+
+    fun cancelProbe() {
+        NotificationManagerCompat.from(context).cancel(PROBE_NOTIFICATION_ID)
+    }
+
+    private fun builder(text: String): NotificationCompat.Builder = NotificationCompat
+        .Builder(context, CHANNEL_ID)
+        .setSmallIcon(R.drawable.ic_otp_message)
+        .setContentTitle("Veles Test")
+        .setContentText(text)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+
+    private fun notify(builder: NotificationCompat.Builder, id: Int) {
         with(NotificationManagerCompat.from(context)) {
             if (areNotificationsEnabled()) {
                 tryCreateChannel()
-                notify(NOTIFICATION_ID, builder.build())
+                notify(id, builder.build())
             }
         }
     }

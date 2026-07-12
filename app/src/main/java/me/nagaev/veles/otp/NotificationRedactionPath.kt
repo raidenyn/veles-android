@@ -21,7 +21,10 @@ sealed interface NotificationRedactionPath {
 
         private fun buildIntent(componentName: ComponentName): Intent = if (Build.VERSION.SDK_INT >= SDK_INT_NOTIFICATION_LISTENER_DETAIL) {
             Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
-                .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, componentName)
+                .putExtra(
+                    Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                    componentName.flattenToString(),
+                )
         } else {
             Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         }

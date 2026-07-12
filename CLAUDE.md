@@ -65,7 +65,19 @@ The app has a built-in test harness for validating handler configs without a rea
 
 `TestResultFlow` is reset in `TestViewModel.onCleared()` to prevent stale badges on re-entry.
 
+`TestNotificationSender` also posts a `VISIBILITY_SECRET` verification probe (`postProbe`) for the sensitive-notifications flow; the probe carries a random OTP-like code so the listener can tell redacted from readable text. Verification (`PermissionsViewModel.verifySensitiveAccess`) resets `TestResultFlow` (before posting and after the probe resolves) so the probe does not leave a stale badge on the Test screen.
+
 `MessageHandlingResult` carries the extracted `OtpMessage` (`otpMessage` field) when a template matches, which the Test screen result card displays.
+
+### Sensitive notifications (Android 15+)
+
+On Android 15 (SDK 35)+, the OS redacts OTP/2FA content inside notifications before handing them to any `NotificationListenerService`. Veles detects and grants the `RECEIVE_SENSITIVE_NOTIFICATIONS` access entirely in-app:
+
+- **Static detection** — `SensitiveNotificationsStatus.check()` combines the runtime permission (role-based grant) with the hidden AppOp (`unsafeCheckOpNoThrow`), returning `NotApplicable` below SDK 35, `Granted(via = Role|AppOp)`, or `NotGranted`.
+- **CDM watch-profile grant** — `CompanionAssociationService` drives `CompanionDeviceManager.associate` with `DEVICE_PROFILE_WATCH`, which is the only profile that carries the sensitive-notifications role. `IntentSenderLauncher` wraps the activity-result contract so the system's "pick a nearby Bluetooth device" dialog is launched from the `PermissionsActivity`. The returned grant is verified, not trusted.
+- **Verification probe** — `TestNotificationSender.postProbe()` posts a `VISIBILITY_SECRET` notification with a random OTP-like code through the same test-notification pipeline the Test screen uses. `NotificationListener.onNotificationPosted` runs the handler chain; `PermissionsViewModel.verifySensitiveAccess` compares the text the listener saw against the text posted. Readable ⇒ `RedactionState.Readable`; redacted ⇒ `RedactionState.Hidden`; timeout ⇒ `Unknown`.
+- **Merged state** — `PermissionsViewModel.mergedSensitiveState` combines the static grant with the live `RedactionState` into `SensitiveNotificationsUiState` (`NotApplicable`, `NotGranted`, `Verifying`, `Granted`, `GrantedButRedacted`, `Unknown`), exposed on `PermissionsState`.
+- **Card-only UI** — `SensitiveNotificationsCard` (in `permissions/ui/components/`) renders only when the state is `NotGranted`, `Verifying`, `GrantedButRedacted`, or `Unknown`; it is absent on Android 14 and below and after a confirmed grant. The card offers companion pairing, a collapsible "More options" section (OEM redaction settings, Enhanced-notifications toggle, copyable adb command), and a "Check now" verify button.
 
 ### Package Structure
 
@@ -75,9 +87,9 @@ The app has a built-in test harness for validating handler configs without a rea
 | `otp/handlers/` | `MessageHandler` / `OtpMessageHandler` interfaces, `RegexMessageHandler`, `CompositeMessageHandler`, `UserNotifierOtpMessageHandler` |
 | `otp/config/` | `BankHandlerConfig` (Room entity), `BankHandlerConfigDao`, `BankHandlerDatabase` (with seed), `BankHandlerRepository` |
 | `permissions/` | `PermissionsActivity` launcher |
-| `permissions/services/` | `PermissionProvider` per type (`ACCESS_NOTIFICATIONS`, `SEND_NOTIFICATIONS`) |
-| `permissions/viewmodal/` | `PermissionsViewModel` (StateFlow MVVM), `PermissionsState`, `PermissionsActions` |
-| `permissions/ui/` | `VelesPermissionsApp` (NavHost), `PermissionsScreen`, sub-components |
+| `permissions/services/` | `PermissionProvider` per type (`ACCESS_NOTIFICATIONS`, `SEND_NOTIFICATIONS`, `RECEIVE_SENSITIVE_NOTIFICATIONS`), `SensitiveNotificationsStatus`, `CompanionAssociationService`, `SensitiveNotificationPermissionProvider`, `IntentSenderLauncher` |
+| `permissions/viewmodal/` | `PermissionsViewModel` (StateFlow MVVM), `PermissionsState`, `PermissionsActions`, `SensitiveNotificationsUiState` |
+| `permissions/ui/` | `VelesPermissionsApp` (NavHost), `PermissionsScreen`, `SensitiveNotificationsCard`, sub-components |
 | `testing/` | `TestNotificationSender`, `TestScreen`, `TestViewModel`, `TestState` |
 | `common/` | `NotificationStatePreferences`, `TestResultFlow`, `TestInputPreferences`, UI theme, `TestTags` |
 

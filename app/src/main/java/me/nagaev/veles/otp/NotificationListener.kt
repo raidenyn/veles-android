@@ -1,6 +1,7 @@
 package me.nagaev.veles.otp
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.Intent
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -31,6 +32,10 @@ class NotificationListener(
     testResultFlow: TestResultFlow? = null,
     redactionStateFlow: RedactionStateFlow? = null,
 ) : NotificationListenerService() {
+    companion object {
+        const val ACTION_REBIND = "me.nagaev.veles.action.REBIND"
+    }
+
     private val entryPoint: NotificationListenerEntryPoint by lazy {
         EntryPointAccessors.fromApplication(
             applicationContext,
@@ -44,6 +49,7 @@ class NotificationListener(
     private val injectedHandler: MessageHandler? = messageHandler
     private var serviceScope: CoroutineScope? = null
     private var reloader: HandlerChainReloader? = null
+    private var pendingRebind = false
     private val logOverride: VelesLog? = velesLog
     private val logger: VelesLog by lazy {
         logOverride ?: entryPoint.velesLog()
@@ -86,6 +92,14 @@ class NotificationListener(
         startId: Int,
     ): Int {
         super.onStartCommand(intent, flags, startId)
+        if (intent?.action == ACTION_REBIND) {
+            pendingRebind = true
+            requestUnbind()
+            // This start only delivers the rebind request. Stopping it lets the managed
+            // listener destruction invoke onListenerDisconnected(), which requests the rebind.
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         logger.d("NotificationListener", "Started: $startId")
         return START_REDELIVER_INTENT
     }
@@ -99,6 +113,10 @@ class NotificationListener(
     override fun onListenerDisconnected() {
         logger.d("NotificationListener", "ListenerDisconnected")
         state.saveConnectionState(false)
+        if (pendingRebind) {
+            pendingRebind = false
+            requestRebind(ComponentName(packageName, javaClass.name))
+        }
         super.onListenerDisconnected()
     }
 

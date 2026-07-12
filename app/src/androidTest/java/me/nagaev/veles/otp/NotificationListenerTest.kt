@@ -86,6 +86,43 @@ class NotificationListenerTest {
     }
 
     @Test
+    fun `rebind action requests listener unbind`() {
+        val service = spyk(
+            NotificationListener(
+                mockk(relaxed = true),
+                ownPackageName = "me.nagaev.veles",
+                velesLog = testLog,
+                testResultFlow = TestResultFlow(),
+                redactionStateFlow = RedactionStateFlow(),
+            ),
+        )
+        every { service.requestUnbind() } returns Unit
+
+        service.onStartCommand(Intent(NotificationListener.ACTION_REBIND), 0, 0)
+
+        verify { service.requestUnbind() }
+    }
+
+    @Test
+    fun `rebind action stops its temporary service start`() {
+        val service = spyk(
+            NotificationListener(
+                mockk(relaxed = true),
+                ownPackageName = "me.nagaev.veles",
+                velesLog = testLog,
+                testResultFlow = TestResultFlow(),
+                redactionStateFlow = RedactionStateFlow(),
+            ),
+        )
+        every { service.requestUnbind() } returns Unit
+        every { service.stopSelf(0) } returns Unit
+
+        service.onStartCommand(Intent(NotificationListener.ACTION_REBIND), 0, 0)
+
+        verify { service.stopSelf(0) }
+    }
+
+    @Test
     fun `onListenerConnected calls saveConnectionState - true`() {
         val state = mockk<NotificationStatePreferences>(relaxed = true)
 
@@ -201,6 +238,41 @@ class NotificationListenerTest {
         assertEquals("text", testResult?.receivedText)
         assertEquals("title", testResult?.receivedTitle)
         assertEquals(ownPkg, testResult?.sourcePackage)
+    }
+
+    @Test
+    fun `secret probe notification round-trips its text through TestResultFlow`() {
+        val ownPkg = "me.nagaev.veles"
+        val probeText = "Veles check: code 835201"
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "Veles Test"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns probeText
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns ownPkg
+        every { sbn.notification } returns notification
+        notification.visibility = Notification.VISIBILITY_SECRET
+        notification.extras = bundle
+        every { notification.channelId } returns TestNotificationSender.CHANNEL_ID
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
+
+        val testResultFlow = TestResultFlow()
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = ownPkg,
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = RedactionStateFlow(),
+        )
+        service.onCreate()
+        service.onNotificationPosted(sbn)
+
+        assertEquals(probeText, testResultFlow.current.value?.receivedText)
     }
 
     @Test

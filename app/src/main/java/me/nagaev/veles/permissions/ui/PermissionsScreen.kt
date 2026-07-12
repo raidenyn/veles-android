@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -26,8 +28,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nagaev.veles.common.ui.TestTags
-import me.nagaev.veles.permissions.ui.components.PermissionsList
-import me.nagaev.veles.permissions.ui.components.RedactionSection
+import me.nagaev.veles.permissions.services.PermissionType
+import me.nagaev.veles.permissions.ui.components.AccessNotificationPermission
+import me.nagaev.veles.permissions.ui.components.SensitiveNotificationsCard
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
 
@@ -37,42 +40,67 @@ fun PermissionsScreen(
     actions: PermissionsActions,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .statusBarsPadding(),
     ) {
-        Text(
-            text = "Veles",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 22.dp),
-        )
-        Spacer(Modifier.height(16.dp))
-        ListenerStatusCard(
-            enabled = state.notificationListenerEnabled,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        RedactionSection(
-            state = state.redactionState,
-            settingsLocation = state.redactionSettingsLocation,
-            onOpenSettings = actions.openRedactionSettings,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
-        )
-        Text(
-            text = "PERMISSIONS",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 0.96.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-        )
-        PermissionsList(
-            permissions = state.permissions,
-            actions = actions,
-            modifier = Modifier.weight(1f),
-        )
+        item {
+            Text(
+                text = "Veles",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 22.dp),
+            )
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+        item {
+            ListenerStatusCard(
+                enabled = state.notificationListenerEnabled,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
+        item {
+            SensitiveNotificationsCard(
+                state = state.sensitiveNotifications,
+                cdmSupported = state.cdmSupported,
+                settingsLocation = state.redactionSettingsLocation,
+                showOnePlusAdbPreStep = state.showOnePlusAdbPreStep,
+                revealFallbacks = state.revealSensitiveFallbacks,
+                showForceStopButton = state.showForceStopButton,
+                onEnableViaCompanion = { actions.requestPermission(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS) },
+                onOpenSettings = actions.openRedactionSettings,
+                onOpenEnhancedSettings = actions.openEnhancedNotificationsSettings,
+                onVerify = actions.verifySensitiveAccess,
+                onOpenAppInfo = actions.openAppInfo,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+            )
+        }
+        item {
+            Text(
+                text = "PERMISSIONS",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.96.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+            )
+        }
+        items(
+            items = state.permissions.values.filter { it.type != PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS },
+            key = { it.type },
+        ) { permission ->
+            AccessNotificationPermission(
+                permission = permission,
+                requestPermission = actions.requestPermission,
+                revokePermission = actions.revokePermission,
+            )
+        }
     }
 }
 
