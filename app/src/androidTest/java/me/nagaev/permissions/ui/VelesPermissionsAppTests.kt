@@ -11,13 +11,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import io.mockk.mockk
 import io.mockk.verify
-import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
 import me.nagaev.veles.permissions.viewmodal.Permission
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
+import me.nagaev.veles.permissions.viewmodal.SensitiveNotificationsUiState
 import org.junit.Rule
 import org.junit.Test
 
@@ -201,34 +201,33 @@ class VelesPermissionsAppTests {
     }
 
     @Test
-    fun `redaction section shows open settings button when Hidden`() {
+    fun sensitiveCardVisibleWhenNotGranted() {
         composeTestRule.setContent {
             VelesPermissionsApp(
                 permissionsState =
                 permissionsState.copy(
-                    redactionState = RedactionState.Hidden,
-                    redactionSettingsLocation = "Settings > Enhanced Notifications",
+                    sensitiveNotifications = SensitiveNotificationsUiState.NotGranted,
+                    cdmSupported = true,
                 ),
                 permissionsActions = permissionsActions,
             )
         }
-        composeTestRule.onNodeWithTag(TestTags.REDACTION_OPEN_SETTINGS).assertExists()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_CARD).assertExists()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ENABLE_BUTTON).assertExists()
     }
 
     @Test
-    fun `clicking open settings calls openRedactionSettings when Hidden`() {
+    fun sensitiveCardAbsentWhenNotApplicable() {
         composeTestRule.setContent {
             VelesPermissionsApp(
                 permissionsState =
                 permissionsState.copy(
-                    redactionState = RedactionState.Hidden,
-                    redactionSettingsLocation = "Settings > Enhanced Notifications",
+                    sensitiveNotifications = SensitiveNotificationsUiState.NotApplicable,
                 ),
                 permissionsActions = permissionsActions,
             )
         }
-        composeTestRule.onNodeWithTag(TestTags.REDACTION_OPEN_SETTINGS).performClick()
-        verify { permissionsActions.openRedactionSettings() }
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_CARD).assertDoesNotExist()
     }
 
     @Test

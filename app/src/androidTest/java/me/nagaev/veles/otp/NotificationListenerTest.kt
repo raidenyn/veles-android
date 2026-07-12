@@ -204,6 +204,41 @@ class NotificationListenerTest {
     }
 
     @Test
+    fun `secret probe notification round-trips its text through TestResultFlow`() {
+        val ownPkg = "me.nagaev.veles"
+        val probeText = "Veles check: code 835201"
+        val messageHandler = mockk<MessageHandler>(relaxed = true)
+        val state = mockk<NotificationStatePreferences>(relaxed = true)
+        val notification = mockk<Notification>(relaxed = true)
+        val sbn = mockk<StatusBarNotification>(relaxed = true)
+        val bundle = mockk<Bundle>(relaxed = true)
+
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TITLE) } returns "Veles Test"
+        every { bundle.getCharSequence(NotificationCompat.EXTRA_TEXT) } returns probeText
+        every { sbn.key } returns "key"
+        every { sbn.packageName } returns ownPkg
+        every { sbn.notification } returns notification
+        notification.visibility = Notification.VISIBILITY_SECRET
+        notification.extras = bundle
+        every { notification.channelId } returns TestNotificationSender.CHANNEL_ID
+        every { messageHandler.onMessageReceived(any()) } returns MessageHandlingResult.FILTERED
+
+        val testResultFlow = TestResultFlow()
+        val service = NotificationListener(
+            state,
+            messageHandler,
+            ownPackageName = ownPkg,
+            velesLog = testLog,
+            testResultFlow = testResultFlow,
+            redactionStateFlow = RedactionStateFlow(),
+        )
+        service.onCreate()
+        service.onNotificationPosted(sbn)
+
+        assertEquals(probeText, testResultFlow.current.value?.receivedText)
+    }
+
+    @Test
     fun `onNotificationPosted writes matched template name and received text to TestResultFlow for self-notifications`() {
         val ownPkg = "me.nagaev.veles"
         val expectedText = "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp."
