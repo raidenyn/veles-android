@@ -1,12 +1,22 @@
 package me.nagaev.veles.permissions.viewmodal
 
-import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.permissions.services.PermissionType
+
+enum class SensitiveNotificationsUiState {
+    NotApplicable,
+    NotGranted,
+    Verifying,
+    Granted,
+    GrantedButRedacted,
+    Unknown,
+}
 
 data class PermissionsState(
     val permissions: Map<PermissionType, Permission>,
     val notificationListenerEnabled: Boolean,
-    val redactionState: RedactionState = RedactionState.Unknown,
+    val sensitiveNotifications: SensitiveNotificationsUiState = SensitiveNotificationsUiState.NotApplicable,
+    val cdmSupported: Boolean = false,
+    val showOnePlusAdbPreStep: Boolean = false,
     val redactionSettingsLocation: String = "",
 ) {
     companion object {

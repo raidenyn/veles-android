@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.PermissionsList
-import me.nagaev.veles.permissions.ui.components.RedactionSection
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
 
@@ -53,12 +52,6 @@ fun PermissionsScreen(
         ListenerStatusCard(
             enabled = state.notificationListenerEnabled,
             modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        RedactionSection(
-            state = state.redactionState,
-            settingsLocation = state.redactionSettingsLocation,
-            onOpenSettings = actions.openRedactionSettings,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
         )
         Text(
             text = "PERMISSIONS",
