@@ -18,6 +18,7 @@ data class PermissionsState(
     val cdmSupported: Boolean = false,
     val showOnePlusAdbPreStep: Boolean = false,
     val redactionSettingsLocation: String = "",
+    val revealSensitiveFallbacks: Boolean = false,
 ) {
     companion object {
         val Init = PermissionsState(emptyMap(), notificationListenerEnabled = false)

@@ -45,6 +45,7 @@ fun SensitiveNotificationsCard(
     cdmSupported: Boolean,
     settingsLocation: String,
     showOnePlusAdbPreStep: Boolean,
+    revealFallbacks: Boolean = false,
     onEnableViaCompanion: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenEnhancedSettings: () -> Unit,
@@ -59,6 +60,7 @@ fun SensitiveNotificationsCard(
     var fallbacksExpanded by rememberSaveable { mutableStateOf(false) }
     val showFallbacks =
         fallbacksExpanded ||
+            revealFallbacks ||
             state == SensitiveNotificationsUiState.GrantedButRedacted ||
             !cdmSupported
     Card(
@@ -80,7 +82,7 @@ fun SensitiveNotificationsCard(
                     Text("Checking…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onErrorContainer)
                 }
             } else {
-                if (cdmSupported && state == SensitiveNotificationsUiState.NotGranted) {
+                if (cdmSupported && (state == SensitiveNotificationsUiState.NotGranted || state == SensitiveNotificationsUiState.Unknown)) {
                     Text(
                         text = "Android only shares sensitive notifications with companion-device apps, " +
                             "so Veles asks to be registered as one. The system dialog will ask you to pick " +

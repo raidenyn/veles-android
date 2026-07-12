@@ -143,4 +143,44 @@ class PermissionsViewModelSensitiveTest {
         assertEquals(SensitiveNotificationsUiState.Unknown, vm.uiState.value.sensitiveNotifications)
         verify { sender.cancelProbe() }
     }
+
+    @Test
+    fun `verification mismatch does not stick on Verifying when redaction flow already Hidden`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        every { status.check() } returns
+            SensitiveNotificationsGrant.Granted(SensitiveNotificationsGrant.Granted.Via.Role)
+        every { sender.postProbe() } returns "Veles check: code 835201"
+        val vm = viewModel()
+
+        redactionStateFlow.current.value = RedactionState.Hidden
+        assertEquals(SensitiveNotificationsUiState.GrantedButRedacted, vm.uiState.value.sensitiveNotifications)
+
+        vm.verifySensitiveAccess()
+        assertEquals(SensitiveNotificationsUiState.Verifying, vm.uiState.value.sensitiveNotifications)
+
+        testResultFlow.current.value = testResult("Sensitive notification content hidden")
+
+        assertEquals(RedactionState.Hidden, redactionStateFlow.current.value)
+        assertEquals(SensitiveNotificationsUiState.GrantedButRedacted, vm.uiState.value.sensitiveNotifications)
+    }
+
+    @Test
+    fun `verification match does not stick on Verifying when redaction flow already Readable`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        every { status.check() } returns
+            SensitiveNotificationsGrant.Granted(SensitiveNotificationsGrant.Granted.Via.Role)
+        every { sender.postProbe() } returns "Veles check: code 835201"
+        val vm = viewModel()
+
+        redactionStateFlow.current.value = RedactionState.Readable
+        assertEquals(SensitiveNotificationsUiState.Granted, vm.uiState.value.sensitiveNotifications)
+
+        vm.verifySensitiveAccess()
+        assertEquals(SensitiveNotificationsUiState.Verifying, vm.uiState.value.sensitiveNotifications)
+
+        testResultFlow.current.value = testResult("Veles check: code 835201")
+
+        assertEquals(RedactionState.Readable, redactionStateFlow.current.value)
+        assertEquals(SensitiveNotificationsUiState.Granted, vm.uiState.value.sensitiveNotifications)
+    }
 }

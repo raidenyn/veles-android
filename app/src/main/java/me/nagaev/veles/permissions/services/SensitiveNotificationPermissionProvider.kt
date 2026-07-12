@@ -7,13 +7,18 @@ class SensitiveNotificationPermissionProvider(
     val cdmSupported: Boolean
         get() = association.isSupported()
 
+    @Volatile
+    var lastOutcome: AssociationOutcome? = null
+        private set
+
     override fun isGranted(): Boolean = status.check() != SensitiveNotificationsGrant.NotGranted
 
     override suspend fun request() {
-        association.associate()
+        lastOutcome = association.associate()
     }
 
     override suspend fun revoke() {
         association.disassociate()
+        lastOutcome = null
     }
 }

@@ -19,6 +19,7 @@ class IntentSenderLauncher(
                     closerCallback(result.resultCode == Activity.RESULT_OK)
                 }
             val launch = { intentSender: IntentSender, callback: (Boolean) -> Unit ->
+                closerCallback(false)
                 closerCallback = callback
                 resultLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
             }

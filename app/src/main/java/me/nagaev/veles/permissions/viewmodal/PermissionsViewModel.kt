@@ -20,6 +20,7 @@ import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.RedactionStateFlow
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.otp.NotificationRedactionPath
+import me.nagaev.veles.permissions.services.AssociationOutcome
 import me.nagaev.veles.permissions.services.PermissionProvider
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.services.PermissionsProvider
@@ -87,6 +88,8 @@ class PermissionsViewModel @AssistedInject constructor(
     }
 
     fun updatePermissionsState() {
+        val provider = sensitiveProvider()
+        val outcome = provider?.lastOutcome
         _uiState.value =
             uiState.value.copy(
                 permissions =
@@ -100,9 +103,13 @@ class PermissionsViewModel @AssistedInject constructor(
                 } else {
                     mergedSensitiveState(redactionStateFlow.current.value)
                 },
-                cdmSupported = sensitiveProvider()?.cdmSupported ?: false,
+                cdmSupported = provider?.cdmSupported ?: false,
                 showOnePlusAdbPreStep = redactionPath is NotificationRedactionPath.OxygenOS,
                 redactionSettingsLocation = redactionPath.settingsLocation,
+                revealSensitiveFallbacks =
+                outcome is AssociationOutcome.Cancelled ||
+                    outcome is AssociationOutcome.Failed ||
+                    outcome is AssociationOutcome.Unsupported,
             )
     }
 
@@ -148,8 +155,11 @@ class PermissionsViewModel @AssistedInject constructor(
     override val requestPermission: RequestPermission = { type ->
         execute(type) { provider ->
             provider.request()
-            if (type == PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS && provider.isGranted()) {
-                verifySensitiveAccess()
+            if (type == PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS) {
+                val sensitiveProvider = provider as? SensitiveNotificationPermissionProvider
+                if (sensitiveProvider?.lastOutcome is AssociationOutcome.Associated) {
+                    verifySensitiveAccess()
+                }
             }
         }
     }
@@ -178,6 +188,9 @@ class PermissionsViewModel @AssistedInject constructor(
                         withTimeoutOrNull(VERIFY_TIMEOUT_MS) {
                             testResultFlow.current.filterNotNull().first()
                         }
+                    testNotificationSender.cancelProbe()
+                    testResultFlow.current.value = null
+                    isVerifying = false
                     when {
                         received == null ->
                             _uiState.value =

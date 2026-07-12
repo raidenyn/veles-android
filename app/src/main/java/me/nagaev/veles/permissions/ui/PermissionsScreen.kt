@@ -60,6 +60,7 @@ fun PermissionsScreen(
             cdmSupported = state.cdmSupported,
             settingsLocation = state.redactionSettingsLocation,
             showOnePlusAdbPreStep = state.showOnePlusAdbPreStep,
+            revealFallbacks = state.revealSensitiveFallbacks,
             onEnableViaCompanion = { actions.requestPermission(PermissionType.RECEIVE_SENSITIVE_NOTIFICATIONS) },
             onOpenSettings = actions.openRedactionSettings,
             onOpenEnhancedSettings = actions.openEnhancedNotificationsSettings,
