@@ -104,6 +104,25 @@ class NotificationListenerTest {
     }
 
     @Test
+    fun `rebind action stops its temporary service start`() {
+        val service = spyk(
+            NotificationListener(
+                mockk(relaxed = true),
+                ownPackageName = "me.nagaev.veles",
+                velesLog = testLog,
+                testResultFlow = TestResultFlow(),
+                redactionStateFlow = RedactionStateFlow(),
+            ),
+        )
+        every { service.requestUnbind() } returns Unit
+        every { service.stopSelf(0) } returns Unit
+
+        service.onStartCommand(Intent(NotificationListener.ACTION_REBIND), 0, 0)
+
+        verify { service.stopSelf(0) }
+    }
+
+    @Test
     fun `onListenerConnected calls saveConnectionState - true`() {
         val state = mockk<NotificationStatePreferences>(relaxed = true)
 

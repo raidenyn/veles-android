@@ -95,6 +95,10 @@ class NotificationListener(
         if (intent?.action == ACTION_REBIND) {
             pendingRebind = true
             requestUnbind()
+            // This start only delivers the rebind request. Stopping it lets the managed
+            // listener destruction invoke onListenerDisconnected(), which requests the rebind.
+            stopSelf(startId)
+            return START_NOT_STICKY
         }
         logger.d("NotificationListener", "Started: $startId")
         return START_REDELIVER_INTENT
