@@ -7,7 +7,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import me.nagaev.veles.R
 import javax.inject.Inject
+import javax.inject.Singleton
 
+@Singleton
 class NotificationStatePreferences @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
