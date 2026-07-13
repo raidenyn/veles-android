@@ -30,9 +30,45 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::A release for tag $GITHUB_REF_NAME already exists. Aborting to avoid duplicate drafts."
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          if ! LOOKUP_JSON=$(gh api graphql \
+            -F owner="$OWNER" \
+            -F name="$REPO" \
+            -F tagName="$GITHUB_REF_NAME" \
+            -f query='query($owner: String!, $name: String!, $tagName: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tagName) { databaseId isDraft }
+              }
+            }'); then
+            echo "::error::Could not check for a pre-existing release for $GITHUB_REF_NAME"
             exit 1
+          fi
+          if ! printf '%s' "$LOOKUP_JSON" | jq -e '
+            .errors == null and
+            (.data.repository | type == "object") and
+            (.data.repository | has("release")) and
+            (.data.repository.release == null or
+              (.data.repository.release.databaseId | type == "number") and
+              (.data.repository.release.isDraft | type == "boolean"))
+          ' >/dev/null; then
+            printf '%s\n' "$LOOKUP_JSON"
+            echo "::error::Invalid response while checking for a pre-existing release for $GITHUB_REF_NAME"
+            exit 1
+          fi
+          EXISTING_JSON=$(printf '%s' "$LOOKUP_JSON" | jq -c .data.repository.release)
+          if [ "$EXISTING_JSON" != "null" ]; then
+            EXISTING_ID=$(printf '%s' "$EXISTING_JSON" | jq -r .databaseId)
+            IS_DRAFT=$(printf '%s' "$EXISTING_JSON" | jq -r .isDraft)
+            if [ "$IS_DRAFT" = "true" ]; then
+              echo "Deleting stale draft release $EXISTING_ID for $GITHUB_REF_NAME"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$EXISTING_ID"
+            else
+              echo "::error::A published release for tag $GITHUB_REF_NAME already exists. Aborting to avoid a duplicate release."
+              exit 1
+            fi
+          else
+            echo "No pre-existing release for $GITHUB_REF_NAME"
           fi
       - uses: actions/setup-java@v5
         with:
@@ -129,7 +165,9 @@ jobs:
             echo "Details: docs/reproducible-builds.md in this repo."
           } > notes.md
           NOTES="$(cat notes.md)"
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f body="$NOTES"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -f tag_name="$GITHUB_REF_NAME" \
+            -f body="$NOTES"
 
   verify:
     name: verify reproducibility
@@ -186,7 +224,15 @@ jobs:
             exit 1
           fi
           echo "Draft asset sha256 matches build digest: $DRAFT_SHA256"
-          # Publish by release ID (unambiguous), not by tag.
+          # Publish by release ID (unambiguous), while explicitly replacing
+          # GitHub's synthetic draft tag with the triggering version tag.
           # -F (not -f) coerces draft to a JSON boolean.
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -f tag_name="$GITHUB_REF_NAME" \
+            -F draft=false
+          PUBLISHED_TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq .tag_name)
+          if [ "$PUBLISHED_TAG" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Release published on '$PUBLISHED_TAG' instead of '$GITHUB_REF_NAME'"
+            exit 1
+          fi
           echo "Published release $GITHUB_REF_NAME (ID: $RELEASE_ID)"
