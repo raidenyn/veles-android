@@ -239,7 +239,7 @@ private fun FallbackSection(
             Spacer(Modifier.height(4.dp))
         }
         Text(
-            text = "Last resort - grant via adb:",
+            text = "Last resort — grant via adb:",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
