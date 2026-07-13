@@ -30,10 +30,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ERROR_FILE="$RUNNER_TEMP/release-view-error"
-          if EXISTING_JSON=$(gh release view "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json "databaseId,isDraft" 2>"$ERROR_FILE"); then
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          if ! LOOKUP_JSON=$(gh api graphql \
+            -F owner="$OWNER" \
+            -F name="$REPO" \
+            -F tagName="$GITHUB_REF_NAME" \
+            -f query='query($owner: String!, $name: String!, $tagName: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tagName) { databaseId isDraft }
+              }
+            }'); then
+            echo "::error::Could not check for a pre-existing release for $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if ! printf '%s' "$LOOKUP_JSON" | jq -e '
+            .errors == null and
+            (.data.repository.release == null or
+              (.data.repository.release.databaseId | type == "number") and
+              (.data.repository.release.isDraft | type == "boolean"))
+          ' >/dev/null; then
+            echo "::error::Invalid response while checking for a pre-existing release for $GITHUB_REF_NAME"
+            exit 1
+          fi
+          EXISTING_JSON=$(printf '%s' "$LOOKUP_JSON" | jq -c .data.repository.release)
+          if [ "$EXISTING_JSON" != "null" ]; then
             EXISTING_ID=$(printf '%s' "$EXISTING_JSON" | jq -r .databaseId)
             IS_DRAFT=$(printf '%s' "$EXISTING_JSON" | jq -r .isDraft)
             if [ "$IS_DRAFT" = "true" ]; then
@@ -43,12 +64,8 @@ jobs:
               echo "::error::A published release for tag $GITHUB_REF_NAME already exists. Aborting to avoid a duplicate release."
               exit 1
             fi
-          elif grep -Fq "release not found" "$ERROR_FILE"; then
-            echo "No pre-existing release for $GITHUB_REF_NAME"
           else
-            echo "::error::Could not check for a pre-existing release for $GITHUB_REF_NAME"
-            cat "$ERROR_FILE" >&2
-            exit 1
+            echo "No pre-existing release for $GITHUB_REF_NAME"
           fi
       - uses: actions/setup-java@v5
         with:
