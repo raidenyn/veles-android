@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Veles turns bank OTP notifications into clean, copy-ready codes. Free, open source, and entirely offline.">
+  <meta name="theme-color" content="#FBFAF3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#12140F" media="(prefers-color-scheme: dark)">
+  <title>Veles - Bank OTPs, made usable</title>
+  <link rel="icon" href="veles-icon.webp" type="image/webp">
+  <link rel="icon" href="veles-icon.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="site-nav" aria-label="Main navigation">
+      <a class="brand" href="#top" aria-label="Veles home">
+        <img src="veles-icon.webp" alt="" width="36" height="36">
+        <span>Veles</span>
+      </a>
+      <div class="nav-links">
+        <a href="#problem">Problem</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#free">Free</a>
+        <a href="#pairing">Pairing</a>
+        <a href="#adb">adb guide</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="hero-title">
+      <img class="hero-logo" src="veles-icon.webp" alt="Veles gold bull icon" width="128" height="128">
+      <p class="eyebrow">Open source · MIT · Android 13+</p>
+      <h1 id="hero-title">Bank OTPs, made usable.</h1>
+      <p class="lede">Veles turns bank OTP notifications that ordinary messaging apps cannot present conveniently into clean, copy-ready codes, with the amount and merchant alongside them.</p>
+      <p>Bank messages come in many formats. Veles matches the templates stored on your phone, pulls out the one-time code, amount, and merchant, and re-posts them as one clean notification with a one-tap <strong>Copy</strong> button. Everything happens on your phone — nothing ever leaves it.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/raidenyn/veles-android/releases/latest">Download latest release</a>
+        <a class="button secondary" href="https://github.com/raidenyn/veles-android">View source on GitHub</a>
+      </div>
+    </section>
+
+    <section id="problem" aria-labelledby="problem-title">
+      <p class="section-label">The problem</p>
+      <h2 id="problem-title">Your bank sent the code. Your messaging app still makes you hunt for it.</h2>
+      <p>Banks use inconsistent OTP formats, and standard messaging apps do not always recognize them or make the code easy to copy. You squint, memorize six digits, switch back to the app you were paying in, and hope you remembered them right. If the notification collapses, you dig through the shade to find it again.</p>
+      <figure class="transformation">
+        <div>
+          <p class="transformation-label">Before</p>
+          <blockquote>“Your OTP is 674902 for payment of THB 1,250.00 to COFFEE HOUSE. Valid for 5 minutes. Do not share this code with anyone. Ref: 8842…”</blockquote>
+        </div>
+        <span class="arrow" aria-hidden="true">↓</span>
+        <div class="clean-notification">
+          <p class="transformation-label">After Veles</p>
+          <p><strong>674902</strong> · THB 1,250.00 → COFFEE HOUSE <span class="copy-chip">Copy</span></p>
+        </div>
+      </figure>
+      <p>Veles extracts the three things that matter — the <strong>code</strong>, the <strong>amount</strong>, and <strong>who is charging you</strong> — cancels the noisy original, and posts a clean replacement. One tap copies the code to your clipboard. Paste, confirm, done.</p>
+      <p>Specialized alternatives may be paid, show ads, or ask you to trust software you cannot inspect. Veles closes that gap: it is free, has no ads, works offline, and publishes all of its source.</p>
+      <p>Banks are described by simple text-matching templates stored on your device. UOB Thailand works out of the box; you can add your own bank from the Templates screen and validate it instantly with the built-in Test screen — no coding, no waiting for a real bank SMS.</p>
+    </section>
+
+    <section id="privacy" aria-labelledby="privacy-title">
+      <p class="section-label">Info safety</p>
+      <h2 id="privacy-title">Your codes never leave your phone.</h2>
+      <p>An app that reads banking notifications has to be held to a higher standard. Veles is built so you don't have to trust promises — you can check every claim:</p>
+      <ul class="assurances">
+        <li><strong>No internet — enforced by Android, not by promise.</strong> Veles does not declare the internet permission in its manifest, so the operating system itself will refuse to let it open a network connection. Your notifications physically cannot be sent anywhere.</li>
+        <li><strong>Nothing is stored.</strong> Notification text is processed in memory and discarded. The only things saved on your device are your own bank templates, in a local database.</li>
+        <li><strong>No accounts, no tracking.</strong> No sign-up, no telemetry, no analytics, no crash reporting, no third-party SDKs.</li>
+        <li><strong>Open source and verifiable.</strong> The complete source code is public under the MIT license. Releases are built reproducibly — CI refuses to publish an APK it cannot rebuild bit-for-bit from the source you can read — and any release can be verified with one command:</li>
+      </ul>
+      <pre><code>gh attestation verify veles-X.Y.Z.apk --repo raidenyn/veles-android</code></pre>
+    </section>
+
+    <section id="free" class="statement" aria-labelledby="free-title">
+      <p class="section-label">Free forever</p>
+      <h2 id="free-title">No ads. No payments. Not now, not ever.</h2>
+      <p>Veles is free software: no advertisements, no in-app purchases, no subscriptions, no "pro" tier — and no plans to ever add any. An app that reads your banking notifications must have zero monetization pressure, so this isn't a launch promo, it's a design constraint. The MIT license guarantees the code stays free.</p>
+    </section>
+
+    <section id="pairing" aria-labelledby="pairing-title">
+      <p class="section-label">Android 15+</p>
+      <h2 id="pairing-title">Why does Veles ask to pair with a Bluetooth device?</h2>
+      <p>Starting with Android 15, the system redacts one-time codes out of notifications <em>before</em> any notification-listener app can read them. Instead of your bank's message, Veles receives only “Sensitive notification content hidden.”</p>
+      <p>Android makes one exception: <strong>companion-device apps</strong> — the mechanism smartwatches use to mirror your notifications. It is the only door Android leaves open, so Veles knocks on it: to be registered as a companion app, it must pair with a nearby Bluetooth device.</p>
+      <ul>
+        <li><strong>Any Bluetooth device works</strong> — headphones, your car, a fitness band. The system dialog mentions a watch only because Veles has to request the "watch" companion profile; it's the only profile that carries the needed permission.</li>
+        <li><strong>Veles never talks to the paired device.</strong> The pairing is a formality Android requires. No data is sent to it, read from it, or associated with it.</li>
+        <li><strong>The grant is verified, not assumed.</strong> After pairing, Veles posts a hidden test notification with a random code through its own pipeline and checks whether it can read the text back. The setup card only disappears once access is <em>confirmed</em> to work.</li>
+      </ul>
+      <p>On Android 14 and below none of this applies — Veles never shows the pairing step there. If pairing doesn't stick on your device, see the <a href="#adb">adb fallback</a> below.</p>
+    </section>
+
+    <section id="adb" aria-labelledby="adb-title">
+      <p class="section-label">Fallback guide</p>
+      <h2 id="adb-title">Fallback: grant access with adb.</h2>
+      <p>If companion pairing doesn't work on your device (some manufacturer builds keep redacting content even after the grant), you can give Veles the permission directly from a computer using adb. This targets <strong>only Veles</strong> — unlike disabling Enhanced notifications, it does not weaken protection for the rest of the device.</p>
+      <p>You'll need a computer with <code>adb</code> and USB or wireless debugging enabled on the phone.</p>
+      <ol class="steps">
+        <li>
+          <h3>Step 1 — OnePlus / OxygenOS only: disable system optimization.</h3>
+          <p>OxygenOS blocks adb from changing per-app operations unless a developer override is on. In <em>Settings → Additional settings → Developer options</em>, find <strong>“Disable system optimization”</strong> (called “Disable permission monitoring” on older builds), turn it <strong>ON</strong>, and <strong>reboot</strong>. On other brands, skip this step.</p>
+        </li>
+        <li>
+          <h3>Step 2 — grant the permission:</h3>
+          <pre><code>adb shell appops set me.nagaev.veles RECEIVE_SENSITIVE_NOTIFICATIONS allow</code></pre>
+          <p>If adb complains about user profiles:</p>
+          <pre><code>adb shell cmd appops set --user 0 me.nagaev.veles RECEIVE_SENSITIVE_NOTIFICATIONS allow</code></pre>
+          <p>Verify it saved:</p>
+          <pre><code>adb shell appops get me.nagaev.veles RECEIVE_SENSITIVE_NOTIFICATIONS</code></pre>
+          <p>Expected output: <code>RECEIVE_SENSITIVE_NOTIFICATIONS: allow</code>. Then tap <strong>Check now</strong> on the card in Veles.</p>
+        </li>
+        <li>
+          <h3>Step 3 — optional:</h3>
+          <p>Turn “Disable system optimization” back <strong>OFF</strong>; the granted permission persists.</p>
+        </li>
+      </ol>
+      <p><strong>When you'd need to redo this:</strong> after a full uninstall + reinstall (updates in place are fine), and occasionally after major OS updates.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Veles · <a href="https://github.com/raidenyn/veles-android/blob/master/LICENSE">MIT License</a> · <a href="https://github.com/raidenyn/veles-android">Source</a> · <a href="https://github.com/raidenyn/veles-android/issues">Report an issue</a></p>
+    <p><em>Named after Veles, the Slavic god of cattle and wealth — the gold bull on the icon.</em></p>
+  </footer>
+</body>
+</html>
