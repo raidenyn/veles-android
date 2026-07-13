@@ -46,6 +46,8 @@ jobs:
           fi
           if ! printf '%s' "$LOOKUP_JSON" | jq -e '
             .errors == null and
+            (.data.repository | type == "object") and
+            (.data.repository | has("release")) and
             (.data.repository.release == null or
               (.data.repository.release.databaseId | type == "number") and
               (.data.repository.release.isDraft | type == "boolean"))
