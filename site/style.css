@@ -68,7 +68,7 @@ p, li { max-width: 70ch; }
 .button.secondary { color: var(--primary); }
 
 .transformation { width: min(900px, calc(100vw - 32px)); margin: 38px 50% 38px 0; transform: translateX(calc((var(--content) - min(900px, calc(100vw - 32px))) / 2)); padding: 28px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
-.transformation-label { margin: 0 0 8px; color: var(--gold); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
+.transformation .transformation-label { margin: 0 0 8px; color: var(--gold); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
 blockquote { margin: 0; color: var(--muted); font-style: italic; }
 .arrow { display: block; padding: 16px 0; color: var(--primary); font-size: 1.8rem; text-align: center; }
 .clean-notification { padding: 18px; border-left: 4px solid var(--primary); border-radius: 7px; background: var(--bg); }
