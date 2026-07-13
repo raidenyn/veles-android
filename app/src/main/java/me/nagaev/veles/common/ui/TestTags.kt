@@ -14,6 +14,8 @@ object TestTags {
     const val SENSITIVE_CARD = "sensitive_card"
     const val SENSITIVE_STATUS = "sensitive_status"
     const val SENSITIVE_ENABLE_BUTTON = "sensitive_enable_button"
+    const val SENSITIVE_PAIRING_GUIDE = "sensitive_pairing_guide"
+    const val SENSITIVE_ADB_GUIDE = "sensitive_adb_guide"
     const val SENSITIVE_VERIFY_BUTTON = "sensitive_verify_button"
     const val SENSITIVE_FALLBACKS_TOGGLE = "sensitive_fallbacks_toggle"
     const val SENSITIVE_OPEN_SETTINGS = "sensitive_open_settings"
