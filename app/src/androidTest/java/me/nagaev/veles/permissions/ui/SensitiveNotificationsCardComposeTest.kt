@@ -73,6 +73,13 @@ class SensitiveNotificationsCardComposeTest {
     }
 
     @Test
+    fun unknownShowsPairingGuide() {
+        setCard(SensitiveNotificationsUiState.Unknown)
+
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_PAIRING_GUIDE).assertIsDisplayed()
+    }
+
+    @Test
     fun adbGuideAppearsWithFallbacksAndOpensAdbAnchor() {
         setCard(SensitiveNotificationsUiState.NotGranted, revealFallbacks = true)
 
@@ -122,6 +129,7 @@ class SensitiveNotificationsCardComposeTest {
     fun fallbacksShownImmediatelyWhenCdmUnsupported() {
         setCard(SensitiveNotificationsUiState.NotGranted, cdmSupported = false)
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ENABLE_BUTTON).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ADB_GUIDE).assertIsDisplayed()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ADB_COPY).assertIsDisplayed()
     }
 
@@ -130,22 +138,27 @@ class SensitiveNotificationsCardComposeTest {
         var verified = false
         setCard(SensitiveNotificationsUiState.GrantedButRedacted, onVerify = { verified = true })
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_OPEN_SETTINGS).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ADB_GUIDE).assertIsDisplayed()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_VERIFY_BUTTON).performClick()
         assertTrue(verified)
     }
 
     @Test
-    fun verifyingShowsProgressWithoutButtons() {
+    fun verifyingHidesPairingAndAdbGuides() {
         setCard(SensitiveNotificationsUiState.Verifying)
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_CARD).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_PAIRING_GUIDE).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ADB_GUIDE).assertDoesNotExist()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ENABLE_BUTTON).assertDoesNotExist()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_VERIFY_BUTTON).assertDoesNotExist()
     }
 
     @Test
-    fun applyingGrantShowsProgressWithoutButtons() {
+    fun applyingGrantHidesPairingAndAdbGuides() {
         setCard(SensitiveNotificationsUiState.ApplyingGrant)
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_CARD).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_PAIRING_GUIDE).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ADB_GUIDE).assertDoesNotExist()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ENABLE_BUTTON).assertDoesNotExist()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_VERIFY_BUTTON).assertDoesNotExist()
     }
