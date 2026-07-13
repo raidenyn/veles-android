@@ -208,6 +208,7 @@ class VelesPermissionsAppTests {
                 permissionsState.copy(
                     sensitiveNotifications = SensitiveNotificationsUiState.NotGranted,
                     cdmSupported = true,
+                    revealSensitiveFallbacks = true,
                 ),
                 permissionsActions = permissionsActions,
             )
@@ -215,8 +216,6 @@ class VelesPermissionsAppTests {
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_CARD).assertExists()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ENABLE_BUTTON).assertExists()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_PAIRING_GUIDE).assertExists()
-        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ADB_GUIDE).assertDoesNotExist()
-        composeTestRule.onNodeWithTag(TestTags.SENSITIVE_FALLBACKS_TOGGLE).performClick()
         composeTestRule.onNodeWithTag(TestTags.SENSITIVE_ADB_GUIDE).assertExists()
     }
 
