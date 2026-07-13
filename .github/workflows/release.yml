@@ -52,6 +52,7 @@ jobs:
               (.data.repository.release.databaseId | type == "number") and
               (.data.repository.release.isDraft | type == "boolean"))
           ' >/dev/null; then
+            printf '%s\n' "$LOOKUP_JSON"
             echo "::error::Invalid response while checking for a pre-existing release for $GITHUB_REF_NAME"
             exit 1
           fi

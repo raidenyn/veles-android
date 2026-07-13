@@ -22,6 +22,10 @@
 - The publish PATCH must send `draft=false` as a JSON boolean.
 - The publish job must fail if the release read-back `.tag_name` differs from `$GITHUB_REF_NAME`.
 
+## Implementation Deviation
+
+The implemented guard supersedes Task 1 Steps 1-3 and their original structural harness. Review found that `gh release view` combines published-release REST and draft-release GraphQL lookups, so matching its `release not found` stderr could treat a partial API failure as absence. The final workflow instead makes one GraphQL `repository.release(tagName:)` query, validates the complete response shape with `jq`, accepts only an explicit `release: null` as absence, and otherwise fails closed. Validation executes the guard extracted from the workflow with a mocked `gh` across absent, draft, published, API-error, GraphQL-error, and malformed-response cases.
+
 ---
 
 ### Task 1: Make Release Publication Tag-Safe And Retryable
