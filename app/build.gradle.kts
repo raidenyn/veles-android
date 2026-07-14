@@ -76,6 +76,9 @@ android {
         compose = true
         buildConfig = true
     }
+    androidResources {
+        localeFilters += listOf("en")
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

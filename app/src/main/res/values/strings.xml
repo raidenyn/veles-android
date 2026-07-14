@@ -1,23 +1,12 @@
 <resources>
     <string name="app_name">Veles</string>
-    <string name="navigation_drawer_open">Open navigation drawer</string>
-    <string name="navigation_drawer_close">Close navigation drawer</string>
-    <string name="nav_header_title">Android Studio</string>
-    <string name="nav_header_subtitle">android.studio@android.com</string>
-    <string name="nav_header_desc">Navigation header</string>
-    <string name="action_settings">Settings</string>
-
-    <string name="menu_home">Home</string>
-    <string name="menu_gallery">Gallery</string>
-    <string name="menu_slideshow">Slideshow</string>
-    <string name="permissions">Permissions</string>
     <string name="access_notification_permission_description">Allow Veles to read bank notifications and present their OTP details clearly.</string>
     <string name="send_notification_permission_description">Allow Veles to post its own OTP notifications.</string>
     <string name="access_notification_permission_title">Notification access</string>
     <string name="send_notification_permission_title">Send notifications</string>
     <string name="notification_listener_service_name">Veles OTP listener</string>
-    <string name="notification_listener_connected">notification_listener_connected</string>
-    <string name="notification_listener_preferences">notification_listener_preferences</string>
+    <string name="notification_listener_connected" translatable="false">notification_listener_connected</string>
+    <string name="notification_listener_preferences" translatable="false">notification_listener_preferences</string>
 
     <plurals name="bank_configs_exported">
         <item quantity="one">Exported %1$d template</item>
