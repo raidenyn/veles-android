@@ -93,4 +93,18 @@
     <string name="sensitive_card_adb_intro">Last resort - grant via adb:</string>
     <string name="sensitive_card_full_guide">Full guide</string>
     <string name="sensitive_card_copy_command">Copy command</string>
+    <string name="bottom_nav_home">Home</string>
+    <string name="bottom_nav_templates">Templates</string>
+    <string name="bottom_nav_test">Test</string>
+    <string name="test_screen_title">Test</string>
+    <string name="test_screen_description">Paste a bank message to check which template matches.</string>
+    <string name="test_screen_notification_text">Notification text</string>
+    <string name="test_screen_send">Send</string>
+    <string name="test_screen_log_raw">Show raw notification content in logs (debug only)</string>
+    <string name="test_screen_matched">Matched · %1$s</string>
+    <string name="test_screen_payment_summary">%1$s %2$s · %3$s</string>
+    <string name="test_screen_no_match">No match - no bank template recognized this text</string>
+    <string name="test_screen_redaction_hint">This is what the listener actually received - the OS redacted the real content before Veles could read it (see the banner on Home).</string>
+    <string name="test_screen_received">Received: %1$s</string>
+    <string name="test_default_notification" translatable="false">For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn\'t make it, call 02-285-1573.</string>
 </resources>
