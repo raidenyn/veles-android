@@ -26,7 +26,7 @@ class OtpNotificationBuilder(
         currencyCode: String,
         copied: Boolean,
     ): Notification {
-        tryCreateNotificationChannel()
+        createOrUpdateNotificationChannel()
 
         val copyIntent =
             Intent(context, CopyDataReceiver::class.java).apply {
@@ -46,8 +46,11 @@ class OtpNotificationBuilder(
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
 
-        val text = "OTP: $otp, Pay: $amountText $currencyCode"
-        val actionLabel = if (copied) "Copy $otp Copied ✓" else "Copy $otp"
+        val text = context.getString(R.string.otp_notification_content, otp, amountText, currencyCode)
+        val actionLabel = context.getString(
+            if (copied) R.string.otp_notification_copied else R.string.otp_notification_copy,
+            otp,
+        )
 
         return NotificationCompat
             .Builder(context, CHANNEL_ID)
@@ -62,18 +65,17 @@ class OtpNotificationBuilder(
             .build()
     }
 
-    private fun tryCreateNotificationChannel() {
+    private fun createOrUpdateNotificationChannel() {
         val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        if (notificationManager.getNotificationChannel(CHANNEL_ID) != null) {
-            return
-        }
-
-        val importance = NotificationManager.IMPORTANCE_HIGH
         val channel =
-            NotificationChannel(CHANNEL_ID, "Handy OTP", importance).apply {
-                description = "Show handy OTP passwords from banks"
+            NotificationChannel(
+                CHANNEL_ID,
+                context.getString(R.string.otp_notification_channel_name),
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = context.getString(R.string.otp_notification_channel_description)
             }
 
         notificationManager.createNotificationChannel(channel)

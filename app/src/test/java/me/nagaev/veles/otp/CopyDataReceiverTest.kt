@@ -16,6 +16,7 @@ import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.verify
 import me.nagaev.veles.common.VelesLog
+import me.nagaev.veles.R
 import me.nagaev.veles.otp.CopyDataReceiver.Companion.EXTRA_COPY_TEXT
 import me.nagaev.veles.otp.CopyDataReceiver.Companion.EXTRA_NOTIFICATION_ID
 import me.nagaev.veles.otp.handlers.OtpNotificationBuilder
@@ -45,6 +46,7 @@ class CopyDataReceiverTest {
     @Before
     fun beforeTest() {
         every { context.getSystemService(Context.CLIPBOARD_SERVICE) } returns clipboardManager
+        every { context.getString(R.string.otp_clipboard_label) } returns "OTP"
         every { intent.getStringExtra(EXTRA_COPY_TEXT) } returns testText
         every { intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1) } returns 42
         every { intent.getStringExtra(CopyDataReceiver.EXTRA_MERCHANT) } returns "Test Merchant"

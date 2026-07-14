@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
+import me.nagaev.veles.R
 import me.nagaev.veles.otp.CopyDataReceiver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -41,7 +42,7 @@ class OtpNotificationBuilderTest {
         val notification = buildNotification(copied = false)
 
         val action = notification.actions.first()
-        assertEquals("Copy $testOtp", action.title)
+        assertEquals(context.getString(R.string.otp_notification_copy, testOtp), action.title)
     }
 
     @Test
@@ -49,7 +50,7 @@ class OtpNotificationBuilderTest {
         val notification = buildNotification(copied = true)
 
         val action = notification.actions.first()
-        assertEquals("Copy $testOtp Copied ✓", action.title)
+        assertEquals(context.getString(R.string.otp_notification_copied, testOtp), action.title)
     }
 
     @Test
@@ -100,7 +101,12 @@ class OtpNotificationBuilderTest {
 
         assertEquals(testMerchant, notification.extras.get(NotificationCompat.EXTRA_TITLE))
         assertEquals(
-            "OTP: $testOtp, Pay: $testAmount $testCurrency",
+            context.getString(
+                R.string.otp_notification_content,
+                testOtp,
+                testAmount,
+                testCurrency,
+            ),
             notification.extras.get(NotificationCompat.EXTRA_TEXT),
         )
     }
@@ -114,7 +120,7 @@ class OtpNotificationBuilderTest {
     }
 
     @Test
-    fun `Channel is not recreated on second build`() {
+    fun `Channel metadata is resubmitted without changing id`() {
         buildNotification(copied = false)
         val channelAfterFirst =
             notificationManager.getNotificationChannel(OtpNotificationBuilder.CHANNEL_ID)
@@ -127,6 +133,14 @@ class OtpNotificationBuilderTest {
             "Channel id should be unchanged after second build",
             channelAfterFirst.id,
             channelAfterSecond.id,
+        )
+        assertEquals(
+            context.getString(R.string.otp_notification_channel_name),
+            channelAfterSecond.name,
+        )
+        assertEquals(
+            context.getString(R.string.otp_notification_channel_description),
+            channelAfterSecond.description,
         )
     }
 }

@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.PersistableBundle
 import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.EntryPointAccessors
+import me.nagaev.veles.R
 import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.otp.handlers.OtpNotificationBuilder
 
@@ -25,12 +26,15 @@ class CopyDataReceiver(
         const val EXTRA_MERCHANT = "Merchant"
         const val EXTRA_AMOUNT_TEXT = "AmountText"
         const val EXTRA_CURRENCY_CODE = "CurrencyCode"
-        internal const val CLIP_LABEL = "OTP"
         private const val CLEAR_DELAY_MILLIS = 2 * 60 * 1000L
 
-        internal fun shouldClearClip(clip: ClipData?, expectedText: String): Boolean {
+        internal fun shouldClearClip(
+            clip: ClipData?,
+            expectedLabel: String,
+            expectedText: String,
+        ): Boolean {
             if (clip == null || clip.itemCount == 0) return false
-            if (clip.description.label != CLIP_LABEL) return false
+            if (clip.description.label != expectedLabel) return false
             return clip.getItemAt(0).text?.toString() == expectedText
         }
     }
@@ -51,8 +55,9 @@ class CopyDataReceiver(
         val currencyCode = intent.getStringExtra(EXTRA_CURRENCY_CODE) ?: ""
         val clipboardManager =
             context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val clipLabel = context.getString(R.string.otp_clipboard_label)
 
-        val clip = ClipData.newPlainText(CLIP_LABEL, otp).apply {
+        val clip = ClipData.newPlainText(clipLabel, otp).apply {
             description.extras = PersistableBundle().apply {
                 putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
             }
@@ -75,7 +80,7 @@ class CopyDataReceiver(
         }
 
         Handler(Looper.getMainLooper()).postDelayed({
-            if (shouldClearClip(clipboardManager.primaryClip, otp)) {
+            if (shouldClearClip(clipboardManager.primaryClip, clipLabel, otp)) {
                 clipboardManager.clearPrimaryClip()
             }
         }, CLEAR_DELAY_MILLIS)

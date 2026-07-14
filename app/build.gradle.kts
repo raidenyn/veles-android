@@ -89,6 +89,7 @@ android {
         warningsAsErrors = false
     }
     testOptions {
+        unitTests.isIncludeAndroidResources = true
         unitTests.isReturnDefaultValues = true
     }
 }

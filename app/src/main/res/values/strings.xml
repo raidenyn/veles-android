@@ -15,7 +15,7 @@
     <string name="send_notification_permission_description">Allow Veles to post its own OTP notifications.</string>
     <string name="access_notification_permission_title">Notification access</string>
     <string name="send_notification_permission_title">Send notifications</string>
-    <string name="notification_listener_service_name">OTP_Listener</string>
+    <string name="notification_listener_service_name">Veles OTP listener</string>
     <string name="notification_listener_connected">notification_listener_connected</string>
     <string name="notification_listener_preferences">notification_listener_preferences</string>
 
@@ -107,4 +107,14 @@
     <string name="test_screen_redaction_hint">This is what the listener actually received - the OS redacted the real content before Veles could read it (see the banner on Home).</string>
     <string name="test_screen_received">Received: %1$s</string>
     <string name="test_default_notification" translatable="false">For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn\'t make it, call 02-285-1573.</string>
+    <string name="otp_notification_content">OTP: %1$s, Pay: %2$s %3$s</string>
+    <string name="otp_notification_copy">Copy %1$s</string>
+    <string name="otp_notification_copied">Copy %1$s Copied ✓</string>
+    <string name="otp_notification_channel_name">Handy OTP</string>
+    <string name="otp_notification_channel_description">Convenient OTP notifications from banks</string>
+    <string name="test_notification_probe">Veles check: code %1$d</string>
+    <string name="test_notification_title">Veles Test</string>
+    <string name="test_notification_channel_name">Veles Test</string>
+    <string name="test_notification_channel_description">Test notifications for verifying handler templates</string>
+    <string name="otp_clipboard_label" translatable="false">OTP</string>
 </resources>

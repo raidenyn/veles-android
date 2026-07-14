@@ -24,26 +24,26 @@ class ShouldClearClipTest {
 
     @Test
     fun `matching label and text clears`() {
-        assertTrue(shouldClearClip(clip("OTP", "123456"), "123456"))
+        assertTrue(shouldClearClip(clip("OTP", "123456"), "OTP", "123456"))
     }
 
     @Test
     fun `matching label but different text does not clear`() {
-        assertFalse(shouldClearClip(clip("OTP", "999999"), "123456"))
+        assertFalse(shouldClearClip(clip("OTP", "999999"), "OTP", "123456"))
     }
 
     @Test
     fun `different label does not clear`() {
-        assertFalse(shouldClearClip(clip("Note", "123456"), "123456"))
+        assertFalse(shouldClearClip(clip("Note", "123456"), "OTP", "123456"))
     }
 
     @Test
     fun `null clip does not clear`() {
-        assertFalse(shouldClearClip(null, "123456"))
+        assertFalse(shouldClearClip(null, "OTP", "123456"))
     }
 
     @Test
     fun `empty clip does not clear`() {
-        assertFalse(shouldClearClip(clip("OTP", null, itemCount = 0), "123456"))
+        assertFalse(shouldClearClip(clip("OTP", null, itemCount = 0), "OTP", "123456"))
     }
 }
