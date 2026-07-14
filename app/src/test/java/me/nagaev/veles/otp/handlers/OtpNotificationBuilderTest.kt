@@ -1,9 +1,14 @@
 package me.nagaev.veles.otp.handlers
 
 import android.app.NotificationManager
+import android.app.NotificationChannel
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import me.nagaev.veles.R
 import me.nagaev.veles.otp.CopyDataReceiver
 import org.junit.Assert.assertEquals
@@ -29,6 +34,18 @@ class OtpNotificationBuilderTest {
     private val testNotificationId = 42
 
     private fun buildNotification(copied: Boolean) = OtpNotificationBuilder(context).build(
+        notificationId = testNotificationId,
+        merchant = testMerchant,
+        otp = testOtp,
+        amountText = testAmount,
+        currencyCode = testCurrency,
+        copied = copied,
+    )
+
+    private fun buildNotification(
+        builder: OtpNotificationBuilder,
+        copied: Boolean,
+    ) = builder.build(
         notificationId = testNotificationId,
         merchant = testMerchant,
         otp = testOtp,
@@ -142,5 +159,34 @@ class OtpNotificationBuilderTest {
             context.getString(R.string.otp_notification_channel_description),
             channelAfterSecond.description,
         )
+    }
+
+    @Test
+    fun `Channel is resubmitted on second build`() {
+        val observingManager = mockk<NotificationManager>(relaxed = true)
+        every {
+            observingManager.getNotificationChannel(OtpNotificationBuilder.CHANNEL_ID)
+        } returnsMany listOf(
+            null,
+            NotificationChannel(
+                OtpNotificationBuilder.CHANNEL_ID,
+                "Existing channel",
+                NotificationManager.IMPORTANCE_HIGH,
+            ),
+        )
+        val observingContext = object : ContextWrapper(context) {
+            override fun getSystemService(name: String): Any? =
+                if (name == Context.NOTIFICATION_SERVICE) observingManager else super.getSystemService(name)
+        }
+        val builder = OtpNotificationBuilder(observingContext)
+
+        buildNotification(builder, copied = false)
+        buildNotification(builder, copied = false)
+
+        verify(exactly = 2) {
+            observingManager.createNotificationChannel(match {
+                it.id == OtpNotificationBuilder.CHANNEL_ID
+            })
+        }
     }
 }
