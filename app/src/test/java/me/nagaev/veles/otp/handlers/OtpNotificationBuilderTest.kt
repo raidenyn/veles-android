@@ -1,7 +1,7 @@
 package me.nagaev.veles.otp.handlers
 
-import android.app.NotificationManager
 import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.core.app.NotificationCompat
@@ -175,8 +175,7 @@ class OtpNotificationBuilderTest {
             ),
         )
         val observingContext = object : ContextWrapper(context) {
-            override fun getSystemService(name: String): Any? =
-                if (name == Context.NOTIFICATION_SERVICE) observingManager else super.getSystemService(name)
+            override fun getSystemService(name: String): Any? = if (name == Context.NOTIFICATION_SERVICE) observingManager else super.getSystemService(name)
         }
         val builder = OtpNotificationBuilder(observingContext)
 
@@ -184,9 +183,11 @@ class OtpNotificationBuilderTest {
         buildNotification(builder, copied = false)
 
         verify(exactly = 2) {
-            observingManager.createNotificationChannel(match {
-                it.id == OtpNotificationBuilder.CHANNEL_ID
-            })
+            observingManager.createNotificationChannel(
+                match {
+                    it.id == OtpNotificationBuilder.CHANNEL_ID
+                },
+            )
         }
     }
 }

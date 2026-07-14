@@ -1,7 +1,7 @@
 package me.nagaev.veles.otp.config.viewmodel
 
-import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.common.UiText
+import me.nagaev.veles.otp.config.BankHandlerConfig
 
 data class BankConfigsState(
     val configs: List<BankHandlerConfig> = emptyList(),

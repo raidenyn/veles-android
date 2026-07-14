@@ -15,8 +15,8 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.verify
-import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.R
+import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.otp.CopyDataReceiver.Companion.EXTRA_COPY_TEXT
 import me.nagaev.veles.otp.CopyDataReceiver.Companion.EXTRA_NOTIFICATION_ID
 import me.nagaev.veles.otp.handlers.OtpNotificationBuilder

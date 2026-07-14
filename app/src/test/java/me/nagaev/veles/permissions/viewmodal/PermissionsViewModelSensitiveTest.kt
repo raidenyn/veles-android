@@ -16,13 +16,13 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import me.nagaev.veles.R
 import me.nagaev.veles.common.NotificationStatePreferences
 import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.RedactionStateFlow
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
 import me.nagaev.veles.common.UiText
-import me.nagaev.veles.R
 import me.nagaev.veles.otp.NotificationRedactionPath
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
 import me.nagaev.veles.permissions.services.AssociationOutcome

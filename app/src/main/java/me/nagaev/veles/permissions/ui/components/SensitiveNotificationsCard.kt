@@ -181,7 +181,8 @@ private fun StatusRow(state: SensitiveNotificationsUiState) {
                     SensitiveNotificationsUiState.GrantedButRedacted -> R.string.sensitive_card_status_granted_but_redacted
                     SensitiveNotificationsUiState.Unknown -> R.string.sensitive_card_status_unknown
                     SensitiveNotificationsUiState.NotApplicable,
-                    SensitiveNotificationsUiState.Granted -> return
+                    SensitiveNotificationsUiState.Granted,
+                    -> return
                 },
             ),
             fontSize = 13.sp,

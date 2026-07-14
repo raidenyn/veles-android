@@ -14,8 +14,8 @@ import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.spyk
 import io.mockk.slot
+import io.mockk.spyk
 import io.mockk.verify
 import me.nagaev.veles.R
 import org.junit.Assert.assertEquals
@@ -35,8 +35,7 @@ class TestNotificationSenderTest {
     private val postedNotification = slot<Notification>()
     private val resources = spyk(applicationContext.resources)
     private val context = object : ContextWrapper(applicationContext) {
-        override fun getSystemService(name: String): Any? =
-            if (name == Context.NOTIFICATION_SERVICE) channelManager else super.getSystemService(name)
+        override fun getSystemService(name: String): Any? = if (name == Context.NOTIFICATION_SERVICE) channelManager else super.getSystemService(name)
 
         override fun getResources(): Resources = this@TestNotificationSenderTest.resources
     }
@@ -63,11 +62,13 @@ class TestNotificationSenderTest {
         assertEquals("Localized test title", postedNotification.captured.extras.getCharSequence(NotificationCompat.EXTRA_TITLE))
         assertEquals(probe, postedNotification.captured.extras.getCharSequence(NotificationCompat.EXTRA_TEXT))
         verify {
-            channelManager.createNotificationChannel(match {
-                it.id == TestNotificationSender.CHANNEL_ID &&
-                    it.name == "Localized test channel" &&
-                    it.description == "Localized test channel description"
-            })
+            channelManager.createNotificationChannel(
+                match {
+                    it.id == TestNotificationSender.CHANNEL_ID &&
+                        it.name == "Localized test channel" &&
+                        it.description == "Localized test channel description"
+                },
+            )
         }
     }
 
@@ -89,9 +90,11 @@ class TestNotificationSenderTest {
         sender.post("Second")
 
         verify(exactly = 2) {
-            channelManager.createNotificationChannel(match {
-                it.id == TestNotificationSender.CHANNEL_ID
-            })
+            channelManager.createNotificationChannel(
+                match {
+                    it.id == TestNotificationSender.CHANNEL_ID
+                },
+            )
         }
     }
 }
