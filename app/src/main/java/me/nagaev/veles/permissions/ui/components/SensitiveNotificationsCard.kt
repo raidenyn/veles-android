@@ -30,11 +30,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.common.VelesLinks
+import me.nagaev.veles.common.asString
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.viewmodal.SensitiveNotificationsUiState
 
@@ -46,7 +50,7 @@ private const val ADB_COMMAND =
 fun SensitiveNotificationsCard(
     state: SensitiveNotificationsUiState,
     cdmSupported: Boolean,
-    settingsLocation: String,
+    settingsLocation: UiText,
     showOnePlusAdbPreStep: Boolean,
     revealFallbacks: Boolean = false,
     showForceStopButton: Boolean,
@@ -89,9 +93,9 @@ fun SensitiveNotificationsCard(
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = if (state == SensitiveNotificationsUiState.Verifying) {
-                            "Checking…"
+                            stringResource(R.string.sensitive_card_checking)
                         } else {
-                            "Finishing setup — Android is applying the permission…"
+                            stringResource(R.string.sensitive_card_applying)
                         },
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer,
@@ -100,7 +104,7 @@ fun SensitiveNotificationsCard(
             } else {
                 if (showForceStopButton) {
                     Text(
-                        text = "Setup is taking longer than expected. Open App info, tap Force stop, then reopen Veles.",
+                        text = stringResource(R.string.sensitive_card_force_stop_help),
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
@@ -109,22 +113,19 @@ fun SensitiveNotificationsCard(
                         onClick = onOpenAppInfo,
                         shape = MaterialTheme.shapes.small,
                         modifier = Modifier.testTag(TestTags.SENSITIVE_FORCE_STOP_BUTTON),
-                    ) { Text("Open App info") }
+                    ) { Text(stringResource(R.string.sensitive_card_open_app_info)) }
                     Spacer(Modifier.height(8.dp))
                 }
                 if (cdmSupported && (state == SensitiveNotificationsUiState.NotGranted || state == SensitiveNotificationsUiState.Unknown)) {
                     Text(
-                        text = "Android only shares sensitive notifications with companion-device apps, " +
-                            "so Veles asks to be registered as one. The system dialog will ask you to pick " +
-                            "a nearby Bluetooth device — any device works (headphones, your car, a watch). " +
-                            "Turn Bluetooth on first.",
+                        text = stringResource(R.string.sensitive_card_pairing_explanation),
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
                     TextButton(
                         onClick = { uriHandler.openUri(VelesLinks.PAIRING) },
                         modifier = Modifier.testTag(TestTags.SENSITIVE_PAIRING_GUIDE),
-                    ) { Text("Why is pairing needed?") }
+                    ) { Text(stringResource(R.string.sensitive_card_pairing_guide)) }
                     Spacer(Modifier.height(12.dp))
                     Button(
                         onClick = onEnableViaCompanion,
@@ -134,7 +135,7 @@ fun SensitiveNotificationsCard(
                             contentColor = MaterialTheme.colorScheme.onError,
                         ),
                         modifier = Modifier.testTag(TestTags.SENSITIVE_ENABLE_BUTTON),
-                    ) { Text("Enable (pair as companion)") }
+                    ) { Text(stringResource(R.string.sensitive_card_enable)) }
                     Spacer(Modifier.height(8.dp))
                 }
                 if (showFallbacks) {
@@ -149,13 +150,13 @@ fun SensitiveNotificationsCard(
                     TextButton(
                         onClick = { fallbacksExpanded = true },
                         modifier = Modifier.testTag(TestTags.SENSITIVE_FALLBACKS_TOGGLE),
-                    ) { Text("More options") }
+                    ) { Text(stringResource(R.string.sensitive_card_more_options)) }
                 }
                 OutlinedButton(
                     onClick = onVerify,
                     shape = MaterialTheme.shapes.small,
                     modifier = Modifier.testTag(TestTags.SENSITIVE_VERIFY_BUTTON),
-                ) { Text("Check now") }
+                ) { Text(stringResource(R.string.sensitive_card_check_now)) }
             }
         }
     }
@@ -172,19 +173,17 @@ private fun StatusRow(state: SensitiveNotificationsUiState) {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            text = when (state) {
-                SensitiveNotificationsUiState.NotGranted ->
-                    "Android hides OTP content from Veles. Bank codes can't be read until access is granted."
-                SensitiveNotificationsUiState.Verifying ->
-                    "Checking whether Veles can read sensitive notifications…"
-                SensitiveNotificationsUiState.ApplyingGrant ->
-                    "Finishing setup — Android is applying the permission…"
-                SensitiveNotificationsUiState.GrantedButRedacted ->
-                    "Access is granted, but this device still hides sensitive content. Try the options below."
-                SensitiveNotificationsUiState.Unknown ->
-                    "Couldn't verify. Check that notification access is enabled, then try again."
-                else -> ""
-            },
+            text = stringResource(
+                when (state) {
+                    SensitiveNotificationsUiState.NotGranted -> R.string.sensitive_card_status_not_granted
+                    SensitiveNotificationsUiState.Verifying -> R.string.sensitive_card_status_verifying
+                    SensitiveNotificationsUiState.ApplyingGrant -> R.string.sensitive_card_applying
+                    SensitiveNotificationsUiState.GrantedButRedacted -> R.string.sensitive_card_status_granted_but_redacted
+                    SensitiveNotificationsUiState.Unknown -> R.string.sensitive_card_status_unknown
+                    SensitiveNotificationsUiState.NotApplicable,
+                    SensitiveNotificationsUiState.Granted -> return
+                },
+            ),
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onErrorContainer,
             modifier = Modifier.testTag(TestTags.SENSITIVE_STATUS),
@@ -194,17 +193,18 @@ private fun StatusRow(state: SensitiveNotificationsUiState) {
 
 @Composable
 private fun FallbackSection(
-    settingsLocation: String,
+    settingsLocation: UiText,
     showOnePlusAdbPreStep: Boolean,
     onOpenSettings: () -> Unit,
     onOpenEnhancedSettings: () -> Unit,
     onOpenAdbGuide: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
+    val settingsLocationText = settingsLocation.asString()
     Column {
-        if (settingsLocation.isNotBlank()) {
+        if (settingsLocationText.isNotBlank()) {
             Text(
-                text = settingsLocation,
+                text = settingsLocationText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
@@ -213,12 +213,11 @@ private fun FallbackSection(
                 onClick = onOpenSettings,
                 shape = MaterialTheme.shapes.small,
                 modifier = Modifier.testTag(TestTags.SENSITIVE_OPEN_SETTINGS),
-            ) { Text("Open settings") }
+            ) { Text(stringResource(R.string.sensitive_card_open_settings)) }
             Spacer(Modifier.height(12.dp))
         }
         Text(
-            text = "Alternatively, turn off Enhanced notifications. This stops Android from hiding " +
-                "sensitive content — but also disables smart replies and actions for all apps.",
+            text = stringResource(R.string.sensitive_card_enhanced_explanation),
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
@@ -227,26 +226,25 @@ private fun FallbackSection(
             onClick = onOpenEnhancedSettings,
             shape = MaterialTheme.shapes.small,
             modifier = Modifier.testTag(TestTags.SENSITIVE_ENHANCED_SETTINGS),
-        ) { Text("Enhanced notifications settings") }
+        ) { Text(stringResource(R.string.sensitive_card_enhanced_settings)) }
         Spacer(Modifier.height(12.dp))
         if (showOnePlusAdbPreStep) {
             Text(
-                text = "On OnePlus: first disable 'System notification optimization' in " +
-                    "Developer options, then run the command below.",
+                text = stringResource(R.string.sensitive_card_oneplus_adb_prestep),
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             Spacer(Modifier.height(4.dp))
         }
         Text(
-            text = "Last resort — grant via adb:",
+            text = stringResource(R.string.sensitive_card_adb_intro),
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
         TextButton(
             onClick = onOpenAdbGuide,
             modifier = Modifier.testTag(TestTags.SENSITIVE_ADB_GUIDE),
-        ) { Text("Full guide") }
+        ) { Text(stringResource(R.string.sensitive_card_full_guide)) }
         Text(
             text = ADB_COMMAND,
             fontFamily = FontFamily.Monospace,
@@ -258,7 +256,7 @@ private fun FallbackSection(
             onClick = { clipboard.setText(AnnotatedString(ADB_COMMAND)) },
             shape = MaterialTheme.shapes.small,
             modifier = Modifier.testTag(TestTags.SENSITIVE_ADB_COPY),
-        ) { Text("Copy command") }
+        ) { Text(stringResource(R.string.sensitive_card_copy_command)) }
         Spacer(Modifier.height(8.dp))
     }
 }

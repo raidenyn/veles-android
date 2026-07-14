@@ -21,6 +21,8 @@ import me.nagaev.veles.common.RedactionState
 import me.nagaev.veles.common.RedactionStateFlow
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.TestResultFlow
+import me.nagaev.veles.common.UiText
+import me.nagaev.veles.R
 import me.nagaev.veles.otp.NotificationRedactionPath
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
 import me.nagaev.veles.permissions.services.AssociationOutcome
@@ -86,6 +88,17 @@ class PermissionsViewModelSensitiveTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         every { status.check() } returns SensitiveNotificationsGrant.NotGranted
         assertEquals(SensitiveNotificationsUiState.NotGranted, viewModel().uiState.value.sensitiveNotifications)
+    }
+
+    @Test
+    fun `uses stock redaction settings resource`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        every { status.check() } returns SensitiveNotificationsGrant.NotGranted
+
+        assertEquals(
+            UiText.Res(R.string.sensitive_card_stock_settings_location),
+            viewModel().uiState.value.redactionSettingsLocation,
+        )
     }
 
     @Test

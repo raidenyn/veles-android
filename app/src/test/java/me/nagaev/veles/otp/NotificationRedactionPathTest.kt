@@ -2,6 +2,8 @@ package me.nagaev.veles.otp
 
 import android.content.ComponentName
 import android.provider.Settings
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,13 +53,19 @@ class NotificationRedactionPathTest {
     }
 
     @Test
-    fun `StockAndroid settingsLocation mentions Sensitive notifications`() {
-        assertTrue(NotificationRedactionPath.StockAndroid.settingsLocation.contains("Sensitive notifications"))
+    fun `StockAndroid settingsLocation is the stock settings resource`() {
+        assertEquals(
+            UiText.Res(R.string.sensitive_card_stock_settings_location),
+            NotificationRedactionPath.StockAndroid.settingsLocation,
+        )
     }
 
     @Test
-    fun `OxygenOS explainerCopy mentions Enhanced Notifications`() {
-        assertTrue(NotificationRedactionPath.OxygenOS.explainerCopy.contains("Enhanced Notifications"))
+    fun `OxygenOS settingsLocation is the OnePlus settings resource`() {
+        assertEquals(
+            UiText.Res(R.string.sensitive_card_oneplus_settings_location),
+            NotificationRedactionPath.OxygenOS.settingsLocation,
+        )
     }
 
     @Test

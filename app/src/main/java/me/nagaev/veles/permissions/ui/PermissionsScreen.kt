@@ -23,10 +23,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nagaev.veles.R
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.ui.components.AccessNotificationPermission
@@ -47,7 +49,7 @@ fun PermissionsScreen(
     ) {
         item {
             Text(
-                text = "Veles",
+                text = stringResource(R.string.permissions_title),
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -81,7 +83,7 @@ fun PermissionsScreen(
         }
         item {
             Text(
-                text = "PERMISSIONS",
+                text = stringResource(R.string.permissions_section),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 0.96.sp,
@@ -136,9 +138,9 @@ private fun ListenerStatusCard(
             Column {
                 Text(
                     text = if (enabled) {
-                        "Notification listener enabled"
+                        stringResource(R.string.permissions_listener_enabled)
                     } else {
-                        "Notification listener disabled"
+                        stringResource(R.string.permissions_listener_disabled)
                     },
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
@@ -147,7 +149,7 @@ private fun ListenerStatusCard(
                 )
                 if (!enabled) {
                     Text(
-                        text = "Grant notification access below to turn it on",
+                        text = stringResource(R.string.permissions_listener_grant_hint),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

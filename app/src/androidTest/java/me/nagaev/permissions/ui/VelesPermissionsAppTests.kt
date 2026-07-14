@@ -11,6 +11,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import io.mockk.mockk
 import io.mockk.verify
+import androidx.test.platform.app.InstrumentationRegistry
+import me.nagaev.veles.R
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.ui.VelesPermissionsApp
@@ -29,6 +31,7 @@ import org.junit.Test
 class VelesPermissionsAppTests {
     @get:Rule
     val composeTestRule = createComposeRule()
+    private val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
 
     private val permissionsState =
         PermissionsState(
@@ -179,7 +182,10 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.NOTIFICATION_LISTENER_STATUS)
-            .assertTextContains("enabled", substring = true)
+            .assertTextContains(
+                targetContext.getString(R.string.permissions_listener_enabled),
+                substring = true,
+            )
     }
 
     @Test
@@ -197,7 +203,10 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.NOTIFICATION_LISTENER_STATUS)
-            .assertTextContains("disabled", substring = true)
+            .assertTextContains(
+                targetContext.getString(R.string.permissions_listener_disabled),
+                substring = true,
+            )
     }
 
     @Test
