@@ -23,7 +23,11 @@ class UiTextComposeTest {
                 listOf(
                     UiText.Res(R.string.bank_configs_title).asString(),
                     UiText.Res(R.string.bank_configs_delete_title, listOf("Bank")).asString(),
-                    UiText.Plural(R.plurals.bank_configs_import_title, 2, listOf(2)).asString(),
+                    UiText.Plural(
+                        R.plurals.ui_text_test_plural_with_label,
+                        2,
+                        listOf(2, "selected"),
+                    ).asString(),
                 ).joinToString("|"),
                 Modifier.testTag("resolved"),
             )
@@ -33,7 +37,12 @@ class UiTextComposeTest {
                 listOf(
                     context.getString(R.string.bank_configs_title),
                     context.getString(R.string.bank_configs_delete_title, "Bank"),
-                    context.resources.getQuantityString(R.plurals.bank_configs_import_title, 2, 2),
+                    context.resources.getQuantityString(
+                        R.plurals.ui_text_test_plural_with_label,
+                        2,
+                        2,
+                        "selected",
+                    ),
                 ).joinToString("|"),
             )
     }

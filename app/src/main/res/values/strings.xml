@@ -44,6 +44,10 @@
         <item quantity="one">Import %1$d template?</item>
         <item quantity="other">Import %1$d templates?</item>
     </plurals>
+    <plurals name="ui_text_test_plural_with_label" translatable="false">
+        <item quantity="one">%1$d %2$s template</item>
+        <item quantity="other">%1$d %2$s templates</item>
+    </plurals>
     <string name="bank_config_edit_back">Back</string>
     <string name="bank_config_edit_new_title">New Template</string>
     <string name="bank_config_edit_title">Edit Template</string>
