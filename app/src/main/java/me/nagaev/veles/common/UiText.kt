@@ -7,16 +7,39 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 
 sealed interface UiText {
-    data class Res(
+    @ConsistentCopyVisibility
+    data class Res private constructor(
         @StringRes val id: Int,
-        val args: List<Any> = emptyList(),
-    ) : UiText
+        private val immutableArgs: List<Any>,
+    ) : UiText {
+        val args: List<Any>
+            get() = immutableArgs
 
-    data class Plural(
+        companion object {
+            operator fun invoke(
+                @StringRes id: Int,
+                args: List<Any> = emptyList(),
+            ): Res = Res(id, args.toList())
+        }
+    }
+
+    @ConsistentCopyVisibility
+    data class Plural private constructor(
         @PluralsRes val id: Int,
         val quantity: Int,
-        val args: List<Any> = emptyList(),
-    ) : UiText
+        private val immutableArgs: List<Any>,
+    ) : UiText {
+        val args: List<Any>
+            get() = immutableArgs
+
+        companion object {
+            operator fun invoke(
+                @PluralsRes id: Int,
+                quantity: Int,
+                args: List<Any> = emptyList(),
+            ): Plural = Plural(id, quantity, args.toList())
+        }
+    }
 }
 
 @Suppress("SpreadOperator")

@@ -25,4 +25,20 @@ class UiTextTest {
             UiText.Plural(R.plurals.bank_configs_exported, 2, listOf(2)),
         )
     }
+
+    @Test
+    fun `resource arguments are snapshotted at construction`() {
+        val resArgs = mutableListOf<Any>("original")
+        val pluralArgs = mutableListOf<Any>(1)
+        val res = UiText.Res(R.string.app_name, resArgs)
+        val plural = UiText.Plural(R.plurals.bank_configs_exported, 1, pluralArgs)
+
+        resArgs[0] = "mutated"
+        pluralArgs[0] = 2
+
+        assertEquals(listOf("original"), res.args)
+        assertEquals(UiText.Res(R.string.app_name, listOf("original")), res)
+        assertEquals(listOf(1), plural.args)
+        assertEquals(UiText.Plural(R.plurals.bank_configs_exported, 1, listOf(1)), plural)
+    }
 }
