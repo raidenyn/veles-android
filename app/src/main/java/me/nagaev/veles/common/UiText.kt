@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import java.util.Collections.unmodifiableList
 
 sealed interface UiText {
     @ConsistentCopyVisibility
@@ -19,7 +20,7 @@ sealed interface UiText {
             operator fun invoke(
                 @StringRes id: Int,
                 args: List<Any> = emptyList(),
-            ): Res = Res(id, args.toList())
+            ): Res = Res(id, unmodifiableList(args.toList()))
         }
     }
 
@@ -37,7 +38,7 @@ sealed interface UiText {
                 @PluralsRes id: Int,
                 quantity: Int,
                 args: List<Any> = emptyList(),
-            ): Plural = Plural(id, quantity, args.toList())
+            ): Plural = Plural(id, quantity, unmodifiableList(args.toList()))
         }
     }
 }

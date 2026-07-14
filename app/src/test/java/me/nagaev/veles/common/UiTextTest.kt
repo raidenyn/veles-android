@@ -3,6 +3,7 @@ package me.nagaev.veles.common
 import me.nagaev.veles.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class UiTextTest {
@@ -28,17 +29,29 @@ class UiTextTest {
 
     @Test
     fun `resource arguments are snapshotted at construction`() {
-        val resArgs = mutableListOf<Any>("original")
-        val pluralArgs = mutableListOf<Any>(1)
+        val resArgs = mutableListOf<Any>("original", "second")
+        val pluralArgs = mutableListOf<Any>(1, 2)
         val res = UiText.Res(R.string.app_name, resArgs)
         val plural = UiText.Plural(R.plurals.bank_configs_exported, 1, pluralArgs)
 
         resArgs[0] = "mutated"
         pluralArgs[0] = 2
 
-        assertEquals(listOf("original"), res.args)
-        assertEquals(UiText.Res(R.string.app_name, listOf("original")), res)
-        assertEquals(listOf(1), plural.args)
-        assertEquals(UiText.Plural(R.plurals.bank_configs_exported, 1, listOf(1)), plural)
+        val resHashCode = res.hashCode()
+        val pluralHashCode = plural.hashCode()
+
+        assertThrows(UnsupportedOperationException::class.java) {
+            (res.args as MutableList<Any>)[0] = "changed"
+        }
+        assertThrows(UnsupportedOperationException::class.java) {
+            (plural.args as MutableList<Any>)[0] = 3
+        }
+
+        assertEquals(listOf("original", "second"), res.args)
+        assertEquals(UiText.Res(R.string.app_name, listOf("original", "second")), res)
+        assertEquals(resHashCode, res.hashCode())
+        assertEquals(listOf(1, 2), plural.args)
+        assertEquals(UiText.Plural(R.plurals.bank_configs_exported, 1, listOf(1, 2)), plural)
+        assertEquals(pluralHashCode, plural.hashCode())
     }
 }
