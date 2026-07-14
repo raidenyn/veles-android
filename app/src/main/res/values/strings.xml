@@ -18,4 +18,9 @@
     <string name="notification_listener_service_name">OTP_Listener</string>
     <string name="notification_listener_connected">notification_listener_connected</string>
     <string name="notification_listener_preferences">notification_listener_preferences</string>
+
+    <plurals name="bank_configs_exported">
+        <item quantity="one">Exported %1$d template</item>
+        <item quantity="other">Exported %1$d templates</item>
+    </plurals>
 </resources>
