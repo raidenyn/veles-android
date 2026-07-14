@@ -35,4 +35,35 @@
     <string name="bank_config_edit_name_required">Name is required</string>
     <string name="bank_config_edit_required">Required</string>
     <string name="bank_config_edit_invalid_regex">Invalid regex</string>
+    <string name="bank_configs_title">Bank Templates</string>
+    <string name="bank_configs_import_templates">Import templates</string>
+    <string name="bank_configs_export_templates">Export templates</string>
+    <string name="bank_configs_add_template">Add template</string>
+    <string name="bank_configs_delete_title">Delete \&quot;%1$s\&quot;?</string>
+    <string name="bank_configs_delete_body">This template will be permanently removed.</string>
+    <string name="bank_configs_delete">Delete</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="bank_configs_export">Export</string>
+    <string name="bank_configs_import">Import</string>
+    <string name="bank_configs_import_new">New:</string>
+    <string name="bank_configs_import_replace">Will replace:</string>
+    <string name="bank_configs_list_item">- %1$s</string>
+    <string name="bank_configs_edit_template">Edit %1$s</string>
+    <string name="bank_configs_delete_template">Delete %1$s</string>
+    <plurals name="bank_configs_import_title">
+        <item quantity="one">Import %1$d template?</item>
+        <item quantity="other">Import %1$d templates?</item>
+    </plurals>
+    <string name="bank_config_edit_back">Back</string>
+    <string name="bank_config_edit_new_title">New Template</string>
+    <string name="bank_config_edit_title">Edit Template</string>
+    <string name="bank_config_edit_name">Name</string>
+    <string name="bank_config_edit_otp_caption">OTP regex - group 1: id, group 2: code</string>
+    <string name="bank_config_edit_otp_label">OTP Regex</string>
+    <string name="bank_config_edit_money_caption">Money regex - group 1: currency, group 2: amount</string>
+    <string name="bank_config_edit_money_label">Money Regex</string>
+    <string name="bank_config_edit_merchant_caption">Merchant regex - group 1: merchant name</string>
+    <string name="bank_config_edit_merchant_label">Merchant Regex</string>
+    <string name="bank_config_edit_save">Save</string>
 </resources>

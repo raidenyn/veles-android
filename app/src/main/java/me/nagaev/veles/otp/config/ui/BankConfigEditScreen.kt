@@ -25,8 +25,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.annotation.StringRes
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -34,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nagaev.veles.common.UiText
 import me.nagaev.veles.common.asString
+import me.nagaev.veles.R
 import me.nagaev.veles.otp.config.viewmodel.BankConfigEditState
 
 @Suppress("LongParameterList", "LongMethod")
@@ -72,12 +75,14 @@ fun BankConfigEditScreen(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.bank_config_edit_back),
                 )
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                text = if (isNew) "New Template" else "Edit Template",
+                text = stringResource(
+                    if (isNew) R.string.bank_config_edit_new_title else R.string.bank_config_edit_title,
+                ),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -86,33 +91,33 @@ fun BankConfigEditScreen(
         OutlinedTextField(
             value = state.name,
             onValueChange = onNameChanged,
-            label = { Text("Name") },
+            label = { Text(stringResource(R.string.bank_config_edit_name)) },
             isError = state.nameError != null,
             supportingText = state.nameError?.let { error -> { Text(error.asString()) } },
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
         RegexField(
-            caption = "OTP regex — group 1: id, group 2: code",
+            caption = R.string.bank_config_edit_otp_caption,
             value = state.otpRegex,
             onValueChange = onOtpRegexChanged,
-            label = "OTP Regex",
+            label = R.string.bank_config_edit_otp_label,
             error = state.otpRegexError,
         )
         Spacer(Modifier.height(8.dp))
         RegexField(
-            caption = "Money regex — group 1: currency, group 2: amount",
+            caption = R.string.bank_config_edit_money_caption,
             value = state.moneyRegex,
             onValueChange = onMoneyRegexChanged,
-            label = "Money Regex",
+            label = R.string.bank_config_edit_money_label,
             error = state.moneyRegexError,
         )
         Spacer(Modifier.height(8.dp))
         RegexField(
-            caption = "Merchant regex — group 1: merchant name",
+            caption = R.string.bank_config_edit_merchant_caption,
             value = state.merchantRegex,
             onValueChange = onMerchantRegexChanged,
-            label = "Merchant Regex",
+            label = R.string.bank_config_edit_merchant_label,
             error = state.merchantRegexError,
         )
         Spacer(Modifier.height(16.dp))
@@ -122,7 +127,7 @@ fun BankConfigEditScreen(
             shape = MaterialTheme.shapes.small,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Save")
+            Text(stringResource(R.string.bank_config_edit_save))
         }
         Spacer(Modifier.height(16.dp))
     }
@@ -130,15 +135,15 @@ fun BankConfigEditScreen(
 
 @Composable
 private fun RegexField(
-    caption: String,
+    @StringRes caption: Int,
     value: String,
     onValueChange: (String) -> Unit,
-    label: String,
+    @StringRes label: Int,
     error: UiText?,
 ) {
     Column {
         Text(
-            text = caption,
+            text = stringResource(caption),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp),
@@ -146,7 +151,7 @@ private fun RegexField(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text(label) },
+            label = { Text(stringResource(label)) },
             textStyle = LocalTextStyle.current.copy(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
