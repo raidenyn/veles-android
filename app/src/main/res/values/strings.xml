@@ -23,4 +23,16 @@
         <item quantity="one">Exported %1$d template</item>
         <item quantity="other">Exported %1$d templates</item>
     </plurals>
+    <string name="bank_configs_select_at_least_one">Select at least one template</string>
+    <string name="bank_configs_export_failed">Export failed</string>
+    <string name="bank_configs_import_cannot_read">Import failed: cannot read file</string>
+    <string name="bank_configs_nothing_to_import">Nothing to import</string>
+    <string name="bank_configs_import_invalid_file">Import failed: invalid file</string>
+    <plurals name="bank_configs_imported">
+        <item quantity="one">Imported %1$d template</item>
+        <item quantity="other">Imported %1$d templates</item>
+    </plurals>
+    <string name="bank_config_edit_name_required">Name is required</string>
+    <string name="bank_config_edit_required">Required</string>
+    <string name="bank_config_edit_invalid_regex">Invalid regex</string>
 </resources>

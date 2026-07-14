@@ -32,6 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nagaev.veles.common.UiText
+import me.nagaev.veles.common.asString
 import me.nagaev.veles.otp.config.viewmodel.BankConfigEditState
 
 @Suppress("LongParameterList", "LongMethod")
@@ -86,7 +88,7 @@ fun BankConfigEditScreen(
             onValueChange = onNameChanged,
             label = { Text("Name") },
             isError = state.nameError != null,
-            supportingText = state.nameError?.let { error -> { Text(error) } },
+            supportingText = state.nameError?.let { error -> { Text(error.asString()) } },
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
@@ -132,7 +134,7 @@ private fun RegexField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
-    error: String?,
+    error: UiText?,
 ) {
     Column {
         Text(
@@ -150,7 +152,7 @@ private fun RegexField(
                 fontSize = 13.sp,
             ),
             isError = error != null,
-            supportingText = error?.let { message -> { Text(message) } },
+            supportingText = error?.let { message -> { Text(message.asString()) } },
             modifier = Modifier.fillMaxWidth(),
         )
     }

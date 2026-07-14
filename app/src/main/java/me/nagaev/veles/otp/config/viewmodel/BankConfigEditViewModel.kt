@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import java.util.regex.PatternSyntaxException
@@ -50,7 +52,7 @@ class BankConfigEditViewModel @Inject constructor(
 
     fun save() {
         val s = _state.value
-        val nameError = if (s.name.isBlank()) "Name is required" else null
+        val nameError = if (s.name.isBlank()) UiText.Res(R.string.bank_config_edit_name_required) else null
         val otpRegexError = validateRegex(s.otpRegex)
         val moneyRegexError = validateRegex(s.moneyRegex)
         val merchantRegexError = validateRegex(s.merchantRegex)
@@ -98,14 +100,14 @@ class BankConfigEditViewModel @Inject constructor(
         }
     }
 
-    private fun validateRegex(pattern: String): String? = if (pattern.isBlank()) {
-        "Required"
+    private fun validateRegex(pattern: String): UiText? = if (pattern.isBlank()) {
+        UiText.Res(R.string.bank_config_edit_required)
     } else {
         try {
             Regex(pattern)
             null
-        } catch (e: java.util.regex.PatternSyntaxException) {
-            "Invalid regex"
+        } catch (e: PatternSyntaxException) {
+            UiText.Res(R.string.bank_config_edit_invalid_regex)
         }
     }
 }

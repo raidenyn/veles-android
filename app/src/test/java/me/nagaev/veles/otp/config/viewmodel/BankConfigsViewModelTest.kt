@@ -14,6 +14,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.config.io.ConfigSerializer
@@ -129,7 +131,10 @@ class BankConfigsViewModelTest {
         vm.onExportRequested()
         vm.toggleExportItem("Test Bank")
         vm.confirmExportSelection()
-        assertEquals("Select at least one config", vm.state.value.message)
+        assertEquals(
+            UiText.Res(R.string.bank_configs_select_at_least_one),
+            vm.state.value.message,
+        )
         assertNotNull(vm.state.value.exportSelection)
         assertNull(vm.state.value.pendingExportJson)
     }
@@ -157,6 +162,10 @@ class BankConfigsViewModelTest {
         vm.writeExportToUri(context, android.net.Uri.parse("content://x/y"))
         assertTrue(out.toString().contains("Test Bank"))
         assertNull(vm.state.value.pendingExportJson)
+        assertEquals(
+            UiText.Plural(R.plurals.bank_configs_exported, 1, listOf(1)),
+            vm.state.value.message,
+        )
     }
 
     @Test
@@ -179,7 +188,7 @@ class BankConfigsViewModelTest {
         vm.onExportRequested()
         vm.confirmExportSelection()
         vm.writeExportToUri(context, android.net.Uri.parse("content://x/y"))
-        assertEquals("Export failed", vm.state.value.message)
+        assertEquals(UiText.Res(R.string.bank_configs_export_failed), vm.state.value.message)
         assertNull(vm.state.value.pendingExportJson)
         assertNull(vm.state.value.pendingExportCount)
     }
@@ -192,7 +201,7 @@ class BankConfigsViewModelTest {
         vm.onExportRequested()
         vm.confirmExportSelection()
         vm.writeExportToUri(context, android.net.Uri.parse("content://x/y"))
-        assertEquals("Export failed", vm.state.value.message)
+        assertEquals(UiText.Res(R.string.bank_configs_export_failed), vm.state.value.message)
         assertNull(vm.state.value.pendingExportJson)
         assertNull(vm.state.value.pendingExportCount)
     }
@@ -226,7 +235,33 @@ class BankConfigsViewModelTest {
         val vm = BankConfigsViewModel(repository, testDispatcher)
         vm.onImportUri(context, android.net.Uri.parse("content://x/y"))
         assertNull(vm.state.value.importReview)
-        assertNotNull(vm.state.value.message)
+        assertEquals(
+            UiText.Res(R.string.bank_configs_import_invalid_file),
+            vm.state.value.message,
+        )
+    }
+
+    @Test
+    fun `onImportUri with unreadable stream sets cannot read message`() {
+        val context = mockk<Context>()
+        every { context.contentResolver.openInputStream(any()) } returns null
+        val vm = BankConfigsViewModel(repository, testDispatcher)
+
+        vm.onImportUri(context, android.net.Uri.parse("content://x/y"))
+
+        assertEquals(UiText.Res(R.string.bank_configs_import_cannot_read), vm.state.value.message)
+    }
+
+    @Test
+    fun `onImportUri with empty config file sets nothing to import message`() {
+        val context = mockk<Context>()
+        every { context.contentResolver.openInputStream(any()) }
+            .returns(ByteArrayInputStream("[]".toByteArray()))
+        val vm = BankConfigsViewModel(repository, testDispatcher)
+
+        vm.onImportUri(context, android.net.Uri.parse("content://x/y"))
+
+        assertEquals(UiText.Res(R.string.bank_configs_nothing_to_import), vm.state.value.message)
     }
 
     @Test
@@ -248,6 +283,10 @@ class BankConfigsViewModelTest {
         coVerify(exactly = 1) { repository.insert(any()) }
         coVerify(exactly = 1) { repository.update(any()) }
         assertNull(vm.state.value.importReview)
+        assertEquals(
+            UiText.Plural(R.plurals.bank_configs_imported, 2, listOf(2)),
+            vm.state.value.message,
+        )
     }
 
     @Test

@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nagaev.veles.common.asString
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsState
@@ -185,7 +186,7 @@ fun BankConfigsScreen(
                     TextButton(onClick = onDismissMessage) { Text("OK") }
                 },
                 title = { Text("Veles") },
-                text = { Text(state.message) },
+                text = { Text(state.message.asString()) },
             )
         }
     }
