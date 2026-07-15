@@ -35,6 +35,7 @@ class TestNotificationSenderTest {
     private val postedNotification = slot<Notification>()
     private val resources = spyk(applicationContext.resources)
     private val context = object : ContextWrapper(applicationContext) {
+        @Suppress("MaxLineLength")
         override fun getSystemService(name: String): Any? = if (name == Context.NOTIFICATION_SERVICE) channelManager else super.getSystemService(name)
 
         override fun getResources(): Resources = this@TestNotificationSenderTest.resources

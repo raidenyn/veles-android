@@ -175,6 +175,7 @@ class OtpNotificationBuilderTest {
             ),
         )
         val observingContext = object : ContextWrapper(context) {
+            @Suppress("MaxLineLength")
             override fun getSystemService(name: String): Any? = if (name == Context.NOTIFICATION_SERVICE) observingManager else super.getSystemService(name)
         }
         val builder = OtpNotificationBuilder(observingContext)
