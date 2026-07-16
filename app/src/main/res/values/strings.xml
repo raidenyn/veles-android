@@ -1,21 +1,113 @@
 <resources>
     <string name="app_name">Veles</string>
-    <string name="navigation_drawer_open">Open navigation drawer</string>
-    <string name="navigation_drawer_close">Close navigation drawer</string>
-    <string name="nav_header_title">Android Studio</string>
-    <string name="nav_header_subtitle">android.studio@android.com</string>
-    <string name="nav_header_desc">Navigation header</string>
-    <string name="action_settings">Settings</string>
-
-    <string name="menu_home">Home</string>
-    <string name="menu_gallery">Gallery</string>
-    <string name="menu_slideshow">Slideshow</string>
-    <string name="permissions">Permissions</string>
-    <string name="access_notification_permission_description">The app needs an access to another apps messages to catch bank messages and present them in the better way</string>
-    <string name="send_notification_permission_description">The app needs sending notification permission to send its own messages</string>
+    <string name="access_notification_permission_description">Allow Veles to read bank notifications and present their OTP details clearly.</string>
+    <string name="send_notification_permission_description">Allow Veles to post its own OTP notifications.</string>
     <string name="access_notification_permission_title">Notification access</string>
     <string name="send_notification_permission_title">Send notifications</string>
-    <string name="notification_listener_service_name">OTP_Listener</string>
-    <string name="notification_listener_connected">notification_listener_connected</string>
-    <string name="notification_listener_preferences">notification_listener_preferences</string>
+    <string name="notification_listener_service_name">Veles OTP listener</string>
+    <string name="notification_listener_connected" translatable="false">notification_listener_connected</string>
+    <string name="notification_listener_preferences" translatable="false">notification_listener_preferences</string>
+
+    <plurals name="bank_configs_exported">
+        <item quantity="one">Exported %1$d template</item>
+        <item quantity="other">Exported %1$d templates</item>
+    </plurals>
+    <string name="bank_configs_select_at_least_one">Select at least one template</string>
+    <string name="bank_configs_export_failed">Export failed</string>
+    <string name="bank_configs_import_cannot_read">Import failed: cannot read file</string>
+    <string name="bank_configs_nothing_to_import">Nothing to import</string>
+    <string name="bank_configs_import_invalid_file">Import failed: invalid file</string>
+    <plurals name="bank_configs_imported">
+        <item quantity="one">Imported %1$d template</item>
+        <item quantity="other">Imported %1$d templates</item>
+    </plurals>
+    <string name="bank_config_edit_name_required">Name is required</string>
+    <string name="bank_config_edit_required">Required</string>
+    <string name="bank_config_edit_invalid_regex">Invalid regex</string>
+    <string name="bank_configs_title">Bank Templates</string>
+    <string name="bank_configs_import_templates">Import templates</string>
+    <string name="bank_configs_export_templates">Export templates</string>
+    <string name="bank_configs_add_template">Add template</string>
+    <string name="bank_configs_delete_title">Delete \&quot;%1$s\&quot;?</string>
+    <string name="bank_configs_delete_body">This template will be permanently removed.</string>
+    <string name="bank_configs_delete">Delete</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="bank_configs_export">Export</string>
+    <string name="bank_configs_import">Import</string>
+    <string name="bank_configs_import_new">New:</string>
+    <string name="bank_configs_import_replace">Will replace:</string>
+    <string name="bank_configs_list_item">- %1$s</string>
+    <string name="bank_configs_edit_template">Edit %1$s</string>
+    <string name="bank_configs_delete_template">Delete %1$s</string>
+    <plurals name="bank_configs_import_title">
+        <item quantity="one">Import %1$d template?</item>
+        <item quantity="other">Import %1$d templates?</item>
+    </plurals>
+    <plurals name="ui_text_test_plural_with_label" translatable="false">
+        <item quantity="one">%1$d %2$s template</item>
+        <item quantity="other">%1$d %2$s templates</item>
+    </plurals>
+    <string name="bank_config_edit_back">Back</string>
+    <string name="bank_config_edit_new_title">New Template</string>
+    <string name="bank_config_edit_title">Edit Template</string>
+    <string name="bank_config_edit_name">Name</string>
+    <string name="bank_config_edit_otp_caption">OTP regex - group 1: id, group 2: code</string>
+    <string name="bank_config_edit_otp_label">OTP Regex</string>
+    <string name="bank_config_edit_money_caption">Money regex - group 1: currency, group 2: amount</string>
+    <string name="bank_config_edit_money_label">Money Regex</string>
+    <string name="bank_config_edit_merchant_caption">Merchant regex - group 1: merchant name</string>
+    <string name="bank_config_edit_merchant_label">Merchant Regex</string>
+    <string name="bank_config_edit_save">Save</string>
+    <string name="permissions_title">Veles</string>
+    <string name="permissions_section">PERMISSIONS</string>
+    <string name="permissions_listener_enabled">Notification listener enabled</string>
+    <string name="permissions_listener_disabled">Notification listener disabled</string>
+    <string name="permissions_listener_grant_hint">Grant notification access below to turn it on</string>
+    <string name="sensitive_card_checking">Checking…</string>
+    <string name="sensitive_card_applying">Finishing setup - Android is applying the permission…</string>
+    <string name="sensitive_card_force_stop_help">Setup is taking longer than expected. Open App info, tap Force stop, then reopen Veles.</string>
+    <string name="sensitive_card_open_app_info">Open App info</string>
+    <string name="sensitive_card_pairing_explanation">Android only shares sensitive notifications with companion-device apps, so Veles asks to be registered as one. The system dialog will ask you to pick a nearby Bluetooth device - any device works (headphones, your car, a watch). Turn Bluetooth on first.</string>
+    <string name="sensitive_card_pairing_guide">Why is pairing needed?</string>
+    <string name="sensitive_card_enable">Enable (pair as companion)</string>
+    <string name="sensitive_card_more_options">More options</string>
+    <string name="sensitive_card_check_now">Check now</string>
+    <string name="sensitive_card_status_not_granted">Android hides OTP content from Veles. Bank codes can\'t be read until access is granted.</string>
+    <string name="sensitive_card_status_verifying">Checking whether Veles can read sensitive notifications…</string>
+    <string name="sensitive_card_status_granted_but_redacted">Access is granted, but this device still hides sensitive content. Try the options below.</string>
+    <string name="sensitive_card_status_unknown">Couldn\'t verify. Check that notification access is enabled, then try again.</string>
+    <string name="sensitive_card_stock_settings_location">Settings &gt; Notifications &gt; Notification access &gt; Veles &gt; Sensitive notifications</string>
+    <string name="sensitive_card_oneplus_settings_location">Settings &gt; Notifications &gt; Notification access &gt; Veles &gt; Enhanced Notifications</string>
+    <string name="sensitive_card_open_settings">Open settings</string>
+    <string name="sensitive_card_enhanced_explanation">Alternatively, turn off Enhanced notifications. This stops Android from hiding sensitive content - but also disables smart replies and actions for all apps.</string>
+    <string name="sensitive_card_enhanced_settings">Enhanced notifications settings</string>
+    <string name="sensitive_card_oneplus_adb_prestep">On OnePlus: first disable \'System notification optimization\' in Developer options, then run the command below.</string>
+    <string name="sensitive_card_adb_intro">Last resort - grant via adb:</string>
+    <string name="sensitive_card_full_guide">Full guide</string>
+    <string name="sensitive_card_copy_command">Copy command</string>
+    <string name="bottom_nav_home">Home</string>
+    <string name="bottom_nav_templates">Templates</string>
+    <string name="bottom_nav_test">Test</string>
+    <string name="test_screen_title">Test</string>
+    <string name="test_screen_description">Paste a bank message to check which template matches.</string>
+    <string name="test_screen_notification_text">Notification text</string>
+    <string name="test_screen_send">Send</string>
+    <string name="test_screen_log_raw">Show raw notification content in logs (debug only)</string>
+    <string name="test_screen_matched">Matched · %1$s</string>
+    <string name="test_screen_payment_summary">%1$s %2$s · %3$s</string>
+    <string name="test_screen_no_match">No match - no bank template recognized this text</string>
+    <string name="test_screen_redaction_hint">This is what the listener actually received - the OS redacted the real content before Veles could read it (see the banner on Home).</string>
+    <string name="test_screen_received">Received: %1$s</string>
+    <string name="test_default_notification" translatable="false">For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn\'t make it, call 02-285-1573.</string>
+    <string name="otp_notification_content">OTP: %1$s, Pay: %2$s %3$s</string>
+    <string name="otp_notification_copy">Copy %1$s</string>
+    <string name="otp_notification_copied">Copy %1$s Copied ✓</string>
+    <string name="otp_notification_channel_name">Handy OTP</string>
+    <string name="otp_notification_channel_description">Convenient OTP notifications from banks</string>
+    <string name="test_notification_probe">Veles check: code %1$d</string>
+    <string name="test_notification_title">Veles Test</string>
+    <string name="test_notification_channel_name">Veles Test</string>
+    <string name="test_notification_channel_description">Test notifications for verifying handler templates</string>
+    <string name="otp_clipboard_label" translatable="false">OTP</string>
 </resources>

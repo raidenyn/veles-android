@@ -25,7 +25,8 @@ class TestNotificationSender @Inject constructor(
     }
 
     fun postProbe(): String {
-        val text = "Veles check: code ${(PROBE_CODE_RANGE_START..PROBE_CODE_RANGE_END).random()}"
+        val code = (PROBE_CODE_RANGE_START..PROBE_CODE_RANGE_END).random()
+        val text = context.getString(R.string.test_notification_probe, code)
         notify(builder(text).setVisibility(NotificationCompat.VISIBILITY_SECRET), PROBE_NOTIFICATION_ID)
         return text
     }
@@ -37,29 +38,28 @@ class TestNotificationSender @Inject constructor(
     private fun builder(text: String): NotificationCompat.Builder = NotificationCompat
         .Builder(context, CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_otp_message)
-        .setContentTitle("Veles Test")
+        .setContentTitle(context.getString(R.string.test_notification_title))
         .setContentText(text)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
 
     private fun notify(builder: NotificationCompat.Builder, id: Int) {
         with(NotificationManagerCompat.from(context)) {
             if (areNotificationsEnabled()) {
-                tryCreateChannel()
+                createOrUpdateNotificationChannel()
                 notify(id, builder.build())
             }
         }
     }
 
-    private fun tryCreateChannel() {
+    private fun createOrUpdateNotificationChannel() {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
         val channel =
             NotificationChannel(
                 CHANNEL_ID,
-                "Veles Test",
+                context.getString(R.string.test_notification_channel_name),
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Test notifications for verifying handler configs"
+                description = context.getString(R.string.test_notification_channel_description)
             }
         manager.createNotificationChannel(channel)
     }

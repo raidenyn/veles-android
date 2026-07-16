@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.common.di.IoDispatcher
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
@@ -78,7 +80,7 @@ class BankConfigsViewModel @Inject constructor(
     fun confirmExportSelection() {
         val sel = _state.value.exportSelection ?: return
         if (sel.checked.isEmpty()) {
-            _state.update { it.copy(message = "Select at least one config") }
+            _state.update { it.copy(message = UiText.Res(R.string.bank_configs_select_at_least_one)) }
             return
         }
         val selected = _state.value.configs.filter { it.name in sel.checked }
@@ -111,13 +113,13 @@ class BankConfigsViewModel @Inject constructor(
                     it.copy(
                         pendingExportJson = null,
                         pendingExportCount = null,
-                        message = "Exported $count configs",
+                        message = UiText.Plural(R.plurals.bank_configs_exported, count, listOf(count)),
                     )
                 } else {
                     it.copy(
                         pendingExportJson = null,
                         pendingExportCount = null,
-                        message = "Export failed",
+                        message = UiText.Res(R.string.bank_configs_export_failed),
                     )
                 }
             }
@@ -138,13 +140,13 @@ class BankConfigsViewModel @Inject constructor(
             val text = withContext(ioDispatcher) {
                 context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
             } ?: run {
-                _state.update { it.copy(message = "Import failed: cannot read file") }
+                _state.update { it.copy(message = UiText.Res(R.string.bank_configs_import_cannot_read)) }
                 return@launch
             }
             try {
                 val parsed = ConfigSerializer.fromJson(text)
                 if (parsed.isEmpty()) {
-                    _state.update { it.copy(message = "Nothing to import") }
+                    _state.update { it.copy(message = UiText.Res(R.string.bank_configs_nothing_to_import)) }
                     return@launch
                 }
                 val diff = ConfigImporter.diff(parsed, _state.value.configs)
@@ -152,7 +154,7 @@ class BankConfigsViewModel @Inject constructor(
                     it.copy(importReview = ImportReview.from(diff))
                 }
             } catch (e: SerializationException) {
-                _state.update { it.copy(message = "Import failed: invalid file") }
+                _state.update { it.copy(message = UiText.Res(R.string.bank_configs_import_invalid_file)) }
             }
         }
     }
@@ -187,7 +189,11 @@ class BankConfigsViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     importReview = null,
-                    message = "Imported ${review.totalConfigs} configs",
+                    message = UiText.Plural(
+                        R.plurals.bank_configs_imported,
+                        review.totalConfigs,
+                        listOf(review.totalConfigs),
+                    ),
                 )
             }
             reload()

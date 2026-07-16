@@ -7,6 +7,8 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.test.platform.app.InstrumentationRegistry
+import me.nagaev.veles.R
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
@@ -22,6 +24,8 @@ import java.math.BigDecimal
 class TestScreenComposeTest {
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    private val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
 
     private val matchedResult = TestResult(
         handlingResult = MessageHandlingResult(
@@ -70,7 +74,10 @@ class TestScreenComposeTest {
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT)
             .assertIsDisplayed()
-            .assertTextContains("Matched", substring = true)
+            .assertTextContains(
+                targetContext.getString(R.string.test_screen_matched, "UOB Thailand"),
+                substring = true,
+            )
             .assertTextContains("UOB Thailand", substring = true)
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_OTP)
@@ -97,7 +104,7 @@ class TestScreenComposeTest {
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT)
             .assertIsDisplayed()
-            .assertTextContains("No match", substring = true)
+            .assertTextContains(targetContext.getString(R.string.test_screen_no_match), substring = true)
         composeTestRule
             .onNodeWithTag(TestTags.TEST_RESULT_OTP)
             .assertDoesNotExist()

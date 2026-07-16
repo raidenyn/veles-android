@@ -2,6 +2,7 @@ package me.nagaev.veles.common
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import me.nagaev.veles.R
 import javax.inject.Inject
 
 @Suppress("MaxLineLength")
@@ -18,6 +19,6 @@ class TestInputPreferences @Inject constructor(
 
     fun load(): String = prefs.getString(
         "test_input_text",
-        "For purchase THB600.00 (OTP=511066) at WWWSFCINEMACITYCOMCORP: Ref-VjKp. Never share OTP with anyone. If you didn't make it, call 02-285-1573.",
+        context.getString(R.string.test_default_notification),
     ) ?: ""
 }

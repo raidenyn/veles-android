@@ -1,5 +1,7 @@
 package me.nagaev.veles.permissions.viewmodal
 
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.permissions.services.PermissionType
 
 enum class SensitiveNotificationsUiState {
@@ -18,7 +20,7 @@ data class PermissionsState(
     val sensitiveNotifications: SensitiveNotificationsUiState = SensitiveNotificationsUiState.NotApplicable,
     val cdmSupported: Boolean = false,
     val showOnePlusAdbPreStep: Boolean = false,
-    val redactionSettingsLocation: String = "",
+    val redactionSettingsLocation: UiText = UiText.Res(R.string.sensitive_card_stock_settings_location),
     val revealSensitiveFallbacks: Boolean = false,
     val showForceStopButton: Boolean = false,
 ) {

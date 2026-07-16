@@ -1,5 +1,6 @@
 package me.nagaev.veles.otp.config.viewmodel
 
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.otp.config.BankHandlerConfig
 
 data class BankConfigsState(
@@ -10,5 +11,5 @@ data class BankConfigsState(
     val pendingExportJson: String? = null,
     val pendingExportCount: Int? = null,
     val importReview: ImportReview? = null,
-    val message: String? = null,
+    val message: UiText? = null,
 )

@@ -7,6 +7,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.common.VelesLinks
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.ui.components.SensitiveNotificationsCard
@@ -42,7 +44,7 @@ class SensitiveNotificationsCardComposeTest {
                 SensitiveNotificationsCard(
                     state = state,
                     cdmSupported = cdmSupported,
-                    settingsLocation = "Settings > Notifications",
+                    settingsLocation = UiText.Res(R.string.sensitive_card_stock_settings_location),
                     showOnePlusAdbPreStep = false,
                     revealFallbacks = revealFallbacks,
                     showForceStopButton = showForceStopButton,

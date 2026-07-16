@@ -37,12 +37,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.nagaev.veles.R
+import me.nagaev.veles.common.asString
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsState
@@ -82,7 +86,7 @@ fun BankConfigsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Bank Templates",
+                    text = stringResource(R.string.bank_configs_title),
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -94,7 +98,7 @@ fun BankConfigsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.FileDownload,
-                        contentDescription = "Import templates",
+                        contentDescription = stringResource(R.string.bank_configs_import_templates),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -104,7 +108,7 @@ fun BankConfigsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.FileUpload,
-                        contentDescription = "Export templates",
+                        contentDescription = stringResource(R.string.bank_configs_export_templates),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -140,7 +144,10 @@ fun BankConfigsScreen(
                 .padding(16.dp)
                 .testTag(TestTags.BANK_CONFIG_ADD_FAB),
         ) {
-            Icon(Icons.Filled.Add, contentDescription = "Add template")
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = stringResource(R.string.bank_configs_add_template),
+            )
         }
 
         if (state.deleteTarget != null) {
@@ -148,13 +155,17 @@ fun BankConfigsScreen(
                 onDismissRequest = onCancelDelete,
                 shape = RoundedCornerShape(8.dp),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                title = { Text("Delete \"${state.deleteTarget.name}\"?") },
-                text = { Text("This template will be permanently removed.") },
+                title = {
+                    Text(stringResource(R.string.bank_configs_delete_title, state.deleteTarget.name))
+                },
+                text = { Text(stringResource(R.string.bank_configs_delete_body)) },
                 confirmButton = {
-                    TextButton(onClick = onConfirmDelete) { Text("Delete") }
+                    TextButton(onClick = onConfirmDelete) {
+                        Text(stringResource(R.string.bank_configs_delete))
+                    }
                 },
                 dismissButton = {
-                    TextButton(onClick = onCancelDelete) { Text("Cancel") }
+                    TextButton(onClick = onCancelDelete) { Text(stringResource(R.string.action_cancel)) }
                 },
             )
         }
@@ -182,10 +193,10 @@ fun BankConfigsScreen(
                 shape = RoundedCornerShape(8.dp),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                 confirmButton = {
-                    TextButton(onClick = onDismissMessage) { Text("OK") }
+                    TextButton(onClick = onDismissMessage) { Text(stringResource(R.string.action_ok)) }
                 },
-                title = { Text("Veles") },
-                text = { Text(state.message) },
+                title = { Text(stringResource(R.string.app_name)) },
+                text = { Text(state.message.asString()) },
             )
         }
     }
@@ -203,7 +214,7 @@ private fun ExportSelectionDialog(
         shape = RoundedCornerShape(8.dp),
         containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_DIALOG),
-        title = { Text("Export templates") },
+        title = { Text(stringResource(R.string.bank_configs_export_templates)) },
         text = {
             Column {
                 selection.items.forEach { name ->
@@ -226,10 +237,10 @@ private fun ExportSelectionDialog(
             TextButton(
                 onClick = onConfirm,
                 modifier = Modifier.testTag(TestTags.BANK_CONFIG_EXPORT_CONFIRM),
-            ) { Text("Export") }
+            ) { Text(stringResource(R.string.bank_configs_export)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         },
     )
 }
@@ -245,17 +256,33 @@ private fun ImportReviewDialog(
         shape = RoundedCornerShape(8.dp),
         containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_DIALOG),
-        title = { Text("Import ${review.totalConfigs} templates?") },
+        title = {
+            Text(
+                pluralStringResource(
+                    R.plurals.bank_configs_import_title,
+                    review.totalConfigs,
+                    review.totalConfigs,
+                ),
+            )
+        },
         text = {
             Column {
                 if (review.toInsert.isNotEmpty()) {
-                    Text("New:", style = MaterialTheme.typography.titleSmall)
-                    review.toInsert.forEach { Text("- ${it.name}") }
+                    Text(
+                        stringResource(R.string.bank_configs_import_new),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    review.toInsert.forEach {
+                        Text(stringResource(R.string.bank_configs_list_item, it.name))
+                    }
                 }
                 if (review.toOverwrite.isNotEmpty()) {
-                    Text("Will replace:", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        stringResource(R.string.bank_configs_import_replace),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
                     review.toOverwrite.forEach { (existing, _) ->
-                        Text("- ${existing.name}")
+                        Text(stringResource(R.string.bank_configs_list_item, existing.name))
                     }
                 }
             }
@@ -264,13 +291,13 @@ private fun ImportReviewDialog(
             TextButton(
                 onClick = onConfirm,
                 modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_CONFIRM),
-            ) { Text("Import") }
+            ) { Text(stringResource(R.string.bank_configs_import)) }
         },
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
                 modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_CANCEL),
-            ) { Text("Cancel") }
+            ) { Text(stringResource(R.string.action_cancel)) }
         },
     )
 }
@@ -333,7 +360,10 @@ private fun BankConfigRow(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Edit,
-                    contentDescription = "Edit ${config.name}",
+                    contentDescription = stringResource(
+                        R.string.bank_configs_edit_template,
+                        config.name,
+                    ),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -343,7 +373,10 @@ private fun BankConfigRow(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Delete,
-                    contentDescription = "Delete ${config.name}",
+                    contentDescription = stringResource(
+                        R.string.bank_configs_delete_template,
+                        config.name,
+                    ),
                     tint = MaterialTheme.colorScheme.error,
                 )
             }

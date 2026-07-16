@@ -1,9 +1,15 @@
 package me.nagaev.veles.otp.handlers
 
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import me.nagaev.veles.R
 import me.nagaev.veles.otp.CopyDataReceiver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -36,12 +42,24 @@ class OtpNotificationBuilderTest {
         copied = copied,
     )
 
+    private fun buildNotification(
+        builder: OtpNotificationBuilder,
+        copied: Boolean,
+    ) = builder.build(
+        notificationId = testNotificationId,
+        merchant = testMerchant,
+        otp = testOtp,
+        amountText = testAmount,
+        currencyCode = testCurrency,
+        copied = copied,
+    )
+
     @Test
     fun `Action label is Copy OTP when copied is false`() {
         val notification = buildNotification(copied = false)
 
         val action = notification.actions.first()
-        assertEquals("Copy $testOtp", action.title)
+        assertEquals(context.getString(R.string.otp_notification_copy, testOtp), action.title)
     }
 
     @Test
@@ -49,7 +67,7 @@ class OtpNotificationBuilderTest {
         val notification = buildNotification(copied = true)
 
         val action = notification.actions.first()
-        assertEquals("Copy $testOtp Copied ✓", action.title)
+        assertEquals(context.getString(R.string.otp_notification_copied, testOtp), action.title)
     }
 
     @Test
@@ -100,7 +118,12 @@ class OtpNotificationBuilderTest {
 
         assertEquals(testMerchant, notification.extras.get(NotificationCompat.EXTRA_TITLE))
         assertEquals(
-            "OTP: $testOtp, Pay: $testAmount $testCurrency",
+            context.getString(
+                R.string.otp_notification_content,
+                testOtp,
+                testAmount,
+                testCurrency,
+            ),
             notification.extras.get(NotificationCompat.EXTRA_TEXT),
         )
     }
@@ -114,7 +137,7 @@ class OtpNotificationBuilderTest {
     }
 
     @Test
-    fun `Channel is not recreated on second build`() {
+    fun `Channel metadata is resubmitted without changing id`() {
         buildNotification(copied = false)
         val channelAfterFirst =
             notificationManager.getNotificationChannel(OtpNotificationBuilder.CHANNEL_ID)
@@ -128,5 +151,44 @@ class OtpNotificationBuilderTest {
             channelAfterFirst.id,
             channelAfterSecond.id,
         )
+        assertEquals(
+            context.getString(R.string.otp_notification_channel_name),
+            channelAfterSecond.name,
+        )
+        assertEquals(
+            context.getString(R.string.otp_notification_channel_description),
+            channelAfterSecond.description,
+        )
+    }
+
+    @Test
+    fun `Channel is resubmitted on second build`() {
+        val observingManager = mockk<NotificationManager>(relaxed = true)
+        every {
+            observingManager.getNotificationChannel(OtpNotificationBuilder.CHANNEL_ID)
+        } returnsMany listOf(
+            null,
+            NotificationChannel(
+                OtpNotificationBuilder.CHANNEL_ID,
+                "Existing channel",
+                NotificationManager.IMPORTANCE_HIGH,
+            ),
+        )
+        val observingContext = object : ContextWrapper(context) {
+            @Suppress("MaxLineLength")
+            override fun getSystemService(name: String): Any? = if (name == Context.NOTIFICATION_SERVICE) observingManager else super.getSystemService(name)
+        }
+        val builder = OtpNotificationBuilder(observingContext)
+
+        buildNotification(builder, copied = false)
+        buildNotification(builder, copied = false)
+
+        verify(exactly = 2) {
+            observingManager.createNotificationChannel(
+                match {
+                    it.id == OtpNotificationBuilder.CHANNEL_ID
+                },
+            )
+        }
     }
 }

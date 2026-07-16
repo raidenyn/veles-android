@@ -28,12 +28,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.nagaev.veles.BuildConfig
+import me.nagaev.veles.R
 import me.nagaev.veles.common.TestResult
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.handlers.MessageHandlingResult
@@ -62,14 +64,14 @@ fun TestScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         Text(
-            text = "Test",
+            text = stringResource(R.string.test_screen_title),
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(top = 20.dp, bottom = 4.dp),
         )
         Text(
-            text = "Paste a bank message to check which template matches.",
+            text = stringResource(R.string.test_screen_description),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 12.dp),
@@ -77,7 +79,7 @@ fun TestScreen(
         OutlinedTextField(
             value = state.inputText,
             onValueChange = onTextChanged,
-            label = { Text("Notification text") },
+            label = { Text(stringResource(R.string.test_screen_notification_text)) },
             minLines = 3,
             modifier = Modifier
                 .fillMaxWidth()
@@ -92,7 +94,7 @@ fun TestScreen(
                 .fillMaxWidth()
                 .testTag(TestTags.TEST_SEND_BUTTON),
         ) {
-            Text("Send")
+            Text(stringResource(R.string.test_screen_send))
         }
         Spacer(Modifier.height(16.dp))
         if (BuildConfig.DEBUG) {
@@ -104,7 +106,7 @@ fun TestScreen(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Show raw notification content in logs (debug only)",
+                    text = stringResource(R.string.test_screen_log_raw),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -142,7 +144,10 @@ private fun MatchedCard(result: TestResult) {
                 StatusDot(color = MaterialTheme.colorScheme.tertiary)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Matched · ${result.handlingResult.matchedTemplateName.orEmpty()}",
+                    text = stringResource(
+                        R.string.test_screen_matched,
+                        result.handlingResult.matchedTemplateName.orEmpty(),
+                    ),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -173,7 +178,12 @@ private fun MatchedCard(result: TestResult) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "${otpMessage.pay.currencyCode} ${otpMessage.pay.amount} · ${otpMessage.merchant}",
+                    text = stringResource(
+                        R.string.test_screen_payment_summary,
+                        otpMessage.pay.currencyCode,
+                        otpMessage.pay.amount,
+                        otpMessage.merchant,
+                    ),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                 )
@@ -206,7 +216,7 @@ private fun NoMatchCard(
                 StatusDot(color = MaterialTheme.colorScheme.outline)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "No match — no bank template recognized this text",
+                    text = stringResource(R.string.test_screen_no_match),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -224,8 +234,7 @@ private fun NoMatchCard(
             if (result.receivedText != typedText) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "This is what the listener actually received — the OS redacted " +
-                        "the real content before Veles could read it (see the banner on Home).",
+                    text = stringResource(R.string.test_screen_redaction_hint),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag(TestTags.TEST_RESULT_REDACTION_HINT),
@@ -241,7 +250,7 @@ private fun ReceivedTextLine(
     color: Color,
 ) {
     Text(
-        text = "Received: $receivedText",
+        text = stringResource(R.string.test_screen_received, receivedText),
         fontSize = 12.sp,
         fontFamily = FontFamily.Monospace,
         color = color.copy(alpha = RECEIVED_TEXT_ALPHA),

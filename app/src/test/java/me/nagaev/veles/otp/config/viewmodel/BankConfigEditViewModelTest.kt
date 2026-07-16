@@ -9,9 +9,12 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import me.nagaev.veles.R
+import me.nagaev.veles.common.UiText
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -69,7 +72,7 @@ class BankConfigEditViewModelTest {
         vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
         vm.onMerchantRegexChanged("""at (.+)""")
         vm.save()
-        assert(vm.state.value.nameError != null)
+        assertEquals(UiText.Res(R.string.bank_config_edit_name_required), vm.state.value.nameError)
         assert(!vm.state.value.savedSuccessfully)
     }
 
@@ -81,7 +84,7 @@ class BankConfigEditViewModelTest {
         vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
         vm.onMerchantRegexChanged("""at (.+)""")
         vm.save()
-        assert(vm.state.value.otpRegexError != null)
+        assertEquals(UiText.Res(R.string.bank_config_edit_invalid_regex), vm.state.value.otpRegexError)
         assert(!vm.state.value.savedSuccessfully)
     }
 
@@ -90,9 +93,9 @@ class BankConfigEditViewModelTest {
         val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         vm.onNameChanged("My Bank")
         vm.save()
-        assert(vm.state.value.otpRegexError != null)
-        assert(vm.state.value.moneyRegexError != null)
-        assert(vm.state.value.merchantRegexError != null)
+        assertEquals(UiText.Res(R.string.bank_config_edit_required), vm.state.value.otpRegexError)
+        assertEquals(UiText.Res(R.string.bank_config_edit_required), vm.state.value.moneyRegexError)
+        assertEquals(UiText.Res(R.string.bank_config_edit_required), vm.state.value.merchantRegexError)
     }
 
     @Test
