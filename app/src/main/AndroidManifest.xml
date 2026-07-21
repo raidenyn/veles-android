@@ -40,13 +40,16 @@
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+            <!--
+                Receive every notification type. OTP notifications from banks are
+                frequently "silent" (posted on low/default-importance channels, silenced
+                by the user, or updated with onlyAlertOnce), so restricting the listener
+                to conversations|alerting caused those messages to never reach
+                onNotificationPosted. See https://developer.android.com/reference/android/service/notification/NotificationListenerService
+            -->
             <meta-data
                 android:name="android.service.notification.default_filter_types"
-                android:value="conversations|alerting">
-            </meta-data>
-            <meta-data
-                android:name="android.service.notification.disabled_filter_types"
-                android:value="ongoing|silent">
+                android:value="conversations|alerting|silent|ongoing">
             </meta-data>
         </service>
 
