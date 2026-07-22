@@ -25,7 +25,7 @@ class BankConfigEditViewModelTest {
     private val existingConfig = BankHandlerConfig(
         id = 42L,
         name = "Test Bank",
-        otpRegex = """\d{6}""",
+        otpRegex = """(\w+)-(\d{6})""",
         moneyRegex = """([A-Z]{3})(\d+)""",
         merchantRegex = """at (.+)""",
         createdAt = 1000L,
@@ -59,7 +59,7 @@ class BankConfigEditViewModelTest {
         val vm = BankConfigEditViewModel(SavedStateHandle(mapOf("id" to 42L)), repository)
         val state = vm.state.value
         assert(state.name == "Test Bank")
-        assert(state.otpRegex == """\d{6}""")
+        assert(state.otpRegex == """(\w+)-(\d{6})""")
         assert(state.moneyRegex == """([A-Z]{3})(\d+)""")
         assert(state.merchantRegex == """at (.+)""")
         assert(state.originalCreatedAt == 1000L)
@@ -68,7 +68,7 @@ class BankConfigEditViewModelTest {
     @Test
     fun `save with blank name sets nameError`() {
         val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
-        vm.onOtpRegexChanged("""\d{6}""")
+        vm.onOtpRegexChanged("""(\w+)-(\d{6})""")
         vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
         vm.onMerchantRegexChanged("""at (.+)""")
         vm.save()
@@ -103,7 +103,7 @@ class BankConfigEditViewModelTest {
         coEvery { repository.insert(any()) } returns 1L
         val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
         vm.onNameChanged("My Bank")
-        vm.onOtpRegexChanged("""\d{6}""")
+        vm.onOtpRegexChanged("""(\w+)-(\d{6})""")
         vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
         vm.onMerchantRegexChanged("""at (.+)""")
         vm.save()
@@ -128,5 +128,47 @@ class BankConfigEditViewModelTest {
         assert(vm.state.value.nameError != null)
         vm.onNameChanged("My Bank")
         assert(vm.state.value.nameError == null)
+    }
+
+    @Test
+    fun `save rejects OTP regex with fewer than two groups`() {
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
+        vm.onNameChanged("My Bank")
+        vm.onOtpRegexChanged("""(\d{6})""")
+        vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
+        vm.onMerchantRegexChanged("""at (.+)""")
+
+        vm.save()
+
+        assertEquals(UiText.Res(R.string.bank_config_edit_invalid_regex), vm.state.value.otpRegexError)
+        coVerify(exactly = 0) { repository.insert(any()) }
+    }
+
+    @Test
+    fun `save rejects money regex with fewer than two groups`() {
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
+        vm.onNameChanged("My Bank")
+        vm.onOtpRegexChanged("""(\w+)-(\d{6})""")
+        vm.onMoneyRegexChanged("""([A-Z]{3})\d+""")
+        vm.onMerchantRegexChanged("""at (.+)""")
+
+        vm.save()
+
+        assertEquals(UiText.Res(R.string.bank_config_edit_invalid_regex), vm.state.value.moneyRegexError)
+        coVerify(exactly = 0) { repository.insert(any()) }
+    }
+
+    @Test
+    fun `save rejects merchant regex without a group`() {
+        val vm = BankConfigEditViewModel(SavedStateHandle(), repository)
+        vm.onNameChanged("My Bank")
+        vm.onOtpRegexChanged("""(\w+)-(\d{6})""")
+        vm.onMoneyRegexChanged("""([A-Z]{3})(\d+)""")
+        vm.onMerchantRegexChanged("""at .+""")
+
+        vm.save()
+
+        assertEquals(UiText.Res(R.string.bank_config_edit_invalid_regex), vm.state.value.merchantRegexError)
+        coVerify(exactly = 0) { repository.insert(any()) }
     }
 }
