@@ -24,7 +24,7 @@ match-time hardening without broadening into import or chain-reload changes trac
 
 ## Goals
 
-- Parse conventionally comma-grouped amounts such as `1,234.56` as `1234.56`.
+- Parse comma-grouped amounts such as `1,234.56` by stripping commas before `BigDecimal` parsing.
 - Never throw because a matched amount is not a valid decimal.
 - Never throw because a user pattern has too few capture groups.
 - Reject insufficient capture groups in the bank-config editor before saving.
@@ -33,7 +33,7 @@ match-time hardening without broadening into import or chain-reload changes trac
 ## Non-goals
 
 - Changing the regex configuration schema or Room database.
-- Adding locale-dependent currency parsing or accepting arbitrary grouping separators.
+- Adding locale-dependent currency parsing or enforcing grouping separator rules.
 - Redesigning import validation or handler-chain construction; those concerns remain in #58.
 - Catching every exception from every message handler. Unrelated programming and notifier failures
   should remain visible rather than being silently converted to a non-match.
@@ -58,16 +58,15 @@ notifying the user.
 
 The money capture will be parsed as follows:
 
-1. If it contains no comma, parse it with Kotlin's nullable `BigDecimal` conversion.
-2. If it contains commas, require conventional thousands grouping: an optional sign, one to three
-   leading digits, one or more comma-separated groups of exactly three digits, and an optional
-   decimal fraction.
-3. For a conventionally grouped value, remove commas and parse the normalized decimal.
-4. If validation or parsing fails, treat the money extraction as absent and return `FILTERED`.
+1. Strip commas from the captured string.
+2. Parse the result with Kotlin's nullable `toBigDecimalOrNull()` extension.
+3. If parsing fails, treat the money extraction as absent and return `FILTERED`.
 
-This accepts `1,234.56` while rejecting malformed captures such as `,,.12`, `12,34.56`, or a
-non-numeric second group. The user's regex still decides which notification text is eligible; the
-handler only ensures the captured value can safely and unambiguously become `Money.amount`.
+This accepts `1,234.56` (normalized to `1234.56`) and any comma-free decimal. Non-numeric
+captures such as `not.a.number` fail parsing and return `FILTERED`. The user's regex decides
+which notification text is eligible; the handler only ensures the captured value can safely
+become `Money.amount`. No locale-specific grouping validation is performed — the handler is
+locale-independent and does not impose grouping rules on the user's capture.
 
 ### Error handling
 
@@ -101,7 +100,6 @@ Notification/test message
 `RegexMessageHandlerTest` will add regression coverage for:
 
 - The reported pattern matching `THB1,234.56`, producing `BigDecimal("1234.56")` and `ACCEPTED`.
-- A malformed comma-grouped capture returning `FILTERED` without invoking the notifier.
 - A non-numeric money capture returning `FILTERED` without throwing.
 - OTP, money, and merchant patterns with insufficient capture groups returning `FILTERED`.
 
@@ -116,8 +114,7 @@ unit-test suite.
 
 ## Risks
 
-- Strict comma grouping intentionally rejects unusual formats such as `12,34,567.89`. Supporting
-  locale-specific grouping would require an explicit locale/config contract and is outside this
-  fix.
+- Strict comma grouping is not enforced; unusual formats such as `12,34,567.89` are stripped to
+  `1234567.89` and parsed. The user's regex is the authority on what constitutes a valid capture.
 - Reusing the existing invalid-pattern message does not distinguish syntax errors from missing
   groups, but it preserves the current UI and keeps this crash fix narrowly scoped.

@@ -23,7 +23,12 @@ class RegexMessageHandlerTest {
             text = "Never share OTP with anyone. Use SMS-OTP HStX-079853 for your purchase of THB319.93 at AMP*AIS SERVICES expiring at 02-Mar-2025 9:23PM BKK time.",
         )
 
-    private fun handler(notifier: OtpMessageHandler) = RegexMessageHandler(HANDLER_NAME, OTP_REGEX, MONEY_REGEX, MERCHANT_REGEX, notifier)
+    private fun handler(
+        notifier: OtpMessageHandler,
+        otpRegex: String = OTP_REGEX,
+        moneyRegex: String = MONEY_REGEX,
+        merchantRegex: String = MERCHANT_REGEX,
+    ) = RegexMessageHandler(HANDLER_NAME, otpRegex, moneyRegex, merchantRegex, notifier)
 
     @Test
     fun `Valid OTP message processing`() {
@@ -258,5 +263,92 @@ class RegexMessageHandlerTest {
         val result = handler(otpMessageHandler).onMessageReceived(message)
 
         assert(result.otpMessage == null)
+    }
+
+    @Test
+    fun `Comma grouped amount is normalized and accepted`() {
+        val message =
+            defaultMessage.copy(
+                text = "Never share OTP with anyone. Use SMS-OTP HStX-079853 for your purchase THB1,234.56 at AMP*AIS SERVICES expiring at 02-Mar-2025 9:23PM BKK time.",
+            )
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+        every { otpMessageHandler.onOtpMessageReceived(any()) } returns Unit
+
+        val result =
+            handler(
+                notifier = otpMessageHandler,
+                moneyRegex = """purchase ([A-Z]{3})([\d,]{1,15}\.\d{1,4})""",
+            ).onMessageReceived(message)
+
+        assert(result.status == MessageHandlingResult.Status.ACCEPTED)
+        verify {
+            otpMessageHandler.onOtpMessageReceived(
+                OtpMessage(
+                    otp = Otp(value = "079853", id = "HStX"),
+                    pay = Money(amount = BigDecimal("1234.56"), currencyCode = "THB"),
+                    merchant = "AMP*AIS SERVICES",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `Non-numeric money capture is filtered`() {
+        val message =
+            defaultMessage.copy(
+                text = "Never share OTP with anyone. Use SMS-OTP HStX-079853 for your purchase THBnot.a.number at AMP*AIS SERVICES expiring at 02-Mar-2025 9:23PM BKK time.",
+            )
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+
+        val result =
+            handler(
+                notifier = otpMessageHandler,
+                moneyRegex = """purchase ([A-Z]{3})([a-z.]+)""",
+            ).onMessageReceived(message)
+
+        assert(result == MessageHandlingResult.FILTERED)
+        verify(exactly = 0) { otpMessageHandler.onOtpMessageReceived(any()) }
+    }
+
+    @Test
+    fun `OTP pattern with insufficient groups is filtered`() {
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+
+        val result =
+            handler(
+                notifier = otpMessageHandler,
+                otpRegex = """SMS-OTP \w{4}-\d{6}""",
+            ).onMessageReceived(defaultMessage)
+
+        assert(result == MessageHandlingResult.FILTERED)
+        verify(exactly = 0) { otpMessageHandler.onOtpMessageReceived(any()) }
+    }
+
+    @Test
+    fun `Money pattern with insufficient groups is filtered`() {
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+
+        val result =
+            handler(
+                notifier = otpMessageHandler,
+                moneyRegex = """of [A-Z]{3}\d+\.\d+ at""",
+            ).onMessageReceived(defaultMessage)
+
+        assert(result == MessageHandlingResult.FILTERED)
+        verify(exactly = 0) { otpMessageHandler.onOtpMessageReceived(any()) }
+    }
+
+    @Test
+    fun `Merchant pattern with insufficient groups is filtered`() {
+        val otpMessageHandler = mockk<OtpMessageHandler>()
+
+        val result =
+            handler(
+                notifier = otpMessageHandler,
+                merchantRegex = """at .+ expiring""",
+            ).onMessageReceived(defaultMessage)
+
+        assert(result == MessageHandlingResult.FILTERED)
+        verify(exactly = 0) { otpMessageHandler.onOtpMessageReceived(any()) }
     }
 }
