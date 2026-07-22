@@ -53,9 +53,9 @@ class BankConfigEditViewModel @Inject constructor(
     fun save() {
         val s = _state.value
         val nameError = if (s.name.isBlank()) UiText.Res(R.string.bank_config_edit_name_required) else null
-        val otpRegexError = validateRegex(s.otpRegex)
-        val moneyRegexError = validateRegex(s.moneyRegex)
-        val merchantRegexError = validateRegex(s.merchantRegex)
+        val otpRegexError = validateRegex(s.otpRegex, requiredGroupCount = 2)
+        val moneyRegexError = validateRegex(s.moneyRegex, requiredGroupCount = 2)
+        val merchantRegexError = validateRegex(s.merchantRegex, requiredGroupCount = 1)
 
         if (nameError != null || otpRegexError != null || moneyRegexError != null || merchantRegexError != null) {
             _state.update {
@@ -100,12 +100,16 @@ class BankConfigEditViewModel @Inject constructor(
         }
     }
 
-    private fun validateRegex(pattern: String): UiText? = if (pattern.isBlank()) {
+    private fun validateRegex(pattern: String, requiredGroupCount: Int): UiText? = if (pattern.isBlank()) {
         UiText.Res(R.string.bank_config_edit_required)
     } else {
         try {
-            Regex(pattern)
-            null
+            val groupCount = Regex(pattern).toPattern().matcher("").groupCount()
+            if (groupCount < requiredGroupCount) {
+                UiText.Res(R.string.bank_config_edit_invalid_regex)
+            } else {
+                null
+            }
         } catch (e: PatternSyntaxException) {
             UiText.Res(R.string.bank_config_edit_invalid_regex)
         }
