@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import me.nagaev.veles.R
 import me.nagaev.veles.common.UiText
+import me.nagaev.veles.otp.config.BankConfigField
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
 import me.nagaev.veles.otp.config.io.ConfigSerializer
@@ -37,7 +38,7 @@ class BankConfigsViewModelTest {
     private val config = BankHandlerConfig(
         id = 1L,
         name = "Test Bank",
-        otpRegex = """\d{6}""",
+        otpRegex = """(\w+)-(\d{6})""",
         moneyRegex = """([A-Z]{3})(\d+)""",
         merchantRegex = """at (.+)""",
         createdAt = 1000L,
@@ -308,5 +309,74 @@ class BankConfigsViewModelTest {
         assertNull(vm.state.value.importReview)
         coVerify(exactly = 0) { repository.insert(any()) }
         coVerify(exactly = 0) { repository.update(any()) }
+    }
+
+    @Test
+    fun `onImportUri rejects all effective entries when any template is invalid`() {
+        coJustRun { repository.insert(any()) }
+        coEvery { repository.update(any()) } returns Unit
+        val context = mockk<Context>()
+        val json = ConfigSerializer.toJson(
+            listOf(
+                config.copy(name = "Valid Bank"),
+                config.copy(name = "Broken Bank", otpRegex = "[", merchantRegex = "no group"),
+            ),
+        )
+        every { context.contentResolver.openInputStream(any()) }
+            .returns(ByteArrayInputStream(json.toByteArray()))
+        val vm = BankConfigsViewModel(repository, testDispatcher)
+
+        vm.onImportUri(context, Uri.parse("content://x/y"))
+        vm.confirmImport()
+
+        assertNull(vm.state.value.importReview)
+        val rejected = vm.state.value.rejectedImportReview
+        assertNotNull(rejected)
+        assertEquals("Broken Bank", rejected!!.entries.single().name)
+        assertEquals(
+            setOf(BankConfigField.OTP_REGEX, BankConfigField.MERCHANT_REGEX),
+            rejected.entries.single().invalidFields,
+        )
+        coVerify(exactly = 0) { repository.insert(any()) }
+        coVerify(exactly = 0) { repository.update(any()) }
+    }
+
+    @Test
+    fun `onImportUri reports blank name and all invalid fields together`() {
+        val context = mockk<Context>()
+        val json = ConfigSerializer.toJson(
+            listOf(
+                config.copy(
+                    name = "",
+                    otpRegex = "",
+                    moneyRegex = "",
+                    merchantRegex = "",
+                ),
+            ),
+        )
+        every { context.contentResolver.openInputStream(any()) }
+            .returns(ByteArrayInputStream(json.toByteArray()))
+        val vm = BankConfigsViewModel(repository, testDispatcher)
+
+        vm.onImportUri(context, Uri.parse("content://x/y"))
+
+        assertEquals(
+            BankConfigField.entries.toSet(),
+            vm.state.value.rejectedImportReview!!.entries.single().invalidFields,
+        )
+    }
+
+    @Test
+    fun `cancelImport clears rejected review`() {
+        val context = mockk<Context>()
+        val json = ConfigSerializer.toJson(listOf(config.copy(name = "Broken", otpRegex = "[")))
+        every { context.contentResolver.openInputStream(any()) }
+            .returns(ByteArrayInputStream(json.toByteArray()))
+        val vm = BankConfigsViewModel(repository, testDispatcher)
+
+        vm.onImportUri(context, Uri.parse("content://x/y"))
+        vm.cancelImport()
+
+        assertNull(vm.state.value.rejectedImportReview)
     }
 }

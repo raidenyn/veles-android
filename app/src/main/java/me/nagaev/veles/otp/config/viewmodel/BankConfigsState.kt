@@ -11,5 +11,6 @@ data class BankConfigsState(
     val pendingExportJson: String? = null,
     val pendingExportCount: Int? = null,
     val importReview: ImportReview? = null,
+    val rejectedImportReview: RejectedImportReview? = null,
     val message: UiText? = null,
 )

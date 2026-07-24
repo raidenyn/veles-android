@@ -108,26 +108,84 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `malformed config does not kill the collector and a later fix takes effect`() = runTest(UnconfinedTestDispatcher()) {
+    fun `mixed initial emission activates valid handler and skips malformed row`() = runTest(UnconfinedTestDispatcher()) {
+        val malformed = config(
+            "Bad",
+            "[",
+            """pay ([A-Z]{3})(\d+\.\d{2})""",
+            """ at (\w+)""",
+        )
+        val flow = MutableStateFlow(listOf(malformed, bankA))
+        val r = reloader(flow)
+
+        r.start(this)
+        try {
+            assertEquals(
+                MessageHandlingResult.Status.ACCEPTED,
+                r.messageHandler.onMessageReceived(msgA).status,
+            )
+            assertEquals("BankA", r.messageHandler.onMessageReceived(msgA).matchedTemplateName)
+        } finally {
+            r.stop()
+        }
+    }
+
+    @Test
+    fun `invalid only initial emission stays collectible and later correction activates`() = runTest(UnconfinedTestDispatcher()) {
+        val malformed = config("Bad", "[", "x", "y")
+        val flow = MutableStateFlow(listOf(malformed))
+        val r = reloader(flow)
+
+        r.start(this)
+        try {
+            assertEquals(MessageHandlingResult.FILTERED, r.messageHandler.onMessageReceived(msgA))
+
+            flow.value = listOf(bankA)
+
+            assertEquals(
+                MessageHandlingResult.Status.ACCEPTED,
+                r.messageHandler.onMessageReceived(msgA).status,
+            )
+        } finally {
+            r.stop()
+        }
+    }
+
+    @Test
+    fun `invalid only emission replaces previous valid chain and later correction activates`() = runTest(UnconfinedTestDispatcher()) {
+        val malformed = config("Bad", "[", "x", "y")
         val flow = MutableStateFlow(listOf(bankA))
         val r = reloader(flow)
+
         r.start(this)
         try {
             assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgA).status)
 
-            // Emit a config with an invalid regex; RegexMessageHandler construction throws, the
-            // collector catches it and keeps the previous (BankA) chain.
-            flow.value = listOf(config("Bad", "[", "x", "y"))
-            assertEquals(
-                "previous chain should still be active after a failed rebuild",
-                MessageHandlingResult.Status.ACCEPTED,
-                r.messageHandler.onMessageReceived(msgA).status,
-            )
+            flow.value = listOf(malformed)
+            assertEquals(MessageHandlingResult.FILTERED, r.messageHandler.onMessageReceived(msgA))
 
-            // Emit a valid config; the collector recovers and the new chain takes effect.
             flow.value = listOf(bankB)
             assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
-            assertEquals("BankB", r.messageHandler.onMessageReceived(msgB).matchedTemplateName)
+        } finally {
+            r.stop()
+        }
+    }
+
+    @Test
+    fun `valid edits and deletions apply while malformed row remains`() = runTest(UnconfinedTestDispatcher()) {
+        val malformed = config("Bad", "[", "x", "y")
+        val flow = MutableStateFlow(listOf(malformed, bankA))
+        val r = reloader(flow)
+
+        r.start(this)
+        try {
+            flow.value = listOf(malformed, bankB)
+
+            assertEquals(MessageHandlingResult.Status.FILTERED, r.messageHandler.onMessageReceived(msgA).status)
+            assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
+
+            flow.value = listOf(malformed)
+            assertEquals(MessageHandlingResult.Status.FILTERED, r.messageHandler.onMessageReceived(msgB).status)
         } finally {
             r.stop()
         }

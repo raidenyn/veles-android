@@ -137,6 +137,9 @@ class BankConfigsViewModel @Inject constructor(
 
     fun onImportUri(context: Context, uri: Uri) {
         viewModelScope.launch {
+            _state.update {
+                it.copy(importReview = null, rejectedImportReview = null, message = null)
+            }
             val text = withContext(ioDispatcher) {
                 context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
             } ?: run {
@@ -149,9 +152,19 @@ class BankConfigsViewModel @Inject constructor(
                     _state.update { it.copy(message = UiText.Res(R.string.bank_configs_nothing_to_import)) }
                     return@launch
                 }
-                val diff = ConfigImporter.diff(parsed, _state.value.configs)
-                _state.update {
-                    it.copy(importReview = ImportReview.from(diff))
+                when (val analysis = ConfigImporter.analyze(parsed, _state.value.configs)) {
+                    is ConfigImporter.Analysis.Valid -> _state.update {
+                        it.copy(
+                            importReview = ImportReview.from(analysis.diff),
+                            rejectedImportReview = null,
+                        )
+                    }
+                    is ConfigImporter.Analysis.Invalid -> _state.update {
+                        it.copy(
+                            importReview = null,
+                            rejectedImportReview = RejectedImportReview.from(analysis.entries),
+                        )
+                    }
                 }
             } catch (e: SerializationException) {
                 _state.update { it.copy(message = UiText.Res(R.string.bank_configs_import_invalid_file)) }
@@ -201,7 +214,7 @@ class BankConfigsViewModel @Inject constructor(
     }
 
     fun cancelImport() {
-        _state.update { it.copy(importReview = null) }
+        _state.update { it.copy(importReview = null, rejectedImportReview = null) }
     }
 
     fun dismissMessage() {

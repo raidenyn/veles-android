@@ -7,10 +7,13 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.Dispatchers
+import me.nagaev.veles.R
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.otp.config.ui.BankConfigsScreen
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsViewModel
@@ -145,18 +148,18 @@ class ExportImportFlowTest {
                 me.nagaev.veles.otp.config.BankHandlerConfig(
                     id = 0L,
                     name = "Existing Bank",
-                    otpRegex = "new",
-                    moneyRegex = "new",
-                    merchantRegex = "new",
+                    otpRegex = """(\w+)-(\d{6})""",
+                    moneyRegex = """([A-Z]{3})(\d+)""",
+                    merchantRegex = """at (.+)""",
                     createdAt = 0L,
                     updatedAt = 0L,
                 ),
                 me.nagaev.veles.otp.config.BankHandlerConfig(
                     id = 0L,
                     name = "Brand New Bank",
-                    otpRegex = "x",
-                    moneyRegex = "x",
-                    merchantRegex = "x",
+                    otpRegex = """(\w+)-(\d{6})""",
+                    moneyRegex = """([A-Z]{3})(\d+)""",
+                    merchantRegex = """at (.+)""",
                     createdAt = 0L,
                     updatedAt = 0L,
                 ),
@@ -198,18 +201,18 @@ class ExportImportFlowTest {
                 me.nagaev.veles.otp.config.BankHandlerConfig(
                     id = 0L,
                     name = "Existing Bank",
-                    otpRegex = "new-otp",
-                    moneyRegex = "new-amt",
-                    merchantRegex = "new-mer",
+                    otpRegex = """(\w+)-(\d{6})""",
+                    moneyRegex = """([A-Z]{3})(\d+)""",
+                    merchantRegex = """at (.+)""",
                     createdAt = 0L,
                     updatedAt = 0L,
                 ),
                 me.nagaev.veles.otp.config.BankHandlerConfig(
                     id = 0L,
                     name = "Brand New Bank",
-                    otpRegex = "x",
-                    moneyRegex = "x",
-                    merchantRegex = "x",
+                    otpRegex = """(\w+)-(\d{6})""",
+                    moneyRegex = """([A-Z]{3})(\d+)""",
+                    merchantRegex = """at (.+)""",
                     createdAt = 0L,
                     updatedAt = 0L,
                 ),
@@ -229,11 +232,11 @@ class ExportImportFlowTest {
             val all = repository.getAllSuspend()
             assertEquals(2, all.size)
             val existing = all.first { it.name == "Existing Bank" }
-            assertEquals("new-otp", existing.otpRegex)
-            assertEquals("new-amt", existing.moneyRegex)
-            assertEquals("new-mer", existing.merchantRegex)
+            assertEquals("""(\w+)-(\d{6})""", existing.otpRegex)
+            assertEquals("""([A-Z]{3})(\d+)""", existing.moneyRegex)
+            assertEquals("""at (.+)""", existing.merchantRegex)
             val newBank = all.first { it.name == "Brand New Bank" }
-            assertEquals("x", newBank.otpRegex)
+            assertEquals("""(\w+)-(\d{6})""", newBank.otpRegex)
         }
     }
 
@@ -261,18 +264,18 @@ class ExportImportFlowTest {
                 me.nagaev.veles.otp.config.BankHandlerConfig(
                     id = 0L,
                     name = "Existing Bank",
-                    otpRegex = "new",
-                    moneyRegex = "new",
-                    merchantRegex = "new",
+                    otpRegex = """(\w+)-(\d{6})""",
+                    moneyRegex = """([A-Z]{3})(\d+)""",
+                    merchantRegex = """at (.+)""",
                     createdAt = 0L,
                     updatedAt = 0L,
                 ),
                 me.nagaev.veles.otp.config.BankHandlerConfig(
                     id = 0L,
                     name = "Brand New Bank",
-                    otpRegex = "x",
-                    moneyRegex = "x",
-                    merchantRegex = "x",
+                    otpRegex = """(\w+)-(\d{6})""",
+                    moneyRegex = """([A-Z]{3})(\d+)""",
+                    merchantRegex = """at (.+)""",
                     createdAt = 0L,
                     updatedAt = 0L,
                 ),
@@ -305,5 +308,80 @@ class ExportImportFlowTest {
 
         assertNull(vm.state.value.importReview)
         assertNotNull(vm.state.value.message)
+    }
+
+    @Test
+    fun `invalid import shows every invalid entry and no import action`() {
+        val context = androidx.test.core.app.ApplicationProvider
+            .getApplicationContext<android.content.Context>()
+        val json = me.nagaev.veles.otp.config.io.ConfigSerializer.toJson(
+            listOf(
+                BankHandlerConfig(
+                    name = "Broken Bank",
+                    otpRegex = "[",
+                    moneyRegex = """([A-Z]{3})\d+""",
+                    merchantRegex = "no group",
+                    createdAt = 0L,
+                    updatedAt = 0L,
+                ),
+                BankHandlerConfig(
+                    name = "",
+                    otpRegex = """(\w+)-(\d{6})""",
+                    moneyRegex = """([A-Z]{3})(\d+)""",
+                    merchantRegex = """at (.+)""",
+                    createdAt = 0L,
+                    updatedAt = 0L,
+                ),
+            ),
+        )
+        val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
+
+        composeRule.runOnIdle { vm.onImportUri(context, uri) }
+        composeRule.waitUntil(5000) { vm.state.value.rejectedImportReview != null }
+
+        composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_REJECTED_DIALOG).assertIsDisplayed()
+        composeRule.onNodeWithText("Broken Bank").assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.bank_configs_import_unnamed)).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            context.getString(R.string.bank_configs_import_field_name),
+            substring = true,
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            context.getString(R.string.bank_configs_import_field_otp),
+            substring = true,
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            context.getString(R.string.bank_configs_import_field_amount),
+            substring = true,
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            context.getString(R.string.bank_configs_import_field_merchant),
+            substring = true,
+        ).assertIsDisplayed()
+        composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_CONFIRM).assertDoesNotExist()
+    }
+
+    @Test
+    fun `rejected import list scrolls to reveal the last invalid entry`() {
+        val context = androidx.test.core.app.ApplicationProvider
+            .getApplicationContext<android.content.Context>()
+        val configs = (1..12).map { i ->
+            BankHandlerConfig(
+                name = "Broken Bank $i",
+                otpRegex = "[",
+                moneyRegex = """([A-Z]{3})\d+""",
+                merchantRegex = "no group",
+                createdAt = 0L,
+                updatedAt = 0L,
+            )
+        }
+        val json = me.nagaev.veles.otp.config.io.ConfigSerializer.toJson(configs)
+        val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
+
+        composeRule.runOnIdle { vm.onImportUri(context, uri) }
+        composeRule.waitUntil(5000) { vm.state.value.rejectedImportReview != null }
+
+        composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_REJECTED_DIALOG).assertIsDisplayed()
+        composeRule.onNodeWithText("Broken Bank 12").performScrollTo().assertIsDisplayed()
     }
 }
