@@ -38,6 +38,14 @@
     <string name="bank_configs_import_new">New:</string>
     <string name="bank_configs_import_replace">Will replace:</string>
     <string name="bank_configs_list_item">- %1$s</string>
+    <string name="bank_configs_import_rejected_title">Can\'t import templates</string>
+    <string name="bank_configs_import_rejected_body">Nothing was imported. Fix these templates and try again:</string>
+    <string name="bank_configs_import_unnamed">Unnamed template</string>
+    <string name="bank_configs_import_field_name">Name</string>
+    <string name="bank_configs_import_field_otp">OTP regex</string>
+    <string name="bank_configs_import_field_amount">Amount regex</string>
+    <string name="bank_configs_import_field_merchant">Merchant regex</string>
+    <string name="bank_configs_import_invalid_field">- %1$s</string>
     <string name="bank_configs_edit_template">Edit %1$s</string>
     <string name="bank_configs_delete_template">Delete %1$s</string>
     <plurals name="bank_configs_import_title">

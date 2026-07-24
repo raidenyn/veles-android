@@ -1,5 +1,6 @@
 package me.nagaev.veles.otp.config.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,10 +49,12 @@ import androidx.compose.ui.unit.sp
 import me.nagaev.veles.R
 import me.nagaev.veles.common.asString
 import me.nagaev.veles.common.ui.TestTags
+import me.nagaev.veles.otp.config.BankConfigField
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.viewmodel.BankConfigsState
 import me.nagaev.veles.otp.config.viewmodel.ExportSelection
 import me.nagaev.veles.otp.config.viewmodel.ImportReview
+import me.nagaev.veles.otp.config.viewmodel.RejectedImportReview
 
 @Suppress("LongParameterList", "LongMethod")
 @Composable
@@ -187,6 +190,13 @@ fun BankConfigsScreen(
             )
         }
 
+        if (state.rejectedImportReview != null) {
+            RejectedImportDialog(
+                review = state.rejectedImportReview,
+                onDismiss = onCancelImport,
+            )
+        }
+
         if (state.message != null) {
             AlertDialog(
                 onDismissRequest = onDismissMessage,
@@ -300,6 +310,58 @@ private fun ImportReviewDialog(
             ) { Text(stringResource(R.string.action_cancel)) }
         },
     )
+}
+
+@Composable
+private fun RejectedImportDialog(
+    review: RejectedImportReview,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(8.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        modifier = Modifier.testTag(TestTags.BANK_CONFIG_IMPORT_REJECTED_DIALOG),
+        title = { Text(stringResource(R.string.bank_configs_import_rejected_title)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.bank_configs_import_rejected_body))
+                review.entries.forEach { entry ->
+                    val displayName = if (entry.name.isBlank()) {
+                        stringResource(R.string.bank_configs_import_unnamed)
+                    } else {
+                        entry.name
+                    }
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    entry.invalidFields.forEach { field ->
+                        Text(
+                            stringResource(
+                                R.string.bank_configs_import_invalid_field,
+                                stringResource(field.labelResource()),
+                            ),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_ok))
+            }
+        },
+    )
+}
+
+@StringRes
+private fun BankConfigField.labelResource(): Int = when (this) {
+    BankConfigField.NAME -> R.string.bank_configs_import_field_name
+    BankConfigField.OTP_REGEX -> R.string.bank_configs_import_field_otp
+    BankConfigField.MONEY_REGEX -> R.string.bank_configs_import_field_amount
+    BankConfigField.MERCHANT_REGEX -> R.string.bank_configs_import_field_merchant
 }
 
 @Composable
