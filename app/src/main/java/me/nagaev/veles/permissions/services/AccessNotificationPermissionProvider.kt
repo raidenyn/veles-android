@@ -1,5 +1,6 @@
 package me.nagaev.veles.permissions.services
 
+import android.content.ComponentName
 import android.content.Intent
 import android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 import android.provider.Settings
@@ -13,20 +14,19 @@ class AccessNotificationPermissionProvider(
         const val ENABLED_NOTIFICATION_LISTENERS = "enabled_notification_listeners"
     }
 
-    private val _listenerName =
-        NotificationListener::class.java.let {
-            it.canonicalName
-        }
-
     override fun isGranted(): Boolean {
         val activity = activityProvider.getActivity()
-        val str =
+        val enabledListeners =
             Settings.Secure.getString(
                 activity.contentResolver,
                 ENABLED_NOTIFICATION_LISTENERS,
-            )
-        val permissionClassName = activity.packageName + "/" + _listenerName
-        return str.contains(permissionClassName)
+            ) ?: return false
+        if (enabledListeners.isEmpty()) return false
+
+        val expectedComponent = ComponentName(activity, NotificationListener::class.java)
+        return enabledListeners.split(':').any {
+            ComponentName.unflattenFromString(it) == expectedComponent
+        }
     }
 
     override suspend fun request() {
