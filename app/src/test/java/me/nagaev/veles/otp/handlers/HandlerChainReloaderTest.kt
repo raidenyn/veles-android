@@ -108,71 +108,68 @@ class HandlerChainReloaderTest {
     }
 
     @Test
-    fun `mixed initial emission activates valid handler and skips malformed row`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val malformed = config(
-                "Bad",
-                "[",
-                """pay ([A-Z]{3})(\d+\.\d{2})""",
-                """ at (\w+)""",
+    fun `mixed initial emission activates valid handler and skips malformed row`() = runTest(UnconfinedTestDispatcher()) {
+        val malformed = config(
+            "Bad",
+            "[",
+            """pay ([A-Z]{3})(\d+\.\d{2})""",
+            """ at (\w+)""",
+        )
+        val flow = MutableStateFlow(listOf(malformed, bankA))
+        val r = reloader(flow)
+
+        r.start(this)
+        try {
+            assertEquals(
+                MessageHandlingResult.Status.ACCEPTED,
+                r.messageHandler.onMessageReceived(msgA).status,
             )
-            val flow = MutableStateFlow(listOf(malformed, bankA))
-            val r = reloader(flow)
-
-            r.start(this)
-            try {
-                assertEquals(
-                    MessageHandlingResult.Status.ACCEPTED,
-                    r.messageHandler.onMessageReceived(msgA).status,
-                )
-                assertEquals("BankA", r.messageHandler.onMessageReceived(msgA).matchedTemplateName)
-            } finally {
-                r.stop()
-            }
+            assertEquals("BankA", r.messageHandler.onMessageReceived(msgA).matchedTemplateName)
+        } finally {
+            r.stop()
         }
+    }
 
     @Test
-    fun `invalid only initial emission stays collectible and later correction activates`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val malformed = config("Bad", "[", "x", "y")
-            val flow = MutableStateFlow(listOf(malformed))
-            val r = reloader(flow)
+    fun `invalid only initial emission stays collectible and later correction activates`() = runTest(UnconfinedTestDispatcher()) {
+        val malformed = config("Bad", "[", "x", "y")
+        val flow = MutableStateFlow(listOf(malformed))
+        val r = reloader(flow)
 
-            r.start(this)
-            try {
-                assertEquals(MessageHandlingResult.FILTERED, r.messageHandler.onMessageReceived(msgA))
+        r.start(this)
+        try {
+            assertEquals(MessageHandlingResult.FILTERED, r.messageHandler.onMessageReceived(msgA))
 
-                flow.value = listOf(bankA)
+            flow.value = listOf(bankA)
 
-                assertEquals(
-                    MessageHandlingResult.Status.ACCEPTED,
-                    r.messageHandler.onMessageReceived(msgA).status,
-                )
-            } finally {
-                r.stop()
-            }
+            assertEquals(
+                MessageHandlingResult.Status.ACCEPTED,
+                r.messageHandler.onMessageReceived(msgA).status,
+            )
+        } finally {
+            r.stop()
         }
+    }
 
     @Test
-    fun `invalid only emission replaces previous valid chain and later correction activates`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val malformed = config("Bad", "[", "x", "y")
-            val flow = MutableStateFlow(listOf(bankA))
-            val r = reloader(flow)
+    fun `invalid only emission replaces previous valid chain and later correction activates`() = runTest(UnconfinedTestDispatcher()) {
+        val malformed = config("Bad", "[", "x", "y")
+        val flow = MutableStateFlow(listOf(bankA))
+        val r = reloader(flow)
 
-            r.start(this)
-            try {
-                assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgA).status)
+        r.start(this)
+        try {
+            assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgA).status)
 
-                flow.value = listOf(malformed)
-                assertEquals(MessageHandlingResult.FILTERED, r.messageHandler.onMessageReceived(msgA))
+            flow.value = listOf(malformed)
+            assertEquals(MessageHandlingResult.FILTERED, r.messageHandler.onMessageReceived(msgA))
 
-                flow.value = listOf(bankB)
-                assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
-            } finally {
-                r.stop()
-            }
+            flow.value = listOf(bankB)
+            assertEquals(MessageHandlingResult.Status.ACCEPTED, r.messageHandler.onMessageReceived(msgB).status)
+        } finally {
+            r.stop()
         }
+    }
 
     @Test
     fun `valid edits and deletions apply while malformed row remains`() = runTest(UnconfinedTestDispatcher()) {
