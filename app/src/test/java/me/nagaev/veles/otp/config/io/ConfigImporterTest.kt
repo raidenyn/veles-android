@@ -1,5 +1,6 @@
 package me.nagaev.veles.otp.config.io
 
+import me.nagaev.veles.otp.config.BankConfigField
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,7 +17,12 @@ class ConfigImporterTest {
         updatedAt = 1000L,
     )
 
-    private fun json(name: String, otp: String = "x") = BankConfigJson(name, RegexJson(otp, "amt", "mer"))
+    private fun json(
+        name: String,
+        otp: String = """(\w+)-(\d{6})""",
+        amount: String = """([A-Z]{3})(\d+)""",
+        merchant: String = """at (.+)""",
+    ) = BankConfigJson(name, RegexJson(otp, amount, merchant))
 
     @Test
     fun `diff classifies names not present locally as toInsert`() {
@@ -61,5 +67,51 @@ class ConfigImporterTest {
         val diff = ConfigImporter.diff(parsed, listOf(existing, existingDup))
         assertEquals(1, diff.toOverwrite.size)
         assertEquals(5L, diff.toOverwrite[0].first.id)
+    }
+
+    @Test
+    fun `analyze returns every invalid effective entry and field`() {
+        val analysis = ConfigImporter.analyze(
+            parsed = listOf(
+                json("Broken", otp = "[", merchant = "no group"),
+                json("", amount = """([A-Z]{3})\d+"""),
+            ),
+            existing = emptyList(),
+        )
+
+        val invalid = analysis as ConfigImporter.Analysis.Invalid
+        assertEquals(2, invalid.entries.size)
+        assertEquals(
+            setOf(BankConfigField.OTP_REGEX, BankConfigField.MERCHANT_REGEX),
+            invalid.entries[0].invalidFields,
+        )
+        assertEquals(
+            setOf(BankConfigField.NAME, BankConfigField.MONEY_REGEX),
+            invalid.entries[1].invalidFields,
+        )
+    }
+
+    @Test
+    fun `analyze validates only last duplicate value`() {
+        val analysis = ConfigImporter.analyze(
+            parsed = listOf(json("Dup", otp = "["), json("Dup")),
+            existing = emptyList(),
+        )
+
+        val valid = analysis as ConfigImporter.Analysis.Valid
+        assertEquals(1, valid.diff.toInsert.size)
+        assertEquals("""(\w+)-(\d{6})""", valid.diff.toInsert.single().regex.otp)
+    }
+
+    @Test
+    fun `analyze returns existing diff when every effective entry is valid`() {
+        val analysis = ConfigImporter.analyze(
+            parsed = listOf(json("New Bank"), json("UOB Thailand")),
+            existing = listOf(existing),
+        )
+
+        val valid = analysis as ConfigImporter.Analysis.Valid
+        assertEquals(1, valid.diff.toInsert.size)
+        assertEquals(1, valid.diff.toOverwrite.size)
     }
 }
