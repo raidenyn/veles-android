@@ -7,6 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import me.nagaev.veles.otp.config.BankConfigValidator
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -33,9 +34,22 @@ class HandlerChainReloader(
                 failed = false
                 try {
                     configs.collect { list ->
-                        try {
-                            messageHandler = CompositeMessageHandler(
-                                list.map { config ->
+                        val handlers = list.mapNotNull { config ->
+                            val invalidFields = BankConfigValidator.invalidFields(
+                                name = config.name,
+                                otpRegex = config.otpRegex,
+                                moneyRegex = config.moneyRegex,
+                                merchantRegex = config.merchantRegex,
+                            )
+                            if (invalidFields.isNotEmpty()) {
+                                logger().log(
+                                    Level.WARNING,
+                                    "Skipping invalid handler config {0}: {1}",
+                                    arrayOf(config.name, invalidFields.joinToString()),
+                                )
+                                null
+                            } else {
+                                try {
                                     RegexMessageHandler(
                                         name = config.name,
                                         otpRegex = config.otpRegex,
@@ -43,15 +57,17 @@ class HandlerChainReloader(
                                         merchantRegex = config.merchantRegex,
                                         notifier = notifier,
                                     )
-                                },
-                            )
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: PatternSyntaxException) {
-                            // A malformed regex in one config must not freeze hot-reload;
-                            // keep the previous chain and let the next edit take effect.
-                            logger().log(Level.WARNING, "Failed to rebuild handler chain", e)
+                                } catch (e: PatternSyntaxException) {
+                                    logger().log(
+                                        Level.WARNING,
+                                        "Skipping handler config {0}: construction failed",
+                                        config.name,
+                                    )
+                                    null
+                                }
+                            }
                         }
+                        messageHandler = CompositeMessageHandler(handlers)
                     }
                 } catch (e: CancellationException) {
                     throw e
