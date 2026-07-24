@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.Dispatchers
@@ -358,5 +359,29 @@ class ExportImportFlowTest {
             substring = true,
         ).assertIsDisplayed()
         composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_CONFIRM).assertDoesNotExist()
+    }
+
+    @Test
+    fun `rejected import list scrolls to reveal the last invalid entry`() {
+        val context = androidx.test.core.app.ApplicationProvider
+            .getApplicationContext<android.content.Context>()
+        val configs = (1..12).map { i ->
+            BankHandlerConfig(
+                name = "Broken Bank $i",
+                otpRegex = "[",
+                moneyRegex = """([A-Z]{3})\d+""",
+                merchantRegex = "no group",
+                createdAt = 0L,
+                updatedAt = 0L,
+            )
+        }
+        val json = me.nagaev.veles.otp.config.io.ConfigSerializer.toJson(configs)
+        val uri = me.nagaev.veles.otp.config.TestFileUris.writeTempFile(context, json)
+
+        composeRule.runOnIdle { vm.onImportUri(context, uri) }
+        composeRule.waitUntil(5000) { vm.state.value.rejectedImportReview != null }
+
+        composeRule.onNodeWithTag(TestTags.BANK_CONFIG_IMPORT_REJECTED_DIALOG).assertIsDisplayed()
+        composeRule.onNodeWithText("Broken Bank 12").performScrollTo().assertIsDisplayed()
     }
 }

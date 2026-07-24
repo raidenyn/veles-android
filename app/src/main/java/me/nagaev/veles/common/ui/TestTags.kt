@@ -29,6 +29,7 @@ object TestTags {
     const val BANK_CONFIG_EXPORT_DIALOG = "bank_config_export_dialog"
     const val BANK_CONFIG_IMPORT_DIALOG = "bank_config_import_dialog"
     const val BANK_CONFIG_IMPORT_REJECTED_DIALOG = "bank_config_import_rejected_dialog"
+    const val BANK_CONFIG_IMPORT_REJECTED_LIST = "bank_config_import_rejected_list"
     const val BANK_CONFIG_IMPORT_CONFIRM = "bank_config_import_confirm"
     const val BANK_CONFIG_IMPORT_CANCEL = "bank_config_import_cancel"
     const val BANK_CONFIG_EXPORT_CONFIRM = "bank_config_export_confirm"
