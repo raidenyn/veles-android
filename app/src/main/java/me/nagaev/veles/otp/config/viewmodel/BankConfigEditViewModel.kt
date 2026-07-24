@@ -10,9 +10,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.nagaev.veles.R
 import me.nagaev.veles.common.UiText
+import me.nagaev.veles.otp.config.BankConfigField
+import me.nagaev.veles.otp.config.BankConfigValidator
 import me.nagaev.veles.otp.config.BankHandlerConfig
 import me.nagaev.veles.otp.config.BankHandlerRepository
-import java.util.regex.PatternSyntaxException
 import javax.inject.Inject
 
 @HiltViewModel
@@ -52,10 +53,20 @@ class BankConfigEditViewModel @Inject constructor(
 
     fun save() {
         val s = _state.value
-        val nameError = if (s.name.isBlank()) UiText.Res(R.string.bank_config_edit_name_required) else null
-        val otpRegexError = validateRegex(s.otpRegex, requiredGroupCount = 2)
-        val moneyRegexError = validateRegex(s.moneyRegex, requiredGroupCount = 2)
-        val merchantRegexError = validateRegex(s.merchantRegex, requiredGroupCount = 1)
+        val invalidFields = BankConfigValidator.invalidFields(
+            name = s.name,
+            otpRegex = s.otpRegex,
+            moneyRegex = s.moneyRegex,
+            merchantRegex = s.merchantRegex,
+        )
+        val nameError = if (BankConfigField.NAME in invalidFields) {
+            UiText.Res(R.string.bank_config_edit_name_required)
+        } else {
+            null
+        }
+        val otpRegexError = regexError(s.otpRegex, BankConfigField.OTP_REGEX in invalidFields)
+        val moneyRegexError = regexError(s.moneyRegex, BankConfigField.MONEY_REGEX in invalidFields)
+        val merchantRegexError = regexError(s.merchantRegex, BankConfigField.MERCHANT_REGEX in invalidFields)
 
         if (nameError != null || otpRegexError != null || moneyRegexError != null || merchantRegexError != null) {
             _state.update {
@@ -100,18 +111,9 @@ class BankConfigEditViewModel @Inject constructor(
         }
     }
 
-    private fun validateRegex(pattern: String, requiredGroupCount: Int): UiText? = if (pattern.isBlank()) {
-        UiText.Res(R.string.bank_config_edit_required)
-    } else {
-        try {
-            val groupCount = Regex(pattern).toPattern().matcher("").groupCount()
-            if (groupCount < requiredGroupCount) {
-                UiText.Res(R.string.bank_config_edit_invalid_regex)
-            } else {
-                null
-            }
-        } catch (e: PatternSyntaxException) {
-            UiText.Res(R.string.bank_config_edit_invalid_regex)
-        }
+    private fun regexError(pattern: String, invalid: Boolean): UiText? = when {
+        !invalid -> null
+        pattern.isBlank() -> UiText.Res(R.string.bank_config_edit_required)
+        else -> UiText.Res(R.string.bank_config_edit_invalid_regex)
     }
 }
