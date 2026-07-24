@@ -38,9 +38,6 @@ object ConfigImporter {
         }
     }
 
-    fun diff(parsed: List<BankConfigJson>, existing: List<BankHandlerConfig>): Diff =
-        classify(deduplicate(parsed), existing)
-
     private fun deduplicate(parsed: List<BankConfigJson>): List<BankConfigJson> {
         val deduped = LinkedHashMap<String, BankConfigJson>()
         for (entry in parsed) {

@@ -113,7 +113,7 @@ class HandlerChainReloaderTest {
             val malformed = config(
                 "Bad",
                 "[",
-                """ pay ([A-Z]{3})(\d+\.\d{2}) """,
+                """pay ([A-Z]{3})(\d+\.\d{2})""",
                 """ at (\w+)""",
             )
             val flow = MutableStateFlow(listOf(malformed, bankA))
