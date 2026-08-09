@@ -37,7 +37,7 @@ class CopyDataReceiver(
         val amountText = intent.getStringExtra(EXTRA_AMOUNT_TEXT) ?: ""
         val currencyCode = intent.getStringExtra(EXTRA_CURRENCY_CODE) ?: ""
         val otpClipboard = otpClipboardOverride ?: resolveOtpClipboard(context)
-        otpClipboard.copy(otp)
+        if (!otpClipboard.copy(otp)) return
 
         if (notificationId != -1) {
             val notificationBuilder =

@@ -113,6 +113,7 @@ class CopyDataReceiverTest {
         CopyDataReceiver(logger, notificationBuilder, otpClipboard).onReceive(context, intent)
 
         verify(exactly = 0) { clipboardManager.setPrimaryClip(any()) }
+        verify(exactly = 0) { notificationManager.notify(any(), any()) }
     }
 
     @Test
