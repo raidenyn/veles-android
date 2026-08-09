@@ -4,9 +4,20 @@ import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.otp.CopyDataReceiver
+import me.nagaev.veles.otp.OtpClipboard
+import me.nagaev.veles.settings.SettingsRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,6 +27,7 @@ import java.math.BigDecimal
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
+@OptIn(ExperimentalCoroutinesApi::class)
 class UserNotifierOtpMessageHandlerTest {
     private val defaultMessage =
         OtpMessage(
@@ -24,29 +36,94 @@ class UserNotifierOtpMessageHandlerTest {
             merchant = "Test Merchant",
         )
 
+    private lateinit var context: Context
+    private lateinit var notificationManager: NotificationManager
+    private lateinit var settingsRepository: SettingsRepository
+    private lateinit var otpClipboard: OtpClipboard
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        settingsRepository = mockk(relaxed = true)
+        otpClipboard = mockk(relaxed = true)
+        // Default: auto-copy disabled so the legacy tests keep their original behavior.
+        coEvery { settingsRepository.isAutoCopyEnabled() } returns false
+    }
+
+    private fun handler(scope: kotlinx.coroutines.CoroutineScope) =
+        UserNotifierOtpMessageHandler(
+            context = context,
+            settingsRepository = settingsRepository,
+            otpClipboard = otpClipboard,
+            applicationScope = scope,
+        )
+
+    private fun postedActionTitle(): String {
+        val notification = shadowOf(notificationManager).getNotification(defaultMessage.hashCode())
+            ?: error("Expected a notification posted for message")
+        return notification.actions.first().title.toString()
+    }
+
     @Test
-    fun `Valid OTP message handling`() {
+    fun `enabled auto-copy writes OTP before copied notification`() = runTest {
+        coEvery { settingsRepository.isAutoCopyEnabled() } returns true
+        every { otpClipboard.copy("123456") } returns true
+
+        handler(this).onOtpMessageReceived(defaultMessage)
+        advanceUntilIdle()
+
+        // The clipboard write must happen before the notification is posted; the
+        // posted notification's action title reflects the auto-copy result.
+        verify { otpClipboard.copy("123456") }
+        assertEquals("Copy 123456 Copied ✓", postedActionTitle())
+    }
+
+    @Test
+    fun `disabled auto-copy leaves clipboard untouched and posts normal notification`() = runTest {
+        coEvery { settingsRepository.isAutoCopyEnabled() } returns false
+
+        handler(this).onOtpMessageReceived(defaultMessage)
+        advanceUntilIdle()
+
+        verify(exactly = 0) { otpClipboard.copy(any()) }
+        assertEquals("Copy 123456", postedActionTitle())
+    }
+
+    @Test
+    fun `enabled auto-copy writes even when notifications are disabled`() = runTest {
+        coEvery { settingsRepository.isAutoCopyEnabled() } returns true
+        every { otpClipboard.copy("123456") } returns true
+        shadowOf(notificationManager).setNotificationsEnabled(false)
+
+        handler(this).onOtpMessageReceived(defaultMessage)
+        advanceUntilIdle()
+
+        verify { otpClipboard.copy("123456") }
+        assertNull(
+            "No notification should be posted when notifications are disabled",
+            shadowOf(notificationManager).getNotification(defaultMessage.hashCode()),
+        )
+    }
+
+    @Test
+    fun `Valid OTP message handling`() = runTest {
         val message = defaultMessage.copy()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val h = handler(this)
+        h.onOtpMessageReceived(message)
+        advanceUntilIdle()
 
-        val handler = UserNotifierOtpMessageHandler(context)
-        handler.onOtpMessageReceived(message)
-
-        // Verify a notification was posted
-        val shadowNotificationManager = shadowOf(notificationManager)
-        val notifications = shadowNotificationManager.allNotifications
+        val notifications = shadowOf(notificationManager).allNotifications
         assert(notifications.isNotEmpty()) { "Expected at least one notification to be posted" }
     }
 
     @Test
-    fun `Notification content text and title reflect the OtpMessage`() {
+    fun `Notification content text and title reflect the OtpMessage`() = runTest {
         val message = defaultMessage.copy()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        val handler = UserNotifierOtpMessageHandler(context)
-        handler.onOtpMessageReceived(message)
+        val h = handler(this)
+        h.onOtpMessageReceived(message)
+        advanceUntilIdle()
 
         val notification = shadowOf(notificationManager).getNotification(message.hashCode())
             ?: error("Expected a notification posted for message")
@@ -64,9 +141,8 @@ class UserNotifierOtpMessageHandlerTest {
     }
 
     @Test
-    fun `Copy PendingIntent is distinct per notification and keeps its own OTP`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val handler = UserNotifierOtpMessageHandler(context)
+    fun `Copy PendingIntent is distinct per notification and keeps its own OTP`() = runTest {
+        val h = handler(this)
 
         val message1 =
             OtpMessage(
@@ -81,15 +157,13 @@ class UserNotifierOtpMessageHandlerTest {
                 merchant = "Merchant Two",
             )
 
-        handler.onOtpMessageReceived(message1)
-        handler.onOtpMessageReceived(message2)
+        h.onOtpMessageReceived(message1)
+        h.onOtpMessageReceived(message2)
+        advanceUntilIdle()
 
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val shadowNotificationManager = shadowOf(notificationManager)
-
-        val notification1 = shadowNotificationManager.getNotification(message1.hashCode())
+        val notification1 = shadowOf(notificationManager).getNotification(message1.hashCode())
             ?: error("Expected a notification posted for message1")
-        val notification2 = shadowNotificationManager.getNotification(message2.hashCode())
+        val notification2 = shadowOf(notificationManager).getNotification(message2.hashCode())
             ?: error("Expected a notification posted for message2")
 
         val copyAction1 = notification1.actions.first()
@@ -123,13 +197,12 @@ class UserNotifierOtpMessageHandlerTest {
     }
 
     @Test
-    fun `Copy PendingIntent request code matches the posted notification id`() {
+    fun `Copy PendingIntent request code matches the posted notification id`() = runTest {
         val message = defaultMessage.copy()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val handler = UserNotifierOtpMessageHandler(context)
-        handler.onOtpMessageReceived(message)
+        val h = handler(this)
+        h.onOtpMessageReceived(message)
+        advanceUntilIdle()
 
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = shadowOf(notificationManager).getNotification(message.hashCode())
             ?: error("Expected a notification posted for message")
 
@@ -148,13 +221,12 @@ class UserNotifierOtpMessageHandlerTest {
     }
 
     @Test
-    fun `Copy intent data URI encodes the notification id`() {
+    fun `Copy intent data URI encodes the notification id`() = runTest {
         val message = defaultMessage.copy()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val handler = UserNotifierOtpMessageHandler(context)
-        handler.onOtpMessageReceived(message)
+        val h = handler(this)
+        h.onOtpMessageReceived(message)
+        advanceUntilIdle()
 
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = shadowOf(notificationManager).getNotification(message.hashCode())
             ?: error("Expected a notification posted for message")
 
@@ -168,13 +240,12 @@ class UserNotifierOtpMessageHandlerTest {
     }
 
     @Test
-    fun `Copy intent carries the notification id`() {
+    fun `Copy intent carries the notification id`() = runTest {
         val message = defaultMessage.copy()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val handler = UserNotifierOtpMessageHandler(context)
-        handler.onOtpMessageReceived(message)
+        val h = handler(this)
+        h.onOtpMessageReceived(message)
+        advanceUntilIdle()
 
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = shadowOf(notificationManager).getNotification(message.hashCode())
             ?: error("Expected a notification posted for message")
 
