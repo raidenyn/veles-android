@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.protobuf)
     alias(libs.plugins.detekt)
 }
 
@@ -136,6 +137,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
+    implementation(libs.androidx.datastore)
+    implementation(libs.protobuf.javalite)
+
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.hilt.navigation.compose)
@@ -158,4 +162,15 @@ dependencies {
     androidTestImplementation(libs.mockk.android)
     androidTestImplementation(libs.mockk.agent)
     testImplementation(kotlin("test"))
+}
+
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:4.29.3" }
+    generateProtoTasks {
+        all().configureEach {
+            builtins {
+                create("java") { option("lite") }
+            }
+        }
+    }
 }
