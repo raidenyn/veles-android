@@ -52,13 +52,12 @@ class UserNotifierOtpMessageHandlerTest {
         coEvery { settingsRepository.isAutoCopyEnabled() } returns false
     }
 
-    private fun handler(scope: kotlinx.coroutines.CoroutineScope) =
-        UserNotifierOtpMessageHandler(
-            context = context,
-            settingsRepository = settingsRepository,
-            otpClipboard = otpClipboard,
-            applicationScope = scope,
-        )
+    private fun handler(scope: kotlinx.coroutines.CoroutineScope) = UserNotifierOtpMessageHandler(
+        context = context,
+        settingsRepository = settingsRepository,
+        otpClipboard = otpClipboard,
+        applicationScope = scope,
+    )
 
     private fun postedActionTitle(): String {
         val notification = shadowOf(notificationManager).getNotification(defaultMessage.hashCode())
