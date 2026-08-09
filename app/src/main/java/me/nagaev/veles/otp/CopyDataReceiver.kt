@@ -2,23 +2,17 @@ package me.nagaev.veles.otp
 
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
-import android.content.ClipData
-import android.content.ClipDescription
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
-import android.os.PersistableBundle
 import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.EntryPointAccessors
-import me.nagaev.veles.R
 import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.otp.handlers.OtpNotificationBuilder
 
 class CopyDataReceiver(
     private val loggerOverride: VelesLog? = null,
     private val notificationBuilderOverride: OtpNotificationBuilder? = null,
+    private val otpClipboardOverride: OtpClipboard? = null,
 ) : BroadcastReceiver() {
     companion object {
         const val EXTRA_COPY_TEXT = "CopyText"
@@ -26,17 +20,6 @@ class CopyDataReceiver(
         const val EXTRA_MERCHANT = "Merchant"
         const val EXTRA_AMOUNT_TEXT = "AmountText"
         const val EXTRA_CURRENCY_CODE = "CurrencyCode"
-        private const val CLEAR_DELAY_MILLIS = 2 * 60 * 1000L
-
-        internal fun shouldClearClip(
-            clip: ClipData?,
-            expectedLabel: String,
-            expectedText: String,
-        ): Boolean {
-            if (clip == null || clip.itemCount == 0) return false
-            if (clip.description.label != expectedLabel) return false
-            return clip.getItemAt(0).text?.toString() == expectedText
-        }
     }
 
     @SuppressLint("MissingPermission")
@@ -53,17 +36,8 @@ class CopyDataReceiver(
         val merchant = intent.getStringExtra(EXTRA_MERCHANT) ?: ""
         val amountText = intent.getStringExtra(EXTRA_AMOUNT_TEXT) ?: ""
         val currencyCode = intent.getStringExtra(EXTRA_CURRENCY_CODE) ?: ""
-        val clipboardManager =
-            context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-        val clipLabel = context.getString(R.string.otp_clipboard_label)
-
-        val clip = ClipData.newPlainText(clipLabel, otp).apply {
-            description.extras = PersistableBundle().apply {
-                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-            }
-        }
-        clipboardManager.setPrimaryClip(clip)
-        logger.dCopiedOtp(otp)
+        val otpClipboard = otpClipboardOverride ?: resolveOtpClipboard(context)
+        otpClipboard.copy(otp)
 
         if (notificationId != -1) {
             val notificationBuilder =
@@ -78,16 +52,15 @@ class CopyDataReceiver(
             )
             NotificationManagerCompat.from(context).notify(notificationId, notification)
         }
-
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (shouldClearClip(clipboardManager.primaryClip, clipLabel, otp)) {
-                clipboardManager.clearPrimaryClip()
-            }
-        }, CLEAR_DELAY_MILLIS)
     }
 
     private fun resolveLogger(context: Context): VelesLog = EntryPointAccessors.fromApplication(
         context.applicationContext,
         NotificationListenerEntryPoint::class.java,
     ).velesLog()
+
+    private fun resolveOtpClipboard(context: Context): OtpClipboard = EntryPointAccessors.fromApplication(
+        context.applicationContext,
+        NotificationListenerEntryPoint::class.java,
+    ).otpClipboard()
 }

@@ -4,7 +4,7 @@ import android.content.ClipData
 import android.content.ClipDescription
 import io.mockk.every
 import io.mockk.mockk
-import me.nagaev.veles.otp.CopyDataReceiver.Companion.shouldClearClip
+import me.nagaev.veles.otp.OtpClipboard.Companion.shouldClearClip
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
