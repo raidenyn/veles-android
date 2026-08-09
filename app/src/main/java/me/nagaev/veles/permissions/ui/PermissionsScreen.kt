@@ -32,6 +32,7 @@ import me.nagaev.veles.R
 import me.nagaev.veles.common.ui.TestTags
 import me.nagaev.veles.permissions.services.PermissionType
 import me.nagaev.veles.permissions.ui.components.AccessNotificationPermission
+import me.nagaev.veles.permissions.ui.components.AutoCopyOtpCard
 import me.nagaev.veles.permissions.ui.components.SensitiveNotificationsCard
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
@@ -63,6 +64,12 @@ fun PermissionsScreen(
             ListenerStatusCard(
                 enabled = state.notificationListenerEnabled,
                 modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
+        item {
+            AutoCopyOtpCard(
+                enabled = state.autoCopyEnabled,
+                onEnabledChange = actions.setAutoCopyEnabled,
             )
         }
         item {

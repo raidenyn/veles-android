@@ -256,4 +256,61 @@ class VelesPermissionsAppTests {
         composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("bank-configs")).assertExists()
         composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("test")).assertExists()
     }
+
+    @Test
+    fun `auto-copy switch reflects off state`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState =
+                permissionsState.copy(
+                    autoCopyEnabled = false,
+                ),
+                permissionsActions = permissionsActions,
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
+            .onChildren()
+            .filterToOne(hasClickAction())
+            .assertIsOff()
+    }
+
+    @Test
+    fun `auto-copy switch reflects on state`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState =
+                permissionsState.copy(
+                    autoCopyEnabled = true,
+                ),
+                permissionsActions = permissionsActions,
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
+            .onChildren()
+            .filterToOne(hasClickAction())
+            .assertIsOn()
+    }
+
+    @Test
+    fun `clicking auto-copy switch invokes setAutoCopyEnabled`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState =
+                permissionsState.copy(
+                    autoCopyEnabled = false,
+                ),
+                permissionsActions = permissionsActions,
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
+            .performClick()
+
+        verify { permissionsActions.setAutoCopyEnabled(true) }
+    }
 }

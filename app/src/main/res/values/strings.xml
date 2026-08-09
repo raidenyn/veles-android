@@ -118,4 +118,6 @@
     <string name="test_notification_channel_name">Veles Test</string>
     <string name="test_notification_channel_description">Test notifications for verifying handler templates</string>
     <string name="otp_clipboard_label" translatable="false">OTP</string>
+    <string name="auto_copy_otp_title">Automatically copy OTP to clipboard</string>
+    <string name="auto_copy_otp_description">Copies intercepted OTPs automatically. Codes are marked sensitive and cleared from the clipboard after about 2 minutes.</string>
 </resources>

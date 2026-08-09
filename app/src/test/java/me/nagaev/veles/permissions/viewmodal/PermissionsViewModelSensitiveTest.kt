@@ -3,6 +3,7 @@ package me.nagaev.veles.permissions.viewmodal
 import android.content.ComponentName
 import android.content.Intent
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -33,6 +34,7 @@ import me.nagaev.veles.permissions.services.PermissionsProviderImpl
 import me.nagaev.veles.permissions.services.SensitiveNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.SensitiveNotificationsGrant
 import me.nagaev.veles.permissions.services.SensitiveNotificationsStatus
+import me.nagaev.veles.settings.SettingsRepository
 import me.nagaev.veles.testing.TestNotificationSender
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -45,6 +47,7 @@ class PermissionsViewModelSensitiveTest {
     private val sender = mockk<TestNotificationSender>(relaxed = true)
     private val testResultFlow = TestResultFlow()
     private val redactionStateFlow = RedactionStateFlow()
+    private val settingsRepository = mockk<SettingsRepository>(relaxed = true)
 
     @After
     fun tearDown() {
@@ -55,6 +58,7 @@ class PermissionsViewModelSensitiveTest {
         permissionsProvider: PermissionsProvider = mockk(relaxed = true),
         rebindListener: () -> Unit = {},
         notificationStatePreferences: NotificationStatePreferences = mockk(relaxed = true),
+        settingsRepo: SettingsRepository = settingsRepository,
     ): PermissionsViewModel = PermissionsViewModel(
         notificationStatePreferences,
         NotificationRedactionPath.StockAndroid,
@@ -66,6 +70,7 @@ class PermissionsViewModelSensitiveTest {
         permissionsProvider,
         { _: Intent -> },
         rebindListener,
+        settingsRepo,
     )
 
     private fun testResult(text: String) = TestResult(
@@ -313,5 +318,33 @@ class PermissionsViewModelSensitiveTest {
         runCurrent()
 
         verify { sender.postProbe() }
+    }
+
+    @Test
+    fun `auto-copy setting follows repository state`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        every { status.check() } returns SensitiveNotificationsGrant.NotApplicable
+        val enabled = MutableStateFlow(false)
+        val settingsRepo = mockk<SettingsRepository> { every { autoCopyEnabled } returns enabled }
+
+        val vm = viewModel(settingsRepo = settingsRepo)
+        enabled.value = true
+        runCurrent()
+
+        assertEquals(true, vm.uiState.value.autoCopyEnabled)
+    }
+
+    @Test
+    fun `set auto-copy delegates to settings repository`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        every { status.check() } returns SensitiveNotificationsGrant.NotApplicable
+        val settingsRepo = mockk<SettingsRepository>(relaxed = true)
+
+        val vm = viewModel(settingsRepo = settingsRepo)
+
+        vm.setAutoCopyEnabled(true)
+        runCurrent()
+
+        coVerify { settingsRepo.setAutoCopyEnabled(true) }
     }
 }

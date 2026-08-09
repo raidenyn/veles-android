@@ -33,6 +33,7 @@ import me.nagaev.veles.permissions.services.PermissionsProvider
 import me.nagaev.veles.permissions.services.SensitiveNotificationPermissionProvider
 import me.nagaev.veles.permissions.services.SensitiveNotificationsGrant
 import me.nagaev.veles.permissions.services.SensitiveNotificationsStatus
+import me.nagaev.veles.settings.SettingsRepository
 import me.nagaev.veles.testing.TestNotificationSender
 
 interface PermissionsActions {
@@ -42,6 +43,7 @@ interface PermissionsActions {
     val openEnhancedNotificationsSettings: () -> Unit
     val verifySensitiveAccess: () -> Unit
     val openAppInfo: () -> Unit
+    val setAutoCopyEnabled: (Boolean) -> Unit
 
     companion object {
         val Mocked: PermissionsActions =
@@ -52,6 +54,7 @@ interface PermissionsActions {
                 override val openEnhancedNotificationsSettings: () -> Unit = {}
                 override val verifySensitiveAccess: () -> Unit = {}
                 override val openAppInfo: () -> Unit = {}
+                override val setAutoCopyEnabled: (Boolean) -> Unit = {}
             }
     }
 }
@@ -72,6 +75,7 @@ class PermissionsViewModel @AssistedInject constructor(
     @Assisted private val permissionsProvider: PermissionsProvider,
     @Assisted private val openSettings: (Intent) -> Unit,
     @Assisted private val rebindListener: () -> Unit,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel(),
     PermissionsActions {
     companion object {
@@ -100,6 +104,11 @@ class PermissionsViewModel @AssistedInject constructor(
         updatePermissionsState()
         viewModelScope.launch {
             redactionStateFlow.current.collect { updatePermissionsState() }
+        }
+        viewModelScope.launch {
+            settingsRepository.autoCopyEnabled.collect { enabled ->
+                _uiState.value = uiState.value.copy(autoCopyEnabled = enabled)
+            }
         }
     }
 
@@ -214,6 +223,10 @@ class PermissionsViewModel @AssistedInject constructor(
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                 .setData(Uri.fromParts("package", componentName.packageName, null)),
         )
+    }
+
+    override val setAutoCopyEnabled: (Boolean) -> Unit = { enabled ->
+        viewModelScope.launch { settingsRepository.setAutoCopyEnabled(enabled) }
     }
 
     private fun applyGrantAfterAssociation() {

@@ -23,6 +23,7 @@ object TestTags {
     const val SENSITIVE_ADB_COPY = "sensitive_adb_copy"
     const val SENSITIVE_FORCE_STOP_BUTTON = "sensitive_force_stop_button"
     val PERMISSION_STATUS = { state: PermissionType -> "permission_status_$state" }
+    const val AUTO_COPY_OTP_SWITCH = "auto_copy_otp_switch"
 
     const val BANK_CONFIG_EXPORT_BUTTON = "bank_config_export_button"
     const val BANK_CONFIG_IMPORT_BUTTON = "bank_config_import_button"
