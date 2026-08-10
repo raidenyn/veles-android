@@ -2,6 +2,7 @@ package me.nagaev.veles.settings
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.settings.proto.VelesSettings
@@ -39,6 +40,18 @@ class SettingsRepositoryTest {
         assertFalse(repository.isAutoCopyEnabled())
     }
 
+    @Test
+    fun `corrupt settings are replaced so subsequent updates succeed`() = runTest {
+        val repository = SettingsRepository(corruptRecoveringStore())
+
+        assertFalse(repository.isAutoCopyEnabled())
+
+        repository.setAutoCopyEnabled(true)
+
+        assertTrue(repository.isAutoCopyEnabled())
+        assertTrue(repository.autoCopyEnabled.first())
+    }
+
     private fun testStore(): DataStore<VelesSettings> = DataStoreFactory.create(
         serializer = SettingsSerializer,
         produceFile = { tempFolder.newFile("settings.test.pb") },
@@ -51,6 +64,19 @@ class SettingsRepositoryTest {
         return DataStoreFactory.create(
             serializer = SettingsSerializer,
             produceFile = { corruptFile },
+        )
+    }
+
+    private fun corruptRecoveringStore(): DataStore<VelesSettings> {
+        val corruptFile = tempFolder.newFile("settings.recover.pb").apply {
+            writeBytes(CORRUPT_BYTES)
+        }
+        return DataStoreFactory.create(
+            serializer = SettingsSerializer,
+            produceFile = { corruptFile },
+            corruptionHandler = ReplaceFileCorruptionHandler(
+                produceNewData = { VelesSettings.getDefaultInstance() },
+            ),
         )
     }
 

@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import io.mockk.mockk
 import io.mockk.verify
@@ -64,6 +65,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.SEND_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -74,6 +76,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.ACCESS_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -110,6 +113,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.SEND_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -120,6 +124,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.ACCESS_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -156,12 +161,14 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.SEND_NOTIFICATIONS))
+            .performScrollTo()
             .onChildren()
             .filterToOne(hasClickAction())
             .assertIsOn()
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.ACCESS_NOTIFICATIONS))
+            .performScrollTo()
             .onChildren()
             .filterToOne(hasClickAction())
             .assertIsOff()
@@ -271,8 +278,6 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
-            .onChildren()
-            .filterToOne(hasClickAction())
             .assertIsOff()
     }
 
@@ -290,8 +295,6 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
-            .onChildren()
-            .filterToOne(hasClickAction())
             .assertIsOn()
     }
 

@@ -3,6 +3,7 @@ package me.nagaev.veles.settings.di
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.dataStoreFile
 import dagger.Module
 import dagger.Provides
@@ -23,5 +24,8 @@ object SettingsModule {
     ): DataStore<VelesSettings> = DataStoreFactory.create(
         serializer = SettingsSerializer,
         produceFile = { context.dataStoreFile("settings.pb") },
+        corruptionHandler = ReplaceFileCorruptionHandler(
+            produceNewData = { VelesSettings.getDefaultInstance() },
+        ),
     )
 }

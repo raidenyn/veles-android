@@ -10,6 +10,7 @@ import android.os.PersistableBundle
 import dagger.hilt.android.qualifiers.ApplicationContext
 import me.nagaev.veles.R
 import me.nagaev.veles.common.VelesLog
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,6 +33,8 @@ class OtpClipboard @Inject constructor(
         }
     }
 
+    private val writeGeneration = AtomicInteger(0)
+
     fun copy(otp: String): Boolean {
         val clipboardManager =
             context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
@@ -45,8 +48,9 @@ class OtpClipboard @Inject constructor(
         clipboardManager.setPrimaryClip(clip)
         logger.dCopiedOtp(otp)
 
+        val generation = writeGeneration.incrementAndGet()
         Handler(Looper.getMainLooper()).postDelayed({
-            if (shouldClearClip(clipboardManager.primaryClip, clipLabel, otp)) {
+            if (writeGeneration.get() == generation) {
                 clipboardManager.clearPrimaryClip()
             }
         }, CLEAR_DELAY_MILLIS)
