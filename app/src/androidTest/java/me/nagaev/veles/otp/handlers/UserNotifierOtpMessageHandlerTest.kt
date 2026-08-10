@@ -5,7 +5,14 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.rule.GrantPermissionRule
+import io.mockk.coEvery
+import io.mockk.mockk
 import junit.framework.TestCase.assertNotNull
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import me.nagaev.veles.otp.OtpClipboard
+import me.nagaev.veles.settings.SettingsRepository
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -18,6 +25,9 @@ class UserNotifierOtpMessageHandlerTest {
 
     private lateinit var context: Context
     private lateinit var handler: UserNotifierOtpMessageHandler
+    private lateinit var settingsRepository: SettingsRepository
+    private lateinit var otpClipboard: OtpClipboard
+    private lateinit var applicationScope: CoroutineScope
 
     private val defaultMessage =
         OtpMessage(
@@ -29,7 +39,16 @@ class UserNotifierOtpMessageHandlerTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        handler = UserNotifierOtpMessageHandler(context)
+        settingsRepository = mockk(relaxed = true)
+        otpClipboard = mockk(relaxed = true)
+        applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        coEvery { settingsRepository.isAutoCopyEnabled() } returns false
+        handler = UserNotifierOtpMessageHandler(
+            context = context,
+            settingsRepository = settingsRepository,
+            otpClipboard = otpClipboard,
+            applicationScope = applicationScope,
+        )
     }
 
     @Test

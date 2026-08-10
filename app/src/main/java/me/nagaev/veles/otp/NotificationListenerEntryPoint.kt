@@ -19,6 +19,8 @@ interface NotificationListenerEntryPoint {
 
     fun userNotifierOtpMessageHandler(): UserNotifierOtpMessageHandler
 
+    fun otpClipboard(): OtpClipboard
+
     fun velesLog(): VelesLog
 
     fun testResultFlow(): TestResultFlow

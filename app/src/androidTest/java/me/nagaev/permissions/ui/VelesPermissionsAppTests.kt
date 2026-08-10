@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import io.mockk.mockk
 import io.mockk.verify
@@ -64,6 +65,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.SEND_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -74,6 +76,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.ACCESS_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -110,6 +113,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.SEND_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -120,6 +124,7 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.ACCESS_NOTIFICATIONS))
+            .performScrollTo()
             .performClick()
 
         verify {
@@ -156,12 +161,14 @@ class VelesPermissionsAppTests {
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.SEND_NOTIFICATIONS))
+            .performScrollTo()
             .onChildren()
             .filterToOne(hasClickAction())
             .assertIsOn()
 
         composeTestRule
             .onNodeWithTag(TestTags.PERMISSION_STATUS(PermissionType.ACCESS_NOTIFICATIONS))
+            .performScrollTo()
             .onChildren()
             .filterToOne(hasClickAction())
             .assertIsOff()
@@ -255,5 +262,58 @@ class VelesPermissionsAppTests {
         composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("permissions")).assertExists()
         composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("bank-configs")).assertExists()
         composeTestRule.onNodeWithTag(TestTags.BOTTOM_NAV_ITEM("test")).assertExists()
+    }
+
+    @Test
+    fun `auto-copy switch reflects off state`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState =
+                permissionsState.copy(
+                    autoCopyEnabled = false,
+                ),
+                permissionsActions = permissionsActions,
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
+            .assertIsOff()
+    }
+
+    @Test
+    fun `auto-copy switch reflects on state`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState =
+                permissionsState.copy(
+                    autoCopyEnabled = true,
+                ),
+                permissionsActions = permissionsActions,
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
+            .assertIsOn()
+    }
+
+    @Test
+    fun `clicking auto-copy switch invokes setAutoCopyEnabled`() {
+        composeTestRule.setContent {
+            VelesPermissionsApp(
+                permissionsState =
+                permissionsState.copy(
+                    autoCopyEnabled = false,
+                ),
+                permissionsActions = permissionsActions,
+            )
+        }
+
+        composeTestRule
+            .onNodeWithTag(TestTags.AUTO_COPY_OTP_SWITCH)
+            .performClick()
+
+        verify { permissionsActions.setAutoCopyEnabled(true) }
     }
 }

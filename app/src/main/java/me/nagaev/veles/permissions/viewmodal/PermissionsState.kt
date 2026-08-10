@@ -17,6 +17,7 @@ enum class SensitiveNotificationsUiState {
 data class PermissionsState(
     val permissions: Map<PermissionType, Permission>,
     val notificationListenerEnabled: Boolean,
+    val autoCopyEnabled: Boolean = false,
     val sensitiveNotifications: SensitiveNotificationsUiState = SensitiveNotificationsUiState.NotApplicable,
     val cdmSupported: Boolean = false,
     val showOnePlusAdbPreStep: Boolean = false,
