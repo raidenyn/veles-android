@@ -50,7 +50,9 @@ class OtpClipboard @Inject constructor(
 
         val generation = writeGeneration.incrementAndGet()
         Handler(Looper.getMainLooper()).postDelayed({
-            if (writeGeneration.get() == generation) {
+            if (writeGeneration.get() == generation &&
+                shouldClearClip(clipboardManager.primaryClip, clipLabel, otp)
+            ) {
                 clipboardManager.clearPrimaryClip()
             }
         }, CLEAR_DELAY_MILLIS)
