@@ -100,7 +100,7 @@ class OtpClipboardTest {
     }
 
     @Test
-    fun `delayed clear does not fire when same OTP is re-copied`() {
+    fun `re-copy refreshes the full TTL so the first deadline does not clear`() {
         every { clipboardManager.primaryClip } returns clipData
         every { clipData.description } returns clipDescription
         every { clipDescription.label } returns "OTP"
@@ -108,9 +108,16 @@ class OtpClipboardTest {
         every { clipData.getItemAt(0) } returns mockk { every { text } returns "123456" }
 
         clipboard.copy("123456")
+
+        advanceMainLooper(60_000L)
+
         clipboard.copy("123456")
 
-        advanceMainLooperPastClearDelay()
+        advanceMainLooper(60_001L)
+
+        verify(exactly = 0) { clipboardManager.clearPrimaryClip() }
+
+        advanceMainLooper(60_001L)
 
         verify(exactly = 1) { clipboardManager.clearPrimaryClip() }
     }
@@ -127,6 +134,10 @@ class OtpClipboardTest {
     }
 
     private fun advanceMainLooperPastClearDelay() {
-        shadowOf(android.os.Looper.getMainLooper()).idle(2 * 60 * 1000L + 1)
+        advanceMainLooper(2 * 60 * 1000L + 1)
+    }
+
+    private fun advanceMainLooper(millis: Long) {
+        shadowOf(android.os.Looper.getMainLooper()).idle(millis)
     }
 }
