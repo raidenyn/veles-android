@@ -281,10 +281,11 @@ internal class BluetoothSpikeService : Service() {
             NotificationManager.IMPORTANCE_LOW,
         )
         manager.createNotificationChannel(channel)
-        val openPendingIntent = PendingIntent.getService(
+        val openIntent = Intent(this, BluetoothSpikeActivity::class.java).setAction(BluetoothSpikeService.ACTION_OPEN)
+        val openPendingIntent = PendingIntent.getActivity(
             this,
             0,
-            intent(this, ACTION_OPEN),
+            openIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
