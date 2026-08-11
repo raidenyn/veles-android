@@ -91,16 +91,16 @@ class PhoneConnection {
   }
 
   async handleNotification(event) {
-    const bytes = new Uint8Array(
-      event.target.value.buffer,
-      event.target.value.byteOffset,
-      event.target.value.byteLength,
-    ).slice();
-    const complete = this.reassembler.accept(this.device.id, bytes);
-    if (!complete) return;
-    let message;
+    let complete;
     try {
-      message = decodeMessage(complete);
+      const bytes = new Uint8Array(
+        event.target.value.buffer,
+        event.target.value.byteOffset,
+        event.target.value.byteLength,
+      ).slice();
+      complete = this.reassembler.accept(this.device.id, bytes);
+      if (!complete) return;
+      const message = decodeMessage(complete);
       await this.handleMessage(message);
     } catch (error) {
       this.authentication?.reject(error);
