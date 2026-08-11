@@ -365,7 +365,14 @@ internal class BluetoothSpikeService : Service() {
             return
         }
         gattServer = server
-        server.addService(service)
+        val added = server.addService(service)
+        if (!added) {
+            BluetoothSpikeStateStore.error("GATT service registration failed")
+            BluetoothSpikeStateStore.availability(false, "GATT service registration failed")
+            server.close()
+            gattServer = null
+            stopSelf()
+        }
     }
 
     private fun startAdvertising(includeDeviceName: Boolean) {
