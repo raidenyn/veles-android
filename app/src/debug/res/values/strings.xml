@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">Veles (debug)</string>
+    <string name="bluetooth_spike_notification_channel">BLE spike service</string>
+    <string name="bluetooth_spike_notification_title">Veles BLE spike active</string>
+    <string name="bluetooth_spike_notification_text">Synthetic-only Bluetooth testing is running</string>
 </resources>
