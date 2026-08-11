@@ -1,0 +1,141 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px;
+  width: 420px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  min-height: 36px;
+}
+
+h1 {
+  font-size: 1rem;
+  margin: 0 0 4px;
+}
+
+header p {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-end: 8px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.phone-card,
+.otp-card {
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  margin-block: 10px;
+  padding: 10px;
+}
+
+.phone-card h2,
+.otp-card h2 {
+  font-size: 0.95rem;
+  margin: 0 0 4px;
+}
+
+.phone-card p,
+.otp-card p {
+  margin: 2px 0;
+  font-size: 0.85rem;
+}
+
+.otp-code {
+  font-family: ui-monospace, monospace;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  margin-block: 6px;
+}
+
+#phones,
+#otp-events,
+#event-log {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-block: 8px;
+  padding-inline-start: 20px;
+}
+
+#event-log {
+  font-size: 0.8rem;
+}
+
+#event-log li {
+  margin-block: 2px;
+  word-break: break-word;
+}
+
+.status-checking::before {
+  content: "Checking: ";
+  font-weight: 700;
+}
+
+.status-error::before {
+  content: "Error: ";
+  font-weight: 700;
+}
+
+.status-success::before {
+  content: "Success: ";
+  font-weight: 700;
+}
+
+.status-warning::before {
+  content: "Warning: ";
+  font-weight: 700;
+}
+
+.phone-card[data-state="error"],
+.otp-card[data-state="error"] {
+  border-color: #b00020;
+}
+
+.phone-card[data-state="success"],
+.otp-card[data-state="success"] {
+  border-color: #1b7f4b;
+}
+
+button[disabled] {
+  opacity: 0.55;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .phone-card[data-state="error"],
+  .otp-card[data-state="error"] {
+    border-color: #ff6b6b;
+  }
+  .phone-card[data-state="success"],
+  .otp-card[data-state="success"] {
+    border-color: #4ade80;
+  }
+}

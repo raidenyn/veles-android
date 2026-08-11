@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Veles Web Bluetooth Spike",
+  "version": "0.1.0",
+  "description": "Synthetic-only popup Web Bluetooth feasibility harness.",
+  "permissions": ["clipboardWrite"],
+  "action": {
+    "default_title": "Veles BLE Spike",
+    "default_popup": "popup.html"
+  }
+}

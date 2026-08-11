@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veles Web Bluetooth Spike</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Veles BLE Spike</h1>
+      <p id="self-check" role="status" class="status-checking">Checking protocol...</p>
+    </header>
+
+    <main>
+      <section class="controls" aria-label="Connection controls">
+        <button id="connect-phone" type="button" disabled>Connect phone</button>
+        <label>
+          <input id="copy-next-push" type="checkbox" />
+          Copy next push
+        </label>
+      </section>
+
+      <section id="phones" aria-label="Connected phones"></section>
+      <section id="otp-events" aria-label="Synthetic OTP events"></section>
+      <ol id="event-log" aria-label="Event log"></ol>
+    </main>
+
+    <template id="phone-template">
+      <article class="phone-card">
+        <h2 data-field="phone-label">Selected phone</h2>
+        <p data-field="phone-status" role="status">Connecting...</p>
+        <div class="actions">
+          <button data-action="pull" type="button" disabled>Pull current</button>
+          <button data-action="disconnect" type="button">Disconnect</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="otp-template">
+      <article class="otp-card">
+        <h2><span data-field="delivery"></span> from <span data-field="source"></span></h2>
+        <p class="otp-code" data-field="code"></p>
+        <p><span data-field="merchant"></span>, <span data-field="amount"></span> <span data-field="currency"></span></p>
+        <p>Event <span data-field="event-id"></span></p>
+        <button data-action="copy" type="button">Copy code</button>
+      </article>
+    </template>
+
+    <script type="module" src="popup.mjs"></script>
+  </body>
+</html>
