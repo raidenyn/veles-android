@@ -286,4 +286,59 @@ class SpikeSessionRegistryTest {
         assertEquals(emptyList(), sessions.expiredAuthenticatedClients())
         assertEquals(listOf("desktop-a"), sessions.authenticatedTargets())
     }
+
+    @Test
+    fun `onUnsubscribed preserves the connected session for resubscription and reauthentication`() {
+        var now = 1_000L
+        // Two auth rounds: the first consumes two batches, the second (after
+        // resubscription) needs two more.
+        val randomValues = ArrayDeque(
+            listOf(
+                ByteArray(16) { 0x10 },
+                ByteArray(16) { 0x20 },
+                ByteArray(16) { 0x30 },
+                ByteArray(16) { 0x40 },
+            ),
+        )
+        val sessions = SpikeSessionRegistry(
+            clockMillis = { now },
+            randomBytes = { randomValues.removeFirst() },
+        )
+        sessions.onConnected("desktop-a", "Windows")
+        sessions.onSubscribed("desktop-a")
+        val firstChallenge = sessions.beginAuthentication("desktop-a", "AAECAwQFBgcICQoLDA0ODw")
+        val firstProof = SpikeAuthenticator.proof(
+            SpikeProofRole.CLIENT,
+            firstChallenge.clientNonce!!,
+            firstChallenge.serverNonce!!,
+            firstChallenge.sessionId!!,
+        )
+        assertTrue(sessions.authenticate("desktop-a", firstProof))
+        assertTrue(sessions.isAuthenticated("desktop-a"))
+        assertTrue(sessions.isSubscribed("desktop-a"))
+
+        // CCC disable: unsubscribe without dropping the connected session.
+        sessions.onUnsubscribed("desktop-a")
+
+        assertFalse(sessions.isAuthenticated("desktop-a"))
+        assertFalse(sessions.isSubscribed("desktop-a"))
+
+        // CCC re-enable: onSubscribed must succeed on the retained session
+        // (without a fresh onConnected), and a new auth round must be possible.
+        sessions.onSubscribed("desktop-a")
+        val secondChallenge = sessions.beginAuthentication("desktop-a", "AAECAwQFBgcICQoLDA0ODw")
+        assertEquals(SpikeProtocol.TYPE_CHALLENGE, secondChallenge.type)
+        assertNotNull(secondChallenge.serverNonce)
+        assertNotNull(secondChallenge.sessionId)
+        assertNotNull(secondChallenge.proof)
+    }
+
+    @Test
+    fun `onUnsubscribed is a no-op for an unknown client`() {
+        val sessions = SpikeSessionRegistry(clockMillis = { 1_000L }, randomBytes = { ByteArray(16) })
+        // Must not throw and must not create a session.
+        sessions.onUnsubscribed("ghost")
+        assertFalse(sessions.isSubscribed("ghost"))
+        assertFalse(sessions.isAuthenticated("ghost"))
+    }
 }

@@ -39,6 +39,16 @@ internal class SpikeSessionRegistry(
     }
 
     @Synchronized
+    fun onUnsubscribed(clientId: String) {
+        val session = sessions[clientId] ?: return
+        session.subscribed = false
+        session.authenticated = false
+        session.pendingChallenge = null
+        session.challengeIssuedAt = 0L
+        session.lastHeartbeat = 0L
+    }
+
+    @Synchronized
     fun beginAuthentication(clientId: String, clientNonce: String): SpikeWireMessage {
         val session = sessions[clientId]
         check(session != null && session.connected && session.subscribed) {

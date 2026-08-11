@@ -161,7 +161,7 @@ internal class BluetoothSpikeService : Service() {
                     updateClientState(clientId)
                     BluetoothSpikeStateStore.event("Client subscribed: $clientId")
                 } else {
-                    sessions.remove(clientId)
+                    sessions.onUnsubscribed(clientId)
                     reassembler.clearClient(clientId)
                     queues.remove(clientId)
                     updateClientState(clientId)
