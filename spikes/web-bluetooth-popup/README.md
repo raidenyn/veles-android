@@ -229,6 +229,10 @@ replaces the known marker text with the synthetic code.
 app state and remove the Windows host from the phone's Bluetooth pairings
 before any later fresh-pairing case.
 
+> **Do NOT remove the OS Bluetooth pairing yet — Cases 3 and 4 reuse it.**
+> Only remove the pairing when re-running a fresh-pairing case or at the very
+> end of testing.
+
 ### Case 2 — macOS fresh chooser / pair / auth / pull / push / async copy
 
 **Setup.**
@@ -245,12 +249,16 @@ order.
 
 **Reset.** As in Case 1, removing the Mac from the phone's Bluetooth pairings.
 
+> **Do NOT remove the OS Bluetooth pairing yet — Cases 3 and 4 reuse it.**
+> Only remove the pairing when re-running a fresh-pairing case or at the very
+> end of testing.
+
 ### Case 3 — Windows popup closure (run twice)
 
 **Setup.**
 
 - Use the already-paired Windows host and phone from Case 1 (do not re-pair
-  fresh for this case).
+  fresh for this case). Uses the pairing retained from Case 1. Do not re-pair.
 - Reset only the popup lifetime: close the popup, then re-open it.
 
 **Steps.**
@@ -283,8 +291,8 @@ runs pass.
 
 ### Case 4 — macOS popup closure (run twice)
 
-**Setup.** Already-paired Mac and phone from Case 2. Reset only the popup
-lifetime.
+**Setup.** Already-paired Mac and phone from Case 2. Uses the pairing retained
+from Case 2. Do not re-pair. Reset only the popup lifetime.
 
 **Steps.** Identical to Case 3, substituting macOS for Windows.
 
