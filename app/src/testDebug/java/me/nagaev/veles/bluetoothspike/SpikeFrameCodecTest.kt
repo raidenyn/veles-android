@@ -68,6 +68,20 @@ class SpikeFrameCodecTest {
     }
 
     @Test
+    fun `zero-length frame payload is rejected`() {
+        // Header-only frame with valid chunk metadata but payloadLength = 0.
+        val zeroPayload = ByteArray(SpikeProtocol.FRAME_HEADER_BYTES)
+        zeroPayload[0] = SpikeProtocol.FRAME_VERSION.toByte()
+        zeroPayload[1] = 0
+        zeroPayload[2] = 1
+        zeroPayload[3] = 0
+        zeroPayload[4] = 1
+        zeroPayload[5] = 0
+
+        assertFailsWith<SpikeFrameException> { SpikeFrameCodec.decode(zeroPayload) }
+    }
+
+    @Test
     fun `wire message survives strict JSON round trip`() {
         val message = SpikeWireMessage(
             type = SpikeProtocol.TYPE_OTP,

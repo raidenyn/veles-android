@@ -66,6 +66,9 @@ internal object SpikeFrameCodec {
         if (chunkIndex >= chunkCount) {
             throw SpikeFrameException("Invalid chunk index: $chunkIndex for count $chunkCount")
         }
+        if (payloadLength == 0) {
+            throw SpikeFrameException("Empty frame payload")
+        }
         if (payloadLength > SpikeProtocol.FRAME_PAYLOAD_BYTES) {
             throw SpikeFrameException("Payload length exceeds chunk size: $payloadLength")
         }
