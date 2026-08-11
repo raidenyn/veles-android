@@ -183,8 +183,9 @@ pass/fail, relevant timing, and limitations, in
 `docs/spikes/2026-08-11-popup-web-bluetooth-validation.md`.
 
 Fresh pairing runs **once per OS** (cases 1 and 2). Popup closure (cases 3 and
-4) and both multi-device topologies (cases 6 and 7) each **run twice** from a
-clean popup lifetime to expose instability. All other cases run once.
+4), the one-phone-two-computers topology (case 5), and both two-phone
+topologies (cases 6 and 7) each **run twice** from a clean popup lifetime to
+expose instability. All other cases run once.
 
 ### Case 1 — Windows fresh chooser / pair / auth / pull / push / async copy
 
@@ -302,7 +303,7 @@ from Case 2. Do not re-pair. Reset only the popup lifetime.
 
 **Reset.** As in Case 3.
 
-### Case 5 — One phone serving two computers concurrently
+### Case 5 — One phone serving two computers concurrently (run twice)
 
 **Setup.**
 
@@ -324,6 +325,9 @@ from Case 2. Do not re-pair. Reset only the popup lifetime.
 
 **Expected.** Both popups authenticate to the same phone concurrently; pulls
 are independent; one push reaches both clients without cross-client blocking.
+
+**Run twice.** Repeat the entire two-computer connect/pull/push sequence from a
+clean popup lifetime a second time. Record both runs.
 
 **Reset.** Close both popups. Stop the service on the phone.
 
@@ -437,7 +441,8 @@ After running the matrix, fill in
   Chrome version.
 - Any OS-level pairing prerequisites, prompts, permissions, or settings.
 - The eight cases' actual results, pass/fail, timing, and limitations.
-- Repetition results for closure (cases 3, 4) and multi-device (cases 6, 7).
+- Repetition results for closure (cases 3, 4), one-phone-two-computers
+  (case 5), and multi-device (cases 6, 7).
 - Observed limitations and environment failures.
 - The go/no-go decision per the rules in the report file.
 

@@ -58,9 +58,10 @@ recorded commit SHA.
 
 ## Repetitions
 
-Popup closure (cases 3 and 4) and both multi-device topologies (cases 6 and 7)
-run twice from a clean popup lifetime to expose instability. Fresh pairing
-(cases 1 and 2) runs once per OS. Record each run separately.
+Popup closure (cases 3 and 4), the one-phone-two-computers topology (case 5),
+and both multi-device topologies (cases 6 and 7) run twice from a clean popup
+lifetime to expose instability. Fresh pairing (cases 1 and 2) runs once per OS.
+Record each run separately.
 
 | Case | Run | Actual result | Outcome | Timing | Limitations |
 |---|---|---|---|---|---|
@@ -68,6 +69,8 @@ run twice from a clean popup lifetime to expose instability. Fresh pairing
 | 3 | 2 of 2 | Not run | Not run | Not run | Not run |
 | 4 | 1 of 2 | Not run | Not run | Not run | Not run |
 | 4 | 2 of 2 | Not run | Not run | Not run | Not run |
+| 5 | 1 of 2 | Not run | Not run | Not run | Not run |
+| 5 | 2 of 2 | Not run | Not run | Not run | Not run |
 | 6 | 1 of 2 | Not run | Not run | Not run | Not run |
 | 6 | 2 of 2 | Not run | Not run | Not run | Not run |
 | 7 | 1 of 2 | Not run | Not run | Not run | Not run |
