@@ -1,5 +1,11 @@
 # Popup-owned Web Bluetooth feasibility spike
 
+> **Superseded launch context:** Physical testing showed that desktop Chrome
+> rejects `requestDevice()` from an MV3 action popup before displaying a
+> chooser. The approved replacement launch context is specified in
+> `2026-08-11-extension-tab-web-bluetooth-design.md`; the Android protocol and
+> synthetic-data constraints below remain applicable.
+
 ## Status
 
 Approved on 2026-08-11.

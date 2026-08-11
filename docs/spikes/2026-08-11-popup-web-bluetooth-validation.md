@@ -39,6 +39,20 @@ only. They do not validate Web Bluetooth behavior on any physical platform.
 | OS-level pairing prerequisites (macOS) | Not run |
 | Other environment notes | Not run |
 
+## Action-popup platform finding
+
+The initial physical attempt called `navigator.bluetooth.requestDevice()`
+directly from the action popup's Connect button. Chrome displayed no chooser
+and rejected the promise with `NotFoundError: User cancelled the
+requestDevice() chooser.`
+
+Chromium's extension chooser implementation requires the requesting extension
+document to be the active contents of a browser tab. An action popup is not a
+tab, so Chrome returns without showing the chooser and reports cancellation
+when the chooser controller is destroyed. The harness now opens the same
+connector document in an extension tab. Results below apply only to that
+revised launch context.
+
 ## Case results
 
 Every case starts as `Not run` for actual result, outcome, timing, and
@@ -47,21 +61,21 @@ recorded commit SHA.
 
 | # | Case | Expected result | Actual result | Outcome | Timing | Limitations |
 |---|---|---|---|---|---|---|
-| 1 | Windows single session: fresh chooser, pair, auth, pull, push, async copy | Fresh chooser appears; required pairing completes; popup stays usable; pull returns synthetic envelope; push reaches popup; async clipboard write replaces known marker with synthetic code. | Not run | Not run | Not run | Not run |
+| 1 | Windows single session: fresh chooser, pair, auth, pull, push, async copy | Fresh chooser appears from the connector tab; required pairing completes; connector tab stays usable; pull returns synthetic envelope; push reaches connector tab; async clipboard write replaces known marker with synthetic code. | Not run | Not run | Not run | Not run |
 | 2 | macOS single session: fresh chooser, pair, auth, pull, push, async copy | Same as case 1 on macOS. | Not run | Not run | Not run | Not run |
-| 3 | Windows popup closure: close, Android disconnect/15-second expiry, reopen, confirm no live session, explicit reselection, pull | Closing the popup ends the session; Android records disconnect or expires session after bounded timeout; reopen shows no live session; explicit reselection reconnects; pull succeeds. | Not run | Not run | Not run | Not run |
-| 4 | macOS popup closure: close, Android disconnect/15-second expiry, reopen, confirm no live session, explicit reselection, pull | Same as case 3 on macOS. | Not run | Not run | Not run | Not run |
-| 5 | One phone, two computers: Windows and macOS popups authenticated to the same phone; independent pulls; one push reaches both without cross-client blocking | Both popups authenticate to the same phone concurrently; pulls are independent; one push reaches both clients; slow/failed client does not block the other. | Not run | Not run | Not run | Not run |
-| 6 | Two phones, one Windows popup: connect/auth two phones from one popup; source-specific pulls and pushes while both connections stay active | One popup maintains two concurrent authenticated sessions; pulls and pushes are source-specific; neither push closes the other connection. | Not run | Not run | Not run | Not run |
-| 7 | Two phones, one macOS popup: connect/auth two phones from one popup; source-specific pulls and pushes while both connections stay active | Same as case 6 on macOS. | Not run | Not run | Not run | Not run |
-| 8 | Android foreground lifecycle: schedule 20 m, background + remove task + lock screen 15 m, reconnect from already-paired desktop, pull, remain connected until scheduled push arrives | Foreground service survives 15 m background/task-removal/screen-lock; foreground indication remains; new popup reconnects and authenticates; pull succeeds; scheduled push arrives on time. | Not run | Not run | Not run | Not run |
+| 3 | Windows connector-tab closure: close, Android disconnect/15-second expiry, open fresh tab, confirm no live session, explicit reselection, pull | Closing the connector tab ends the session; Android records disconnect or expires session after bounded timeout; the fresh tab shows no live session; explicit reselection reconnects; pull succeeds. | Not run | Not run | Not run | Not run |
+| 4 | macOS connector-tab closure: close, Android disconnect/15-second expiry, open fresh tab, confirm no live session, explicit reselection, pull | Same as case 3 on macOS. | Not run | Not run | Not run | Not run |
+| 5 | One phone, two computers: Windows and macOS connector tabs authenticated to the same phone; independent pulls; one push reaches both without cross-client blocking | Both connector tabs authenticate to the same phone concurrently; pulls are independent; one push reaches both clients; slow/failed client does not block the other. | Not run | Not run | Not run | Not run |
+| 6 | Two phones, one Windows connector tab: connect/auth two phones from one connector tab; source-specific pulls and pushes while both connections stay active | One connector tab maintains two concurrent authenticated sessions; pulls and pushes are source-specific; neither push closes the other connection. | Not run | Not run | Not run | Not run |
+| 7 | Two phones, one macOS connector tab: connect/auth two phones from one connector tab; source-specific pulls and pushes while both connections stay active | Same as case 6 on macOS. | Not run | Not run | Not run | Not run |
+| 8 | Android foreground lifecycle: schedule 20 m, background + remove task + lock screen 15 m, reconnect from already-paired desktop, pull, remain connected until scheduled push arrives | Foreground service survives 15 m background/task-removal/screen-lock; foreground indication remains; new connector tab reconnects and authenticates; pull succeeds; scheduled push arrives on time. | Not run | Not run | Not run | Not run |
 
 ## Repetitions
 
-Popup closure (cases 3 and 4), the one-phone-two-computers topology (case 5),
-and both multi-device topologies (cases 6 and 7) run twice from a clean popup
-lifetime to expose instability. Fresh pairing (cases 1 and 2) runs once per OS.
-Record each run separately.
+Connector-tab closure (cases 3 and 4), the one-phone-two-computers topology
+(case 5), and both multi-device topologies (cases 6 and 7) run twice from a
+clean connector-tab lifetime to expose instability. Fresh pairing (cases 1 and
+2) runs once per OS. Record each run separately.
 
 | Case | Run | Actual result | Outcome | Timing | Limitations |
 |---|---|---|---|---|---|
@@ -98,10 +112,12 @@ observed values populated.
 - **Go** only when every core case passes on stable Chrome for both supported
   desktop operating systems. Prompt wording differences and a measured bounded
   disconnect delay may be recorded as non-blocking limitations.
-- **No-go** on a repeatable failure of chooser/pairing survival, authenticated
-  pull/push, asynchronous copy, explicit reselection, either required
-  multi-device topology, or the foreground-service lifecycle. The report then
-  recommends returning the roadmap to a persistent side-panel or tab design.
+- **No-go** on a repeatable connector-tab failure of chooser/pairing survival,
+  authenticated pull/push, asynchronous copy, explicit reselection, either
+  required multi-device topology, or the foreground-service lifecycle.
+  Popup-owned Web Bluetooth has already been ruled out by the action-popup
+  platform finding above; the report then recommends returning the roadmap to
+  a persistent side-panel or tab design.
 - A harness defect is fixed and retested rather than counted as a platform
   failure.
 - A result blocked by unavailable hardware, an unidentified environment

@@ -137,17 +137,19 @@ Chrome, not Beta, Dev, or Canary.
 4. Select the checked-out `spikes/web-bluetooth-popup/` directory.
 5. Pin **Veles Web Bluetooth Spike** from the extensions toolbar menu so the
    action icon is always visible.
-6. Open the popup from the pinned action. Confirm the status line reads
-   **Protocol self-check passed** before selecting **Connect phone**. If the
-   self-check fails, do not run cases; reload the extension and re-check, and if
-   it still fails, report an environment failure.
+6. Select the pinned action. Chrome opens a connector tab; selecting the action
+   again focuses the same tab. Confirm the status line reads **Protocol
+   self-check passed** before selecting **Connect phone**. If the self-check
+   fails, reload the extension and re-check; if it still fails, report an
+   environment failure.
 
 ### After pulling a newer PR commit
 
 1. `git pull --ff-only` on the branch (see §1).
 2. Open `chrome://extensions`.
 3. Select the **Reload** button on the Veles Web Bluetooth Spike card.
-4. Re-open the popup and confirm **Protocol self-check passed** again.
+4. Select the pinned action to open a fresh connector tab and confirm
+   **Protocol self-check passed** again.
 
 ### For a fresh extension state
 
@@ -162,19 +164,14 @@ When a case requires a fresh extension state:
 5. Record the prompts that appear (permission wording, pairing flow, etc.) in
    the report for the case that requires it.
 
-### Popup inspector (troubleshooting only)
+### Connector-tab DevTools (troubleshooting only)
 
-To inspect popup errors, right-click the pinned Veles Web Bluetooth Spike
-action icon and select **Inspect popup**. The popup DevTools let you read
-console errors and the event log.
-
-> **Warning: popup DevTools can keep a popup document alive and invalidate
-> lifecycle observations.** The popup inspector holds the popup document open
-> even when the popup window would otherwise close, so any observation made
-> while the inspector is open is not representative of the production lifecycle.
-> **Every chooser-survival, popup-closure, multi-device, and clipboard
-> pass/fail run must be repeated with popup DevTools closed.** Use the
-> inspector only for first-time diagnosis, then close it and re-run the case.
+To inspect connector errors, open DevTools for the connector tab (right-click
+inside the page and select **Inspect**, or use the platform DevTools shortcut).
+Read the console and the on-page event log. Close DevTools before timing a
+physical case so debugging overhead does not affect observations. Closing
+DevTools does not close the connector; close the connector tab itself when a
+case requires a fresh tab lifetime.
 
 ## 4. Eight physical validation cases
 
@@ -182,10 +179,10 @@ For every case, record: exact steps, expected result, actual result,
 pass/fail, relevant timing, and limitations, in
 `docs/spikes/2026-08-11-popup-web-bluetooth-validation.md`.
 
-Fresh pairing runs **once per OS** (cases 1 and 2). Popup closure (cases 3 and
-4), the one-phone-two-computers topology (case 5), and both two-phone
-topologies (cases 6 and 7) each **run twice** from a clean popup lifetime to
-expose instability. All other cases run once.
+Fresh pairing runs **once per OS** (cases 1 and 2). Connector-tab closure
+(cases 3 and 4), the one-phone-two-computers topology (case 5), and both
+two-phone topologies (cases 6 and 7) each **run twice** from a clean
+connector-tab lifetime to expose instability. All other cases run once.
 
 ### Case 1 — Windows fresh chooser / pair / auth / pull / push / async copy
 
@@ -201,36 +198,36 @@ expose instability. All other cases run once.
 1. On the phone, open the **Veles BLE Spike** activity, grant Nearby Devices
    and POST_NOTIFICATIONS, enable Bluetooth, and tap **Start service**.
 2. Confirm the activity shows **Advertising** and an empty client list.
-3. On Windows, open the Veles Web Bluetooth Spike popup and confirm
-   **Protocol self-check passed**.
-4. Select **Connect phone** in the popup. The Web Bluetooth device chooser
-   appears. Select the phone and confirm.
+3. On Windows, select the pinned action to open the Veles Web Bluetooth Spike
+   connector tab and confirm **Protocol self-check passed**.
+4. Select **Connect phone** in the connector tab. The Web Bluetooth device
+   chooser appears. Select the phone and confirm.
 5. Complete the OS-level Bluetooth pairing sequence when prompted (PIN
    confirmation, system pairing dialog, etc.). Record the exact prompts and
    order.
-6. Wait for the popup to report per-phone connection, subscription, and
-   **authenticated** status.
-7. Select **Pull current**. Confirm the popup displays a synthetic current OTP
-   envelope with event number, six-digit code, merchant label, amount, and
-   currency.
-8. On the phone, tap **Push now**. Confirm the popup receives a new synthetic
-   push event with a fresh unique event number and code.
+6. Wait for the connector tab to report per-phone connection, subscription,
+   and **authenticated** status.
+7. Select **Pull current**. Confirm the connector tab displays a synthetic
+   current OTP envelope with event number, six-digit code, merchant label,
+   amount, and currency.
+8. On the phone, tap **Push now**. Confirm the connector tab receives a new
+   synthetic push event with a fresh unique event number and code.
 9. Clipboard: place known text (e.g. `CLIPBOARD-MARKER`) on the Windows
-   clipboard. In the popup, select **Copy next push**. On the phone, tap
-   **Push now**. Paste the clipboard into a local text editor and confirm the
-   synthetic six-digit code replaced the marker.
+   clipboard. In the connector tab, select **Copy next push**. On the phone,
+   tap **Push now**. Paste the clipboard into a local text editor and confirm
+   the synthetic six-digit code replaced the marker.
 10. Record exact timing, prompt wording, and any limitations.
 
-**Expected.** Fresh chooser appears, required pairing completes, the popup
-stays usable through the pairing interactions, pull returns the synthetic
-envelope, the push reaches the popup, and the asynchronous clipboard write
-replaces the known marker text with the synthetic code.
+**Expected.** Fresh chooser appears, required pairing completes, the
+connector tab stays usable through the pairing interactions, pull returns the
+synthetic envelope, the push reaches the connector tab, and the asynchronous
+clipboard write replaces the known marker text with the synthetic code.
 
-**Reset.** Close the popup. On the phone, tap **Stop service**, then reset the
-app state as needed. **Retain the OS Bluetooth pairing** — Cases 3 and 4 and
-Case 5 reuse it. Remove the Windows host from the phone's Bluetooth pairings
-only before intentionally re-running a fresh-pairing case or after all
-dependent cases (3, 4, and 5) are complete.
+**Reset.** Close the connector tab. On the phone, tap **Stop service**, then
+reset the app state as needed. **Retain the OS Bluetooth pairing** — Cases 3
+and 4 and Case 5 reuse it. Remove the Windows host from the phone's Bluetooth
+pairings only before intentionally re-running a fresh-pairing case or after
+all dependent cases (3, 4, and 5) are complete.
 
 ### Case 2 — macOS fresh chooser / pair / auth / pull / push / async copy
 
@@ -246,52 +243,55 @@ order.
 
 **Expected.** Same as Case 1 on macOS.
 
-**Reset.** As in Case 1: close the popup, stop the service, and reset the app
-state as needed. **Retain the OS Bluetooth pairing** — Cases 3 and 4 and Case 5
-reuse it. Remove the Mac from the phone's Bluetooth pairings only before
-intentionally re-running a fresh-pairing case or after all dependent cases (3,
-4, and 5) are complete.
+**Reset.** As in Case 1: close the connector tab, stop the service, and reset
+the app state as needed. **Retain the OS Bluetooth pairing** — Cases 3 and 4
+and Case 5 reuse it. Remove the Mac from the phone's Bluetooth pairings only
+before intentionally re-running a fresh-pairing case or after all dependent
+cases (3, 4, and 5) are complete.
 
-### Case 3 — Windows popup closure (run twice)
+### Case 3 — Windows connector-tab closure (run twice)
 
 **Setup.**
 
 - Use the already-paired Windows host and phone from Case 1 (do not re-pair
   fresh for this case). Uses the pairing retained from Case 1. Do not re-pair.
-- Reset only the popup lifetime: close the popup, then re-open it.
+- Reset only the connector-tab lifetime: close the connector tab, then select
+  the action to open a fresh one.
 
 **Steps.**
 
 1. Start the service on the phone if it is not already running.
-2. Open the popup and connect/authenticate to the phone (explicit selection
-   through **Connect phone** / the device chooser, as in Case 1). Pull current
-   data and confirm the authenticated session works.
-3. **Close the popup** (click away or dismiss the popup window; do not use
-   popup DevTools — see §3 warning).
+2. Select the pinned action to open the connector tab and connect/authenticate
+   to the phone (explicit selection through **Connect phone** / the device
+   chooser, as in Case 1). Pull current data and confirm the authenticated
+   session works.
+3. **Close the connector tab** (close the browser tab itself; do not use
+   connector-tab DevTools during this observation — see §3).
 4. Observe the phone activity. Record Android disconnect callback timing or
    the bounded heartbeat timeout after which the session expires. Confirm the
    client disappears from the connected client list.
 5. Wait at least 15 seconds past expiry to ensure the session is fully gone.
-6. **Reopen the popup.** Confirm there is **no live session** — the phone list
-   is empty and there is no remembered connection.
+6. **Select the action to create a fresh connector tab.** Confirm there is
+   **no live session** — the phone list is empty and there is no remembered
+   connection.
 7. **Explicitly reselect the phone** through **Connect phone** and the
-   chooser. Confirm the popup re-authenticates and reconnects.
+   chooser. Confirm the connector tab re-authenticates and reconnects.
 8. Select **Pull current** and confirm the pull succeeds.
 
-**Run twice.** Repeat the entire closure → reopen → reselection → pull
-sequence from a clean popup lifetime a second time. Record both runs.
+**Run twice.** Repeat the entire closure → fresh tab → reselection → pull
+sequence from a clean connector-tab lifetime a second time. Record both runs.
 
-**Expected.** Closing the popup ends the session; Android records disconnect or
-expires the session after the bounded timeout; reopening shows no live session;
-explicit reselection through the chooser reconnects and pull succeeds. Both
-runs pass.
+**Expected.** Closing the connector tab ends the session; Android records
+disconnect or expires the session after the bounded timeout; the fresh tab
+shows no live session; explicit reselection through the chooser reconnects
+and pull succeeds. Both runs pass.
 
-**Reset.** Close the popup. Stop the service on the phone.
+**Reset.** Close the connector tab. Stop the service on the phone.
 
-### Case 4 — macOS popup closure (run twice)
+### Case 4 — macOS connector-tab closure (run twice)
 
 **Setup.** Already-paired Mac and phone from Case 2. Uses the pairing retained
-from Case 2. Do not re-pair. Reset only the popup lifetime.
+from Case 2. Do not re-pair. Reset only the connector-tab lifetime.
 
 **Steps.** Identical to Case 3, substituting macOS for Windows.
 
@@ -308,28 +308,32 @@ from Case 2. Do not re-pair. Reset only the popup lifetime.
 - One Android phone, one Windows computer, one macOS computer, both already
   paired to the phone from Cases 1 and 2.
 - Start the service on the phone once. Confirm Advertising and an empty
-  client list before connecting either popup.
+  client list before connecting either connector tab.
 
 **Steps.**
 
-1. On Windows, open the popup, connect/authenticate to the phone.
-2. On macOS, open the popup, connect/authenticate to the **same** phone.
-3. From the Windows popup, **Pull current** and confirm a result.
-4. From the macOS popup, **Pull current** and confirm an independent result.
+1. On Windows, open the connector tab, connect/authenticate to the phone.
+2. On macOS, open a separate connector tab, connect/authenticate to the
+   **same** phone.
+3. From the Windows connector tab, **Pull current** and confirm a result.
+4. From the macOS connector tab, **Pull current** and confirm an independent
+   result.
 5. On the phone, tap **Push now**.
-6. Confirm the push reaches **both** the Windows and macOS popups as
+6. Confirm the push reaches **both** the Windows and macOS connector tabs as
    independent events with the same unique event number, and that a slow or
    failed client on one side does not block the other.
 
-**Expected.** Both popups authenticate to the same phone concurrently; pulls
-are independent; one push reaches both clients without cross-client blocking.
+**Expected.** Both connector tabs authenticate to the same phone concurrently;
+pulls are independent; one push reaches both clients without cross-client
+blocking.
 
 **Run twice.** Repeat the entire two-computer connect/pull/push sequence from a
-clean popup lifetime a second time. Record both runs.
+clean connector-tab lifetime a second time. Record both runs.
 
-**Reset.** Close both popups. Stop the service on the phone.
+**Reset.** Close both connector tabs (one on each computer). Stop the service
+on the phone.
 
-### Case 6 — Two phones, one Windows popup (run twice)
+### Case 6 — Two phones, one Windows connector tab (run twice)
 
 **Setup.**
 
@@ -339,29 +343,30 @@ clean popup lifetime a second time. Record both runs.
 
 **Steps.**
 
-1. On the Windows popup, select **Connect phone** and connect/authenticate to
-   phone A.
+1. In the Windows connector tab, select **Connect phone** and
+   connect/authenticate to phone A.
 2. Select **Connect phone** again and connect/authenticate to phone B without
-   dropping the first connection.
-3. From the popup, select phone A's **Pull current** and confirm a
+   dropping the first connection. Both sessions are retained in the same
+   connector tab.
+3. From the connector tab, select phone A's **Pull current** and confirm a
    phone-A-source result.
-4. From the popup, select phone B's **Pull current** and confirm a
+4. From the connector tab, select phone B's **Pull current** and confirm a
    phone-B-source result.
-5. On phone A, tap **Push now**. Confirm the popup receives a phone-A-source
-   push.
-6. On phone B, tap **Push now**. Confirm the popup receives a phone-B-source
-   push while phone A's connection remains active.
+5. On phone A, tap **Push now**. Confirm the connector tab receives a
+   phone-A-source push.
+6. On phone B, tap **Push now**. Confirm the connector tab receives a
+   phone-B-source push while phone A's connection remains active.
 
 **Run twice.** Repeat the entire two-phone connect/pull/push sequence from a
-clean popup lifetime a second time. Record both runs.
+clean connector-tab lifetime a second time. Record both runs.
 
-**Expected.** One popup maintains two concurrent authenticated sessions; pulls
-and pushes are source-specific; neither phone's push closes the other phone's
-connection. Both runs pass.
+**Expected.** One connector tab maintains two concurrent authenticated
+sessions; pulls and pushes are source-specific; neither phone's push closes
+the other phone's connection. Both runs pass.
 
-**Reset.** Close the popup. Stop the service on both phones.
+**Reset.** Close the connector tab. Stop the service on both phones.
 
-### Case 7 — Two phones, one macOS popup (run twice)
+### Case 7 — Two phones, one macOS connector tab (run twice)
 
 **Setup.**
 
@@ -395,20 +400,21 @@ connection. Both runs pass.
 5. **Lock the phone with the screen off** for at least 15 minutes.
 6. After 15 minutes, confirm the foreground service notification (the BLE
    spike active indication) is still present.
-7. From the already-paired desktop, open the popup, **Connect phone**, and
-   complete authentication through the existing pairing.
+7. From the already-paired desktop, open the connector tab, select
+   **Connect phone**, and complete authentication through the existing
+   pairing.
 8. **Pull current** and confirm the pull succeeds.
 9. Remain connected and wait until the scheduled 20-minute push arrives
-   (verify it lands in the popup).
+   (verify it lands in the connector tab).
 10. Record timing for: service still alive at 15 m, reconnect succeeds, pull
     succeeds, scheduled push arrives.
 
 **Expected.** The foreground service survives 15 m of backgrounding, task
-removal, and screen lock; the foreground indication remains; a new popup from
-an already-paired desktop reconnects and authenticates; pull succeeds; the
-scheduled push arrives on time.
+removal, and screen lock; the foreground indication remains; a new connector
+tab from an already-paired desktop reconnects and authenticates; pull
+succeeds; the scheduled push arrives on time.
 
-**Reset.** Close the popup. Stop the service on the phone. Run
+**Reset.** Close the connector tab. Stop the service on the phone. Run
 `adb shell am force-stop me.nagaev.veles.debug` and
 `adb shell pm clear me.nagaev.veles.debug` only **after** the case completes.
 
@@ -417,7 +423,7 @@ scheduled push arrives on time.
 For every case that exercises asynchronous copy:
 
 1. Place known text on the desktop clipboard (e.g. `CLIPBOARD-MARKER`).
-2. In the popup, select **Copy next push**.
+2. In the connector tab, select **Copy next push**.
 3. On the phone, trigger the relevant push (e.g. **Push now**).
 4. Paste the clipboard into a local text editor (Notepad, TextEdit, etc.).
 5. Confirm the synthetic six-digit code replaced the marker text, not the
