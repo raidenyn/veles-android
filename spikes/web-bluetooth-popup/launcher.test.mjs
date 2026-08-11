@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { openConnector } from "./launcher.mjs";
 
 test("creates the connector tab when none exists", async () => {
@@ -61,4 +62,22 @@ test("activates and focuses an existing connector tab", async () => {
     ["update-window", 23, { focused: true }],
     ["update-tab", 17, { active: true }],
   ]);
+});
+
+test("manifest launches the connector through a module service worker", async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL("./manifest.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(manifest.permissions, ["clipboardWrite"]);
+  assert.deepEqual(manifest.background, {
+    service_worker: "service-worker.mjs",
+    type: "module",
+  });
+  assert.equal(manifest.action.default_popup, undefined);
+});
+
+test("connector layout is responsive instead of popup-width fixed", async () => {
+  const css = await readFile(new URL("./popup.css", import.meta.url), "utf8");
+  assert.doesNotMatch(css, /width:\s*420px/);
+  assert.match(css, /max-width:\s*720px/);
 });
