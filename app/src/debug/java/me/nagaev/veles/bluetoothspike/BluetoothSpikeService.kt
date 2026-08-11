@@ -161,6 +161,10 @@ internal class BluetoothSpikeService : Service() {
                     updateClientState(clientId)
                     BluetoothSpikeStateStore.event("Client subscribed: $clientId")
                 } else {
+                    sessions.remove(clientId)
+                    reassembler.clearClient(clientId)
+                    queues.remove(clientId)
+                    updateClientState(clientId)
                     BluetoothSpikeStateStore.event("Client unsubscribed: $clientId")
                 }
             } else {
@@ -492,8 +496,9 @@ internal class BluetoothSpikeService : Service() {
 
     private fun updateClientState(clientId: String) {
         val authenticated = sessions.isAuthenticated(clientId)
+        val subscribed = sessions.isSubscribed(clientId)
         val label = clientLabels[clientId] ?: clientId
-        BluetoothSpikeStateStore.client(clientId, label, subscribed = true, authenticated = authenticated)
+        BluetoothSpikeStateStore.client(clientId, label, subscribed = subscribed, authenticated = authenticated)
     }
 
     private fun cleanupClient(clientId: String) {

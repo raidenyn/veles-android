@@ -109,6 +109,9 @@ internal class SpikeSessionRegistry(
     fun isAuthenticated(clientId: String): Boolean = sessions[clientId]?.authenticated == true
 
     @Synchronized
+    fun isSubscribed(clientId: String): Boolean = sessions[clientId]?.subscribed == true
+
+    @Synchronized
     fun authenticatedTargets(): List<String> = sessions.filter { it.value.authenticated }.keys.sorted()
 
     @Synchronized
