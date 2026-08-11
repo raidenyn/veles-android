@@ -3,4 +3,26 @@
     <string name="bluetooth_spike_notification_channel">BLE spike service</string>
     <string name="bluetooth_spike_notification_title">Veles BLE spike active</string>
     <string name="bluetooth_spike_notification_text">Synthetic-only Bluetooth testing is running</string>
+    <string name="bluetooth_spike_title">Veles BLE Spike</string>
+    <string name="bluetooth_spike_synthetic_warning">Synthetic data only. Never use real OTPs.</string>
+    <string name="bluetooth_spike_start">Start service</string>
+    <string name="bluetooth_spike_stop">Stop service</string>
+    <string name="bluetooth_spike_open_settings">Bluetooth settings</string>
+    <string name="bluetooth_spike_push_now">Push now</string>
+    <string name="bluetooth_spike_schedule_smoke">Schedule in 10 seconds</string>
+    <string name="bluetooth_spike_schedule_lifecycle">Schedule in 20 minutes</string>
+    <string name="bluetooth_spike_schedule_confirm_title">Schedule lifecycle push?</string>
+    <string name="bluetooth_spike_schedule_confirm_body">The service will push synthetic data in 20 minutes.</string>
+    <string name="bluetooth_spike_confirm">Schedule</string>
+    <string name="bluetooth_spike_cancel">Cancel</string>
+    <string name="bluetooth_spike_service_status">Service running: %1$b</string>
+    <string name="bluetooth_spike_advertising_status">Advertising: %1$b</string>
+    <string name="bluetooth_spike_clients">Connected clients</string>
+    <string name="bluetooth_spike_no_clients">No clients connected</string>
+    <string name="bluetooth_spike_client_address">Address: %1$s</string>
+    <string name="bluetooth_spike_client_subscription">Subscribed: %1$b</string>
+    <string name="bluetooth_spike_client_authentication">Authenticated: %1$b</string>
+    <string name="bluetooth_spike_events">Event log</string>
+    <string name="bluetooth_spike_no_events">No events recorded</string>
+    <string name="bluetooth_spike_event_row">%1$s  %2$s</string>
 </resources>
