@@ -168,8 +168,13 @@ internal class BluetoothSpikeService : Service() {
             }
         }
 
-        override fun onNotificationSent(device: BluetoothDevice, requestId: Int) {
+        override fun onNotificationSent(device: BluetoothDevice, status: Int) {
             val clientId = device.address
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                BluetoothSpikeStateStore.error("Notify failed ($status) for $clientId")
+                queues.remove(clientId)
+                return
+            }
             val next = queues.complete(clientId) ?: return
             val events = eventsCharacteristic ?: return
             sendNotification(device, events, next)
