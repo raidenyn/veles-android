@@ -19,8 +19,10 @@ internal class BluetoothSpikeActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { grants ->
-        val allGranted = grants.values.all { it }
-        if (pendingStart && allGranted) {
+        val denied = grants.filterValues { !it }.keys
+        if (denied.isNotEmpty()) {
+            BluetoothSpikeStateStore.error("Permissions denied: ${denied.joinToString()}")
+        } else if (pendingStart) {
             sendServiceAction(BluetoothSpikeService.ACTION_START)
         }
         pendingStart = false
