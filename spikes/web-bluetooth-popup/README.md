@@ -227,12 +227,10 @@ envelope, the push reaches the popup, and the asynchronous clipboard write
 replaces the known marker text with the synthetic code.
 
 **Reset.** Close the popup. On the phone, tap **Stop service**, then reset the
-app state and remove the Windows host from the phone's Bluetooth pairings
-before any later fresh-pairing case.
-
-> **Do NOT remove the OS Bluetooth pairing yet — Cases 3 and 4 reuse it.**
-> Only remove the pairing when re-running a fresh-pairing case or at the very
-> end of testing.
+app state as needed. **Retain the OS Bluetooth pairing** — Cases 3 and 4 and
+Case 5 reuse it. Remove the Windows host from the phone's Bluetooth pairings
+only before intentionally re-running a fresh-pairing case or after all
+dependent cases (3, 4, and 5) are complete.
 
 ### Case 2 — macOS fresh chooser / pair / auth / pull / push / async copy
 
@@ -248,11 +246,11 @@ order.
 
 **Expected.** Same as Case 1 on macOS.
 
-**Reset.** As in Case 1, removing the Mac from the phone's Bluetooth pairings.
-
-> **Do NOT remove the OS Bluetooth pairing yet — Cases 3 and 4 reuse it.**
-> Only remove the pairing when re-running a fresh-pairing case or at the very
-> end of testing.
+**Reset.** As in Case 1: close the popup, stop the service, and reset the app
+state as needed. **Retain the OS Bluetooth pairing** — Cases 3 and 4 and Case 5
+reuse it. Remove the Mac from the phone's Bluetooth pairings only before
+intentionally re-running a fresh-pairing case or after all dependent cases (3,
+4, and 5) are complete.
 
 ### Case 3 — Windows popup closure (run twice)
 
