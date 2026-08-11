@@ -290,7 +290,9 @@ Replace `spikes/web-bluetooth-popup/manifest.json` with:
 }
 ```
 
-This replacement intentionally removes the uncommitted, invalid `"bluetooth"` permission currently present in the worktree.
+This replacement also verifies that the manifest retains only the supported
+`"clipboardWrite"` permission and never introduces an invalid `"bluetooth"`
+permission.
 
 - [ ] **Step 4: Update the connector layout**
 
