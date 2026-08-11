@@ -262,7 +262,7 @@ class EventLog {
 
   append(text) {
     const item = document.createElement("li");
-    item.textContent = text;
+    item.textContent = `${new Date().toISOString()}  ${text}`;
     this.listEl.prepend(item);
     while (this.listEl.childElementCount > MAX_LOG_ENTRIES) {
       this.listEl.removeChild(this.listEl.lastElementChild);
