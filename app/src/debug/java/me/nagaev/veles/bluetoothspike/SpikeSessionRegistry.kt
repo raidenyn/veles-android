@@ -14,6 +14,7 @@ internal class SpikeSessionRegistry(
 
     private class Session(
         var label: String,
+        var connected: Boolean = false,
         var subscribed: Boolean = false,
         var pendingChallenge: SpikeWireMessage? = null,
         var challengeIssuedAt: Long = 0L,
@@ -26,18 +27,21 @@ internal class SpikeSessionRegistry(
 
     @Synchronized
     fun onConnected(clientId: String, label: String) {
-        sessions.getOrPut(clientId) { Session(label = label) }.label = label
+        val session = sessions.getOrPut(clientId) { Session(label = label) }
+        session.label = label
+        session.connected = true
     }
 
     @Synchronized
     fun onSubscribed(clientId: String) {
-        sessions.getOrPut(clientId) { Session(label = "") }.subscribed = true
+        val session = sessions[clientId] ?: return
+        session.subscribed = true
     }
 
     @Synchronized
     fun beginAuthentication(clientId: String, clientNonce: String): SpikeWireMessage {
         val session = sessions[clientId]
-        check(session != null && session.subscribed) {
+        check(session != null && session.connected && session.subscribed) {
             "Client $clientId must be connected and subscribed before authentication"
         }
         require(isValidClientNonce(clientNonce)) {

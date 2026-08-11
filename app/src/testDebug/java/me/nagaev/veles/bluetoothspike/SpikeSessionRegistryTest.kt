@@ -95,6 +95,21 @@ class SpikeSessionRegistryTest {
     }
 
     @Test
+    fun `beginAuthentication rejects subscribed-but-not-connected client`() {
+        var now = 1_000L
+        val randomValues = ArrayDeque(listOf(ByteArray(16) { 0x10 }, ByteArray(16) { 0x20 }))
+        val sessions = SpikeSessionRegistry(
+            clockMillis = { now },
+            randomBytes = { randomValues.removeFirst() },
+        )
+
+        // Only subscribing (skipping onConnected) must not auto-create a session,
+        // so beginAuthentication must reject the client.
+        sessions.onSubscribed("desktop-a")
+        assertFailsWith<IllegalStateException> { sessions.beginAuthentication("desktop-a", "AAECAwQFBgcICQoLDA0ODw") }
+    }
+
+    @Test
     fun `beginAuthentication rejects client nonce that is not sixteen bytes`() {
         var now = 1_000L
         val randomValues = ArrayDeque(listOf(ByteArray(16) { 0x10 }, ByteArray(16) { 0x20 }))
