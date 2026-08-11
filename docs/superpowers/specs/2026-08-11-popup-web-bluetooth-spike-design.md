@@ -102,7 +102,7 @@ The debug-only launcher activity provides a deliberately utilitarian test surfac
 - Shows Bluetooth capability, permission, service, advertising, and GATT status.
 - Lists connected clients and whether each client is subscribed and authenticated.
 - Triggers uniquely numbered synthetic OTP pushes.
-- Schedules a synthetic push for the background and screen-off lifecycle test.
+- Schedules a synthetic push after a selected delay, including a 20-minute lifecycle preset.
 - Shows a bounded timestamped event log without production notification data.
 
 The activity does not modify the existing Compose navigation or production Home screen.
@@ -288,9 +288,10 @@ The written report records:
 6. **Two phones, one Windows popup:** Connect and authenticate two phones from one popup and
    verify source-specific pulls and pushes while both connections remain active.
 7. **Two phones, one macOS popup:** Repeat the two-phone topology on macOS.
-8. **Android foreground lifecycle:** Start the service, schedule a push, background and remove
-   the app task, lock the phone with its screen off for 15 minutes, confirm the foreground
-   indication remains, connect a new popup, pull current data, and receive the scheduled push.
+8. **Android foreground lifecycle:** Start the service and schedule a push for 20 minutes,
+   background and remove the app task, and lock the phone with its screen off. After 15 minutes,
+   confirm the foreground indication remains, connect a new popup from an already paired
+   computer, pull current data, and remain connected until the scheduled push arrives.
 
 Fresh pairing runs once per desktop platform. Popup reconnection and both multi-device
 topologies run twice from a clean popup lifetime to expose instability. Every case records its
