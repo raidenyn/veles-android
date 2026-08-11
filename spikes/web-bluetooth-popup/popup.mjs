@@ -328,7 +328,9 @@ async function connectPhone() {
       filters: [{ services: [SERVICE_UUID] }],
     });
   } catch (error) {
-    if (error.name !== "NotFoundError") {
+    if (error.name === "NotFoundError") {
+      log.append("Device selection cancelled");
+    } else {
       log.append(`Device selection failed: ${error.name}: ${error.message}`);
       setSelfCheck(`Device selection failed: ${error.message}`, "error");
     }
