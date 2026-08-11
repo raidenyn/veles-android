@@ -98,6 +98,17 @@ android {
     }
 }
 
+// Robolectric and Conscrypt extract native libraries to java.io.tmpdir; when /tmp is
+// mounted noexec the load fails. Allow overriding the native workdir for the forked
+// test JVM via a Gradle property.
+val nativeWorkdir = providers.gradleProperty("veles.native.workdir").orNull
+if (nativeWorkdir != null) {
+    tasks.withType<Test>().configureEach {
+        systemProperty("java.io.tmpdir", nativeWorkdir)
+        systemProperty("org.conscrypt.native.workdir", nativeWorkdir)
+    }
+}
+
 dependencies {
     val composeBom = platform(libs.androidx.compose.bom)
     implementation(composeBom)
