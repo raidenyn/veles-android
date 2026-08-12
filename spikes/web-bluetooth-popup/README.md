@@ -143,6 +143,17 @@ Chrome, not Beta, Dev, or Canary.
    fails, reload the extension and re-check; if it still fails, report an
    environment failure.
 
+   Keep the connector tab visible and focused for the duration of a case. A
+   backgrounded tab is subject to Chrome's timer throttling (`setInterval` can
+   drop to about once a minute after roughly 5 minutes hidden), which can
+   silently break the 5-second heartbeat against the server's 15-second
+   timeout, and `navigator.clipboard.writeText()` requires the document to be
+   focused, so an async copy from a backgrounded tab can reject with a
+   focus-related error. If a heartbeat disconnect or a clipboard failure
+   happens while the connector tab was backgrounded, treat it as a
+   harness/platform artifact, not a real result, and rerun the case with the
+   tab focused.
+
 ### After pulling a newer PR commit
 
 1. `git pull --ff-only` on the branch (see §1).
@@ -172,6 +183,16 @@ Read the console and the on-page event log. Close DevTools before timing a
 physical case so debugging overhead does not affect observations. Closing
 DevTools does not close the connector; close the connector tab itself when a
 case requires a fresh tab lifetime.
+
+### Running the automated checks
+
+The JS unit test suite (protocol framing/HMAC logic and the launcher's
+tab-focus-or-create behavior) can be run with Node directly, no Chrome
+required:
+
+```bash
+node --test spikes/web-bluetooth-popup/protocol.test.mjs spikes/web-bluetooth-popup/launcher.test.mjs
+```
 
 ## 4. Eight physical validation cases
 

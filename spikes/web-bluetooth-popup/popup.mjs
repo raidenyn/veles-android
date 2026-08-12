@@ -377,7 +377,7 @@ connectButton.addEventListener("click", connectPhone);
 
 window.addEventListener("pagehide", () => {
   for (const { connection } of connections.values()) {
-    connection.disconnect("Popup closed", "info");
+    connection.disconnect("Connector tab closed", "info");
   }
 });
 

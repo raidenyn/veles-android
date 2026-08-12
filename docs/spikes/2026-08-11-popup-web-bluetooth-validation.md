@@ -53,6 +53,28 @@ when the chooser controller is destroyed. The harness now opens the same
 connector document in an extension tab. Results below apply only to that
 revised launch context.
 
+## Known limitations
+
+Moving from an always-visible action popup to a tab introduces two platform
+behaviors that a tester can trigger by backgrounding the connector tab. Neither
+is a code bug in this migration; both are inherent properties of tabs versus
+popups.
+
+- **Timer throttling.** Chrome throttles `setInterval` in hidden/backgrounded
+  tabs, down to about once per minute after roughly 5 minutes hidden. The
+  spike's heartbeat runs every 5 s (`popup.mjs`'s `HEARTBEAT_INTERVAL_MS`)
+  against a 15 s server-side timeout (`SpikeSessionRegistry.HEARTBEAT_TIMEOUT_MILLIS`),
+  and Web Bluetooth is not on Chrome's throttling-exemption list, so a
+  backgrounded connector tab can silently disconnect a session.
+- **Clipboard focus requirement.** `navigator.clipboard.writeText()` requires
+  the document to be focused; a backgrounded tab is not, so an async copy
+  attempted while the connector tab is backgrounded can reject with a
+  focus-related error.
+
+The connector tab must stay the visible, focused tab for the duration of a
+case. If either behavior is observed while the tab was backgrounded, record it
+as a harness/platform artifact, not a real result.
+
 ## Case results
 
 Every case starts as `Not run` for actual result, outcome, timing, and
@@ -69,6 +91,8 @@ recorded commit SHA.
 | 6 | Two phones, one Windows connector tab: connect/auth two phones from one connector tab; source-specific pulls and pushes while both connections stay active | One connector tab maintains two concurrent authenticated sessions; pulls and pushes are source-specific; neither push closes the other connection. | Not run | Not run | Not run | Not run |
 | 7 | Two phones, one macOS connector tab: connect/auth two phones from one connector tab; source-specific pulls and pushes while both connections stay active | Same as case 6 on macOS. | Not run | Not run | Not run | Not run |
 | 8 | Android foreground lifecycle: schedule 20 m, background + remove task + lock screen 15 m, reconnect from already-paired desktop, pull, remain connected until scheduled push arrives | Foreground service survives 15 m background/task-removal/screen-lock; foreground indication remains; new connector tab reconnects and authenticates; pull succeeds; scheduled push arrives on time. | Not run | Not run | Not run | Not run |
+| 9 | Repeated action click focuses the existing connector tab instead of creating a duplicate | Selecting the pinned action while a connector tab is already open focuses and activates that tab; no duplicate connector tab is created. | Not run | Not run | Not run | Not run |
+| 10 | Connector tab backgrounded during an active session (heartbeat/clipboard behavior under Chrome tab throttling) | Backgrounding the connector tab during an active session may trigger Chrome's timer throttling (heartbeat disconnect) or a focus-related clipboard-write rejection; either is a harness/platform artifact, not a real result, when observed while the tab was backgrounded. | Not run | Not run | Not run | Not run |
 
 ## Repetitions
 
@@ -135,6 +159,8 @@ substitute for physical validation:
 - `./gradlew assembleRelease` — release APK builds and does not contain the
   spike activity, service, Bluetooth permissions, or debug package.
 
-The unpacked extension is checked for manifest and popup console errors in the
-implementation environment, but only the physical matrix can validate Web
-Bluetooth behavior.
+In the implementation environment, `node --test spikes/web-bluetooth-popup/protocol.test.mjs spikes/web-bluetooth-popup/launcher.test.mjs`
+and `node --check` on each `.mjs` file were run. No browser-based check (no
+unpacked-extension load, no popup/connector-tab console-error check) was
+performed here — the implementation environment has no Chrome browser; only
+the physical matrix can validate that.
