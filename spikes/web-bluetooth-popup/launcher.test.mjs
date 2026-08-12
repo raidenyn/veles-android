@@ -8,12 +8,12 @@ test("creates the connector tab when none exists", async () => {
   const chromeApi = {
     runtime: {
       getURL: (path) => `chrome-extension://test/${path}`,
-    },
-    tabs: {
-      query: async (query) => {
-        calls.push(["query", query]);
+      getContexts: async (filter) => {
+        calls.push(["getContexts", filter]);
         return [];
       },
+    },
+    tabs: {
       create: async (properties) => {
         calls.push(["create", properties]);
       },
@@ -27,7 +27,13 @@ test("creates the connector tab when none exists", async () => {
   await openConnector(chromeApi);
 
   assert.deepEqual(calls, [
-    ["query", { url: "chrome-extension://test/popup.html" }],
+    [
+      "getContexts",
+      {
+        contextTypes: ["TAB"],
+        documentUrls: ["chrome-extension://test/popup.html"],
+      },
+    ],
     ["create", { url: "chrome-extension://test/popup.html" }],
   ]);
 });
@@ -37,12 +43,12 @@ test("activates and focuses an existing connector tab", async () => {
   const chromeApi = {
     runtime: {
       getURL: (path) => `chrome-extension://test/${path}`,
+      getContexts: async (filter) => {
+        calls.push(["getContexts", filter]);
+        return [{ tabId: 17, windowId: 23 }];
+      },
     },
     tabs: {
-      query: async (query) => {
-        calls.push(["query", query]);
-        return [{ id: 17, windowId: 23 }];
-      },
       create: async () => assert.fail("must not create a duplicate tab"),
       update: async (tabId, properties) => {
         calls.push(["update-tab", tabId, properties]);
@@ -58,7 +64,13 @@ test("activates and focuses an existing connector tab", async () => {
   await openConnector(chromeApi);
 
   assert.deepEqual(calls, [
-    ["query", { url: "chrome-extension://test/popup.html" }],
+    [
+      "getContexts",
+      {
+        contextTypes: ["TAB"],
+        documentUrls: ["chrome-extension://test/popup.html"],
+      },
+    ],
     ["update-window", 23, { focused: true }],
     ["update-tab", 17, { active: true }],
   ]);
