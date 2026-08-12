@@ -6,6 +6,14 @@
 > `2026-08-11-extension-tab-web-bluetooth-design.md`; the Android protocol and
 > synthetic-data constraints below remain applicable.
 
+> **Superseded link-layer security:** the encrypted/MITM GATT permissions
+> required below are unreachable from Chrome's Web Bluetooth on Windows. The
+> harness now uses unprotected GATT permissions and stays synthetic-data-only;
+> application-layer authenticated key agreement and AEAD are required before any
+> real OTP uses this transport, and are not yet designed. See the Windows BLE
+> pairing platform finding in
+> `docs/spikes/2026-08-11-popup-web-bluetooth-validation.md`.
+
 ## Status
 
 Approved on 2026-08-11.

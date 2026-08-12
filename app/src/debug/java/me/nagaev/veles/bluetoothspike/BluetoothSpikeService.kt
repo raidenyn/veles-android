@@ -337,21 +337,34 @@ internal class BluetoothSpikeService : Service() {
 
     private fun setupGattServer() {
         val manager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
+        // No BLE link-layer security: Chrome's Web Bluetooth on Windows cannot
+        // reliably reach characteristics that require pairing. Physical testing
+        // showed it abandons the JS promise as soon as pairing needs user
+        // confirmation, leaves "Connection already in progress" state behind on
+        // retry, and can hang indefinitely without issuing a single HCI command
+        // — even against an already-bonded phone. See the Windows pairing
+        // platform finding in
+        // docs/spikes/2026-08-11-popup-web-bluetooth-validation.md.
+        //
+        // This spike therefore carries synthetic data over an unprotected link.
+        // Confidentiality for real OTPs must come from the application layer
+        // (authenticated key agreement on first pairing + AEAD per message),
+        // not from PERMISSION_*_ENCRYPTED_MITM. That work is not implemented.
         val command = BluetoothGattCharacteristic(
             SpikeProtocol.COMMAND_UUID,
             BluetoothGattCharacteristic.PROPERTY_WRITE,
-            BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED_MITM,
+            BluetoothGattCharacteristic.PERMISSION_WRITE,
         )
         val events = BluetoothGattCharacteristic(
             SpikeProtocol.EVENT_UUID,
             BluetoothGattCharacteristic.PROPERTY_NOTIFY,
-            BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED_MITM,
+            BluetoothGattCharacteristic.PERMISSION_READ,
         )
         events.addDescriptor(
             BluetoothGattDescriptor(
                 SpikeProtocol.CCC_UUID,
-                BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED_MITM or
-                    BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED_MITM,
+                BluetoothGattDescriptor.PERMISSION_READ or
+                    BluetoothGattDescriptor.PERMISSION_WRITE,
             ),
         )
         val service = BluetoothGattService(
