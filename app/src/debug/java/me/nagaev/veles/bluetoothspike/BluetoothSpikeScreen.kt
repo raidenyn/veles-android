@@ -39,6 +39,7 @@ internal fun BluetoothSpikeScreen(
     onPushNow: () -> Unit,
     onScheduleSmokePush: () -> Unit,
     onScheduleLifecyclePush: () -> Unit,
+    onCopyEvents: () -> Unit,
 ) {
     var showLifecycleConfirm by remember { mutableStateOf(false) }
 
@@ -173,7 +174,15 @@ internal fun BluetoothSpikeScreen(
 
         item {
             SpikeCard(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text(stringResource(R.string.bluetooth_spike_events), fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(stringResource(R.string.bluetooth_spike_events), fontWeight = FontWeight.Bold)
+                    TextButton(onClick = onCopyEvents, enabled = state.events.isNotEmpty()) {
+                        Text(stringResource(R.string.bluetooth_spike_copy_log))
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 if (state.events.isEmpty()) {
                     Text(stringResource(R.string.bluetooth_spike_no_events))

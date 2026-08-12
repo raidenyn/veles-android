@@ -1,6 +1,8 @@
 package me.nagaev.veles.bluetoothspike
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -53,6 +55,7 @@ internal class BluetoothSpikeActivity : ComponentActivity() {
                             BluetoothSpikeService.LIFECYCLE_PUSH_DELAY_MILLIS,
                         )
                     },
+                    onCopyEvents = ::copyEventLog,
                 )
             }
         }
@@ -85,6 +88,13 @@ internal class BluetoothSpikeActivity : ComponentActivity() {
 
     private fun openBluetoothSettings() {
         startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+    }
+
+    private fun copyEventLog() {
+        val clipboardManager = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val text = BluetoothSpikeStateStore.state.value.eventLogText()
+        clipboardManager.setPrimaryClip(ClipData.newPlainText("Veles BLE spike event log", text))
+        BluetoothSpikeStateStore.event("Event log copied to clipboard")
     }
 
     private fun sendServiceAction(action: String, delayMillis: Long? = null) {

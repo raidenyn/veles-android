@@ -100,7 +100,7 @@ internal class BluetoothSpikeService : Service() {
                 BluetoothSpikeStateStore.client(clientId, label, subscribed = false, authenticated = false)
                 BluetoothSpikeStateStore.event("Client connected: $clientId ($label)")
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                cleanupClient(clientId)
+                cleanupClient(clientId, status)
             }
         }
 
@@ -501,7 +501,7 @@ internal class BluetoothSpikeService : Service() {
         BluetoothSpikeStateStore.client(clientId, label, subscribed = subscribed, authenticated = authenticated)
     }
 
-    private fun cleanupClient(clientId: String) {
+    private fun cleanupClient(clientId: String, status: Int) {
         sessions.remove(clientId)
         reassembler.clearClient(clientId)
         queues.remove(clientId)
@@ -509,7 +509,7 @@ internal class BluetoothSpikeService : Service() {
         messageCounters.remove(clientId)
         clientLabels.remove(clientId)
         BluetoothSpikeStateStore.removeClient(clientId)
-        BluetoothSpikeStateStore.event("Client disconnected: $clientId")
+        BluetoothSpikeStateStore.event("Client disconnected: $clientId (status $status)")
     }
 
     private fun runMaintenance() {

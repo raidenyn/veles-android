@@ -23,6 +23,7 @@
     <string name="bluetooth_spike_client_subscription">Subscribed: %1$b</string>
     <string name="bluetooth_spike_client_authentication">Authenticated: %1$b</string>
     <string name="bluetooth_spike_events">Event log</string>
+    <string name="bluetooth_spike_copy_log">Copy log</string>
     <string name="bluetooth_spike_no_events">No events recorded</string>
     <string name="bluetooth_spike_event_row">%1$s  %2$s</string>
 </resources>

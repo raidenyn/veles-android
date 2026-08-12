@@ -30,6 +30,9 @@ internal data class BluetoothSpikeEvent(
     val error: Boolean,
 )
 
+internal fun BluetoothSpikeUiState.eventLogText(): String =
+    events.joinToString("\n") { "${it.timestamp}  ${it.message}" }
+
 internal object BluetoothSpikeStateStore {
     private const val MAX_EVENTS = 100
     private val timeFormatter = DateTimeFormatter.ISO_LOCAL_TIME
