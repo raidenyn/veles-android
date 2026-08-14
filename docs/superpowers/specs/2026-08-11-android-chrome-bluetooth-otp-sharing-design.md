@@ -361,49 +361,54 @@ turn headphones, cars, watches, or other permission-only associations into OTP r
 
 ### Feasibility gate
 
-The first roadmap issue is a real-hardware go/no-go gate on Windows and macOS. Before the
-architecture proceeds, it must validate:
+The first roadmap issue established these binding platform findings:
 
-- Chrome chooser and operating-system pairing behavior from an extension popup.
-- Popup survival through required user interaction.
-- Encrypted GATT access between desktop Chrome and Android peripheral mode.
-- Request/response and push while the popup remains open.
-- Copying from an asynchronous Bluetooth event.
-- Expected disconnect and re-selection behavior after popup closure.
-- Two physical desktop computers connected to one Android phone.
-- One popup selecting and maintaining simultaneous sessions with multiple Android phones.
+- An MV3 action popup cannot own `requestDevice()` on desktop Chrome; the supported visible
+  owner is an active extension tab.
+- Chrome Web Bluetooth on Windows cannot reliably access authenticated/MITM-gated GATT
+  attributes, including already-paired devices. The transport uses plain GATT permissions.
+- macOS does not reproduce the Windows encrypted-GATT failure.
+- Plain-GATT pull, push, asynchronous copy, connector closure, and two-phone flows are viable
+  enough to continue the roadmap.
+- The 20-minute foreground lifecycle and one-phone/two-connector topology remain unverified
+  and are release-gate work, not assumed successes.
 
-If popup ownership fails a core requirement, the roadmap returns for approval of a persistent
-side-panel or tab design. It does not silently adopt experimental offscreen APIs.
+Plain GATT is transport only. No real OTP may cross it until the application-layer protocol in
+`2026-08-14-bluetooth-application-security-design.md` provides trusted pairing, persistent
+identity, fresh authenticated session keys, AEAD, and replay protection. Experimental offscreen
+APIs remain outside the stable-release architecture.
 
 ### Automated validation
 
-- Shared protocol fixtures and cryptographic vectors are consumed by Kotlin and TypeScript.
-- Android tests cover buffer expiry, policy checks, pairing limits, authentication, revocation,
-  fan-out, and service state.
-- Extension tests cover popup state, expiry, deduplication, badge count, copying, multiple
-  phones, and errors.
+- RFC 9807 and project protocol vectors are consumed by native Rust, Android JNI, and browser
+  WASM; platform-crypto vectors cover identity signatures, ECDH, HKDF, AEAD, and replay state.
+- Android tests cover secure storage and backup exclusion, buffer expiry, policy checks,
+  pairing limits, authentication, revocation, fan-out, and service state.
+- Extension tests cover non-extractable identity persistence, connector-tab state, expiry,
+  deduplication, badge count, copying, multiple phones, and errors.
 - Packaged-extension browser tests use simulated transport where practical.
 - Docker CI validates deterministic builds and simulation, but never claims to validate real
   Bluetooth behavior.
 
 ### Physical-system validation
 
-A repeatable hardware workflow validates pairing, pull, push, disconnect, and recovery using
-a physical Android 13+ phone and desktop Chrome. Release validation covers Windows, macOS,
-experimental Linux, two concurrent computers, multiple phones, all delivery policies,
-Bluetooth interruption, popup/browser closure, process restart, revocation, malformed traffic,
-and replay attempts.
+A repeatable hardware workflow validates one-time OPAQUE pairing, automatic authenticated
+reconnect, encrypted pull and push, disconnect, revocation, and recovery using a physical
+Android 13+ phone and desktop Chrome. Release validation covers Windows, macOS, experimental
+Linux, two concurrent computers, multiple phones, all delivery policies, Bluetooth
+interruption, connector-tab/browser closure, process restart, malformed traffic, replay
+attempts, and the previously untested 20-minute lifecycle and two-connector topology.
 
-Issue 3 ends with a focused protocol and security review before protocol implementation.
-Issue 17 performs the pre-release security review, and Issue 18 cannot begin until that review
-is accepted.
+Issue 3 ends with a focused protocol review before cryptographic implementation. Issue 21
+performs the external release-candidate security review, and Issue 22 cannot begin until that
+review is accepted.
 
 ## Documentation and privacy
 
-README and GitHub Pages documentation must explain installation, operating-system Bluetooth
-pairing, Veles pairing, security, supported platforms, foreground-service behavior, Chrome
-popup limitations, Linux experimental setup, and the any-device Android fallback.
+README and GitHub Pages documentation must explain installation, Chrome device selection,
+one-time Veles pairing, automatic secure reconnect, security boundaries, supported platforms,
+foreground-service behavior, connector-tab limitations, Linux experimental setup, and the
+any-device Android fallback.
 
 The current privacy statement must distinguish no internet transmission from explicit,
 opt-in, encrypted local Bluetooth sharing. Veles remains free of telemetry, analytics,
@@ -411,53 +416,118 @@ accounts, advertisements, payments, and cloud services.
 
 ## Ordered roadmap
 
-Issues 1 through 19 form the stable-release path. Issues 20 and 21 are deferred and do not
-block that release.
+Issues 1 through 23 form the stable-release path. Issues 24 and 25 are deferred and do not
+block that release. Every issue that sends or displays OTP data depends on Issue 9's protected
+record layer. Production code has no plaintext or hard-coded-test-key compatibility mode.
 
-1. **Spike: Validate popup-based Web Bluetooth OTP delivery**
-   Prove the real-hardware and required multi-device assumptions and stop for redesign if a
-   core assumption fails.
-2. **Tech: Add the TypeScript Chrome extension project to Gradle**
-   Establish the Manifest V3 npm project and reproducible Gradle build entry points.
-3. **Design: Define the secure Veles Bluetooth protocol**
-   Specify the PAKE, sessions, compatibility, pull, push, revocation, framing, and fixtures.
-4. **Android: Add the desktop-sharing Bluetooth service**
-   Add the user-enabled foreground service, advertising, GATT lifecycle, and availability.
-5. **Chrome: Add visible-page Bluetooth connections**
-   Add reusable settings-page and popup device selection and connection lifecycle.
-6. **Feature: Pair and authenticate Android with Chrome**
-   Implement code pairing, Android approval, installation trust, and authenticated sessions.
-7. **Feature: Manage and revoke trusted Veles devices**
-   Add core trust listing, key-loss handling, and connected or offline revocation behavior.
-8. **Android: Add the short-lived OTP delivery buffer and phone-state policy**
-   Add memory-only retention and the unlocked, display-on, and always policies.
-9. **Feature: Pull recent OTPs from Android into Chrome**
-   Complete authenticated retrieval of eligible recent OTP events.
-10. **Feature: Push new OTPs to connected Chrome clients**
-    Deliver eligible matched OTPs to every authenticated popup session.
-11. **Testing: Establish Android-Chrome end-to-end validation**
-    Establish simulated CI and required real-hardware cross-system workflows.
-12. **Android UI: Add Desktop Sharing and Connections settings**
-    Add service, policy, pairing, status, trusted-client, and revocation UI.
-13. **Android: Integrate Chrome pairing with sensitive-notification onboarding**
-    Reuse the desktop association where possible while retaining the any-device fallback.
-14. **Chrome UI: Add the OTP popup, copy actions, history, and badge**
-    Build the Android-aligned frequent-use experience and short-lived session history.
-15. **Chrome UI: Complete connection management and auto-copy settings**
-    Complete pairing management and add global disabled-by-default automatic copying.
-16. **Feature: Support multiple simultaneous Android and Chrome connections**
-    Complete and validate the required multi-computer and multi-phone topologies.
-17. **Hardening: Secure Bluetooth lifecycle and failure handling**
-    Cover interruption, process lifecycle, invalid traffic, limits, safe logs, and recovery.
-18. **Release: Validate and package Chrome platform support**
-    Complete CI, platform validation, Web Store disclosures, and extension packaging.
-19. **Docs: Add Veles Chrome to the README and GitHub Pages**
-    Document desktop sharing and update privacy language for local Bluetooth delivery.
-20. **Experiment: Automatically reconnect through an offscreen extension document**
+1. **Spike: Conclude visible-tab Web Bluetooth transport validation**
+   Record the action-popup and Windows encrypted-GATT failures, the viable plain-GATT flows,
+   the untested topologies, and the conditional recommendation. The spike remains synthetic.
+2. **Tech: Add Chrome and Rust crypto toolchains to the reproducible Gradle build**
+   Establish the Manifest V3 TypeScript/npm project plus pinned Rust, Android NDK/JNI, and
+   packaged WASM build entry points. Enforce no remote executable code and emit reproducible
+   artifact hashes and dependency metadata.
+3. **Design: Freeze and review the secure Veles Bluetooth protocol**
+   Adopt `2026-08-14-bluetooth-application-security-design.md`, freeze the OPAQUE profile,
+   binary schemas, identities, key schedule, limits, and error model, and obtain a focused
+   pre-implementation review. Protocol ambiguities block Issues 4, 8, and 9.
+4. **Crypto: Build the shared RFC 9807 OPAQUE core for Android and Chrome**
+   Implement one pinned Rust wrapper exposed only through complete JNI and WASM operations.
+   Pass RFC and project fixed-randomness vectors identically on native Rust, Android, and
+   Chrome; cover malformed state, zeroization paths, KSF performance, and packaged-WASM policy.
+5. **Security: Add persistent installation identity and trust stores**
+   Generate non-exportable P-256 ECDSA installation keys, Android Keystore and IndexedDB
+   persistence, per-peer public records, non-sync Chrome metadata, Android backup/transfer
+   exclusions, storage-loss fail-closed behavior, and cross-platform storage tests.
+6. **Android: Add the desktop-sharing Bluetooth transport service**
+   Add the user-enabled foreground service, advertising, plain-GATT lifecycle, availability,
+   and bounded transport framing. The service exposes no OTP data before application-layer
+   authentication and never treats a Bluetooth address as trust identity.
+7. **Chrome: Add visible-tab Bluetooth connections**
+   Add action-launched connector-tab selection, connection lifecycle, repeated-action focus,
+   and explicit reselection after closure. Keep Bluetooth ownership visible and do not add an
+   offscreen stable-release fallback.
+8. **Security: Implement one-time OPAQUE pairing and identity enrollment**
+   Add phone-generated expiring codes, local OPAQUE pre-registration, online attempt limits,
+   mutual confirmation, encrypted identity enrollment, pending/commit/ack state, generic
+   failures, secret erasure, and smooth re-pairing after revocation or storage loss.
+9. **Security: Implement authenticated reconnect and the protected record layer**
+   Reuse persistent identity keys without another user challenge, perform signed fresh P-256
+   ECDH after every Chrome device selection, derive directional AES-256-GCM keys with HKDF,
+   and encrypt every command, response, push, pull, heartbeat, acknowledgement, and error.
+   Enforce strict sequence/replay rejection, nonce uniqueness, canonical encoding, and no
+   downgrade to plaintext application records.
+10. **Feature: Manage and revoke trusted Veles devices**
+    Add peer listing, fingerprints, labels, last-seen state, key-loss handling, and connected
+    or offline per-peer revocation. Revocation immediately blocks sessions and requires new
+    one-time pairing.
+11. **Android: Add the short-lived OTP delivery buffer and phone-state policy**
+    Add memory-only retention and the unlocked, display-on, and always policies. Keep OTPs out
+    of logs, durable storage, pairing messages, and unauthenticated transport state.
+12. **Feature: Pull recent OTPs from Android into Chrome**
+    Retrieve eligible recent OTP events only through Issue 9 protected records, with bounded
+    responses, authenticated empty-history behavior, and no plaintext fallback.
+13. **Feature: Push new OTPs to connected Chrome clients**
+    Deliver eligible matched OTPs independently to every authenticated encrypted session,
+    handling per-client failure without exposing or blocking another client.
+14. **Testing: Establish secure Android-Chrome end-to-end validation**
+    Add deterministic protocol simulation, JNI/WASM interoperability, storage and backup,
+    wrong-code, MITM, modification, replay, reorder, crash/restart, revocation, pull/push, and
+    real-hardware Windows/macOS workflows. Automated tests never claim physical Bluetooth.
+15. **Android UI: Add Desktop Sharing and Connections settings**
+    Add service, policy, one-time pairing, countdown/attempt state, connection status,
+    fingerprints, trusted-client, storage-loss, and revocation UI without displaying secrets
+    in logs or screenshots beyond the active pairing code.
+16. **Android: Integrate Chrome pairing with sensitive-notification onboarding**
+    Coordinate desktop sharing with the existing onboarding while retaining the any-device
+    fallback. Companion association is optional defense in depth and not a transport-security
+    prerequisite.
+17. **Chrome UI: Add OTP display, copy actions, history, and badge**
+    Build the Android-aligned frequent-use experience and short-lived session history. Render
+    OTP data only after protected-record authentication and preserve clipboard focus/error
+    behavior.
+18. **Chrome UI: Complete connection, trust, and auto-copy settings**
+    Add paired-phone management, fingerprints, revocation/re-pairing, secure reconnect status,
+    and global disabled-by-default automatic copying. Never expose private key material.
+19. **Feature: Support multiple simultaneous Android and Chrome connections**
+    Validate independent identities, traffic keys, counters, queues, revocation, and failure
+    isolation for multiple phones and multiple connectors, including the previously untested
+    one-phone/two-connector topology.
+20. **Hardening: Secure Bluetooth lifecycle and failure handling**
+    Cover interruption, connector/background lifecycle, process death, malformed crypto and
+    framing input, global/per-peer limits, rate limiting, safe logs, key erasure, counter
+    boundaries, recovery, and the previously untested 20-minute foreground scenario.
+21. **Security: Review the release-candidate protocol and crypto supply chain**
+    Obtain external review of the exact OPAQUE wrapper/dependencies, JNI/WASM boundaries,
+    platform key storage, enrollment, signed ECDH, key schedule, AEAD nonces, replay policy,
+    revocation, binary decoders, CSP, SBOM, and built artifacts. Unresolved findings block
+    release packaging and all real-OTP enablement.
+22. **Release: Validate and package Chrome platform support**
+    Complete CI, reproducible APK/extension builds, Windows/macOS and experimental Linux
+    validation, Chrome Web Store disclosures, local-WASM policy checks, and extension
+    packaging only after Issue 21 is accepted.
+23. **Docs: Add Veles Chrome to the README and GitHub Pages**
+    Document connector-tab behavior, plain BLE transport versus encrypted application data,
+    one-time pairing and automatic reconnect, revocation, supported platforms, security
+    boundaries, privacy language, and recovery after key loss.
+24. **Experiment: Automatically reconnect through an offscreen extension document**
     Evaluate experimental hidden ownership and last-device recovery after stable release.
-21. **Feature: Show desktop OTP notifications**
-    Add optional Chrome or operating-system notifications only after Issue 20 establishes a
-    viable background transport; otherwise return notification delivery for redesign.
+    Reuse Issue 9 security unchanged; hidden transport never weakens authentication.
+25. **Feature: Show desktop OTP notifications**
+    Add optional Chrome or operating-system notifications only after Issue 24 establishes a
+    viable background transport; otherwise return notification delivery for redesign. Consume
+    only authenticated protected records.
+
+### Security dependency gates
+
+- Issues 4 and 5 require Issue 3.
+- Issues 8 and 9 require Issues 4 through 7.
+- Issue 10 requires Issues 5, 8, and 9.
+- Issues 12, 13, 17, 18, 19, 20, 24, and 25 require Issue 9.
+- Issue 14 validates Issues 4 through 13 and remains active as later UX work lands.
+- Issue 21 reviews the integrated release candidate after Issues 2 through 20.
+- Issue 22 requires accepted Issue 21 findings; production OTP enablement is part of Issue 22
+  and cannot be merged earlier.
 
 ## GitHub project
 
@@ -467,15 +537,16 @@ Create a public GitHub Projects v2 project under `raidenyn` and link it to
 The project uses these fields:
 
 - **Status**: Backlog, Ready, In Progress, In Review, Blocked, Done.
-- **Implementation order**: numeric order from 1 through 21.
-- **Phase**: Feasibility, Foundations, Core delivery, Product UX, Release, Future.
-- **Area**: Android, Chrome, Cross-platform, Documentation.
+- **Implementation order**: numeric order from 1 through 25.
+- **Phase**: Feasibility, Foundations, Security, Core delivery, Product UX, Release, Future.
+- **Area**: Android, Chrome, Cryptography, Cross-platform, Documentation.
 - **Release scope**: Stable release or Deferred.
 
-Issue 1 starts Ready; all other issues start Backlog. The project provides an implementation-
-order table, a status board, and a deferred-work view. If the GitHub API cannot configure
-views, the populated fields and sequential item positions remain authoritative and view setup
-is documented for a project owner to complete in the web UI.
+The existing spike Issue 1 starts In Review until its conditional report is accepted; all
+new issues start Backlog. The project provides an implementation-order table, a status board,
+a security-gates view, and a deferred-work view. If the GitHub API cannot configure views, the
+populated fields, dependency text, and sequential item positions remain authoritative and view
+setup is documented for a project owner to complete in the web UI.
 
 ## Reference constraints
 
