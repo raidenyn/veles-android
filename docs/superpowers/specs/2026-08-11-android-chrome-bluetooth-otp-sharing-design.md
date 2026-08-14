@@ -4,6 +4,15 @@
 
 Approved on 2026-08-11.
 
+> **Superseded transport and security assumptions:** Physical validation ruled
+> out action-popup Web Bluetooth and authenticated/MITM GATT permissions on
+> Windows. The connector now requires an active extension tab and plain GATT;
+> the approved one-time OPAQUE pairing, persistent identity, signed session-key
+> exchange, AEAD, and replay design is specified in
+> `2026-08-14-bluetooth-application-security-design.md`. References below to a
+> popup, OS pairing as a prerequisite, encrypted GATT, or an unspecified PAKE
+> are retained as historical roadmap context and do not override that design.
+
 This document is a roadmap specification. It defines the product boundaries, architecture,
 security model, delivery order, and release gates for Bluetooth OTP sharing between Veles
 Android and a Veles Chrome extension. Each roadmap issue receives its own focused design
