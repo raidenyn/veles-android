@@ -1,5 +1,10 @@
 # Popup-Owned Web Bluetooth Spike Implementation Plan
 
+> **Historical completed plan.** Do not execute this plan as current work. Its
+> popup, OS-pairing, and encrypted-GATT assumptions were superseded by PR #78.
+> Use the current roadmap spec and physical validation report for remaining
+> Issue #77 work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a debug-only Android BLE peripheral and an unpacked Manifest V3 popup that can be handed to separate Windows, macOS, and Android test machines for the physical go/no-go validation in issue #77.

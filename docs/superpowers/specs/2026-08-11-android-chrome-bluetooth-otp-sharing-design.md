@@ -2,116 +2,150 @@
 
 ## Status
 
-Approved on 2026-08-11.
+Provisionally revised on 2026-08-15 from the partial physical results in PR #78.
 
-> **Superseded transport and security assumptions:** Physical validation ruled
-> out action-popup Web Bluetooth and authenticated/MITM GATT permissions on
-> Windows. The connector now requires an active extension tab and plain GATT;
-> the approved one-time OPAQUE pairing, persistent identity, signed session-key
-> exchange, AEAD, and replay design is specified in
-> `2026-08-14-bluetooth-application-security-design.md`. References below to a
-> popup, OS pairing as a prerequisite, encrypted GATT, or an unspecified PAKE
-> are retained as historical roadmap context and do not override that design.
+This is the current normative roadmap. It replaces the original action-popup,
+OS-pairing, and encrypted-GATT assumptions. The implementation backlog and
+GitHub project are intentionally not final until Issue #77 completes its
+remaining physical transport gates.
 
-This document is a roadmap specification. It defines the product boundaries, architecture,
-security model, delivery order, and release gates for Bluetooth OTP sharing between Veles
-Android and a Veles Chrome extension. Each roadmap issue receives its own focused design
-before implementation. The issue descriptions intentionally avoid low-level implementation
-details.
+The application security protocol is defined by
+`2026-08-14-bluetooth-application-security-design.md`. No real OTP may cross
+Bluetooth until that protocol and its release gates are implemented and
+accepted.
+
+## Confirmed decisions
+
+- A Chrome action popup cannot own the required `requestDevice()` flow on
+  desktop Chrome. The toolbar action opens or focuses a dedicated extension
+  connector tab.
+- The connector tab is the sole owner of Web Bluetooth objects and live GATT
+  sessions. Closing it ends those sessions.
+- The connector tab may remain open in the background while the user browses
+  in another tab. Background delivery is a required behavior, not a best-effort
+  enhancement.
+- Chrome must still show its device chooser when a new connector-tab lifetime
+  selects a phone. Stable behavior does not depend on automatic device recovery.
+- Windows Chrome cannot reliably use GATT attributes protected by authenticated
+  BLE pairing. The cross-platform transport therefore uses plain GATT.
+- OS Bluetooth pairing is not a setup prerequisite or a trust signal. A stale
+  Windows bond is a troubleshooting condition, not part of normal onboarding.
+- All peer trust, confidentiality, integrity, and replay protection are supplied
+  by the Veles application protocol.
+- Android sensitive-notification companion association is a separate
+  permission-only flow. It is never Chrome trust, transport setup, or identity.
+- No native desktop application is planned.
 
 ## Goal
 
-Let a user explicitly connect a Chrome extension to Veles Android over local Bluetooth and
-retrieve recent OTP transaction data. While the extension popup remains connected, Android
-also pushes new OTPs immediately. The extension displays the OTP code, merchant, and amount
+Let a user explicitly connect Veles Chrome to Veles Android over local
+Bluetooth, retrieve recent OTP transaction data, and receive new OTPs while a
+connector tab remains open. The connector can be backgrounded while the user
+works in another browser tab. Chrome displays the code, merchant, and amount
 and supports manual or opt-in automatic copying.
 
-The feature remains local. It introduces no internet transport, cloud service, account,
-telemetry, or native desktop application.
+The feature introduces no internet transport, cloud service, account,
+telemetry, native desktop process, advertisement, or payment.
+
+## Non-goals
+
+- Native Windows, macOS, or Linux companion software.
+- Cloud relay, internet synchronization, or user accounts.
+- Durable OTP history on Android or Chrome.
+- Trust based on Bluetooth address, Bluetooth name, OS bond, or companion
+  association.
+- Hiding Bluetooth traffic timing, service UUIDs, or encrypted record sizes.
+- Protecting OTPs after compromise of either endpoint, the browser profile,
+  operating system, or clipboard.
+- Stable background Bluetooth ownership through experimental offscreen APIs.
+
+## Spike evidence
+
+### Confirmed findings
+
+Physical testing in PR #78 established:
+
+- An MV3 action popup rejects `requestDevice()` without presenting the chooser.
+- An active extension tab can present the chooser and own Web Bluetooth.
+- Windows Chrome fails unreliably around MITM-gated GATT access, while the same
+  harness works over plain GATT.
+- macOS did not reproduce the encrypted-GATT failure.
+- Plain-GATT connection, synthetic authentication, pull, push, asynchronous
+  copy, connector closure, and explicit reselection were exercised.
+- One connector tab serving two Android phones was exercised on Windows and
+  macOS.
+
+These results justify continuing the tab-owned, plain-GATT design. They do not
+authorize real OTP transport.
+
+### Remaining feasibility gates
+
+Issue #77 remains inconclusive until the following are recorded against exact
+hardware, OS builds, stable Chrome versions, Bluetooth adapters, and commit
+SHAs:
+
+- One Android phone concurrently serving Windows and macOS, including
+  independent pulls and one push reaching both clients.
+- Android connected-device foreground-service survival through the documented
+  20-minute task-removal and locked-screen scenario.
+- A connector tab remaining connected and receiving pushes while backgrounded
+  long enough to trigger Chrome timer throttling.
+- Automatic copying from a backgrounded connector through the supported
+  clipboard helper.
+- Repeated action clicks focusing the existing connector tab rather than
+  creating duplicates.
+- Repeated closure, reconnection, and multi-device runs.
+
+The previously reported behavior of already-bonded Windows devices is not a
+general platform conclusion because exact environments and run sequences were
+not recorded. Normal onboarding avoids OS pairing. Troubleshooting may advise
+forgetting a stale bond when Windows cannot connect.
 
 ## Product flow
 
-1. The user installs Veles Android and grants its required notification permissions.
-2. The phone and desktop are paired through their operating-system Bluetooth settings.
-3. The user installs Veles Chrome from the Chrome Web Store.
-4. Android and Chrome complete a separate Veles pairing flow using a one-time code.
-5. The user opens the extension popup, selects a paired phone through Chrome's Bluetooth
-   chooser, and connects.
-6. Chrome requests eligible OTPs retained during the preceding ten minutes.
-7. While the popup remains open, Android pushes eligible new OTPs to every connected client.
-8. Chrome displays the OTP data and lets the user copy it. Automatic copying is available as
-   a global, disabled-by-default setting.
+### First pairing
 
-## Constraints
+1. The user installs Veles Android and grants notification and Nearby Devices
+   permissions.
+2. The user installs Veles Chrome from the Chrome Web Store.
+3. The user enables Desktop Sharing on Android. Android starts its foreground
+   Bluetooth service and advertises the public Veles service.
+4. The user starts Add Chrome on the unlocked phone. Android displays a short,
+   expiring one-time code.
+5. The user selects the extension action. Chrome opens or focuses the connector
+   tab.
+6. The user selects Connect phone and chooses the advertising phone in Chrome's
+   chooser. No OS Bluetooth pairing step is required.
+7. The user enters the Android code. Veles completes OPAQUE pairing and binds
+   the two installation identities.
+8. Both applications persist trust records and erase all one-time pairing
+   state.
 
-### Chrome lifecycle
+### Later use
 
-Manifest V3 service workers cannot own Web Bluetooth objects. A toolbar popup can use Web
-Bluetooth, but its GATT connection belongs to that popup document and is lost when the popup
-closes. Stable Chrome APIs also do not let an extension silently select the last device after
-the popup has been recreated.
+1. The user selects the extension action. Chrome opens or focuses the connector
+   tab.
+2. If no live session exists, the user selects the phone in Chrome's chooser.
+3. The peers authenticate automatically with their stored identities, derive
+   fresh traffic keys, and establish a protected session.
+4. Chrome requests eligible OTPs retained during the preceding ten minutes.
+5. The connector tab may be backgrounded while the user returns to the target
+   website.
+6. Android pushes eligible new OTPs while the connector tab remains open and
+   connected.
+7. Chrome displays the data, updates its badge, and performs background
+   automatic copy only when the user enabled that setting.
 
-The stable release therefore uses an explicit connection for each popup session:
-
-- The user clicks Connect and selects a Veles phone in Chrome's chooser.
-- Chrome pulls recent OTPs after authentication.
-- Android pushes new OTPs only while the popup remains connected.
-- Closing the popup ends useful push delivery, even if the platform takes time to report the
-  underlying disconnect.
-- A heartbeat and session timeout remove abandoned sessions on Android.
-
-A later experiment may evaluate an offscreen extension document and experimental device
-recovery APIs. Stable behavior does not depend on that experiment.
-
-### Desktop platforms
-
-Windows and macOS stable Chrome are the initial supported desktop platforms. Linux remains
-experimental because current Chrome releases require an experimental Web Bluetooth flag.
-Chrome Web Store distribution is the stable release channel; developer-mode installation is
-used only for development and testing.
-
-### Android availability
-
-For Chrome to connect on demand, Android must advertise while desktop sharing is enabled.
-A user-enabled connected-device foreground service owns advertising, the GATT server, active
-sessions, and client delivery queues. It supplies the required ongoing service indication.
-
-Service restoration after ordinary process death, reboot, package replacement, or Bluetooth
-recovery is best effort. Permission revocation, unsupported peripheral advertising, Android
-Task Manager Stop, and OEM background restrictions are explicit unavailable states. Veles
-never reports desktop sharing as available when the service is not actually running.
-
-## Scope
-
-### Stable release
-
-- Android BLE peripheral advertising and GATT service.
-- Veles application pairing and authenticated sessions.
-- Pulling up to five recent OTPs retained for no more than ten minutes.
-- Pushing new OTPs while an extension popup remains connected.
-- Manual copy and disabled-by-default automatic copy in Chrome.
-- Android desktop-sharing and client-management UI.
-- Chrome pairing, connection-management, OTP popup, and settings UI.
-- One phone serving at least two physical desktop computers concurrently.
-- One popup explicitly connecting to multiple phones during the same popup session.
-- Gradle integration for a TypeScript npm project under repository-root `src/typescript`.
-- Windows and macOS validation, Chrome Web Store packaging, and experimental Linux guidance.
-- README and GitHub Pages documentation.
-
-### Deferred work
-
-- Offscreen-document ownership and automatic last-device recovery.
-- Chrome or operating-system OTP notifications.
-- A native desktop connector.
-- Cloud relay, internet transport, accounts, or synchronization.
-- Guaranteed concurrent sessions for multiple Chrome profiles sharing one Bluetooth adapter.
-- Durable OTP history on Android or Chrome.
+Closing the connector tab destroys connection state. Reopening it requires
+explicit Chrome chooser selection, followed by automatic Veles authentication;
+it does not require another one-time code unless trust was revoked or lost.
 
 ## Architecture
 
-### Existing OTP path
+### Existing Android OTP path
 
-The existing Android matching and local notification behavior remains unchanged:
+The existing notification matching and local replacement notification remain
+unchanged:
 
 ```text
 Incoming notification
@@ -121,432 +155,291 @@ Incoming notification
   -> existing local Veles notification and copy behavior
 ```
 
-Desktop delivery is an additional consumer of a matched `OtpMessage`. Desktop failures never
-prevent the local Veles notification.
+Desktop delivery is an additional consumer. Bluetooth failure never suppresses
+the local Veles notification.
 
-### Android components
+### Android desktop delivery
 
-#### Desktop delivery coordinator
+#### Delivery coordinator
 
-The coordinator accepts matched OTP events, assigns stable event identities, and passes them
-to the short-lived buffer and eligible connected clients. It isolates notification matching
-from Bluetooth service lifecycle.
+The coordinator accepts matched OTP events, assigns stable event IDs, and
+passes them to the memory buffer and eligible protected sessions. It keeps OTP
+matching independent from Bluetooth lifecycle.
 
-#### OTP buffer
+#### Memory-only OTP buffer
 
-The buffer is process memory only. It retains at most five OTP events globally for no more
-than ten minutes. It runs only while desktop sharing is enabled and is cleared immediately
-when sharing is disabled. Process death and reboot also clear it.
+Android retains at most five OTP events globally for no more than ten minutes.
+The buffer exists only while desktop sharing is enabled. Disabling sharing,
+process death, or reboot clears it.
 
-Each event has a stable ID, receipt time, code, merchant, amount, and currency. Android is the
-authority for eligibility and expiry. Chrome merges events by phone identity and event ID so
-repeated pulls do not duplicate the displayed history.
+Android is authoritative for expiry and delivery eligibility. A response
+includes remaining lifetime so Chrome cannot extend retention because of clock
+skew.
 
 #### Desktop-sharing service
 
-The connected-device foreground service owns:
+A user-enabled `connectedDevice` foreground service owns:
 
-- Bluetooth capability and permission checks.
-- BLE advertising and the GATT server.
-- Authenticated sessions and heartbeat expiry.
-- Per-client subscriptions, framing, sequencing, and delivery queues.
-- Fan-out to eligible connected clients.
-- Service and connection status for the Android UI.
+- Bluetooth capability and permission state.
+- Plain-GATT advertising and server lifecycle.
+- Bounded transport framing and per-connection queues.
+- Pairing and protected-session state.
+- Multiple connected physical clients.
+- Service and connection status exposed to Android UI.
 
-The service starts from visible user action. Enabling is persisted, and restoration is
-best-effort where Android permits it. Disabling closes sessions, stops advertising, clears
-the OTP buffer, and retains trusted clients until the user revokes them.
+The service starts from visible user action and persists the enabled preference.
+Restoration after process death, reboot, package replacement, and Bluetooth
+recovery is best effort where Android permits it. Permission loss, unsupported
+advertising, OEM restriction, and Task Manager Stop are explicit unavailable
+states.
 
-#### Trust store
+Plain GATT exposes no OTP, trust record, meaningful error detail, or production
+application message before Veles authentication. Bluetooth addresses are
+connection hints only.
 
-Android persists trusted client identity and key material, not OTP data. Secret material is
-protected by Android Keystore and excluded from backup and device transfer. Restored metadata
-without its key, application reinstall, or key loss invalidates the trust record and requires
-pairing again.
+#### Trust storage
 
-#### Desktop Connections UI
+Android installation identity keys are non-exportable Android Keystore keys.
+Peer trust metadata and keys are excluded from cloud backup and device transfer.
+Missing, restored without keys, or corrupted trust state fails closed and
+requires pairing again.
 
-The existing Home screen gains a Desktop Sharing card that opens a dedicated Connections
-screen. No fourth bottom-navigation destination is added. The screen provides:
+### Chrome extension
 
-- Sharing enablement and actual service status.
-- Pair Chrome action.
-- Trusted and currently connected client list.
-- Client revocation.
-- Delivery-policy selection.
-- Actionable Bluetooth, permission, and service errors.
+#### Project and build
 
-The foreground-service indication opens this screen and reports sharing and connection state.
+The Manifest V3 extension is an npm/TypeScript project under repository-root
+`src/typescript`. Gradle provides pinned, reproducible install, lint,
+type-check, test, build, crypto, and package entry points. Rust/JNI/WASM details
+follow the application security design.
 
-### Chrome extension components
+#### Service worker
 
-#### TypeScript project
+The MV3 service worker does not own Bluetooth or OTP session state. It:
 
-The Manifest V3 extension lives in an npm project at repository-root `src/typescript`.
-Gradle exposes locked, reproducible entry points for install, lint, type-check, test, build,
-and package operations. The extension requests only permissions required for Bluetooth,
-session history, badge, settings, and copying.
+- Opens the connector tab when none exists.
+- Focuses the existing connector tab on repeated action clicks.
+- Updates the toolbar badge from connector messages.
+- Coordinates the supported offscreen clipboard helper.
 
-#### Visible-page Bluetooth transport
+#### Connector tab
 
-Only visible extension documents own Web Bluetooth:
+The connector tab owns device selection, GATT objects, Veles pairing,
+protected sessions, pull, push, and short-lived display history. It supports
+multiple explicitly selected phones in one tab lifetime.
 
-- The settings page owns the temporary connection used for initial pairing, then disconnects.
-- The toolbar popup owns each normal pull/push session.
-- Bluetooth objects are never transferred to the service worker or another document.
+It must remain connected when backgrounded. Production liveness must not depend
+on a five-second JavaScript interval that Chrome can throttle. The final
+heartbeat, lease, or server-initiated liveness mechanism is selected only after
+the revised background physical spike establishes reliable behavior.
 
-The transport filters Chrome's chooser to the Veles service, authenticates the selected
-phone, negotiates protocol capabilities, pulls eligible history, and listens for pushes until
-the owning document closes.
+Closing the tab ends all live sessions. The next tab starts without a reusable
+`BluetoothDevice` object and requires explicit chooser selection.
 
-#### Popup
+#### Clipboard helper
 
-The popup:
+Manual copy occurs from a focused extension UI. Background automatic copy is
+delegated through the supported `chrome.offscreen` clipboard pattern. The
+offscreen document handles clipboard work only; it never owns Bluetooth,
+cryptographic sessions, or OTP history beyond the immediate copy operation.
 
-1. Shows cached, unexpired session history immediately.
-2. Offers Connect for each phone the user wants to use in that session.
-3. Authenticates and pulls recent eligible OTPs.
-4. Displays code, merchant, amount, age, and source phone.
-5. Offers a Copy action for each OTP.
-6. Receives pushes while open.
+Automatic copy is global and disabled by default. A successful pull copies its
+newest OTP, including a repeated pull. A new push copies its OTP. Copy failures
+are visible and never terminate the protected Bluetooth session.
 
-Chrome keeps no more than five OTPs for ten minutes in browser-session storage, never durable
-storage. This is one global five-event limit across all connected phones. Android includes the
-remaining lifetime of each event so Chrome cannot extend retention because of clock skew. The
-toolbar badge shows the count of valid cached OTPs and clears as entries expire. It cannot
-update from Android while no extension document is connected.
+#### Session history
 
-#### Settings and installation identity
+Chrome keeps at most five OTPs globally across all phones for ten minutes in
+browser-session storage. It merges events by phone installation ID and event
+ID. No OTP is written to sync or durable local storage.
 
-The settings page starts initial pairing, manages remembered phones, revokes local trust, and
-owns the global automatic-copy toggle. Chrome generates a random per-installation identity
-and keeps identity and keys in non-sync local storage. Clearing extension data or reinstalling
-the extension requires pairing again.
+The badge shows the number of valid cached events. Closing Chrome or expiry
+clears sensitive session data.
 
-Automatic copy is disabled by default. When enabled:
+#### Chrome trust storage
 
-- Every successful pull copies its newest OTP, including a repeated pull.
-- Every newly pushed OTP is copied.
-- Repeated pull responses merge by event ID and do not duplicate displayed history.
+Chrome generates a random installation ID and non-extractable identity key.
+Private keys are stored as non-extractable Web Crypto keys in IndexedDB. Peer
+metadata is local, non-sync extension storage restricted to trusted extension
+contexts. Extension removal, profile data loss, or corruption requires pairing
+again.
 
-## Pairing and security
+## Application security
 
-### Trust model
+Plain GATT is an actively attacked transport. The dedicated security design is
+normative and requires:
 
-Operating-system Bluetooth pairing and encrypted GATT are prerequisites and defense in depth,
-but are not the root of Veles application trust. A CompanionDeviceManager association does
-not itself authorize OTP delivery.
+- RFC 9807 OPAQUE for first pairing with the phone-generated one-time code.
+- A pinned, reviewed Rust core compiled for Android JNI and locally packaged
+  browser WASM.
+- Persistent P-256 ECDSA installation identities.
+- Fresh mutually signed P-256 ECDH on every connection.
+- HKDF-SHA-256 directional key separation.
+- AES-256-GCM protection of every production command, response, push, pull,
+  heartbeat, acknowledgement, and error.
+- Strict sequence, nonce, replay, ordering, size, and session checks.
+- Explicit per-peer revocation and fail-closed storage loss.
+- No production plaintext or hard-coded-test-key compatibility mode.
 
-Veles pairing uses an established password-authenticated key exchange (PAKE) based on the
-one-time Android code. The protocol design issue selects and reviews the concrete PAKE with
-compatible Kotlin and TypeScript implementations. A custom cryptographic handshake is not
-acceptable. The exchange performs explicit key confirmation and binds both installation
-identities and the negotiated protocol transcript.
+Real OTP integration is blocked until shared crypto vectors pass across Rust,
+JNI, and WASM; protected sessions pass physical Windows/macOS testing; and the
+release-candidate security review is accepted.
 
-### Pairing flow
+## Delivery policy
 
-1. The user opens Add Chrome on Android.
-2. Android enters a two-minute pairing window and displays a random six-digit code.
-3. The user starts Pair Phone in the Chrome settings page, selects the advertising phone, and
-   enters the Android code.
-4. Chrome contributes its random installation identity and proposed client label.
-5. Android displays the client and requires final user approval.
-6. The PAKE authenticates the short code without exposing it to offline guessing and derives
-   the client trust material.
-7. Both sides persist the resulting identity and keys; the code and pending session expire.
-
-Pairing is rate-limited, and the code is invalidated on success, cancellation, timeout, or too
-many attempts.
-
-### Authenticated sessions
-
-Later connections authenticate the trusted installation, derive fresh session keys, and
-negotiate compatible protocol capabilities. OTP messages use authenticated encryption,
-unique nonces, sequence numbers, and replay rejection. Exact Android and extension versions
-need not match; delivery fails only when the peers share no supported protocol version.
-
-Unknown, revoked, unauthenticated, replayed, malformed, oversized, expired, or incompatible
-requests return no OTP data. OTPs, pairing codes, and keys are never logged.
-
-### Revocation
-
-Revoking a client deletes its key and disconnects its sessions. A connected counterpart can
-request mutual removal. Offline removal is local, and the UI explains that the counterpart
-may also need removal when it is next available.
-
-### Threat boundary
-
-The design protects against unintended nearby devices, short-code offline guessing, message
-tampering, and replay. It does not protect OTPs after compromise of the unlocked phone,
-Chrome profile, extension, browser, operating system, or clipboard.
-
-## Delivery policy and data flow
-
-### Policies
-
-Android evaluates the selected policy immediately before every pull response and push:
+Android evaluates the configured policy immediately before every protected pull
+response or push:
 
 - **Unlocked only**, default: require an interactive and unlocked phone.
 - **Display on**: require an interactive phone, including the lock screen.
 - **Always**: allow delivery regardless of display or lock state.
 
-An OTP that arrives while delivery is blocked remains in the memory buffer until expiry. It
-can be pulled later once the phone becomes eligible. A blocked pull returns a distinct
-phone-state response rather than appearing to have an empty history.
-
-### Pull
-
-```text
-User opens popup and clicks Connect
-  -> Chrome chooser selects a Veles phone
-  -> authenticated session established
-  -> Chrome requests recent OTPs
-  -> Android evaluates current delivery policy
-  -> Android returns up to five eligible, unexpired events
-  -> Chrome merges session history and updates the badge
-  -> Chrome copies the newest response when auto-copy is enabled
-```
-
-### Push
-
-```text
-Android matches a new OTP
-  -> local Veles behavior continues
-  -> event enters the memory buffer when sharing is enabled
-  -> Android evaluates current delivery policy
-  -> eligible event is encrypted and sent to every authenticated client
-  -> each client acknowledges independently
-  -> connected popup displays and optionally copies the event
-```
-
-A failed or slow client never blocks another client or the local Android notification.
+An OTP received while blocked remains in the memory buffer until expiry. It may
+be pulled after the phone becomes eligible. A blocked authenticated request
+returns a protected phone-state response rather than appearing as empty history.
 
 ## Multiple connections
 
-The first release guarantees the following tested topology:
+The intended stable topology is:
 
-- One Android phone serves at least two physical desktop computers concurrently on supported
-  hardware.
-- One Chrome popup can explicitly select and connect to multiple phones during its lifetime.
+- One Android phone independently serving at least two physical desktop
+  computers.
+- One connector tab independently serving multiple Android phones.
 
-Different Chrome profiles generate separate Veles installation identities, but concurrent
-profiles sharing one physical Bluetooth adapter are best effort. Android tracks application
-identity separately from Bluetooth device address, which is not treated as stable trust.
+Every peer has an independent installation identity, trust record, protected
+session, sequence space, queue, revocation state, and failure boundary.
+Concurrent Chrome profiles sharing one physical Bluetooth adapter remain best
+effort unless later testing establishes a portable guarantee.
+
+The multi-phone topology is promising from partial testing. The two-computer
+topology remains an open Issue #77 gate.
 
 ## Sensitive-notification onboarding
 
-When sensitive-notification access is missing, the desktop setup flow attempts to reuse the
-same physical computer in the existing Android companion-association flow. The system
-association remains permission-only and never grants Veles protocol trust.
+Sensitive-notification companion association remains the existing Android
+permission workaround. It may use any suitable nearby device and is independent
+from Desktop Sharing.
 
-The existing path for selecting any nearby Bluetooth device remains available to users who
-do not have the Chrome extension. This work coordinates with GitHub issue #43 and does not
-turn headphones, cars, watches, or other permission-only associations into OTP recipients.
+The Chrome connector does not require, reuse, infer, or modify companion
+association. A companion association never authorizes OTP delivery. Chrome
+trust exists only after Veles OPAQUE enrollment.
 
 ## Failure handling
 
-- Bluetooth unavailable, missing Nearby Devices permission, unsupported advertising, failed
-  advertising, and connection-capacity limits have distinct Android states.
-- Chrome distinguishes unsupported Web Bluetooth, Linux flag requirements, chooser
-  cancellation, unavailable phone, policy denial, authentication failure, empty history, and
-  mid-transfer disconnect.
-- Disconnection abandons pending delivery. The next popup connection performs a fresh pull.
-- Android process death clears OTP history and connections. Browser restart clears Chrome OTP
-  history. Trusted identities and settings remain unless their keys are unavailable.
-- BLE framing is bounded and handles negotiated packet-size limits. Oversized or malformed
-  messages are rejected.
-- No error, debug log, metric, or status text includes plaintext OTPs, codes, or keys.
+- Invalid, unknown, revoked, malformed, replayed, reordered, oversized, or
+  incompatible protocol input returns no OTP data and fails closed.
+- Bluetooth unavailable, Nearby Devices denial, unsupported advertising,
+  service failure, and connection-capacity limits have distinct Android states.
+- Chrome distinguishes unsupported Web Bluetooth, chooser cancellation,
+  unavailable phone, stale-bond troubleshooting, policy denial, authentication
+  failure, empty history, background liveness failure, clipboard failure, and
+  disconnect.
+- Background-tab timer throttling must not silently convert a healthy session
+  into expected behavior. It is a transport failure until the revised spike
+  proves a robust mechanism.
+- Disconnection abandons pending delivery. A new chooser selection establishes
+  fresh session keys and performs a fresh pull.
+- OTPs, pairing codes, keys, public-key encodings, and plaintext records never
+  appear in logs or metrics.
 
 ## Validation strategy
 
-### Feasibility gate
+### Current spike completion
 
-The first roadmap issue established these binding platform findings:
+Issue #77 first revises its synthetic harness and matrix to:
 
-- An MV3 action popup cannot own `requestDevice()` on desktop Chrome; the supported visible
-  owner is an active extension tab.
-- Chrome Web Bluetooth on Windows cannot reliably access authenticated/MITM-gated GATT
-  attributes, including already-paired devices. The transport uses plain GATT permissions.
-- macOS does not reproduce the Windows encrypted-GATT failure.
-- Plain-GATT pull, push, asynchronous copy, connector closure, and two-phone flows are viable
-  enough to continue the roadmap.
-- The 20-minute foreground lifecycle and one-phone/two-connector topology remain unverified
-  and are release-gate work, not assumed successes.
+- Remove required OS pairing and encrypted-GATT expectations.
+- Test tab backgrounding for a throttling-relevant duration.
+- Replace the short client timer dependency with the proposed production
+  liveness approach.
+- Route automatic copy through the offscreen clipboard helper.
+- Run one-phone/two-computer fan-out.
+- Run the 20-minute Android foreground lifecycle.
+- Repeat closure and multi-device cases.
+- Record exact environments, commit SHAs, timings, logs, and limitations.
 
-Plain GATT is transport only. No real OTP may cross it until the application-layer protocol in
-`2026-08-14-bluetooth-application-security-design.md` provides trusted pairing, persistent
-identity, fresh authenticated session keys, AEAD, and replay protection. Experimental offscreen
-APIs remain outside the stable-release architecture.
+The spike reaches **go** only when every required Windows/macOS case passes.
+A harness defect is fixed and rerun. Missing hardware or incomplete evidence is
+inconclusive. A repeatable failure returns the transport design for review.
 
-### Automated validation
+### Automated security and feature validation
 
-- RFC 9807 and project protocol vectors are consumed by native Rust, Android JNI, and browser
-  WASM; platform-crypto vectors cover identity signatures, ECDH, HKDF, AEAD, and replay state.
-- Android tests cover secure storage and backup exclusion, buffer expiry, policy checks,
-  pairing limits, authentication, revocation, fan-out, and service state.
-- Extension tests cover non-extractable identity persistence, connector-tab state, expiry,
-  deduplication, badge count, copying, multiple phones, and errors.
-- Packaged-extension browser tests use simulated transport where practical.
-- Docker CI validates deterministic builds and simulation, but never claims to validate real
-  Bluetooth behavior.
+- Shared deterministic vectors cover OPAQUE, identity signatures, ECDH, HKDF,
+  AEAD, replay state, binary schemas, and JNI/WASM boundaries.
+- Property and fuzz tests cover binary decoders, fragmentation, state machines,
+  and length bounds.
+- Android tests cover secure storage and backup exclusion, buffer expiry,
+  delivery policy, service lifecycle, pairing limits, revocation, and fan-out.
+- Extension tests cover installation identity persistence, launcher behavior,
+  connector lifecycle, background messaging, clipboard helper, session history,
+  badge, copying, multiple phones, and errors.
+- Docker and CI validate deterministic builds and simulated protocol behavior;
+  they never claim to validate physical Bluetooth.
 
-### Physical-system validation
+### Physical release validation
 
-A repeatable hardware workflow validates one-time OPAQUE pairing, automatic authenticated
-reconnect, encrypted pull and push, disconnect, revocation, and recovery using a physical
-Android 13+ phone and desktop Chrome. Release validation covers Windows, macOS, experimental
-Linux, two concurrent computers, multiple phones, all delivery policies, Bluetooth
-interruption, connector-tab/browser closure, process restart, malformed traffic, replay
-attempts, and the previously untested 20-minute lifecycle and two-connector topology.
-
-Issue 3 ends with a focused protocol review before cryptographic implementation. Issue 21
-performs the external release-candidate security review, and Issue 22 cannot begin until that
-review is accepted.
+Physical Windows and macOS testing covers one-time OPAQUE pairing, automatic
+authenticated reconnect, encrypted pull and push, background-tab delivery,
+background automatic copy, interruption, closure, browser restart, revocation,
+multiple peers, delivery policies, malformed traffic, replay, and Android
+foreground lifecycle. Linux remains experimental and requires separate
+documented validation.
 
 ## Documentation and privacy
 
-README and GitHub Pages documentation must explain installation, Chrome device selection,
-one-time Veles pairing, automatic secure reconnect, security boundaries, supported platforms,
-foreground-service behavior, connector-tab limitations, Linux experimental setup, and the
-any-device Android fallback.
+README and GitHub Pages must explain:
 
-The current privacy statement must distinguish no internet transmission from explicit,
-opt-in, encrypted local Bluetooth sharing. Veles remains free of telemetry, analytics,
-accounts, advertisements, payments, and cloud services.
+- The connector-tab requirement and explicit chooser selection.
+- That the tab may remain backgrounded but must stay open.
+- Plain Bluetooth transport versus encrypted Veles application records.
+- One-time Veles pairing and automatic authenticated reconnect.
+- No OS Bluetooth pairing prerequisite.
+- Revocation and recovery after key loss.
+- Windows stale-bond troubleshooting.
+- Foreground-service behavior and supported platforms.
+- The independent sensitive-notification companion fallback.
 
-## Ordered roadmap
+Privacy language must distinguish no internet transmission from explicit,
+opt-in, encrypted local Bluetooth sharing.
 
-Issues 1 through 23 form the stable-release path. Issues 24 and 25 are deferred and do not
-block that release. Every issue that sends or displays OTP data depends on Issue 9's protected
-record layer. Production code has no plaintext or hard-coded-test-key compatibility mode.
+## Provisional implementation workstreams
 
-1. **Spike: Conclude visible-tab Web Bluetooth transport validation**
-   Record the action-popup and Windows encrypted-GATT failures, the viable plain-GATT flows,
-   the untested topologies, and the conditional recommendation. The spike remains synthetic.
-2. **Tech: Add Chrome and Rust crypto toolchains to the reproducible Gradle build**
-   Establish the Manifest V3 TypeScript/npm project plus pinned Rust, Android NDK/JNI, and
-   packaged WASM build entry points. Enforce no remote executable code and emit reproducible
-   artifact hashes and dependency metadata.
-3. **Design: Freeze and review the secure Veles Bluetooth protocol**
-   Adopt `2026-08-14-bluetooth-application-security-design.md`, freeze the OPAQUE profile,
-   binary schemas, identities, key schedule, limits, and error model, and obtain a focused
-   pre-implementation review. Protocol ambiguities block Issues 4, 8, and 9.
-4. **Crypto: Build the shared RFC 9807 OPAQUE core for Android and Chrome**
-   Implement one pinned Rust wrapper exposed only through complete JNI and WASM operations.
-   Pass RFC and project fixed-randomness vectors identically on native Rust, Android, and
-   Chrome; cover malformed state, zeroization paths, KSF performance, and packaged-WASM policy.
-5. **Security: Add persistent installation identity and trust stores**
-   Generate non-exportable P-256 ECDSA installation keys, Android Keystore and IndexedDB
-   persistence, per-peer public records, non-sync Chrome metadata, Android backup/transfer
-   exclusions, storage-loss fail-closed behavior, and cross-platform storage tests.
-6. **Android: Add the desktop-sharing Bluetooth transport service**
-   Add the user-enabled foreground service, advertising, plain-GATT lifecycle, availability,
-   and bounded transport framing. The service exposes no OTP data before application-layer
-   authentication and never treats a Bluetooth address as trust identity.
-7. **Chrome: Add visible-tab Bluetooth connections**
-   Add action-launched connector-tab selection, connection lifecycle, repeated-action focus,
-   and explicit reselection after closure. Keep Bluetooth ownership visible and do not add an
-   offscreen stable-release fallback.
-8. **Security: Implement one-time OPAQUE pairing and identity enrollment**
-   Add phone-generated expiring codes, local OPAQUE pre-registration, online attempt limits,
-   mutual confirmation, encrypted identity enrollment, pending/commit/ack state, generic
-   failures, secret erasure, and smooth re-pairing after revocation or storage loss.
-9. **Security: Implement authenticated reconnect and the protected record layer**
-   Reuse persistent identity keys without another user challenge, perform signed fresh P-256
-   ECDH after every Chrome device selection, derive directional AES-256-GCM keys with HKDF,
-   and encrypt every command, response, push, pull, heartbeat, acknowledgement, and error.
-   Enforce strict sequence/replay rejection, nonce uniqueness, canonical encoding, and no
-   downgrade to plaintext application records.
-10. **Feature: Manage and revoke trusted Veles devices**
-    Add peer listing, fingerprints, labels, last-seen state, key-loss handling, and connected
-    or offline per-peer revocation. Revocation immediately blocks sessions and requires new
-    one-time pairing.
-11. **Android: Add the short-lived OTP delivery buffer and phone-state policy**
-    Add memory-only retention and the unlocked, display-on, and always policies. Keep OTPs out
-    of logs, durable storage, pairing messages, and unauthenticated transport state.
-12. **Feature: Pull recent OTPs from Android into Chrome**
-    Retrieve eligible recent OTP events only through Issue 9 protected records, with bounded
-    responses, authenticated empty-history behavior, and no plaintext fallback.
-13. **Feature: Push new OTPs to connected Chrome clients**
-    Deliver eligible matched OTPs independently to every authenticated encrypted session,
-    handling per-client failure without exposing or blocking another client.
-14. **Testing: Establish secure Android-Chrome end-to-end validation**
-    Add deterministic protocol simulation, JNI/WASM interoperability, storage and backup,
-    wrong-code, MITM, modification, replay, reorder, crash/restart, revocation, pull/push, and
-    real-hardware Windows/macOS workflows. Automated tests never claim physical Bluetooth.
-15. **Android UI: Add Desktop Sharing and Connections settings**
-    Add service, policy, one-time pairing, countdown/attempt state, connection status,
-    fingerprints, trusted-client, storage-loss, and revocation UI without displaying secrets
-    in logs or screenshots beyond the active pairing code.
-16. **Android: Integrate Chrome pairing with sensitive-notification onboarding**
-    Coordinate desktop sharing with the existing onboarding while retaining the any-device
-    fallback. Companion association is optional defense in depth and not a transport-security
-    prerequisite.
-17. **Chrome UI: Add OTP display, copy actions, history, and badge**
-    Build the Android-aligned frequent-use experience and short-lived session history. Render
-    OTP data only after protected-record authentication and preserve clipboard focus/error
-    behavior.
-18. **Chrome UI: Complete connection, trust, and auto-copy settings**
-    Add paired-phone management, fingerprints, revocation/re-pairing, secure reconnect status,
-    and global disabled-by-default automatic copying. Never expose private key material.
-19. **Feature: Support multiple simultaneous Android and Chrome connections**
-    Validate independent identities, traffic keys, counters, queues, revocation, and failure
-    isolation for multiple phones and multiple connectors, including the previously untested
-    one-phone/two-connector topology.
-20. **Hardening: Secure Bluetooth lifecycle and failure handling**
-    Cover interruption, connector/background lifecycle, process death, malformed crypto and
-    framing input, global/per-peer limits, rate limiting, safe logs, key erasure, counter
-    boundaries, recovery, and the previously untested 20-minute foreground scenario.
-21. **Security: Review the release-candidate protocol and crypto supply chain**
-    Obtain external review of the exact OPAQUE wrapper/dependencies, JNI/WASM boundaries,
-    platform key storage, enrollment, signed ECDH, key schedule, AEAD nonces, replay policy,
-    revocation, binary decoders, CSP, SBOM, and built artifacts. Unresolved findings block
-    release packaging and all real-OTP enablement.
-22. **Release: Validate and package Chrome platform support**
-    Complete CI, reproducible APK/extension builds, Windows/macOS and experimental Linux
-    validation, Chrome Web Store disclosures, local-WASM policy checks, and extension
-    packaging only after Issue 21 is accepted.
-23. **Docs: Add Veles Chrome to the README and GitHub Pages**
-    Document connector-tab behavior, plain BLE transport versus encrypted application data,
-    one-time pairing and automatic reconnect, revocation, supported platforms, security
-    boundaries, privacy language, and recovery after key loss.
-24. **Experiment: Automatically reconnect through an offscreen extension document**
-    Evaluate experimental hidden ownership and last-device recovery after stable release.
-    Reuse Issue 9 security unchanged; hidden transport never weakens authentication.
-25. **Feature: Show desktop OTP notifications**
-    Add optional Chrome or operating-system notifications only after Issue 24 establishes a
-    viable background transport; otherwise return notification delivery for redesign. Consume
-    only authenticated protected records.
+The following workstreams are justified by current evidence but are not yet an
+issue-ready execution order:
 
-### Security dependency gates
+1. Complete Issue #77's remaining transport and lifecycle gates.
+2. Establish reproducible TypeScript, Rust, NDK/JNI, and WASM toolchains.
+3. Freeze and externally review the security protocol profile and schemas.
+4. Implement and cross-test the OPAQUE core.
+5. Implement installation identity and trust stores.
+6. Build production Android plain-GATT transport and Chrome connector-tab
+   transport without exposing OTPs.
+7. Implement one-time enrollment, authenticated reconnect, and protected
+   records.
+8. Add trust management and revocation.
+9. Add the OTP buffer, delivery policy, protected pull, and protected push.
+10. Establish automated and physical secure end-to-end validation.
+11. Add Android and Chrome product UI, history, badge, and copy behavior.
+12. Validate multi-peer isolation and harden lifecycle and failure handling.
+13. Complete release-candidate security review, packaging, platform validation,
+    Web Store disclosures, and documentation.
 
-- Issues 4 and 5 require Issue 3.
-- Issues 8 and 9 require Issues 4 through 7.
-- Issue 10 requires Issues 5, 8, and 9.
-- Issues 12, 13, 17, 18, 19, 20, 24, and 25 require Issue 9.
-- Issue 14 validates Issues 4 through 13 and remains active as later UX work lands.
-- Issue 21 reviews the integrated release candidate after Issues 2 through 20.
-- Issue 22 requires accepted Issue 21 findings; production OTP enablement is part of Issue 22
-  and cannot be merged earlier.
+No issue that sends, displays, or copies real OTP data may precede the protected
+record layer. No release packaging may precede the release-candidate security
+review.
 
-## GitHub project
+## Backlog and project finalization
 
-Create a public GitHub Projects v2 project under `raidenyn` and link it to
-`raidenyn/veles-android`. Add all roadmap issues in implementation order.
+Do not create the remaining implementation issues or GitHub project while
+Issue #77 is inconclusive. After the spike reaches a supported decision:
 
-The project uses these fields:
-
-- **Status**: Backlog, Ready, In Progress, In Review, Blocked, Done.
-- **Implementation order**: numeric order from 1 through 25.
-- **Phase**: Feasibility, Foundations, Security, Core delivery, Product UX, Release, Future.
-- **Area**: Android, Chrome, Cryptography, Cross-platform, Documentation.
-- **Release scope**: Stable release or Deferred.
-
-The existing spike Issue 1 starts In Review until its conditional report is accepted; all
-new issues start Backlog. The project provides an implementation-order table, a status board,
-a security-gates view, and a deferred-work view. If the GitHub API cannot configure views, the
-populated fields, dependency text, and sequential item positions remain authoritative and view
-setup is documented for a project owner to complete in the web UI.
+1. Reconcile these workstreams with the observed transport constraints.
+2. Produce concise, standalone issues with explicit dependencies and security
+   gates.
+3. Create the public GitHub project under `raidenyn`.
+4. Add implementation order, phase, area, release scope, and status fields.
+5. Put deferred offscreen Bluetooth ownership and desktop notifications outside
+   the stable-release path.
 
 ## Reference constraints
 

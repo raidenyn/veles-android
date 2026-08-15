@@ -1,26 +1,22 @@
 # Popup-owned Web Bluetooth feasibility spike
 
-> **Superseded launch context:** Physical testing showed that desktop Chrome
-> rejects `requestDevice()` from an MV3 action popup before displaying a
-> chooser. The approved replacement launch context is specified in
-> `2026-08-11-extension-tab-web-bluetooth-design.md`; the Android protocol and
-> synthetic-data constraints below remain applicable.
-
-> **Superseded link-layer security:** the encrypted/MITM GATT permissions
-> required below are unreachable from Chrome's Web Bluetooth on Windows. The
-> harness now uses unprotected GATT permissions and stays synthetic-data-only;
-> application-layer authenticated key agreement and AEAD are required before any
-> real OTP uses this transport, and are not yet designed. See the Windows BLE
-> pairing platform finding in
-> `docs/spikes/2026-08-11-popup-web-bluetooth-validation.md`.
+> **Historical specification. Do not use this as current implementation
+> guidance.** Physical testing rejected action-popup ownership, OS pairing as a
+> prerequisite, and encrypted/MITM GATT as a portable Windows transport. The
+> current connector-tab/plain-GATT requirements are in
+> `2026-08-11-android-chrome-bluetooth-otp-sharing-design.md`; production
+> security is in `2026-08-14-bluetooth-application-security-design.md`; recorded
+> evidence and remaining gates are in
+> `docs/spikes/2026-08-11-popup-web-bluetooth-validation.md`. The material below
+> is retained only to explain the original synthetic spike.
 
 ## Status
 
-Approved on 2026-08-11.
+Approved on 2026-08-11 and superseded by physical findings in PR #78.
 
-This specification defines the implementation and real-hardware validation for GitHub issue
-#77. It is the feasibility gate for the popup-owned Bluetooth architecture in the approved
-Android-Chrome Bluetooth OTP sharing roadmap.
+This specification defined the original implementation and real-hardware
+validation for GitHub issue #77. It no longer defines the current feasibility
+gate.
 
 ## Goal
 

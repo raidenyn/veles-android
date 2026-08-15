@@ -1,5 +1,10 @@
 # Extension-tab Web Bluetooth Implementation Plan
 
+> **Historical completed migration plan.** This plan explains the move from an
+> action popup to a connector tab. It does not define the remaining
+> background-tab liveness or offscreen clipboard validation; use the current
+> roadmap spec and physical validation report for that work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the Chrome action popup that cannot display a Web Bluetooth chooser with an action-launched extension tab that owns the existing Bluetooth session.
