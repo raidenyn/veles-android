@@ -718,7 +718,7 @@ cryptographic sequence numbers. Reassembly, peer, queue, message, and process
 limits are explicit and tested. The baseline security design caps the service
 at eight simultaneous clients, two incomplete messages and 8 KiB reassembly
 per peer,
-16 incomplete messages and 64 KiB globally, 32 queued messages and 32 KiB per
+16 incomplete messages and 64 KiB globally, 16 queued messages and 16 KiB per
 peer, and 128 queued messages and 128 KiB globally.
 
 ### Safe observability
@@ -1492,7 +1492,8 @@ with another ordinary tab focused and no audio, WebRTC, or other
 timer-throttling exemption active; after a minute-20 push is scheduled, the
 Android task is removed and the phone remains locked for at least 15 minutes,
 the foreground indication remains present, a connector pulls after minute 15,
-and the scheduled push arrives by minute 21; fresh reconnect uses fresh keys;
+and the scheduled push arrives no earlier than minute 19 and no later than
+minute 21 (a one-minute tolerance from the scheduled minute 20); fresh reconnect uses fresh keys;
 failures are reproducible and classified; no result relies on an OS bond,
 native handle, or platform hint as setup or trust;
 connector closure leaves no host process and restart creates fresh handles and
