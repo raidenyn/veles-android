@@ -2025,11 +2025,13 @@ on the wrist. The protocol fits without divergence:
   client-side bearer (Native Messaging + the Rust/Tauri bridge); a watch speaks
   GATT directly and needs none of it.
 - SPAKE2 uses no memory-hard preprocessing, so the watch runs the very profile
-  the Chrome connector runs — the same pinned Rust core (OTP-03 gains an Xtensa
-  firmware target), the same six-digit code ceremony, the same limits. There is
-  no embedded-memory carve-out and no unreviewed downgrade. (This was the
-  blocker under OPAQUE and is the principal reason SPAKE2's selection unlocks
-  watch support.)
+  the Chrome connector runs — the same pinned Rust core, the same six-digit
+  code ceremony, the same limits. There is no embedded-memory carve-out and no
+  unreviewed downgrade. (This was the blocker under OPAQUE and is the principal
+  reason SPAKE2's selection unlocks watch support.) OTP-03 remains scoped to
+  native Rust, Android JNI, and browser WASM; the Xtensa firmware target is
+  validated separately by OTP-26, consistent with OTP-26's declared dependency
+  on OTP-03.
 - The resource caps (8 simultaneous clients, 2 incomplete messages / 8 KiB
   reassembly per peer, queue bounds) and the multi-peer isolation model apply
   to watch peers unchanged. Delivery policies remain phone-side and apply to
@@ -2046,9 +2048,13 @@ on the wrist. The protocol fits without divergence:
 
 ### OTP-26: Validate esp-rs toolchain, NimBLE BLE central, and SPAKE2 core on Xtensa
 
-**Outcome:** Evidence that the pinned Rust SPAKE2 core (OTP-03) and a
-production-grade Rust BLE GATT central both build and run for ESP32-S3 class
-silicon, with rough timing data, before any firmware is committed to.
+**Outcome:** Evidence that the pinned Rust SPAKE2 core (OTP-03) builds and runs
+on ESP32-S3 class emulation with rough timing data, and that a supported host
+BLE central proves a functional GATT round-trip. The selected `esp32-nimble`
+central crate/configuration is validated only up to compile, link, and boot on
+the `qemu-system-xtensa` ESP32-S3 machine; functional radio behavior of that
+stack is reserved for the physical-hardware follow-up and is *not* claimed here.
+All evidence is gathered before any firmware is committed to.
 
 **Scope:** In a disposable harness, build the OTP-03 SPAKE2 core against
 Xtensa targets via the esp-rs toolchain (ESP-IDF `linux` host target for fast
@@ -2066,8 +2072,10 @@ memory ceiling on the emulated CPU; document crate/toolchain pins, build
 friction, and any central-role API gaps. Also survey the board-support gap
 (ST7789 display, FT6336 touch, AXP2101 PMU) to size OTP-28-class BSP work.
 
-**Exclusions:** Veles UI, OTP data, trust storage, real hardware, and anything
-kept. Spike output is throwaway.
+**Exclusions:** Veles UI, OTP data, trust storage, real hardware, and production
+code. The spike harness, logs, traces, and written decision are retained (they
+reproduce the spike and inform the follow-up RFC) but are research artifacts,
+not production deliverables.
 
 **Dependencies:** OTP-01, OTP-02, OTP-03.
 
@@ -2106,7 +2114,9 @@ push + ack). Measure setup reliability and document which layers are real
 (procedure PDUs, crypto) vs emulated (radio, timing).
 
 **Exclusions:** Real radios, real phones/watches, OTP data, and any production
-code. Spike output is throwaway.
+code. The spike harness, configuration files, traces, and adoption
+recommendation are retained (to reproduce the harness and let Gate-B/C tests
+adopt it) but are research artifacts, not production deliverables.
 
 **Dependencies:** OTP-06, OTP-09, OTP-10, OTP-26.
 
