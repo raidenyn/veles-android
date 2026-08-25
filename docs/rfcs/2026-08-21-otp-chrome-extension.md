@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted for execution planning and amended to select the native bridge on
-2026-08-21.
+Accepted for execution planning, amended to select the native bridge on
+2026-08-21, and amended to select RFC 9382 SPAKE2 for first pairing on
+2026-08-25.
 
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and a Veles Chrome extension. It was
@@ -18,13 +19,14 @@ background.
 
 PR #78 recorded an incomplete physical validation matrix and described
 tab-owned Web Bluetooth as conditionally promising. That evidence remains
-useful history, but the approved amendment to this RFC replaces that production
+useful history, but the approved amendments to this RFC replace that production
 transport on Windows and macOS with an on-demand Rust and Tauri Native Messaging
-BLE bridge with no durable state. Chrome continues to own all Veles cryptography
-and the Android protected plain-GATT protocol is unchanged. This decision
-permits execution planning. It does not waive native-host feasibility,
-protected-transport, security-review, physical-validation, installer, or release
-gates defined below.
+BLE bridge with no durable state and replace OPAQUE enrollment with balanced
+SPAKE2. Chrome continues to own all Veles cryptography and the protected
+plain-GATT transport shape is unchanged. These decisions permit execution
+planning. They do not waive native-host feasibility, protected-transport,
+security-review, physical-validation, installer, or release gates defined
+below.
 
 ## Decision summary
 
@@ -41,9 +43,9 @@ gates defined below.
 - Plain GATT is untrusted transport. OS Bluetooth pairing, Bluetooth names,
   Bluetooth addresses, and Android companion associations provide no Veles
   trust.
-- First pairing uses RFC 9807 OPAQUE and a short code displayed by the unlocked
-  phone. Later use searches or reconnects through non-authoritative platform
-  hints and always authenticates the phone before accepting a session.
+- First pairing uses RFC 9382 balanced SPAKE2 and a short code displayed by the
+  unlocked phone. Later use searches or reconnects through non-authoritative
+  platform hints and always authenticates the phone before accepting a session.
 - Every production application record is encrypted, authenticated, ordered,
   and replay protected independently of BLE link security.
 - Android and Chrome retain at most five OTP events globally for no more than
@@ -69,6 +71,11 @@ The decisions in this RFC are based on the following sources:
 - [Original popup feasibility design](../superpowers/specs/2026-08-11-popup-web-bluetooth-spike-design.md)
 - [PR #78 application-security design](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/superpowers/specs/2026-08-14-bluetooth-application-security-design.md)
 - [PR #78 physical-validation report](https://github.com/raidenyn/veles-android/blob/f5ec4afbd587c57e844d9d58b635211dde86f9c3/docs/spikes/2026-08-11-popup-web-bluetooth-validation.md)
+- [RFC 8125: Requirements for PAKE schemes](https://www.rfc-editor.org/rfc/rfc8125.html)
+- [RFC 9382: SPAKE2](https://www.rfc-editor.org/rfc/rfc9382.html)
+- [RFC 9807: OPAQUE](https://www.rfc-editor.org/rfc/rfc9807.html)
+- [CPace CFRG Internet-Draft](https://datatracker.ietf.org/doc/draft-irtf-cfrg-cpace/)
+- [PR #79 first-pairing protocol review](https://github.com/raidenyn/veles-android/pull/79#discussion_r3834994122)
 
 PR #78 physically established or strongly supported these findings:
 
@@ -162,10 +169,11 @@ ordinary application update delivery do not change this data boundary.
    and the user selects the intended advertising phone. OS Bluetooth pairing is
    not a setup step.
 8. The user enters the code in the connector tab.
-9. Android and Chrome complete OPAQUE, exchange installation identities, and
-   atomically activate trust.
-10. Both endpoints erase the code, pending OPAQUE state, and enrollment traffic
-   keys.
+9. Android and Chrome complete SPAKE2 and its bidirectional key confirmation,
+   exchange installation identities through the protected enrollment channel,
+   and activate trust through prepare/commit/ack.
+10. Both endpoints erase the code, pending SPAKE2 state, and enrollment traffic
+    keys.
 
 ### Later use
 
@@ -190,7 +198,7 @@ Closing the connector tab closes its Native Messaging port, disconnects every
 BLE link, erases every live cryptographic session, and lets the on-demand host
 exit. Reopening uses saved hints for authenticated automatic reconnect where
 possible and otherwise offers search and explicit selection. It does not
-require new OPAQUE enrollment unless trust was revoked or lost.
+require new SPAKE2 enrollment unless trust was revoked or lost.
 
 ### Revocation and recovery
 
@@ -321,7 +329,7 @@ A user-enabled `connectedDevice` foreground service owns:
 - Plain-GATT advertising and server lifecycle.
 - Bounded fragmentation and reassembly.
 - Per-connection transport queues.
-- OPAQUE enrollment sessions and protected normal sessions.
+- SPAKE2 enrollment sessions and protected normal sessions.
 - Multi-client fan-out and session cleanup.
 - Actual availability, advertising, and connection state for the Android UI.
 
@@ -400,7 +408,7 @@ The connector tab owns:
 - The Native Messaging port and compatibility handshake.
 - Extension-owned scan results, explicit phone selection, platform hints, and
   per-phone native handles.
-- OPAQUE pairing and protected normal sessions.
+- SPAKE2 pairing and protected normal sessions.
 - Pull, push, acknowledgement, and liveness state.
 - Short-lived rendered history and per-phone connection state.
 - Multiple independent phone connections.
@@ -631,16 +639,39 @@ transport threat boundary.
 
 ### Cryptographic implementation
 
-First pairing uses OPAQUE from RFC 9807. A pinned Rust wrapper around
-`opaque-ke` is compiled as an Android NDK library behind a narrow JNI interface
-and as locally packaged browser WASM. Kotlin and TypeScript do not independently
-implement the PAKE.
+First pairing uses balanced SPAKE2 from RFC 9382. A pinned Rust core is compiled
+as an Android NDK library behind a narrow JNI interface and as locally packaged
+browser WASM. Kotlin and TypeScript do not independently implement the PAKE.
 
-The baseline profile is OPAQUE-3DH with RFC 9807 Ristretto255/SHA-512 and
-Argon2id v1.3 using 64 MiB, three iterations, and parallelism one. The wrapper
-pins the profile, dependency graph, identities, context, serialization, bounds,
-and errors. Performance is measured before release; an unreviewed runtime
-downgrade is prohibited.
+The baseline ciphersuite is `SPAKE2-P256-SHA256-HKDF-HMAC`. Android is fixed as
+party A and sends first; Chrome is fixed as party B. The RFC 9382 identity byte
+strings included in `TT` are exactly `Veles Android SPAKE2 party A v1` for A and
+`Veles Chrome SPAKE2 party B v1` for B, encoded as ASCII. The core uses the RFC
+9382 P-256 M and N points, uncompressed SEC1 point encoding, complete point
+validation, fresh uniformly sampled scalars for every attempt, constant-time
+secret-dependent group operations and comparisons, and the RFC 9382 `cA` and
+`cB` confirmation messages. Neither endpoint treats SPAKE2 as complete or
+releases enrollment data until it has verified the peer's confirmation.
+
+The six ASCII digits, including leading zeroes, are transformed into `w` by
+`prk = HKDF-Extract-SHA256(salt = pairing_id, IKM = code_ascii)` followed by
+`okm = HKDF-Expand-SHA256(prk, info, 40)`, where `info` is exactly the ASCII
+label `Veles SPAKE2 password input v1`. `w` is the 40-byte `okm` interpreted as
+a big-endian integer modulo the P-256 subgroup order. The 320-bit intermediate
+follows RFC 9382's guidance to avoid material reduction bias. The transform is
+not an entropy amplifier: the security boundary remains one online guess per
+protocol execution plus the pairing expiry and attempt limits.
+
+No memory-hard preprocessing is used. The code is uniformly random, one-use,
+held only during a five-minute pairing window, and has no durable verifier;
+SPAKE2 prevents a captured transcript from validating guesses offline. A
+memory-hard step would not change the unavoidable online-guessing bound and
+would add browser/mobile latency and a nearby denial-of-service surface. Any
+change to this decision requires protocol and external security review.
+
+The core pins the ciphersuite, dependency graph, role assignment, password
+encoding, context, serialization, bounds, and errors. Performance is measured
+before release; an unreviewed runtime downgrade is prohibited.
 
 Normal sessions use platform cryptography:
 
@@ -654,25 +685,63 @@ Normal sessions use platform cryptography:
 Private identity keys remain in Android Keystore or non-extractable Web Crypto
 storage and never pass through Rust or WASM.
 
-### OPAQUE enrollment
+### SPAKE2 enrollment
 
-Android locally pre-registers the one-time OPAQUE credential because RFC 9807
-registration requires an authenticated confidential channel. Pending state is
-bound to a random pairing ID, phone installation ID, protocol version, role,
-context, and exact OPAQUE profile.
+Android creates one random 128-bit pairing ID and one uniformly random six-digit
+code, preserving leading zeroes. Pending state and code expiry use monotonic
+time. Before SPAKE2, both endpoints construct one canonical, length-prefixed
+public context containing the application and protocol version, exact
+ciphersuite, pairing ID, fixed A/B roles, both fresh pairing nonces, and both
+offered capability sets in role order. This context is supplied identically as
+RFC 9382 AAD and is bound into key confirmation. Stable installation IDs and
+identity public keys are not sent before SPAKE2 confirmation.
 
 One pairing ID permits at most five online attempts. Android permits only one
-OPAQUE server operation in flight and no more than five attempts in any rolling
-five-minute interval across pairing IDs. Excess work is rejected before the
-memory-hard operation begins. Android also permits only one active pairing
-window. Unknown, expired, incorrect, rate-limited, busy, and malformed attempts
-produce generic failures.
+SPAKE2 operation in flight and no more than five attempts in any rolling
+five-minute interval across pairing IDs. After validating framing, pairing ID,
+length, and the received `pB` point, Android atomically and non-refundably
+consumes one attempt before any password-dependent group operation or `cA`
+response. A duplicate or replayed valid `pB`, later confirmation failure,
+disconnect, cancellation, or timeout still consumes that attempt. Malformed or
+invalid-point input is rejected before attempt consumption but remains subject
+to separate framing, request-rate, concurrency, and resource limits. Excess
+valid attempts are rejected before password-dependent group operations begin.
+Android also permits only one active pairing window. Unknown, expired,
+incorrect, rate-limited, busy, and malformed attempts produce generic failures.
 
-After OPAQUE key confirmation, both sides exchange encrypted enrollment
-records containing installation ID, label, identity public key, fingerprint,
-and nonce. A prepare/commit/ack exchange keeps records inactive until mutual
-confirmation. A disconnect may leave an inactive pending record, but it cannot
-grant access and expires automatically.
+After both RFC 9382 confirmation messages pass, enrollment derives
+`enrollment_prk = HKDF-Extract-SHA256(salt, Ke)`, where `salt` is
+`SHA-256(label || len(AAD) || AAD)` and `label` is exactly the ASCII string
+`Veles SPAKE2 enrollment salt v1`; `len(AAD)` is the unsigned 64-bit
+little-endian byte length used by RFC 9382's `len` function. HKDF-Expand derives
+32-byte AES keys, four-byte nonce prefixes, and 32-byte HMAC-SHA-256 activation
+confirmation keys independently for each direction under the exact ASCII labels
+`Veles enrollment A-to-B AES key v1`, `Veles enrollment A-to-B nonce v1`,
+`Veles enrollment A confirmation v1`, `Veles enrollment B-to-A AES key v1`,
+`Veles enrollment B-to-A nonce v1`, and
+`Veles enrollment B confirmation v1`. Enrollment nonces concatenate the
+directional four-byte prefix with an unsigned 64-bit big-endian sequence number
+starting at zero. The complete `Hash(TT)` is not an input because its `Ka` half
+is reserved exclusively for RFC 9382 key confirmation; `Ke` is never used
+directly. Android sends the first protected enrollment record only after it
+verifies `cB`; Chrome releases its protected enrollment record only after it
+authenticates that Android record, proving Android reached confirmation. The
+records contain installation ID, label, identity public key, fingerprint, and
+nonce.
+
+Trust activation is explicitly interruption-safe rather than distributed-
+atomic. Both endpoints first persist inactive `pending` records and confirm the
+canonical enrollment transcript, which binds both installation records, the
+complete SPAKE2 exchange, and activation state. Chrome then sends `commit`;
+Android atomically transitions to `committed_waiting_ack` and sends
+`activation_complete`; Chrome atomically transitions to `active` and sends
+`activation_ack`; Android transitions to `active` only after authenticating that
+ack. Pending or `committed_waiting_ack` records authorize only this bounded,
+idempotent activation-recovery exchange and never OTP pull, push, or other
+application records. If any message is lost, a later authenticated recovery
+connection resumes the recorded state. Android sends no OTP until it is active,
+which proves Chrome reached active and sent the final ack. Incomplete records
+expire automatically or are removed by explicit cancellation or revocation.
 
 ### Authenticated reconnect
 
@@ -738,7 +807,7 @@ part of Desktop Sharing setup.
 
 The Chrome connector does not require, reuse, infer, or modify companion
 association. Companion association never authorizes OTP delivery. Veles Chrome
-trust exists only after OPAQUE enrollment.
+trust exists only after SPAKE2 enrollment.
 
 ## Failure handling
 
@@ -793,7 +862,7 @@ Before any task integrates real `OtpMessage` data:
   stable Windows and macOS.
 - The production bridge and per-user installer path, not a development-only
   registration or Web Bluetooth fallback, is used by the matrix.
-- OPAQUE enrollment, trust activation, authenticated reconnect, protected
+- SPAKE2 enrollment, trust activation, authenticated reconnect, protected
   records, revocation, and key-loss behavior pass cross-runtime tests.
 - A synthetic-data physical matrix passes on stable Windows and macOS Chrome.
 - The connector and Native Messaging port remain useful while backgrounded for
@@ -841,8 +910,8 @@ rejected decision. An incomplete or inconclusive matrix leaves Gate C open.
 
 Before public release:
 
-- An external reviewer assesses the exact threat model, OPAQUE profile and
-  pre-registration use, Rust wrapper, dependencies, schemas, enrollment,
+- An external reviewer assesses the exact threat model, SPAKE2 profile,
+  password-to-scalar transform, Rust core, dependencies, schemas, enrollment,
   identity storage, key schedule, nonce construction, replay policy,
   revocation, JNI, WASM, Native Messaging envelope/parser/state machine,
   request correlation and handle routing, bounds/queues/framing,
@@ -851,7 +920,7 @@ Before public release:
   and packaged artifacts.
 - All findings are fixed, and affected release-candidate components are
   re-reviewed.
-- OPAQUE completes within three seconds on each endpoint on the representative
+- SPAKE2 completes within one second on each endpoint on the representative
   minimum and median Android devices and stable Windows/macOS browsers selected
   in the release matrix. A miss returns the profile for a separate revision
   approved by the release owner and external security reviewer; an unreviewed
@@ -917,11 +986,27 @@ documentation in OTP-22.
   by the OTP data boundary and security model.
 - **Plaintext production fallback:** prohibited even when secure setup or
   protected sessions fail.
+- **OPAQUE for one-time pairing:** RFC 9807 is an augmented client/server PAKE
+  whose registration phase requires an authenticated confidential channel and
+  whose principal benefit is protecting long-lived server-side password
+  records. Android generates, displays, and erases this one-time random code and
+  stores no durable verifier, so local pre-registration adds OPRF, envelope, and
+  state complexity without improving this threat model.
+- **Ephemeral ECDH plus a short authentication string:** ordinary ECDH is
+  available through Android Keystore and Web Crypto, but a secure six-digit SAS
+  flow requires a reviewed commitment construction to prevent adaptive key or
+  nonce grinding, changes the approved display-then-enter ceremony, and shifts
+  security onto a bespoke human-confirmation protocol. Ordinary ECDH with the
+  digits used as a raw PSK, MAC key, or transcript hash is prohibited.
 
 ### Deferred to separate RFCs
 
 - Desktop OTP notifications.
 - Experimental hidden/offscreen Web Bluetooth ownership.
+- CPace as the first-pairing PAKE. It fits the balanced-PAKE threat model but is
+  still a changing CFRG Internet-Draft rather than a published RFC; reconsider
+  only through a future protocol revision with final specification, test
+  vectors, implementation review, and migration analysis.
 - Any Linux implementation, packaging, validation, support, or user
   documentation; all are wholly deferred to a future RFC.
 
@@ -1008,12 +1093,13 @@ initial Status Ready.
 **Outcome:** Android, Rust, and Chrome share one reviewed, versioned,
 unambiguous protocol contract before protocol implementation expands.
 
-**Scope:** Specify OPAQUE profile and context, installation identities,
-enrollment states, reconnect transcript, P1363 signature encoding, HKDF
-schedule, AES-GCM records, nonce construction, sequence rules, binary schemas,
-fragmentation bounds, protected pull/push/policy/acknowledgement records,
-pairing attempt/concurrency limits, capabilities, errors, version negotiation,
-and fixture format. Separately freeze immutable `envelope_version: 1`,
+**Scope:** Specify the RFC 9382 SPAKE2 profile, roles, password-to-scalar
+transform, AAD and confirmation context, installation identities, enrollment
+states, reconnect transcript, P1363 signature encoding, HKDF schedule, AES-GCM
+records, nonce construction, sequence rules, binary schemas, fragmentation
+bounds, protected pull/push/policy/acknowledgement records, pairing
+attempt/concurrency limits, capabilities, errors, version negotiation, and
+fixture format. Separately freeze immutable `envelope_version: 1`,
 `hello`/`ready` bridge API negotiation, operation-specific completion events
 including `sent`, unsolicited events, ordering, whole-record boundaries,
 bounds, handles, errors, and the single `record_base64` JSON field. Prohibit
@@ -1048,25 +1134,29 @@ cross-language vector test skeletons.
 Cross-platform; Release scope Stable release; Gate Blocks protected transport;
 initial Status Backlog.
 
-### OTP-03: Implement and cross-test the pinned OPAQUE core
+### OTP-03: Implement and cross-test the pinned SPAKE2 core
 
-**Outcome:** One reviewed Rust wrapper performs first-pairing OPAQUE operations
+**Outcome:** One reviewed Rust core performs first-pairing SPAKE2 operations
 identically through Android JNI and browser WASM.
 
-**Scope:** Implement the pinned `opaque-ke` wrapper, fixed profile, input and
-state bounds, registration preparation, client/server login, key confirmation,
-serialization, zeroization where supported, narrow JNI and WASM APIs, and
-stable error mapping.
+**Scope:** Implement or wrap the pinned RFC 9382
+`SPAKE2-P256-SHA256-HKDF-HMAC` profile, fixed A/B roles, code-to-`w` transform,
+input and state bounds, point validation, fresh scalar generation, bidirectional
+key confirmation, serialization, zeroization where supported, narrow JNI and
+WASM APIs, and stable error mapping.
 
 **Exclusions:** Platform identity keys, trust-store activation, Bluetooth, and
 real OTP records.
 
 **Dependencies:** OTP-01 and OTP-02.
 
-**Acceptance criteria:** RFC 9807 and project vectors pass in native Rust,
-JNI, and WASM; wrong-code, malformed-element, expired-state, replay, length,
-and boundary cases fail consistently; Kotlin and TypeScript contain no
-independent PAKE implementation; browser packaging uses only local WASM.
+**Acceptance criteria:** RFC 9382 and project vectors pass in native Rust, JNI,
+and WASM; wrong-code, invalid-point, malformed-element, expired-state, replay,
+role/context mismatch, length, RNG failure, and boundary cases fail
+consistently; core-owned generation and tests prove fresh scalar and state use
+for every attempt; both confirmation messages are required; Kotlin and
+TypeScript contain no independent PAKE implementation; browser packaging uses
+only local WASM.
 
 **Verification evidence:** Shared vector results from all runtimes, Rust tests,
 JNI instrumentation tests, browser/WASM tests, fuzz results, dependency hashes,
@@ -1086,7 +1176,7 @@ store peer IDs, public keys, labels, fingerprints, lifecycle timestamps, and
 pending/active state atomically; enforce backup and transfer exclusion; expose
 testable repository interfaces; detect key loss and corruption.
 
-**Exclusions:** OPAQUE flow, GATT transport, pairing UI, and OTP storage.
+**Exclusions:** SPAKE2 flow, GATT transport, pairing UI, and OTP storage.
 
 **Dependencies:** OTP-01 and OTP-02.
 
@@ -1114,7 +1204,7 @@ extension storage; implement atomic pending/active records, corruption
 detection, identity loss handling, and per-peer non-authoritative platform
 hints that never participate in trust selection.
 
-**Exclusions:** OPAQUE flow, native BLE transport, connector UI, sync storage,
+**Exclusions:** SPAKE2 flow, native BLE transport, connector UI, sync storage,
 and OTP history.
 
 **Dependencies:** OTP-01 and OTP-02.
@@ -1144,7 +1234,7 @@ service lifecycle, plain-GATT service and characteristics, advertising,
 fragmentation/reassembly, per-client queues, connection limits, cleanup,
 availability state, and best-effort restoration.
 
-**Exclusions:** OPAQUE, protected records, `OtpMessage` integration, and final
+**Exclusions:** SPAKE2, protected records, `OtpMessage` integration, and final
 product UI.
 
 **Dependencies:** OTP-01 and OTP-02.
@@ -1385,7 +1475,7 @@ ephemeral ECDH, HKDF schedule, encrypted key confirmation, directional
 AES-GCM records, exact sequence enforcement, protected errors, session teardown,
 and reconnect.
 
-**Exclusions:** First-time OPAQUE enrollment, real OTP payloads, and product UI.
+**Exclusions:** First-time SPAKE2 enrollment, real OTP payloads, and product UI.
 
 **Dependencies:** OTP-02, OTP-03, OTP-04, OTP-05, OTP-06, and OTP-07.
 
@@ -1403,17 +1493,18 @@ malformed-input tests, and synthetic cross-endpoint integration tests.
 Cross-platform; Release scope Stable release; Gate Blocks real OTP; initial
 Status Backlog.
 
-### OTP-10: Implement one-time OPAQUE enrollment and trust activation
+### OTP-10: Implement one-time SPAKE2 enrollment and trust activation
 
 **Outcome:** A user can pair one phone and one extension installation with a
-short code without exposing the code to offline guessing or granting partial
-trust after interruption.
+short code without exposing the code to offline guessing or granting OTP access
+after interrupted activation.
 
-**Scope:** Add Android pairing-window state, local OPAQUE pre-registration,
+**Scope:** Add Android pairing-window state, pairing ID and code generation,
 attempt and time limits, extension-owned phone search and selection, Chrome code
-entry, OPAQUE login over opaque native transport, encrypted enrollment records,
-Android-visible confirmation, prepare/commit/ack activation, pending record
-expiry, authenticated platform-hint capture, and sensitive-state erasure.
+entry, SPAKE2 and bidirectional confirmation over opaque native transport,
+labeled enrollment-key derivation, encrypted enrollment records,
+prepare/commit/ack activation, pending record expiry, authenticated
+platform-hint capture, and sensitive-state erasure.
 
 **Exclusions:** Peer-management UI beyond minimal harness controls and real OTP
 delivery.
@@ -1422,16 +1513,23 @@ delivery.
 
 **Acceptance criteria:** The code is random, six digits, valid for five minutes,
 and never sent or logged; one pairing ID allows at most five attempts; wrong,
-expired, cancelled, replayed, and interrupted attempts grant no trust; both
-identities and protocol context are bound; Android permits only one active
-pairing window, one OPAQUE operation in flight, and no more than five attempts
-in any rolling five-minute interval; excess attempts are rejected before the
-memory-hard operation; a native handle or platform hint never substitutes for
+expired, cancelled, replayed, and interrupted attempts never activate Android
+or authorize OTP access; any surviving local state is restricted to activation
+recovery; both identities and protocol context are bound; Android permits only
+one active pairing window, one SPAKE2 operation in flight, and no more than five
+attempts in any rolling five-minute interval; every valid `pB` is charged before
+password-dependent work or `cA` and is never refunded; malformed pre-PAKE input
+is separately rate and resource limited; both RFC 9382 confirmation messages
+pass before enrollment data is released; pending and
+`committed_waiting_ack` records authorize only activation recovery and no OTP
+data; interruption at every activation message resumes idempotently or expires
+without partial access; a native handle or platform hint never substitutes for
 the enrolled identity; successful pairing supports later automatic
 authenticated reconnect.
 
-**Verification evidence:** Shared enrollment vectors, attempt/expiry tests,
-wrong-code and interruption tests, atomic activation tests, state-erasure
+**Verification evidence:** Shared enrollment vectors, attempt/expiry and
+non-refund tests, malformed-input resource-limit tests, wrong-code and
+interruption tests, activation state-machine and recovery tests, state-erasure
 tests, and synthetic physical pairing/reconnect tests.
 
 **Project fields:** Implementation order 13; Phase Security; Area
@@ -1474,7 +1572,7 @@ lifecycle path is proven with synthetic data on supported physical platforms
 before any real OTP integration.
 
 **Scope:** Using the signed per-user packages, execute missing/incompatible-host
-recovery, extension-owned search, OPAQUE pairing, hint-based authenticated
+recovery, extension-owned search, SPAKE2 pairing, hint-based authenticated
 automatic reconnect, protected pull/push, background native event delivery,
 offscreen copy, connector/host closure and restart, revocation, Bluetooth
 interruption, and the Android 20-minute foreground-service scenario on stable
@@ -1754,7 +1852,7 @@ envelope/parser/state machine, request correlation and handle routing,
 bounds/queues/framing, WinRT/CoreBluetooth adapters, Tauri headless lifecycle,
 exact-origin host registration, and installer install/repair/upgrade/rollback/
 uninstall behavior in addition to the protected protocol and cryptography;
-remediate and re-review findings; benchmark OPAQUE;
+remediate and re-review findings; benchmark SPAKE2;
 verify ABI/CSP/permissions/local WASM and native-host privilege/network
 boundaries; reproduce unsigned bridge binaries, bundle/package payloads,
 manifests, and installer inputs in independent clean builds; validate Windows
@@ -1770,7 +1868,7 @@ machine-wide native installation, and public release before OTP-22.
 
 **Acceptance criteria:** External review accepts all listed native and protected
 protocol surfaces in the exact relevant artifacts; all findings are resolved
-and affected artifacts are re-reviewed; OPAQUE completes within three seconds
+and affected artifacts are re-reviewed; SPAKE2 completes within one second
 on each endpoint in the approved representative minimum/median matrix;
 independent clean builds produce byte-identical unsigned native outputs and
 installer inputs; signed outputs need not be byte-identical but have valid
@@ -1801,7 +1899,7 @@ the feature without misunderstanding its local data boundary or security model.
 
 **Scope:** Update README and GitHub Pages with Android/Chrome installation,
 Desktop Sharing, per-user native-host install/repair/upgrade/uninstall,
-connector and host lifecycle, extension-owned search, OPAQUE pairing,
+connector and host lifecycle, extension-owned search, SPAKE2 pairing,
 authenticated automatic reconnect and hint fallback, delivery policies,
 retention, copy behavior, revocation, key-loss recovery, foreground-service
 behavior, supported platforms, Windows stale-bond troubleshooting,
