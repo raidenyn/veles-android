@@ -2053,12 +2053,15 @@ silicon, with rough timing data, before any firmware is committed to.
 **Scope:** In a disposable harness, build the OTP-03 SPAKE2 core against
 Xtensa targets via the esp-rs toolchain (ESP-IDF `linux` host target for fast
 iteration, then `qemu-system-xtensa` ESP32-S3 machine for target-arch sanity
-and rough timing); exercise `esp32-nimble` central-role scan/connect/GATT
-client against a synthetic peer on the host for a functional round-trip, and
-separately build the selected NimBLE central crate/configuration for the
-ESP32-S3 target and boot it under `qemu-system-xtensa` as a target sanity
-check (compile, link, boot; radio behavior is not required); measure SPAKE2
-wall time and
+and rough timing); validate a host-side functional BLE round-trip with a
+supported host stack (a scripted Bumble central over a virtual HCI controller,
+or an explicitly integrated native NimBLE Linux port) performing
+scan/connect/GATT client against a synthetic peer — ESP-IDF's `bt` component
+does not build for the `linux` target, so `esp32-nimble` cannot execute on the
+host; separately build the selected `esp32-nimble` central crate/configuration
+for the ESP32-S3 target and boot it under `qemu-system-xtensa` as a target
+sanity check (compile, link, boot; radio behavior requires real hardware and
+is deferred to the follow-up firmware RFC); measure SPAKE2 wall time and
 memory ceiling on the emulated CPU; document crate/toolchain pins, build
 friction, and any central-role API gaps. Also survey the board-support gap
 (ST7789 display, FT6336 touch, AXP2101 PMU) to size OTP-28-class BSP work.
@@ -2069,10 +2072,11 @@ kept. Spike output is throwaway.
 **Dependencies:** OTP-01, OTP-02, OTP-03.
 
 **Acceptance criteria:** SPAKE2 client login completes against the RFC vectors
-on the Xtensa build; the selected NimBLE central crate/configuration builds
+on the Xtensa build; the selected `esp32-nimble` central crate/configuration builds
 and links for the ESP32-S3 target and boots under `qemu-system-xtensa`;
-`esp32-nimble` central performs scan → connect → GATT
-discover → notify round-trip against a synthetic GATT server on the host;
+a supported host BLE central (scripted Bumble over virtual HCI, or an
+explicitly integrated native NimBLE Linux port) performs scan → connect → GATT
+discover → notify round-trip against a synthetic GATT server;
 SPAKE2 timing and
 peak-heap figures recorded with the emulation-speed caveat (±50% until
 hardware); any blocker or crate gap is written up with an explicit go/no-go
@@ -2094,8 +2098,8 @@ not wait for a device.
 
 **Scope:** In a disposable harness, run the Veles Android sharing service in
 the Android emulator backed by a virtual Bluetooth controller (rootcanal or
-Bumble over virtual HCI), and a simulated watch client (OTP-26-class
-esp32-nimble build on the IDF `linux` target, or a scripted Bumble central)
+Bumble over virtual HCI), and a simulated watch client (a scripted Bumble
+central, or an explicitly integrated native NimBLE Linux port from OTP-26)
 as the central; carry OTP-02 frozen-format synthetic records end to end
 (scan/connect, SPAKE2 enrollment with a fixture code, hello/reconnect,
 push + ack). Measure setup reliability and document which layers are real
