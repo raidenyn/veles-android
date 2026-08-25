@@ -478,6 +478,16 @@ database, product trust decision, cryptographic protocol implementation, or OTP
 interpretation. Closing the Native Messaging port or receiving `shutdown`
 stops scans, disconnects all handles, clears process memory, and exits.
 
+**Tauri rationale:** Every stated bridge property is satisfiable by plain Rust
+(`windows-rs` for WinRT, `objc2`/CoreBluetooth or `btleplug` on macOS). Tauri
+is selected solely for its bundler, signing, and notarization tooling for the
+OTP-25 per-user installers — Windows code signing and macOS signing/
+notarization/stapling with a managed dependency tree. This trade adds review
+surface (Gate D must assess "Tauri headless lifecycle") but avoids a standalone
+packaging pipeline. OTP-23 explicitly validates this decision by recording the
+Tauri dependency cost and confirming the headless process meets all stated
+properties.
+
 The bridge may hold only bounded ephemeral scan, request, handle, connection,
 queue, fragment, and reassembly state plus in-flight opaque record bytes. It
 clears request and payload memory on operation completion, per-connection state
@@ -732,7 +742,10 @@ Normal sessions use platform cryptography:
 - Platform cryptographically secure randomness.
 
 Private identity keys remain in Android Keystore or non-extractable Web Crypto
-storage and never pass through Rust or WASM.
+storage and never pass through Rust or WASM **on Android and desktop**. Watch
+identity-key storage is deferred to the follow-up firmware RFC; the expected
+posture is flash-encrypted NVS with accepted physical-extraction risk consistent
+with the watch-class threat framing (see Appendix A).
 
 ### SPAKE2 enrollment
 
@@ -749,12 +762,21 @@ One pairing ID permits at most five online attempts. Android permits only one
 SPAKE2 operation in flight and no more than five attempts in any rolling
 five-minute interval across pairing IDs. After validating framing, pairing ID,
 length, and the received `pB` point, Android atomically and non-refundably
-consumes one attempt before any password-dependent group operation or `cA`
-response. A duplicate or replayed valid `pB`, later confirmation failure,
-disconnect, cancellation, or timeout still consumes that attempt. Malformed or
-invalid-point input is rejected before attempt consumption but remains subject
-to separate framing, request-rate, concurrency, and resource limits. Excess
-valid attempts are rejected before password-dependent group operations begin.
+consumes one attempt before any `pB`-dependent password-sensitive group operation
+(deriving the shared group element, key schedule, or the `cA` response). Note
+that Android as party A computes `pA = x·G + w·M` before any `pB` exists — this
+`pA` computation is not counted as an attempt. A central that connects, elicits
+a fresh `pA`, and disconnects without ever sending `pB` consumes **no** attempt
+under this rule (intentional: collected `pA` values leak nothing offline-guessable
+under the one-time random code, and the framing/request-rate/concurrency limits
+bound the churn). Android emits at most one fresh `pA` per connection and five
+fresh `pA` values in any rolling one-minute interval across pairing IDs; excess
+connections are rejected before fresh scalar generation or point multiplication.
+A duplicate or replayed valid `pB`, later confirmation failure, disconnect,
+cancellation, or timeout still consumes that attempt. Malformed or invalid-point
+input is rejected before attempt consumption but remains subject to separate
+framing, request-rate, concurrency, and resource limits. Excess valid attempts
+are rejected before `pB`-dependent password-sensitive operations begin.
 Android also permits only one active pairing window. Unknown, expired,
 incorrect, rate-limited, busy, and malformed attempts produce generic failures.
 
@@ -905,6 +927,26 @@ trust exists only after SPAKE2 enrollment.
   protected sessions; it never restores process-local handles or traffic keys.
 - Background timer throttling is not accepted as normal disconnect behavior.
   Event-driven native delivery must be demonstrated under a backgrounded tab.
+- **Chrome tab discarding (Memory Saver) and freezing:** The connector does
+  not claim or verify any discard/freeze exemption. The service worker observes
+  `chrome.tabs.onUpdated` changes to `frozen` and `discarded` plus
+  `chrome.tabs.onRemoved`; on any such transition it immediately clears the
+  per-tab badge and marks the connector unavailable, so pre-transition state is
+  never user-visible as current.
+- A freeze suspends the renderer and is treated as connection suspension, not
+  useful background operation. The host remains subject to OTP-02's queue and
+  memory bounds while the renderer is frozen. On resume, before processing any
+  queued native event or showing connected state, the connector invalidates the
+  old port generation, closes it, restarts the host, establishes fresh
+  authenticated sessions, and re-pulls bounded history. A discard performs the
+  same invalidation by killing the renderer and closing the port immediately;
+  the host exits and the tab becomes a reload-on-focus shell. Refocus/reload
+  starts the same fresh reconnect and re-pull path. Retained unexpired events
+  reappear; expired history is shown as empty. These failures are accepted as
+  equivalent to closing the connector tab.
+- Gate B forces both freeze and discard under memory pressure and verifies the
+  status reset, bounded host behavior, port/host cleanup, fresh authenticated
+  recovery, and retained-versus-expired synthetic history results.
 - No fallback may send production OTPs through plaintext messages, the spike's
   public HMAC key, an unprotected debug protocol, or a downgraded ciphersuite.
 
@@ -941,12 +983,28 @@ Before any task integrates real `OtpMessage` data:
   audio, WebRTC, or any other timer-throttling exemption active, with a
   protected native-host event and offscreen copy after minute seven.
 - Background copy succeeds through the offscreen helper.
+- Before OTP-13 exists, a Gate B-only Android fixture retains at most five
+  synthetic records with the production ten-minute expiry so lifecycle recovery
+  can exercise bounded re-pull without integrating real `OtpMessage` data.
+- On physical stable Windows and macOS Chrome, force one connector freeze and
+  one discard under memory pressure. For each observed transition,
+  `chrome.tabs.onUpdated` causes the service worker to clear the per-tab badge
+  and mark status unavailable before recovery. Resume or reload invalidates the
+  old port generation before queued events are processed; the old port closes,
+  the host exits without unbounded queues, a new host starts, fresh
+  authentication succeeds, and the synthetic five-record/ten-minute fixture is
+  re-pulled. Unexpired records return and expired records do not.
 - The Android foreground service passes the documented 20-minute
   task-removal, screen-lock, reconnect, pull, and push scenario: schedule a
   synthetic push for minute 20, background and remove the Android task, lock
   the phone for at least 15 minutes, confirm the foreground indication,
   connect and pull after minute 15, and remain connected until the scheduled
-  push arrives at minute 20 within a recorded one-minute tolerance.
+  push arrives at minute 20 within a recorded one-minute tolerance. **This
+  scenario runs with delivery-policy evaluation absent or set to `Always`**
+  (OTP-13 not yet integrated); a Gate C counterpart re-runs the locked-phone
+  scenario under the default `Unlocked only` policy and verifies the blocking
+  behavior (locked pull receives phone-state response, blocked event stays in
+  buffer and is pullable after unlock before expiry).
 - Connector closure stops the host and all BLE links; reopening performs
   authenticated automatic reconnect by hint or extension-owned reselection and
   establishes a fresh protected session.
@@ -962,6 +1020,12 @@ synthetic HMAC spike.
 After Gate B, automated and physical tests cover:
 
 - Buffer capacity, expiry, deduplication, and delivery policies.
+- Gate C includes a physical default-`Unlocked only` scenario: keep the phone
+  locked through minute 20, create the scheduled event at minute 20, verify a
+  locked pull receives the protected phone-state response and no push is sent,
+  verify the event remains in the memory buffer, then unlock and retrieve it
+  before its minute-30 expiry. Record lock, event, pull, unlock, retrieval, and
+  expiry timestamps.
 - Protected pull, push, acknowledgement, and reconnect.
 - Multiple phones and multiple computers with independent failures.
 - Android and Chrome process lifecycle, Bluetooth interruption, permission
@@ -1342,7 +1406,12 @@ manifests; exercise the Native Messaging stdin/stdout framing and port
 lifecycle, WinRT and CoreBluetooth scanning, connect, GATT discovery,
 subscription, whole-record writes and reads, disconnect, shutdown, background
 delivery, concurrent request IDs, and at least two independent phone handles
-against OTP-06.
+against OTP-06. Build both the dev-registered unsigned host and a directly
+signed production-shaped host fixture from OTP-01's unsigned payload, using the
+final macOS bundle identifier but no installer, for TCC attribution tests.
+Record Tauri's direct and transitive dependency count, SBOM, binary-size cost,
+runtime components, and security-review surface relative to the plain-Rust host
+baseline.
 
 **Exclusions:** Production bridge reuse, installers, Veles cryptography, trust
 activation, and real OTP data.
@@ -1359,16 +1428,29 @@ ordinary tab focused and no audio, WebRTC, or any other timer-throttling
 exemption active; disconnect affects only its handle; Chrome port closure,
 stdin EOF, and `shutdown` each stop scans, disconnect links, close stdout, and
 leave no process; unsupported or denied
-states are classified. Any failure blocks OTP-24 or causes this RFC to be
-revisited.
+states are classified. **On fresh standard non-admin macOS accounts, the
+acceptance matrix explicitly records TCC Bluetooth attribution:** which process
+(Chrome or the bridge binary) the TCC prompt/grant attaches to for the
+Chrome-launched headless child, whether a prompt fires at all for the headless
+process, and the allow and deny results from the connector, on both the
+dev-registered unsigned binary and the signed production-shaped host fixture.
+The signed fixture is signed directly with CI-provided credentials and the final
+bundle identifier; it does not depend on OTP-24, OTP-25, or an installer. After
+the deny case, the connector presents exact System Settings and retry guidance;
+following that guidance and granting access lets search recover without
+reinstalling or losing extension state. The recorded dependency-cost comparison
+must justify retaining Tauri solely for OTP-25 packaging. Any failure blocks
+OTP-24 or causes this RFC to be revisited.
 
 **Verification evidence:** Committed harness and physical Windows/macOS matrix
 with exact commit, Chrome and OS versions, hardware and adapters, Rust and Tauri
 build identity, host manifests, commands, framed stdin/stdout traces, proof that
 no window appears, process launch/EOF/port-close/shutdown observations,
 repetitions, timings, focused-tab identity, confirmation that no audio, WebRTC,
-or other timer-throttling exemption was active, safe logs, per-case
-expected/actual results, and an explicit feasibility decision.
+or other timer-throttling exemption was active, safe logs, fresh-account TCC
+prompt/grant ownership and allow/deny/recovery results, signed-fixture provenance,
+Tauri dependency cost and transitive SBOM comparison, per-case expected/actual
+results, and an explicit feasibility decision.
 
 **Project fields:** Implementation order 7; Phase Transport; Area Native bridge;
 Release scope Stable release; Gate Blocks protected transport; initial Status
@@ -1516,27 +1598,39 @@ Release scope Stable release; Gate Blocks real OTP; initial Status Backlog.
 transport without short throttled timers, and synthetic automatic-copy requests
 succeed through a clipboard-only offscreen document.
 
-**Scope:** Validate Native Messaging event delivery and protected liveness while
+**Scope:** Validate Native Messaging event delivery and liveness while
 backgrounded; implement service-worker messaging, offscreen-document lifecycle,
 copy request validation, result reporting, cleanup, and background-tab and
-native-port diagnostics.
+native-port diagnostics. Add service-worker observation of
+`chrome.tabs.onUpdated` `frozen`/`discarded` transitions and
+`chrome.tabs.onRemoved`, immediate per-tab diagnostic badge/status invalidation,
+and port-generation invalidation before freeze/discard recovery.
 
 **Exclusions:** Real OTP data, moving the native port out of the connector,
-persistent offscreen state, and the user-facing automatic-copy setting.
+persistent offscreen state, the user-facing automatic-copy setting, and
+protected-transport validation (deferred to OTP-12 with OTP-09 available).
+Final history and badge presentation remains in OTP-17.
 
 **Dependencies:** OTP-01, OTP-06, and OTP-07.
 
 **Acceptance criteria:** The connector stays backgrounded for at least ten
 continuous minutes while another ordinary tab is focused and no audio, WebRTC,
 or any other timer-throttling exemption is active; a synthetic native `message`
-event and protected push after minute seven are received and copied through the
+event and offscreen copy after minute seven are received and succeed through the
 helper; copy failure is visible and does not disconnect; the helper owns no
-native port, session, trust, or history state.
+native port, session, trust, or history state. Protected-transport background
+validation is deferred to OTP-12/Gate B. A forced freeze and discard each clear
+the per-tab diagnostic badge/status as soon as the service worker observes the
+transition. Resume or reload rejects the old port generation before processing
+queued events, closes the old port, starts a fresh host, and receives a new raw
+synthetic `message`; host queues remain within OTP-02 bounds throughout.
 
 **Verification evidence:** Service-worker/offscreen tests, lifecycle tests,
 extension permission/CSP review, and timed physical Windows/macOS background
 runs recording the focused ordinary tab and confirming no audio, WebRTC, or
-other timer-throttling exemption was active.
+other timer-throttling exemption was active, plus forced freeze/discard tests
+covering `chrome.tabs` transitions, status reset, old-generation rejection,
+host cleanup, bounded queues, and raw-message recovery.
 
 **Project fields:** Implementation order 11; Phase Transport; Area Chrome;
 Release scope Stable release; Gate Blocks real OTP; initial Status Backlog.
@@ -1595,9 +1689,13 @@ or authorize OTP access; any surviving local state is restricted to activation
 recovery; both identities and protocol context are bound; Android permits only
 one active pairing window, one SPAKE2 operation in flight, and no more than five
 attempts in any rolling five-minute interval; every valid `pB` is charged before
-password-dependent work or `cA` and is never refunded; malformed pre-PAKE input
-is separately rate and resource limited; both RFC 9382 confirmation messages
-pass before enrollment data is released; pending and
+any `pB`-dependent password-sensitive group operation or `cA` and is never
+refunded; computing the initial `pA`, then disconnecting without sending `pB`,
+consumes no attempt; Android emits at most one fresh `pA` per connection and five
+fresh `pA` values in any rolling one-minute interval, rejecting excess requests
+before scalar generation or point multiplication; malformed pre-PAKE input is
+separately rate and resource limited; both RFC 9382 confirmation messages pass
+before enrollment data is released; pending and
 `committed_waiting_ack` records authorize only activation recovery and no OTP
 data; interruption at every activation message resumes idempotently or expires
 without partial access; a native handle or platform hint never substitutes for
@@ -1605,7 +1703,8 @@ the enrolled identity; successful pairing supports later automatic
 authenticated reconnect.
 
 **Verification evidence:** Shared enrollment vectors, attempt/expiry and
-non-refund tests, malformed-input resource-limit tests, wrong-code and
+non-refund tests, connect/get-`pA`/disconnect no-charge tests, fresh-`pA`
+rate/resource-bound tests, malformed-input resource-limit tests, wrong-code and
 interruption tests, activation state-machine and recovery tests, state-erasure
 tests, and synthetic physical pairing/reconnect tests.
 
@@ -1651,9 +1750,12 @@ before any real OTP integration.
 **Scope:** Using the signed per-user packages, execute missing/incompatible-host
 recovery, extension-owned search, SPAKE2 pairing, hint-based authenticated
 automatic reconnect, protected pull/push, background native event delivery,
-offscreen copy, connector/host closure and restart, revocation, Bluetooth
-interruption, and the Android 20-minute foreground-service scenario on stable
-Windows and macOS Chrome. The synthetic harness and fixtures must be
+offscreen copy, forced connector freeze/discard and fresh recovery,
+connector/host closure and restart, revocation, Bluetooth interruption, and the
+Android 20-minute foreground-service scenario on stable Windows and macOS
+Chrome. Add a Gate B-only Android history fixture bounded to five synthetic
+records and ten-minute expiry; it is test infrastructure, not OTP-13's
+production buffer. The synthetic harness and fixtures must be
 client-agnostic: the same SPAKE2 enrollment, reconnect, and protected-record
 checks a desktop passes must be reusable by a watch client (and by the virtual
 harness validated in OTP-27), without desktop-only assumptions in the fixture
@@ -1668,7 +1770,12 @@ OTP-11.
 **Acceptance criteria:** Every required case passes with no plaintext fallback;
 background operation passes OTP-08's ten-continuous-minute/minute-seven scenario
 with another ordinary tab focused and no audio, WebRTC, or other
-timer-throttling exemption active; after a minute-20 push is scheduled, the
+timer-throttling exemption active; on forced freeze and discard, the service
+worker immediately clears the observed tab's badge/status, resume or reload
+invalidates the old port generation before queued-event processing, the old
+port closes and leaves no host process, and a fresh host and authenticated
+session re-pull the synthetic five-record/ten-minute fixture with unexpired
+records present and expired records absent; after a minute-20 push is scheduled, the
 Android task is removed and the phone remains locked for at least 15 minutes,
 the foreground indication remains present, a connector pulls after minute 15,
 and the scheduled push arrives no earlier than minute 19 and no later than
@@ -1686,8 +1793,10 @@ keys.
 **Verification evidence:** A committed matrix containing exact commit SHAs,
 phone/desktop models, OS builds, Chrome versions, adapters, steps, repetitions,
 timings, focused-tab identity, confirmation that no audio, WebRTC, or other
-timer-throttling exemption was active, logs with safe redaction, expected
-results, actual results, and pass/fail decisions.
+timer-throttling exemption was active, forced freeze/discard lifecycle traces,
+`chrome.tabs` observations, per-tab status and badge results, host process/queue
+observations, retained/expired fixture results, logs with safe redaction,
+expected results, actual results, and pass/fail decisions.
 
 **Project fields:** Implementation order 15; Phase Transport; Area
 Cross-platform; Release scope Stable release; Gate Blocks real OTP; initial
@@ -1904,7 +2013,9 @@ state loss.
 replay/reorder/counter-boundary handling, queue pressure, Bluetooth toggles,
 permission loss, task/process/browser/host restart, native-port failure, host
 upgrade/removal, stale hints and handles, service restoration, key loss, storage
-corruption, connector closure, safe diagnostics, and regression matrix.
+corruption, connector closure, safe diagnostics, and regression matrix. Run the
+physical default-`Unlocked only` lock/block/unlock/retrieve scenario required by
+Gate C and record each lifecycle and expiry timestamp.
 
 **Exclusions:** New product capabilities and compatibility downgrades.
 
@@ -1914,13 +2025,18 @@ corruption, connector closure, safe diagnostics, and regression matrix.
 leakage; malformed or cryptographically invalid input mutates no protected
 state; terminal protocol errors erase session keys; lifecycle events never
 reuse nonce/sequence state; recovery never restores expired OTPs; safe logs
-contain no prohibited data; local Android notifications remain reliable; the
-linked complete evidence is reviewed and the release owner records explicit
-Gate C acceptance before the issue closes.
+contain no prohibited data; local Android notifications remain reliable. On a
+physical phone using default `Unlocked only`, a minute-20 event created while
+locked produces a protected phone-state response to pull and no push, remains in
+the memory buffer, and is retrieved only after unlock and before minute-30
+expiry. The linked complete evidence is reviewed and the release owner records
+explicit Gate C acceptance before the issue closes.
 
 **Verification evidence:** Property/fuzz reports, boundary and lifecycle tests,
 safe-log scans, backup/storage-loss tests, Android and Chrome restart tests,
-Bluetooth/permission fault injection, and complete physical regression results.
+Bluetooth/permission fault injection, the physical default-policy matrix with
+lock/event/pull/unlock/retrieval/expiry timestamps, and complete physical
+regression results.
 
 **Project fields:** Implementation order 23; Phase Hardening; Area
 Cross-platform; Release scope Stable release; Gate Blocks release; initial
@@ -2044,7 +2160,7 @@ on the wrist. The protocol fits without divergence:
 - Watch firmware beyond this protocol surface is deferred (see Rejected and
   deferred alternatives); the design sketch is in the client-design appendix.
 
-## Ordered execution tasks
+## Deferred watch spike tasks
 
 ### OTP-26: Validate esp-rs toolchain, NimBLE BLE central, and SPAKE2 core on Xtensa
 
@@ -2070,7 +2186,8 @@ sanity check (compile, link, boot; radio behavior requires real hardware and
 is deferred to the follow-up firmware RFC); measure SPAKE2 wall time and
 memory ceiling on the emulated CPU; document crate/toolchain pins, build
 friction, and any central-role API gaps. Also survey the board-support gap
-(ST7789 display, FT6336 touch, AXP2101 PMU) to size OTP-28-class BSP work.
+(ST7789 display, FT6336 touch, AXP2101 PMU) to size the follow-up firmware
+RFC's BSP work.
 
 **Exclusions:** Veles UI, OTP data, trust storage, real hardware, and production
 code. The spike harness, logs, traces, and written decision are retained (they
