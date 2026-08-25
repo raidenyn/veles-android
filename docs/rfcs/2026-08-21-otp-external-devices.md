@@ -1,17 +1,21 @@
-# RFC: Veles OTP Chrome extension
+# RFC: Veles OTP external devices
 
 ## Status
 
-Accepted for execution planning, amended to select the native bridge on
-2026-08-21, and amended to select RFC 9382 SPAKE2 for first pairing on
-2026-08-25.
+Accepted for execution planning. Amended to select the native bridge on
+2026-08-21, to select RFC 9382 SPAKE2 for first pairing on 2026-08-25, and to
+add the T-WATCH-S3 watch client with emulator-first execution on 2026-08-25;
+all amendments are consolidated into this body.
 
 This RFC is the canonical product and technical specification for sharing OTP
-transaction data between Veles Android and a Veles Chrome extension. It was
-originally introduced in pull request
-[#76](https://github.com/raidenyn/veles-android/pull/76) and consolidated the
-roadmap, security design, implementation spike, and physical observations from
-pull request [#78](https://github.com/raidenyn/veles-android/pull/78).
+transaction data between Veles Android and locally connected external devices:
+a Veles Chrome extension today, and a LILYGO T-WATCH-S3 family (ESP32-S3)
+smartwatch whose firmware lands in a follow-up amendment after the feasibility
+spikes (OTP-26/OTP-27). It was originally introduced in pull request
+[#76](https://github.com/raidenyn/veles-android/pull/76) as the OTP Chrome
+extension RFC and consolidated the roadmap, security design, implementation
+spike, and physical observations from pull request
+[#78](https://github.com/raidenyn/veles-android/pull/78).
 
 Where earlier roadmap or spike documents conflict with this RFC, this RFC takes
 precedence. The earlier documents remain historical evidence and implementation
@@ -21,17 +25,20 @@ PR #78 recorded an incomplete physical validation matrix and described
 tab-owned Web Bluetooth as conditionally promising. That evidence remains
 useful history, but the approved amendments to this RFC replace that production
 transport on Windows and macOS with an on-demand Rust and Tauri Native Messaging
-BLE bridge with no durable state and replace OPAQUE enrollment with balanced
-SPAKE2. Chrome continues to own all Veles cryptography and the protected
-plain-GATT transport shape is unchanged. These decisions permit execution
+BLE bridge with no durable state, replace OPAQUE enrollment with balanced
+SPAKE2, and add the watch client protocol surface. Chrome continues to own all
+Veles cryptography on the desktop; the watch reuses the same SPAKE2 core and
+protected plain-GATT transport shape. These decisions permit execution
 planning. They do not waive native-host feasibility, protected-transport,
 security-review, physical-validation, installer, or release gates defined
 below.
 
 ## Decision summary
 
-- Veles will provide a Manifest V3 Chrome extension for local OTP delivery from
-  Veles Android.
+- Veles provides clients for local OTP delivery from Veles Android: a Manifest
+  V3 Chrome extension (desktop client) and a LILYGO T-WATCH-S3 family
+  ESP32-S3 smartwatch (watch client). The Android protocol machinery is
+  device-agnostic; "client" refers to either peer type.
 - The extension action opens or focuses one dedicated connector tab. The tab
   owns search, pairing, connection, recovery, and OTP presentation UI.
 - The connector tab owns one Chrome Native Messaging port to an on-demand,
@@ -46,12 +53,16 @@ below.
 - First pairing uses RFC 9382 balanced SPAKE2 and a short code displayed by the
   unlocked phone. Later use searches or reconnects through non-authoritative
   platform hints and always authenticates the phone before accepting a session.
+  The watch enters the same code on an on-screen dial; pairing limits and
+  windows are identical for both client types.
 - Every production application record is encrypted, authenticated, ordered,
   and replay protected independently of BLE link security.
-- Android and Chrome retain at most five OTP events globally for no more than
-  ten minutes. OTP history is never durable.
-- Manual copy is supported. Automatic copy is global, opt-in, and disabled by
-  default. Background automatic copy uses a clipboard-only offscreen document.
+- Android and each client retain at most five OTP events globally for no more
+  than ten minutes; the watch keeps them RAM-only. OTP history is never
+  durable on any endpoint.
+- Manual copy is supported on desktop. Automatic copy is global, opt-in, and
+  disabled by default. Background automatic copy uses a clipboard-only
+  offscreen document.
 - Per-user signed installers register the exact production extension origin
   with Chrome on Windows and macOS. Linux implementation and support are wholly
   deferred to a future RFC.
@@ -60,6 +71,8 @@ below.
   devices and must never transit an internet service.
 - The native bridge never receives trust records, private identity keys,
   traffic keys, pairing codes, decrypted Veles records, or OTP plaintext.
+- A watch's local PIN (if enabled) never leaves the watch, is absent from every
+  protocol message, and a forgotten PIN requires re-pairing.
 
 ## Source evidence
 
@@ -98,14 +111,15 @@ feasibility and production-path testing remain mandatory before release.
 
 ## Goals
 
-- Let a user explicitly pair a Veles Chrome installation with a Veles Android
-  installation over nearby Bluetooth.
-- Let Chrome retrieve recent eligible OTP transaction data from Android.
-- Let Android push new eligible OTPs while the connector tab and its native
-  port remain open and connected, including while the tab is backgrounded.
-- Display the OTP code, merchant, amount, age, and source phone in Chrome.
-- Support manual copy and disabled-by-default automatic copy.
-- Support one phone serving at least two physical desktop computers and one
+- Let a user explicitly pair a Veles client installation (Chrome extension or
+  T-WATCH-S3 watch) with a Veles Android installation over nearby Bluetooth.
+- Let clients retrieve recent eligible OTP transaction data from Android.
+- Let Android push new eligible OTPs while the client remains connected,
+  including to a backgrounded connector tab.
+- Display the OTP code, merchant, amount, age, and source phone on the client;
+  on the watch, optionally behind a local PIN.
+- Support manual copy and disabled-by-default automatic copy on desktop.
+- Support one phone serving at least two physical clients concurrently and one
   connector tab and bridge process serving multiple phones independently.
 - Keep the feature local, short-lived, revocable, and independent from the
   existing Android notification experience.
@@ -114,6 +128,8 @@ feasibility and production-path testing remain mandatory before release.
 - Provide per-user installation, exact-origin host registration, upgrade,
   uninstall, development registration, and actionable missing or incompatible
   host recovery on Windows and macOS.
+- Keep the watch pairing ceremony identical to the desktop ceremony from the
+  phone's point of view.
 
 ## Permanent privacy constraints
 
@@ -128,12 +144,13 @@ The following are prohibited product directions, not merely deferred features:
   Android application or Chrome extension.
 
 OTP data may move only between a user's Veles Android installation and locally
-connected Veles extension installations. Chrome Web Store distribution and
-ordinary application update delivery do not change this data boundary.
+connected Veles client installations (the Chrome extension or a paired watch).
+Chrome Web Store distribution and ordinary application update delivery do not
+change this data boundary.
 
 ## Non-goals
 
-- Durable OTP history on Android or Chrome.
+- Durable OTP history on Android or any client.
 - Trust based on a Bluetooth address, Bluetooth name, OS bond, or Android
   companion association.
 - Hiding BLE service UUIDs, connection timing, traffic timing, or encrypted
@@ -159,21 +176,31 @@ ordinary application update delivery do not change this data boundary.
 2. The user installs Veles Chrome from the Chrome Web Store.
 3. The user enables Desktop Sharing on Android. Android starts its foreground
    Bluetooth service and advertises the public Veles service.
-4. The user starts Add Chrome from the unlocked phone. Android opens one pending
+4. The user starts Add device from the unlocked phone. Android opens one pending
    pairing window and displays a random, six-digit, five-minute code.
 5. The user selects the extension action. Chrome opens or focuses the connector
    tab and attempts to start the registered bridge through Native Messaging.
+   (On the watch, the user instead opens the Veles watch app and selects "Pair
+   with phone"; the watch scans for phones advertising the public Veles service
+   and lists them by name and signal strength.)
 6. If the connector reports that the required compatible host is missing, the
    user installs the per-user Veles Native Bridge package and selects Retry.
+   (Desktop only; the watch needs no host.)
 7. The user selects Find phones. The connector renders bridge discovery events
-   and the user selects the intended advertising phone. OS Bluetooth pairing is
-   not a setup step.
-8. The user enters the code in the connector tab.
-9. Android and Chrome complete SPAKE2 and its bidirectional key confirmation,
-   exchange installation identities through the protected enrollment channel,
-   and activate trust through prepare/commit/ack.
+   and the user selects the intended advertising phone. On the watch, the user
+   taps the phone from the scan list. OS Bluetooth pairing is not a setup step
+   on either client type.
+8. The user enters the code in the connector tab. On the watch, the user
+   transcribes the code from the phone onto an on-screen digit dial.
+9. Android and the client complete SPAKE2 and its bidirectional key
+   confirmation, exchange installation identities through the protected
+   enrollment channel (including the client's `device_type`: `desktop` or
+   `watch`), and activate trust through prepare/commit/ack.
+   The watch then prompts the user to set a local PIN (digits, minimum four)
+   twice to confirm; the PIN is stored only on the watch and never transmitted.
 10. Both endpoints erase the code, pending SPAKE2 state, and enrollment traffic
-    keys.
+    keys. Pairing ends with both devices displaying the same enrollment
+    fingerprint for visual comparison.
 
 ### Later use
 
@@ -204,11 +231,17 @@ require new SPAKE2 enrollment unless trust was revoked or lost.
 
 - Either endpoint can delete one peer trust record without affecting other
   peers.
-- Android immediately disconnects sessions belonging to a revoked Chrome
-  installation.
+- Android immediately disconnects sessions belonging to a revoked client
+  installation; a revoked watch learns this at its next reconnect and shows
+  "pairing revoked — re-pair required."
 - A connected peer may request mutual removal. Offline removal is local; the UI
   explains that the other endpoint may retain its local record until it is
   separately removed.
+- A watch's forgotten local PIN has no recovery path: the watch erases its
+  trust store (peer record, session state, PIN verifier) and re-pairs from the
+  beginning. Phone-side revocation of the stale watch record is recommended
+  but not required for the reset to be safe. Changing the watch PIN is local
+  and needs no re-pairing.
 - Reinstallation, extension removal, app-data loss, profile loss, private-key
   loss, or trust-store corruption fails closed and requires pairing again.
 - A missing, incompatible, or unregistered native host leaves trust records
@@ -245,6 +278,12 @@ Chrome cannot extend retention because of clock skew. Chrome merges repeated
 events by phone installation ID and event ID. Browser or profile shutdown,
 session-storage loss, and expiry clear the history.
 
+The watch mirrors the global rule with a stricter storage posture: at most five
+events, all in RAM, expiry from the phone's authoritative remaining lifetime
+(the watch never extends retention from its own clock), and the buffer clears
+on reboot and pairing reset. On reconnect after absence, the watch may issue
+one pull of recent events to backfill anything pushed while disconnected.
+
 ### Delivery policy
 
 Android evaluates the selected policy immediately before every pull response
@@ -261,6 +300,9 @@ empty-history response.
 
 ### Copy behavior
 
+Desktop-only behavior (the watch displays OTPs but has no clipboard
+integration; it never offers copy):
+
 - Manual copy is initiated from focused extension UI.
 - Automatic copy is a global setting and is disabled by default.
 - A successful pull copies the newest event returned, including a repeated
@@ -276,8 +318,9 @@ empty-history response.
 
 The stable release must support:
 
-- One Android phone serving at least two physical desktop computers
-  concurrently.
+- One Android phone serving at least two physical clients concurrently, in any
+  mix of desktop computers and watches (the GATT service caps at eight
+  simultaneous clients).
 - One connector tab and its single bridge process serving multiple Android
   phones through independent connections.
 
@@ -365,7 +408,8 @@ The Home screen gains a Desktop Sharing card that opens a dedicated Connections
 screen. No fourth bottom-navigation item is added. The screen provides:
 
 - Sharing enablement and actual service state.
-- Pair Chrome action and pairing-code state.
+- Pair device action (Chrome today and the watch once its firmware lands) and
+  pairing-code state.
 - Delivery-policy selection.
 - Trusted and currently connected client lists.
 - Peer details and revocation.
@@ -644,9 +688,10 @@ as an Android NDK library behind a narrow JNI interface and as locally packaged
 browser WASM. Kotlin and TypeScript do not independently implement the PAKE.
 
 The baseline ciphersuite is `SPAKE2-P256-SHA256-HKDF-HMAC`. Android is fixed as
-party A and sends first; Chrome is fixed as party B. The RFC 9382 identity byte
+party A and sends first; the client is fixed as party B (the Chrome desktop
+client and the watch client alike). The RFC 9382 identity byte
 strings included in `TT` are exactly `Veles Android SPAKE2 party A v1` for A and
-`Veles Chrome SPAKE2 party B v1` for B, encoded as ASCII. The core uses the RFC
+`Veles client SPAKE2 party B v1` for B, encoded as ASCII. The core uses the RFC
 9382 P-256 M and N points, uncompressed SEC1 point encoding, complete point
 validation, fresh uniformly sampled scalars for every attempt, constant-time
 secret-dependent group operations and comparisons, and the RFC 9382 `cA` and
@@ -726,8 +771,8 @@ is reserved exclusively for RFC 9382 key confirmation; `Ke` is never used
 directly. Android sends the first protected enrollment record only after it
 verifies `cB`; Chrome releases its protected enrollment record only after it
 authenticates that Android record, proving Android reached confirmation. The
-records contain installation ID, label, identity public key, fingerprint, and
-nonce.
+records contain installation ID, label, `device_type` (required: `desktop` or
+`watch`), identity public key, fingerprint, and nonce.
 
 Trust activation is explicitly interruption-safe rather than distributed-
 atomic. Both endpoints first persist inactive `pending` records and confirm the
@@ -799,11 +844,32 @@ raw ciphertext. Native-host logs are disabled in production except for an
 explicit local diagnostic mode that follows the same restrictions and never
 logs Native Messaging `send` or `message` bodies. No remote telemetry exists.
 
+### Watch PIN policy
+
+A watch may gate OTP display behind a local PIN. The PIN is **never
+transmitted, never escrowed, absent from every protocol message, and unknown
+to the phone**. Pairing trust is unchanged by enabling, changing, or disabling
+the PIN. The user sets the PIN on the watch immediately after pairing
+completes (twice, to confirm), and may change it later by entering the current
+PIN first. Wrong-PIN entry uses an exponential lockout — 1 s, 2 s, 4 s, 8 s,
+16 s, capped at 32 s between attempts — persisted in flash so a reboot does not
+reset it; the counter resets after the first successful entry. There is no
+hard lockout-to-reset: with only an offline verifier and the exponential
+backoff, brute force against a local PIN is slow enough, and a physical reset
+remains available regardless (see Revocation and recovery: a forgotten or
+unrecoverable PIN requires erasing the trust store and re-pairing). A hardware
+reflash can always bypass the verifier — accepted risk for a watch-class
+device; the PIN is a display gate, not a trust boundary.
+
 ## Sensitive-notification access
 
 Android sensitive-notification companion association remains an independent,
 permission-only workaround. It may use any suitable nearby device and is not
-part of Desktop Sharing setup.
+part of Desktop Sharing setup. Because both this feature and watch pairing may
+involve a watch-class device over Companion Device Manager: the companion
+association (including a `DEVICE_PROFILE_WATCH` association) grants only the
+sensitive-notifications role and never authorizes OTP delivery; Veles watch
+trust is established exclusively by the SPAKE2 application-layer enrollment.
 
 The Chrome connector does not require, reuse, infer, or modify companion
 association. Companion association never authorizes OTP delivery. Veles Chrome
@@ -1009,18 +1075,26 @@ documentation in OTP-22.
   vectors, implementation review, and migration analysis.
 - Any Linux implementation, packaging, validation, support, or user
   documentation; all are wholly deferred to a future RFC.
+- Watch firmware beyond the protocol surface defined here. The T-WATCH-S3
+  firmware architecture (`watch/` monorepo layout with `watch/core`,
+  `watch/lilygo/hal`, `watch/lilygo/twatch-s3`, later `watch/lilygo/
+  twatch-ultra`), its UI and PIN-display UX, additional watch execution tasks,
+  and hardware validation (including battery life) are designed at the sketch
+  level (see the watch-client appendix) but become binding only in a follow-up
+  amendment or RFC after spikes OTP-26/OTP-27 land. This RFC commits only the
+  protocol and the spikes.
 
 ## GitHub Project model
 
 Create a public GitHub Projects v2 project under `raidenyn` and link it to
-`raidenyn/veles-android`. Suggested title: **Veles OTP Chrome Extension**.
+`raidenyn/veles-android`. Suggested title: **Veles OTP external devices**.
 
 Use these fields:
 
 | Field | Type | Values |
 |---|---|---|
 | Status | Single select | Backlog, Ready, In Progress, In Review, Blocked, Done |
-| Implementation order | Number | 1 through 25 |
+| Implementation order | Number | 1 through 27 |
 | Phase | Single select | Foundations, Security, Transport, Core delivery, Product UX, Hardening, Release |
 | Area | Single select | Android, Chrome, Native bridge, Cross-platform, Documentation |
 | Release scope | Single select | Stable release, Deferred |
@@ -1036,10 +1110,8 @@ Create these views:
 
 Issue dependencies are authoritative. Numeric order is a stable topological
 priority order, not a prohibition on parallel implementation after
-prerequisites pass. The canonical order is OTP-01, OTP-02, OTP-03, OTP-04,
-OTP-05, OTP-06, OTP-23, OTP-24, OTP-07, OTP-25, OTP-08, OTP-09, OTP-10,
-OTP-11, OTP-12, OTP-13, OTP-14, OTP-15, OTP-16, OTP-17, OTP-18, OTP-19,
-OTP-20, OTP-21, OTP-22. Tasks may run in parallel where their explicit
+prerequisites pass. See "Ordered execution tasks" for
+the canonical order. Tasks may run in parallel where their explicit
 dependencies allow it.
 
 OTP-01 starts `Ready`. Every other issue starts `Backlog`, or `Blocked` when its
@@ -1576,7 +1648,11 @@ recovery, extension-owned search, SPAKE2 pairing, hint-based authenticated
 automatic reconnect, protected pull/push, background native event delivery,
 offscreen copy, connector/host closure and restart, revocation, Bluetooth
 interruption, and the Android 20-minute foreground-service scenario on stable
-Windows and macOS Chrome.
+Windows and macOS Chrome. The synthetic harness and fixtures must be
+client-agnostic: the same SPAKE2 enrollment, reconnect, and protected-record
+checks a desktop passes must be reusable by a watch client (and by the virtual
+harness validated in OTP-27), without desktop-only assumptions in the fixture
+format or validation path.
 
 **Exclusions:** Real notification data and final multi-computer/multi-phone
 release validation.
@@ -1593,7 +1669,9 @@ the foreground indication remains present, a connector pulls after minute 15,
 and the scheduled push arrives no earlier than minute 19 and no later than
 minute 21 (a one-minute tolerance from the scheduled minute 20); fresh reconnect uses fresh keys;
 failures are reproducible and classified; no result relies on an OS bond,
-native handle, or platform hint as setup or trust;
+native handle, or platform hint as setup or trust; the synthetic fixtures and
+harness run against a scripted non-desktop client (per OTP-27) as well as the
+desktop connector, proving client-agnosticism;
 connector closure leaves no host process and restart creates fresh handles and
 keys.
 
@@ -1925,3 +2003,140 @@ on Windows and macOS, and final release checklist approval.
 
 **Project fields:** Implementation order 25; Phase Release; Area Documentation;
 Release scope Stable release; Gate Blocks release; initial Status Backlog.
+
+### Watch client (T-WATCH-S3)
+
+The second client class is a LILYGO T-WATCH-S3 family (ESP32-S3) smartwatch
+that pairs over the same protected plain-GATT protocol and receives OTP pushes
+on the wrist. The protocol fits without divergence:
+
+- Android is the BLE peripheral/GATT server; clients are centrals speaking
+  opaque, encrypted Veles records. Nothing in the record model, session crypto,
+  enrollment, delivery policies, or retention caps assumes a desktop, a tab, or
+  the Native Messaging bearer. The desktop-specific layer is strictly the
+  client-side bearer (Native Messaging + the Rust/Tauri bridge); a watch speaks
+  GATT directly and needs none of it.
+- SPAKE2 uses no memory-hard preprocessing, so the watch runs the very profile
+  the Chrome connector runs — the same pinned Rust core (OTP-03 gains an Xtensa
+  firmware target), the same six-digit code ceremony, the same limits. There is
+  no embedded-memory carve-out and no unreviewed downgrade. (This was the
+  blocker under OPAQUE and is the principal reason SPAKE2's selection unlocks
+  watch support.)
+- The resource caps (8 simultaneous clients, 2 incomplete messages / 8 KiB
+  reassembly per peer, queue bounds) and the multi-peer isolation model apply
+  to watch peers unchanged. Delivery policies remain phone-side and apply to
+  watch pushes. OTP-02's fixture set is host-runnable Rust so the watch crate
+  runs the same vectors; its schema freeze adds the enrollment `device_type`
+  and directs GATT layout and fragmentation bounds so a bare GATT client at a
+  negotiated MTU of at least 185 works, with reassembly staying within the
+  8 KiB/peer cap. Android treats all watches as ordinary peers — no new pairing
+  windows or limits.
+- Watch firmware beyond this protocol surface is deferred (see Rejected and
+  deferred alternatives); the design sketch is in the client-design appendix.
+
+## Ordered execution tasks
+
+### OTP-26: Validate esp-rs toolchain, NimBLE BLE central, and SPAKE2 core on Xtensa
+
+**Outcome:** Evidence that the pinned Rust SPAKE2 core (OTP-03) and a
+production-grade Rust BLE GATT central both build and run for ESP32-S3 class
+silicon, with rough timing data, before any firmware is committed to.
+
+**Scope:** In a disposable harness, build the OTP-03 SPAKE2 core against
+Xtensa targets via the esp-rs toolchain (ESP-IDF `linux` host target for fast
+iteration, then `qemu-system-xtensa` ESP32-S3 machine for target-arch sanity
+and rough timing); exercise `esp32-nimble` central-role scan/connect/GATT
+client against a synthetic peer on the host; measure SPAKE2 wall time and
+memory ceiling on the emulated CPU; document crate/toolchain pins, build
+friction, and any central-role API gaps. Also survey the board-support gap
+(ST7789 display, FT6336 touch, AXP2101 PMU) to size OTP-28-class BSP work.
+
+**Exclusions:** Veles UI, OTP data, trust storage, real hardware, and anything
+kept. Spike output is throwaway.
+
+**Dependencies:** OTP-01, OTP-02, OTP-03.
+
+**Acceptance criteria:** SPAKE2 client login completes against the RFC vectors
+on the Xtensa build; `esp32-nimble` central performs scan → connect → GATT
+discover → notify round-trip against a synthetic GATT server; SPAKE2 timing and
+peak-heap figures recorded with the emulation-speed caveat (±50% until
+hardware); any blocker or crate gap is written up with an explicit go/no-go
+recommendation for Approach-A firmware. Emulation limitations (timing accuracy,
+no real radio) are stated in the report.
+
+**Verification evidence:** Committed spike harness, build logs, vector results,
+central round-trip traces, measured timings with hardware specs of the host VM,
+and the written feasibility decision.
+
+**Project fields:** Implementation order 26; Phase Foundations; Area
+Cross-platform; Release scope Deferred; Gate None; initial Status Backlog.
+
+### OTP-27: Validate virtual-BLE end-to-end harness (Android emulator ↔ simulated watch)
+
+**Outcome:** Proof that the protected synthetic transport can be exercised
+end-to-end without physical BLE hardware, so watch-side development and CI do
+not wait for a device.
+
+**Scope:** In a disposable harness, run the Veles Android sharing service in
+the Android emulator backed by a virtual Bluetooth controller (rootcanal or
+Bumble over virtual HCI), and a simulated watch client (OTP-26-class
+esp32-nimble build on the IDF `linux` target, or a scripted Bumble peripheral)
+as the central; carry OTP-02 frozen-format synthetic records end to end
+(scan/connect, SPAKE2 enrollment with a fixture code, hello/reconnect,
+push + ack). Measure setup reliability and document which layers are real
+(procedure PDUs, crypto) vs emulated (radio, timing).
+
+**Exclusions:** Real radios, real phones/watches, OTP data, and any production
+code. Spike output is throwaway.
+
+**Dependencies:** OTP-06, OTP-09, OTP-26.
+
+**Acceptance criteria:** Synthetic enrollment + one push + ack traverse the
+emulated link with all protocol checks passing; setup steps are documented
+well enough for a second machine to reproduce; the report states which
+Gate-B/C acceptance criteria can adopt this harness and which still demand
+physical devices.
+
+**Verification evidence:** Committed harness, emulator/controller
+configuration repo files, end-to-end traces, reproduction instructions, and the
+written harness-adoption recommendation.
+
+**Project fields:** Implementation order 27; Phase Transport; Area
+Cross-platform; Release scope Deferred; Gate None; initial Status Backlog.
+
+Canonical order: OTP-01, OTP-02, OTP-03, OTP-04, OTP-05, OTP-06,
+OTP-23, OTP-24, OTP-07, OTP-25, OTP-08, OTP-09, OTP-10, OTP-11, OTP-12,
+OTP-13, OTP-14, OTP-15, OTP-16, OTP-17, OTP-18, OTP-19, OTP-20, OTP-21,
+OTP-22, OTP-26, OTP-27. OTP-26 may start as soon as OTP-03 lands; OTP-26 and
+OTP-27 are intentionally sequenced last as deferrable parallel work and gate
+nothing above.
+
+## Appendix A: watch-client design sketch (non-normative)
+
+The following watch decisions are agreed at design level but are **intentionally
+not normative here**, to keep this RFC scoped to the protocol while spikes run.
+They become binding in the follow-up amendment or RFC after OTP-26/OTP-27:
+
+- Firmware architecture: monorepo `watch/` layout with `watch/core`
+  (platform-agnostic Rust protocol crate reusing the OTP-03 core),
+  `watch/lilygo/hal` (BSP traits/drivers: ST7789/FT6336/AXP2101),
+  `watch/lilygo/twatch-s3` (feature flags `s3`/`s3plus`), and future
+  `watch/lilygo/twatch-ultra`.
+- PIN UX details: set-at-pairing on the watch's dial, change-PIN, grace
+  window.
+- Push UX: wake on push, notification card, tap to reveal behind PIN, OTP list
+  (≤5), TTL countdown.
+- Watch execution tasks (firmware skeleton, UI pipelines, hardening, Gate B/C
+  participation) and their dependencies.
+- Real-battery-life numbers stay a hardware-validation item, not an RFC
+  commitment.
+
+The firmware is expected to be pure Rust on ESP-IDF std
+(`esp-idf-svc` + `esp32-nimble` host + RustCrypto `p256`/`aes-gcm`/`hkdf`/
+`sha2` in software, fast enough at <1 KiB records), UI via Slint or
+embedded-graphics, board support via a small `Board` HAL over AXP2101/FT6336/
+ST7789. A C++/LVGL hybrid with the SPAKE2 core linked as a Rust staticlib is
+the recorded fallback if BSP bring-up dominates; a bare-`no_std`/`trouble`
+stack was considered and rejected as too immature for a security client today.
+These sketches inform OTP-26's survey and are superseded by whatever the
+follow-up amendment freezes.
