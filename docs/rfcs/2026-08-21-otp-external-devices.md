@@ -196,8 +196,10 @@ change this data boundary.
    confirmation, exchange installation identities through the protected
    enrollment channel (including the client's `device_type`: `desktop` or
    `watch`), and activate trust through prepare/commit/ack.
-   The watch then prompts the user to set a local PIN (digits, minimum four)
-   twice to confirm; the PIN is stored only on the watch and never transmitted.
+   The watch then offers optional local-PIN setup (digits, minimum four): the
+   user may set a PIN (entered twice to confirm) or skip, leaving the OTP
+   display ungated by default; the PIN is stored only on the watch and never
+   transmitted.
 10. Both endpoints erase the code, pending SPAKE2 state, and enrollment traffic
     keys. Pairing ends with both devices displaying the same enrollment
     fingerprint for visual comparison.
@@ -318,9 +320,11 @@ integration; it never offers copy):
 
 The stable release must support:
 
-- One Android phone serving at least two physical clients concurrently, in any
-  mix of desktop computers and watches (the GATT service caps at eight
-  simultaneous clients).
+- One Android phone serving at least two physical desktop clients concurrently
+  against stable Chrome on Windows and macOS (the GATT service caps at eight
+  simultaneous clients). Watch clients are exercised only in the virtual
+  harness; physical watch validation is deferred to a follow-up RFC after
+  OTP-26/OTP-27 (see Rejected and deferred alternatives).
 - One connector tab and its single bridge process serving multiple Android
   phones through independent connections.
 
@@ -846,11 +850,12 @@ logs Native Messaging `send` or `message` bodies. No remote telemetry exists.
 
 ### Watch PIN policy
 
-A watch may gate OTP display behind a local PIN. The PIN is **never
-transmitted, never escrowed, absent from every protocol message, and unknown
-to the phone**. Pairing trust is unchanged by enabling, changing, or disabling
-the PIN. The user sets the PIN on the watch immediately after pairing
-completes (twice, to confirm), and may change it later by entering the current
+A watch may gate OTP display behind a local PIN. The PIN is **optional and off
+by default**, **never transmitted, never escrowed, absent from every protocol
+message, and unknown to the phone**. Pairing trust is unchanged by enabling,
+changing, or disabling the PIN. When enabled, the user sets the PIN on the
+watch immediately after pairing completes (twice, to confirm) — or skips,
+leaving the display ungated — and may change it later by entering the current
 PIN first. Wrong-PIN entry uses an exponential lockout — 1 s, 2 s, 4 s, 8 s,
 16 s, capped at 32 s between attempts — persisted in flash so a reboot does not
 reset it; the counter resets after the first successful entry. There is no
@@ -1670,8 +1675,11 @@ and the scheduled push arrives no earlier than minute 19 and no later than
 minute 21 (a one-minute tolerance from the scheduled minute 20); fresh reconnect uses fresh keys;
 failures are reproducible and classified; no result relies on an OS bond,
 native handle, or platform hint as setup or trust; the synthetic fixtures and
-harness run against a scripted non-desktop client (per OTP-27) as well as the
-desktop connector, proving client-agnosticism;
+harness are constructed to be client-agnostic — a scripted non-desktop client
+fixture passes the same enrollment, reconnect, and protected-record checks as
+the desktop connector with no desktop-only assumptions — while running that
+fixture end-to-end against the virtual BLE link is validated in OTP-27 and
+gates nothing here;
 connector closure leaves no host process and restart creates fresh handles and
 keys.
 
@@ -2046,7 +2054,11 @@ silicon, with rough timing data, before any firmware is committed to.
 Xtensa targets via the esp-rs toolchain (ESP-IDF `linux` host target for fast
 iteration, then `qemu-system-xtensa` ESP32-S3 machine for target-arch sanity
 and rough timing); exercise `esp32-nimble` central-role scan/connect/GATT
-client against a synthetic peer on the host; measure SPAKE2 wall time and
+client against a synthetic peer on the host for a functional round-trip, and
+separately build the selected NimBLE central crate/configuration for the
+ESP32-S3 target and boot it under `qemu-system-xtensa` as a target sanity
+check (compile, link, boot; radio behavior is not required); measure SPAKE2
+wall time and
 memory ceiling on the emulated CPU; document crate/toolchain pins, build
 friction, and any central-role API gaps. Also survey the board-support gap
 (ST7789 display, FT6336 touch, AXP2101 PMU) to size OTP-28-class BSP work.
@@ -2057,8 +2069,11 @@ kept. Spike output is throwaway.
 **Dependencies:** OTP-01, OTP-02, OTP-03.
 
 **Acceptance criteria:** SPAKE2 client login completes against the RFC vectors
-on the Xtensa build; `esp32-nimble` central performs scan → connect → GATT
-discover → notify round-trip against a synthetic GATT server; SPAKE2 timing and
+on the Xtensa build; the selected NimBLE central crate/configuration builds
+and links for the ESP32-S3 target and boots under `qemu-system-xtensa`;
+`esp32-nimble` central performs scan → connect → GATT
+discover → notify round-trip against a synthetic GATT server on the host;
+SPAKE2 timing and
 peak-heap figures recorded with the emulation-speed caveat (±50% until
 hardware); any blocker or crate gap is written up with an explicit go/no-go
 recommendation for Approach-A firmware. Emulation limitations (timing accuracy,
@@ -2080,7 +2095,7 @@ not wait for a device.
 **Scope:** In a disposable harness, run the Veles Android sharing service in
 the Android emulator backed by a virtual Bluetooth controller (rootcanal or
 Bumble over virtual HCI), and a simulated watch client (OTP-26-class
-esp32-nimble build on the IDF `linux` target, or a scripted Bumble peripheral)
+esp32-nimble build on the IDF `linux` target, or a scripted Bumble central)
 as the central; carry OTP-02 frozen-format synthetic records end to end
 (scan/connect, SPAKE2 enrollment with a fixture code, hello/reconnect,
 push + ack). Measure setup reliability and document which layers are real
@@ -2089,7 +2104,7 @@ push + ack). Measure setup reliability and document which layers are real
 **Exclusions:** Real radios, real phones/watches, OTP data, and any production
 code. Spike output is throwaway.
 
-**Dependencies:** OTP-06, OTP-09, OTP-26.
+**Dependencies:** OTP-06, OTP-09, OTP-10, OTP-26.
 
 **Acceptance criteria:** Synthetic enrollment + one push + ack traverse the
 emulated link with all protocol checks passing; setup steps are documented
