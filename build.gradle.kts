@@ -188,3 +188,71 @@ tasks.named("clean") {
         delete(webExtDist)
     }
 }
+
+val extensionBuild = registerWebExtExecTask(
+    taskName = "extensionBuild",
+    taskDescription = "Run vite build in web-extension/ to produce dist/. Always re-runs (no outputs.dir declared).",
+    script = "build",
+)
+extensionBuild.configure {
+    dependsOn(extensionInstall, extensionTypecheck)
+    // Deliberately no outputs.dir: declaring only webExtDir/"dist" without modeling
+    // all src inputs (src/**, public/**, vite.config.ts, tsconfig.json, package.json)
+    // risks stale-artifact re-use. The build is fast (<10s); always-run is the safer
+    // contract for a deterministic-artifact pipeline.
+}
+
+val extensionPackage = tasks.register<Zip>("extensionPackage") {
+    group = "extension"
+    description = "Package web-extension/dist/ into a deterministic zip under build/web-extension/ plus a .sha256 sidecar."
+    onlyIf {
+        when {
+            skipWebExt.get() -> {
+                logger.lifecycle("Skipping extensionPackage: -Pveles.skipWebExt=true.")
+                false
+            }
+            !webExtLockfile.isFile -> {
+                logger.lifecycle("Skipping extensionPackage: web-extension/package-lock.json absent.")
+                false
+            }
+            else -> true
+        }
+    }
+    dependsOn(extensionBuild)
+
+    // Extension version comes from package.json — same source manifest.ts reads,
+    // keeping zip name and manifest content in sync.
+    @Suppress("UNCHECKED_CAST")
+    val pkg = groovy.json.JsonSlurper().parse(webExtPkg) as Map<String, Any?>
+    val extVersion = pkg["version"]?.toString()
+        ?: throw GradleException("web-extension/package.json missing 'version'.")
+
+    archiveFileName.set("veles-extension-$extVersion.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("web-extension"))
+
+    from(webExtDist)
+
+    // Deterministic-zip recipe — see spec "Deterministic packaging recipe".
+    isReproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+    dirPermissions { unix("0755") }
+    filePermissions { unix("0644") }
+    entryCompression = ZipEntryCompression.DEFLATED
+    metadataCharset = "UTF-8"
+    includeEmptyDirs = false
+
+    // sha256 sidecar is a declared output (not just a side-effect file).
+    val sidecar = layout.buildDirectory.file("web-extension/veles-extension-$extVersion.zip.sha256")
+    outputs.file(sidecar)
+
+    doLast {
+        val zip = archiveFile.get().asFile
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(zip.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        val side = sidecar.get().asFile
+        side.parentFile.mkdirs()
+        side.writeText("$digest  ${zip.name}\n")
+        logger.lifecycle("Wrote ${side.name}: $digest")
+    }
+}
