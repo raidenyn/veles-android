@@ -6,9 +6,11 @@ Accepted for execution planning. Amended to select the native bridge on
 2026-08-21, to select RFC 9382 SPAKE2 for first pairing on 2026-08-25, to
 add the T-WATCH-S3 watch client with emulator-first execution on 2026-08-25,
 and on 2026-08-26 to (a) record the OTP-01 extension living at
-`web-extension/` instead of `src/typescript/` and (b) transfer OTP-01's
-signing/correspondence acceptance clauses to OTP-25; all amendments are
-consolidated into this body.
+`web-extension/` instead of `src/typescript/`, (b) transfer OTP-01's
+signing/correspondence acceptance clauses to OTP-25, and (c) declare the
+extension toolchain's Node.js floor as `>=22.0.0` with npm's version only
+logged (no separate npm floor); all amendments are consolidated into this
+body.
 
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
@@ -1232,7 +1234,8 @@ check, APK ABI inspection, and initial SBOM/license output.
 Cross-platform; Release scope Stable release; Gate Blocks protected transport;
 initial Status Ready.
 
-> **OTP-01 amendment (2026-08-26).** Two implementation-time decisions deviate
+> **OTP-01 amendment (2026-08-26).** Three implementation-time decisions
+> deviate
 > from the literal reading of this RFC and are recorded here so OTP-01's
 > acceptance does not silently conflict with this section:
 >
