@@ -84,7 +84,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run test/smoke.test.ts",
     "test:bundle": "vitest run test/bundle.test.ts",
     "build": "vite build"
   },
@@ -254,7 +254,9 @@ git -c commit.gpgsign=false commit -m "feat(otp-01/1a): bootstrap web-extension 
 
 **Interfaces:**
 - Consumes: scaffolding from Task 1.
-- Produces: `buildExtensionManifest(): chrome.runtime.ManifestV3` — re-imported by both vitest bundle assertions (Task 5) and the Gradle manifest guard (Task 5) as the single source of truth.
+- Produces:
+  - `buildExtensionManifest(): chrome.runtime.ManifestV3` — used by Task 5's Vite plugin to emit `dist/manifest.json` and by vitest bundle assertions as the canonical shape (single source of truth on the TypeScript side).
+  - Task 5's Gradle `validateExtensionManifest` parses the emitted `dist/manifest.json` JSON and validates it independently — the two systems share the baseline values via the JSON output, not via cross-language function reuse.
 
 - [ ] **Step 1: Write the failing smoke test**
 
@@ -480,20 +482,6 @@ val skipWebExt = providers.gradleProperty("veles.skipWebExt")
     .map { it.toBooleanStrict() }
     .orElse(false)
 
-fun webExtShouldSkip(taskName: String): Boolean {
-    if (skipWebExt.get()) {
-        return true
-    }
-    if (!webExtLockfile.isFile) {
-        return true
-    }
-    return false
-}
-
-fun logWebExtSkip(taskName: String, reason: String) {
-    println("Skipping $taskName: $reason (web-extension toolchain not required for APK workflows).")
-}
-
 // Toolchain check — fails fast on missing or under-floored node/npm.
 val extensionToolchainCheck = tasks.register("extensionToolchainCheck") {
     group = "extension"
@@ -523,7 +511,7 @@ val extensionToolchainCheck = tasks.register("extensionToolchainCheck") {
             } catch (e: java.io.IOException) {
                 throw GradleException(
                     "Could not find '$tool' on PATH; " +
-                        "install Node.js >= 22.0.0 (declared in web-extension/package.json engines.node).",
+                        "install Node.js >= 22.0.0 (declared in web-extension/package.json engines.node)",
                     e,
                 )
             }
@@ -622,12 +610,12 @@ val extensionTest = registerWebExtExecTask(
 )
 extensionTest.configure { dependsOn(extensionInstall) }
 
-// Wire source-level checks into root `check` so ci.yml picks them up via existing invocations.
+// Wire source-level checks into root `check` so CI quality gates ride along.
 tasks.named("check") {
     dependsOn(extensionFormat, extensionLint, extensionTypecheck, extensionTest)
 }
 
-// Root clean also removes web-extension/dist (the one generated-artifact exception
+// Root clean also removes web-extension/dist/ (the one generated-artifact exception
 // allowed inside a source tree — see spec Global decision 3).
 tasks.named("clean") {
     doLast {
@@ -635,8 +623,6 @@ tasks.named("clean") {
     }
 }
 ```
-
-**Note re: dead-code removal.** The helper `webExtShouldSkip`/`logWebExtSkip` above is shown for illustration but isn't used by any task below — **do not actually write them**; the `onlyIf` blocks inline the same logic. (`webExtShouldSkip`/`logWebExtSkip` should be omitted from the final file to avoid dead code. Only the `skipWebExt` Provider, `registerWebExtExecTask`, and the per-task `onlyIf` blocks belong in the committed code.)
 
 - [ ] **Step 3: Verify tasks register and run**
 
@@ -646,21 +632,29 @@ Expected: `extensionToolchainCheck`, `extensionInstall`, `extensionFormat`, `ext
 Run: `./gradlew extensionToolchainCheck extensionInstall extensionFormat extensionLint extensionTypecheck extensionTest`
 Expected: all pass (Node 22 present per Global Constraints; `node --version` printed in log).
 
-- [ ] **Step 4: Verify the skip paths (with a guarded shell trap)**
+- [ ] **Step 4: Verify the skip paths (lockfile restored before flag tests)**
 
 ```bash
 set -e
-trap 'mv /tmp/veles-lock-backup-$$ web-extension/package-lock.json 2>/dev/null || true' EXIT
+BACKUP="/tmp/veles-lock-backup-$$"
+trap 'mv "$BACKUP" web-extension/package-lock.json 2>/dev/null || true' EXIT
 
-mv web-extension/package-lock.json /tmp/veles-lock-backup-$$
-# Lockfile now missing — tasks must skip.
-./gradlew extensionInstall extensionTest
-# Lockfile restored via trap on exit; flag path:
-./gradlew -Pveles.skipWebExt=true extensionInstall
-./gradlew -Pveles.skipWebExt=false extensionInstall   # must actually run
+# Phase 1: missing-lockfile skip
+mv web-extension/package-lock.json "$BACKUP"
+./gradlew extensionInstall extensionTest 2>&1 | grep -E "Skipping extensionInstall|Skipping extensionTest" \
+  || { echo "FAIL: missing-lock skip not observed"; exit 1; }
+
+# Phase 2: restore lockfile so the flag paths exercise real runs
+mv "$BACKUP" web-extension/package-lock.json
+
+# Phase 3: value-based skip flag
+./gradlew -Pveles.skipWebExt=true extensionInstall 2>&1 | grep "Skipping extensionInstall" \
+  || { echo "FAIL: skip=true did not skip"; exit 1; }
+./gradlew -Pveles.skipWebExt=false extensionInstall \
+  || { echo "FAIL: skip=false did not run"; exit 1; }
 ```
 
-Expected: the first two invocations print the skip messages; the third succeeds and runs `npm ci`.
+Expected: phase 1 logs skip messages; phase 3 first invocation skips, second runs `npm ci`. The trap is only a safety net for failures mid-script.
 
 - [ ] **Step 5: Verify `clean` removes `web-extension/dist/`**
 
@@ -970,8 +964,8 @@ sed -i "s|script-src 'self'|script-src 'self' 'unsafe-eval'|" web-extension/src/
 ./gradlew extensionPackage 2>&1 | grep 'content_security_policy must be exactly' || { echo "FAIL: guard missed"; exit 1; }
 git checkout web-extension/src/manifest.ts
 
-# 4) manifest_version wrong
-sed -i 's/manifest_version: 3/manifest_version: 2/' web-extension/src/manifest.ts
+# 4) manifest_version wrong — typecast bypass needed so TypeScript compile succeeds and the Gradle guard is what fires
+sed -i 's/manifest_version: 3/manifest_version: 2 as unknown as 3/' web-extension/src/manifest.ts
 ./gradlew extensionPackage 2>&1 | grep 'manifest_version must be 3' || { echo "FAIL: guard missed"; exit 1; }
 git checkout web-extension/src/manifest.ts
 ```
@@ -1135,7 +1129,7 @@ git add -A && git -c commit.gpgsign=false commit -m "chore(otp-01/1a): final cle
   18. (Important) license policy language rewritten to SPDX allow/deny with explicit categories.
   19. (Important) docs wording corrected — exact pins refer to npm deps; node itself has a floor; reference-env pins land in 1d.
   20. (Minor) spec layout now lists `eslint.config.js` (not `.eslintrc.cjs`).
-  21. (Minor) Task 3 verification expects five tasks, not seven (Build/Package arrive in Task 4).
+  21. (Minor) Task 3 verification expects six tasks (`extensionToolchainCheck`, `extensionInstall`, `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest`); Build/Package arrive in Task 4.
   22. (Minor) lockfile-skip smoke uses `trap` so it restores on failure.
   23. (Minor) `.apply { configure }` replaced with direct `configure`.
 - **Placeholder scan:** none remaining — every code block has concrete content, every command is runnable as written.

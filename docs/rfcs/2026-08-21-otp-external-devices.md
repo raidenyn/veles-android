@@ -1229,6 +1229,29 @@ check, APK ABI inspection, and initial SBOM/license output.
 Cross-platform; Release scope Stable release; Gate Blocks protected transport;
 initial Status Ready.
 
+> **OTP-01 amendment (2026-08-26).** Two implementation-time decisions deviate
+> from the literal reading of this RFC and are recorded here so OTP-01's
+> acceptance does not silently conflict with this section:
+>
+> 1. **Extension source path.** "…the MV3 TypeScript npm project under
+>    `src/typescript`" reads as if the extension lives at `src/typescript/`.
+>    The implementation lives at `web-extension/` at the repo root. Rationale:
+>    the directory name is self-describing across toolchain boundaries
+>    (Gradle task group, CI job name, and ZIP artifact name all read
+>    `web-extension`), avoids collision with the Android `src/` tree at the
+>    module level, and matches the convention used by other OTP-01
+>    directories (`web-extension/`, `rust/`, `native-bridge/`). This is the
+>    path used by sub-project 1a going forward; `src/typescript` should not
+>    be introduced.
+> 2. **Signing/notarization timing.** "platform signing can consume
+>    CI-provided credentials" and "signed outputs are verified for provenance
+>    and content correspondence" are not satisfied by OTP-01's sub-projects.
+>    OTP-01 produces unsigned, byte-reproducible artifacts with the
+>    no-embedded-secrets guarantee; the signed↔unsigned comparison
+>    procedure and the credential-consumption end-to-end demonstration are
+>    OTP-25 scope. Issue #80 must not close until OTP-25 demonstrates those
+>    two clauses.
+
 ### OTP-02: Freeze the protected Bluetooth protocol profile and schemas
 
 **Outcome:** Android, Rust, and Chrome share one reviewed, versioned,
