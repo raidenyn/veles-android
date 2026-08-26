@@ -22,6 +22,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Run a single instrumented test class
 ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.nagaev.permissions.ui.VelesPermissionsAppTests
+
+# Web extension (OTP-01 sub-project 1a) — requires node/npm on PATH (node >= 22, npm bundled)
+./gradlew extensionToolchainCheck extensionInstall                      # verify tools + hydrate node_modules
+./gradlew extensionFormat extensionLint extensionTypecheck extensionTest  # source-level quality gates
+./gradlew extensionBuild validateExtensionManifest extensionArtifactTest extensionPackage  # -> build/web-extension/veles-extension-<version>.zip + .sha256
 ```
 
 ## Architecture Overview
