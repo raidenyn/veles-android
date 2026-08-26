@@ -164,11 +164,16 @@ The extension artifact name embeds `web-extension/package.json` `version`
 of the Android app's git-tag-derived versionName — the extension and the
 APK ship on separate tracks.
 
-### Testing (sub-project-level, before wiring into CI)
+### Testing (sub-project 1a, before 1d wires byte-compare)
 
-- `vitest run` covers: manifest generator emits expected MV3 shape, zip
-  entry list matches a checked-in expected-file snapshot, both entry
-  points compile and export.
+- `vitest run test/smoke.test.ts` covers source-only assertions: manifest
+  generator emits expected MV3 shape, both entry points compile and export.
+- `vitest run test/bundle.test.ts` — invoked by `extensionArtifactTest`
+  **after** `extensionBuild` — asserts two things against built `dist/`:
+  (1) the exact file set, as an inline expected list (currently
+  `['background.js', 'content.js', 'manifest.json']`; any new chunk/asset
+  fails the test and forces conscious review), and (2) that
+  `dist/manifest.json` round-trips through `buildExtensionManifest()`.
 - Byte-determinism is asserted in 1d via double-build hash-compare, not in
   1a. 1a's job is to make the zip recipe deterministic so 1d can compare
   hashes without surprises.
@@ -254,17 +259,20 @@ APK ship on separate tracks.
   for the Rust core) run inside Docker as full reference environments, giving
   byte-stable rebuilds of the extension zip and of the Rust `.so` / `.wasm`
   intermediates. Windows and macOS artifacts cannot be rebuilt inside Linux
-  Docker (signing/notarization require Apple/MS SDKs that are not portable
-  to Linux), so 1d treats the GitHub-hosted `windows-latest` and
-  `macos-latest` runner images as the *documented environments*: each
-  reference run pins (a) the runner image label and SHA, (b) the Rust
-  toolchain via `rust-toolchain.toml`, (c) the Tauri CLI version from
-  `package-lock.json`, and (d) on macOS the Xcode/SDK version explicit in
-  the workflow YAML. Two CI runs on fresh runners of the same image serve
-  as the "independent clean documented environments," and their output
-  hashes are compared byte-for-byte. (The `Dockerfile.web` /
-  `Dockerfile.rust` pattern is reusable if self-hosted reproducibility is
-  wanted later.)
+  Docker (signing/notarization require Apple/MS SDKs that are not portable),
+  so 1d treats **pinned** GitHub-hosted runner labels (`windows-2022`,
+  `macos-15` — never `-latest`) as the *documented environments*. Each
+  reference run pins (a) the versioned runner label from the workflow YAML,
+  (b) the Rust toolchain via `rust-toolchain.toml`, (c) the Tauri CLI
+  version from `package-lock.json`, and (d) on macOS the Xcode/SDK version
+  explicit in the workflow YAML. Each run captures the observed
+  `runner.ImageOS` and `runner.ImageVersion` values into its workflow log
+  and into `SHA256SUMS.native-bridge` metadata. Byte-comparison across two
+  CI runs proceeds only when their observed ImageOS/ImageVersion match; on
+  mismatch the comparison aborts with a "re-run on matched image"
+  instruction. This is deliberately weaker than pinning a self-hosted image
+  ID — that option is an extension point if self-hosted infrastructure
+  becomes available later.
 - **Compare script:** `verify/verify-all.sh` orchestrates: build in each
   Docker image on Linux and compare hashes; run the Windows and macOS CI
   jobs twice on the same pinned image and compare their hashes; verify the
@@ -289,36 +297,42 @@ APK ship on separate tracks.
 
 ## Acceptance criteria (traceable to RFC OTP-01)
 
-The RFC's acceptance paragraph has six clauses. Clauses 1, 2, 3, and 6 are
-owned and closed by OTP-01's sub-projects as mapped below. Clauses 4 and 5
-depend on real signing/notarization infrastructure, which is OTP-25 scope —
-OTP-01 contributes the unsigned-artifact ground truth and the
-no-embedded-secrets guarantee, but the OTP-01 GitHub issue cannot close
-until those two clauses are demonstrated in OTP-25. This deferral is
-recorded here and must also be recorded on issue #80 and in the RFC (as a
-short amendment note under OTP-01) so the dependency is explicit rather
-than discovered later.
+The RFC's acceptance paragraph has six clauses. OTP-01 closes when the four
+clauses it owns (1, 2, 3, 6) are demonstrated. Clauses 4 and 5 are formally
+**transferred to OTP-25's acceptance criteria** by the RFC amendment dated
+2026-08-26 — they depend on real signing/notarization infrastructure that
+is OTP-25 scope. This transfer avoids the dependency deadlock that would
+otherwise arise: OTP-25 transitively depends on OTP-01 via OTP-06/OTP-07,
+so if OTP-01 could not close until OTP-25 finished, neither issue could
+ever reach Ready in the RFC's dependency model. OTP-01's contribution to
+clauses 4 and 5 is the stable unsigned-artifact ground truth and the
+no-embedded-secrets guarantee. The amendment is recorded in the RFC
+(after the OTP-01 entry's project fields) and on issue #80 so the
+transfer is explicit, not silent.
 
-| Clause | Owner inside this decomposition | OTP-01 closes? |
+| Clause | Owner | OTP-01 acceptance depends on it? |
 |---|---|---|
-| 1 (byte-identical artifacts in clean envs) | 1d (`verify-all.sh`) | Yes |
-| 2 (CI-safe Gradle entry points) | 1a+1b+1c wired by 1d | Yes |
-| 3 (artifact content allow-list) | 1a (ext file-set) + 1b (APK ABIs) + 1c (bridge) | Yes |
-| 4 (signing consumes CI credentials) | OTP-25 | No — OTP-01 contributes unsigned artifacts |
-| 5 (signed↔unsigned correspondence) | OTP-25 | No — OTP-01 contributes stable unsigned reference |
-| 6 (no runtime download / remote exec) | 1a+1b+1c, scanned by 1d | Yes |
+| 1 (byte-identical artifacts in clean envs) | 1d (`verify-all.sh`) | **Yes** — OTP-01 closes when met |
+| 2 (CI-safe Gradle entry points) | 1a+1b+1c, wired into CI by 1d | **Yes** |
+| 3 (artifact content allow-list) | 1a (ext file-set) + 1b (APK ABIs) + 1c (bridge) | **Yes** |
+| 4 (signing consumes CI credentials) | OTP-25 | **No** — transferred to OTP-25 |
+| 5 (signed↔unsigned correspondence) | OTP-25 | **No** — transferred to OTP-25 |
+| 6 (no runtime download / remote exec) | 1a+1b+1c, scanned by 1d | **Yes** |
 
-Clause-by-clause detail:
-
-### RFC clauses (verbatim), mapped to sub-projects
+### RFC clauses (verbatim), with sub-project mapping
 
 1. *"Independent clean documented environments produce matching locked
    dependencies and byte-identical unsigned bridge binaries, bundle/package
    payloads, host manifests, and installer inputs."*
-   → **1d.** `verify/verify-all.sh` runs every sub-project's build inside
-   pinned Docker environments and compares hashes against the committed
-   `SHA256SUMS.toolchains`. `SHA256SUMS.native-bridge` produced by 1c is one
-   of the inputs.
+   → **1d.** For Linux-side artifacts (Android APK, extension ZIP, Rust
+   `.so`/`.wasm`), `verify/verify-all.sh` builds in pinned Docker
+   environments and compares hashes. For Windows/macOS — which cannot be
+   reproduced inside Linux Docker — two CI runs on GitHub-hosted
+   `windows-2022` and `macos-15` runners record their observed
+   `runner.ImageOS`/`ImageVersion` and byte-compare outputs only when both
+   runs landed on the same image; on mismatch the verification aborts with
+   a re-run instruction (no claim is made that a workflow can pin the
+   underlying image SHA; the check is post-hoc identity of environments).
 2. *"Gradle exposes CI-safe entry points."*
    → **1a / 1b / 1c** each deliver their task group; **1d** wires the
    `verify-all.sh` byte-compare into CI and asserts the entry points run

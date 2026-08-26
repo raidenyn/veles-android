@@ -255,7 +255,7 @@ git -c commit.gpgsign=false commit -m "feat(otp-01/1a): bootstrap web-extension 
 **Interfaces:**
 - Consumes: scaffolding from Task 1.
 - Produces:
-  - `buildExtensionManifest(): chrome.runtime.ManifestV3` — used by Task 5's Vite plugin to emit `dist/manifest.json` and by vitest bundle assertions as the canonical shape (single source of truth on the TypeScript side).
+  - `buildExtensionManifest(): chrome.runtime.ManifestV3` — used by **this task's** Vite plugin (added in Step 5) to emit `dist/manifest.json`, and consumed by Task 5's bundle assertion (`test/bundle.test.ts`) to verify the emitted JSON round-trips the canonical shape.
   - Task 5's Gradle `validateExtensionManifest` parses the emitted `dist/manifest.json` JSON and validates it independently — the two systems share the baseline values via the JSON output, not via cross-language function reuse.
 
 - [ ] **Step 1: Write the failing smoke test**
@@ -635,26 +635,30 @@ Expected: all pass (Node 22 present per Global Constraints; `node --version` pri
 - [ ] **Step 4: Verify the skip paths (lockfile restored before flag tests)**
 
 ```bash
-set -e
+set -euo pipefail
 BACKUP="/tmp/veles-lock-backup-$$"
 trap 'mv "$BACKUP" web-extension/package-lock.json 2>/dev/null || true' EXIT
 
-# Phase 1: missing-lockfile skip
+# Phase 1: missing-lockfile skip — capture output, assert exact lines separately.
 mv web-extension/package-lock.json "$BACKUP"
-./gradlew extensionInstall extensionTest 2>&1 | grep -E "Skipping extensionInstall|Skipping extensionTest" \
-  || { echo "FAIL: missing-lock skip not observed"; exit 1; }
+OUT1=$(./gradlew extensionInstall extensionTest 2>&1)
+echo "$OUT1" | grep -F 'Skipping extensionInstall' \
+  || { echo "FAIL: missing-lock skip for extensionInstall not observed"; echo "$OUT1"; exit 1; }
+echo "$OUT1" | grep -F 'Skipping extensionTest' \
+  || { echo "FAIL: missing-lock skip for extensionTest not observed"; echo "$OUT1"; exit 1; }
 
-# Phase 2: restore lockfile so the flag paths exercise real runs
+# Phase 2: restore lockfile so the flag paths exercise real runs.
 mv "$BACKUP" web-extension/package-lock.json
 
-# Phase 3: value-based skip flag
-./gradlew -Pveles.skipWebExt=true extensionInstall 2>&1 | grep "Skipping extensionInstall" \
-  || { echo "FAIL: skip=true did not skip"; exit 1; }
-./gradlew -Pveles.skipWebExt=false extensionInstall \
-  || { echo "FAIL: skip=false did not run"; exit 1; }
+# Phase 3: value-based skip flag.
+OUT2=$(./gradlew -Pveles.skipWebExt=true extensionInstall 2>&1)
+echo "$OUT2" | grep -F 'Skipping extensionInstall' \
+  || { echo "FAIL: -Pveles.skipWebExt=true did not skip"; echo "$OUT2"; exit 1; }
+./gradlew -Pveles.skipWebExt=false extensionInstall >/dev/null 2>&1 \
+  || { echo "FAIL: -Pveles.skipWebExt=false did not run"; exit 1; }
 ```
 
-Expected: phase 1 logs skip messages; phase 3 first invocation skips, second runs `npm ci`. The trap is only a safety net for failures mid-script.
+The trap is only a safety net for failures mid-script; the explicit `mv` between phases guarantees the lockfile is in place before the flag-path tests.
 
 - [ ] **Step 5: Verify `clean` removes `web-extension/dist/`**
 

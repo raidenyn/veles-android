@@ -3,9 +3,12 @@
 ## Status
 
 Accepted for execution planning. Amended to select the native bridge on
-2026-08-21, to select RFC 9382 SPAKE2 for first pairing on 2026-08-25, and to
-add the T-WATCH-S3 watch client with emulator-first execution on 2026-08-25;
-all amendments are consolidated into this body.
+2026-08-21, to select RFC 9382 SPAKE2 for first pairing on 2026-08-25, to
+add the T-WATCH-S3 watch client with emulator-first execution on 2026-08-25,
+and on 2026-08-26 to (a) record the OTP-01 extension living at
+`web-extension/` instead of `src/typescript/` and (b) transfer OTP-01's
+signing/correspondence acceptance clauses to OTP-25; all amendments are
+consolidated into this body.
 
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
@@ -1241,16 +1244,23 @@ initial Status Ready.
 >    `web-extension`), avoids collision with the Android `src/` tree at the
 >    module level, and matches the convention used by other OTP-01
 >    directories (`web-extension/`, `rust/`, `native-bridge/`). This is the
->    path used by sub-project 1a going forward; `src/typescript` should not
->    be introduced.
-> 2. **Signing/notarization timing.** "platform signing can consume
->    CI-provided credentials" and "signed outputs are verified for provenance
->    and content correspondence" are not satisfied by OTP-01's sub-projects.
->    OTP-01 produces unsigned, byte-reproducible artifacts with the
->    no-embedded-secrets guarantee; the signed↔unsigned comparison
->    procedure and the credential-consumption end-to-end demonstration are
->    OTP-25 scope. Issue #80 must not close until OTP-25 demonstrates those
->    two clauses.
+ >    path used by sub-project 1a going forward; `src/typescript` should not
+ >    be introduced.
+ > 2. **Signing/notarization criteria transfer.** Acceptance clauses
+ >    "platform signing can consume CI-provided credentials without embedding
+ >    secrets" and "signed outputs are verified for provenance and content
+ >    correspondence but are not required to be byte-identical" are **removed
+ >    from OTP-01's acceptance** and added to OTP-25's acceptance. Rationale:
+ >    both clauses require real signing/notarization infrastructure, which is
+ >    OTP-25 scope; if OTP-01 could not close until OTP-25 demonstrated them,
+ >    a deadlock arises because OTP-25 transitively depends on OTP-01 via
+ >    OTP-06/OTP-07/OTP-24. OTP-01's contribution to those clauses is the
+ >    stable unsigned-artifact ground truth and the no-embedded-secrets
+ >    guarantee. OTP-01 closes when its remaining clauses (matching locked
+ >    dependencies / byte-identical unsigned artifacts in clean environments;
+ >    CI-safe Gradle entry points; artifact content allow-list; no runtime
+ >    download or remote executable code) are demonstrated by sub-projects
+ >    1a–1d.
 
 ### OTP-02: Freeze the protected Bluetooth protocol profile and schemas
 
@@ -1576,7 +1586,10 @@ roots and Chrome manifest locations; register the production host for only the
 exact production extension origin; add atomic upgrade and rollback, uninstall,
 Windows code signing, macOS signing/notarization/stapling, signed-to-unsigned
 content correspondence, release hashes, checksums, and separate scripted
-development registration and removal.
+development registration and removal. **(Inherits the two OTP-01 RFC clauses
+transferred here by the 2026-08-26 amendment: platform signing consuming
+CI-provided credentials without embedding secrets, and signed↔unsigned
+content-correspondence verification.)**
 
 **Exclusions:** Machine-wide installation, auto-update daemons, broad or
 wildcard origins, bundling extension trust or OTP state, and Linux packaging.
