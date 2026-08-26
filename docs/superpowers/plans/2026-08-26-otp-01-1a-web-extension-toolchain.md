@@ -2,43 +2,53 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stand up `web-extension/` (Vite + TypeScript skeleton, vitest, eslint, prettier) and root Gradle tasks that install, format, lint, type-check, test, build, and deterministically zip it — wired into root `check`, reproducible, and gated by a manifest/CSP guard.
+**Goal:** Stand up `web-extension/` (Vite + TypeScript skeleton, vitest, eslint, prettier) and root Gradle tasks that install, format, lint, type-check, test, build, validate, and deterministically zip it — wired into root `check`, reproducible, and gated by a strict manifest/CSP exact-match.
 
-**Architecture:** A new top-level `web-extension/` npm project (not a Gradle subproject) holds a minimal loadable MV3 extension. Root `build.gradle.kts` defines an `extension` task group invoking `npm` on PATH with `--prefix web-extension`. Tasks are skipped with descriptive messages when `web-extension/package-lock.json` is absent so Android-only workflows keep working. `extensionPackage` produces a deterministic zip via a Gradle `Zip` task (`reproducibleFileOrder`, `preserveFileTimestamps=false`), then validates the emitted `manifest.json` against a strict baseline.
+**Architecture:** A new top-level `web-extension/` npm project (not a Gradle subproject) holds a minimal loadable MV3 extension. Root `build.gradle.kts` defines an `extension` task group invoking `npm` via `workingDir = webExtDir`. Every task skips with a descriptive message when `web-extension/package-lock.json` is absent OR when `-Pveles.skipWebExt=true` is passed (value-based, `toBooleanStrict`). `extensionBuild` always re-runs (no `outputs.dir` declared) to eliminate the stale-artifact class of bugs; `extensionInstall` uses fine-grained inputs for correct up-to-date behavior. `extensionPackage` produces a deterministic zip plus a `.zip.sha256` sidecar.
 
-**Tech Stack:** Gradle 8.11.1 Kotlin DSL, Node 26/npm 11 (minimum floor declared in `engines.node`; Gradle does not pin or download node), Vite 6, TypeScript 5.7, vitest 3, eslint 9 (flat config), prettier 3.
+**Tech Stack:** Gradle 8.11.1 Kotlin DSL, Node 22 (LTS, satisfies Vite 6 / Vitest 3 / typescript-eslint 8 engine requirements), Vite 6, TypeScript 5.7, vitest 3, eslint 9 (flat config), prettier 3.
 
 **Spec:** `docs/superpowers/specs/2026-08-26-otp-01-reproducible-toolchains-design.md` (sub-project 1a section + Global decisions). Read both before starting.
 
 ## Global Constraints
 
-- node/npm come from PATH; Gradle never downloads them. Minimum floor: `engines.node = ">=20.0.0"`, `engines.npm = ">=10.0.0"` (Node 20 is the oldest still-maintained LTS line).
+- node/npm come from PATH; Gradle never downloads them.
+- `web-extension/package.json` `engines.node = ">=22.0.0"` — matches CI (Node 22 LTS) and the strictest devDep (typescript-eslint@8.57 requires ≥20.9; Vite 6 / Vitest 3 require `^18 || ^20 || >=22`).
+- No `engines.npm` entry — npm version is implied by node major.
 - Lockfile is the reproducibility contract: `package-lock.json` committed, installs run `npm ci`, drift fails — no fallback to `npm install`.
-- All npm deps are **exact pins** (no `^`/`~`). Lockfile is byte-preserving.
-- All `extension*` Gradle tasks: if `web-extension/package-lock.json` is absent, print a descriptive skip message and succeed. No exception.
-- Root `check` depends on `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest` (and **not** on `extensionBuild`/`extensionPackage`).
+- All npm deps are **exact pins** (no `^`/`~`). The pins listed in Task 1 are the reviewed set — verify availability with `npm view <pkg>@<version> version` and substitute only if a pin is unavailable; do not float to latest.
+- All `extension*` tasks skip (with a descriptive log) when `web-extension/package-lock.json` is absent or `-Pveles.skipWebExt=true` is passed.
+- Root `check` depends on `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest` only — never on `extensionBuild`, `validateExtensionManifest`, `extensionArtifactTest`, or `extensionPackage`. `extensionTest` must be **source-only** (never reads `dist/`); bundle assertions live in a separate task.
 - APK build (`:app:assembleDebug` / `:app:assembleRelease`) must remain unaffected: no new entries in `settings.gradle.kts`, no new dependencies of `:app` tasks.
-- Artifact output goes under `build/web-extension/`, **never** inside `web-extension/` source tree (zip path, sha sidecar).
-- Manifest policy baseline is fixed by this plan: `manifest_version = 3`, `permissions: []`, no `host_permissions`, CSP `extension_pages = "script-src 'self'; object-src 'self'"` (no `'wasm-unsafe-eval'` in 1a — WASM only arrives in 1b).
+- Artifact zips and sha sidecars land under `build/web-extension/`. `web-extension/dist/` is a deliberate exception (Vite's conventional output); root `clean` is extended to delete it.
+- Manifest policy baseline is fixed by this plan and enforced exactly:
+  - `manifest_version == 3`
+  - `permissions` is exactly `[]`
+  - `host_permissions` absent
+  - `content_security_policy` exactly `{ extension_pages: "script-src 'self'; object-src 'self'" }`
+  - No `'wasm-unsafe-eval'` in 1a (allowed starting in 1b).
 
 ## File map
 
 | File | Responsibility |
 |---|---|
-| `web-extension/package.json` | npm metadata, exact-pinned devDeps, scripts, engines floors |
+| `web-extension/package.json` | npm metadata, exact-pinned devDeps, scripts, `engines.node` |
 | `web-extension/package-lock.json` | committed lockfile (reproducibility contract) |
-| `web-extension/tsconfig.json` | strict TS config covering `src/`, `vite.config.ts`, `vitest`, `test/` |
-| `web-extension/vite.config.ts` | two entry points (`background.ts` → service worker, `content.ts` → content script) |
-| `web-extension/eslint.config.js` | ESLint 9 flat config, TS+prettier integration |
-| `web-extension/.prettierrc` | prettier settings (no prose wrap, 100-col, single quotes — matches repo Kotlin style) |
+| `web-extension/tsconfig.json` | strict TS config, `resolveJsonModule: true` for version import |
+| `web-extension/vite.config.ts` | two entry points + plugin that emits `manifest.json` into `dist/` |
+| `web-extension/eslint.config.js` | ESLint 9 flat config, TS + prettier integration |
+| `web-extension/.prettierrc` | prettier settings (100-col, single quotes, LF) |
 | `web-extension/.prettierignore` | exclude `node_modules/`, `dist/`, `package-lock.json` |
-| `web-extension/src/manifest.ts` | exports canonical MV3 manifest object (single source of truth) |
-| `web-extension/src/background.ts` | service worker entry stub |
+| `web-extension/.gitignore` | exclude `node_modules/`, `dist/`, `coverage/` |
+| `web-extension/src/manifest.ts` | exports canonical MV3 manifest; reads version from `package.json` |
+| `web-extension/src/background.ts` | service worker entry stub (browser-global access behind a guard) |
 | `web-extension/src/content.ts` | content script entry stub |
-| `web-extension/test/smoke.test.ts` | vitest: manifest shape, both modules compile |
-| `build.gradle.kts` | root Gradle file gaining the `extension` task group and `check` wiring |
-| `.gitignore` | add `web-extension/node_modules/`, `web-extension/dist/` |
-| `.github/workflows/ci.yml` | **modify** — add `actions/setup-node` + `npm ci` to the two JVM jobs (`lint-check`, `unit-tests`) so the `check`-wired extension tasks actually find node on PATH in CI |
+| `web-extension/test/setup.ts` | vitest global setup; stubs `chrome` API surface |
+| `web-extension/test/smoke.test.ts` | vitest: manifest shape, both modules compile (chrome stubbed) |
+| `web-extension/test/bundle.test.ts` | vitest: `dist/` file-set and manifest against canonical shape |
+| `build.gradle.kts` | root Gradle file gaining the `extension` task group, `clean` extension, `check` wiring |
+| `.github/workflows/ci.yml` | new `web-extension` job running the extension tasks under `setup-node@v6` |
+| `CLAUDE.md`, `docs/reproducible-builds.md` | documentation updates in Task 7 |
 
 ---
 
@@ -46,18 +56,18 @@
 
 **Files:**
 - Create: `web-extension/package.json`
-- Create: `web-extension/.gitignore` (project-local, keeps the root one clean of node entries)
+- Create: `web-extension/.gitignore`
 - Create: `web-extension/tsconfig.json`
-- Create: `web-extension/vite.config.ts`
+- Create: `web-extension/vite.config.ts` (skeleton — manifest-emission wired in Task 2)
 - Create: `web-extension/eslint.config.js`
 - Create: `web-extension/.prettierrc`
 - Create: `web-extension/.prettierignore`
 
 **Interfaces:**
 - Consumes: nothing (first task).
-- Produces: `web-extension/package.json` with `scripts` keys `format`, `format:check`, `lint`, `typecheck`, `test`, `build` — Gradle tasks in Task 3+ invoke these via `npm run <name>`.
+- Produces: `web-extension/package.json` with scripts `format:check`, `lint`, `typecheck`, `test`, `test:bundle`, `build` — Gradle tasks in Task 3+ invoke these via `npm run <name>`. `vitest` is configured to load `test/setup.ts` globally.
 
-- [ ] **Step 1: Create `web-extension/package.json` with exact-pinned devDependencies**
+- [ ] **Step 1: Create `web-extension/package.json` with the reviewed exact pins**
 
 ```json
 {
@@ -67,8 +77,7 @@
   "type": "module",
   "description": "Veles OTP browser extension (MV3). Skeleton toolchain for OTP-01 sub-project 1a.",
   "engines": {
-    "node": ">=20.0.0",
-    "npm": ">=10.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "format": "prettier --write .",
@@ -76,6 +85,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:bundle": "vitest run test/bundle.test.ts",
     "build": "vite build"
   },
   "devDependencies": {
@@ -93,9 +103,22 @@
 }
 ```
 
-Exact versions above are placeholders to be resolved in Step 3 — they exist as of writing but verify with `npm view <pkg>@<v> version` and substitute the **latest stable exact pin** if any is unavailable. Every entry must be an exact version (no `^`/`~`).
+Version-pinning rule: this set is reviewed as a unit. **Do not float to latest** — the plan was reviewed against these versions.
 
-- [ ] **Step 2: Create config files**
+- [ ] **Step 2: Verify each pin is actually available**
+
+```bash
+cd web-extension
+for pin in '@eslint/js@9.39.2' '@types/chrome@0.1.35' '@types/node@24.10.13' \
+           'eslint@9.39.2' 'eslint-config-prettier@10.1.8' 'prettier@3.8.0' \
+           'typescript@5.7.3' 'typescript-eslint@8.57.0' 'vite@6.4.2' 'vitest@3.2.4'; do
+  echo -n "$pin -> "; npm view "$pin" version 2>&1 | tail -1
+done
+```
+
+Expected: each line prints the same version string (not a 404 or registry error). If a pin is unavailable, replace **only that entry** with the closest stable earlier release in the same major line and note the substitution in the commit message.
+
+- [ ] **Step 3: Create config files**
 
 `web-extension/tsconfig.json`:
 
@@ -111,26 +134,30 @@ Exact versions above are placeholders to be resolved in Step 3 — they exist as
     "isolatedModules": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
     "types": ["chrome", "node"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "resolveJsonModule": true
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src", "test", "vite.config.ts", "eslint.config.js"]
 }
 ```
 
-`web-extension/vite.config.ts` (skeleton — two entry points, emitted to `dist/`; manifest copy step added in Task 2):
+`web-extension/vite.config.ts` (skeleton — manifest emit lands in Task 2; vitest configured to load the test setup):
 
 ```ts
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 
 export default defineConfig({
+  test: {
+    setupFiles: ['./test/setup.ts'],
+    environment: 'node',
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
-    minify: false, // deterministic output; minification is a post-1a concern
+    minify: false,
     rollupOptions: {
       input: {
         background: resolve(__dirname, 'src/background.ts'),
@@ -145,6 +172,8 @@ export default defineConfig({
   },
 });
 ```
+
+(Using `vitest/config` instead of `vite` so the `test` block type-checks; Vite still uses the same export.)
 
 `web-extension/eslint.config.js`:
 
@@ -193,62 +222,79 @@ dist/
 coverage/
 ```
 
-- [ ] **Step 3: Resolve dependency pins**
+- [ ] **Step 4: Generate `package-lock.json`**
 
-Run: `cd web-extension && for p in '@eslint/js' '@types/chrome' '@types/node' eslint eslint-config-prettier prettier typescript typescript-eslint vite vitest; do npm view "$p" version; done`
+Run: `cd web-extension && npm install`
+Expected: `package-lock.json` produced; `git status` shows it untracked.
 
-If any version printed differs from `package.json`, update `package.json` to the printed exact version. Then run `npm install` to generate `package-lock.json`.
+Sanity-check the lockfile didn't widen any pin:
+Run: `grep -E '"(vite|vitest|typescript|eslint)": "' web-extension/package.json`
+Expected: every value still matches the exact pin in Step 1.
 
-Expected: `package-lock.json` exists; `git status` shows it untracked.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add web-extension/package.json web-extension/package-lock.json web-extension/.gitignore web-extension/tsconfig.json web-extension/vite.config.ts web-extension/eslint.config.js web-extension/.prettierrc web-extension/.prettierignore
+git add web-extension/package.json web-extension/package-lock.json web-extension/.gitignore \
+        web-extension/tsconfig.json web-extension/vite.config.ts web-extension/eslint.config.js \
+        web-extension/.prettierrc web-extension/.prettierignore
 git -c commit.gpgsign=false commit -m "feat(otp-01/1a): bootstrap web-extension npm project (vite+ts+vitest+eslint+prettier)"
 ```
 
 ---
 
-### Task 2: Extension skeleton (manifest + two entry points + smoke tests)
+### Task 2: Extension skeleton (manifest + two entry points + stubbed-chrome smoke tests)
 
 **Files:**
-- Create: `web-extension/src/manifest.ts`
-- Create: `web-extension/src/background.ts`
+- Create: `web-extension/src/manifest.ts` — reads version from `package.json` so zip name and manifest version stay in sync
+- Create: `web-extension/src/background.ts` — guards against missing `chrome` global so it can be imported under vitest/Node
 - Create: `web-extension/src/content.ts`
+- Create: `web-extension/test/setup.ts` — vitest global setup, stubs minimum `chrome` API surface
 - Create: `web-extension/test/smoke.test.ts`
-- Modify: `web-extension/vite.config.ts` — emit `dist/manifest.json` from `src/manifest.ts` via a tiny plugin.
+- Modify: `web-extension/vite.config.ts` — add `generateBundle` plugin emitting `dist/manifest.json`
 
 **Interfaces:**
-- Consumes: `web-extension/` scaffolding from Task 1.
-- Produces: `buildExtensionManifest(): chrome.runtime.ManifestV3` (the canonical manifest shape — re-imported by the package-time guard in Task 5), plus `dist/manifest.json` in the build output.
+- Consumes: scaffolding from Task 1.
+- Produces: `buildExtensionManifest(): chrome.runtime.ManifestV3` — re-imported by both vitest bundle assertions (Task 5) and the Gradle manifest guard (Task 5) as the single source of truth.
 
 - [ ] **Step 1: Write the failing smoke test**
+
+`web-extension/test/setup.ts`:
+
+```ts
+import { vi } from 'vitest';
+
+// MV3 APIs are browser-globals. Stub the minimum surface background.ts uses
+// so the module can be imported under vitest's Node environment.
+vi.stubGlobal('chrome', {
+  runtime: {
+    onInstalled: { addListener: vi.fn() },
+    getManifest: vi.fn(),
+  },
+});
+```
 
 `web-extension/test/smoke.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest';
 import { buildExtensionManifest } from '../src/manifest';
+import pkg from '../package.json';
 
 describe('extension manifest', () => {
-  it('is a valid MV3 manifest with locked-down baseline', () => {
+  it('is a valid MV3 manifest at the locked-down baseline', () => {
     const m = buildExtensionManifest();
     expect(m.manifest_version).toBe(3);
     expect(m.name).toBe('Veles OTP');
-    expect(m.version).toBe('0.1.0');
-    expect(m.permissions ?? []).toEqual([]);
-    expect(m.host_permissions ?? []).toEqual([]);
+    expect(m.version).toBe(pkg.version);
+    expect(m.permissions).toEqual([]);
+    expect(m).not.toHaveProperty('host_permissions');
     expect(m.background?.service_worker).toBe('background.js');
     expect(m.content_scripts?.[0]?.js).toEqual(['content.js']);
   });
 
-  it('uses a restrictive CSP without wasm-unsafe-eval (WASM arrives in 1b)', () => {
-    const csp = buildExtensionManifest().content_security_policy?.extension_pages ?? '';
-    expect(csp).toContain("script-src 'self'");
-    expect(csp).not.toContain('wasm-unsafe-eval');
-    expect(csp).not.toContain('unsafe-eval');
-    expect(csp).not.toContain('unsafe-inline');
+  it('uses a restrictive CSP without wasm-unsafe-eval (allowed in 1b)', () => {
+    const csp = buildExtensionManifest().content_security_policy;
+    expect(csp).toEqual({ extension_pages: "script-src 'self'; object-src 'self'" });
   });
 });
 
@@ -270,13 +316,13 @@ Expected: FAIL — `Cannot find module '../src/manifest'`.
 `web-extension/src/manifest.ts`:
 
 ```ts
-/// <reference types="chrome" />
+import pkg from '../package.json';
 
 export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
   return {
     manifest_version: 3,
     name: 'Veles OTP',
-    version: '0.1.0',
+    version: pkg.version,
     description:
       'Delivers one-time passcodes from the Veles Android app to this browser over an authenticated local channel.',
     permissions: [],
@@ -302,9 +348,16 @@ export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
 ```ts
 // MV3 service worker entry — skeleton for OTP-01 1a.
 // Real connector/offscreen lifecycle lands in later OTP tasks.
-chrome.runtime.onInstalled.addListener(() => {
-  // no-op placeholder
-});
+//
+// The chrome-global guard exists so vitest (Node environment) can import this
+// module without a browser runtime; the test setup stubs chrome.runtime anyway,
+// but defensive coding here prevents a hard ReferenceError if the stub is
+// missed in a future test file.
+if (typeof chrome !== 'undefined' && chrome.runtime?.onInstalled) {
+  chrome.runtime.onInstalled.addListener(() => {
+    // no-op placeholder
+  });
+}
 
 export {};
 ```
@@ -317,12 +370,13 @@ export {};
 export {};
 ```
 
-- [ ] **Step 5: Wire `vite.config.ts` to emit `dist/manifest.json`**
+- [ ] **Step 5: Add the manifest-emission plugin to `vite.config.ts`**
 
-Modify `web-extension/vite.config.ts` to add a tiny plugin importing `src/manifest.ts` directly:
+Replace `web-extension/vite.config.ts` with:
 
 ```ts
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig } from 'vitest/config';
+import type { Plugin } from 'vite';
 import { resolve } from 'node:path';
 import { buildExtensionManifest } from './src/manifest';
 
@@ -341,6 +395,10 @@ function emitManifest(): Plugin {
 
 export default defineConfig({
   plugins: [emitManifest()],
+  test: {
+    setupFiles: ['./test/setup.ts'],
+    environment: 'node',
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -361,17 +419,15 @@ export default defineConfig({
 });
 ```
 
-(`generateBundle` on a Vite plugin fires during build — no extra dependency.)
-
 - [ ] **Step 6: Run vitest and verify pass**
 
 Run: `cd web-extension && npm test`
 Expected: PASS — 3 tests green.
 
-- [ ] **Step 7: Run build and inspect `dist/manifest.json`**
+- [ ] **Step 7: Build and inspect the artifact**
 
 Run: `cd web-extension && npm run build && cat dist/manifest.json`
-Expected: valid MV3 JSON matching the smoke tests, `background.js` and `content.js` also present in `dist/`.
+Expected: valid MV3 JSON; `background.js` and `content.js` also present.
 
 - [ ] **Step 8: Run format, lint, typecheck**
 
@@ -382,51 +438,129 @@ Expected: all pass.
 
 ```bash
 git add web-extension/src web-extension/test web-extension/vite.config.ts
-git -c commit.gpgsign=false commit -m "feat(otp-01/1a): add MV3 skeleton (manifest generator, background/content stubs, smoke tests)"
+git -c commit.gpgsign=false commit -m "feat(otp-01/1a): MV3 skeleton (manifest generator, stubbed-chrome smoke tests)"
 ```
 
 ---
 
-### Task 3: Gradle task group `extension` (install/format/lint/typecheck/test)
+### Task 3: Gradle task group `extension` — toolchain check, install, format/lint/typecheck/test
 
 **Files:**
 - Modify: `build.gradle.kts` (root)
 
 **Interfaces:**
-- Consumes: `web-extension/package-lock.json` from Task 1, scripts from Task 2.
-- Produces: Gradle tasks `extensionInstall`, `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest`, all wired into root `check`. Helper function `execNpm(script: String)` — reused by Task 4 for `extensionBuild` and Task 5 does not invoke npm.
+- Consumes: `web-extension/package-lock.json` from Task 1, npm scripts from Task 2.
+- Produces:
+  - `extensionToolchainCheck` — fails fast with the spec's exact message if `node`/`npm` missing or below floor.
+  - `extensionInstall`, `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest` — wired into root `check`.
+  - Helper `registerWebExtExecTask(...)` reused by Task 4 (`extensionBuild`) and Task 5 (`extensionArtifactTest`).
+  - Root `clean` extended to delete `web-extension/dist/`.
 
-- [ ] **Step 1: Write the failing smoke check**
+- [ ] **Step 1: Verify the before-state**
 
-Run: `./gradlew tasks --all | grep extension`
-Expected: no tasks found (this validates the "before" state).
+Run: `./gradlew tasks --group=extension 2>&1 | head -20`
+Expected: `Could not determine the tasks to execute` or no tasks in group `extension`.
 
 - [ ] **Step 2: Add the task group to `build.gradle.kts`**
 
-Append to `build.gradle.kts`:
+Append to root `build.gradle.kts`:
 
 ```kotlin
 // OTP-01 sub-project 1a — web-extension toolchain task group.
-// All tasks skip with a descriptive message when web-extension/package-lock.json is absent,
-// so Android-only and verify/ workflows keep working without node on PATH.
+// Tasks skip with a descriptive message when web-extension/package-lock.json is absent
+// or -Pveles.skipWebExt=true is passed — Android-only and verify/ workflows keep
+// working without node on PATH.
 val webExtDir = rootDir.resolve("web-extension")
 val webExtLockfile = webExtDir.resolve("package-lock.json")
-val webExtAvailable = providers.gradleProperty("veles.skipWebExt").map { false }.orElse(true).get() &&
-    webExtLockfile.isFile
+val webExtPkg = webExtDir.resolve("package.json")
+val webExtDist = webExtDir.resolve("dist")
 
-fun registerWebExtExecTask(name: String, description: String, script: String): TaskProvider<Exec> =
-    tasks.register<Exec>(name) {
-        group = "extension"
-        this.description = description
-        onlyIf {
-            if (!webExtAvailable) {
-                logger.lifecycle(
-                    "Skipping $name: web-extension/package-lock.json absent " +
-                        "(or -Pveles.skipWebExt=true set); web-extension toolchain not required for APK workflows.",
-                )
+// Presence skip is value-based: -Pveles.skipWebExt=false leaves tasks enabled.
+val skipWebExt = providers.gradleProperty("veles.skipWebExt")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
+
+fun webExtShouldSkip(taskName: String): Boolean {
+    if (skipWebExt.get()) {
+        return true
+    }
+    if (!webExtLockfile.isFile) {
+        return true
+    }
+    return false
+}
+
+fun logWebExtSkip(taskName: String, reason: String) {
+    println("Skipping $taskName: $reason (web-extension toolchain not required for APK workflows).")
+}
+
+// Toolchain check — fails fast on missing or under-floored node/npm.
+val extensionToolchainCheck = tasks.register("extensionToolchainCheck") {
+    group = "extension"
+    description = "Verify node/npm exist on PATH and satisfy the declared floors."
+    onlyIf {
+        when {
+            skipWebExt.get() -> {
+                logger.lifecycle("Skipping extensionToolchainCheck: -Pveles.skipWebExt=true.")
                 false
-            } else {
-                true
+            }
+            !webExtLockfile.isFile -> {
+                logger.lifecycle("Skipping extensionToolchainCheck: web-extension/package-lock.json absent.")
+                false
+            }
+            else -> true
+        }
+    }
+    doLast {
+        fun probe(tool: String, vararg args: String): String {
+            return try {
+                val proc = ProcessBuilder(tool, *args)
+                    .redirectErrorStream(true)
+                    .start()
+                val out = proc.inputStream.bufferedReader().readText().trim()
+                check(proc.waitFor() == 0) { "$tool ${args.joinToString(" ")} exited non-zero" }
+                out
+            } catch (e: java.io.IOException) {
+                throw GradleException(
+                    "Could not find '$tool' on PATH; " +
+                        "install Node.js >= 22.0.0 (declared in web-extension/package.json engines.node).",
+                    e,
+                )
+            }
+        }
+
+        val nodeVersion = probe("node", "--version").removePrefix("v")
+        val npmVersion = probe("npm", "--version")
+
+        // Floor check: node major >= 22. npm is bundled with node, so no separate floor.
+        val major = nodeVersion.substringBefore('.').toIntOrNull()
+            ?: throw GradleException("Unparseable `node --version` output: '$nodeVersion'")
+        if (major < 22) {
+            throw GradleException(
+                "Node.js $nodeVersion is below the declared floor >= 22.0.0 " +
+                    "(see web-extension/package.json engines.node).",
+            )
+        }
+        logger.lifecycle("web-extension toolchain: node $nodeVersion, npm $npmVersion — OK.")
+    }
+}
+
+// npm exec helper — every task that runs npm goes through this.
+fun registerWebExtExecTask(taskName: String, taskDescription: String, script: String): TaskProvider<Exec> =
+    tasks.register<Exec>(taskName) {
+        group = "extension"
+        description = taskDescription
+        onlyIf {
+            when {
+                skipWebExt.get() -> {
+                    logger.lifecycle("Skipping $taskName: -Pveles.skipWebExt=true.")
+                    false
+                }
+                !webExtLockfile.isFile -> {
+                    logger.lifecycle("Skipping $taskName: web-extension/package-lock.json absent.")
+                    false
+                }
+                else -> true
             }
         }
         workingDir = webExtDir
@@ -437,315 +571,500 @@ val extensionInstall = tasks.register<Exec>("extensionInstall") {
     group = "extension"
     description = "Run `npm ci` in web-extension/ to hydrate node_modules per the committed lockfile."
     onlyIf {
-        if (!webExtAvailable) {
-            logger.lifecycle("Skipping extensionInstall: web-extension/package-lock.json absent.")
-            false
-        } else {
-            true
+        when {
+            skipWebExt.get() -> {
+                logger.lifecycle("Skipping extensionInstall: -Pveles.skipWebExt=true.")
+                false
+            }
+            !webExtLockfile.isFile -> {
+                logger.lifecycle("Skipping extensionInstall: web-extension/package-lock.json absent.")
+                false
+            }
+            else -> true
         }
     }
+    dependsOn(extensionToolchainCheck)
     workingDir = webExtDir
     commandLine = listOf("npm", "ci")
+    // npm ci is driven by both package.json (dep spec) and lockfile (exact resolution).
+    // Also track .npmrc (registry/proxy overrides) — it's optional.
+    inputs.file(webExtPkg)
     inputs.file(webExtLockfile)
+    inputs.file(webExtDir.resolve(".npmrc")).optional(true)
     outputs.dir(webExtDir.resolve("node_modules"))
 }
 
 val extensionFormat = registerWebExtExecTask(
-    name = "extensionFormat",
-    description = "Run prettier --check over web-extension/.",
+    taskName = "extensionFormat",
+    taskDescription = "Run prettier --check over web-extension/.",
     script = "format:check",
-).apply { configure { dependsOn(extensionInstall) } }
+)
+extensionFormat.configure { dependsOn(extensionInstall) }
 
 val extensionLint = registerWebExtExecTask(
-    name = "extensionLint",
-    description = "Run eslint over web-extension/.",
+    taskName = "extensionLint",
+    taskDescription = "Run eslint over web-extension/.",
     script = "lint",
-).apply { configure { dependsOn(extensionInstall) } }
+)
+extensionLint.configure { dependsOn(extensionInstall) }
 
 val extensionTypecheck = registerWebExtExecTask(
-    name = "extensionTypecheck",
-    description = "Run tsc --noEmit over web-extension/.",
+    taskName = "extensionTypecheck",
+    taskDescription = "Run tsc --noEmit over web-extension/.",
     script = "typecheck",
-).apply { configure { dependsOn(extensionInstall) } }
+)
+extensionTypecheck.configure { dependsOn(extensionInstall) }
 
 val extensionTest = registerWebExtExecTask(
-    name = "extensionTest",
-    description = "Run vitest run in web-extension/.",
+    taskName = "extensionTest",
+    taskDescription = "Run vitest run in web-extension/ (source-only; bundle assertions live in extensionArtifactTest).",
     script = "test",
-).apply { configure { dependsOn(extensionInstall) } }
+)
+extensionTest.configure { dependsOn(extensionInstall) }
 
+// Wire source-level checks into root `check` so ci.yml picks them up via existing invocations.
 tasks.named("check") {
     dependsOn(extensionFormat, extensionLint, extensionTypecheck, extensionTest)
 }
-```
 
-- [ ] **Step 3: Verify tasks register and skip when appropriate**
-
-Run: `./gradlew tasks --all | grep -E 'extension(Install|Format|Lint|Typecheck|Test|Build|Package)'`
-Expected: all seven tasks listed under "extension" group (Build and Package added in Task 4).
-
-Since `web-extension/package-lock.json` exists from Task 1, also run:
-
-Run: `./gradlew :extensionInstall :extensionFormat :extensionLint :extensionTypecheck :extensionTest`
-Expected: all pass (node is on PATH per Global Constraints).
-
-Verify skip path:
-
-Run: `mv web-extension/package-lock.json /tmp/ && ./gradlew extensionInstall extensionTest && mv /tmp/package-lock.json web-extension/`
-Expected: tasks SKIPPED with the descriptive message; build still succeeds.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add build.gradle.kts
-git -c commit.gpgsign=false commit -m "feat(otp-01/1a): add Gradle extension task group (install/format/lint/typecheck/test) wired into check"
-```
-
----
-
-### Task 4: `extensionBuild` and `extensionPackage` (deterministic zip)
-
-**Files:**
-- Modify: `build.gradle.kts` (append to the `extension` block added in Task 3)
-
-**Interfaces:**
-- Consumes: `extensionInstall`, helper `registerWebExtExecTask`, `webExtAvailable` flag, `webExtDir`.
-- Produces: tasks `extensionBuild` (invokes `vite build`) and `extensionPackage` (Gradle `Zip` of `dist/`). Output goes to `build/web-extension/veles-extension-<version>.zip`. Version read from `web-extension/package.json` `version` field.
-
-- [ ] **Step 1: Add `extensionBuild`**
-
-Append inside the `extension` task-block region of `build.gradle.kts`:
-
-```kotlin
-val extensionBuild = registerWebExtExecTask(
-    name = "extensionBuild",
-    description = "Run vite build in web-extension/ to produce dist/.",
-    script = "build",
-).apply {
-    configure {
-        dependsOn(extensionInstall, extensionTypecheck)
-        outputs.dir(webExtDir.resolve("dist"))
+// Root clean also removes web-extension/dist (the one generated-artifact exception
+// allowed inside a source tree — see spec Global decision 3).
+tasks.named("clean") {
+    doLast {
+        delete(webExtDist)
     }
 }
 ```
 
-- [ ] **Step 2: Add `extensionPackage` with deterministic zip settings**
+**Note re: dead-code removal.** The helper `webExtShouldSkip`/`logWebExtSkip` above is shown for illustration but isn't used by any task below — **do not actually write them**; the `onlyIf` blocks inline the same logic. (`webExtShouldSkip`/`logWebExtSkip` should be omitted from the final file to avoid dead code. Only the `skipWebExt` Provider, `registerWebExtExecTask`, and the per-task `onlyIf` blocks belong in the committed code.)
 
-Also append:
+- [ ] **Step 3: Verify tasks register and run**
+
+Run: `./gradlew tasks --group=extension`
+Expected: `extensionToolchainCheck`, `extensionInstall`, `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest` listed.
+
+Run: `./gradlew extensionToolchainCheck extensionInstall extensionFormat extensionLint extensionTypecheck extensionTest`
+Expected: all pass (Node 22 present per Global Constraints; `node --version` printed in log).
+
+- [ ] **Step 4: Verify the skip paths (with a guarded shell trap)**
+
+```bash
+set -e
+trap 'mv /tmp/veles-lock-backup-$$ web-extension/package-lock.json 2>/dev/null || true' EXIT
+
+mv web-extension/package-lock.json /tmp/veles-lock-backup-$$
+# Lockfile now missing — tasks must skip.
+./gradlew extensionInstall extensionTest
+# Lockfile restored via trap on exit; flag path:
+./gradlew -Pveles.skipWebExt=true extensionInstall
+./gradlew -Pveles.skipWebExt=false extensionInstall   # must actually run
+```
+
+Expected: the first two invocations print the skip messages; the third succeeds and runs `npm ci`.
+
+- [ ] **Step 5: Verify `clean` removes `web-extension/dist/`**
+
+```bash
+cd web-extension && npm run build && cd ..
+test -d web-extension/dist || { echo "FAIL: dist/ missing"; exit 1; }
+./gradlew clean
+test ! -d web-extension/dist || { echo "FAIL: dist/ still present"; exit 1; }
+echo OK
+```
+
+Expected: `OK`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add build.gradle.kts
+git -c commit.gpgsign=false commit -m "feat(otp-01/1a): extension task group (toolchain/install/format/lint/typecheck/test) + clean wiring"
+```
+
+---
+
+### Task 4: `extensionBuild` and `extensionPackage` (deterministic zip + sha256 sidecar)
+
+**Files:**
+- Modify: `build.gradle.kts` — append to the `extension` block from Task 3
+
+**Interfaces:**
+- Consumes: `extensionInstall`, `extensionTypecheck`, helper `registerWebExtExecTask`, `webExtDir`, `webExtLockfile`, `skipWebExt`.
+- Produces: `extensionBuild` (always re-runs — no `outputs.dir` declared, eliminates stale-artifact class of bugs); `extensionPackage` emitting `build/web-extension/veles-extension-<version>.zip` and `build/web-extension/veles-extension-<version>.zip.sha256`.
+
+- [ ] **Step 1: Add `extensionBuild`**
+
+Append:
+
+```kotlin
+val extensionBuild = registerWebExtExecTask(
+    taskName = "extensionBuild",
+    taskDescription = "Run vite build in web-extension/ to produce dist/. Always re-runs (no outputs.dir declared).",
+    script = "build",
+)
+extensionBuild.configure {
+    dependsOn(extensionInstall, extensionTypecheck)
+    // Deliberately no outputs.dir: declaring only webExtDir/"dist" without modeling
+    // all src inputs (src/**, public/**, vite.config.ts, tsconfig.json, package.json)
+    // risks stale-artifact re-use. The build is fast (<10s); always-run is the safer
+    // contract for a deterministic-artifact pipeline.
+}
+```
+
+- [ ] **Step 2: Add `extensionPackage` with deterministic zip + sha256 sidecar**
+
+Append:
 
 ```kotlin
 val extensionPackage = tasks.register<Zip>("extensionPackage") {
     group = "extension"
-    description = "Package web-extension/dist into a deterministic, reproducible zip under build/web-extension/."
+    description = "Package web-extension/dist/ into a deterministic zip under build/web-extension/ plus a .sha256 sidecar."
     onlyIf {
-        if (!webExtAvailable) {
-            logger.lifecycle("Skipping extensionPackage: web-extension/package-lock.json absent.")
-            false
-        } else {
-            true
+        when {
+            skipWebExt.get() -> {
+                logger.lifecycle("Skipping extensionPackage: -Pveles.skipWebExt=true.")
+                false
+            }
+            !webExtLockfile.isFile -> {
+                logger.lifecycle("Skipping extensionPackage: web-extension/package-lock.json absent.")
+                false
+            }
+            else -> true
         }
     }
     dependsOn(extensionBuild)
 
-    // Read version from web-extension/package.json (single source of truth for the extension artifact).
-    val pkg = groovy.json.JsonSlurper().parse(webExtDir.resolve("package.json")) as Map<*, *>
-    val extVersion = pkg["version"].toString()
+    // Extension version comes from package.json — same source manifest.ts reads,
+    // keeping zip name and manifest content in sync.
+    @Suppress("UNCHECKED_CAST")
+    val pkg = groovy.json.JsonSlurper().parse(webExtPkg) as Map<String, Any?>
+    val extVersion = pkg["version"]?.toString()
+        ?: throw GradleException("web-extension/package.json missing 'version'.")
 
     archiveFileName.set("veles-extension-$extVersion.zip")
     destinationDirectory.set(layout.buildDirectory.dir("web-extension"))
 
-    from(webExtDir.resolve("dist"))
+    from(webExtDist)
 
-    // Deterministic-zip recipe (see spec "Deterministic packaging recipe"):
+    // Deterministic-zip recipe — see spec "Deterministic packaging recipe".
     isReproducibleFileOrder = true
     isPreserveFileTimestamps = false
-    dirMode = "0755".toInt(8)
-    fileMode = "0644".toInt(8)
+    dirPermissions { unix("0755") }
+    filePermissions { unix("0644") }
     entryCompression = ZipEntryCompression.DEFLATED
-    // Gradle Zip tasks already set constant DOS-time when preserveFileTimestamps=false.
+    metadataCharset = "UTF-8"
+    includeEmptyDirs = false
+
+    // sha256 sidecar is a declared output (not just a side-effect file).
+    val sidecar = layout.buildDirectory.file("web-extension/veles-extension-$extVersion.zip.sha256")
+    outputs.file(sidecar)
+
+    doLast {
+        val zip = archiveFile.get().asFile
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(zip.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        val side = sidecar.get().asFile
+        side.parentFile.mkdirs()
+        side.writeText("$digest  ${zip.name}\n")
+        logger.lifecycle("Wrote ${side.name}: $digest")
+    }
 }
 ```
 
-- [ ] **Step 3: Verify output and determinism**
+- [ ] **Step 3: Verify output and byte-determinism**
 
-Run: `./gradlew clean extensionPackage && sha256sum build/web-extension/*.zip && ./gradlew clean extensionPackage && sha256sum build/web-extension/*.zip`
-Expected: the two sha256 values are identical.
+```bash
+./gradlew clean extensionPackage
+sha256sum build/web-extension/veles-extension-0.1.0.zip
+FIRST=$(cat build/web-extension/veles-extension-0.1.0.zip.sha256 | cut -d' ' -f1)
+
+./gradlew clean extensionPackage
+sha256sum build/web-extension/veles-extension-0.1.0.zip
+SECOND=$(cat build/web-extension/veles-extension-0.1.0.zip.sha256 | cut -d' ' -f1)
+
+test "$FIRST" = "$SECOND" || { echo "FAIL: non-deterministic zip"; exit 1; }
+echo "OK: $FIRST"
+```
+
+Expected: same sha256 both runs; `OK` line prints.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add build.gradle.kts
-git -c commit.gpgsign=false commit -m "feat(otp-01/1a): add extensionBuild + deterministic extensionPackage zip"
+git -c commit.gpgsign=false commit -m "feat(otp-01/1a): extensionBuild + deterministic extensionPackage with sha256 sidecar"
 ```
 
 ---
 
-### Task 5: Manifest/CSP guard at package time
+### Task 5: Strict manifest/CSP guard + dist artifact test
 
 **Files:**
-- Modify: `build.gradle.kts` — add a `validateExtensionManifest` task and make `extensionPackage` depend on it; the guard re-imports the manifest from the built `dist/manifest.json` (not from source) so it inspects the actual artifact.
-- Modify: `web-extension/test/smoke.test.ts` — extend to assert the zipped file list matches an expected snapshot.
+- Modify: `build.gradle.kts` — add `validateExtensionManifest` and `extensionArtifactTest`; wire `extensionPackage.dependsOn` on both.
+- Create: `web-extension/test/bundle.test.ts` — vitest against built `dist/` content.
+- Modify: `web-extension/package.json` — already has `test:bundle` script from Task 1 (used by `extensionArtifactTest`).
 
 **Interfaces:**
-- Consumes: `extensionBuild` output at `web-extension/dist/manifest.json`.
-- Produces: `validateExtensionManifest` task in group `extension`, wired so `extensionPackage.dependsOn(validateExtensionManifest)`. The zip-snapshot assertion in vitest guards against silent file additions by future Vite/plugin bumps.
+- Consumes: `extensionBuild`, `extensionPackage`, `webExtDist`.
+- Produces: `validateExtensionManifest` (Gradle-side, **exact match** against the canonical baseline) and `extensionArtifactTest` (npm-side, asserts `dist/` file set and that `dist/manifest.json` round-trips through `buildExtensionManifest()`).
 
-- [ ] **Step 1: Extend smoke test with zip entry snapshot**
+- [ ] **Step 1: Write the bundle test**
 
-Append to `web-extension/test/smoke.test.ts`:
+`web-extension/test/bundle.test.ts`:
 
 ```ts
+import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildExtensionManifest } from '../src/manifest';
 
-describe('dist/ contents (post-build snapshot)', () => {
-  function walk(dir: string, base = ''): string[] {
-    return readdirSync(dir).flatMap((entry) => {
-      const path = join(dir, entry);
-      const rel = join(base, entry);
-      return statSync(path).isDirectory() ? walk(path, rel) : [rel.replace(/\\/g, '/')];
-    });
-  }
+function walk(dir: string, base = ''): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    const rel = base ? `${base}/${entry}` : entry;
+    return statSync(path).isDirectory() ? walk(path, rel) : [rel];
+  });
+}
 
-  it('emits exactly the expected file set', () => {
-    // Run after `npm run build`; if dist/ is missing this fails loudly, which is what we want.
-    const files = walk(join(__dirname, '..', 'dist')).sort();
-    // Hash-named chunks/assets must be excluded — their names vary by build. We assert
-    // only the stable top-level entries.
-    const stable = files.filter((f) => !f.includes('-'));
-    expect(stable).toEqual(['background.js', 'content.js', 'manifest.json']);
+const DIST = join(__dirname, '..', 'dist');
+
+describe('dist/ contents (post-build artifact)', () => {
+  it('contains exactly the expected file set', () => {
+    // Run after `npm run build`. The exact list is the contract:
+    // any change (new chunk, new asset, new manifest field) breaks this test
+    // and forces a conscious review. Hash-named files (chunks/-[hash].js,
+    // assets/[name]-[hash][extname]) are part of the asserted list because
+    // under the committed lockfile they are deterministic.
+    const files = walk(DIST).sort();
+    expect(files).toEqual(['background.js', 'content.js', 'manifest.json']);
   });
 
-  it('emitted manifest matches the canonical generator', () => {
-    const emitted = JSON.parse(
-      readFileSync(join(__dirname, '..', 'dist', 'manifest.json'), 'utf8'),
-    );
-    expect(emitted).toEqual(buildExtensionManifest());
+  it('dist/manifest.json matches the canonical generator exactly', () => {
+    const emitted = JSON.parse(readFileSync(join(DIST, 'manifest.json'), 'utf8'));
+    expect(emitted).toEqual(JSON.parse(JSON.stringify(buildExtensionManifest())));
   });
 });
 ```
 
-- [ ] **Step 2: Run vitest, expect it fails (dist/ missing or stale after Task 4's cleans)**
+- [ ] **Step 2: Run the bundle test against a fresh build; expect pass**
 
-Run: `cd web-extension && npm test`
-Expected: FAIL — no `dist/`. Then `npm run build && npm test` → PASS. This proves the snapshot test reacts to build output.
+Run: `cd web-extension && npm run build && npm run test:bundle`
+Expected: PASS — 2 tests green. (If the file-set test fails because a chunk file is emitted, that's a real signal — investigate why before editing the expected list.)
 
-- [ ] **Step 3: Add the Gradle guard**
+Then verify the test would fail without a build:
+Run: `cd web-extension && rm -rf dist && npm run test:bundle 2>&1 | grep -E "ENOENT|no such file|fails" | head -5`
+Expected: non-zero exit, error mentioning missing dist/.
+Restore: `cd web-extension && npm run build`.
 
-Append to the `extension` block in `build.gradle.kts`:
+- [ ] **Step 3: Add `validateExtensionManifest` to `build.gradle.kts`**
+
+Append:
 
 ```kotlin
 val validateExtensionManifest = tasks.register("validateExtensionManifest") {
     group = "extension"
-    description = "Validate web-extension/dist/manifest.json against the locked-down MV3 baseline."
+    description = "Validate web-extension/dist/manifest.json against the locked-down MV3 baseline (exact match)."
     onlyIf {
-        if (!webExtAvailable) {
-            logger.lifecycle("Skipping validateExtensionManifest: web-extension/package-lock.json absent.")
-            false
-        } else {
-            true
+        when {
+            skipWebExt.get() -> {
+                logger.lifecycle("Skipping validateExtensionManifest: -Pveles.skipWebExt=true.")
+                false
+            }
+            !webExtLockfile.isFile -> {
+                logger.lifecycle("Skipping validateExtensionManifest: web-extension/package-lock.json absent.")
+                false
+            }
+            else -> true
         }
     }
     dependsOn(extensionBuild)
-    inputs.file(webExtDir.resolve("dist/manifest.json"))
+    inputs.file(webExtDist.resolve("manifest.json"))
     doLast {
-        val manifestFile = webExtDir.resolve("dist/manifest.json")
-        check(manifestFile.isFile) { "Expected $manifestFile after extensionBuild; not found." }
+        val manifestFile = webExtDist.resolve("manifest.json")
+        check(manifestFile.isFile) {
+            "Expected $manifestFile after extensionBuild; not found. Run `./gradlew extensionBuild`."
+        }
         @Suppress("UNCHECKED_CAST")
         val m = groovy.json.JsonSlurper().parse(manifestFile) as Map<String, Any?>
+
         fun fail(reason: String): Nothing =
             throw GradleException("web-extension manifest guard failed: $reason")
-        if (m["manifest_version"] != 3) fail("manifest_version must be 3, got ${m["manifest_version"]}")
-        val perms = (m["permissions"] as? List<*>) ?: emptyList<Any>()
-        if (perms.isNotEmpty()) fail("permissions must be empty in 1a, got $perms")
-        val hostPerms = (m["host_permissions"] as? List<*>) ?: emptyList<Any>()
-        if (hostPerms.isNotEmpty()) fail("host_permissions must be empty in 1a, got $hostPerms")
-        val csp = ((m["content_security_policy"] as? Map<*, *>)?.get("extension_pages") as? String).orEmpty()
-        if ("wasm-unsafe-eval" in csp) fail("wasm-unsafe-eval not permitted in 1a")
-        if ("unsafe-eval" in csp) fail("unsafe-eval not permitted")
-        if ("unsafe-inline" in csp) fail("unsafe-inline not permitted")
-        logger.lifecycle("web-extension manifest guard: MV3 baseline OK.")
+
+        if (m["manifest_version"] != 3) {
+            fail("manifest_version must be 3, got ${m["manifest_version"]}")
+        }
+
+        // `permissions` must be exactly the empty list — not absent, not a non-list.
+        if (!m.containsKey("permissions")) {
+            fail("permissions key must be present and equal to []")
+        }
+        if (m["permissions"] != emptyList<Any>()) {
+            fail("permissions must be exactly [], got ${m["permissions"]}")
+        }
+
+        // `host_permissions` must be absent entirely.
+        if (m.containsKey("host_permissions")) {
+            fail("host_permissions must be absent in 1a, got ${m["host_permissions"]}")
+        }
+
+        // CSP must be exactly the locked-down map.
+        val expectedCsp = mapOf(
+            "extension_pages" to "script-src 'self'; object-src 'self'",
+        )
+        val actualCsp = m["content_security_policy"]
+        if (actualCsp != expectedCsp) {
+            fail(
+                "content_security_policy must be exactly $expectedCsp, got $actualCsp",
+            )
+        }
+
+        logger.lifecycle("web-extension manifest guard: MV3 baseline (exact match) OK.")
     }
 }
 
-extensionPackage.configure { dependsOn(validateExtensionManifest) }
+extensionPackage.configure {
+    dependsOn(validateExtensionManifest)
+}
 ```
 
-- [ ] **Step 4: Verify the guard bites**
+- [ ] **Step 4: Add `extensionArtifactTest`**
+
+Append:
+
+```kotlin
+val extensionArtifactTest = registerWebExtExecTask(
+    taskName = "extensionArtifactTest",
+    taskDescription = "Run vitest bundle tests against web-extension/dist/ (asserts file set and manifest round-trip).",
+    script = "test:bundle",
+)
+extensionArtifactTest.configure {
+    dependsOn(extensionBuild)
+}
+
+extensionPackage.configure {
+    dependsOn(extensionArtifactTest)
+}
+```
+
+- [ ] **Step 5: Verify the guard bites**
 
 Run: `./gradlew extensionPackage`
-Expected: BUILD SUCCESSFUL, guard log line visible.
+Expected: SUCCESS, guard log line visible.
 
-Smoke-violate the guard temporarily: edit `web-extension/src/manifest.ts` to add `"wasm-unsafe-eval"` to the CSP, run `./gradlew clean extensionPackage`, expect FAILURE at `validateExtensionManifest` naming wasm-unsafe-eval. Revert.
-
-- [ ] **Step 5: Commit**
+Negative tests — each edit should produce the named failure, then revert:
 
 ```bash
-git add build.gradle.kts web-extension/test/smoke.test.ts
-git -c commit.gpgsign=false commit -m "feat(otp-01/1a): add manifest/CSP guard + vitest dist snapshot"
+# 1) permissions not empty
+sed -i 's/permissions: \[\]/permissions: ["tabs"]/' web-extension/src/manifest.ts
+./gradlew extensionPackage 2>&1 | grep 'permissions must be exactly \[\]' || { echo "FAIL: guard missed"; exit 1; }
+git checkout web-extension/src/manifest.ts
+
+# 2) host_permissions present
+sed -i 's|permissions: \[\]|permissions: [],\n    host_permissions: ["*://*/*"]|' web-extension/src/manifest.ts
+./gradlew extensionPackage 2>&1 | grep 'host_permissions must be absent' || { echo "FAIL: guard missed"; exit 1; }
+git checkout web-extension/src/manifest.ts
+
+# 3) CSP weakened
+sed -i "s|script-src 'self'|script-src 'self' 'unsafe-eval'|" web-extension/src/manifest.ts
+./gradlew extensionPackage 2>&1 | grep 'content_security_policy must be exactly' || { echo "FAIL: guard missed"; exit 1; }
+git checkout web-extension/src/manifest.ts
+
+# 4) manifest_version wrong
+sed -i 's/manifest_version: 3/manifest_version: 2/' web-extension/src/manifest.ts
+./gradlew extensionPackage 2>&1 | grep 'manifest_version must be 3' || { echo "FAIL: guard missed"; exit 1; }
+git checkout web-extension/src/manifest.ts
+```
+
+All four must produce the expected failure text.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add build.gradle.kts web-extension/test/bundle.test.ts
+git -c commit.gpgsign=false commit -m "feat(otp-01/1a): strict manifest/CSP guard + bundle artifact test"
 ```
 
 ---
 
-### Task 6: CI wiring (setup Node in the two JVM jobs)
+### Task 6: CI wiring — dedicated `web-extension` job
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Consumes: tasks from Tasks 3–5 (which run under `./gradlew spotlessCheck`, `./gradlew detekt`, `./gradlew testDebugUnitTest`, `./gradlew check`-adjacent entry points).
-- Produces: Node 22 (LTS) + cached `~/.npm` available to `lint-check` and `unit-tests` jobs. `instrumented-tests` job is **not** modified — it doesn't run extension tasks (and running them there would needlessly extend emulator time).
+- Consumes: tasks from Tasks 3–5.
+- Produces: a new job that runs `./gradlew extensionInstall extensionFormat extensionLint extensionTypecheck extensionTest extensionBuild validateExtensionManifest extensionArtifactTest extensionPackage` under `setup-node@v6` with Node 22. The existing `lint-check`, `unit-tests`, and `instrumented-tests` jobs are **not modified**.
 
-- [ ] **Step 1: Add `setup-node` to both jobs**
+- [ ] **Step 1: Add the new job**
 
-Insert into `.github/workflows/ci.yml` after each `actions/setup-java` step in the `lint-check` and `unit-tests` jobs (not in `instrumented-tests`):
+Append to `.github/workflows/ci.yml` (same indentation as the existing `lint-check` / `unit-tests` jobs):
 
 ```yaml
+  web-extension:
+    name: web-extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: web-extension/package-lock.json
-      - name: Install web-extension dependencies
-        working-directory: web-extension
-        run: npm ci
+      - run: ./gradlew extensionInstall extensionFormat extensionLint extensionTypecheck extensionTest
+      - run: ./gradlew extensionBuild validateExtensionManifest extensionArtifactTest extensionPackage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: veles-extension-zip
+          path: build/web-extension/
+          if-no-files-found: error
 ```
 
-Node 22 chosen because it is the LTS line currently shipping npm 11, satisfying the `engines.npm >= 10` floor without overshooting into a just-released major.
+Notes:
+- The two `./gradlew` invocations stay separate so the source-level checks surface failures before the slower build/validate/package sequence runs.
+- The job does not run `:app:*` tasks — APK build jobs unchanged.
+- `setup-java`/`setup-gradle` are present because Gradle needs a JDK itself; node setup comes after so a Gradle-level failure doesn't waste node cache setup.
 
-- [ ] **Step 2: Verify workflow YAML parses**
+- [ ] **Step 2: Verify YAML parses**
 
-Run: `python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml'))"` (or use `actionlint` if installed: `actionlint .github/workflows/ci.yml`)
-Expected: no parse errors.
+Run: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"`
+Expected: no output (parse succeeded).
+
+If `actionlint` is installed, also: `actionlint .github/workflows/ci.yml` and expect no findings.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
-git -c commit.gpgsign=false commit -m "ci(otp-01/1a): set up node + npm ci in lint-check and unit-tests jobs"
+git -c commit.gpgsign=false commit -m "ci(otp-01/1a): dedicated web-extension job running the full extension task pipeline"
 ```
 
 ---
 
-### Task 7: Documentation updates + final `check` wiring validation
+### Task 7: Documentation updates + final end-to-end verification
 
 **Files:**
-- Modify: `CLAUDE.md` — add new commands to "Build & Test Commands".
-- Modify: `docs/reproducible-builds.md` — add a sentence noting the web-extension toolchain joins the pinned-toolchain family (full wiring lands in 1d).
-- Modify: `README.md` — one-line "Sub-projects" pointer if a logical spot exists; otherwise skip (don't fake a section).
+- Modify: `CLAUDE.md` — new command rows in "Build & Test Commands".
+- Modify: `docs/reproducible-builds.md` — sentence noting npm deps are exact-pinned (not node/npm themselves; reference-env pins land in 1d).
 
 **Interfaces:**
-- Consumes: every task in group `extension` from Tasks 3–5.
-- Produces: user-visible documentation matching reality; final `./gradlew clean check` green on a clean working tree.
+- Consumes: everything.
+- Produces: user-visible docs matching reality; final `./gradlew clean check extensionPackage` green on a clean tree.
 
 - [ ] **Step 1: Update `CLAUDE.md`**
 
-Insert into the "Build & Test Commands" block after `connectedDebugAndroidTest`:
+Insert into "Build & Test Commands" after `connectedDebugAndroidTest`:
 
 ```bash
-# Web extension (OTP-01 sub-project 1a) — requires node/npm on PATH
-./gradlew extensionInstall extensionFormat extensionLint extensionTypecheck extensionTest
-./gradlew extensionBuild extensionPackage  # produces build/web-extension/veles-extension-<version>.zip
+# Web extension (OTP-01 sub-project 1a) — requires node/npm on PATH (node >= 22, npm bundled)
+./gradlew extensionToolchainCheck extensionInstall                      # verify tools + hydrate node_modules
+./gradlew extensionFormat extensionLint extensionTypecheck extensionTest  # source-level quality gates
+./gradlew extensionBuild validateExtensionManifest extensionArtifactTest extensionPackage  # -> build/web-extension/veles-extension-<version>.zip + .sha256
 ```
 
 - [ ] **Step 2: Update `docs/reproducible-builds.md`**
@@ -753,36 +1072,71 @@ Insert into the "Build & Test Commands" block after `connectedDebugAndroidTest`:
 Append after the "Pinned toolchain" table:
 
 ```markdown
-The web-extension toolchain (node, npm, vite, vitest, eslint, prettier) is pinned via
-`web-extension/package.json` (exact versions, no carets) and `web-extension/package-lock.json`.
-Its Docker-based reference environment and byte-compare harness land in OTP-01 sub-project 1d.
+The web-extension's npm dependencies are exact-pinned in `web-extension/package.json`
+(no `^`/`~`) and resolved via the committed `package-lock.json`. Developer Node/npm are
+not pinned — `engines.node >= 22.0.0` is a floor, and CI runs Node 22 LTS. The
+zero-trust reference environment with an exact Node runtime pin lands in OTP-01
+sub-project 1d (`verify/Dockerfile.web`).
 ```
 
 - [ ] **Step 3: Commit docs**
 
 ```bash
 git add CLAUDE.md docs/reproducible-builds.md
-git -c commit.gpgsign=false commit -m "docs(otp-01/1a): document web-extension toolchain + reproducibility note"
+git -c commit.gpgsign=false commit -m "docs(otp-01/1a): web-extension toolchain commands + reproducibility note"
 ```
 
 - [ ] **Step 4: Final end-to-end verification on a clean tree**
 
-Run: `git status` (expect clean), then `./gradlew clean check extensionPackage`
-Expected: SUCCESS — all unit tests pass, all lint/format/typecheck pass, zip produced at `build/web-extension/veles-extension-0.1.0.zip`.
+```bash
+git status --short                  # expect clean
+./gradlew clean check               # expect SUCCESS — no extensionBuild side-effects
+./gradlew extensionPackage          # expect SUCCESS — zip + sha256 sidecar produced
+ls -la build/web-extension/
+./gradlew :app:assembleDebug        # expect SUCCESS — APK build unaffected
+```
 
-Run: `./gradlew :app:assembleDebug`
-Expected: SUCCESS — APK build unaffected by the new task group.
+Expected:
+- `git status` shows nothing to commit.
+- First `./gradlew clean check` does not run `extensionBuild`/`extensionPackage`/artifact test.
+- `extensionPackage` produces `build/web-extension/veles-extension-0.1.0.zip` and `.zip.sha256`.
+- APK builds normally.
 
 - [ ] **Step 5: Final commit (if any straggler files)**
 
 ```bash
-git status — should be clean already. If not, `git add -A && git -c commit.gpgsign=false commit -m "chore(otp-01/1a): final cleanup"`
+git status --short   # expect clean; if not:
+git add -A && git -c commit.gpgsign=false commit -m "chore(otp-01/1a): final cleanup"
 ```
 
 ---
 
-## Self-review status
+## Self-review status (post-review revision)
 
-- **Spec coverage:** every spec requirement under "Sub-project 1a" maps to a task: layout → Tasks 1–2; Gradle task table → Tasks 3–5; deterministic zip recipe → Task 4; error-handling skip path → Task 3 helper; manifest/CSP guard → Task 5; wiring into `check` → Task 3; versioning → Task 4 (reads `package.json`); CI wiring → Task 6 (caught in review — `ci.yml` had no `setup-node`); documentation → Task 7. Global Constraints section re-states spec Global decisions 1–5.
-- **Placeholder scan:** none — every code block has concrete content, every command is runnable as written (subject to exact-pin substitution check in Task 1 Step 3).
-- **Type consistency:** helper `registerWebExtExecTask` defined Task 3, consumed Task 4 (`extensionBuild`). Flags `webExtAvailable`/`webExtDir`/`webExtLockfile` defined Task 3, consumed Tasks 4–5. Smoke test edited in Task 2 Step 1 and extended in Task 5 Step 1 — additive, new imports, no name collision.
+- **Spec coverage:** every spec requirement under "Sub-project 1a" maps to a task: layout → Tasks 1–2; Gradle task table (now including toolchain check + artifact test) → Tasks 3–5; deterministic zip recipe (with sha256 sidecar) → Task 4; skip path (value-based) → Task 3 Step 4; manifest/CSP guard exact-match → Task 5 Step 3; versioning single-source → Task 2 Step 3 + Task 4 Step 2; CI wiring → Task 6 (dedicated job — fixes the gap reviewer found where JVM jobs never invoke extension tasks); documentation → Task 7.
+- **Reviewer-driven changes applied:**
+  1. (Critical) chrome-global stub in `test/setup.ts` + defensive guard in `background.ts`.
+  2. (Critical) artifact assertions split into `extensionArtifactTest`, wired to `extensionPackage`, not `check`.
+  3. (Critical) CI is a new dedicated job, not a modification of JVM jobs.
+  4. (Critical) `extensionInstall` inputs now include `package.json`, `package-lock.json`, optional `.npmrc`. `extensionBuild` declares no outputs — always re-runs.
+  5. (Critical) manifest guard uses exact equality on `permissions`, `host_permissions` absence, and the full CSP map.
+  6. (Critical) Task 1 Step 2 verifies the listed pins rather than floats to latest.
+  7. (Critical) Spec acceptance criteria restructured to enumerate all six RFC clauses verbatim with owning sub-projects; three decomposition-specific criteria appended.
+  8. (Important) `web-extension/dist/` is an explicit spec exception; root `clean` extended to delete it.
+  9. (Important) `engines.node = ">=22.0.0"`; `engines.npm` dropped.
+  10. (Important) `.zip.sha256` sidecar added.
+  11. (Important) zip recipe fixes: `metadataCharset = "UTF-8"`, `includeEmptyDirs = false`, `dirPermissions`/`filePermissions` (non-deprecated), deflate-level claim dropped from spec.
+  12. (Important) `veles.skipWebExt` is value-based (`toBooleanStrict`).
+  13. (Important) `extensionToolchainCheck` implements missing-tool and below-floor failures with the spec's exact message text.
+  14. (Important) `manifest.ts` reads `version` from `package.json` — single source of truth.
+  15. (Important) bundle test no longer filters by `-`; asserts the exact file set (deterministic under the lockfile).
+  16. (Important) spec/plan wasm-unsafe-eval disagreement resolved — forbidden in 1a, permitted starting in 1b.
+  17. (Important) spec now notes 1b's `jniLibs` path is an open question to be resolved in 1b's own spec.
+  18. (Important) license policy language rewritten to SPDX allow/deny with explicit categories.
+  19. (Important) docs wording corrected — exact pins refer to npm deps; node itself has a floor; reference-env pins land in 1d.
+  20. (Minor) spec layout now lists `eslint.config.js` (not `.eslintrc.cjs`).
+  21. (Minor) Task 3 verification expects five tasks, not seven (Build/Package arrive in Task 4).
+  22. (Minor) lockfile-skip smoke uses `trap` so it restores on failure.
+  23. (Minor) `.apply { configure }` replaced with direct `configure`.
+- **Placeholder scan:** none remaining — every code block has concrete content, every command is runnable as written.
+- **Type consistency:** helper `registerWebExtExecTask` is defined in Task 3 with parameters `(taskName, taskDescription, script)` and consumed with named arguments in Tasks 4 and 5. `webExtDir`/`webExtLockfile`/`webExtPkg`/`webExtDist`/`skipWebExt` are defined Task 3 and consumed Tasks 4–5 with unchanged names. npm scripts referenced by Gradle tasks (`format:check`, `lint`, `typecheck`, `test`, `test:bundle`, `build`) all exist in `web-extension/package.json` per Task 1 Step 1.
