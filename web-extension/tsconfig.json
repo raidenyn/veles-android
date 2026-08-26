@@ -1,17 +1,17 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "isolatedModules": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "types": ["chrome", "node"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
-  },
-  "include": ["src", "test", "vite.config.ts", "eslint.config.js"]
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "strict": true,
+        "noEmit": true,
+        "esModuleInterop": true,
+        "isolatedModules": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true,
+        "types": ["chrome", "node"],
+        "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    },
+    "include": ["src", "test", "vite.config.ts", "eslint.config.js"]
 }

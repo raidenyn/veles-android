@@ -1,31 +1,31 @@
 {
-  "name": "@veles/web-extension",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "description": "Veles OTP browser extension (MV3). Skeleton toolchain for OTP-01 sub-project 1a.",
-  "engines": {
-    "node": ">=22.0.0"
-  },
-  "scripts": {
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run test/smoke.test.ts",
-    "test:bundle": "vitest run test/bundle.test.ts",
-    "build": "vite build"
-  },
-  "devDependencies": {
-    "@eslint/js": "9.39.2",
-    "@types/chrome": "0.1.35",
-    "@types/node": "24.10.13",
-    "eslint": "9.39.2",
-    "eslint-config-prettier": "10.1.8",
-    "prettier": "3.8.0",
-    "typescript": "5.7.3",
-    "typescript-eslint": "8.57.0",
-    "vite": "6.4.2",
-    "vitest": "3.2.4"
-  }
+    "name": "@veles/web-extension",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Veles OTP browser extension (MV3). Skeleton toolchain for OTP-01 sub-project 1a.",
+    "engines": {
+        "node": ">=22.0.0"
+    },
+    "scripts": {
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "lint": "eslint .",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run test/smoke.test.ts",
+        "test:bundle": "vitest run test/bundle.test.ts",
+        "build": "vite build"
+    },
+    "devDependencies": {
+        "@eslint/js": "9.39.2",
+        "@types/chrome": "0.1.35",
+        "@types/node": "24.10.13",
+        "eslint": "9.39.2",
+        "eslint-config-prettier": "10.1.8",
+        "prettier": "3.8.0",
+        "typescript": "5.7.3",
+        "typescript-eslint": "8.57.0",
+        "vite": "6.4.2",
+        "vitest": "3.2.4"
+    }
 }
