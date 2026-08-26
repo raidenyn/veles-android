@@ -270,7 +270,7 @@ APK ship on separate tracks.
   variables the runner images export** (these are *not* properties of the
   GitHub Actions `runner` context — workflows read them as
   `$env:ImageOS` / `$env:ImageVersion` on Windows and `$ImageOS` /
-  `$ImageVersion` on macOS/Linux) plus `RUNNER_ARCH`, asserts both are
+  `$ImageVersion` on macOS/Linux) plus `RUNNER_ARCH`, asserts all three are
   non-empty, and records them into the workflow log and into
   `SHA256SUMS.native-bridge` metadata. Byte-comparison across two CI runs
   proceeds only when all three recorded values match; on mismatch the
@@ -337,11 +337,14 @@ transfer is explicit, not silent.
    `.so`/`.wasm`), `verify/verify-all.sh` builds in pinned Docker
    environments and compares hashes. For Windows/macOS — which cannot be
    reproduced inside Linux Docker — two CI runs on GitHub-hosted
-   `windows-2022` and `macos-15` runners record their observed
-   `runner.ImageOS`/`ImageVersion` and byte-compare outputs only when both
-   runs landed on the same image; on mismatch the verification aborts with
-   a re-run instruction (no claim is made that a workflow can pin the
-   underlying image SHA; the check is post-hoc identity of environments).
+   `windows-2022` and `macos-15` runners record their observed image
+   identity via the `ImageOS`, `ImageVersion`, and `RUNNER_ARCH`
+   environment variables the images export (these are *not* GitHub Actions
+   `runner` context properties), assert all three are non-empty, and
+   byte-compare outputs only when the full triple matches; on mismatch the
+   verification aborts with a re-run instruction. No claim is made that a
+   workflow can pin the underlying image SHA; the check is post-hoc
+   identity of environments.
 2. *"Gradle exposes CI-safe entry points."*
    → **1a / 1b / 1c** each deliver their task group; **1d** wires the
    `verify-all.sh` byte-compare into CI and asserts the entry points run

@@ -431,7 +431,7 @@ sharing and connection state without exposing OTP content.
 #### Project and build
 
 The Manifest V3 extension is a TypeScript npm project under repository-root
-`src/typescript`. Gradle provides pinned, reproducible entry points for npm,
+`web-extension/`. Gradle provides pinned, reproducible entry points for npm,
 TypeScript, extension tests, Rust, JNI, WASM, lint, package, cryptographic
 fixtures, native-host and installer builds, checksums, signing inputs, and
 software-bill-of-materials generation.

@@ -453,7 +453,7 @@ git -c commit.gpgsign=false commit -m "feat(otp-01/1a): MV3 skeleton (manifest g
 **Interfaces:**
 - Consumes: `web-extension/package-lock.json` from Task 1, npm scripts from Task 2.
 - Produces:
-  - `extensionToolchainCheck` — fails fast with the spec's exact message if `node`/`npm` missing or below floor.
+  - `extensionToolchainCheck` — fails fast with the spec's exact message if `node` or `npm` is missing from PATH, or if `node --version` reports a major below 22 (the declared floor). npm is bundled with node; its version is logged for diagnosis but no separate floor is enforced.
   - `extensionInstall`, `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest` — wired into root `check`.
   - Helper `registerWebExtExecTask(...)` reused by Task 4 (`extensionBuild`) and Task 5 (`extensionArtifactTest`).
   - Root `clean` extended to delete `web-extension/dist/`.
@@ -482,10 +482,12 @@ val skipWebExt = providers.gradleProperty("veles.skipWebExt")
     .map { it.toBooleanStrict() }
     .orElse(false)
 
-// Toolchain check — fails fast on missing or under-floored node/npm.
+// Toolchain check — verifies node and npm exist on PATH and node meets the
+// declared Node floor. npm is bundled with node, so only its presence and
+// version are logged (no separate npm floor is enforced).
 val extensionToolchainCheck = tasks.register("extensionToolchainCheck") {
     group = "extension"
-    description = "Verify node/npm exist on PATH and satisfy the declared floors."
+    description = "Verify node and npm are on PATH and node major >= 22 (the declared floor). npm version is logged only."
     onlyIf {
         when {
             skipWebExt.get() -> {
