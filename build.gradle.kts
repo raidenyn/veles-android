@@ -256,3 +256,88 @@ val extensionPackage = tasks.register<Zip>("extensionPackage") {
         logger.lifecycle("Wrote ${side.name}: $digest")
     }
 }
+
+// Strict MV3 baseline guard — exact match against the locked-down manifest.
+// Any drift in manifest_version, permissions, host_permissions, or CSP fails
+// the package step. Exact-match (not substring) so weakening CSP with extra
+// directives, adding host_permissions, or non-empty permissions is caught.
+val validateExtensionManifest = tasks.register("validateExtensionManifest") {
+    group = "extension"
+    description = "Validate web-extension/dist/manifest.json against the locked-down MV3 baseline (exact match)."
+    onlyIf {
+        when {
+            skipWebExt.get() -> {
+                logger.lifecycle("Skipping validateExtensionManifest: -Pveles.skipWebExt=true.")
+                false
+            }
+            !webExtLockfile.isFile -> {
+                logger.lifecycle("Skipping validateExtensionManifest: web-extension/package-lock.json absent.")
+                false
+            }
+            else -> true
+        }
+    }
+    dependsOn(extensionBuild)
+    inputs.file(webExtDist.resolve("manifest.json"))
+    doLast {
+        val manifestFile = webExtDist.resolve("manifest.json")
+        check(manifestFile.isFile) {
+            "Expected $manifestFile after extensionBuild; not found. Run `./gradlew extensionBuild`."
+        }
+        @Suppress("UNCHECKED_CAST")
+        val m = groovy.json.JsonSlurper().parse(manifestFile) as Map<String, Any?>
+
+        fun fail(reason: String): Nothing =
+            throw GradleException("web-extension manifest guard failed: $reason")
+
+        if (m["manifest_version"] != 3) {
+            fail("manifest_version must be 3, got ${m["manifest_version"]}")
+        }
+
+        // `permissions` must be exactly the empty list — not absent, not a non-list.
+        if (!m.containsKey("permissions")) {
+            fail("permissions key must be present and equal to []")
+        }
+        if (m["permissions"] != emptyList<Any>()) {
+            fail("permissions must be exactly [], got ${m["permissions"]}")
+        }
+
+        // `host_permissions` must be absent entirely.
+        if (m.containsKey("host_permissions")) {
+            fail("host_permissions must be absent in 1a, got ${m["host_permissions"]}")
+        }
+
+        // CSP must be exactly the locked-down map.
+        val expectedCsp = mapOf(
+            "extension_pages" to "script-src 'self'; object-src 'self'",
+        )
+        val actualCsp = m["content_security_policy"]
+        if (actualCsp != expectedCsp) {
+            fail(
+                "content_security_policy must be exactly $expectedCsp, got $actualCsp",
+            )
+        }
+
+        logger.lifecycle("web-extension manifest guard: MV3 baseline (exact match) OK.")
+    }
+}
+
+extensionPackage.configure {
+    dependsOn(validateExtensionManifest)
+}
+
+// npm-side artifact test: asserts the dist/ file set and that manifest.json
+// round-trips through buildExtensionManifest(). Runs vitest against the built
+// dist/, so a missing build or an unexpected emitted chunk fails packaging.
+val extensionArtifactTest = registerWebExtExecTask(
+    taskName = "extensionArtifactTest",
+    taskDescription = "Run vitest bundle tests against web-extension/dist/ (asserts file set and manifest round-trip).",
+    script = "test:bundle",
+)
+extensionArtifactTest.configure {
+    dependsOn(extensionBuild)
+}
+
+extensionPackage.configure {
+    dependsOn(extensionArtifactTest)
+}
