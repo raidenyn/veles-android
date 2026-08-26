@@ -21,8 +21,8 @@
 - Root `check` depends on `extensionFormat`, `extensionLint`, `extensionTypecheck`, `extensionTest` only — never on `extensionBuild`, `validateExtensionManifest`, `extensionArtifactTest`, or `extensionPackage`. `extensionTest` must be **source-only** (never reads `dist/`); bundle assertions live in a separate task.
 - APK build (`:app:assembleDebug` / `:app:assembleRelease`) must remain unaffected: no new entries in `settings.gradle.kts`, no new dependencies of `:app` tasks.
 - Artifact zips and sha sidecars land under `build/web-extension/`. `web-extension/dist/` is a deliberate exception (Vite's conventional output); root `clean` is extended to delete it.
-- Manifest policy baseline is fixed by this plan and enforced exactly:
-  - `manifest_version == 3`
+- **OTP-01 closure semantics (per RFC amendment 2026-08-26):** OTP-01 closes when RFC clauses 1 (byte-identical artifacts in clean envs), 2 (CI-safe Gradle entry points), 3 (artifact content allow-list), and 6 (no runtime download/remote executable code) are demonstrated. Sub-project 1a contributes evidence to clauses 2, 3, and 6. Clauses 4 (`signing consumes CI credentials`) and 5 (`signed↔unsigned correspondence`) are **OTP-25 acceptance criteria**, not OTP-01 — see the spec acceptance table and the RFC amendment. This plan does not implement anything toward clauses 4/5.
+- Manifest policy baseline is fixed by this plan and enforced exactly:  - `manifest_version == 3`
   - `permissions` is exactly `[]`
   - `host_permissions` absent
   - `content_security_policy` exactly `{ extension_pages: "script-src 'self'; object-src 'self'" }`

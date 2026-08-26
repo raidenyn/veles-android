@@ -42,12 +42,14 @@ therefore cannot close until build outputs exist.
 
 ## Global decisions (apply to 1a / 1b / 1c / 1d)
 
-1. **Toolchain provisioning is PATH-based, minimum-version declared.**
-   node/npm/rustup/cargo are not downloaded by Gradle. `package.json
-   engines.node`, `rust-toolchain.toml` channel, and Cargo minimum-version
-   are the declared pins. `verify/` Docker images (1d) bake exact versions
-   for byte-compare environments; developer machines need only satisfy the
-   declared minimum.
+1. **Toolchain provisioning is PATH-based, minimum-version declared only for
+   Node.** node/npm/rustup/cargo are not downloaded by Gradle. The single
+   floor is `engines.node = ">=22.0.0"` in `web-extension/package.json`;
+   npm is bundled with Node and its version is only logged for diagnosis
+   (no separate `engines.npm` entry). `rust-toolchain.toml` channel is the
+   declared pin for Rust. `verify/` Docker images (1d) bake exact runtime
+   versions for byte-compare environments; developer machines need only
+   satisfy the declared floor.
 2. **Lockfiles are the reproducibility contract.** `package-lock.json` and
    `Cargo.lock` are committed and builds run `--locked` / `npm ci`. Drift
    fails the build; never auto-fixed in CI.
@@ -105,7 +107,7 @@ web-extension/
 
 | Task | Command | Depends on | Output |
 |---|---|---|---|
-| `extensionToolchainCheck` | runs `node --version`, `npm --version`; fails if absent or below floors | — | — |
+| `extensionToolchainCheck` | runs `node --version`, `npm --version`; fails if either is absent from PATH, or if `node --version` reports a major below 22; npm version is logged for diagnosis (no separate floor) | — | — |
 | `extensionInstall` | `npm ci` in `web-extension/` — skipped with a descriptive message if `web-extension/package-lock.json` is absent, so Android-only workflows still run | `extensionToolchainCheck` | `web-extension/node_modules` |
 | `extensionFormat` | `npm run format:check` in `web-extension/` | `extensionInstall` | — |
 | `extensionLint` | `npm run lint` in `web-extension/` | `extensionInstall` | — |
@@ -152,7 +154,7 @@ Wiring: root `check` depends on `extensionFormat`, `extensionLint`,
 | Failure | Behavior |
 |---|---|
 | `node`/`npm` missing from PATH | `extensionToolchainCheck` fails fast with `Could not find 'node' on PATH; install Node.js >= 22.0.0 (declared in web-extension/package.json engines.node)` — mirrors `verify/verify.sh` pin-error style. |
-| `node`/`npm` present but below declared floor | `extensionToolchainCheck` fails with both actual and required versions printed. |
+| `node` present but `node --version` reports major < 22 | `extensionToolchainCheck` fails with both actual and required versions printed (npm version logged for diagnosis but no npm floor is enforced — npm is bundled with node). |
 | `package-lock.json` drift (`npm ci` non-zero) | Hard fail. No `npm install` fallback. |
 | Manifest/CSP guard trip | `validateExtensionManifest` fails naming the violated baseline. |
 | `web-extension/package-lock.json` absent | All `extension*` tasks (including `extensionToolchainCheck`) skipped with descriptive messages — Android-only developer can run `./gradlew build` without node. |

@@ -1261,6 +1261,12 @@ initial Status Ready.
  >    CI-safe Gradle entry points; artifact content allow-list; no runtime
  >    download or remote executable code) are demonstrated by sub-projects
  >    1a–1d.
+ > 3. **Node.js floor.** The extension toolchain requires Node.js `>=22.0.0`
+ >    (declared in `web-extension/package.json` `engines.node`). npm is
+ >    bundled with Node and its version is only logged for diagnosis; there
+ >    is no separate npm floor. Gradle never downloads node/npm; the pinned
+ >    reference environment for byte-compare runs (sub-project 1d) bakes an
+ >    exact Node runtime.
 
 ### OTP-02: Freeze the protected Bluetooth protocol profile and schemas
 
