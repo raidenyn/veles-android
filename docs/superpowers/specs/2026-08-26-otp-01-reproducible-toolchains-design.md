@@ -265,19 +265,27 @@ APK ship on separate tracks.
   reference run pins (a) the versioned runner label from the workflow YAML,
   (b) the Rust toolchain via `rust-toolchain.toml`, (c) the Tauri CLI
   version from `package-lock.json`, and (d) on macOS the Xcode/SDK version
-  explicit in the workflow YAML. Each run captures the observed
-  `runner.ImageOS` and `runner.ImageVersion` values into its workflow log
-  and into `SHA256SUMS.native-bridge` metadata. Byte-comparison across two
-  CI runs proceeds only when their observed ImageOS/ImageVersion match; on
-  mismatch the comparison aborts with a "re-run on matched image"
-  instruction. This is deliberately weaker than pinning a self-hosted image
-  ID — that option is an extension point if self-hosted infrastructure
-  becomes available later.
+  explicit in the workflow YAML. Each run captures the observed runner
+  image identity from the **`ImageOS` and `ImageVersion` environment
+  variables the runner images export** (these are *not* properties of the
+  GitHub Actions `runner` context — workflows read them as
+  `$env:ImageOS` / `$env:ImageVersion` on Windows and `$ImageOS` /
+  `$ImageVersion` on macOS/Linux) plus `RUNNER_ARCH`, asserts both are
+  non-empty, and records them into the workflow log and into
+  `SHA256SUMS.native-bridge` metadata. Byte-comparison across two CI runs
+  proceeds only when all three recorded values match; on mismatch the
+  comparison aborts with a "re-run on matched image" instruction. This is
+  deliberately weaker than pinning a self-hosted image ID — that option is
+  an extension point if self-hosted infrastructure becomes available
+  later.
 - **Compare script:** `verify/verify-all.sh` orchestrates: build in each
   Docker image on Linux and compare hashes; run the Windows and macOS CI
-  jobs twice on the same pinned image and compare their hashes; verify the
-  aggregated results against `SHA256SUMS.toolchains`. Exit codes mirror
-  `verify.sh` (0 match, 1 mismatch, 2 usage/pin error).
+  jobs twice on the same **versioned runner label** (`windows-2022`,
+  `macos-15`) and compare output hashes **only when the observed image
+  identities match** (see the 1d environment-strategy bullet for how
+  identity is captured). Mismatch aborts with a re-run instruction. Verify
+  the aggregated results against `SHA256SUMS.toolchains`. Exit codes
+  mirror `verify.sh` (0 match, 1 mismatch, 2 usage/pin error).
 - **SBOM:** `cyclonedx-npm` for `web-extension/`, `cargo cyclonedx` for
   `rust/` and `native-bridge/src-tauri/`. Output JSON files into
   `build/sbom/{web-extension,rust,native-bridge}.cdx.json`.
@@ -302,7 +310,8 @@ clauses it owns (1, 2, 3, 6) are demonstrated. Clauses 4 and 5 are formally
 **transferred to OTP-25's acceptance criteria** by the RFC amendment dated
 2026-08-26 — they depend on real signing/notarization infrastructure that
 is OTP-25 scope. This transfer avoids the dependency deadlock that would
-otherwise arise: OTP-25 transitively depends on OTP-01 via OTP-06/OTP-07,
+otherwise arise: OTP-25 transitively depends on OTP-01 via
+OTP-06/OTP-07/OTP-24,
 so if OTP-01 could not close until OTP-25 finished, neither issue could
 ever reach Ready in the RFC's dependency model. OTP-01's contribution to
 clauses 4 and 5 is the stable unsigned-artifact ground truth and the
@@ -339,8 +348,8 @@ transfer is explicit, not silent.
    there without interactive input.
 3. *"Release artifacts contain only intended Android ABIs, local extension
    code, and declared native-host packages."*
-   → **1a** (extension artifact file-set snapshot in
-   `test/bundle.test.ts` plus `validateExtensionManifest`), **1b** (APK ABI
+   → **1a** (extension artifact file-set inline expected-list assertion in
+   `test/bundle.test.ts`, plus `validateExtensionManifest`), **1b** (APK ABI
    inspection via `unzip -l` or `apkanalyzer` in 1d's verify image), **1c**
    (bridge package file-set snapshot).
 4. *"Platform signing can consume CI-provided credentials without embedding
