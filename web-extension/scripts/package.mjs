@@ -16,7 +16,10 @@
 //     the zip DOS date floor)
 //   - no directory entries for empty dirs
 //   - DEFLATE compression
-//   - unix file mode 0644, dir mode 0755
+//   - unix file mode 100644 (regular file + 0644 perms), dir mode 040755
+//     (directory + 0755 perms). yazl's `mode` carries both the file-type
+//     and permission bits, so the leading type bits are required for the
+//     entry to read as a regular file / directory rather than `?`.
 //
 // Manifest baseline guard (exact match, was the Kotlin `validateExtensionManifest`):
 //   - manifest_version === 3
@@ -49,20 +52,31 @@ function readJson(path) {
 }
 
 // Walk a directory, returning relative POSIX-style paths (forward slashes)
-// for every regular file. Directories are not emitted as entries.
+// for every regular file plus the non-empty directories that contain them.
+// Directories that contain no files (empty) are omitted, mirroring the
+// recipe's `includeEmptyDirs = false` equivalent. Both lists are returned
+// unsorted here; the caller sorts them together lexicographically so each
+// directory entry precedes its contents.
 function walkFiles(dir, base = '') {
-    const out = [];
+    const files = [];
+    const dirs = [];
     for (const entry of readdirSync(dir)) {
         const abs = join(dir, entry);
         const rel = base ? `${base}/${entry}` : entry;
         const st = statSync(abs);
         if (st.isDirectory()) {
-            out.push(...walkFiles(abs, rel));
+            const sub = walkFiles(abs, rel);
+            if (sub.files.length > 0) {
+                // Only record directories that contain at least one file.
+                dirs.push({ kind: 'dir', rel: rel.split(sep).join('/'), abs });
+                dirs.push(...sub.dirs);
+                files.push(...sub.files);
+            }
         } else if (st.isFile()) {
-            out.push({ rel: rel.split(sep).join('/'), abs });
+            files.push({ kind: 'file', rel: rel.split(sep).join('/'), abs });
         }
     }
-    return out;
+    return { files, dirs };
 }
 
 function validateManifest(manifest) {
@@ -121,11 +135,16 @@ function main() {
     }
     console.error('web-extension manifest guard: MV3 baseline (exact match) OK.');
 
-    // Collect and sort file entries lexicographically by relative path.
-    const files = walkFiles(DIST_DIR).sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    // Collect entries (files + non-empty directories) and sort them
+    // lexicographically by relative path, so each directory entry precedes
+    // its contents.
+    const { files, dirs } = walkFiles(DIST_DIR);
     if (files.length === 0) {
         fail(`${DIST_DIR} contains no files; nothing to package.`);
     }
+    const entries = [...dirs, ...files].sort((a, b) =>
+        a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0,
+    );
 
     // Prepare the output directory.
     mkdirSync(BUILD_DIR, { recursive: true });
@@ -137,11 +156,18 @@ function main() {
     // digest in one pass. Fixed mtime + sorted entries + fixed mode make
     // the output byte-identical across runs on the same input.
     const zipfile = new yazl.ZipFile();
-    for (const { rel, abs } of files) {
-        zipfile.addBuffer(readFileSync(abs), rel, {
-            mtime: FIXED_MTIME,
-            mode: 0o644,
-        });
+    for (const entry of entries) {
+        if (entry.kind === 'dir') {
+            zipfile.addEmptyDirectory(entry.rel, {
+                mtime: FIXED_MTIME,
+                mode: 0o40755,
+            });
+        } else {
+            zipfile.addBuffer(readFileSync(entry.abs), entry.rel, {
+                mtime: FIXED_MTIME,
+                mode: 0o100644,
+            });
+        }
     }
     zipfile.end();
 
