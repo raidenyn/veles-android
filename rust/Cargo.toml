@@ -1,0 +1,3 @@
+[workspace]
+members = ["veles-crypto"]
+resolver = "3"
