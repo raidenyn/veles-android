@@ -8,6 +8,8 @@ export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
         description:
             'Delivers one-time passcodes from the Veles Android app to this browser over an authenticated local channel.',
         permissions: [],
+        action: { default_popup: 'popup.html' },
+        options_ui: { page: 'options.html' },
         background: { service_worker: 'background.js' },
         content_scripts: [
             {

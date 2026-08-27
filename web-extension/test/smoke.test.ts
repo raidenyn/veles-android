@@ -12,6 +12,8 @@ describe('extension manifest', () => {
         expect(m).not.toHaveProperty('host_permissions');
         expect(m.background?.service_worker).toBe('background.js');
         expect(m.content_scripts?.[0]?.js).toEqual(['content.js']);
+        expect(m.action?.default_popup).toBe('popup.html');
+        expect(m.options_ui?.page).toBe('options.html');
     });
 
     it('uses a restrictive CSP without wasm-unsafe-eval (allowed in 1b)', () => {
@@ -21,8 +23,10 @@ describe('extension manifest', () => {
 });
 
 describe('entry-point modules', () => {
-    it('background.ts and content.ts compile and export', async () => {
+    it('background.ts, content.ts, options.ts and popup.ts compile and export', async () => {
         await expect(import('../src/background')).resolves.toBeDefined();
         await expect(import('../src/content')).resolves.toBeDefined();
+        await expect(import('../src/options')).resolves.toBeDefined();
+        await expect(import('../src/popup')).resolves.toBeDefined();
     });
 });

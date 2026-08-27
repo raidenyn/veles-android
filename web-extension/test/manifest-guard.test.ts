@@ -25,4 +25,12 @@ describe('manifest baseline guard (exact match)', () => {
             extension_pages: "script-src 'self'; object-src 'self'",
         });
     });
+
+    it('action.default_popup is exactly popup.html', () => {
+        expect(buildExtensionManifest().action).toEqual({ default_popup: 'popup.html' });
+    });
+
+    it('options_ui.page is exactly options.html', () => {
+        expect(buildExtensionManifest().options_ui).toEqual({ page: 'options.html' });
+    });
 });

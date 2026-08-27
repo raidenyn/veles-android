@@ -1,10 +1,15 @@
 // OTP-01 sub-project 1a — deterministic packaging for the MV3 web extension.
 //
-// Replaces the former Gradle `extensionPackage` + `validateExtensionManifest`
-// tasks. Runs `vite build` is expected to have already produced `dist/` (the
-// `package` npm script invokes `vite build && node scripts/package.mjs`), but
-// this script also verifies the manifest baseline before zipping, so a missing
-// or stale build fails loudly.
+// Replaces the former Gradle `extensionPackage` task. `vite build` is expected
+// to have already produced `dist/` (the `package` npm script invokes
+// `vite build && node scripts/package.mjs`); this script zips it
+// deterministically and emits a sha256 sidecar.
+//
+// Manifest baseline validation is a test concern, not a packaging step:
+//   - source-level via test/manifest-guard.test.ts (against
+//     buildExtensionManifest())
+//   - bundle-level via test/bundle.test.ts (against built dist/manifest.json,
+//     round-trip exact match), run in CI before `npm run package`.
 //
 // Outputs (at the repo-root `build/web-extension/`, NOT inside web-extension/):
 //   - veles-extension-<version>.zip      deterministic zip of dist/
@@ -20,12 +25,6 @@
 //     (directory + 0755 perms). yazl's `mode` carries both the file-type
 //     and permission bits, so the leading type bits are required for the
 //     entry to read as a regular file / directory rather than `?`.
-//
-// Manifest baseline guard (exact match, was the Kotlin `validateExtensionManifest`):
-//   - manifest_version === 3
-//   - permissions present and exactly []
-//   - host_permissions absent
-//   - content_security_policy exactly { extension_pages: "script-src 'self'; object-src 'self'" }
 
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -79,33 +78,6 @@ function walkFiles(dir, base = '') {
     return { files, dirs };
 }
 
-function validateManifest(manifest) {
-    const errors = [];
-    if (manifest.manifest_version !== 3) {
-        errors.push(`manifest_version must be 3, got ${String(manifest.manifest_version)}`);
-    }
-    if (!Object.prototype.hasOwnProperty.call(manifest, 'permissions')) {
-        errors.push('permissions key must be present and equal to []');
-    } else if (!Array.isArray(manifest.permissions) || manifest.permissions.length !== 0) {
-        errors.push(`permissions must be exactly [], got ${JSON.stringify(manifest.permissions)}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(manifest, 'host_permissions')) {
-        errors.push(
-            `host_permissions must be absent in 1a, got ${JSON.stringify(manifest.host_permissions)}`,
-        );
-    }
-    const expectedCsp = { extension_pages: "script-src 'self'; object-src 'self'" };
-    const actualCsp = manifest.content_security_policy;
-    if (JSON.stringify(actualCsp) !== JSON.stringify(expectedCsp)) {
-        errors.push(
-            `content_security_policy must be exactly ${JSON.stringify(expectedCsp)}, got ${JSON.stringify(actualCsp)}`,
-        );
-    }
-    if (errors.length) {
-        fail(`manifest guard failed:\n  - ${errors.join('\n  - ')}`);
-    }
-}
-
 function main() {
     // Ensure dist/ exists and is current. The `package` npm script runs
     // `vite build` first, but be defensive: if dist/ is missing, fail.
@@ -125,15 +97,6 @@ function main() {
         fail('web-extension/package.json missing a string "version".');
     }
     const version = pkg.version;
-
-    // Manifest baseline guard against the emitted dist/manifest.json.
-    const manifestPath = join(DIST_DIR, 'manifest.json');
-    try {
-        validateManifest(readJson(manifestPath));
-    } catch (e) {
-        fail(`could not read/parse ${manifestPath}: ${e.message}`);
-    }
-    console.error('web-extension manifest guard: MV3 baseline (exact match) OK.');
 
     // Collect entries (files + non-empty directories) and sort them
     // lexicographically by relative path, so each directory entry precedes

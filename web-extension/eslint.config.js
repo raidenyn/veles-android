@@ -2,6 +2,13 @@ import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import prettier from 'eslint-config-prettier/flat';
 
+// No vite or react eslint plugins are configured here, intentionally:
+//   - The extension uses plain TypeScript (no React/JSX), so there is nothing
+//     for eslint-plugin-react-hooks / eslint-plugin-react to lint. Add them
+//     (and a JSX-aware parser) if/when React components are introduced.
+//   - There is no published `eslint-plugin-vite`; vite.config.ts is a small
+//     config file that the standard TS rules already cover. Vite does not
+//     require a dedicated eslint plugin for its config files.
 export default ts.config(
     js.configs.recommended,
     ...ts.configs.strict,

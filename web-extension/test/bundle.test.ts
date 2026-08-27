@@ -21,7 +21,16 @@ describe('dist/ contents (post-build artifact)', () => {
         // assets/[name]-[hash][extname]) are part of the asserted list because
         // under the committed lockfile they are deterministic.
         const files = walk(DIST).sort();
-        expect(files).toEqual(['background.js', 'content.js', 'manifest.json']);
+        expect(files).toEqual([
+            'background.js',
+            'chunks/modulepreload-polyfill-DaKOjhqt.js',
+            'content.js',
+            'manifest.json',
+            'options.html',
+            'options.js',
+            'popup.html',
+            'popup.js',
+        ]);
     });
 
     it('dist/manifest.json matches the canonical generator exactly', () => {
