@@ -3,6 +3,7 @@ import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Properties
+import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Exec
 
 plugins {
@@ -63,6 +64,21 @@ fun requireOnPath(name: String, versionHint: String, installHint: String) {
     }
     check(found) {
         "Could not find '$name' on PATH. $installHint. Version hint: $versionHint."
+    }
+}
+
+fun requireNdkVersion(ndkDir: File, expected: String) {
+    check(ndkDir.isDirectory) {
+        "Android NDK $expected is not installed. " +
+            "Install it with sdkmanager \"ndk;$expected\"."
+    }
+    val properties = Properties().apply {
+        ndkDir.resolve("source.properties").inputStream().use(::load)
+    }
+    val actual = properties.getProperty("Pkg.Revision")
+    check(actual == expected) {
+        "Expected Android NDK $expected at $ndkDir, found '$actual'. " +
+            "Install the pinned version with sdkmanager \"ndk;$expected\"."
     }
 }
 
@@ -296,18 +312,7 @@ val rustJni = tasks.register<Exec>("rustJni") {
     doFirst {
         val ndkDir = appNdkDirectory.get().asFile
         val expected = libs.versions.ndk.get()
-        check(ndkDir.isDirectory) {
-            "Android NDK $expected is not installed. " +
-                "Install it with sdkmanager \"ndk;$expected\"."
-        }
-        val properties = Properties().apply {
-            ndkDir.resolve("source.properties").inputStream().use(::load)
-        }
-        val actual = properties.getProperty("Pkg.Revision")
-        check(actual == expected) {
-            "Expected Android NDK $expected at $ndkDir, found '$actual'. " +
-                "Install the pinned version with sdkmanager \"ndk;$expected\"."
-        }
+        requireNdkVersion(ndkDir, expected)
         delete(rustJniOutput)
         val cargoNdkBinDir = rustToolsDir.get().dir("cargo-ndk/bin").asFile
         environment("PATH", cargoNdkBinDir.prependToPath(System.getenv("PATH")))
@@ -322,5 +327,81 @@ val rustJni = tasks.register<Exec>("rustJni") {
         "--target", "x86_64",
         "--output-dir", rustJniOutput.get().asFile,
         "build", "--workspace", "--release", "--locked",
+    )
+}
+
+val rustFormat = tasks.register<Exec>("rustFormat") {
+    group = "rust"
+    dependsOn(rustToolchainCheck)
+    workingDir(rustDir)
+    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+    commandLine("cargo", "fmt", "--all", "--", "--check")
+}
+
+val rustLintHost = tasks.register<Exec>("rustLintHost") {
+    group = "rust"
+    dependsOn(rustToolchainCheck)
+    workingDir(rustDir)
+    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+    commandLine(
+        "cargo", "clippy", "--workspace", "--all-targets", "--locked",
+        "--", "-D", "warnings",
+    )
+}
+
+val rustLintWasm = tasks.register<Exec>("rustLintWasm") {
+    group = "rust"
+    dependsOn(rustToolchainCheck)
+    workingDir(rustDir)
+    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+    environment("CARGO_PROFILE_RELEASE_PANIC", "abort")
+    commandLine(
+        "cargo", "clippy", "--workspace", "--target", "wasm32-unknown-unknown",
+        "--locked", "--", "-D", "warnings",
+    )
+}
+
+val rustLintAndroid = tasks.register<Exec>("rustLintAndroid") {
+    group = "rust"
+    dependsOn(verifyCargoNdk)
+    workingDir(rustDir)
+    doFirst {
+        val ndkDir = appNdkDirectory.get().asFile
+        val expected = libs.versions.ndk.get()
+        requireNdkVersion(ndkDir, expected)
+        val cargoNdkBinDir = rustToolsDir.get().dir("cargo-ndk/bin").asFile
+        environment("PATH", cargoNdkBinDir.prependToPath(System.getenv("PATH")))
+        environment("ANDROID_NDK_HOME", ndkDir)
+        environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
+    }
+    commandLine(
+        "cargo", "ndk", "--platform", "33", "--target", "x86_64",
+        "clippy", "--workspace", "--all-targets", "--locked",
+        "--", "-D", "warnings",
+    )
+}
+
+val rustLint = tasks.register("rustLint") {
+    group = "rust"
+    description = "Runs denied-warning Clippy checks for host, WASM, and Android JNI."
+    dependsOn(rustLintHost, rustLintWasm, rustLintAndroid)
+}
+
+tasks.register("rustNdkVersion") {
+    group = "rust"
+    description = "Prints the pinned Android NDK version for CI provisioning."
+    doLast { println(libs.versions.ndk.get()) }
+}
+
+tasks.named("check") {
+    dependsOn(rustFormat, rustLint, rustTest)
+}
+
+tasks.named<Delete>("clean") {
+    dependsOn(":app:clean")
+    delete(
+        layout.projectDirectory.dir("web-extension/dist"),
+        wasmPackageDir,
     )
 }
