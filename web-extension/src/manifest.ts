@@ -19,7 +19,7 @@ export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
             },
         ],
         content_security_policy: {
-            extension_pages: "script-src 'self'; object-src 'self'",
+            extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
         },
     };
 }

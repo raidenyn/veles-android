@@ -16,9 +16,11 @@ describe('extension manifest', () => {
         expect(m.options_ui?.page).toBe('options.html');
     });
 
-    it('uses a restrictive CSP without wasm-unsafe-eval (allowed in 1b)', () => {
+    it('uses a restrictive CSP permitting only wasm-unsafe-eval (1b)', () => {
         const csp = buildExtensionManifest().content_security_policy;
-        expect(csp).toEqual({ extension_pages: "script-src 'self'; object-src 'self'" });
+        expect(csp).toEqual({
+            extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+        });
     });
 });
 
