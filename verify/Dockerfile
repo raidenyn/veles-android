@@ -2,12 +2,12 @@
 # The JDK tag below MUST match .java-version at the repo root
 # (verify.sh enforces this). See docs/reproducible-builds.md for the
 # toolchain upgrade procedure.
-ARG JAVA_IMAGE=eclipse-temurin:17.0.19_10-jdk-noble@sha256:0386aaf49d6756b4856119f8e037f40cc865c7c8fbdda7c81733cc806f462daf
+ARG JAVA_IMAGE=eclipse-temurin:21.0.12_8-jdk-noble@sha256:1ca5e470ad60db0d5b4137c1357068fa210051d815ad98ea9964f4bbe7367f8c
 FROM ${JAVA_IMAGE}
 
 ENV TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8
 ENV ANDROID_HOME=/opt/android-sdk
-ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/35.0.0:${PATH}
+ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/36.0.0:${PATH}
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl unzip ca-certificates python3-pip \
@@ -23,7 +23,7 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
  && rm /tmp/cmdline-tools.zip
 
 RUN yes | sdkmanager --licenses > /dev/null \
- && sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+ && sdkmanager "platform-tools" "platforms;android-35" "build-tools;36.0.0"
 
 COPY verify-inner.sh /usr/local/bin/verify-inner.sh
 RUN chmod +x /usr/local/bin/verify-inner.sh
