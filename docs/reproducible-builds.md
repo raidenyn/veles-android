@@ -61,6 +61,14 @@ Requirements: Docker, plus `bash`, `realpath`, `grep`, and `tr` on the host
 | Docker base image | `verify/Dockerfile` (digest-pinned) |
 | apksigcopier | `verify/Dockerfile` |
 
+The web-extension's npm dependencies are exact-pinned in `web-extension/package.json`
+(no `^`/`~`) and resolved via the committed `package-lock.json`. The deterministic
+packaging (zip + sha256 sidecar) and manifest/CSP guard run as npm scripts
+(`npm run package`, `npm test`) — no Gradle wrapping needed for the extension since
+it never touches the APK. Developer Node/npm are not pinned — `engines.node >= 22.0.0`
+is a floor, and CI runs Node 22 LTS. The zero-trust reference environment with an
+exact Node runtime pin lands in OTP-01 sub-project 1d (`verify/Dockerfile.web`).
+
 The Play "dependency metadata" block (`dependenciesInfo`) is disabled — it is
 encrypted with a Google key and inherently non-reproducible.
 

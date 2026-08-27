@@ -89,3 +89,33 @@ jobs:
           name: instrumented-test-results
           path: app/build/outputs/androidTest-results/
           if-no-files-found: ignore
+
+  web-extension:
+    name: web-extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web-extension/package-lock.json
+      - run: npm ci
+        working-directory: web-extension
+      - run: npm run format:check
+        working-directory: web-extension
+      - run: npm run lint
+        working-directory: web-extension
+      - run: npm run typecheck
+        working-directory: web-extension
+      - run: npm test
+        working-directory: web-extension
+      - run: npm run build && npm run test:bundle
+        working-directory: web-extension
+      - run: npm run package
+        working-directory: web-extension
+      - uses: actions/upload-artifact@v7
+        with:
+          name: veles-extension-zip
+          path: build/web-extension/
+          if-no-files-found: error

@@ -22,6 +22,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Run a single instrumented test class
 ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.nagaev.permissions.ui.VelesPermissionsAppTests
+
+# Web extension (OTP-01 sub-project 1a) — requires node >= 22 and npm on PATH
+cd web-extension
+npm ci                          # install deps from lockfile
+npm run format:check            # prettier check
+npm run lint                    # eslint
+npm run typecheck               # tsc --noEmit
+npm test                        # vitest source-level tests (smoke + manifest guard)
+npm run test:bundle             # vitest bundle tests (requires `npm run build` first)
+npm run package                 # vite build + deterministic zip + sha256 sidecar -> ../build/web-extension/
 ```
 
 ## Architecture Overview
