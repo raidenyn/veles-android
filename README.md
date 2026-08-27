@@ -52,7 +52,7 @@ publish a release whose APK it cannot independently reproduce. See
 ## Requirements
 
 - Android device running **Android 13 (API 33)** or newer.
-- Android Studio (or a standalone Android SDK + JDK 17) to build.
+- Android Studio (or a standalone Android SDK + JDK 21) to build.
 - A machine with `adb` available to install the APK and grant the sensitive-notification permission (see below).
 
 ## Build
