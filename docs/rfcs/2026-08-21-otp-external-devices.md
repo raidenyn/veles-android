@@ -7,10 +7,11 @@ Accepted for execution planning. Amended to select the native bridge on
 add the T-WATCH-S3 watch client with emulator-first execution on 2026-08-25,
 and on 2026-08-26 to (a) record the OTP-01 extension living at
 `web-extension/` instead of `src/typescript/`, (b) transfer OTP-01's
-signing/correspondence acceptance clauses to OTP-25, and (c) declare the
+signing/correspondence acceptance clauses to OTP-25, (c) declare the
 extension toolchain's Node.js floor as `>=22.0.0` with npm's version only
-logged (no separate npm floor); all amendments are consolidated into this
-body.
+logged (no separate npm floor), and (d) record that the extension (1a)
+toolchain entry points are npm scripts, not Gradle tasks; all amendments
+are consolidated into this body.
 
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
@@ -1234,7 +1235,7 @@ check, APK ABI inspection, and initial SBOM/license output.
 Cross-platform; Release scope Stable release; Gate Blocks protected transport;
 initial Status Ready.
 
-> **OTP-01 amendment (2026-08-26).** Three implementation-time decisions
+> **OTP-01 amendment (2026-08-26).** Four implementation-time decisions
 > deviate
 > from the literal reading of this RFC and are recorded here so OTP-01's
 > acceptance does not silently conflict with this section:
@@ -1270,6 +1271,17 @@ initial Status Ready.
  >    is no separate npm floor. Gradle never downloads node/npm; the pinned
  >    reference environment for byte-compare runs (sub-project 1d) bakes an
  >    exact Node runtime.
+> 4. **Extension toolchain entry points are npm scripts, not Gradle tasks.**
+>    The MV3 extension never integrates with the APK build (it ships as a
+>    separate zip loaded into Chrome), so wrapping its build in Gradle
+>    added complexity without value. RFC clause 2 ("Gradle exposes CI-safe
+>    entry points") applies to sub-projects that integrate with the APK
+>    (1b: Rust JNI `.so` injection, 1c: native-host packaging); for the
+>    extension (1a), CI-safe entry points are the documented npm scripts
+>    (`npm ci`, `npm test`, `npm run package`) invoked by the dedicated
+>    `web-extension` CI job. The deterministic zip recipe, sha256 sidecar,
+>    and manifest/CSP exact-match guard are preserved — implemented as a
+>    Node script and a vitest test rather than Kotlin DSL.
 
 ### OTP-02: Freeze the protected Bluetooth protocol profile and schemas
 
