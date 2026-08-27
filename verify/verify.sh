@@ -38,8 +38,22 @@ if ! grep -Eq "eclipse-temurin:${JAVA_VERSION_RE}_" "$SCRIPT_DIR/Dockerfile"; th
   exit 2
 fi
 
+# Pin-consistency check: Dockerfile NDK must match gradle/libs.versions.toml.
+NDK_VERSION="$(awk -F'"' '/^ndk = / {print $2}' "$REPO_ROOT/gradle/libs.versions.toml")"
+if [ -z "$NDK_VERSION" ] || ! grep -Fq "ARG NDK_VERSION=$NDK_VERSION" "$SCRIPT_DIR/Dockerfile"; then
+  echo "ERROR: verify/Dockerfile NDK does not match libs.versions.toml ($NDK_VERSION)." >&2
+  exit 2
+fi
+if ! grep -Fq 'COPY rust/rust-toolchain.toml' "$SCRIPT_DIR/Dockerfile"; then
+  echo "ERROR: verify/Dockerfile does not consume rust/rust-toolchain.toml." >&2
+  exit 2
+fi
+
 echo "==> Building reference environment image (this can take several minutes)"
-docker build -t veles-verify "$SCRIPT_DIR" || { echo "ERROR: failed to build reference image." >&2; exit 2; }
+docker build -t veles-verify -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT" || {
+  echo "ERROR: failed to build reference image." >&2
+  exit 2
+}
 
 DOCKER_ARGS=(--rm -v "$APK":/apk/released.apk:ro)
 if [ -n "${VELES_REPO_URL:-}" ] && [ -d "$VELES_REPO_URL" ]; then
