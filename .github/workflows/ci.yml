@@ -95,18 +95,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version-file: .java-version
-      - uses: gradle/actions/setup-gradle@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: web-extension/package-lock.json
-      - run: ./gradlew extensionInstall extensionFormat extensionLint extensionTypecheck extensionTest
-      - run: ./gradlew extensionBuild validateExtensionManifest extensionArtifactTest extensionPackage
+      - run: npm ci
+        working-directory: web-extension
+      - run: npm run format:check
+        working-directory: web-extension
+      - run: npm run lint
+        working-directory: web-extension
+      - run: npm run typecheck
+        working-directory: web-extension
+      - run: npm test
+        working-directory: web-extension
+      - run: npm run package
+        working-directory: web-extension
       - uses: actions/upload-artifact@v7
         with:
           name: veles-extension-zip
