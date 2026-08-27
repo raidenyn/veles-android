@@ -270,3 +270,57 @@ val rustTest = tasks.register("rustTest") {
     description = "Runs native Rust and generated web-target WASM tests."
     dependsOn(rustNativeTest, rustWasmSmoke)
 }
+
+val appNdkDirectory = objects.directoryProperty()
+project(":app").plugins.withId("com.android.application") {
+    val androidComponents = project(":app").extensions
+        .getByType(ApplicationAndroidComponentsExtension::class.java)
+    appNdkDirectory.set(androidComponents.sdkComponents.ndkDirectory)
+}
+
+val rustJniOutput = project(":app").layout.buildDirectory.dir("generated/jniLibs")
+val rustJni = tasks.register<Exec>("rustJni") {
+    group = "rust"
+    description = "Builds locked release JNI libraries for the approved Android ABIs."
+    dependsOn(verifyCargoNdk)
+    inputs.files(
+        fileTree(rustCrateDir) { include("Cargo.toml", "src/**/*.rs") },
+        rustDir.file("Cargo.toml"),
+        rustDir.file("Cargo.lock"),
+        rustDir.file("rust-toolchain.toml"),
+        rustToolsFile,
+    )
+    inputs.property("ndkVersion", libs.versions.ndk.get())
+    outputs.dir(rustJniOutput)
+    workingDir(rustDir)
+    doFirst {
+        val ndkDir = appNdkDirectory.get().asFile
+        val expected = libs.versions.ndk.get()
+        check(ndkDir.isDirectory) {
+            "Android NDK $expected is not installed. " +
+                "Install it with sdkmanager \"ndk;$expected\"."
+        }
+        val properties = Properties().apply {
+            ndkDir.resolve("source.properties").inputStream().use(::load)
+        }
+        val actual = properties.getProperty("Pkg.Revision")
+        check(actual == expected) {
+            "Expected Android NDK $expected at $ndkDir, found '$actual'. " +
+                "Install the pinned version with sdkmanager \"ndk;$expected\"."
+        }
+        delete(rustJniOutput)
+        val cargoNdkBinDir = rustToolsDir.get().dir("cargo-ndk/bin").asFile
+        environment("PATH", cargoNdkBinDir.prependToPath(System.getenv("PATH")))
+        environment("ANDROID_NDK_HOME", ndkDir)
+        environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
+    }
+    commandLine(
+        "cargo", "ndk", "--platform", "33",
+        "--target", "arm64-v8a",
+        "--target", "armeabi-v7a",
+        "--target", "x86_64",
+        "--output-dir", rustJniOutput.get().asFile,
+        "build", "--workspace", "--release", "--locked",
+    )
+}

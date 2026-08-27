@@ -6,6 +6,76 @@ pub fn reverse_bytes(input: &[u8]) -> Vec<u8> {
     input.iter().rev().copied().collect()
 }
 
+// jni 0.22 splits the legacy `JNIEnv` into an FFI-safe `EnvUnowned` (the type
+// native methods must accept as their first argument) and `Env` (the full,
+// non-FFI-safe API, obtained via `EnvUnowned::with_env`). `with_env` already
+// wraps its closure in `catch_unwind`, so a panic surfaces as
+// `EnvOutcome::Outcome::Panic` rather than unwinding into the JVM. We resolve
+// that `EnvOutcome` with a custom `ErrorPolicy` that mirrors the previous
+// behavior: preserve any exception already pending, otherwise throw a
+// generic `java.lang.RuntimeException`, and return null on failure.
+#[cfg(target_os = "android")]
+mod android {
+    use std::any::Any;
+    use std::ptr::null_mut;
+
+    use jni::errors::{Error, ErrorPolicy, Result as JniResult};
+    use jni::objects::{JByteArray, JClass};
+    use jni::sys::jbyteArray;
+    use jni::{Env, EnvUnowned, jni_str};
+
+    use super::reverse_bytes;
+
+    struct ThrowGenericRuntimeException;
+
+    impl ErrorPolicy<jbyteArray, Error> for ThrowGenericRuntimeException {
+        type Captures<'unowned_env_local: 'native_method, 'native_method> = ();
+
+        fn on_error<'unowned_env_local: 'native_method, 'native_method>(
+            env: &mut Env<'unowned_env_local>,
+            _cap: &mut Self::Captures<'unowned_env_local, 'native_method>,
+            _err: Error,
+        ) -> JniResult<jbyteArray> {
+            if !env.exception_check() {
+                let _ = env.throw_new(
+                    jni_str!("java/lang/RuntimeException"),
+                    jni_str!("Veles crypto JNI conversion failed"),
+                );
+            }
+            Ok(null_mut())
+        }
+
+        fn on_panic<'unowned_env_local: 'native_method, 'native_method>(
+            env: &mut Env<'unowned_env_local>,
+            _cap: &mut Self::Captures<'unowned_env_local, 'native_method>,
+            _payload: Box<dyn Any + Send + 'static>,
+        ) -> JniResult<jbyteArray> {
+            if !env.exception_check() {
+                let _ = env.throw_new(
+                    jni_str!("java/lang/RuntimeException"),
+                    jni_str!("Veles crypto JNI operation failed"),
+                );
+            }
+            Ok(null_mut())
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_me_nagaev_veles_crypto_VelesCrypto_reverseBytes<'local>(
+        mut env: EnvUnowned<'local>,
+        _class: JClass<'local>,
+        input: JByteArray<'local>,
+    ) -> jbyteArray {
+        env.with_env(|env| -> JniResult<jbyteArray> {
+            let input = env.convert_byte_array(&input)?;
+            Ok(env
+                .byte_array_from_slice(&reverse_bytes(&input))?
+                .into_raw())
+        })
+        .resolve::<ThrowGenericRuntimeException>()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::reverse_bytes;
