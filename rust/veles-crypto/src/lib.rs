@@ -12,8 +12,10 @@ pub fn reverse_bytes(input: &[u8]) -> Vec<u8> {
 // wraps its closure in `catch_unwind`, so a panic surfaces as
 // `EnvOutcome::Outcome::Panic` rather than unwinding into the JVM. We resolve
 // that `EnvOutcome` with a custom `ErrorPolicy` that mirrors the previous
-// behavior: preserve any exception already pending, otherwise throw a
-// generic `java.lang.RuntimeException`, and return null on failure.
+// behavior: preserve any exception already pending on entry, otherwise throw
+// a generic `java.lang.RuntimeException`, and return null on failure. See the
+// comment on `ThrowGenericRuntimeException` below for a nuance on what
+// "already pending" does and doesn't cover.
 #[cfg(target_os = "android")]
 mod android {
     use std::any::Any;
@@ -26,6 +28,17 @@ mod android {
 
     use super::reverse_bytes;
 
+    // `exception_check()` below only preserves an exception that was already
+    // pending *before* this native method was entered (e.g. raised by JVM code
+    // prior to calling `reverseBytes`). It does NOT catch a JVM exception
+    // raised from inside `convert_byte_array` or `byte_array_from_slice`:
+    // jni 0.22.4's own internal call macros always clear the pending JVM
+    // exception before mapping it to a Rust `Error` (see the doc comment on
+    // `jni_call_with_catch_and_null_check!` in jni-0.22.4/src/macros.rs). So
+    // e.g. an `OutOfMemoryError` from `byte_array_from_slice` or an
+    // `ArrayIndexOutOfBoundsException` from `convert_byte_array` is always
+    // already cleared and reported to Java as our generic RuntimeException
+    // below, by construction of the jni crate — not a gap in this policy.
     struct ThrowGenericRuntimeException;
 
     impl ErrorPolicy<jbyteArray, Error> for ThrowGenericRuntimeException {
