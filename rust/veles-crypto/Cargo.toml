@@ -7,6 +7,9 @@ publish = false
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[lints]
+workspace = true
+
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "=0.22.4"
 

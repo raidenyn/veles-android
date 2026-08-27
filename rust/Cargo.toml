@@ -1,3 +1,18 @@
 [workspace]
 members = ["veles-crypto"]
 resolver = "3"
+
+[workspace.lints.clippy]
+# Enforce explicit arithmetic for crypto-adjacent code (no silent wrap).
+arithmetic_side_effects = "warn"
+# Prefer explicit return types in public FFI API.
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+# Security-adjacent: avoid unsafe code outside the FFI boundary.
+undocumented_unsafe_blocks = "warn"
+
+[workspace.lints.rust]
+# Treat unused imports/variables as warnings (clippy -D warnings in CI still
+# escalates them to errors, but local builds stay informative).
+unused_imports = "warn"
+unused_variables = "warn"
