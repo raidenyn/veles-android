@@ -32,7 +32,25 @@ npm run typecheck               # tsc --noEmit
 npm test                        # vitest source-level tests (smoke + manifest guard)
 npm run test:bundle             # vitest bundle tests (requires `npm run build` first)
 npm run package                 # vite build + deterministic zip + sha256 sidecar -> ../build/web-extension/
+
+# Rust core (OTP-01 sub-project 1b) — shared crypto core for Android JNI and browser WASM
+# Install/verify exact auxiliary Rust build CLIs under build/rust-tools/
+./gradlew rustInstall
+
+# Format, lint host+WASM+Android targets, and run native+WASM tests
+./gradlew rustFormat rustLint rustTest
+
+# Build three Android JNI ABIs into app/build/generated/jniLibs/
+./gradlew rustJni
+
+# Build web-target WASM into web-extension/rust-wasm/pkg/
+./gradlew rustWasm
 ```
+
+Clean APK assembly now requires rustup/cargo and NDK r29 (`rustJni` is a dependency of
+`:app:assembleDebug`/`assembleRelease`). Node >= 22 is required only for `rustTest` (which
+runs a WASM smoke test) and the WASM/extension commands above — it is not needed to build the
+APK on its own.
 
 ## Architecture Overview
 
