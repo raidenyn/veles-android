@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,6 +56,14 @@ describe('tauri.conf.json headless posture (exact match)', () => {
 
     it('bundle.targets is exactly []', () => {
         expect((readConfig().bundle as { targets: unknown }).targets).toEqual([]);
+    });
+
+    it('declares a committed Windows ICO for the WiX bundle target', () => {
+        const bundle = readConfig().bundle as { icon?: unknown };
+        expect(bundle.icon).toEqual(['icons/veles-native-bridge.ico']);
+        expect(
+            existsSync(join(__dirname, '..', 'src-tauri', 'icons', 'veles-native-bridge.ico')),
+        ).toBe(true);
     });
 
     it('plugins is absent or empty', () => {

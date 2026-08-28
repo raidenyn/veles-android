@@ -20,6 +20,6 @@
         "category": "Utility",
         "shortDescription": "Veles Native Messaging host (headless)",
         "longDescription": "Headless Tauri Native Messaging host for the Veles OTP browser extension.",
-        "icon": []
+        "icon": ["icons/veles-native-bridge.ico"]
     }
 }

@@ -27,7 +27,7 @@ describe('native-messaging host manifest (exact match)', () => {
         expect(buildHostManifest('macos')).toEqual({
             name: 'app.veles.native_bridge',
             description: 'Veles Native Messaging host',
-            path: '{{INSTALL_DIR}}/Veles Native Bridge.app/Contents/MacOS/Veles Native Bridge',
+            path: '{{INSTALL_DIR}}/Veles Native Bridge.app/Contents/MacOS/veles-native-bridge',
             type: 'stdio',
             allowed_origins: [`chrome-extension://${VELES_EXTENSION_ID}/`],
         });
@@ -37,7 +37,10 @@ describe('native-messaging host manifest (exact match)', () => {
         expect(buildHostManifest('macos', '/Applications/Veles')).toEqual({
             name: 'app.veles.native_bridge',
             description: 'Veles Native Messaging host',
-            path: '/Applications/Veles/Veles Native Bridge.app/Contents/MacOS/Veles Native Bridge',
+            // The .app's Contents/MacOS/ binary is the Cargo [[bin]] name
+            // ("veles-native-bridge"), NOT the Tauri productName. The manifest
+            // must point at the real executable Chrome will launch.
+            path: '/Applications/Veles/Veles Native Bridge.app/Contents/MacOS/veles-native-bridge',
             type: 'stdio',
             allowed_origins: [`chrome-extension://${VELES_EXTENSION_ID}/`],
         });

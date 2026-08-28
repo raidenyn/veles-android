@@ -11,8 +11,9 @@
         "format:check": "prettier --check .",
         "lint": "eslint .",
         "typecheck": "tsc --noEmit",
-        "test": "vitest run test/tauri-config-guard.test.ts test/manifest-guard.test.ts test/manifests-output.test.ts",
+        "test": "vitest run test/tauri-config-guard.test.ts test/manifest-guard.test.ts test/manifests-output.test.ts test/bundle-orchestration.test.ts test/manifest-install-path.test.ts test/package-extraction.test.ts",
         "build": "tauri build --no-bundle -- --locked --features tauri-runtime",
+        "bundle": "tauri build --ci",
         "package": "node scripts/package.mjs",
         "manifests": "node scripts/manifests.mjs"
     },
