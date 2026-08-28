@@ -64,6 +64,8 @@ Requirements: Docker, plus `bash`, `realpath`, `grep`, and `tr` on the host
 | Rust dependencies | `rust/Cargo.lock` plus exact direct pins in crate manifests |
 | Rust auxiliary CLIs | `rust/toolchain-tools.toml` (`cargo install --locked`) |
 | Android NDK | `gradle/libs.versions.toml` `ndk`, propagated to AGP and `verify/Dockerfile` |
+| Native-bridge Tauri CLI & TS tooling | `native-bridge/package.json` (exact-pinned) + committed `package-lock.json` |
+| Native-bridge Rust crate & deps | `native-bridge/src-tauri/Cargo.toml` + committed `Cargo.lock` |
 
 Veles' Android code calls into a shared Rust core (`rust/veles-crypto`) via JNI, and the
 same crate compiles to WASM for the browser extension. `rust/rust-toolchain.toml` pins the
@@ -96,6 +98,23 @@ packaging (zip + sha256 sidecar) and manifest/CSP guard run as npm scripts
 it never touches the APK. Developer Node/npm are not pinned — `engines.node >= 22.0.0`
 is a floor, and CI runs Node 22 LTS. The zero-trust reference environment with an
 exact Node runtime pin lands in OTP-01 sub-project 1d (`verify/Dockerfile.web`).
+
+The native-bridge (`native-bridge/`) is a Tauri 2.x headless Native Messaging
+host. Its npm dependencies (Tauri CLI, ESLint, Prettier, TypeScript, vitest)
+are exact-pinned in `native-bridge/package.json` with a committed
+`package-lock.json`, following the same pattern as the web-extension. The Rust
+bridge crate (`native-bridge/src-tauri/`) pins exact direct dependency versions
+and commits `Cargo.lock`. Gradle wraps the npm and cargo entry points as
+`bridge*` tasks (group `native-bridge`): `bridgeInstall`, `bridgeFormat`,
+`bridgeLint`, `bridgeTypecheck`, `bridgeTest`, `bridgeBuild`
+(`cargo tauri build --no-bundle -- --locked`), `bridgePackage`
+(platform-specific deterministic zip/tar + sha256 sidecar into
+`build/native-bridge/`), and `bridgeManifests` (Chrome native-messaging host
+manifests). The bridge is headless (`windows = []`, no tray/menu/autostart),
+exits on stdin EOF, and produces unsigned artifacts only — Tauri signing env
+vars are documented as absent and `tauri.conf.json` hard-codes unsigned output.
+Windows and macOS builds run on pinned GitHub-hosted runners (`windows-2022`,
+`macos-15`); the Linux-side byte-compare harness lands in 1d.
 
 The Play "dependency metadata" block (`dependenciesInfo`) is disabled — it is
 encrypted with a Google key and inherently non-reproducible.

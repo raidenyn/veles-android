@@ -82,7 +82,7 @@ sub-project layout:
 
 - `web-extension/` — npm/Vite MV3 extension and deterministic package.
 - `rust/` — shared Rust core with Android JNI and browser WASM bindings.
-- `native-bridge/` — reserved for OTP-01 sub-project 1c.
+- `native-bridge/` — Tauri 2.x headless Native Messaging host (unsigned, Windows/macOS).
 - `verify/` — reproducible APK verifier; broader toolchain verification lands in 1d.
 
 ## Install

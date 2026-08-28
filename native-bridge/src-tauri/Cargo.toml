@@ -1,0 +1,30 @@
+[package]
+name = "veles-native-bridge"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "veles_native_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "veles-native-bridge"
+path = "src/main.rs"
+required-features = ["tauri-runtime"]
+
+[features]
+default = []
+tauri-runtime = ["dep:tauri"]
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.140"
+tauri = { version = "=2.6.0", default-features = false, features = [], optional = true }
+
+[build-dependencies]
+tauri-build = { version = "=2.3.1", features = [] }
+
+[lints.rust]
+unused_imports = "warn"
+unused_variables = "warn"

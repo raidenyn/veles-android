@@ -1,0 +1,32 @@
+{
+    "name": "@veles/native-bridge",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Veles native-bridge (Tauri 2.x headless Native Messaging host). Skeleton toolchain for OTP-01 sub-project 1c.",
+    "engines": {
+        "node": ">=22.0.0"
+    },
+    "scripts": {
+        "format:check": "prettier --check .",
+        "lint": "eslint .",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run test/tauri-config-guard.test.ts test/manifest-guard.test.ts test/manifests-output.test.ts test/bundle-orchestration.test.ts test/manifest-install-path.test.ts test/package-extraction.test.ts",
+        "build": "tauri build --no-bundle -- --locked --features tauri-runtime",
+        "bundle": "tauri build --ci",
+        "package": "node scripts/package.mjs",
+        "manifests": "node scripts/manifests.mjs"
+    },
+    "devDependencies": {
+        "@eslint/js": "9.39.2",
+        "@tauri-apps/cli": "2.6.0",
+        "@types/node": "24.10.13",
+        "eslint": "9.39.2",
+        "eslint-config-prettier": "10.1.8",
+        "prettier": "3.8.0",
+        "typescript": "5.7.3",
+        "typescript-eslint": "8.57.0",
+        "vitest": "3.2.4",
+        "yazl": "3.3.1"
+    }
+}
