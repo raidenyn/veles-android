@@ -1,0 +1,25 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "Veles Native Bridge",
+    "version": "0.1.0",
+    "identifier": "app.veles.native-bridge",
+    "build": {
+        "frontendDist": "../index.html"
+    },
+    "app": {
+        "windows": [],
+        "security": {
+            "csp": null
+        },
+        "withGlobalTauri": false
+    },
+    "bundle": {
+        "active": false,
+        "targets": [],
+        "publisher": "Veles",
+        "category": "Utility",
+        "shortDescription": "Veles Native Messaging host (headless)",
+        "longDescription": "Headless Tauri Native Messaging host for the Veles OTP browser extension.",
+        "icon": []
+    }
+}

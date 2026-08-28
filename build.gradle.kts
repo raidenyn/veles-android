@@ -394,8 +394,198 @@ tasks.register("rustNdkVersion") {
     doLast { println(libs.versions.ndk.get()) }
 }
 
+// ---------------------------------------------------------------------------
+// OTP-01 sub-project 1c — native-bridge (Tauri 2.x headless Native Messaging host)
+// ---------------------------------------------------------------------------
+//
+// Layout: native-bridge/ at repo root. npm manages the Tauri CLI and TS tooling;
+// cargo manages the Rust bridge crate. Gradle wraps both for CI-safe entry
+// points, mirroring the rust task group pattern.
+//
+// The bridge is headless (windows = []), exits on stdin EOF, and produces
+// unsigned artifacts only. No BLE, no crypto, no signing.
+
+val bridgeDir = layout.projectDirectory.dir("native-bridge")
+val bridgeSrcTauriDir = bridgeDir.dir("src-tauri")
+val bridgeBuildOutput = layout.buildDirectory.dir("native-bridge")
+
+fun requireNpm(installHint: String) {
+    val path = System.getenv("PATH") ?: ""
+    val found = path.split(File.pathSeparator).any { dir ->
+        File(dir, if (windowsExecutableSuffix.isNotEmpty()) "npm.cmd" else "npm").let { it.isFile && it.canExecute() }
+    }
+    check(found) {
+        "Could not find 'npm' on PATH. $installHint."
+    }
+}
+
+val bridgeNodeCheck = tasks.register("bridgeNodeCheck") {
+    group = "native-bridge"
+    doLast {
+        requireNpm("Install Node.js >=22.0.0 (declared in native-bridge/package.json engines.node)")
+        val version = providers.exec {
+            commandLine("node", "--version")
+        }.standardOutput.asText.get().trim()
+        val major = version.removePrefix("v").substringBefore('.').toIntOrNull()
+        check(major != null && major >= 22) {
+            "Node >=22 is required by native-bridge/package.json; found '$version'"
+        }
+    }
+}
+
+val bridgeInstall = tasks.register<Exec>("bridgeInstall") {
+    group = "native-bridge"
+    description = "Installs exact-pinned npm dependencies for native-bridge/."
+    dependsOn(bridgeNodeCheck)
+    inputs.file(bridgeDir.file("package.json"))
+    inputs.file(bridgeDir.file("package-lock.json"))
+    outputs.dir(bridgeDir.dir("node_modules"))
+    workingDir(bridgeDir)
+    commandLine("npm", "ci")
+}
+
+val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
+    group = "native-bridge"
+    description = "Checks Prettier formatting for native-bridge/."
+    dependsOn(bridgeInstall)
+    workingDir(bridgeDir)
+    commandLine("npm", "run", "format:check")
+}
+
+val bridgeLint = tasks.register<Exec>("bridgeLint") {
+    group = "native-bridge"
+    description = "Runs ESLint for native-bridge/."
+    dependsOn(bridgeInstall)
+    workingDir(bridgeDir)
+    commandLine("npm", "run", "lint")
+}
+
+val bridgeTypecheck = tasks.register<Exec>("bridgeTypecheck") {
+    group = "native-bridge"
+    description = "Runs TypeScript type-checking for native-bridge/."
+    dependsOn(bridgeInstall)
+    workingDir(bridgeDir)
+    commandLine("npm", "run", "typecheck")
+}
+
+val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
+    group = "native-bridge"
+    description = "Runs vitest source-level tests for native-bridge/."
+    dependsOn(bridgeInstall)
+    workingDir(bridgeDir)
+    commandLine("npm", "test")
+}
+
+val bridgeRustToolchainCheck = tasks.register("bridgeRustToolchainCheck") {
+    group = "native-bridge"
+    doLast {
+        requireOnPath(
+            "rustup",
+            "Rust 1.98.0",
+            "Install rustup and run `rustup show active-toolchain` to install the pinned toolchain",
+        )
+        requireOnPath(
+            "cargo",
+            "Rust 1.98.0",
+            "Install rustup and run `rustup show active-toolchain` to install the pinned toolchain",
+        )
+    }
+}
+
+val bridgeRustFormat = tasks.register<Exec>("bridgeRustFormat") {
+    group = "native-bridge"
+    description = "Checks cargo fmt formatting for the native-bridge Rust crate."
+    dependsOn(bridgeRustToolchainCheck)
+    inputs.files(fileTree(bridgeSrcTauriDir) { include("src/**/*.rs", "tests/**/*.rs") })
+    workingDir(bridgeSrcTauriDir)
+    environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("native-bridge/rust-target").get().asFile)
+    commandLine("cargo", "fmt", "--all", "--", "--check")
+}
+
+val bridgeRustLint = tasks.register<Exec>("bridgeRustLint") {
+    group = "native-bridge"
+    description = "Runs cargo clippy with -D warnings for the native-bridge Rust crate."
+    dependsOn(bridgeRustToolchainCheck)
+    inputs.files(
+        fileTree(bridgeSrcTauriDir) { include("Cargo.toml", "Cargo.lock", "src/**/*.rs", "tests/**/*.rs", "build.rs") },
+    )
+    workingDir(bridgeSrcTauriDir)
+    environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("native-bridge/rust-target").get().asFile)
+    commandLine("cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings")
+}
+
+val bridgeRustTest = tasks.register<Exec>("bridgeRustTest") {
+    group = "native-bridge"
+    description = "Runs cargo test --locked for the native-bridge Rust crate."
+    dependsOn(bridgeRustToolchainCheck)
+    inputs.files(
+        fileTree(bridgeSrcTauriDir) { include("Cargo.toml", "Cargo.lock", "src/**/*.rs", "tests/**/*.rs") },
+    )
+    workingDir(bridgeSrcTauriDir)
+    environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("native-bridge/rust-target").get().asFile)
+    commandLine("cargo", "test", "--locked")
+}
+
+val bridgeTest = tasks.register("bridgeTest") {
+    group = "native-bridge"
+    description = "Runs npm and cargo tests for native-bridge/."
+    dependsOn(bridgeNpmTest, bridgeRustFormat, bridgeRustLint, bridgeRustTest)
+}
+
+val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
+    group = "native-bridge"
+    description = "Builds the unsigned native-bridge host (cargo tauri build --no-bundle -- --locked)."
+    dependsOn(bridgeInstall, bridgeRustToolchainCheck)
+    inputs.files(
+        fileTree(bridgeSrcTauriDir) { include("Cargo.toml", "Cargo.lock", "src/**/*.rs", "build.rs") },
+        bridgeSrcTauriDir.file("tauri.conf.json"),
+        bridgeDir.file("index.html"),
+        bridgeDir.file("package.json"),
+        bridgeDir.file("package-lock.json"),
+    )
+    outputs.dir(bridgeSrcTauriDir.dir("target"))
+    workingDir(bridgeDir)
+    doFirst {
+        // Tauri signing env vars are documented as absent; hard-code unsigned.
+        environment("TAURI_SIGNING_PRIVATE_KEY", "")
+        environment("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "")
+    }
+    commandLine("npx", "tauri", "build", "--no-bundle", "--", "--locked")
+}
+
+val bridgeManifests = tasks.register<Exec>("bridgeManifests") {
+    group = "native-bridge"
+    description = "Emits Chrome native-messaging host manifests for each OS."
+    dependsOn(bridgeInstall)
+    inputs.file(bridgeDir.file("src/manifest.mjs"))
+    inputs.file(bridgeDir.file("scripts/manifests.mjs"))
+    outputs.dir(bridgeBuildOutput.map { it.dir("manifests") })
+    workingDir(bridgeDir)
+    commandLine("node", "scripts/manifests.mjs")
+}
+
+val bridgePackage = tasks.register<Exec>("bridgePackage") {
+    group = "native-bridge"
+    description = "Packages the native-bridge deterministically (platform-specific)."
+    dependsOn(bridgeInstall, bridgeManifests)
+    inputs.file(bridgeDir.file("scripts/package.mjs"))
+    inputs.file(bridgeDir.file("src/manifest.mjs"))
+    inputs.file(bridgeDir.file("package.json"))
+    outputs.dir(bridgeBuildOutput)
+    workingDir(bridgeDir)
+    commandLine("node", "scripts/package.mjs")
+}
+
 tasks.named("check") {
-    dependsOn(rustFormat, rustLint, rustTest)
+    dependsOn(
+        rustFormat,
+        rustLint,
+        rustTest,
+        bridgeFormat,
+        bridgeLint,
+        bridgeTypecheck,
+        bridgeTest,
+    )
 }
 
 tasks.named<Delete>("clean") {
@@ -403,5 +593,8 @@ tasks.named<Delete>("clean") {
     delete(
         layout.projectDirectory.dir("web-extension/dist"),
         wasmPackageDir,
+        layout.projectDirectory.dir("native-bridge/src-tauri/target"),
+        layout.projectDirectory.dir("native-bridge/dist"),
+        layout.buildDirectory.dir("native-bridge"),
     )
 }

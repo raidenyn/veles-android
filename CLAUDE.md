@@ -45,12 +45,25 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 
 # Build web-target WASM into web-extension/rust-wasm/pkg/
 ./gradlew rustWasm
+
+# Native-bridge (OTP-01 sub-project 1c) — Tauri 2.x headless Native Messaging host
+# Install npm deps, check format/lint/typecheck, run npm+cargo tests
+./gradlew bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeTest
+
+# Build the unsigned host (cargo tauri build --no-bundle -- --locked)
+./gradlew bridgeBuild
+
+# Emit Chrome native-messaging host manifests
+./gradlew bridgeManifests
+
+# Platform-specific deterministic packaging into build/native-bridge/
+./gradlew bridgePackage
 ```
 
 Clean APK assembly now requires rustup/cargo and NDK r29 (`rustJni` is a dependency of
-`:app:assembleDebug`/`assembleRelease`). Node >= 22 is required only for `rustTest` (which
-runs a WASM smoke test) and the WASM/extension commands above — it is not needed to build the
-APK on its own.
+`:app:assembleDebug`/`assembleRelease`). Node >= 22 is required for `rustTest` (which
+runs a WASM smoke test), the WASM/extension commands, and the native-bridge commands
+above — it is not needed to build the APK on its own.
 
 ## Architecture Overview
 
