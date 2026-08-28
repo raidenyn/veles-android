@@ -56,8 +56,15 @@ pinning is available.
 - Root `clean` removes every declared product, verification, SBOM, checksum,
   and tool output under `build/` plus both named source-tree exceptions.
 - Tauri signing and notarization credentials remain absent.
-- Existing skeleton bridge identifiers and placeholder extension origin remain
-  unchanged. Production identities are later installer/release scope.
+- The skeleton identity tuple remains exactly: npm package
+  `@veles/native-bridge`, Tauri product name `Veles Native Bridge`, Tauri
+  identifier `app.veles.native-bridge`, native host name
+  `app.veles.native_bridge`, binary `veles-native-bridge` (plus `.exe` on
+  Windows), macOS bundle `Veles Native Bridge.app`, extension ID
+  `abcdefghijklmnopabcdefghijklmnop`, and allowed origin
+  `chrome-extension://abcdefghijklmnopabcdefghijklmnop/`. Guard tests require
+  every value independently. Production identities are later installer/release
+  scope.
 
 ## Architecture
 
@@ -65,9 +72,12 @@ pinning is available.
 
 Artifact producers emit canonical per-tree checksum manifests. Component
 verifiers validate one producer and one environment boundary. Reusable
-component workflows build an artifact, verify it in the same workflow, and
-upload it only after verification. A final workflow aggregates already-verified
-component manifests.
+component workflows build an artifact and verify it in the same workflow.
+Ordinary component outputs are uploaded only after verification. Native build
+slots may upload explicitly named, short-lived unverified transport archives
+because their independent jobs must transfer outputs to a comparison job; only
+the comparison job's verified output is consumable by aggregation or downstream
+workflows. A final workflow aggregates already-verified component manifests.
 
 The layers are:
 
@@ -81,7 +91,43 @@ No layer reimplements product compilation or packaging owned by a lower layer.
 
 ### Local aggregate entry point
 
-`verify/verify-all.sh` is intentionally small. It:
+The exact synopsis is:
+
+```
+verify/verify-all.sh <apk> <git-ref> <native-run-a-dir> <native-run-b-dir>
+```
+
+Before invoking a component, the script resolves `<git-ref>` to a commit,
+requires it to equal `HEAD`, and requires an empty porcelain status including
+untracked files. This binds all locally built web, Rust, and supply-chain
+evidence to one clean source tree. It passes the resolved commit to native
+verification and aggregation.
+
+The native input layout is:
+
+```
+<native-run-a-dir>/windows/native-windows-run.tar
+<native-run-a-dir>/windows/native-windows-run.tar.sha256
+<native-run-a-dir>/macos/native-macos-run.tar
+<native-run-a-dir>/macos/native-macos-run.tar.sha256
+<native-run-b-dir>/windows/native-windows-run.tar
+<native-run-b-dir>/windows/native-windows-run.tar.sha256
+<native-run-b-dir>/macos/native-macos-run.tar
+<native-run-b-dir>/macos/native-macos-run.tar.sha256
+```
+
+`verify/verify-all.sh` is intentionally small. From the repository root it
+invokes, in order:
+
+1. `verify/verify.sh <apk> <resolved-commit>`;
+2. `verify/verify-web.sh`;
+3. `verify/verify-rust.sh`;
+4. `verify/verify-native.sh <resolved-commit> <native-run-a-dir>
+   <native-run-b-dir>`;
+5. `verify/verify-supply-chain.sh`; and
+6. `verify/aggregate-checksums.sh <resolved-commit>`.
+
+It:
 
 - validates its command-line arguments;
 - calls component verifier commands in a fixed documented order;
@@ -91,17 +137,11 @@ No layer reimplements product compilation or packaging owned by a lower layer.
 
 It contains no build implementation, checksum parser, runner-identity parser,
 artifact allow-list, SBOM generator, license decision, or remote-code scanner.
-A full local invocation requires:
-
-- the released or candidate APK;
-- the exact Git tag or commit to rebuild;
-- the first downloaded aggregate native-run directory; and
-- the second downloaded aggregate native-run directory.
-
-The native directories each contain one Windows tree and one macOS tree. The
-script fails with exit 2 rather than silently skipping absent inputs. Stable
-component commands provide a future seam for changed-path selection, but 1d
-does not implement selective verification.
+The script fails with exit 2 rather than silently skipping an input or
+component. Component outputs use their documented `build/` paths, and the final
+command writes `build/verification/SHA256SUMS.toolchains`. Stable component
+commands provide a future seam for changed-path selection, but 1d does not
+implement selective verification.
 
 CI never invokes `verify-all.sh`; it invokes component commands directly.
 
@@ -109,7 +149,7 @@ CI never invokes `verify-all.sh`; it invokes component commands directly.
 
 ### Canonical checksum format
 
-Every checksum manifest uses:
+Every standard checksum manifest uses:
 
 - lowercase SHA-256;
 - two ASCII spaces between digest and path;
@@ -123,14 +163,23 @@ Manifest readers reject malformed, unsorted, duplicate, missing, unexpected,
 absolute, and traversal records. They do not normalize invalid input into an
 accepted form.
 
+`SHA256SUMS.native-bridge` is the only extension to this grammar. It permits
+exactly three ordered comment headers (`ImageOS`, `ImageVersion`, and
+`RUNNER_ARCH`) before otherwise canonical checksum records. Standard manifests
+reject comments.
+
 ### Android artifact
 
 The Android build keeps its release APK, mapping, and existing `SHA256SUMS`
-contract. Verification delegates to `verify/verify.sh`, including its
-signature-stripped comparison for signed APKs. PR CI passes the exact commit
-SHA; tagged release verification passes the tag. APK content checks continue
-to require exactly the approved ABI directories and exactly the three Veles JNI
-entries.
+release contract. Verification delegates to `verify/verify.sh`, including its
+signature-stripped comparison for signed APKs. The component verifier also
+exports the canonical unsigned reference APK to
+`build/verification/android/app-release-unsigned.apk`. PR CI passes the exact
+commit SHA; tagged release verification passes the tag. APK content checks
+continue to require exactly the approved ABI directories and exactly the three
+Veles JNI entries. Mapping files and raw signed APK bytes remain release
+evidence but are not claimed byte-reproducible and do not enter
+`SHA256SUMS.toolchains`.
 
 ### Web-extension artifact
 
@@ -191,6 +240,23 @@ packaged release input. Archive bytes cover normalized archive metadata; the
 extracted view identifies the first differing product file and independently
 enforces the package allow-list.
 
+Each run also emits canonical `METADATA.native-bridge.jsonl`, sorted by path.
+Each JSON line records path, entry type, and four-digit octal mode; regular-file
+records include SHA-256, symlink records include the literal target and its
+SHA-256, and directory records include no content digest. JSON string escaping
+is authoritative for paths and targets. A deterministic tar transport contains
+the verification view, metadata JSONL, checksum files, and identity. The run
+slot uploads only that tar plus its SHA-256 sidecar, preserving all evidence as
+bytes even if GitHub artifact extraction would otherwise alter modes or
+symlinks. The comparison job validates the tar allow-list before extraction,
+then compares both metadata JSONL and product bytes.
+
+The transport also contains `SOURCE-COMMIT`, exactly one lowercase 40-character
+Git commit followed by a newline. It is covered by the transport sidecar but is
+not a product checksum record. Native verification requires both run slots and
+both platforms to equal the resolved commit passed by `verify-all.sh` or the
+caller workflow. Source mismatch is exit 2 and comparison does not proceed.
+
 Each native run emits `SHA256SUMS.native-bridge` with deterministic comment
 headers followed by ordinary checksum records:
 
@@ -214,10 +280,19 @@ build/verification/SHA256SUMS.toolchains
 ```
 
 Namespaces are `android/`, `web-extension/`, `rust/`,
-`native-bridge/windows/`, and `native-bridge/macos/`. The aggregate covers
-reproducible product artifacts and intermediates only. SBOM, license, and audit
-reports are uploaded separately because their generators may include run
-metadata.
+`native-bridge/windows/`, and `native-bridge/macos/`. The aggregate contains
+only these records:
+
+- `android/`: the canonical unsigned reference APK;
+- `web-extension/`: the compared extension ZIP and its sidecar;
+- `rust/`: every compared regular file under `jni/` and `wasm/`; and
+- each native namespace: the compared outer package and sidecar, each compared
+  raw product file from the verification view, and
+  `METADATA.native-bridge.jsonl`.
+
+Signed APK bytes, mapping files, run-slot transport archives, runner identity,
+component checksum manifests, SBOMs, license reports, and audit reports are
+excluded. They remain separately uploaded evidence where applicable.
 
 Aggregation is all-or-nothing. Every required namespace and component manifest
 must be present and valid. The aggregator never invents a digest for a missing
@@ -349,7 +424,9 @@ Default allowed SPDX licenses are:
 
 - MIT and MIT-0;
 - Apache-2.0 and Apache-2.0 WITH LLVM-exception;
-- BSD-2-Clause, BSD-3-Clause, and recognized BSD permissive variants;
+- 0BSD, BSD-1-Clause, BSD-2-Clause, BSD-2-Clause-Patent, BSD-3-Clause,
+  BSD-3-Clause-Clear, BSD-4-Clause, BSD-4-Clause-Shortened, and
+  BSD-4-Clause-UC;
 - ISC;
 - Zlib;
 - BlueOak-1.0.0;
@@ -399,6 +476,20 @@ remote executable launch patterns. An exact reviewed package/checksum exception
 is required for any ambiguous script; no floating name-only exception is
 accepted.
 
+Every product packaging flow separates acquisition from execution. Web
+dependencies are installed first, then candidate and reference package commands
+run in containers with `--network=none`. Native jobs complete `npm ci`,
+`cargo fetch --locked`, Rust toolchain setup, and the pinned Windows Tauri-cache
+provisioning before activating a platform outbound-network deny. The job proves
+connectivity by successfully reaching one fixed HTTPS probe endpoint immediately
+before denial, activates and inspects the platform-wide outbound-deny rule, then
+requires the same endpoint to fail during denial. It sets Cargo offline mode,
+runs `bridgePackage`, and restores host networking in an unconditional cleanup
+step. Failure of the pre-denial probe is an environment error, not proof of
+isolation. A platform that cannot prove the rule and before/after behavior fails
+with exit 2; static scanning alone is not accepted as evidence that packaging
+was offline.
+
 Repository source and configuration scans reject:
 
 - extension remote script origins or weakened CSP;
@@ -434,8 +525,12 @@ generic verification workflow accepts an unverified product and no component
 defers its own byte/content decision to `verify-all.sh`.
 
 The native workflows each contain two independent target build jobs and one
-comparison job. Only their comparison job uploads the verified component tree.
-The toolchain-manifest workflow consumes only those verified native outputs.
+comparison job. Each build job uploads an `unverified-<platform>-run-<slot>`
+transport tar and sidecar with minimum retention solely for its sibling
+comparison job. The names and manifests mark these as unverified, and the
+caller never exposes them as downstream build outputs. Only the comparison job
+uploads `verified-native-<platform>`, which is the sole native output consumed
+by the toolchain-manifest workflow or later workflows.
 
 ### Caller and triggers
 
@@ -446,9 +541,13 @@ and retains its existing manual prerelease publication behavior.
   existing release-build cost profile.
 - A pull request carrying the existing `release-build` label runs the complete
   component graph.
-- A manual `workflow_dispatch` on `master` runs the complete component graph.
-- Manual prerelease publication depends on successful Android verification and
-  successful `build-toolchain-manifest.yml`.
+- A manual `workflow_dispatch` has an initial guard requiring
+  `github.ref == 'refs/heads/master'`. A dispatch from any selectable non-master
+  ref fails before build or publication. A valid master dispatch runs the
+  complete component graph.
+- Manual prerelease publication depends on successful Android verification,
+  successful `build-supply-chain.yml`, and successful
+  `build-toolchain-manifest.yml`.
 
 Toolchain packages, SBOMs, licenses, audits, and aggregate checksums remain CI
 artifacts. They are not added to public GitHub Releases in 1d.
@@ -468,9 +567,11 @@ with human-readable version comments. An upgrade changes the SHA and comment
 together after release-note review.
 
 Every artifact upload uses an exact source allow-list, fails when any file is
-missing, has fixed retention, and avoids broad workspace globs. Native artifact
-names include platform and independent run slot; environment identity comes
-only from validated checksum metadata, not the artifact name.
+missing, has fixed retention, and avoids broad workspace globs. Unverified
+native transport artifacts use the shortest retention and cannot satisfy any
+caller output. Native artifact names include platform and independent run slot;
+environment identity comes only from validated checksum metadata, not the
+artifact name.
 
 ## Error handling
 
@@ -568,7 +669,8 @@ Sub-project 1d is accepted when:
 3. The Rust reference image rebuilds exact JNI/WASM package inputs and candidate
    and reference paths/bytes match.
 4. Two Windows and two macOS builds compare bytes only after complete identity
-   equality, and unmatched identities produce the required rerun instruction.
+   equality and exact source-commit equality, and unmatched identities produce
+   the required rerun instruction.
 5. Every package tree emits a deterministic checksum manifest and the aggregate
    manifest covers every reproducible component namespace.
 6. All three required CycloneDX JSON files are generated and validated.
@@ -578,8 +680,10 @@ Sub-project 1d is accepted when:
    packaging phases prove no network fetch or remote executable fallback.
 9. Artifact allow-lists cover APK ABIs/JNI, extension files, Rust JNI/WASM, and
    native package contents.
-10. The reusable component workflows produce only verified artifacts and the
-    documented release-build triggers run the intended graph.
+10. The reusable component workflows expose only verified component outputs;
+    native run-slot uploads are explicitly unverified internal transport with
+    minimum retention. The documented release-build triggers and non-master
+    dispatch guard run the intended graph.
 11. `verify-all.sh` provides the complete local orchestration contract and
     preserves exit codes 0, 1, and 2 without being used by CI.
 12. Root `clean` removes every new declared generated output.
