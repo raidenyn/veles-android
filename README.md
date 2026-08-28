@@ -75,6 +75,16 @@ For a release build:
 ./gradlew assembleRelease
 ```
 
+## OTP external-device toolchains
+
+Veles is growing support for OTP delivery via external devices (OTP-01). The
+sub-project layout:
+
+- `web-extension/` — npm/Vite MV3 extension and deterministic package.
+- `rust/` — shared Rust core with Android JNI and browser WASM bindings.
+- `native-bridge/` — reserved for OTP-01 sub-project 1c.
+- `verify/` — reproducible APK verifier; broader toolchain verification lands in 1d.
+
 ## Install
 
 Connect your device (USB or wireless debugging) and verify it's seen:

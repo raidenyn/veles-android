@@ -1,0 +1,15 @@
+.git
+.gradle
+.idea
+build
+app/build
+captures
+*.iml
+node_modules
+web-extension/node_modules
+web-extension/dist
+web-extension/rust-wasm/pkg
+.cxx
+.externalNativeBuild
+.kotlin
+local.properties

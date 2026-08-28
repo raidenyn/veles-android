@@ -15,7 +15,7 @@ export default ts.config(
     ...ts.configs.stylistic,
     prettier,
     {
-        ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
+        ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'rust-wasm/pkg/**'],
     },
     // Node ES-module scripts (scripts/*.mjs) use Node globals (console,
     // process, Buffer, URL) that the default espree parser does not know

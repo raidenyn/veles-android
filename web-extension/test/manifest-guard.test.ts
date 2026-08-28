@@ -22,7 +22,7 @@ describe('manifest baseline guard (exact match)', () => {
 
     it('content_security_policy is exactly the locked-down map', () => {
         expect(buildExtensionManifest().content_security_policy).toEqual({
-            extension_pages: "script-src 'self'; object-src 'self'",
+            extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
         });
     });
 

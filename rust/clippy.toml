@@ -1,0 +1,22 @@
+# Clippy configuration for the veles-crypto workspace.
+# This is a small, security-adjacent FFI library; favor explicitness and
+# predictability over brevity.
+
+# FFI boundary code uses extern "system" — allow higher fn args threshold.
+too-many-arguments-threshold = 7
+
+# Catch overly large enum variants early.
+enum-variant-size-threshold = 64
+
+# Doc comments in the public API are valuable for an FFI surface.
+doc-valid-idents = [
+    "AndroidRuntime",
+    "JNIEnv",
+    "JClass",
+    "JByteArray",
+    "JniResult",
+    "EnvUnowned",
+    "ErrorPolicy",
+    "VelesCrypto",
+    "wasm_bindgen",
+]

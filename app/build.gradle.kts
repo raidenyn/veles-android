@@ -22,6 +22,7 @@ android {
     namespace = "me.nagaev.veles"
     compileSdk = 35
     buildToolsVersion = "36.0.0"
+    ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
         applicationId = "me.nagaev.veles"
@@ -31,6 +32,10 @@ android {
         versionName = androidGitVersion.name()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
 
     // Play "dependency metadata" is encrypted with a Google key and makes the
@@ -82,6 +87,9 @@ android {
     androidResources {
         localeFilters += listOf("en")
     }
+    sourceSets.getByName("main").jniLibs.srcDir(
+        layout.buildDirectory.dir("generated/jniLibs").get().asFile,
+    )
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -98,6 +106,10 @@ android {
         unitTests.isIncludeAndroidResources = true
         unitTests.isReturnDefaultValues = true
     }
+}
+
+tasks.matching { it.name.matches(Regex("merge.*JniLibFolders")) }.configureEach {
+    dependsOn(rootProject.tasks.named("rustJni"))
 }
 
 dependencies {

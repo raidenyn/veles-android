@@ -60,6 +60,34 @@ Requirements: Docker, plus `bash`, `realpath`, `grep`, and `tr` on the host
 | Android cmdline-tools, platform, build-tools | `verify/Dockerfile` |
 | Docker base image | `verify/Dockerfile` (digest-pinned) |
 | apksigcopier | `verify/Dockerfile` |
+| Rust compiler/components/targets | `rust/rust-toolchain.toml` |
+| Rust dependencies | `rust/Cargo.lock` plus exact direct pins in crate manifests |
+| Rust auxiliary CLIs | `rust/toolchain-tools.toml` (`cargo install --locked`) |
+| Android NDK | `gradle/libs.versions.toml` `ndk`, propagated to AGP and `verify/Dockerfile` |
+
+Veles' Android code calls into a shared Rust core (`rust/veles-crypto`) via JNI, and the
+same crate compiles to WASM for the browser extension. `rust/rust-toolchain.toml` pins the
+exact `rustc` channel, components (`clippy`, `rustfmt`), and cross-compilation targets
+(three Android ABIs plus `wasm32-unknown-unknown`); rustup auto-selects it for any command
+run under `rust/`. `rust/toolchain-tools.toml` pins exact versions of the auxiliary CLIs
+(`cargo-ndk`, `wasm-pack`, `wasm-bindgen-cli`) that aren't part of the toolchain itself;
+`./gradlew rustInstall` installs/verifies them with `cargo install --locked` into
+`build/rust-tools/`, a local, gitignored cache — not committed, not shared across machines.
+
+Generated output boundaries are intentionally narrow:
+
+- **Android JNI**: `./gradlew rustJni` builds exactly the three ABI filters declared in
+  `app/build.gradle.kts` (`arm64-v8a`, `armeabi-v7a`, `x86_64`) into
+  `app/build/generated/jniLibs/<abi>/libveles_crypto.so`. This is the *only* JNI output
+  path; `:app:assembleDebug`/`assembleRelease` depend on `rustJni` so a clean build always
+  regenerates it.
+- **WASM**: `./gradlew rustWasm` builds the web target into `web-extension/rust-wasm/pkg/`.
+  This is the one path in the repo that is *not* traceable to source in git — it's build
+  output, and `web-extension/rust-wasm/pkg/` is gitignored like `web-extension/dist/`.
+- **Local caches**: `build/rust/target` (the Cargo build cache) and `build/rust-tools`
+  (the auxiliary-CLI install cache) live under the top-level `build/` directory, which is
+  already gitignored; `rust/scripts/assert-clean.sh` asserts none of these generated paths
+  (nor `app/build/generated/jniLibs`, nor `app/build/outputs/apk`) survive `./gradlew clean`.
 
 The web-extension's npm dependencies are exact-pinned in `web-extension/package.json`
 (no `^`/`~`) and resolved via the committed `package-lock.json`. The deterministic
