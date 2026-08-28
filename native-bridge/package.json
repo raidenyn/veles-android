@@ -11,13 +11,14 @@
         "format:check": "prettier --check .",
         "lint": "eslint .",
         "typecheck": "tsc --noEmit",
-        "test": "vitest run test/tauri-config-guard.test.ts test/manifest-guard.test.ts",
-        "build": "cargo tauri build --no-bundle -- --locked",
+        "test": "vitest run test/tauri-config-guard.test.ts test/manifest-guard.test.ts test/manifests-output.test.ts",
+        "build": "tauri build --no-bundle -- --locked --features tauri-runtime",
         "package": "node scripts/package.mjs",
         "manifests": "node scripts/manifests.mjs"
     },
     "devDependencies": {
         "@eslint/js": "9.39.2",
+        "@tauri-apps/cli": "2.6.0",
         "@types/node": "24.10.13",
         "eslint": "9.39.2",
         "eslint-config-prettier": "10.1.8",

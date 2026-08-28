@@ -18,24 +18,33 @@
 //   - DEFLATE compression (zip) / fixed gzip metadata (tar.gz)
 //   - unix file mode 100644 for regular files, 040755 for dirs
 //
-// On a Linux developer machine the Tauri binary is not built (it requires
-// Windows/macOS SDKs). This script still validates the manifest and emits
-// the SHA256 sidecar structure; the actual binary packaging runs in CI on
-// the target platform runner.
+// The host platform to package is supplied via the VELES_BRIDGE_PLATFORM env
+// var (set by the `bridgePackage` Gradle task). This script only packages the
+// already-built payload for that platform — it never emits manifests as a
+// fallback (that is the `bridgeManifests` task's job). A missing or
+// unsupported platform, or a missing payload, is a hard error.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { gzipSync } from 'node:zlib';
 import yazl from 'yazl';
 import { buildHostManifest } from '../src/manifest.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const BRIDGE_DIR = resolve(__dirname, '..');
 const SRC_TAURI_DIR = join(BRIDGE_DIR, 'src-tauri');
+const RELEASE_DIR = join(SRC_TAURI_DIR, 'target', 'release');
 const BUILD_DIR = resolve(BRIDGE_DIR, '..', 'build', 'native-bridge');
 const FIXED_MTIME = new Date(0);
+
+const SUPPORTED_PLATFORMS = ['windows', 'macos'];
+
+// Tauri productName (from src-tauri/tauri.conf.json) drives the emitted .app
+// bundle name on macOS. Keep this in sync with that file.
+const MACOS_APP_BUNDLE = 'Veles Native Bridge.app';
+const WINDOWS_BINARY = 'veles-native-bridge.exe';
 
 function fail(reason) {
     console.error(`native-bridge package: ${reason}`);
@@ -46,6 +55,10 @@ function readJson(path) {
     return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+// Walk a directory tree, collecting non-empty directory entries and regular
+// files. Paths are returned with forward slashes regardless of host OS. This
+// is used to enumerate the macOS .app bundle payload only — the entire
+// `target/release` tree is never archived.
 function walkFiles(dir, base = '') {
     const files = [];
     const dirs = [];
@@ -79,29 +92,37 @@ function writeSidecar(artifactPath, name) {
     console.log(`sha256: ${digest}`);
 }
 
-function packageWindows(version, payloadDir, manifest) {
+function sortByRel(entries) {
+    entries.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+}
+
+function packageWindows(version, manifest) {
+    const binaryPath = join(RELEASE_DIR, WINDOWS_BINARY);
+    if (!existsSync(binaryPath)) {
+        fail(
+            `Windows payload not found. Expected the built binary at:\n  ${binaryPath}\n` +
+                `Run \`cargo tauri build --no-bundle -- --locked\` (bridgeBuild) first.`,
+        );
+    }
+
     const outDir = join(BUILD_DIR, 'windows');
     mkdirSync(outDir, { recursive: true });
     const zipName = `veles-native-bridge-${version}.zip`;
     const zipPath = join(outDir, zipName);
 
-    const entries = [];
-    if (existsSync(payloadDir)) {
-        const { files, dirs } = walkFiles(payloadDir);
-        entries.push(...dirs, ...files);
-    }
-    entries.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    // Allow-list: only the binary plus the host manifest JSON.
+    const entries = [
+        { kind: 'file', rel: WINDOWS_BINARY, abs: binaryPath },
+        {
+            kind: 'file',
+            rel: `${manifest.name}.json`,
+            abs: null,
+            content: JSON.stringify(manifest, null, 2) + '\n',
+        },
+    ];
+    sortByRel(entries);
 
     const zipfile = new yazl.ZipFile();
-    const manifestEntry = {
-        kind: 'file',
-        rel: `${manifest.name}.json`,
-        abs: null,
-        content: JSON.stringify(manifest, null, 2) + '\n',
-    };
-    entries.push(manifestEntry);
-    entries.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
-
     for (const entry of entries) {
         if (entry.kind === 'dir') {
             zipfile.addEmptyDirectory(entry.rel, { mtime: FIXED_MTIME, mode: 0o40755 });
@@ -128,38 +149,106 @@ function packageWindows(version, payloadDir, manifest) {
     });
 }
 
-function packageMacos(version, payloadDir, manifest) {
+// Build a deterministic USTAR tar archive entirely in pure JS so the macOS
+// packaging step does not depend on GNU tar flags (the macOS runner ships
+// bsdtar, which rejects --sort=name / --mtime=@0). Every entry is normalized:
+//   - sorted lexicographically by path
+//   - mtime fixed at Unix epoch (0)
+//   - uid/gid fixed at 0, uname/gname empty
+//   - mode 0644 for regular files, 0755 for directories
+// The archive is terminated by two 512-byte zero blocks (end-of-archive).
+function createTar(entries) {
+    const blocks = [];
+    for (const entry of entries) {
+        const isDir = entry.kind === 'dir';
+        const data = isDir ? Buffer.alloc(0) : readFileSync(entry.abs);
+        const header = Buffer.alloc(512, 0);
+
+        const name = Buffer.from(entry.rel, 'utf8');
+        if (name.length > 100) {
+            throw new Error(`tar entry name too long (>100 bytes): ${entry.rel}`);
+        }
+        name.copy(header, 0);
+
+        // mode: 8 bytes, octal, NUL-terminated.
+        header.write(isDir ? '0000755\0' : '0000644\0', 100, 'ascii');
+        // uid / gid: 8 bytes each, octal, NUL-terminated.
+        header.write('0000000\0', 108, 'ascii');
+        header.write('0000000\0', 116, 'ascii');
+        // size: 12 bytes, octal, NUL-terminated.
+        header.write(data.length.toString(8).padStart(11, '0') + '\0', 124, 'ascii');
+        // mtime: 12 bytes, octal, NUL-terminated — fixed at epoch 0.
+        header.write('00000000000\0', 136, 'ascii');
+        // typeflag: '0' regular file, '5' directory.
+        header.write(isDir ? '5' : '0', 156, 'ascii');
+        // magic "ustar\0" + version "00".
+        header.write('ustar\0', 257, 'ascii');
+        header.write('00', 263, 'ascii');
+        // uname/gname left zeroed (offset 265 / 297).
+        // devmajor/devminor/prefix left zeroed (329 / 337 / 345).
+
+        // checksum: sum of all header bytes with the 8-byte checksum field
+        // (offset 148..156) treated as ASCII spaces (0x20). The field is then
+        // written as 6 octal digits, a NUL, and a space.
+        let checksum = 0;
+        for (let i = 0; i < 512; i++) {
+            checksum += i >= 148 && i < 156 ? 0x20 : header[i];
+        }
+        header.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148, 'ascii');
+
+        blocks.push(header);
+        if (!isDir) {
+            // File data padded to a 512-byte boundary with zero bytes.
+            const pad = (512 - (data.length % 512)) % 512;
+            if (pad === 0) {
+                blocks.push(data);
+            } else {
+                blocks.push(data, Buffer.alloc(pad, 0));
+            }
+        }
+    }
+    // End-of-archive: two 512-byte zero blocks.
+    blocks.push(Buffer.alloc(512, 0), Buffer.alloc(512, 0));
+    return Buffer.concat(blocks);
+}
+
+function packageMacos(version, manifest) {
+    const bundlePath = join(RELEASE_DIR, MACOS_APP_BUNDLE);
+    if (!existsSync(bundlePath) || !statSync(bundlePath).isDirectory()) {
+        fail(
+            `macOS payload not found. Expected the built .app bundle at:\n  ${bundlePath}\n` +
+                `Run \`cargo tauri build --no-bundle -- --locked\` (bridgeBuild) first.`,
+        );
+    }
+
     const outDir = join(BUILD_DIR, 'macos');
     mkdirSync(outDir, { recursive: true });
     const tarName = `veles-native-bridge-${version}.tar.gz`;
     const tarPath = join(outDir, tarName);
 
-    const stagingDir = join(BUILD_DIR, '_staging_macos');
-    if (existsSync(stagingDir)) {
-        execFileSync('rm', ['-rf', stagingDir]);
+    // Allow-list: only files within the .app bundle, plus the host manifest
+    // JSON at the archive root. The bundle is archived under its own name so
+    // extraction reproduces "Veles Native Bridge.app/...".
+    const { files, dirs } = walkFiles(bundlePath, MACOS_APP_BUNDLE);
+    const entries = [];
+    for (const d of dirs) {
+        entries.push({ kind: 'dir', rel: d.rel });
     }
-    mkdirSync(stagingDir, { recursive: true });
-
-    if (existsSync(payloadDir)) {
-        execFileSync('cp', ['-R', payloadDir + '/.', stagingDir]);
+    for (const f of files) {
+        entries.push({ kind: 'file', rel: f.rel, abs: f.abs });
     }
-    const manifestPath = join(stagingDir, `${manifest.name}.json`);
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+    entries.push({
+        kind: 'file',
+        rel: `${manifest.name}.json`,
+        abs: null,
+        content: JSON.stringify(manifest, null, 2) + '\n',
+    });
+    sortByRel(entries);
 
-    execFileSync('tar', [
-        '--sort=name',
-        '--mtime=@0',
-        '--owner=0',
-        '--group=0',
-        '--numeric-owner',
-        '-czf',
-        tarPath,
-        '-C',
-        stagingDir,
-        '.',
-    ]);
-
-    execFileSync('rm', ['-rf', stagingDir]);
+    const tarBuffer = createTar(entries);
+    // gzip with fixed mtime (0) header metadata for determinism.
+    const gzBuffer = gzipSync(tarBuffer, { level: 9, mtime: 0 });
+    writeFileSync(tarPath, gzBuffer);
     console.log(tarPath);
     writeSidecar(tarPath, tarName);
 }
@@ -172,28 +261,20 @@ function main() {
     }
 
     const platform = process.env.VELES_BRIDGE_PLATFORM || '';
-    const payloadDir = join(SRC_TAURI_DIR, 'target', 'release');
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
+        fail(
+            `VELES_BRIDGE_PLATFORM is not set or unsupported ('${platform}').\n` +
+                `Set VELES_BRIDGE_PLATFORM=windows or macos. ` +
+                `Manifests are emitted separately by the bridgeManifests task.`,
+        );
+    }
 
     if (platform === 'windows') {
         const manifest = buildHostManifest('windows');
-        packageWindows(version, payloadDir, manifest);
-    } else if (platform === 'macos') {
-        const manifest = buildHostManifest('macos');
-        packageMacos(version, payloadDir, manifest);
+        packageWindows(version, manifest);
     } else {
-        console.log(
-            `native-bridge package: VELES_BRIDGE_PLATFORM not set or unknown ('${platform}').`,
-        );
-        console.log('Set VELES_BRIDGE_PLATFORM=windows or macos to package.');
-        console.log('Emitting manifests only.');
-        const manifestsDir = join(BUILD_DIR, 'manifests');
-        mkdirSync(manifestsDir, { recursive: true });
-        for (const p of ['windows', 'macos']) {
-            const m = buildHostManifest(p);
-            const outPath = join(manifestsDir, `${m.name}.json`);
-            writeFileSync(outPath, JSON.stringify(m, null, 2) + '\n');
-            console.log(outPath);
-        }
+        const manifest = buildHostManifest('macos');
+        packageMacos(version, manifest);
     }
 }
 

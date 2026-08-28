@@ -478,17 +478,25 @@ val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
 
 val bridgeRustToolchainCheck = tasks.register("bridgeRustToolchainCheck") {
     group = "native-bridge"
+    inputs.file(bridgeSrcTauriDir.file("rust-toolchain.toml"))
     doLast {
         requireOnPath(
             "rustup",
             "Rust 1.98.0",
-            "Install rustup and run `rustup show active-toolchain` to install the pinned toolchain",
+            "Install rustup and run `rustup show active-toolchain` in native-bridge/src-tauri/ to install the pinned toolchain",
         )
         requireOnPath(
             "cargo",
             "Rust 1.98.0",
-            "Install rustup and run `rustup show active-toolchain` to install the pinned toolchain",
+            "Install rustup and run `rustup show active-toolchain` in native-bridge/src-tauri/ to install the pinned toolchain",
         )
+        val rustc = providers.exec {
+            workingDir(bridgeSrcTauriDir)
+            commandLine("rustc", "--version")
+        }.standardOutput.asText.get().trim()
+        check(rustc.startsWith("rustc 1.98.0 ")) {
+            "native-bridge/src-tauri/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '$rustc'"
+        }
     }
 }
 
@@ -534,7 +542,7 @@ val bridgeTest = tasks.register("bridgeTest") {
 
 val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
     group = "native-bridge"
-    description = "Builds the unsigned native-bridge host (cargo tauri build --no-bundle -- --locked)."
+    description = "Builds the unsigned native-bridge host (tauri build --no-bundle -- --locked --features tauri-runtime)."
     dependsOn(bridgeInstall, bridgeRustToolchainCheck)
     inputs.files(
         fileTree(bridgeSrcTauriDir) { include("Cargo.toml", "Cargo.lock", "src/**/*.rs", "build.rs") },
@@ -550,7 +558,7 @@ val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
         environment("TAURI_SIGNING_PRIVATE_KEY", "")
         environment("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "")
     }
-    commandLine("npx", "tauri", "build", "--no-bundle", "--", "--locked")
+    commandLine("npm", "run", "build")
 }
 
 val bridgeManifests = tasks.register<Exec>("bridgeManifests") {
@@ -567,12 +575,25 @@ val bridgeManifests = tasks.register<Exec>("bridgeManifests") {
 val bridgePackage = tasks.register<Exec>("bridgePackage") {
     group = "native-bridge"
     description = "Packages the native-bridge deterministically (platform-specific)."
-    dependsOn(bridgeInstall, bridgeManifests)
+    dependsOn(bridgeBuild, bridgeManifests)
     inputs.file(bridgeDir.file("scripts/package.mjs"))
     inputs.file(bridgeDir.file("src/manifest.mjs"))
     inputs.file(bridgeDir.file("package.json"))
     outputs.dir(bridgeBuildOutput)
     workingDir(bridgeDir)
+    doFirst {
+        val osName = System.getProperty("os.name")
+        when {
+            osName.startsWith("Windows") -> environment("VELES_BRIDGE_PLATFORM", "windows")
+            osName.startsWith("Mac") -> environment("VELES_BRIDGE_PLATFORM", "macos")
+            else -> {
+                throw GradleException(
+                    "bridgePackage: unsupported host platform '$osName'. " +
+                        "Use a Windows or macOS runner. Linux is not a target for native-bridge packaging.",
+                )
+            }
+        }
+    }
     commandLine("node", "scripts/package.mjs")
 }
 

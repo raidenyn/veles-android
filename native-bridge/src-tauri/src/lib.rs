@@ -15,12 +15,23 @@ use std::io::{Read, Write};
 /// complete message, or `Err` on a truncated frame.
 pub fn read_message<R: Read>(reader: &mut R) -> Result<Option<Vec<u8>>, FrameError> {
     let mut header = [0u8; 4];
-    let n = reader.read(&mut header)?;
+    // Read the first byte separately so a clean EOF (no bytes at all) is
+    // distinguished from a truncated frame. `Read::read` may legally return
+    // fewer than four bytes while more data remains (e.g. on a pipe), so the
+    // remaining three header bytes are filled with an explicit loop rather
+    // than a single `read`.
+    let n = reader.read(&mut header[..1])?;
     if n == 0 {
         return Ok(None);
     }
-    if n < 4 {
-        return Err(FrameError::TruncatedHeader(n));
+    // First byte is present; from here a short read is a truncated frame.
+    let mut filled = 1;
+    while filled < 4 {
+        let r = reader.read(&mut header[filled..4])?;
+        if r == 0 {
+            return Err(FrameError::TruncatedHeader(filled));
+        }
+        filled += r;
     }
     let len = u32::from_le_bytes(header) as usize;
     if len == 0 {

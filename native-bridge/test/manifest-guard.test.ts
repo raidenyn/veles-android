@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { buildHostManifest, EXTENSION_ID_PLACEHOLDER } from '../src/manifest';
+import { buildHostManifest, VELES_EXTENSION_ID } from '../src/manifest';
 
 // OTP-01 sub-project 1c — Chrome Native Messaging host manifest guard.
 // The host manifest is registered with Chrome so the extension can launch
 // the bridge via chrome.runtime.connectNative. Exact-match assertions so a
 // wrong extension ID, a wrong path, or a weak type is caught at `npm test`.
 describe('native-messaging host manifest (exact match)', () => {
-    it('EXTENSION_ID_PLACEHOLDER is a 32-char lowercase hex string', () => {
-        expect(EXTENSION_ID_PLACEHOLDER).toMatch(/^[a-z0-9]{32}$/);
+    it('VELES_EXTENSION_ID is a 32-char lowercase [a-p] string', () => {
+        expect(VELES_EXTENSION_ID).toMatch(/^[a-p]{32}$/);
     });
 
     it('buildHostManifest("windows") produces the exact Windows manifest', () => {
@@ -16,17 +16,30 @@ describe('native-messaging host manifest (exact match)', () => {
             description: 'Veles Native Messaging host',
             path: 'veles-native-bridge.exe',
             type: 'stdio',
-            allowed_origins: [`chrome-extension://${EXTENSION_ID_PLACEHOLDER}/`],
+            allowed_origins: [`chrome-extension://${VELES_EXTENSION_ID}/`],
         });
     });
 
-    it('buildHostManifest("macos") produces the exact macOS manifest', () => {
+    it('buildHostManifest("macos") emits an installer template by default', () => {
+        // Without an install directory the path is an installer template
+        // containing {{INSTALL_DIR}}; Chrome requires an absolute path on
+        // macOS, so this manifest cannot launch the host until substituted.
         expect(buildHostManifest('macos')).toEqual({
             name: 'app.veles.native_bridge',
             description: 'Veles Native Messaging host',
-            path: 'Veles Native Bridge.app/Contents/MacOS/Veles Native Bridge',
+            path: '{{INSTALL_DIR}}/Veles Native Bridge.app/Contents/MacOS/Veles Native Bridge',
             type: 'stdio',
-            allowed_origins: [`chrome-extension://${EXTENSION_ID_PLACEHOLDER}/`],
+            allowed_origins: [`chrome-extension://${VELES_EXTENSION_ID}/`],
+        });
+    });
+
+    it('buildHostManifest("macos", installDir) produces an absolute path', () => {
+        expect(buildHostManifest('macos', '/Applications/Veles')).toEqual({
+            name: 'app.veles.native_bridge',
+            description: 'Veles Native Messaging host',
+            path: '/Applications/Veles/Veles Native Bridge.app/Contents/MacOS/Veles Native Bridge',
+            type: 'stdio',
+            allowed_origins: [`chrome-extension://${VELES_EXTENSION_ID}/`],
         });
     });
 

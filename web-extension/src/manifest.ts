@@ -1,5 +1,13 @@
 import pkg from '../package.json';
 
+// Canonical Chrome extension ID placeholder shared with the native-bridge
+// host manifest generator (native-bridge/src/manifest.mjs). Chrome extension
+// IDs are 32 lowercase characters from `a` through `p`. Both projects must
+// use this exact value so the host authorizes this extension. Until the
+// published extension provides the real ID, every consumer reads this
+// constant.
+export const VELES_EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
+
 export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
     return {
         manifest_version: 3,

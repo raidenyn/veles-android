@@ -1,15 +1,17 @@
 // OTP-01 sub-project 1c — Chrome Native Messaging host manifest emitter.
 //
 // Emits the host manifest JSON for each supported platform into
-// build/native-bridge/manifests/. The manifest contents are validated by
-// test/manifest-guard.test.ts; this script is a thin file-writing wrapper.
+// build/native-bridge/manifests/<platform>/. The manifest contents are
+// validated by test/manifest-guard.test.ts; this script is a thin
+// file-writing wrapper.
 //
 // Output:
-//   build/native-bridge/manifests/com.veles.native_bridge.json (windows)
-//   build/native-bridge/manifests/app.veles.native_bridge.json (macos)
+//   build/native-bridge/manifests/windows/app.veles.native_bridge.json
+//   build/native-bridge/manifests/macos/app.veles.native_bridge.json
 //
-// Chrome's native-messaging convention installs the manifest at a
-// platform-specific system path under the name "<host_name>.json".
+// Both platforms share the same `name` field, so each manifest is written
+// into a platform-specific subdirectory to avoid the second write
+// overwriting the first.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -26,7 +28,9 @@ function main() {
     for (const platform of ['windows', 'macos']) {
         const manifest = buildHostManifest(platform);
         const filename = `${manifest.name}.json`;
-        const outPath = join(OUT_DIR, filename);
+        const platformDir = join(OUT_DIR, platform);
+        mkdirSync(platformDir, { recursive: true });
+        const outPath = join(platformDir, filename);
         const json = JSON.stringify(manifest, null, 2) + '\n';
         writeFileSync(outPath, json);
         console.log(outPath);
