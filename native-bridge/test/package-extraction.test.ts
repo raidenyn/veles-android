@@ -18,6 +18,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    readdirSync,
     rmSync,
     symlinkSync,
     writeFileSync,
@@ -524,6 +525,24 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         const actual = createHash('sha256').update(readFileSync(tarPath)).digest('hex');
         expect(digest).toBe(actual);
     });
+
+    it('replaces stale output and writes SHA256SUMS for only the package and sidecar', () => {
+        runPackage();
+        const outDir = join(buildOutDir, 'macos');
+        const tarName = 'veles-native-bridge-0.1.0.tar.gz';
+        const sidecarName = `${tarName}.sha256`;
+        writeFileSync(join(outDir, 'stale-sentinel'), 'stale');
+
+        runPackage();
+
+        expect(readdirSync(outDir).sort()).toEqual(['SHA256SUMS', sidecarName, tarName].sort());
+        const archive = readFileSync(join(outDir, tarName));
+        const sidecar = readFileSync(join(outDir, sidecarName));
+        expect(readFileSync(join(outDir, 'SHA256SUMS'), 'utf8')).toBe(
+            `${createHash('sha256').update(archive).digest('hex')}  ${tarName}\n` +
+                `${createHash('sha256').update(sidecar).digest('hex')}  ${sidecarName}\n`,
+        );
+    });
 });
 
 describe('package.mjs Windows zip (extraction-tested)', () => {
@@ -745,5 +764,23 @@ describe('package.mjs Windows zip (extraction-tested)', () => {
         const digest = sidecar.split(/\s+/)[0];
         const actual = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
         expect(digest).toBe(actual);
+    });
+
+    it('replaces stale output and writes SHA256SUMS for only the package and sidecar', () => {
+        runPackage();
+        const outDir = join(buildOutDir, 'windows');
+        const zipName = 'veles-native-bridge-0.1.0.zip';
+        const sidecarName = `${zipName}.sha256`;
+        writeFileSync(join(outDir, 'stale-sentinel'), 'stale');
+
+        runPackage();
+
+        expect(readdirSync(outDir).sort()).toEqual(['SHA256SUMS', sidecarName, zipName].sort());
+        const archive = readFileSync(join(outDir, zipName));
+        const sidecar = readFileSync(join(outDir, sidecarName));
+        expect(readFileSync(join(outDir, 'SHA256SUMS'), 'utf8')).toBe(
+            `${createHash('sha256').update(archive).digest('hex')}  ${zipName}\n` +
+                `${createHash('sha256').update(sidecar).digest('hex')}  ${sidecarName}\n`,
+        );
     });
 });

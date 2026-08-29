@@ -16,6 +16,11 @@
     "bundle": {
         "active": false,
         "targets": [],
+        "windows": {
+            "webviewInstallMode": {
+                "type": "skip"
+            }
+        },
         "publisher": "Veles",
         "category": "Utility",
         "shortDescription": "Veles Native Messaging host (headless)",

@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const CONF_PATH = join(__dirname, '..', 'src-tauri', 'tauri.conf.json');
+const PACKAGE_PATH = resolve(__dirname, '..', 'package.json');
 
 function readConfig(): Record<string, unknown> {
     return JSON.parse(readFileSync(CONF_PATH, 'utf8'));
+}
+
+function readPackage(): Record<string, unknown> {
+    return JSON.parse(readFileSync(PACKAGE_PATH, 'utf8'));
 }
 
 // OTP-01 sub-project 1c — Tauri headless posture guard.
@@ -16,8 +21,16 @@ function readConfig(): Record<string, unknown> {
 // Exact-match assertions so weakening posture (adding a window, enabling the
 // updater, wiring tray/menu) is caught at `npm test` time.
 describe('tauri.conf.json headless posture (exact match)', () => {
+    it('npm package identity is exactly @veles/native-bridge', () => {
+        expect(readPackage().name).toBe('@veles/native-bridge');
+    });
+
     it('productName is Veles Native Bridge', () => {
         expect(readConfig().productName).toBe('Veles Native Bridge');
+    });
+
+    it('Tauri identifier is exactly app.veles.native-bridge', () => {
+        expect(readConfig().identifier).toBe('app.veles.native-bridge');
     });
 
     it('version is present and non-empty', () => {
@@ -56,6 +69,11 @@ describe('tauri.conf.json headless posture (exact match)', () => {
 
     it('bundle.targets is exactly []', () => {
         expect((readConfig().bundle as { targets: unknown }).targets).toEqual([]);
+    });
+
+    it('Windows WebView installer mode is exactly skip', () => {
+        const windows = (readConfig().bundle as { windows?: unknown }).windows;
+        expect(windows).toEqual({ webviewInstallMode: { type: 'skip' } });
     });
 
     it('declares a committed Windows ICO for the WiX bundle target', () => {
