@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { createNativeMetadata, parseNativeMetadata } from '../lib/native-metadata.mjs';
-import { EXIT_MISMATCH } from '../lib/exit-codes.mjs';
+import { EXIT_ERROR, EXIT_MISMATCH } from '../lib/exit-codes.mjs';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
@@ -28,6 +28,10 @@ function isMismatch(error) {
   return error?.exitCode === EXIT_MISMATCH;
 }
 
+function isError(error) {
+  return error?.exitCode === EXIT_ERROR;
+}
+
 test('creates sorted JSONL metadata for files, directories, and literal symlinks', async () => {
   await withTree(async (root) => {
     const metadata = await createNativeMetadata(root, ['folder/link', 'file', 'folder']);
@@ -42,8 +46,11 @@ test('creates sorted JSONL metadata for files, directories, and literal symlinks
 
 test('rejects duplicate metadata paths and invalid creation paths', async () => {
   await withTree(async (root) => {
-    await assert.rejects(() => createNativeMetadata(root, ['file', 'file']), isMismatch);
-    await assert.rejects(() => createNativeMetadata(root, ['../file']), isMismatch);
+    await assert.rejects(() => createNativeMetadata(root, ['file', 'file']), isError);
+    for (const path of ['../file', '..\\file', 'C:\\file', '\\\\server\\share']) {
+      await assert.rejects(() => createNativeMetadata(root, [path]), isError);
+    }
+    await assert.rejects(() => createNativeMetadata(root, ['missing']), isError);
   });
 });
 
@@ -67,4 +74,11 @@ test('parses only sorted JSONL entries with type-specific fields and four-digit 
   ]) {
     assert.throws(() => parseNativeMetadata(invalid), isMismatch);
   }
+});
+
+test('rejects a symlink target whose declared digest does not match', () => {
+  const entry = {
+    path: 'link', type: 'symlink', mode: '0777', target: '../file', sha256: sha256('other'),
+  };
+  assert.throws(() => parseNativeMetadata(`${JSON.stringify(entry)}\n`), isMismatch);
 });

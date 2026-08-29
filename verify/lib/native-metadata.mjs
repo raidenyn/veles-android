@@ -1,7 +1,7 @@
 import { lstat, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { mismatch, sha256, validateRelativePath } from './checksum-manifest.mjs';
+import { error, mismatch, sha256, validateRelativePath } from './checksum-manifest.mjs';
 
 function comparePaths(left, right) {
   return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
@@ -38,35 +38,36 @@ function validateEntry(entry) {
 }
 
 export async function createNativeMetadata(root, entries) {
-  if (!Array.isArray(entries)) throw mismatch('metadata paths must be an array');
-  const paths = [...entries].map(validateRelativePath).sort(comparePaths);
+  if (!Array.isArray(entries)) throw error('metadata paths must be an array');
+  const paths = [...entries].map((path) => validateRelativePath(path, error)).sort(comparePaths);
   for (let index = 1; index < paths.length; index += 1) {
-    if (paths[index] === paths[index - 1]) throw mismatch(`duplicate metadata path: ${paths[index]}`);
+    if (paths[index] === paths[index - 1]) throw error(`duplicate metadata path: ${paths[index]}`);
   }
 
   const records = await Promise.all(paths.map(async (path) => {
-    let stat;
     try {
-      stat = await lstat(join(root, path));
-    } catch {
-      throw mismatch(`missing metadata entry: ${path}`);
+      const stat = await lstat(join(root, path));
+      if (stat.isFile()) {
+        if (stat.nlink !== 1) throw mismatch(`hard link metadata entry: ${path}`);
+        return { path, type: 'file', mode: mode(stat), sha256: sha256(await readFile(join(root, path))) };
+      }
+      if (stat.isDirectory()) return { path, type: 'directory', mode: mode(stat) };
+      if (stat.isSymbolicLink()) {
+        const target = await readlink(join(root, path));
+        return { path, type: 'symlink', mode: mode(stat), target, sha256: sha256(Buffer.from(target, 'utf8')) };
+      }
+      throw mismatch(`unsupported metadata entry: ${path}`);
+    } catch (caught) {
+      if (caught?.exitCode) throw caught;
+      throw error(`cannot read metadata entry: ${path}`);
     }
-    if (stat.isFile()) {
-      if (stat.nlink !== 1) throw mismatch(`hard link metadata entry: ${path}`);
-      return { path, type: 'file', mode: mode(stat), sha256: sha256(await readFile(join(root, path))) };
-    }
-    if (stat.isDirectory()) return { path, type: 'directory', mode: mode(stat) };
-    if (stat.isSymbolicLink()) {
-      const target = await readlink(join(root, path));
-      return { path, type: 'symlink', mode: mode(stat), target, sha256: sha256(Buffer.from(target, 'utf8')) };
-    }
-    throw mismatch(`unsupported metadata entry: ${path}`);
   }));
   return `${records.map(JSON.stringify).join('\n')}\n`;
 }
 
 export function parseNativeMetadata(text) {
-  if (typeof text !== 'string' || text.includes('\r') || !text.endsWith('\n')) {
+  if (typeof text !== 'string') throw error('metadata text must be a string');
+  if (text.includes('\r') || !text.endsWith('\n')) {
     throw mismatch('metadata must use LF and end with one LF');
   }
   const lines = text.slice(0, -1).split('\n');
@@ -82,6 +83,9 @@ export function parseNativeMetadata(text) {
       throw mismatch('invalid metadata JSON');
     }
     validateEntry(entry);
+    if (entry.type === 'symlink' && entry.sha256 !== sha256(Buffer.from(entry.target, 'utf8'))) {
+      throw mismatch(`symlink target checksum mismatch: ${entry.path}`);
+    }
     if (previousPath !== undefined && comparePaths(previousPath, entry.path) >= 0) {
       throw mismatch(`metadata paths are not sorted: ${entry.path}`);
     }

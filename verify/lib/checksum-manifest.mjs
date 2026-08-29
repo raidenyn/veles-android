@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { EXIT_MISMATCH } from './exit-codes.mjs';
+import { EXIT_ERROR, EXIT_MISMATCH } from './exit-codes.mjs';
 
 const digestPattern = /^[0-9a-f]{64}$/;
 
@@ -12,13 +12,26 @@ export function mismatch(message) {
   return error;
 }
 
-export function validateRelativePath(path) {
-  if (typeof path !== 'string' || path === '' || path.startsWith('/') || path.includes('\0')) {
-    throw mismatch(`invalid relative path: ${path}`);
+export function error(message) {
+  const failure = new Error(message);
+  failure.exitCode = EXIT_ERROR;
+  return failure;
+}
+
+export function validateRelativePath(path, failure = mismatch) {
+  if (
+    typeof path !== 'string'
+    || path === ''
+    || path.startsWith('/')
+    || path.includes('\\')
+    || /^[A-Za-z]:\//.test(path)
+    || path.includes('\0')
+  ) {
+    throw failure(`invalid relative path: ${path}`);
   }
   for (const segment of path.split('/')) {
     if (segment === '' || segment === '.' || segment === '..' || segment.includes('\r') || segment.includes('\n')) {
-      throw mismatch(`invalid relative path: ${path}`);
+      throw failure(`invalid relative path: ${path}`);
     }
   }
   return path;
@@ -33,25 +46,26 @@ export function sha256(value) {
 }
 
 export async function createStandardManifest(root, paths) {
-  if (!Array.isArray(paths)) throw mismatch('manifest paths must be an array');
-  const sorted = [...paths].map(validateRelativePath).sort(comparePaths);
+  if (!Array.isArray(paths)) throw error('manifest paths must be an array');
+  const sorted = [...paths].map((path) => validateRelativePath(path, error)).sort(comparePaths);
   for (let index = 1; index < sorted.length; index += 1) {
-    if (sorted[index] === sorted[index - 1]) throw mismatch(`duplicate manifest path: ${sorted[index]}`);
+    if (sorted[index] === sorted[index - 1]) throw error(`duplicate manifest path: ${sorted[index]}`);
   }
 
   const records = await Promise.all(sorted.map(async (path) => {
     try {
       return `${sha256(await readFile(join(root, path)))}  ${path}`;
-    } catch (error) {
-      if (error?.exitCode === EXIT_MISMATCH) throw error;
-      throw mismatch(`cannot read manifest path: ${path}`);
+    } catch (caught) {
+      if (caught?.exitCode === EXIT_MISMATCH) throw caught;
+      throw error(`cannot read manifest path: ${path}`);
     }
   }));
   return `${records.join('\n')}\n`;
 }
 
 export function parseStandardManifest(text, options = {}) {
-  if (typeof text !== 'string' || text.includes('\r') || !text.endsWith('\n')) {
+  if (typeof text !== 'string') throw error('manifest text must be a string');
+  if (text.includes('\r') || !text.endsWith('\n')) {
     throw mismatch('manifest must use LF and end with one LF');
   }
   const lines = text.slice(0, -1).split('\n');
@@ -76,18 +90,17 @@ export function parseStandardManifest(text, options = {}) {
 }
 
 export function parseNativeManifest(text, options = {}) {
-  if (typeof text !== 'string' || text.includes('\r')) throw mismatch('native manifest must use LF');
+  if (typeof text !== 'string') throw error('native manifest text must be a string');
   const headerNames = ['ImageOS', 'ImageVersion', 'RUNNER_ARCH'];
   const lines = text.split('\n');
   const identity = {};
   for (let index = 0; index < headerNames.length; index += 1) {
     const prefix = `# ${headerNames[index]}=`;
-    if (!lines[index]?.startsWith(prefix) || lines[index].slice(prefix.length) === '') {
-      throw mismatch(`invalid native identity header: ${headerNames[index]}`);
+    if (!lines[index]?.startsWith(prefix) || lines[index].slice(prefix.length) === '' || lines[index].includes('\r')) {
+      throw error(`invalid native identity header: ${headerNames[index]}`);
     }
     identity[headerNames[index]] = lines[index].slice(prefix.length);
   }
-  if (lines.slice(0, 3).some((line) => line.includes('\n'))) throw mismatch('invalid native identity header');
   return {
     identity,
     checksums: parseStandardManifest(`${lines.slice(3).join('\n')}`, options),
