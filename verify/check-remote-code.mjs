@@ -33,7 +33,7 @@ export async function scanRemoteCode(root, paths) {
   for (const path of paths) {
     const text = await readFile(join(root, path), 'utf8');
     const executable = path.endsWith('.json') ? text : path.endsWith('.sh') ? text.replace(/#[^\n]*/g, '') : codeWithoutStringsAndComments(text);
-    const executedStrings = [...text.matchAll(/(?:exec|execFile|spawn)\s*\(\s*(["'`])([\s\S]*?)\1/g)].map((match) => match[2]).join('\n');
+    const executedStrings = [...text.matchAll(/(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\(\s*(["'`])([\s\S]*?)\1/g)].map((match) => match[2]).join('\n');
     if (/\bnpx\b/.test(executable)) throw failure(path, 'npx is forbidden');
     if (/(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(executable) || /(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(executedStrings)) throw failure(path, 'shell-pipe download is forbidden');
     if (/content_security_policy[^\n]*https?:\/\//i.test(executable) || /script-src[^;"']*https?:\/\//i.test(executable)) {

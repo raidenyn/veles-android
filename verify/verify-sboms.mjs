@@ -55,7 +55,7 @@ export async function validateSboms(root, expectedRoots, lockComponents = {}) {
     if (!Array.isArray(bom.dependencies) || bom.dependencies.length === 0) {
       throw failure(`SBOM ${file} must contain a non-empty dependency graph`);
     }
-    const refs = new Set([rootRef]);
+    const refs = new Set([rootRef, rootComponent.purl]);
     collectRefs(bom.components, refs);
     for (const component of lockComponents[name] ?? []) {
       if (![...refs].some((ref) => ref === component || ref.startsWith(`${component}?`))) throw failure(`Missing lockfile component ${component} in ${file}`);
@@ -80,11 +80,7 @@ if (import.meta.main) {
     deriveLockComponents(join(root, 'web-extension', 'package-lock.json'), 'npm'),
     deriveLockComponents(join(root, 'rust', 'Cargo.lock'), 'cargo'),
     deriveLockComponents(join(root, 'native-bridge', 'src-tauri', 'Cargo.lock'), 'cargo'),
-  ]).then(([web, rust, bridge]) => {
-    // cargo-cyclonedx emits target-resolved components; validate each lock against
-    // that generated graph without treating unavailable target packages as roots.
-    return validateSboms(root, expectedRoots, { 'web-extension': web, rust: [], 'native-bridge': [] });
-  }).catch((error) => {
+  ]).then(([web, rust, bridge]) => validateSboms(root, expectedRoots, { 'web-extension': web, rust, 'native-bridge': bridge })).catch((error) => {
     console.error(error.message);
     process.exitCode = error.exitCode ?? 2;
   });

@@ -84,3 +84,9 @@ test('derives npm lock components for production validation', async () => {
   await writeFile(join(directory, 'web-extension-package-lock.json'), JSON.stringify({ packages: { 'node_modules/example': { version: '1.0.0' } } }));
   assert.deepEqual(await deriveLockComponents(join(directory, 'web-extension-package-lock.json'), 'npm'), ['pkg:npm/example@1.0.0']);
 });
+
+test('rejects Rust and bridge SBOMs that omit their derived locked components', async () => {
+  const directory = await fixture();
+  await assert.rejects(validateSboms(directory, root, { 'web-extension': [], rust: ['pkg:cargo/missing-rust@1.0.0'], 'native-bridge': [] }), /lockfile component/i);
+  await assert.rejects(validateSboms(directory, root, { 'web-extension': [], rust: [], 'native-bridge': ['pkg:cargo/missing-bridge@1.0.0'] }), /lockfile component/i);
+});
