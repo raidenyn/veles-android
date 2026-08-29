@@ -99,6 +99,7 @@ test('classifies invalid API inputs and filesystem failures as exit 2', async ()
     await assert.rejects(() => verifyManifestTree(root, {}), isError);
     await assert.rejects(() => compareTrees(root, root, 'a'), isError);
     await assert.rejects(() => compareTrees(root, root, ['missing']), isError);
+    await assert.rejects(() => verifyManifestTree(join(root, 'missing'), new Map()), isError);
   });
 });
 
@@ -122,6 +123,12 @@ test('detects missing, changed, and unexpected tree entries', async () => {
     await rm(join(root, 'extra'));
     await writeFile(join(root, 'a'), 'changed');
     await assert.rejects(() => verifyManifestTree(root, expected), isMismatch);
+  });
+});
+
+test('treats a non-POSIX filename discovered in an artifact tree as a mismatch', async () => {
+  await withTree({ 'bad\\name': 'value' }, async (root) => {
+    await assert.rejects(() => verifyManifestTree(root, new Map()), isMismatch);
   });
 });
 
@@ -154,6 +161,8 @@ test('parses native manifests only with the required ordered identity headers', 
     valid.replace('# ImageOS=macos\n# ImageVersion=26.0', '# ImageVersion=26.0\n# ImageOS=macos'),
     valid.replace('# ImageVersion=26.0', '# Unknown=value'),
     valid.replace('# RUNNER_ARCH=ARM64', '# RUNNER_ARCH='),
+    valid.replace(`${digest}  host`, `# ImageOS=other\n${digest}  host`),
+    valid.replace(`${digest}  host`, `# Unknown=value\n${digest}  host`),
   ]) {
     assert.throws(() => parseNativeManifest(text), isError);
   }

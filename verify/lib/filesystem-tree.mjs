@@ -25,11 +25,16 @@ async function listFiles(root, prefix = '') {
   const paths = [];
   for (const entry of entries) {
     const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-    validateRelativePath(path, error);
+    validateRelativePath(path);
     if (entry.isDirectory()) {
       paths.push(...await listFiles(root, path));
     } else if (entry.isFile()) {
-      const stat = await lstat(join(root, path));
+      let stat;
+      try {
+        stat = await lstat(join(root, path));
+      } catch {
+        throw error(`cannot read manifest entry: ${path}`);
+      }
       if (stat.nlink !== 1) throw mismatch(`unsupported manifest entry: ${path}`);
       paths.push(path);
     } else {

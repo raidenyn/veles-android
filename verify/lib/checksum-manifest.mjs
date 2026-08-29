@@ -101,6 +101,9 @@ export function parseNativeManifest(text, options = {}) {
     }
     identity[headerNames[index]] = lines[index].slice(prefix.length);
   }
+  if (lines.slice(3).some((line) => line.startsWith('#'))) {
+    throw error('invalid native identity header');
+  }
   return {
     identity,
     checksums: parseStandardManifest(`${lines.slice(3).join('\n')}`, options),
