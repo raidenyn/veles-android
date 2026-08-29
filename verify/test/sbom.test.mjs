@@ -70,3 +70,10 @@ test('rejects an unrequested fourth SBOM', async () => {
   await writeFile(join(directory, 'build', 'sbom', 'unexpected.cdx.json'), '{}');
   await assert.rejects(validateSboms(directory, root), /exactly three/i);
 });
+
+test('rejects an SBOM that omits a component declared by its lockfile', async () => {
+  const directory = await fixture();
+  await assert.rejects(validateSboms(directory, root, {
+    'web-extension': ['pkg:npm/example@1.0.0', 'pkg:npm/missing@2.0.0'], rust: [], 'native-bridge': [],
+  }), /lockfile component/i);
+});

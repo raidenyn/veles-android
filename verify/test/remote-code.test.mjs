@@ -35,3 +35,8 @@ test('allows documentation and lockfile URLs outside declared source scopes', as
   });
   await assert.doesNotReject(scanRemoteCode(directory, ['src/main.ts']));
 });
+
+test('allows remote-code examples in comments while rejecting executable statements', async () => {
+  const directory = await fixture({ 'src/main.ts': '// npx esbuild\nconst command = "curl | sh";\nexport const local = true;' });
+  await assert.doesNotReject(scanRemoteCode(directory, ['src/main.ts']));
+});

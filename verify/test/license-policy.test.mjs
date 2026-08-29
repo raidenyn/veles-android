@@ -48,7 +48,7 @@ test('pins the license checker package while accepting its reviewed stale CLI ba
 
   // Upstream 5.0.1 hard-codes this banner. Revisit this exception on every tool upgrade.
   const cli = fileURLToPath(new URL('../node_modules/.bin/license-checker-rseidelsohn', import.meta.url));
-  const invocation = spawnSync(cli, ['--json'], { encoding: 'utf8' });
+  const invocation = spawnSync(cli, ['--json'], { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8' });
   assert.equal(invocation.status, 0, invocation.stderr);
   assert.notEqual(Object.keys(JSON.parse(invocation.stdout)).length, 0);
 

@@ -48,3 +48,11 @@ test('rejects Cargo checksum drift and suspicious build scripts', async () => {
   await writeFile(join(source, 'build.rs'), 'std::process::Command::new("curl");');
   await assert.rejects(verifyCargoBuildScripts({ sources: [source], policy: { policyPath: 'cargo-policy.json', exceptions: [] } }), /checksum|suspicious/i);
 });
+
+test('binds Cargo registry sources to the locked package checksum', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'veles-cargo-lock-'));
+  const source = join(directory, 'registry', 'fixture-1.0.0');
+  await mkdir(source, { recursive: true });
+  await writeFile(join(source, '.cargo-checksum.json'), JSON.stringify({ package: 'wrong', files: {} }));
+  await assert.rejects(verifyCargoBuildScripts({ sources: [source], policy: { policyPath: 'cargo-policy.json', exceptions: [] }, lockedPackages: new Map([['fixture@1.0.0', 'expected']]) }), /locked checksum/i);
+});

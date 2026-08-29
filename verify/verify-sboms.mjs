@@ -14,7 +14,7 @@ function collectRefs(components, refs) {
   }
 }
 
-export async function validateSboms(root, expectedRoots) {
+export async function validateSboms(root, expectedRoots, lockComponents = {}) {
   const directory = join(root, 'build', 'sbom');
   let files;
   try {
@@ -46,6 +46,9 @@ export async function validateSboms(root, expectedRoots) {
     }
     const refs = new Set([rootRef]);
     collectRefs(bom.components, refs);
+    for (const component of lockComponents[name] ?? []) {
+      if (!refs.has(component)) throw failure(`Missing lockfile component ${component} in ${file}`);
+    }
     for (const dependency of bom.dependencies) {
       if (!refs.has(dependency.ref)) throw failure(`Unresolved dependency ref ${dependency.ref} in ${file}`);
       for (const child of dependency.dependsOn ?? []) {

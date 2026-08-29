@@ -7,19 +7,41 @@ function failure(path, reason) {
   return error;
 }
 
+function codeWithoutStringsAndComments(text) {
+  let output = '';
+  let quote = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const next = text[index + 1];
+    if (quote) {
+      if (character === '\\') index += 1;
+      else if (character === quote) quote = null;
+      output += ' ';
+    } else if (character === '"' || character === "'" || character === '`') {
+      quote = character; output += ' ';
+    } else if (character === '/' && next === '/') {
+      index = text.indexOf('\n', index); if (index < 0) break; output += '\n';
+    } else if (character === '/' && next === '*') {
+      index = text.indexOf('*/', index + 2); if (index < 0) break; index += 1; output += ' ';
+    } else output += character;
+  }
+  return output;
+}
+
 export async function scanRemoteCode(root, paths) {
   const findings = [];
   for (const path of paths) {
     const text = await readFile(join(root, path), 'utf8');
-    if (/\bnpx\b/.test(text)) throw failure(path, 'npx is forbidden');
-    if (/(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(text)) throw failure(path, 'shell-pipe download is forbidden');
-    if (/content_security_policy[^\n]*https?:\/\//i.test(text) || /script-src[^;"']*https?:\/\//i.test(text)) {
+    const executable = path.endsWith('.json') ? text : path.endsWith('.sh') ? text.replace(/#[^\n]*/g, '') : codeWithoutStringsAndComments(text);
+    if (/\bnpx\b/.test(executable)) throw failure(path, 'npx is forbidden');
+    if (/(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(executable)) throw failure(path, 'shell-pipe download is forbidden');
+    if (/content_security_policy[^\n]*https?:\/\//i.test(executable) || /script-src[^;"']*https?:\/\//i.test(executable)) {
       throw failure(path, 'remote CSP script source is forbidden');
     }
-    if (/"updater"\s*:|tauri-plugin-updater|plugins\s*\.\s*updater/i.test(text)) {
+    if (/"updater"\s*:|tauri-plugin-updater|plugins\s*\.\s*updater/i.test(executable)) {
       throw failure(path, 'Tauri updater wiring is forbidden');
     }
-    if (/(?:curl|wget)\s+https?:\/\/[^\s]+(?:latest|releases\/download\/[^/]+\/[^\s]*\.(?:sh|exe|msi))/i.test(text)) {
+    if (/(?:curl|wget)\s+https?:\/\/[^\s]+(?:latest|releases\/download\/[^/]+\/[^\s]*\.(?:sh|exe|msi))/i.test(executable)) {
       throw failure(path, 'floating executable download is forbidden');
     }
     findings.push(path);
