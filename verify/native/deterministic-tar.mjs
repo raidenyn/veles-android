@@ -27,7 +27,8 @@ function padding(length) {
 }
 
 function validateSymlinkTarget(path, target) {
-  if (typeof target !== 'string' || target === '' || target.startsWith('/') || target.includes('\\') || posix.normalize(posix.join(posix.dirname(path), target)).startsWith('../')) {
+  const normalized = typeof target === 'string' ? posix.normalize(posix.join(posix.dirname(path), target)) : '';
+  if (typeof target !== 'string' || target === '' || target.startsWith('/') || target.includes('\\') || normalized === '..' || normalized.startsWith('../')) {
     throw mismatch(`unsafe tar symlink target: ${path}`);
   }
 }

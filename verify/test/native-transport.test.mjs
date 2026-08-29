@@ -142,3 +142,27 @@ test('rejects adversarial USTAR entries before transport extraction', async () =
     }
   });
 });
+
+test('rejects symlinked transport roots before emission', async () => {
+  const { createRun, readTransport } = await import('../native/create-run.mjs');
+  await withRun(async ({ root, product, view }) => {
+    for (const [name, index, target] of [
+      ['product escape', 3, '..'],
+      ['view symlink', 7, '.'],
+    ]) {
+      const output = join(root, `${name}.tar`);
+      await createRun({
+        output,
+        sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+        identity: { ImageOS: 'Windows', ImageVersion: '2025', RUNNER_ARCH: 'X64' },
+        product,
+        view,
+      });
+      await rewriteTransport(output, (_tar, header) => {
+        header(index)[156] = '2'.charCodeAt(0);
+        Buffer.from(`${target}\0`).copy(header(index), 157);
+      });
+      await assert.rejects(() => readTransport(output), (error) => error.exitCode === 1, name);
+    }
+  });
+});

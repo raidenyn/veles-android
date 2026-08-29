@@ -83,7 +83,9 @@ export async function readTransport(tarPath, sidecarPath = `${tarPath}.sha256`) 
       throw mismatch(`unexpected transport entry: ${entry.path}`);
     }
   }
-  if (!names.has('product/') || !names.has('view/')) throw mismatch('missing transport tree');
+  for (const path of ['product/', 'view/']) {
+    if (names.get(path)?.type !== 'directory') throw mismatch(`invalid transport tree: ${path}`);
+  }
   const sourceCommit = names.get('SOURCE-COMMIT').data.toString('utf8');
   if (!/^[0-9a-f]{40}\n$/.test(sourceCommit)) throw error('invalid transport source commit');
   return { entries, sourceCommit: sourceCommit.slice(0, -1), manifest: names.get('SHA256SUMS.native-bridge').data.toString('utf8'), metadata: names.get('METADATA.native-bridge.jsonl').data.toString('utf8') };
