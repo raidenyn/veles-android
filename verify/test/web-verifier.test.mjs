@@ -11,6 +11,7 @@ const ZIP = 'veles-extension-0.1.0.zip';
 const SIDECAR = `${ZIP}.sha256`;
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const VERIFY_SCRIPT = join(REPO_ROOT, 'verify', 'verify-web.sh');
+const WEB_INNER = join(REPO_ROOT, 'verify', 'web-inner.sh');
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 async function withArtifacts(files, run) {
@@ -60,6 +61,10 @@ const cleanGit = '#!/usr/bin/env bash\nexit 0\n';
 const successfulDocker = '#!/usr/bin/env bash\nexit 0\n';
 const validCandidateNpm = `#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = --version ]; then
+  printf '%s\\n' "\${NPM_VERSION:-11.19.0}"
+  exit 0
+fi
 OUT="$(dirname "$PWD")/build/web-extension"
 ZIP="veles-extension-0.1.0.zip"
 SIDECAR="$ZIP.sha256"
@@ -69,6 +74,16 @@ printf '%s  %s\\n' "$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)" "$ZIP" > "$OUT/$SI
 printf '%s  %s\\n' "$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)" "$ZIP" > "$OUT/SHA256SUMS"
 printf '%s  %s\\n' "$(sha256sum "$OUT/$SIDECAR" | cut -d' ' -f1)" "$SIDECAR" >> "$OUT/SHA256SUMS"
 `;
+
+function nodeWithVersion(version) {
+  return `#!/usr/bin/env bash
+if [ "\${1:-}" = --version ]; then
+  printf '%s\\n' "\${NODE_VERSION:-${version}}"
+  exit 0
+fi
+exec "$REAL_NODE" "$@"
+`;
+}
 
 test('rejects an invalid candidate manifest', async () => {
   const { verifyWebArtifacts } = await import('../verify-web.mjs');
@@ -162,17 +177,29 @@ printf '%s  %s\\n' "$(sha256sum "$OUT/$SIDECAR" | cut -d' ' -f1)" "$SIDECAR" >> 
   });
 });
 
-test('maps Node and npm pin drift from reference preparation to exit 2', async () => {
-  for (const pinFailure of ['Node version drift', 'npm version drift']) {
-    const fakeDocker = `#!/usr/bin/env bash
+test('maps Node and npm pin drift from web-inner preparation to exit 2', async () => {
+  const fakeDocker = `#!/usr/bin/env bash
 if [ "$1" = run ] && [ "\${!#}" = prepare ]; then
-  echo "${pinFailure}" >&2
-  exit 2
+  exec /bin/bash "${WEB_INNER}" prepare
 fi
 `;
-    await withFakeTools({ git: cleanGit, npm: validCandidateNpm, docker: fakeDocker }, async (bin) => {
-      const result = runVerifier(bin, { DOCKER_BIN: join(bin, 'docker') });
-      assert.equal(result.status, 2, pinFailure);
+  for (const [name, environment] of [
+    ['Node version drift', { NODE_VERSION: 'v26.8.0' }],
+    ['npm version drift', { NPM_VERSION: '11.19.1' }],
+  ]) {
+    await withFakeTools({
+      git: cleanGit,
+      npm: validCandidateNpm,
+      node: nodeWithVersion('v26.8.1'),
+      docker: fakeDocker,
+    }, async (bin) => {
+      const result = runVerifier(bin, {
+        DOCKER_BIN: join(bin, 'docker'),
+        REAL_NODE: process.execPath,
+        ...environment,
+      });
+      assert.equal(result.status, 2, name);
+      assert.match(result.stderr, new RegExp(name));
       assert.match(result.stderr, /reference preparation failed/);
     });
   }
