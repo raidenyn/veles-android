@@ -46,6 +46,8 @@ val rustCrateDir = rustDir.dir("veles-crypto")
 val rustToolsFile = rustDir.file("toolchain-tools.toml")
 val rustTargetDir = layout.buildDirectory.dir("rust/target")
 val rustToolsDir = layout.buildDirectory.dir("rust-tools")
+val verifyCargoToolsFile = layout.projectDirectory.file("verify/cargo-tools.toml")
+val verifyToolsDir = layout.buildDirectory.dir("verify-tools")
 val wasmPackageDir = layout.projectDirectory.dir("web-extension/rust-wasm/pkg")
 val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
 
@@ -53,6 +55,13 @@ fun pinnedToolVersion(name: String): String {
     val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
     return requireNotNull(pattern.find(rustToolsFile.asFile.readText())) {
         "Missing '$name' pin in ${rustToolsFile.asFile}"
+    }.groupValues[1]
+}
+
+fun pinnedVerificationToolVersion(name: String): String {
+    val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
+    return requireNotNull(pattern.find(verifyCargoToolsFile.asFile.readText())) {
+        "Missing '$name' pin in ${verifyCargoToolsFile.asFile}"
     }.groupValues[1]
 }
 
@@ -168,6 +177,56 @@ fun registerCargoTool(
     return install to verify
 }
 
+fun registerVerificationCargoTool(
+    taskStem: String,
+    crateName: String,
+    binaryName: String,
+): Pair<TaskProvider<Exec>, TaskProvider<Task>> {
+    val version = pinnedVerificationToolVersion(crateName)
+    val installRoot = verifyToolsDir.map { it.dir(crateName) }
+    val binary = installRoot.map {
+        it.file("bin/$binaryName$windowsExecutableSuffix")
+    }
+    val install = tasks.register<Exec>("install$taskStem") {
+        group = "verification"
+        description = "Installs $crateName $version into the verification tool directory."
+        dependsOn("rustToolchainCheck")
+        inputs.property("crateName", crateName)
+        inputs.property("version", version)
+        inputs.file(verifyCargoToolsFile)
+        inputs.file(rustDir.file("rust-toolchain.toml"))
+        outputs.dir(installRoot)
+        workingDir(rustDir)
+        environment(
+            "CARGO_TARGET_DIR",
+            layout.buildDirectory.dir("verify-tools/tool-install-target/$crateName").get().asFile,
+        )
+        doFirst { delete(installRoot) }
+        commandLine(
+            "cargo", "install", "--locked", "--version", version,
+            "--root", installRoot.get().asFile, crateName,
+        )
+    }
+    val verify = tasks.register("verify$taskStem") {
+        group = "verification"
+        description = "Verifies the isolated $crateName tool version."
+        dependsOn(install)
+        inputs.property("version", version)
+        inputs.file(binary.map { it.asFile })
+        doLast {
+            val output = providers.exec {
+                commandLine(binary.get().asFile, "--version")
+            }.standardOutput.asText.get().trim()
+            val actualVersion = output.split(Regex("\\s+"))
+                .firstOrNull { it.matches(Regex("\\d+\\.\\d+\\.\\d+(-\\S+)?")) }
+            check(actualVersion == version) {
+                "Expected $crateName $version at ${binary.get().asFile}, got: $output"
+            }
+        }
+    }
+    return install to verify
+}
+
 val (_, verifyCargoNdk) = registerCargoTool("CargoNdk", "cargo-ndk", "cargo-ndk")
 val (_, verifyWasmPack) = registerCargoTool("WasmPack", "wasm-pack", "wasm-pack")
 val (_, verifyWasmBindgen) = registerCargoTool(
@@ -175,6 +234,12 @@ val (_, verifyWasmBindgen) = registerCargoTool(
     "wasm-bindgen-cli",
     "wasm-bindgen",
 )
+val (_, verifyCargoCyclonedx) = registerVerificationCargoTool(
+    "CargoCyclonedx",
+    "cargo-cyclonedx",
+    "cargo-cyclonedx",
+)
+val (_, verifyCargoDeny) = registerVerificationCargoTool("CargoDeny", "cargo-deny", "cargo-deny")
 
 val rustWasmBindgenConsistency = tasks.register("rustWasmBindgenConsistency") {
     group = "rust"

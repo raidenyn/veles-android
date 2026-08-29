@@ -3,5 +3,9 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=26.8.1" },
-  "scripts": { "test": "node --test test/*.test.mjs" }
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "devDependencies": {
+    "@cyclonedx/cyclonedx-npm": "6.0.1",
+    "license-checker-rseidelsohn": "5.0.1"
+  }
 }
