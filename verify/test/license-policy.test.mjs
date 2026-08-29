@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { evaluateNpmLicense } from '../lib/license-policy.mjs';
 import policy from '../../.license-policy.json' with { type: 'json' };
@@ -38,6 +41,21 @@ const deniedLicenses = [
   'CC0-1.0',
   'Unlicense',
 ];
+
+test('pins the license checker package while accepting its reviewed stale CLI banner', async () => {
+  const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(lock.packages['node_modules/license-checker-rseidelsohn'].version, '5.0.1');
+
+  // Upstream 5.0.1 hard-codes this banner. Revisit this exception on every tool upgrade.
+  const cli = fileURLToPath(new URL('../node_modules/.bin/license-checker-rseidelsohn', import.meta.url));
+  const invocation = spawnSync(cli, ['--json'], { encoding: 'utf8' });
+  assert.equal(invocation.status, 0, invocation.stderr);
+  assert.notEqual(Object.keys(JSON.parse(invocation.stdout)).length, 0);
+
+  const version = spawnSync(cli, ['--version'], { encoding: 'utf8' });
+  assert.equal(version.status, 1);
+  assert.equal(version.stderr.trim(), '4.4.2');
+});
 
 test('allows every reviewed SPDX identifier and the LLVM exception', () => {
   for (const expression of allowedLicenses) {
