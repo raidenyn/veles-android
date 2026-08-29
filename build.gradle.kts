@@ -2,9 +2,11 @@
 import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.MessageDigest
 import java.util.Properties
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.Sync
 
 plugins {
     base
@@ -328,6 +330,57 @@ val rustJni = tasks.register<Exec>("rustJni") {
         "--output-dir", rustJniOutput.get().asFile,
         "build", "--workspace", "--release", "--locked",
     )
+}
+
+val rustPackageDir = layout.buildDirectory.dir("rust-package")
+val rustJniPaths = listOf(
+    "arm64-v8a/libveles_crypto.so",
+    "armeabi-v7a/libveles_crypto.so",
+    "x86_64/libveles_crypto.so",
+)
+
+val rustPackage = tasks.register<Sync>("rustPackage") {
+    group = "rust"
+    description = "Stages the JNI and WASM artifacts as the rust-jni-wasm package."
+    dependsOn(rustJni, rustWasm)
+    from(rustJniOutput) {
+        include(rustJniPaths)
+        into("jni")
+    }
+    from(wasmPackageDir) { into("wasm") }
+    into(rustPackageDir)
+    doFirst {
+        val actual = rustJniOutput.get().asFile.walkTopDown()
+            .filter { it.isFile }
+            .map { it.relativeTo(rustJniOutput.get().asFile).invariantSeparatorsPath }
+            .sorted()
+            .toList()
+        check(actual == rustJniPaths.sorted()) {
+            "Unexpected JNI artifact paths: $actual"
+        }
+    }
+    doLast {
+        val root = rustPackageDir.get().asFile
+        // Gradle's Sync excludes dotfiles, but wasm-pack emits .gitignore as
+        // part of the package contract, so copy it before recording checksums.
+        wasmPackageDir.file(".gitignore").asFile.copyTo(root.resolve("wasm/.gitignore"), overwrite = true)
+        val paths = root.walkTopDown()
+            .filter { it.isFile && it.name != "SHA256SUMS" }
+            .map { it.relativeTo(root).invariantSeparatorsPath }
+            .sorted()
+            .toList()
+        check(paths.filter { it.startsWith("jni/") } == rustJniPaths.map { "jni/$it" }.sorted()) {
+            "Rust package JNI paths are invalid: $paths"
+        }
+        check(paths.any { it.startsWith("wasm/") }) { "Rust package has no WASM files" }
+        val sums = paths.joinToString(separator = "\n", postfix = "\n") { path ->
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(root.resolve(path).readBytes())
+                .joinToString("") { byte -> "%02x".format(byte) }
+            "$digest  $path"
+        }
+        root.resolve("SHA256SUMS").writeText(sums)
+    }
 }
 
 val rustFormat = tasks.register<Exec>("rustFormat") {
@@ -769,5 +822,6 @@ tasks.named<Delete>("clean") {
         layout.projectDirectory.dir("native-bridge/src-tauri/target"),
         layout.projectDirectory.dir("native-bridge/dist"),
         layout.buildDirectory.dir("native-bridge"),
+        rustPackageDir,
     )
 }
