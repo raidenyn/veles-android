@@ -26,7 +26,7 @@ checkout_status="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all)
 [ -z "$checkout_status" ] || fail "verify-rust.sh requires a clean checkout"
 
 "$GRADLE_BIN" rustPackage || fail "candidate Rust package failed"
-if node "$SCRIPT_DIR/verify-rust.mjs" "$RUST_PACKAGE_DIR" "$RUST_PACKAGE_DIR"; then :; else
+if node "$SCRIPT_DIR/verify-rust.mjs" --validate "$RUST_PACKAGE_DIR"; then :; else
   status=$?
   [ "$status" -eq 1 ] && exit 1
   fail "candidate artifact validation failed"

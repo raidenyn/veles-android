@@ -93,7 +93,29 @@ test('maps a Docker build failure to exit 2', async () => {
     await rm(candidate, { recursive: true, force: true });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /failed to build Rust reference image/);
+    assert.doesNotMatch(result.stdout, /VERIFIED:/);
   });
+});
+
+test('prepares dependencies online and produces the reference package offline', async () => {
+  const [wrapper, inner] = await Promise.all([
+    readFile(VERIFY_SCRIPT, 'utf8'),
+    readFile(RUST_INNER, 'utf8'),
+  ]);
+  assert.match(inner, /prepare\(\)[\s\S]*\.\/gradlew --refresh-dependencies rustInstall/);
+  assert.match(inner, /package_reference\(\)[\s\S]*CARGO_NET_OFFLINE=true \.\/gradlew --offline rustPackage/);
+  assert.match(wrapper, /verify-rust\.mjs" --validate "\$RUST_PACKAGE_DIR"/);
+  assert.doesNotMatch(wrapper, /verify-rust\.mjs" "\$RUST_PACKAGE_DIR" "\$RUST_PACKAGE_DIR"/);
+});
+
+test('pins and verifies all Rust-image Android downloads and apt packages', async () => {
+  const dockerfile = await readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8');
+  assert.match(dockerfile, /ARG PLATFORM_TOOLS_VERSION=37\.0\.1/);
+  assert.match(dockerfile, /platform-tools_r\$\{PLATFORM_TOOLS_VERSION\}-linux\.zip/);
+  assert.match(dockerfile, /d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1/);
+  assert.match(dockerfile, /2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258/);
+  assert.match(dockerfile, /curl=8\.5\.0-2ubuntu10\.6/);
+  assert.doesNotMatch(dockerfile, /sdkmanager "platform-tools"/);
 });
 
 test('pins the JDK, NDK, Rust, Node, npm, and Android helper in the reference files', async () => {

@@ -17,12 +17,15 @@ prepare() {
   rm -rf /work/src
   mkdir -p /work/src
   cp -a /source/. /work/src/
+  cd /work/src
+  ./gradlew --refresh-dependencies rustInstall
+  (cd rust && cargo fetch --locked)
 }
 
 package_reference() {
   assert_pins
   cd /work/src
-  ./gradlew rustPackage
+  CARGO_NET_OFFLINE=true ./gradlew --offline rustPackage
   mkdir -p /out
   cp -a build/rust-package/. /out/
 }

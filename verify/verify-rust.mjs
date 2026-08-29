@@ -96,6 +96,10 @@ export async function verifyRustPackages(candidateRoot, referenceRoot) {
 }
 
 async function main() {
+  if (process.argv[2] === '--validate' && process.argv.length === 4) {
+    await validateRustPackage(process.argv[3], 'candidate');
+    return;
+  }
   const [candidateRoot, referenceRoot] = process.argv.slice(2);
   if (!candidateRoot || !referenceRoot || process.argv.length !== 4) {
     throw error('usage: verify-rust.mjs <candidate-artifact-dir> <reference-artifact-dir>');
