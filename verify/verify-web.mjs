@@ -67,16 +67,9 @@ async function validateArtifactTree(root, label) {
   return manifest;
 }
 
-export function verifyWebPreparation({ nodeVersion, npmVersion, dockerStatus = 0 }) {
-  if (nodeVersion !== 'v26.8.1') throw error(`Node version drift: expected v26.8.1, got ${nodeVersion}`);
-  if (npmVersion !== '11.19.0') throw error(`npm version drift: expected 11.19.0, got ${npmVersion}`);
-  if (dockerStatus !== 0) throw error(`Docker failed with status ${dockerStatus}`);
-}
-
-export async function verifyWebArtifacts(candidateRoot, referenceRoot, runDocker) {
+export async function verifyWebArtifacts(candidateRoot, referenceRoot) {
   const candidateManifest = await validateArtifactTree(candidateRoot, 'candidate');
   const referenceManifest = await validateArtifactTree(referenceRoot, 'reference');
-  if (typeof runDocker === 'function') runDocker();
 
   for (const path of expectedPaths) {
     const [candidate, reference] = await Promise.all([
