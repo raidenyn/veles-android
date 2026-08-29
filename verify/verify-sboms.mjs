@@ -58,7 +58,7 @@ export async function validateSboms(root, expectedRoots, lockComponents = {}) {
     const refs = new Set([rootRef, rootComponent.purl]);
     collectRefs(bom.components, refs);
     for (const component of lockComponents[name] ?? []) {
-      if (![...refs].some((ref) => ref === component || ref.startsWith(`${component}?`))) throw failure(`Missing lockfile component ${component} in ${file}`);
+      if (![...refs].some((ref) => ref === component || (ref && ref.startsWith(`${component}?`)))) throw failure(`Missing lockfile component ${component} in ${file}`);
     }
     for (const dependency of bom.dependencies) {
       if (!refs.has(dependency.ref)) throw failure(`Unresolved dependency ref ${dependency.ref} in ${file}`);

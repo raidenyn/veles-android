@@ -28,14 +28,46 @@ function codeWithoutStringsAndComments(text) {
   return output;
 }
 
+function codeWithoutComments(text) {
+  let output = '';
+  let quote = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const next = text[index + 1];
+    if (quote) {
+      if (character === '\\') {
+        output += character + (next ?? '');
+        index += 1;
+      } else {
+        output += character;
+        if (character === quote) quote = null;
+      }
+    } else if (character === '"' || character === "'" || character === '`') {
+      quote = character;
+      output += character;
+    } else if (character === '/' && next === '/') {
+      index = text.indexOf('\n', index);
+      if (index < 0) break;
+      output += '\n';
+    } else if (character === '/' && next === '*') {
+      index = text.indexOf('*/', index + 2);
+      if (index < 0) break;
+      index += 1;
+    } else output += character;
+  }
+  return output;
+}
+
 export async function scanRemoteCode(root, paths) {
   const findings = [];
   for (const path of paths) {
     const text = await readFile(join(root, path), 'utf8');
     const executable = path.endsWith('.json') ? text : path.endsWith('.sh') ? text.replace(/#[^\n]*/g, '') : codeWithoutStringsAndComments(text);
-    const executedStrings = [...text.matchAll(/(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\(\s*(["'`])([\s\S]*?)\1/g)].map((match) => match[2]).join('\n');
+    const source = codeWithoutComments(text);
+    const executedStrings = [...source.matchAll(/(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\(\s*(["'`])([\s\S]*?)\1/g)].map((match) => match[2]).join('\n');
+    const shellCommands = [...source.matchAll(/(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\(\s*(["'`])(?:\/(?:usr\/)?bin\/)?(?:sh|bash|zsh)\1\s*,\s*\[\s*(["'`])-c\2\s*,\s*(["'`])([\s\S]*?)\3/g)].map((match) => match[4]).join('\n');
     if (/\bnpx\b/.test(executable)) throw failure(path, 'npx is forbidden');
-    if (/(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(executable) || /(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(executedStrings)) throw failure(path, 'shell-pipe download is forbidden');
+    if (/(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(executable) || /(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(executedStrings) || /(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b/.test(shellCommands)) throw failure(path, 'shell-pipe download is forbidden');
     if (/content_security_policy[^\n]*https?:\/\//i.test(executable) || /script-src[^;"']*https?:\/\//i.test(executable)) {
       throw failure(path, 'remote CSP script source is forbidden');
     }
