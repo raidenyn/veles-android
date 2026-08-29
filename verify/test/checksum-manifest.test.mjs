@@ -167,3 +167,11 @@ test('parses native manifests only with the required ordered identity headers', 
     assert.throws(() => parseNativeManifest(text), isError);
   }
 });
+
+test('classifies generic post-identity comments as malformed standard evidence', () => {
+  const digest = 'a'.repeat(64);
+  for (const line of ['# comment', '#not-a-header']) {
+    const manifest = `# ImageOS=macos\n# ImageVersion=26.0\n# RUNNER_ARCH=ARM64\n${line}\n${digest}  host\n`;
+    assert.throws(() => parseNativeManifest(manifest), isMismatch, line);
+  }
+});
