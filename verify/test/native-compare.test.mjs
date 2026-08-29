@@ -33,6 +33,15 @@ async function withRuns(run) {
   }
 }
 
+async function rewriteRun(tarPath, mutate) {
+  const { readTransport } = await import('../native/create-run.mjs');
+  const { createTar } = await import('../native/deterministic-tar.mjs');
+  const transport = await readTransport(tarPath);
+  const tar = createTar(transport.entries.map((entry) => mutate(entry) ?? entry));
+  await writeFile(tarPath, tar);
+  await writeFile(`${tarPath}.sha256`, `${createHash('sha256').update(tar).digest('hex')}  ${tarPath.split('/').at(-1)}\n`);
+}
+
 test('rejects source and runner identity gates as environment errors', async () => {
   const { compareRuns } = await import('../native/compare-runs.mjs');
   await withRuns(async (root) => {
@@ -45,6 +54,32 @@ test('rejects source and runner identity gates as environment errors', async () 
     });
     await assert.rejects(
       () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, identityMismatch),
+      (error) => error.exitCode === 2 && error.message.includes('re-run on matched image'),
+    );
+
+    for (const manifest of [
+      '# ImageVersion=2025\n# RUNNER_ARCH=X64\n',
+      '# ImageOS=\n# ImageVersion=2025\n# RUNNER_ARCH=X64\n',
+      '# RUNNER_ARCH=X64\n# ImageOS=Windows\n# ImageVersion=2025\n',
+    ]) {
+      const malformed = await makeRun(root, `identity-${manifest.length}`);
+      await rewriteRun(malformed, (entry) => entry.path === 'SHA256SUMS.native-bridge'
+        ? { ...entry, data: Buffer.from(`${manifest}not-a-manifest\n`) }
+        : entry);
+      await assert.rejects(
+        () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, malformed),
+        (error) => error.exitCode === 2,
+      );
+    }
+
+    const ordered = await makeRun(root, 'ordered', {
+      identity: { ImageOS: 'Windows', ImageVersion: '2026', RUNNER_ARCH: 'X64' },
+    });
+    await rewriteRun(ordered, (entry) => entry.path === 'product/artifact'
+      ? { ...entry, data: Buffer.from('corrupt-product') }
+      : entry);
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, ordered),
       (error) => error.exitCode === 2 && error.message.includes('re-run on matched image'),
     );
   });
@@ -86,6 +121,36 @@ test('rejects metadata mode drift even when archived view bytes match', async ()
     await assert.rejects(
       () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
       (error) => error.exitCode === 1 && error.message.includes('native metadata mismatch: host'),
+    );
+  });
+});
+
+test('rejects metadata symlink target drift even when archived target is unchanged', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  const { createRun } = await import('../native/create-run.mjs');
+  await withRuns(async (root) => {
+    const left = await makeRun(root, 'left');
+    const product = join(root, 'right-product');
+    const view = join(root, 'right-view');
+    await mkdir(product);
+    await mkdir(view);
+    await writeFile(join(product, 'artifact'), 'artifact');
+    await writeFile(join(view, 'host'), 'host');
+    await (await import('node:fs/promises')).symlink('host', join(view, 'current'));
+    const right = join(root, 'right.tar');
+    await createRun({ output: right, sourceCommit: '0123456789abcdef0123456789abcdef01234567', identity: { ImageOS: 'Windows', ImageVersion: '2025', RUNNER_ARCH: 'X64' }, product, view });
+    await rewriteRun(right, (entry) => entry.path === 'METADATA.native-bridge.jsonl'
+      ? {
+        ...entry,
+        data: Buffer.from(entry.data.toString('utf8')
+          .replace('"target":"host"', '"target":"other"')
+          .replace(createHash('sha256').update('host').digest('hex'), createHash('sha256').update('other').digest('hex')),
+        ),
+      }
+      : entry);
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && error.message.includes('native metadata mismatch: current'),
     );
   });
 });

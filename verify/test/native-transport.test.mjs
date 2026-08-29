@@ -7,6 +7,30 @@ import test from 'node:test';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
+function updateChecksum(header) {
+  header.fill(0x20, 148, 156);
+  Buffer.from(header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(7, '0') + '\0').copy(header, 148);
+}
+
+function headerOffset(tar, index) {
+  let offset = 0;
+  for (let current = 0; current < index; current += 1) {
+    const size = Number.parseInt(tar.subarray(offset + 124, offset + 136).toString('utf8'), 8);
+    offset += 512 + size + ((512 - (size % 512)) % 512);
+  }
+  return offset;
+}
+
+async function rewriteTransport(tarPath, mutate) {
+  const tar = Buffer.from(await readFile(tarPath));
+  mutate(tar, (index) => tar.subarray(headerOffset(tar, index), headerOffset(tar, index) + 512));
+  for (let offset = 0; offset + 512 <= tar.length && tar[offset] !== 0; offset += 512 + Number.parseInt(tar.subarray(offset + 124, offset + 136).toString('utf8'), 8) + ((512 - (Number.parseInt(tar.subarray(offset + 124, offset + 136).toString('utf8'), 8) % 512)) % 512)) {
+    updateChecksum(tar.subarray(offset, offset + 512));
+  }
+  await writeFile(tarPath, tar);
+  await writeFile(`${tarPath}.sha256`, `${sha256(tar)}  ${tarPath.split('/').at(-1)}\n`);
+}
+
 async function withRun(run) {
   const root = await mkdtemp(join(tmpdir(), 'veles-native-transport-'));
   try {
@@ -87,5 +111,34 @@ test('rejects malformed sidecars and unsafe transport entries before extraction'
       () => createTar([{ path: '../escape', type: 'file', data: Buffer.from('bad'), mode: 0o644 }]),
       (error) => error.exitCode === 1,
     );
+  });
+});
+
+test('rejects adversarial USTAR entries before transport extraction', async () => {
+  const { createRun, readTransport } = await import('../native/create-run.mjs');
+  await withRun(async ({ root, product, view }) => {
+    for (const [name, mutate] of [
+      ['duplicate', (_tar, header) => { Buffer.from('view/\0').copy(header(3), 0); }],
+      ['hard link', (_tar, header) => { header(4)[156] = '1'.charCodeAt(0); }],
+      ['device', (_tar, header) => { header(4)[156] = '3'.charCodeAt(0); }],
+      ['unexpected', (_tar, header) => { Buffer.from('unexpected/\0').copy(header(3), 0); }],
+      ['absolute symlink', (_tar, header) => { Buffer.from('/outside\0').copy(header(9), 157); }],
+      ['escaping symlink', (_tar, header) => { Buffer.from('../../../outside\0').copy(header(9), 157); }],
+      ['nonzero uid', (_tar, header) => { Buffer.from('0000001\0').copy(header(0), 108); }],
+      ['nonzero mtime', (_tar, header) => { Buffer.from('00000000001\0').copy(header(0), 136); }],
+      ['wrong USTAR version', (_tar, header) => { Buffer.from('01').copy(header(0), 263); }],
+      ['USTAR prefix', (_tar, header) => { Buffer.from('prefix\0').copy(header(0), 345); }],
+    ]) {
+      const output = join(root, `${name}.tar`);
+      await createRun({
+        output,
+        sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+        identity: { ImageOS: 'Windows', ImageVersion: '2025', RUNNER_ARCH: 'X64' },
+        product,
+        view,
+      });
+      await rewriteTransport(output, mutate);
+      await assert.rejects(() => readTransport(output), (error) => error.exitCode === 1, name);
+    }
   });
 });

@@ -93,10 +93,12 @@ export async function compareRuns(resolvedCommit, leftPath, rightPath, output) {
   if (!/^[0-9a-f]{40}$/.test(resolvedCommit ?? '')) throw error('invalid resolved commit');
   const [left, right] = await Promise.all([transportPath(leftPath).then((path) => readTransport(path)), transportPath(rightPath).then((path) => readTransport(path))]);
   if (left.sourceCommit !== resolvedCommit || right.sourceCommit !== resolvedCommit) throw error('native run source commit does not match resolved commit');
-  const [leftManifest, rightManifest] = [verifyProductManifest(left), verifyProductManifest(right)];
+  const [leftManifest, rightManifest] = [parseNativeManifest(left.manifest), parseNativeManifest(right.manifest)];
   if (JSON.stringify(leftManifest.identity) !== JSON.stringify(rightManifest.identity)) {
     throw error(`native runner identities differ\nleft: ${JSON.stringify(leftManifest.identity)}\nright: ${JSON.stringify(rightManifest.identity)}\nre-run on matched image`);
   }
+  verifyProductManifest(left);
+  verifyProductManifest(right);
   const [leftMetadata, rightMetadata] = [parseNativeMetadata(left.metadata), parseNativeMetadata(right.metadata)];
   verifyMetadata(left, leftMetadata);
   verifyMetadata(right, rightMetadata);

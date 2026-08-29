@@ -1,4 +1,5 @@
 import { error, mismatch, validateRelativePath } from '../lib/checksum-manifest.mjs';
+import { posix } from 'node:path';
 
 const BLOCK = 512;
 
@@ -25,6 +26,16 @@ function padding(length) {
   return (BLOCK - (length % BLOCK)) % BLOCK;
 }
 
+function validateSymlinkTarget(path, target) {
+  if (typeof target !== 'string' || target === '' || target.startsWith('/') || target.includes('\\') || posix.normalize(posix.join(posix.dirname(path), target)).startsWith('../')) {
+    throw mismatch(`unsafe tar symlink target: ${path}`);
+  }
+}
+
+function requireZero(buffer, offset, length, field) {
+  if (!buffer.subarray(offset, offset + length).every((byte) => byte === 0)) throw mismatch(`invalid fixed tar ${field}`);
+}
+
 export function createTar(entries) {
   if (!Array.isArray(entries)) throw error('tar entries must be an array');
   const seen = new Set();
@@ -37,6 +48,7 @@ export function createTar(entries) {
     if (seen.has(path)) throw error(`duplicate tar entry: ${path}`);
     seen.add(path);
     const data = entry.type === 'file' ? Buffer.from(entry.data ?? '') : Buffer.alloc(0);
+    if (entry.type === 'symlink') validateSymlinkTarget(path, entry.target);
     const header = Buffer.alloc(BLOCK);
     writeString(header, 0, 100, path);
     writeOctal(header, 100, 8, entry.mode ?? (entry.type === 'directory' ? 0o755 : 0o644));
@@ -83,6 +95,15 @@ export function parseTar(bytes) {
     copied.fill(0x20, 148, 156);
     if (copied.reduce((sum, byte) => sum + byte, 0) !== checksum) throw mismatch('invalid tar checksum');
     if (readString(header, 257, 6) !== 'ustar') throw mismatch('tar must use USTAR headers');
+    if (readString(header, 263, 2) !== '00') throw mismatch('tar must use USTAR version 00');
+    if (readOctal(header, 108, 8) !== 0 || readOctal(header, 116, 8) !== 0 || readOctal(header, 136, 12) !== 0) {
+      throw mismatch('invalid fixed tar ownership or timestamp');
+    }
+    requireZero(header, 265, 32, 'user name');
+    requireZero(header, 297, 32, 'group name');
+    requireZero(header, 329, 8, 'device major');
+    requireZero(header, 337, 8, 'device minor');
+    requireZero(header, 345, 155, 'prefix');
     const rawPath = readString(header, 0, 100);
     const typeFlag = String.fromCharCode(header[156]);
     const type = typeFlag === '0' || typeFlag === '\0' ? 'file' : typeFlag === '5' ? 'directory' : typeFlag === '2' ? 'symlink' : null;
@@ -96,9 +117,16 @@ export function parseTar(bytes) {
     const dataStart = offset + BLOCK;
     const dataEnd = dataStart + size;
     if (dataEnd > buffer.length) throw mismatch(`truncated tar entry: ${path}`);
-    entries.push({ path, type, mode: readOctal(header, 100, 8), data: buffer.subarray(dataStart, dataEnd), target: type === 'symlink' ? readString(header, 157, 100) : undefined });
+    const target = type === 'symlink' ? readString(header, 157, 100) : undefined;
+    if (type === 'symlink') validateSymlinkTarget(path, target);
+    entries.push({ path, type, mode: readOctal(header, 100, 8), data: buffer.subarray(dataStart, dataEnd), target });
     offset = dataEnd + padding(size);
   }
   if (offset + BLOCK * 2 !== buffer.length || !isZeroBlock(buffer.subarray(offset))) throw mismatch('invalid tar trailer');
+  for (const entry of entries) {
+    if (entry.type !== 'directory' && entries.some((other) => other.path.startsWith(`${entry.path}/`))) {
+      throw mismatch(`tar entry has children: ${entry.path}`);
+    }
+  }
   return entries;
 }
