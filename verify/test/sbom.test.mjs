@@ -77,3 +77,10 @@ test('rejects an SBOM that omits a component declared by its lockfile', async ()
     'web-extension': ['pkg:npm/example@1.0.0', 'pkg:npm/missing@2.0.0'], rust: [], 'native-bridge': [],
   }), /lockfile component/i);
 });
+
+test('derives npm lock components for production validation', async () => {
+  const { deriveLockComponents } = await import('../verify-sboms.mjs');
+  const directory = await fixture();
+  await writeFile(join(directory, 'web-extension-package-lock.json'), JSON.stringify({ packages: { 'node_modules/example': { version: '1.0.0' } } }));
+  assert.deepEqual(await deriveLockComponents(join(directory, 'web-extension-package-lock.json'), 'npm'), ['pkg:npm/example@1.0.0']);
+});

