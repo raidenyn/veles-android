@@ -1,0 +1,10 @@
+FROM node:26.8.1-bookworm-slim@sha256:367679cf9792759492a486e4aa4b421764d71a9546a6dae8aab81a99eb797b3e
+
+ENV TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+COPY verify/web-inner.sh /usr/local/bin/web-inner.sh
+RUN chmod +x /usr/local/bin/web-inner.sh \
+  && test "$(node --version)" = "v26.8.1" \
+  && test "$(npm --version)" = "11.19.0"
+
+ENTRYPOINT ["/usr/local/bin/web-inner.sh"]

@@ -12,7 +12,7 @@
         "format:check": "prettier --check .",
         "lint": "eslint .",
         "typecheck": "tsc --noEmit",
-        "test": "vitest run test/smoke.test.ts test/manifest-guard.test.ts",
+        "test": "vitest run test/smoke.test.ts test/manifest-guard.test.ts test/package-output.test.ts",
         "test:bundle": "vitest run test/bundle.test.ts",
         "build": "vite build",
         "package": "vite build && node scripts/package.mjs"
