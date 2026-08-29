@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -57,6 +58,17 @@ function runVerifier(bin, environment = {}) {
 
 const cleanGit = '#!/usr/bin/env bash\nexit 0\n';
 const successfulDocker = '#!/usr/bin/env bash\nexit 0\n';
+const validCandidateNpm = `#!/usr/bin/env bash
+set -euo pipefail
+OUT="$(dirname "$PWD")/build/web-extension"
+ZIP="veles-extension-0.1.0.zip"
+SIDECAR="$ZIP.sha256"
+mkdir -p "$OUT"
+printf 'candidate zip' > "$OUT/$ZIP"
+printf '%s  %s\\n' "$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)" "$ZIP" > "$OUT/$SIDECAR"
+printf '%s  %s\\n' "$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)" "$ZIP" > "$OUT/SHA256SUMS"
+printf '%s  %s\\n' "$(sha256sum "$OUT/$SIDECAR" | cut -d' ' -f1)" "$SIDECAR" >> "$OUT/SHA256SUMS"
+`;
 
 test('rejects an invalid candidate manifest', async () => {
   const { verifyWebArtifacts } = await import('../verify-web.mjs');
@@ -122,8 +134,8 @@ test('maps a failed git status check to exit 2', async () => {
   });
 });
 
-test('preserves exit 1 for a real candidate/reference artifact mismatch', async () => {
-  const fakeNpm = `#!/usr/bin/env bash
+test('preserves exit 1 for invalid candidate evidence before Docker starts', async () => {
+  const invalidCandidateNpm = `#!/usr/bin/env bash
 set -euo pipefail
 OUT="$(dirname "$PWD")/build/web-extension"
 ZIP="veles-extension-0.1.0.zip"
@@ -131,9 +143,51 @@ SIDECAR="$ZIP.sha256"
 mkdir -p "$OUT"
 printf 'candidate zip' > "$OUT/$ZIP"
 printf '%s  %s\\n' "$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)" "$ZIP" > "$OUT/$SIDECAR"
-printf '%s  %s\\n' "$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)" "$ZIP" > "$OUT/SHA256SUMS"
+printf '%s  %s\\n' "0000000000000000000000000000000000000000000000000000000000000000" "$ZIP" > "$OUT/SHA256SUMS"
 printf '%s  %s\\n' "$(sha256sum "$OUT/$SIDECAR" | cut -d' ' -f1)" "$SIDECAR" >> "$OUT/SHA256SUMS"
 `;
+  await withFakeTools({
+    git: cleanGit,
+    npm: invalidCandidateNpm,
+    docker: '#!/usr/bin/env bash\n[ "$2" = rm ] && exit 0\ntouch "$DOCKER_MARKER"\n',
+  }, async (bin) => {
+    const marker = join(bin, 'docker-started');
+    const result = runVerifier(bin, {
+      DOCKER_BIN: join(bin, 'docker'),
+      DOCKER_MARKER: marker,
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /candidate: checksum mismatch/);
+    assert.equal(existsSync(marker), false);
+  });
+});
+
+test('maps Node and npm pin drift from reference preparation to exit 2', async () => {
+  for (const pinFailure of ['Node version drift', 'npm version drift']) {
+    const fakeDocker = `#!/usr/bin/env bash
+if [ "$1" = run ] && [ "\${!#}" = prepare ]; then
+  echo "${pinFailure}" >&2
+  exit 2
+fi
+`;
+    await withFakeTools({ git: cleanGit, npm: validCandidateNpm, docker: fakeDocker }, async (bin) => {
+      const result = runVerifier(bin, { DOCKER_BIN: join(bin, 'docker') });
+      assert.equal(result.status, 2, pinFailure);
+      assert.match(result.stderr, /reference preparation failed/);
+    });
+  }
+});
+
+test('maps Docker build failure to exit 2', async () => {
+  const fakeDocker = '#!/usr/bin/env bash\n[ "$1" = build ] && exit 42\n';
+  await withFakeTools({ git: cleanGit, npm: validCandidateNpm, docker: fakeDocker }, async (bin) => {
+    const result = runVerifier(bin, { DOCKER_BIN: join(bin, 'docker') });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /failed to build web reference image/);
+  });
+});
+
+test('preserves exit 1 for a real candidate/reference artifact mismatch', async () => {
   const fakeDocker = `#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1" = run ] && [ "\${!#}" = package ]; then
@@ -152,7 +206,7 @@ if [ "$1" = run ] && [ "\${!#}" = package ]; then
   printf '%s  %s\\n' "$(sha256sum "$OUT/$SIDECAR" | cut -d' ' -f1)" "$SIDECAR" >> "$OUT/SHA256SUMS"
 fi
 `;
-  await withFakeTools({ git: cleanGit, npm: fakeNpm, docker: fakeDocker }, async (bin) => {
+  await withFakeTools({ git: cleanGit, npm: validCandidateNpm, docker: fakeDocker }, async (bin) => {
     const result = runVerifier(bin, { DOCKER_BIN: join(bin, 'docker') });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /byte mismatch: veles-extension-0\.1\.0\.zip/);

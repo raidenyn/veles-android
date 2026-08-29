@@ -42,7 +42,15 @@ npm test || fail "candidate tests failed"
 npm run build || fail "candidate build failed"
 npm run test:bundle || fail "candidate bundle test failed"
 npm run package || fail "candidate package failed"
-node "$SCRIPT_DIR/verify-web.mjs" --validate "$REPO_ROOT/build/web-extension" || fail "candidate artifact validation failed"
+if node "$SCRIPT_DIR/verify-web.mjs" --validate "$REPO_ROOT/build/web-extension"; then
+  :
+else
+  status=$?
+  if [ "$status" -eq 1 ]; then
+    exit 1
+  fi
+  fail "candidate artifact validation failed"
+fi
 
 "$DOCKER_BIN" build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile.web" "$REPO_ROOT" || fail "failed to build web reference image"
 "$DOCKER_BIN" volume create "$VOLUME" >/dev/null || fail "failed to create reference work volume"
