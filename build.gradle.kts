@@ -181,6 +181,7 @@ fun registerVerificationCargoTool(
     taskStem: String,
     crateName: String,
     binaryName: String,
+    versionArguments: List<String> = listOf("--version"),
 ): Pair<TaskProvider<Exec>, TaskProvider<Task>> {
     val version = pinnedVerificationToolVersion(crateName)
     val installRoot = verifyToolsDir.map { it.dir(crateName) }
@@ -215,7 +216,7 @@ fun registerVerificationCargoTool(
         inputs.file(binary.map { it.asFile })
         doLast {
             val output = providers.exec {
-                commandLine(binary.get().asFile, "--version")
+                commandLine(binary.get().asFile, *versionArguments.toTypedArray())
             }.standardOutput.asText.get().trim()
             val actualVersion = output.split(Regex("\\s+"))
                 .firstOrNull { it.matches(Regex("\\d+\\.\\d+\\.\\d+(-\\S+)?")) }
@@ -238,6 +239,7 @@ val (_, verifyCargoCyclonedx) = registerVerificationCargoTool(
     "CargoCyclonedx",
     "cargo-cyclonedx",
     "cargo-cyclonedx",
+    listOf("cyclonedx", "--version"),
 )
 val (_, verifyCargoDeny) = registerVerificationCargoTool("CargoDeny", "cargo-deny", "cargo-deny")
 

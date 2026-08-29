@@ -83,8 +83,27 @@ test('reports package, version, detected text, and policy path for rejected expr
   assert.match(result.diagnostic, /\.license-policy\.json/);
 });
 
-test('denies unknown, missing, and malformed expressions', () => {
-  for (const expression of ['Unknown-1.0', '', null, 'MIT OR', '(MIT']) {
-    assert.equal(evaluateNpmLicense(expression, policy).allowed, false, String(expression));
+test('diagnoses unknown, missing, and malformed expressions with review evidence', () => {
+  const rejectedExpressions = [
+    { expression: 'Unknown-1.0', evidence: { licenseText: 'Unknown license text' } },
+    { expression: '', evidence: { licensePath: 'node_modules/example/LICENSE' } },
+    { expression: null, evidence: { licenseText: 'Missing declared license' } },
+    { expression: 'MIT OR', evidence: { licenseText: 'Malformed SPDX expression' } },
+    { expression: '(MIT', evidence: { licensePath: 'node_modules/example/COPYING' } },
+  ];
+
+  for (const { expression, evidence } of rejectedExpressions) {
+    const result = evaluateNpmLicense(expression, {
+      ...policy,
+      diagnostic: {
+        package: '@example/rejected-license',
+        version: '4.5.6',
+        ...evidence,
+      },
+    });
+    assert.equal(result.allowed, false, String(expression));
+    assert.match(result.diagnostic, /@example\/rejected-license@4\.5\.6/);
+    assert.match(result.diagnostic, /Unknown license text|node_modules\/example\/(LICENSE|COPYING)|Missing declared license|Malformed SPDX expression/);
+    assert.match(result.diagnostic, /\.license-policy\.json/);
   }
 });
