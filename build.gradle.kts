@@ -793,6 +793,12 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
         // Tauri's DMG bundler checks specifically for CI=true before enabling
         // its headless --skip-jenkins path.
         environment("CI", "true")
+        // The target-runner wrappers set these to the verified, per-run cache.
+        // Forwarding them explicitly prevents Tauri from falling back to a
+        // mutable user cache while offline packaging is enforced.
+        listOf("TAURI_WIX_PATH", "TAURI_NSIS_PATH").forEach { key ->
+            System.getenv(key)?.takeIf(String::isNotBlank)?.let { environment(key, it) }
+        }
 
         val osName = System.getProperty("os.name")
         val targets = bridgeBundleTargetsFor(osName)

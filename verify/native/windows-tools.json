@@ -1,0 +1,14 @@
+{
+  "wix": {
+    "url": "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip",
+    "sha256": "6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31"
+  },
+  "nsis": {
+    "url": "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3/nsis-3.zip",
+    "sha256": "1bb9fc85ee5b220d3869325dbb9d191dfe6537070f641c30fbb275c97051fd0c"
+  },
+  "nsisTauriUtils": {
+    "url": "https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.1/nsis_tauri_utils.dll",
+    "sha256": "3697d11bdbe1e34daa26b1e89d84276d9ff28148906943d0fe888354c3b13620"
+  }
+}
