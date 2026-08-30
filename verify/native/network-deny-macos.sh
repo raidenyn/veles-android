@@ -15,42 +15,18 @@ xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
 ./gradlew bridgeBuild
 probe='https://github.com/'
 curl --fail --silent --show-error --output /dev/null "$probe"
-pf_was_enabled=0
-ruleset=$(mktemp)
-active_ruleset=$(mktemp)
-deny_rules=$(mktemp)
-anchor="com.veles.target-runner-offline.$$"
-snapshot_complete=0
+command -v sandbox-exec >/dev/null || { printf '%s\n' 'sandbox-exec is required' >&2; exit 2; }
+profile=$(mktemp)
 cleanup() {
-  local status=$?
-  local restore_failed=0
-  set +e
-  if [ "$snapshot_complete" -eq 1 ]; then
-    sudo pfctl -a "$anchor" -F all >/dev/null || restore_failed=1
-    sudo pfctl -f "$ruleset" >/dev/null || restore_failed=1
-    if [ "$pf_was_enabled" -eq 0 ]; then sudo pfctl -d >/dev/null || restore_failed=1; fi
-  fi
-  rm -f "$ruleset" "$active_ruleset" "$deny_rules"
-  if [ "$restore_failed" -ne 0 ] && [ "$status" -eq 0 ]; then status=1; fi
-  return "$status"
+  rm -f "$profile"
 }
 trap cleanup EXIT
 
-if sudo pfctl -s info | grep -Fq 'Status: Enabled'; then pf_was_enabled=1; fi
-sudo pfctl -sr > "$ruleset"
-snapshot_complete=1
-printf '%s\n' 'block drop out all' > "$deny_rules"
-{
-  cat "$ruleset"
-  printf 'anchor "%s"\n' "$anchor"
-} > "$active_ruleset"
-sudo pfctl -a "$anchor" -f "$deny_rules"
-sudo pfctl -f "$active_ruleset"
-if [ "$pf_was_enabled" -eq 0 ]; then sudo pfctl -E >/dev/null; fi
-sudo pfctl -a "$anchor" -sr | grep -F 'block drop out all' >/dev/null
-if curl --fail --silent --show-error --output /dev/null "$probe"; then
+printf '%s\n' '(version 1)' '(allow default)' '(deny network-outbound)' > "$profile"
+sandbox-exec -f "$profile" /usr/bin/true
+if sandbox-exec -f "$profile" curl --fail --silent --show-error --output /dev/null "$probe"; then
   printf '%s\n' 'network probe succeeded after outbound denial' >&2
   exit 1
 fi
 if [ "$#" -eq 0 ]; then set -- ./gradlew bridgePackage; fi
-CARGO_NET_OFFLINE=true "$@"
+sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true "$@"

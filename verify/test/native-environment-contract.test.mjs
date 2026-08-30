@@ -58,24 +58,24 @@ test('macOS target wrapper validates its exact runner and safely proves offline 
   for (const contract of [
     'macos-26', 'ImageVersion', 'RUNNER_ARCH', 'node --version', 'v26.8.1', 'npm --version', '11.19.0',
     'DEVELOPER_DIR=/Applications/Xcode_26.6.app', '17F113', 'macosx26.5', 'https://github.com/',
-    'curl --fail --silent --show-error', 'pfctl', 'CARGO_NET_OFFLINE=true', 'trap', 'bridgePackage',
+    'curl --fail --silent --show-error', 'sandbox-exec', 'CARGO_NET_OFFLINE=true', 'trap', 'bridgePackage',
   ]) assert.match(script, literal(contract));
   assert.match(script, /bridgeBuild/);
   assert.ok(script.indexOf('bridgeBuild') < script.indexOf('curl --fail'));
-  assert.ok(script.indexOf('curl --fail') < script.indexOf('pfctl'));
-  assert.ok(script.indexOf('pfctl') < script.lastIndexOf('curl --fail'));
+  assert.ok(script.indexOf('curl --fail') < script.indexOf('sandbox-exec'));
+  assert.ok(script.indexOf('sandbox-exec') < script.lastIndexOf('curl --fail'));
 });
 
-test('macOS target wrapper snapshots and restores the prior PF state and rules before denial', async () => {
+test('macOS target wrapper isolates only the package command tree without modifying PF', async () => {
   const script = await native('network-deny-macos.sh');
   for (const contract of [
-    'pf_was_enabled', 'pfctl -s info', 'Status: Enabled', 'ruleset=$(mktemp)',
-    'pfctl -sr > "$ruleset"', 'anchor=', 'pfctl -a "$anchor" -f',
-    'pfctl -f "$ruleset"', 'restore_failed=0', 'if [ "$pf_was_enabled" -eq 0 ]', 'pfctl -d',
+    'command -v sandbox-exec', 'profile=$(mktemp)', '(deny network-outbound)',
+    'trap cleanup EXIT', 'rm -f "$profile"', 'sandbox-exec -f "$profile" curl',
+    'sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true',
   ]) assert.match(script, literal(contract));
-  assert.ok(script.indexOf('pfctl -s info') < script.indexOf('pfctl -a "$anchor" -f'));
-  assert.ok(script.indexOf('pfctl -sr > "$ruleset"') < script.indexOf('pfctl -a "$anchor" -f'));
-  assert.ok(script.indexOf('pfctl -f "$ruleset"') > script.indexOf('cleanup()'));
+  assert.doesNotMatch(script, /pfctl/);
+  assert.ok(script.indexOf('curl --fail') < script.indexOf('sandbox-exec -f "$profile" curl'));
+  assert.ok(script.indexOf('sandbox-exec -f "$profile" curl') < script.indexOf('sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true'));
 });
 
 test('Gradle forwards only an isolated Tauri cache contract to native bundle builds', async () => {
