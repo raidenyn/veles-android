@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const native = (name) => readFile(join(ROOT, 'verify', 'native', name), 'utf8');
+const literal = (value) => new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
 test('pins the reviewed Windows Tauri tool inputs and required cache files', async () => {
   const manifest = JSON.parse(await native('windows-tools.json'));
@@ -45,7 +46,7 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
     "ImageOS -ne 'windows-2025'", "ImageVersion", "RUNNER_ARCH", "node --version", "v26.8.1",
     "npm --version", "11.19.0", 'https://github.com/', 'Invoke-WebRequest', 'New-NetFirewallRule',
     'Get-NetFirewallRule', 'CARGO_NET_OFFLINE', 'finally', 'Remove-NetFirewallRule', 'bridgePackage',
-  ]) assert.match(script, new RegExp(contract.replaceAll('.', '\\.')));
+  ]) assert.match(script, literal(contract));
   assert.match(script, /bridgeBuild/);
   assert.ok(script.indexOf('bridgeBuild') < script.indexOf('Invoke-WebRequest'));
   assert.ok(script.indexOf('Invoke-WebRequest') < script.indexOf('New-NetFirewallRule'));
@@ -58,11 +59,23 @@ test('macOS target wrapper validates its exact runner and safely proves offline 
     'macos-26', 'ImageVersion', 'RUNNER_ARCH', 'node --version', 'v26.8.1', 'npm --version', '11.19.0',
     'DEVELOPER_DIR=/Applications/Xcode_26.6.app', '17F113', 'macosx26.5', 'https://github.com/',
     'curl --fail --silent --show-error', 'pfctl', 'CARGO_NET_OFFLINE=true', 'trap', 'bridgePackage',
-  ]) assert.match(script, new RegExp(contract.replaceAll('.', '\\.')));
+  ]) assert.match(script, literal(contract));
   assert.match(script, /bridgeBuild/);
   assert.ok(script.indexOf('bridgeBuild') < script.indexOf('curl --fail'));
   assert.ok(script.indexOf('curl --fail') < script.indexOf('pfctl'));
   assert.ok(script.indexOf('pfctl') < script.lastIndexOf('curl --fail'));
+});
+
+test('macOS target wrapper snapshots and restores the prior PF state and rules before denial', async () => {
+  const script = await native('network-deny-macos.sh');
+  for (const contract of [
+    'pf_was_enabled', 'pfctl -s info', 'Status: Enabled', 'ruleset=$(mktemp)',
+    'pfctl -sr > "$ruleset"', 'anchor=', 'pfctl -a "$anchor" -f',
+    'pfctl -f "$ruleset"', 'restore_failed=0', 'if [ "$pf_was_enabled" -eq 0 ]', 'pfctl -d',
+  ]) assert.match(script, literal(contract));
+  assert.ok(script.indexOf('pfctl -s info') < script.indexOf('pfctl -a "$anchor" -f'));
+  assert.ok(script.indexOf('pfctl -sr > "$ruleset"') < script.indexOf('pfctl -a "$anchor" -f'));
+  assert.ok(script.indexOf('pfctl -f "$ruleset"') > script.indexOf('cleanup()'));
 });
 
 test('Gradle forwards only an isolated Tauri cache contract to native bundle builds', async () => {
