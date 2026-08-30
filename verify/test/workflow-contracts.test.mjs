@@ -12,9 +12,11 @@ function uploadPaths(source, name) {
   const uploads = [...source.matchAll(/actions\/upload-artifact@v7([\s\S]*?)(?=\n {6}-\s|$)/g)];
   assert.ok(uploads.length > 0, `${name} must upload an artifact`);
   return uploads.map(([, upload], index) => {
-    const match = upload.match(/path:\s*\|\n((?: {12}.+\n)+)\s+if-no-files-found:/);
-    assert.ok(match, `${name} upload ${index + 1} must declare explicit upload paths`);
-    return match[1].trim().split('\n').map((line) => line.trim());
+    const blockPath = upload.match(/path:[ \t]*\|[ \t]*\n((?: {12}.+\n)+)\s+if-no-files-found:/);
+    if (blockPath) return blockPath[1].trim().split('\n').map((line) => line.trim());
+    const scalarPath = upload.match(/path:[ \t]*([^\n]+)\n\s+if-no-files-found:/);
+    assert.ok(scalarPath, `${name} upload ${index + 1} must declare explicit upload paths`);
+    return [scalarPath[1].trim()];
   });
 }
 
@@ -26,6 +28,11 @@ function runCommands(source) {
   const lines = source.split('\n');
   const commands = [];
   for (let index = 0; index < lines.length; index += 1) {
+    const flowRun = lines[index].match(/^[ \t]*-\s*\{.*\brun\s*:\s*(?:'([^']*)'|"([^"]*)"|([^,}]*)).*\}[ \t]*$/);
+    if (flowRun) {
+      commands.push(flowRun[1] ?? flowRun[2] ?? flowRun[3]);
+      continue;
+    }
     const match = lines[index].match(/^([ \t]*)(?:-\s+)?run:\s*(.*)$/);
     if (!match) continue;
     const indent = match[1].length;
@@ -53,14 +60,15 @@ function assertReusableWorkflow(source, name) {
   assert.match(source, /workflow_call:/, `${name} must be reusable`);
   assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
   assert.match(source, /artifact-name:[\s\S]*?required:\s*true/, `${name} must require an artifact name`);
-  const permissions = [...source.matchAll(/^([ \t]*)permissions:[ \t]*(.*)$/gm)];
+  const permissions = [...source.matchAll(/^([ \t]*)(?:"permissions"|permissions):[ \t]*(.*)$/gm)];
   assert.equal(permissions.length, 1, `${name} must declare permissions exactly once without job overrides`);
   assert.equal(permissions[0][1], '', `${name} permissions must be declared at workflow scope`);
   assert.equal(permissions[0][2], '', `${name} permissions must use a block mapping`);
-  const workflowPermissions = source.match(/^permissions:[ \t]*\n((?: {2}.+\n)*)/m);
+  const workflowPermissions = source.match(/^(?:"permissions"|permissions):[ \t]*\n((?: {2}.+\n)*)/m);
   assert.deepEqual(workflowPermissions?.[1].trim().split('\n'), ['contents: read'], `${name} must use only read-only contents permission`);
   assert.match(source, /runs-on:\s*ubuntu-latest/, `${name} must run on Linux`);
   assert.doesNotMatch(source, /verify\/verify-all\.sh/, `${name} must invoke only its component verifier`);
+  assertNoSecretRunInterpolation(source, name);
   const uploads = [...source.matchAll(/actions\/upload-artifact@v7([\s\S]*?)(?=\n {6}-\s|$)/g)];
   assert.ok(uploads.length > 0, `${name} must upload an artifact`);
   for (const [, upload] of uploads) {
@@ -87,6 +95,10 @@ test('Android workflow builds and verifies the explicit release evidence tree', 
   assert.match(source, /rust\/scripts\/verify-apk-jni\.sh/, 'Android workflow must enforce the APK JNI allow-list');
   assert.match(source, /app\/build\/outputs\/apk\/release\//, 'Android workflow must upload the release APK evidence');
   assert.match(source, /app\/build\/outputs\/mapping\/release\/mapping\.txt/, 'Android workflow must upload the release mapping evidence');
+  assertExactUploadPaths(source, 'build-android.yml', [
+    'app/build/outputs/apk/release/',
+    'app/build/outputs/mapping/release/mapping.txt',
+  ]);
 });
 
 test('web extension workflow uses the exact Node reference and publishes only package files', async () => {
@@ -113,6 +125,7 @@ test('Rust workflow packages and reference-verifies rust-jni-wasm', async () => 
   assert.match(source, /default:\s*rust-jni-wasm/, 'Rust workflow must default to the stable artifact name');
   assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, 'Rust workflow must publish the requested artifact name');
   assert.match(source, /path:\s*build\/rust-package\//, 'Rust workflow must upload only its package tree');
+  assertExactUploadPaths(source, 'build-rust.yml', ['build/rust-package/']);
   assert.doesNotMatch(source, /secrets:/, 'Rust workflow must not accept signing secrets');
 });
 
@@ -175,10 +188,37 @@ jobs:
     permissions: write-all
 `, 'fixture'), /permissions exactly once/);
 
+  assert.throws(() => assertReusableWorkflow(`on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+      artifact-name:
+        required: true
+permissions:
+  contents: read
+jobs:
+  build:
+    "permissions": write-all
+`, 'fixture'), /permissions exactly once/);
+
+  assert.throws(() => assertReusableWorkflow(`on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+      artifact-name:
+        required: true
+"permissions": write-all
+jobs:
+  build:
+`, 'fixture'), /permissions must use a block mapping/);
+
   for (const run of [
     'run: echo "${{ secrets.KEY }}"',
     'run: |\n    echo "${{ secrets.KEY }}"',
     'run: >-\n    echo "${{ secrets.KEY }}"',
+    "{ run: 'echo \"${{ secrets.KEY }}\"' }",
   ]) {
     assert.throws(() => assertNoSecretRunInterpolation(`steps:\n  - ${run}`, 'fixture'), /must not interpolate secrets/);
   }
