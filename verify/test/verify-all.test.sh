@@ -45,6 +45,8 @@ rm "$root/calls"
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAKE_STATUS='?? untracked' "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 2 ]; fi
 [ ! -e "$root/calls" ]
 
+if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAKE_STATUS=' M verify/verify-all.sh' "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 2 ]; fi
+
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAKE_HEAD=ffffffffffffffffffffffffffffffffffffffff "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 2 ]; fi
 
 rm -f "$root/calls"
@@ -55,3 +57,5 @@ rm -f "$root/calls"
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAIL_COMPONENT=verify-rust FAIL_STATUS=1 "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 1 ]; fi
 
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" "$scripts/verify-all.sh" only-three args here; then exit 1; else [ $? -eq 2 ]; fi
+
+! grep -Eq 'aggregateChecksums|parseNative|SHA256SUMS|node ' "$scripts/verify-all.sh"

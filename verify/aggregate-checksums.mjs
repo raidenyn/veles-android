@@ -95,24 +95,24 @@ async function nativeRecords(root, platform) {
   const metadata = parseNativeMetadata(metadataText);
   const product = await files(join(root, 'product'));
   exact(product, [...manifest.checksums.keys()], `native ${platform} product`);
+  const packagePaths = product.filter((path) => !path.endsWith('.sha256'));
+  if (packagePaths.length !== 1 || product.length !== 2 || product[1] !== `${packagePaths[0]}.sha256`) {
+    throw mismatch(`native ${platform} product must contain one package and sidecar`);
+  }
   const view = await viewEntries(join(root, 'view'));
   const metadataByPath = new Map(metadata.map((entry) => [entry.path, entry]));
   const different = view.find((entry) => {
     const expected = metadataByPath.get(entry.path);
     return !expected || entry.type !== expected.type || entry.mode !== expected.mode || entry.sha256 !== expected.sha256 || entry.target !== expected.target;
   });
-  if (view.length !== metadata.length || different) {
+  if (view.length === 0 || metadata.length === 0 || view.length !== metadata.length || different) {
     throw mismatch(`native ${platform} view does not match metadata${different ? `: ${different.path}` : ''}`);
   }
-  const metadataFiles = metadata.filter((entry) => entry.type === 'file');
   const output = await recordsFromManifest(
     join(root, 'product'),
-    new Map([...manifest.checksums].filter(([path]) => path !== 'SHA256SUMS')),
+    manifest.checksums,
     `native-bridge/${platform}/product/`,
   );
-  for (const entry of metadataFiles) {
-    output.push([`native-bridge/${platform}/view/${entry.path}`, entry.sha256]);
-  }
   output.push([`native-bridge/${platform}/${metadataName}`, sha256(metadataText)]);
   const allowed = ['product', 'view', manifestName, metadataName];
   const topLevel = await readdir(root);
@@ -123,8 +123,10 @@ async function nativeRecords(root, platform) {
 }
 
 export async function aggregateChecksums(root, resolvedCommit) {
-  if (!/^[0-9a-f]{40}$/.test(resolvedCommit ?? '')) throw error('invalid resolved commit');
   const verification = join(root, 'build', 'verification');
+  const output = join(verification, 'SHA256SUMS.toolchains');
+  await rm(output, { force: true });
+  if (!/^[0-9a-f]{40}$/.test(resolvedCommit ?? '')) throw error('invalid resolved commit');
   const android = join(verification, 'android');
   exact(await files(android), ['app-release-unsigned.apk'], 'android verification');
   const androidBytes = await readFile(join(android, 'app-release-unsigned.apk'));
@@ -156,8 +158,6 @@ export async function aggregateChecksums(root, resolvedCommit) {
     if (records[index - 1][0] === records[index][0]) throw mismatch(`duplicate aggregate path: ${records[index][0]}`);
   }
   await mkdir(verification, { recursive: true });
-  const output = join(verification, 'SHA256SUMS.toolchains');
-  await rm(output, { force: true });
   await writeFile(output, `${records.map(([path, digest]) => `${digest}  ${path}`).join('\n')}\n`);
 }
 

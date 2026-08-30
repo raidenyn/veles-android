@@ -13,6 +13,7 @@ async function withTree(files, run) {
     for (const [path, content] of Object.entries(files)) {
       await mkdir(join(root, path, '..'), { recursive: true, mode: 0o755 });
       if (typeof content === 'object' && content.link) await symlink(content.link, join(root, path));
+      else if (typeof content === 'object' && content.directory) await mkdir(join(root, path), { recursive: true, mode: 0o755 });
       else await writeFile(join(root, path), content, { mode: 0o644 });
     }
     await run(root);
@@ -54,6 +55,7 @@ const requiredFiles = {
   'build/rust-package/wasm/veles_crypto_bg.wasm': 'wasm',
   'build/verification/native-bridge/windows/product/veles-native.zip': 'windows-package',
   'build/verification/native-bridge/windows/product/veles-native.zip.sha256': 'windows-sidecar',
+  'build/verification/native-bridge/windows/view': { directory: true },
   'build/verification/native-bridge/windows/view/host.exe': 'windows-host',
   'build/verification/native-bridge/windows/METADATA.native-bridge.jsonl': nativeMetadata.windows,
   'build/verification/native-bridge/macos/product/veles-native.tar.gz': 'mac-package',
@@ -92,14 +94,16 @@ test('aggregates exactly the verified artifact namespaces in byte order', async 
       'rust/wasm/veles_crypto_bg.wasm': 'wasm',
       'native-bridge/windows/product/veles-native.zip': 'windows-package',
       'native-bridge/windows/product/veles-native.zip.sha256': 'windows-sidecar',
-      'native-bridge/windows/view/host.exe': 'windows-host',
       'native-bridge/windows/METADATA.native-bridge.jsonl': nativeMetadata.windows,
       'native-bridge/macos/product/veles-native.tar.gz': 'mac-package',
       'native-bridge/macos/product/veles-native.tar.gz.sha256': 'mac-sidecar',
-      'native-bridge/macos/view/Veles.app/Contents/MacOS/host': 'mac-host',
       'native-bridge/macos/METADATA.native-bridge.jsonl': nativeMetadata.macos,
     });
     assert.equal(actual, expected);
+    await writeFile(join(root, 'build/verification/native-bridge/windows/product/SHA256SUMS'), 'not a product');
+    await writeFile(join(root, 'build/verification/native-bridge/windows/SHA256SUMS.native-bridge'), `# ImageOS=Windows\n# ImageVersion=2025\n# RUNNER_ARCH=X64\n${manifest({ 'SHA256SUMS': 'not a product', 'veles-native.zip': 'windows-package', 'veles-native.zip.sha256': 'windows-sidecar' })}`);
+    await assert.rejects(runAggregate(root), (error) => error.exitCode === 1);
+    await assert.rejects(readFile(join(root, 'build/verification/SHA256SUMS.toolchains')));
   });
 });
 
@@ -109,6 +113,13 @@ test('rejects missing namespaces, duplicate names, and excluded evidence', async
     ['signed APK', 1, (files) => { files['build/verification/android/app-release.apk'] = 'signed'; }],
     ['mapping', 1, (files) => { files['build/verification/android/mapping.txt'] = 'mapping'; }],
     ['transport', 1, (files) => { files['build/verification/native-bridge/windows/run.tar'] = 'transport'; }],
+    ['identity', 1, (files) => { files['build/verification/native-bridge/windows/SOURCE-COMMIT'] = 'commit'; }],
+    ['report', 1, (files) => { files['build/verification/native-bridge/windows/REPORT.txt'] = 'report'; }],
+    ['nested evidence', 1, (files) => { files['build/verification/native-bridge/windows/view/nested/report.txt'] = 'report'; }],
+    ['empty view and metadata', 1, (files) => {
+      delete files['build/verification/native-bridge/windows/view/host.exe'];
+      files['build/verification/native-bridge/windows/METADATA.native-bridge.jsonl'] = '\n';
+    }],
     ['duplicate native manifest name', 1, (files) => {
       files['build/verification/native-bridge/windows/SHA256SUMS.native-bridge'] = `# ImageOS=Windows\n# ImageVersion=2025\n# RUNNER_ARCH=X64\n${digest('windows-package')}  veles-native.zip\n${digest('windows-package')}  veles-native.zip\n`;
     }],

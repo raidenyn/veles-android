@@ -33,8 +33,9 @@ run_component() {
     printf '%s\n' "$name" >> "$summary"
     printf 'PASS %s\n' "$name"
     return
+  else
+    local status=$?
   fi
-  local status=$?
   [ "$status" -eq 1 ] && exit 1
   exit 2
 }
