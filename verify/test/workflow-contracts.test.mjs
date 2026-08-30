@@ -8,15 +8,101 @@ async function workflow(name) {
   return readFile(new URL(`.github/workflows/${name}`, root), 'utf8');
 }
 
+function mappingEntry(line) {
+  const match = line.match(/^([ \t]*)(?:-\s+)?(?:"([^"]+)"|'([^']+)'|([A-Za-z][A-Za-z0-9_-]*))\s*:\s*(.*)$/);
+  if (!match) return null;
+  return { indent: match[1].length, key: match[2] ?? match[3] ?? match[4], value: match[5] };
+}
+
+function flowValues(line, wantedKey) {
+  const values = [];
+  for (let start = line.indexOf('{'); start !== -1; start = line.indexOf('{', start + 1)) {
+    let index = start + 1;
+    let depth = 1;
+    while (index < line.length && depth > 0) {
+      while (/\s|,/.test(line[index] ?? '')) index += 1;
+      let key = '';
+      if (line[index] === '"' || line[index] === "'") {
+        const quote = line[index++];
+        const end = line.indexOf(quote, index);
+        if (end === -1) break;
+        key = line.slice(index, end);
+        index = end + 1;
+      } else {
+        const keyMatch = line.slice(index).match(/^[A-Za-z][A-Za-z0-9_-]*/);
+        if (!keyMatch) break;
+        key = keyMatch[0];
+        index += key.length;
+      }
+      while (/\s/.test(line[index] ?? '')) index += 1;
+      if (line[index] !== ':') break;
+      index += 1;
+      while (/\s/.test(line[index] ?? '')) index += 1;
+      const valueStart = index;
+      let quote = null;
+      for (; index < line.length; index += 1) {
+        const character = line[index];
+        if (quote) {
+          if (character === quote) quote = null;
+        } else if (character === '"' || character === "'") {
+          quote = character;
+        } else if (character === '{') {
+          depth += 1;
+        } else if (character === '}') {
+          depth -= 1;
+          if (depth === 0) break;
+        } else if (character === ',' && depth === 1) {
+          break;
+        }
+      }
+      if (key === wantedKey) values.push(line.slice(valueStart, index).trim());
+      if (line[index] === ',') index += 1;
+    }
+  }
+  return values;
+}
+
+function steps(source) {
+  const result = [];
+  let step = [];
+  for (const line of source.split('\n')) {
+    if (/^[ \t]*-\s/.test(line) && step.length > 0) {
+      result.push(step);
+      step = [];
+    }
+    step.push(line);
+  }
+  if (step.length > 0) result.push(step);
+  return result;
+}
+
+function isUploadArtifact(value) {
+  return /^['"]?actions\/upload-artifact@/.test(value?.trim() ?? '');
+}
+
 function uploadPaths(source, name) {
-  const uploads = [...source.matchAll(/actions\/upload-artifact@v7([\s\S]*?)(?=\n {6}-\s|$)/g)];
+  const uploads = steps(source).filter((step) => {
+    const uses = step.flatMap((line) => {
+      const entry = mappingEntry(line);
+      return [entry?.key === 'uses' ? entry.value : null, ...flowValues(line, 'uses')];
+    });
+    return uses.some(isUploadArtifact);
+  });
   assert.ok(uploads.length > 0, `${name} must upload an artifact`);
-  return uploads.map(([, upload], index) => {
-    const blockPath = upload.match(/path:[ \t]*\|[ \t]*\n((?: {12}.+\n)+)\s+if-no-files-found:/);
-    if (blockPath) return blockPath[1].trim().split('\n').map((line) => line.trim());
-    const scalarPath = upload.match(/path:[ \t]*([^\n]+)\n\s+if-no-files-found:/);
-    assert.ok(scalarPath, `${name} upload ${index + 1} must declare explicit upload paths`);
-    return [scalarPath[1].trim()];
+  return uploads.map((step, index) => {
+    const pathIndex = step.findIndex((line) => mappingEntry(line)?.key === 'path');
+    assert.notEqual(pathIndex, -1, `${name} upload ${index + 1} must declare explicit upload paths`);
+    const path = mappingEntry(step[pathIndex]);
+    if (path.value.startsWith('|')) {
+      const paths = [];
+      for (let lineIndex = pathIndex + 1; lineIndex < step.length; lineIndex += 1) {
+        const line = step[lineIndex];
+        if (line.trim() && line.match(/^\s*/)[0].length <= path.indent) break;
+        if (line.trim()) paths.push(line.trim());
+      }
+      return paths;
+    }
+    return [path.value.trim()];
   });
 }
 
@@ -28,19 +114,18 @@ function runCommands(source) {
   const lines = source.split('\n');
   const commands = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const flowRun = lines[index].match(/^[ \t]*-\s*\{.*\brun\s*:\s*(?:'([^']*)'|"([^"]*)"|([^,}]*)).*\}[ \t]*$/);
-    if (flowRun) {
-      commands.push(flowRun[1] ?? flowRun[2] ?? flowRun[3]);
+    const flowRuns = flowValues(lines[index], 'run');
+    if (flowRuns.length > 0) {
+      commands.push(...flowRuns);
       continue;
     }
-    const match = lines[index].match(/^([ \t]*)(?:-\s+)?run:\s*(.*)$/);
-    if (!match) continue;
-    const indent = match[1].length;
-    let command = match[2];
+    const entry = mappingEntry(lines[index]);
+    if (entry?.key !== 'run') continue;
+    let command = entry.value;
     if (/^[>|]/.test(command)) {
       while (index + 1 < lines.length) {
         const next = lines[index + 1];
-        if (next.trim() && next.match(/^\s*/)[0].length <= indent) break;
+        if (next.trim() && next.match(/^\s*/)[0].length <= entry.indent) break;
         command += `\n${next}`;
         index += 1;
       }
@@ -60,20 +145,33 @@ function assertReusableWorkflow(source, name) {
   assert.match(source, /workflow_call:/, `${name} must be reusable`);
   assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
   assert.match(source, /artifact-name:[\s\S]*?required:\s*true/, `${name} must require an artifact name`);
-  const permissions = [...source.matchAll(/^([ \t]*)(?:"permissions"|permissions):[ \t]*(.*)$/gm)];
+  const lines = source.split('\n');
+  const permissions = lines.flatMap((line, index) => {
+    const entry = mappingEntry(line);
+    return entry?.key === 'permissions' ? [{ ...entry, index }] : [];
+  });
   assert.equal(permissions.length, 1, `${name} must declare permissions exactly once without job overrides`);
-  assert.equal(permissions[0][1], '', `${name} permissions must be declared at workflow scope`);
-  assert.equal(permissions[0][2], '', `${name} permissions must use a block mapping`);
-  const workflowPermissions = source.match(/^(?:"permissions"|permissions):[ \t]*\n((?: {2}.+\n)*)/m);
-  assert.deepEqual(workflowPermissions?.[1].trim().split('\n'), ['contents: read'], `${name} must use only read-only contents permission`);
+  assert.equal(permissions[0].indent, 0, `${name} permissions must be declared at workflow scope`);
+  assert.equal(permissions[0].value, '', `${name} permissions must use a block mapping`);
+  const permissionValues = [];
+  for (let index = permissions[0].index + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && line.match(/^\s*/)[0].length <= permissions[0].indent) break;
+    const entry = mappingEntry(line);
+    if (entry && entry.indent > permissions[0].indent) permissionValues.push(`${entry.key}: ${entry.value}`.trim());
+  }
+  assert.deepEqual(permissionValues, ['contents: read'], `${name} must use only read-only contents permission`);
   assert.match(source, /runs-on:\s*ubuntu-latest/, `${name} must run on Linux`);
   assert.doesNotMatch(source, /verify\/verify-all\.sh/, `${name} must invoke only its component verifier`);
   assertNoSecretRunInterpolation(source, name);
-  const uploads = [...source.matchAll(/actions\/upload-artifact@v7([\s\S]*?)(?=\n {6}-\s|$)/g)];
+  const uploads = steps(source).filter((step) => step.some((line) => {
+    const entry = mappingEntry(line);
+    return (entry?.key === 'uses' && isUploadArtifact(entry.value)) || flowValues(line, 'uses').some(isUploadArtifact);
+  }));
   assert.ok(uploads.length > 0, `${name} must upload an artifact`);
-  for (const [, upload] of uploads) {
-    assert.match(upload, /path:/, `${name} must give every artifact upload an explicit path`);
-    assert.match(upload, /retention-days:\s*\d+/, `${name} must retain every artifact upload`);
+  for (const upload of uploads) {
+    assert.ok(upload.some((line) => mappingEntry(line)?.key === 'path'), `${name} must give every artifact upload an explicit path`);
+    assert.ok(upload.some((line) => mappingEntry(line)?.key === 'retention-days' && /^\d+$/.test(mappingEntry(line).value)), `${name} must retain every artifact upload`);
   }
 }
 
@@ -158,6 +256,8 @@ test('workflow contract helpers reject elevated permissions, extra uploads, and 
           if-no-files-found: error
           retention-days: 14`;
   assert.throws(() => assertExactUploadPaths(`${upload}\n${upload.replace('allowed.txt', 'unexpected.txt')}`, 'fixture', ['allowed.txt']), /exactly one upload/);
+  assert.throws(() => assertExactUploadPaths(`${upload}\n${upload.replace('@v7', '@v6').replace('allowed.txt', 'unexpected.txt')}`, 'fixture', ['allowed.txt']), /exactly one upload/);
+  assert.throws(() => assertExactUploadPaths(`${upload}\n${upload.replace('actions/upload-artifact@v7', "'actions/upload-artifact@feature-ref'").replace('allowed.txt', 'unexpected.txt')}`, 'fixture', ['allowed.txt']), /exactly one upload/);
 
   assert.throws(() => assertReusableWorkflow(`on:
   workflow_call:
@@ -172,6 +272,20 @@ jobs:
   build:
     permissions:
       contents: write
+`, 'fixture'), /permissions exactly once/);
+
+  assert.throws(() => assertReusableWorkflow(`on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+      artifact-name:
+        required: true
+'permissions':
+  contents: read
+jobs:
+  build:
+    'permissions': write-all
 `, 'fixture'), /permissions exactly once/);
 
   assert.throws(() => assertReusableWorkflow(`on:
@@ -219,6 +333,8 @@ jobs:
     'run: |\n    echo "${{ secrets.KEY }}"',
     'run: >-\n    echo "${{ secrets.KEY }}"',
     "{ run: 'echo \"${{ secrets.KEY }}\"' }",
+    "{ 'run': 'echo \"${{ secrets.KEY }}\"' }",
+    '{ "run": "echo ${{ secrets.KEY }}" }',
   ]) {
     assert.throws(() => assertNoSecretRunInterpolation(`steps:\n  - ${run}`, 'fixture'), /must not interpolate secrets/);
   }
