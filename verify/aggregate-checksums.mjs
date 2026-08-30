@@ -57,6 +57,18 @@ function exact(actual, expected, name) {
   }
 }
 
+function excludedNativeViewPath(path) {
+  return path.split('/').some((name) => (
+    name === 'SOURCE-COMMIT'
+    || name === 'IDENTITY'
+    || name === 'SHA256SUMS.native-bridge'
+    || name === 'SHA256SUMS.toolchains'
+    || name === 'METADATA.native-bridge.jsonl'
+    || /^REPORT(?:\..*)?$/i.test(name)
+    || /\.tar(?:\.gz)?$/i.test(name)
+  ));
+}
+
 async function readManifest(root, name, native = false) {
   let text;
   try {
@@ -108,11 +120,16 @@ async function nativeRecords(root, platform) {
   if (view.length === 0 || metadata.length === 0 || view.length !== metadata.length || different) {
     throw mismatch(`native ${platform} view does not match metadata${different ? `: ${different.path}` : ''}`);
   }
+  const excluded = view.find((entry) => excludedNativeViewPath(entry.path));
+  if (excluded) throw mismatch(`native ${platform} view contains excluded evidence: ${excluded.path}`);
   const output = await recordsFromManifest(
     join(root, 'product'),
     manifest.checksums,
     `native-bridge/${platform}/product/`,
   );
+  for (const entry of view) {
+    if (entry.type === 'file') output.push([`native-bridge/${platform}/view/${entry.path}`, entry.sha256]);
+  }
   output.push([`native-bridge/${platform}/${metadataName}`, sha256(metadataText)]);
   const allowed = ['product', 'view', manifestName, metadataName];
   const topLevel = await readdir(root);

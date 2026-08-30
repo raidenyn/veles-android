@@ -6,6 +6,11 @@ fail() {
   exit 2
 }
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(dirname "$script_dir")
+aggregate="$repo_root/build/verification/SHA256SUMS.toolchains"
+rm -f "$aggregate" || fail "cannot remove stale aggregate"
+
 [ "$#" -eq 4 ] || fail "usage: $0 <apk> <git-ref> <native-run-a-dir> <native-run-b-dir>"
 apk=$1
 ref=$2
@@ -15,8 +20,6 @@ run_b=$4
 [ -d "$run_a" ] || fail "native run directory not found: $run_a"
 [ -d "$run_b" ] || fail "native run directory not found: $run_b"
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(dirname "$script_dir")
 cd "$repo_root"
 resolved=$(git rev-parse --verify "${ref}^{commit}") || fail "cannot resolve git ref: $ref"
 head=$(git rev-parse HEAD) || fail "cannot resolve HEAD"

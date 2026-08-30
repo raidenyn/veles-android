@@ -8,6 +8,11 @@ bin="$root/bin"
 mkdir -p "$scripts" "$bin"
 touch "$root/apk.git"
 mkdir "$root/native-a" "$root/native-b"
+stale="$root/build/verification/SHA256SUMS.toolchains"
+create_stale() {
+  mkdir -p "$(dirname "$stale")"
+  : > "$stale"
+}
 cp "$(cd "$(dirname "$0")/.." && pwd)/verify-all.sh" "$scripts/verify-all.sh"
 chmod +x "$scripts/verify-all.sh"
 
@@ -42,12 +47,18 @@ expected=$(printf 'verify|%s 0123456789abcdef0123456789abcdef01234567\nverify-we
 [ "$(cat "$root/calls")" = "$expected" ]
 
 rm "$root/calls"
+create_stale
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAKE_STATUS='?? untracked' "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 2 ]; fi
 [ ! -e "$root/calls" ]
+[ ! -e "$stale" ]
 
+create_stale
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAKE_STATUS=' M verify/verify-all.sh' "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 2 ]; fi
+[ ! -e "$stale" ]
 
+create_stale
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAKE_HEAD=ffffffffffffffffffffffffffffffffffffffff "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 2 ]; fi
+[ ! -e "$stale" ]
 
 rm -f "$root/calls"
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAIL_COMPONENT=verify-rust FAIL_STATUS=9 "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 2 ]; fi
@@ -56,6 +67,14 @@ if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAIL_COMPONENT=verify-rust FAIL_STAT
 rm -f "$root/calls"
 if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAIL_COMPONENT=verify-rust FAIL_STATUS=1 "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 1 ]; fi
 
-if PATH="$bin:$PATH" CALL_LOG="$root/calls" "$scripts/verify-all.sh" only-three args here; then exit 1; else [ $? -eq 2 ]; fi
+for component in verify verify-web verify-rust verify-native verify-supply-chain; do
+  create_stale
+  if PATH="$bin:$PATH" CALL_LOG="$root/calls" FAIL_COMPONENT="$component" FAIL_STATUS=1 "$scripts/verify-all.sh" "$root/apk.git" main "$root/native-a" "$root/native-b"; then exit 1; else [ $? -eq 1 ]; fi
+  [ ! -e "$stale" ]
+done
 
-! grep -Eq 'aggregateChecksums|parseNative|SHA256SUMS|node ' "$scripts/verify-all.sh"
+create_stale
+if PATH="$bin:$PATH" CALL_LOG="$root/calls" "$scripts/verify-all.sh" only-three args here; then exit 1; else [ $? -eq 2 ]; fi
+[ ! -e "$stale" ]
+
+! grep -Eq 'aggregateChecksums|parseNative|node ' "$scripts/verify-all.sh"

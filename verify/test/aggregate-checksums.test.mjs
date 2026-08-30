@@ -94,9 +94,11 @@ test('aggregates exactly the verified artifact namespaces in byte order', async 
       'rust/wasm/veles_crypto_bg.wasm': 'wasm',
       'native-bridge/windows/product/veles-native.zip': 'windows-package',
       'native-bridge/windows/product/veles-native.zip.sha256': 'windows-sidecar',
+      'native-bridge/windows/view/host.exe': 'windows-host',
       'native-bridge/windows/METADATA.native-bridge.jsonl': nativeMetadata.windows,
       'native-bridge/macos/product/veles-native.tar.gz': 'mac-package',
       'native-bridge/macos/product/veles-native.tar.gz.sha256': 'mac-sidecar',
+      'native-bridge/macos/view/Veles.app/Contents/MacOS/host': 'mac-host',
       'native-bridge/macos/METADATA.native-bridge.jsonl': nativeMetadata.macos,
     });
     assert.equal(actual, expected);
@@ -115,7 +117,22 @@ test('rejects missing namespaces, duplicate names, and excluded evidence', async
     ['transport', 1, (files) => { files['build/verification/native-bridge/windows/run.tar'] = 'transport'; }],
     ['identity', 1, (files) => { files['build/verification/native-bridge/windows/SOURCE-COMMIT'] = 'commit'; }],
     ['report', 1, (files) => { files['build/verification/native-bridge/windows/REPORT.txt'] = 'report'; }],
-    ['nested evidence', 1, (files) => { files['build/verification/native-bridge/windows/view/nested/report.txt'] = 'report'; }],
+    ['nested matching report evidence', 1, (files) => {
+      files['build/verification/native-bridge/windows/view/nested/report.txt'] = 'report';
+      files['build/verification/native-bridge/windows/METADATA.native-bridge.jsonl'] = [
+        { path: 'host.exe', type: 'file', mode: '0644', sha256: digest('windows-host') },
+        { path: 'nested', type: 'directory', mode: '0755' },
+        { path: 'nested/report.txt', type: 'file', mode: '0644', sha256: digest('report') },
+      ].map(JSON.stringify).join('\n') + '\n';
+    }],
+    ['nested matching identity evidence', 1, (files) => {
+      files['build/verification/native-bridge/windows/view/nested/SOURCE-COMMIT'] = 'commit';
+      files['build/verification/native-bridge/windows/METADATA.native-bridge.jsonl'] = [
+        { path: 'host.exe', type: 'file', mode: '0644', sha256: digest('windows-host') },
+        { path: 'nested', type: 'directory', mode: '0755' },
+        { path: 'nested/SOURCE-COMMIT', type: 'file', mode: '0644', sha256: digest('commit') },
+      ].map(JSON.stringify).join('\n') + '\n';
+    }],
     ['empty view and metadata', 1, (files) => {
       delete files['build/verification/native-bridge/windows/view/host.exe'];
       files['build/verification/native-bridge/windows/METADATA.native-bridge.jsonl'] = '\n';
