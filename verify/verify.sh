@@ -55,7 +55,9 @@ docker build -t veles-verify -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT" || {
   exit 2
 }
 
-DOCKER_ARGS=(--rm -v "$APK":/apk/released.apk:ro)
+OUTPUT_DIR="$REPO_ROOT/build/verification/android"
+mkdir -p "$OUTPUT_DIR"
+DOCKER_ARGS=(--rm -v "$APK":/apk/released.apk:ro -v "$OUTPUT_DIR":/out)
 if [ -n "${VELES_REPO_URL:-}" ] && [ -d "$VELES_REPO_URL" ]; then
   DOCKER_ARGS+=(-v "$(realpath "$VELES_REPO_URL")":/host-repo:ro -e VELES_REPO_URL=/host-repo)
 elif [ -n "${VELES_REPO_URL:-}" ]; then

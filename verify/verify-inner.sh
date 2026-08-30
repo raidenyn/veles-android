@@ -33,6 +33,7 @@ fi
 
 if [ -d /out ]; then
   cp "$REBUILT" /out/
+  /build/src/rust/scripts/verify-apk-jni.sh /out/app-release-unsigned.apk
   echo "==> Copied rebuilt APK to /out"
 fi
 
