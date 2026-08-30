@@ -1,9 +1,9 @@
-$ErrorActionPreference = 'Stop'
-
 param(
     [Parameter(Mandatory = $true)]
     [string]$TauriCachePath
 )
+
+$ErrorActionPreference = 'Stop'
 
 $requiredFiles = @(
     'WixTools314/candle.exe', 'WixTools314/candle.exe.config', 'WixTools314/darice.cub',

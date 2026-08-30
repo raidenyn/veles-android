@@ -21,7 +21,7 @@ on:
       rust-artifact-name:
         required: true
         type: string
-        default: verified-rust
+        default: rust-jni-wasm
       native-windows-artifact-name:
         required: true
         type: string
@@ -41,6 +41,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit-sha }}
+      - name: Validate verified artifact names
+        env:
+          ANDROID_ARTIFACT_NAME: ${{ inputs.android-artifact-name }}
+          WEB_EXTENSION_ARTIFACT_NAME: ${{ inputs.web-extension-artifact-name }}
+          RUST_ARTIFACT_NAME: ${{ inputs.rust-artifact-name }}
+          NATIVE_WINDOWS_ARTIFACT_NAME: ${{ inputs.native-windows-artifact-name }}
+          NATIVE_MACOS_ARTIFACT_NAME: ${{ inputs.native-macos-artifact-name }}
+        run: verify/validate-verified-artifact-names.sh "$ANDROID_ARTIFACT_NAME" "$WEB_EXTENSION_ARTIFACT_NAME" "$RUST_ARTIFACT_NAME" "$NATIVE_WINDOWS_ARTIFACT_NAME" "$NATIVE_MACOS_ARTIFACT_NAME"
       - uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.android-artifact-name }}

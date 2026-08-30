@@ -1,10 +1,10 @@
-$ErrorActionPreference = 'Stop'
-
 param(
     [Parameter(Mandatory = $true)] [string]$TauriCachePath,
     [string[]]$AcquireCommand = @('.\gradlew.bat', 'bridgeBuild'),
     [string[]]$PackageCommand = @('.\gradlew.bat', 'bridgePackage')
 )
+
+$ErrorActionPreference = 'Stop'
 
 foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
     if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required" }

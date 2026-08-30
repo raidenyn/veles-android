@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const root = new URL('../..', import.meta.url);
+const repository = fileURLToPath(root);
 
 async function workflow(name) {
   return readFile(new URL(`.github/workflows/${name}`, root), 'utf8');
@@ -191,12 +194,8 @@ test('Android workflow builds and verifies the explicit release evidence tree', 
   assert.match(source, /\.\/gradlew assembleRelease/, 'Android workflow must build a release APK');
   assert.match(source, /verify\/verify\.sh[\s\S]*?inputs\.commit-sha/, 'Android workflow must run Docker APK verification for the requested commit');
   assert.match(source, /rust\/scripts\/verify-apk-jni\.sh/, 'Android workflow must enforce the APK JNI allow-list');
-  assert.match(source, /app\/build\/outputs\/apk\/release\//, 'Android workflow must upload the release APK evidence');
-  assert.match(source, /app\/build\/outputs\/mapping\/release\/mapping\.txt/, 'Android workflow must upload the release mapping evidence');
-  assertExactUploadPaths(source, 'build-android.yml', [
-    'app/build/outputs/apk/release/',
-    'app/build/outputs/mapping/release/mapping.txt',
-  ]);
+  assert.match(source, /build\/verification\/android\/app-release-unsigned\.apk/, 'Android workflow must export the canonical unsigned APK');
+  assertExactUploadPaths(source, 'build-android.yml', ['build/verification/android/app-release-unsigned.apk']);
 });
 
 test('web extension workflow uses the exact Node reference and publishes only package files', async () => {
@@ -284,6 +283,10 @@ test('Windows native workflow produces a verified comparison from two offline tr
   assertNativeWorkflow(source, 'build-native-windows.yml', 'windows-2025', 'verify/native/network-deny-windows.ps1');
   assert.match(source, /node-version:\s*['"]26\.8\.1['"]/, 'Windows workflow must pin Node 26.8.1');
   assert.match(source, /RUNNER_ARCH\s*-ne\s*'X64'/, 'Windows workflow must require an x64 runner');
+  for (const [start, end] of [['  run-a:', '  run-b:'], ['  run-b:', '  compare:']]) {
+    const slot = source.slice(source.indexOf(start), source.indexOf(end));
+    assert.match(slot, /pwsh -NoProfile -File verify\/native\/network-deny-windows\.ps1 -TauriCachePath "\$env:RUNNER_TEMP\\veles-tauri-cache"/, `${start.trim()} must execute the wrapper with its supported cache argument`);
+  }
 });
 
 test('macOS native workflow produces a verified comparison with the approved sandbox denial', async () => {
@@ -303,7 +306,7 @@ test('aggregate workflow consumes all and only verified component artifacts', as
   for (const input of ['android-artifact-name', 'web-extension-artifact-name', 'rust-artifact-name', 'native-windows-artifact-name', 'native-macos-artifact-name']) {
     assert.match(source, new RegExp(`${input}:[\\s\\S]*?required:\\s*true`), `aggregate workflow must require ${input}`);
   }
-  for (const artifact of ['verified-android', 'verified-web-extension', 'verified-rust', 'verified-native-windows', 'verified-native-macos']) {
+  for (const artifact of ['verified-android', 'verified-web-extension', 'rust-jni-wasm', 'verified-native-windows', 'verified-native-macos']) {
     assert.match(source, new RegExp(`default:\\s*${artifact}`), `aggregate workflow must default to ${artifact}`);
   }
   for (const path of ['build/verification/android', 'build/web-extension', 'build/rust-package', 'build/verification/native-bridge/windows', 'build/verification/native-bridge/macos']) {
@@ -312,6 +315,47 @@ test('aggregate workflow consumes all and only verified component artifacts', as
   assert.match(source, /verify\/aggregate-checksums\.sh[\s\S]*?inputs\.commit-sha/, 'aggregate workflow must directly validate and aggregate components');
   assertExactUploadPaths(source, 'build-toolchain-manifest.yml', ['build/verification/SHA256SUMS.toolchains']);
   assert.doesNotMatch(source, /secrets:/, 'aggregate workflow must not accept signing secrets');
+});
+
+test('Windows wrapper and provisioner declare parameters before executable statements', async () => {
+  for (const name of ['network-deny-windows.ps1', 'provision-windows-tools.ps1']) {
+    const source = await readFile(new URL(`verify/native/${name}`, root), 'utf8');
+    assert.match(source, /^\s*(?:#.*\n\s*)*param\(/, `${name} must declare param before every executable statement`);
+  }
+});
+
+test('aggregate producer and consumer agree on canonical verified artifact layouts', async () => {
+  const [android, rust, aggregate] = await Promise.all([
+    workflow('build-android.yml'),
+    workflow('build-rust.yml'),
+    workflow('build-toolchain-manifest.yml'),
+  ]);
+  assert.match(android, /cp app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk build\/verification\/android\/app-release-unsigned\.apk/, 'Android workflow must export its canonical unsigned APK for aggregation');
+  assertExactUploadPaths(android, 'build-android.yml', ['build/verification/android/app-release-unsigned.apk']);
+  assert.match(rust, /default:\s*rust-jni-wasm/, 'Rust producer default documents its verified artifact name');
+  assert.match(aggregate, /rust-artifact-name:[\s\S]*?default:\s*rust-jni-wasm/, 'aggregate Rust input must default to the producer artifact name');
+  assert.match(aggregate, /path:\s*build\/verification\/android/, 'aggregate must restore Android output into its canonical verification directory');
+});
+
+test('aggregate artifact-name guard accepts only the five verified producers', () => {
+  for (const name of ['verified-android', 'verified-web-extension', 'rust-jni-wasm', 'verified-native-windows', 'verified-native-macos']) {
+    const result = spawnSync('bash', ['verify/validate-verified-artifact-names.sh', name], { cwd: repository, encoding: 'utf8' });
+    assert.equal(result.status, 0, `must accept ${name}: ${result.stderr}`);
+  }
+  for (const name of ['', 'unverified-windows-run-a', 'verified-evil', 'rust-jni-wasm-extra', '../verified-android']) {
+    const result = spawnSync('bash', ['verify/validate-verified-artifact-names.sh', name], { cwd: repository, encoding: 'utf8' });
+    assert.notEqual(result.status, 0, `must reject malicious artifact name ${JSON.stringify(name)}`);
+  }
+});
+
+test('aggregate validates all artifact inputs before any download', async () => {
+  const source = await workflow('build-toolchain-manifest.yml');
+  const validation = source.indexOf('- name: Validate verified artifact names');
+  const download = source.indexOf('actions/download-artifact@v8');
+  assert.ok(validation !== -1 && validation < download, 'aggregate must validate artifact names before downloads');
+  for (const input of ['android-artifact-name', 'web-extension-artifact-name', 'rust-artifact-name', 'native-windows-artifact-name', 'native-macos-artifact-name']) {
+    assert.match(source.slice(validation, download), new RegExp(`inputs\\.${input}`), `aggregate guard must validate ${input}`);
+  }
 });
 
 test('workflow contract helpers reject elevated permissions, extra uploads, and every run syntax secret interpolation', () => {
