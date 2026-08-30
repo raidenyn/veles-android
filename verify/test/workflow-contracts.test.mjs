@@ -199,9 +199,15 @@ test('Android workflow builds and verifies the explicit release evidence tree', 
   assert.match(source, /name:\s*\$\{\{ inputs\.release-evidence-artifact-name \}\}/, 'Android workflow must upload caller-selected release evidence');
   assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, 'Android workflow must upload the caller-selected aggregate reference');
   assert.deepEqual(uploadPaths(source, 'build-android.yml'), [
-    ['app/build/outputs/apk/release/', 'app/build/outputs/mapping/release/mapping.txt'],
+    ['build/verification/android-release-evidence/'],
     ['build/verification/android/app-release-unsigned.apk'],
   ], 'Android workflow must keep release evidence separate from the aggregate reference');
+  const signedBuild = source.indexOf('VELES_KEYSTORE_FILE');
+  const staging = source.indexOf('- name: Stage signed release evidence');
+  const unsignedBuild = source.indexOf('- name: Build canonical unsigned release');
+  assert.ok(signedBuild < staging && staging < unsignedBuild, 'Android workflow must stage signed evidence before the unsigned rebuild replaces AGP outputs');
+  assert.match(source.slice(staging, unsignedBuild), /cp app\/build\/outputs\/apk\/release\/app-release\.apk build\/verification\/android-release-evidence\/app-release\.apk/, 'Android workflow must stage the signed APK');
+  assert.match(source.slice(staging, unsignedBuild), /cp app\/build\/outputs\/mapping\/release\/mapping\.txt build\/verification\/android-release-evidence\/mapping\.txt/, 'Android workflow must stage the signed mapping');
 });
 
 test('web extension workflow uses the exact Node reference and publishes only package files', async () => {
@@ -338,7 +344,7 @@ test('aggregate producer and consumer agree on canonical verified artifact layou
   ]);
   assert.match(android, /cp app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk build\/verification\/android\/app-release-unsigned\.apk/, 'Android workflow must export its canonical unsigned APK for aggregation');
   assert.deepEqual(uploadPaths(android, 'build-android.yml'), [
-    ['app/build/outputs/apk/release/', 'app/build/outputs/mapping/release/mapping.txt'],
+    ['build/verification/android-release-evidence/'],
     ['build/verification/android/app-release-unsigned.apk'],
   ], 'Android release evidence must not pollute the aggregate input artifact');
   assert.match(android, /artifact-name:[\s\S]*?default:\s*verified-android/, 'Android aggregate artifact must retain the stable verified-android default');
