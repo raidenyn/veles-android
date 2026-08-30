@@ -182,6 +182,7 @@ test('Android workflow builds and verifies the explicit release evidence tree', 
   const source = await workflow('build-android.yml');
   assertReusableWorkflow(source, 'build-android.yml');
   assert.match(source, /secrets:[\s\S]*?KEYSTORE_BASE64/, 'Android workflow must accept signing secrets');
+  assert.match(source, /release-evidence-artifact-name:[\s\S]*?required:\s*true[\s\S]*?default:\s*android-release-evidence/, 'Android workflow must expose a downstream release-evidence artifact name');
   assert.match(source, /env:\s*\n\s*KEYSTORE_BASE64:\s*\$\{\{ secrets\.KEYSTORE_BASE64 \}\}/, 'Android workflow must map the keystore secret into env');
   assert.match(source, /if:\s*env\.KEYSTORE_BASE64 != ''/, 'Android workflow must test secret presence through env');
   assert.doesNotMatch(source, /if:\s*secrets\./, 'Android workflow must not reference secrets directly in if conditions');
@@ -195,7 +196,12 @@ test('Android workflow builds and verifies the explicit release evidence tree', 
   assert.match(source, /verify\/verify\.sh[\s\S]*?inputs\.commit-sha/, 'Android workflow must run Docker APK verification for the requested commit');
   assert.match(source, /rust\/scripts\/verify-apk-jni\.sh/, 'Android workflow must enforce the APK JNI allow-list');
   assert.match(source, /build\/verification\/android\/app-release-unsigned\.apk/, 'Android workflow must export the canonical unsigned APK');
-  assertExactUploadPaths(source, 'build-android.yml', ['build/verification/android/app-release-unsigned.apk']);
+  assert.match(source, /name:\s*\$\{\{ inputs\.release-evidence-artifact-name \}\}/, 'Android workflow must upload caller-selected release evidence');
+  assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, 'Android workflow must upload the caller-selected aggregate reference');
+  assert.deepEqual(uploadPaths(source, 'build-android.yml'), [
+    ['app/build/outputs/apk/release/', 'app/build/outputs/mapping/release/mapping.txt'],
+    ['build/verification/android/app-release-unsigned.apk'],
+  ], 'Android workflow must keep release evidence separate from the aggregate reference');
 });
 
 test('web extension workflow uses the exact Node reference and publishes only package files', async () => {
@@ -331,7 +337,11 @@ test('aggregate producer and consumer agree on canonical verified artifact layou
     workflow('build-toolchain-manifest.yml'),
   ]);
   assert.match(android, /cp app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk build\/verification\/android\/app-release-unsigned\.apk/, 'Android workflow must export its canonical unsigned APK for aggregation');
-  assertExactUploadPaths(android, 'build-android.yml', ['build/verification/android/app-release-unsigned.apk']);
+  assert.deepEqual(uploadPaths(android, 'build-android.yml'), [
+    ['app/build/outputs/apk/release/', 'app/build/outputs/mapping/release/mapping.txt'],
+    ['build/verification/android/app-release-unsigned.apk'],
+  ], 'Android release evidence must not pollute the aggregate input artifact');
+  assert.match(android, /artifact-name:[\s\S]*?default:\s*verified-android/, 'Android aggregate artifact must retain the stable verified-android default');
   assert.match(rust, /default:\s*rust-jni-wasm/, 'Rust producer default documents its verified artifact name');
   assert.match(aggregate, /rust-artifact-name:[\s\S]*?default:\s*rust-jni-wasm/, 'aggregate Rust input must default to the producer artifact name');
   assert.match(aggregate, /path:\s*build\/verification\/android/, 'aggregate must restore Android output into its canonical verification directory');
@@ -356,6 +366,7 @@ test('aggregate validates all artifact inputs before any download', async () => 
   for (const input of ['android-artifact-name', 'web-extension-artifact-name', 'rust-artifact-name', 'native-windows-artifact-name', 'native-macos-artifact-name']) {
     assert.match(source.slice(validation, download), new RegExp(`inputs\\.${input}`), `aggregate guard must validate ${input}`);
   }
+  assert.match(source.slice(validation, download), /run:\s*bash verify\/validate-verified-artifact-names\.sh/, 'aggregate must explicitly invoke the non-executable validator through bash');
 });
 
 test('workflow contract helpers reject elevated permissions, extra uploads, and every run syntax secret interpolation', () => {

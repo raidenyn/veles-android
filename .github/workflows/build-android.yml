@@ -10,6 +10,10 @@ on:
         required: true
         type: string
         default: verified-android
+      release-evidence-artifact-name:
+        required: true
+        type: string
+        default: android-release-evidence
     secrets:
       KEYSTORE_BASE64:
         required: false
@@ -76,6 +80,14 @@ jobs:
         run: |
           mkdir -p build/verification/android
           cp app/build/outputs/apk/release/app-release-unsigned.apk build/verification/android/app-release-unsigned.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.release-evidence-artifact-name }}
+          path: |
+            app/build/outputs/apk/release/
+            app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}
