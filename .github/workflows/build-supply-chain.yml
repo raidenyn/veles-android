@@ -1,0 +1,43 @@
+name: build-supply-chain
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: verified-supply-chain
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - uses: gradle/actions/setup-gradle@v6
+      - run: npm ci --ignore-scripts --prefix verify
+      - run: verify/verify-supply-chain.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            build/sbom/web-extension.cdx.json
+            build/sbom/rust.cdx.json
+            build/sbom/native-bridge.cdx.json
+            build/verification/supply-chain/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,46 @@
+name: build-rust
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: rust-jni-wasm
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Activate pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Install pinned Android NDK
+        run: |
+          NDK_VERSION="$(./gradlew -q rustNdkVersion)"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - run: ./gradlew rustPackage
+      - run: verify/verify-rust.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/rust-package/
+          if-no-files-found: error
+          retention-days: 14

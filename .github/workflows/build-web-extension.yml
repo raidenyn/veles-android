@@ -1,0 +1,42 @@
+name: build-web-extension
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: verified-web-extension
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+          cache: npm
+          cache-dependency-path: web-extension/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: web-extension
+      - run: npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:bundle && npm run package
+        working-directory: web-extension
+      - run: verify/verify-web.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            build/web-extension/veles-extension-*.zip
+            build/web-extension/veles-extension-*.zip.sha256
+            build/web-extension/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
