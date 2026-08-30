@@ -1,0 +1,108 @@
+name: build-native-macos
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: verified-native-macos
+
+permissions:
+  contents: read
+
+jobs:
+  run-a:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity and Xcode
+        run: |
+          test -n "$ImageOS"
+          test -n "$ImageVersion"
+          test -n "$RUNNER_ARCH"
+          [ "$RUNNER_ARCH" = 'ARM64' ]
+          export DEVELOPER_DIR=/Applications/Xcode_26.6.app
+          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
+          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+      - name: Produce sandboxed offline native package
+        run: verify/native/network-deny-macos.sh
+      - name: Create run transport
+        run: verify/native/prepare-run.sh build/verification/native-runs/run-a/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos native-bridge/dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unverified-macos-run-a
+          path: build/verification/native-runs/run-a/
+          if-no-files-found: error
+          retention-days: 1
+  run-b:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity and Xcode
+        run: |
+          test -n "$ImageOS"
+          test -n "$ImageVersion"
+          test -n "$RUNNER_ARCH"
+          [ "$RUNNER_ARCH" = 'ARM64' ]
+          export DEVELOPER_DIR=/Applications/Xcode_26.6.app
+          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
+          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+      - name: Produce sandboxed offline native package
+        run: verify/native/network-deny-macos.sh
+      - name: Create run transport
+        run: verify/native/prepare-run.sh build/verification/native-runs/run-b/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos native-bridge/dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unverified-macos-run-b
+          path: build/verification/native-runs/run-b/
+          if-no-files-found: error
+          retention-days: 1
+  compare:
+    needs: [run-a, run-b]
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity and Xcode
+        run: |
+          test -n "$ImageOS"
+          test -n "$ImageVersion"
+          test -n "$RUNNER_ARCH"
+          [ "$RUNNER_ARCH" = 'ARM64' ]
+          export DEVELOPER_DIR=/Applications/Xcode_26.6.app
+          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
+          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+      - uses: actions/download-artifact@v8
+        with:
+          name: unverified-macos-run-a
+          path: build/verification/native-runs/run-a
+      - uses: actions/download-artifact@v8
+        with:
+          name: unverified-macos-run-b
+          path: build/verification/native-runs/run-b
+      - name: Compare native transports
+        run: verify/verify-native.sh "${{ inputs.commit-sha }}" build/verification/native-runs/run-a build/verification/native-runs/run-b
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/verification/native-bridge/
+          if-no-files-found: error
+          retention-days: 14

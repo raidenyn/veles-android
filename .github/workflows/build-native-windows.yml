@@ -1,0 +1,99 @@
+name: build-native-windows
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: verified-native-windows
+
+permissions:
+  contents: read
+
+jobs:
+  run-a:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity
+        run: |
+          foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
+            if ([string]::IsNullOrWhiteSpace($env:$name)) { throw "$name is required" }
+          }
+          if ($env:RUNNER_ARCH -ne 'X64') { throw "expected X64, got $env:RUNNER_ARCH" }
+      - name: Produce offline native package
+        run: pwsh -File verify/native/network-deny-windows.ps1 -TauriCachePath "$env:RUNNER_TEMP\veles-tauri-cache"
+      - name: Create run transport
+        run: pwsh -File verify/native/prepare-run.ps1 build/verification/native-runs/run-a/native-windows-run.tar "${{ inputs.commit-sha }}" build/native-bridge/windows native-bridge/dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unverified-windows-run-a
+          path: build/verification/native-runs/run-a/
+          if-no-files-found: error
+          retention-days: 1
+  run-b:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity
+        run: |
+          foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
+            if ([string]::IsNullOrWhiteSpace($env:$name)) { throw "$name is required" }
+          }
+          if ($env:RUNNER_ARCH -ne 'X64') { throw "expected X64, got $env:RUNNER_ARCH" }
+      - name: Produce offline native package
+        run: pwsh -File verify/native/network-deny-windows.ps1 -TauriCachePath "$env:RUNNER_TEMP\veles-tauri-cache"
+      - name: Create run transport
+        run: pwsh -File verify/native/prepare-run.ps1 build/verification/native-runs/run-b/native-windows-run.tar "${{ inputs.commit-sha }}" build/native-bridge/windows native-bridge/dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unverified-windows-run-b
+          path: build/verification/native-runs/run-b/
+          if-no-files-found: error
+          retention-days: 1
+  compare:
+    needs: [run-a, run-b]
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity
+        run: |
+          foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
+            if ([string]::IsNullOrWhiteSpace($env:$name)) { throw "$name is required" }
+          }
+          if ($env:RUNNER_ARCH -ne 'X64') { throw "expected X64, got $env:RUNNER_ARCH" }
+      - uses: actions/download-artifact@v8
+        with:
+          name: unverified-windows-run-a
+          path: build/verification/native-runs/run-a
+      - uses: actions/download-artifact@v8
+        with:
+          name: unverified-windows-run-b
+          path: build/verification/native-runs/run-b
+      - name: Compare native transports
+        run: bash verify/verify-native.sh "${{ inputs.commit-sha }}" build/verification/native-runs/run-a build/verification/native-runs/run-b
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/verification/native-bridge/
+          if-no-files-found: error
+          retention-days: 14

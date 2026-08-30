@@ -1,0 +1,71 @@
+name: build-toolchain-manifest
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: SHA256SUMS.toolchains
+      android-artifact-name:
+        required: true
+        type: string
+        default: verified-android
+      web-extension-artifact-name:
+        required: true
+        type: string
+        default: verified-web-extension
+      rust-artifact-name:
+        required: true
+        type: string
+        default: verified-rust
+      native-windows-artifact-name:
+        required: true
+        type: string
+        default: verified-native-windows
+      native-macos-artifact-name:
+        required: true
+        type: string
+        default: verified-native-macos
+
+permissions:
+  contents: read
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.android-artifact-name }}
+          path: build/verification/android
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.web-extension-artifact-name }}
+          path: build/web-extension
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.rust-artifact-name }}
+          path: build/rust-package
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.native-windows-artifact-name }}
+          path: build/verification/native-bridge/windows
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.native-macos-artifact-name }}
+          path: build/verification/native-bridge/macos
+      - name: Validate and aggregate component manifests
+        run: verify/aggregate-checksums.sh "${{ inputs.commit-sha }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/verification/SHA256SUMS.toolchains
+          if-no-files-found: error
+          retention-days: 14

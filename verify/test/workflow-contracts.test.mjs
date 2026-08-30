@@ -248,6 +248,72 @@ test('supply-chain workflow enforces reports before uploading exactly three SBOM
   assert.doesNotMatch(source, /secrets:/, 'Supply-chain workflow must not accept signing secrets');
 });
 
+function assertNativeWorkflow(source, name, platform, wrapper) {
+  assert.match(source, /workflow_call:/, `${name} must be reusable`);
+  assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
+  assert.match(source, /artifact-name:[\s\S]*?required:\s*true/, `${name} must require the verified artifact name`);
+  assert.doesNotMatch(source, /-latest/, `${name} must use pinned runner labels`);
+  assert.doesNotMatch(source, /secrets:/, `${name} must not accept signing secrets`);
+  assertNoSecretRunInterpolation(source, name);
+  for (const job of ['run-a', 'run-b', 'compare']) {
+    assert.match(source, new RegExp(`\\n  ${job}:`), `${name} must define ${job}`);
+  }
+  assert.equal((source.match(new RegExp(`runs-on:\\s*${platform}`, 'g')) ?? []).length, 3, `${name} must run both slots and comparison on ${platform}`);
+  assert.equal((source.match(/actions\/setup-node@v6[\s\S]*?node-version:\s*['"]26\.8\.1['"]/g) ?? []).length, 3, `${name} must pin Node 26.8.1 in every job`);
+  for (const field of ['ImageOS', 'ImageVersion', 'RUNNER_ARCH']) {
+    assert.match(source, new RegExp(`(?:test -n "\\$${field}"|foreach \\(\\$name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH'\\))`), `${name} must reject an empty ${field}`);
+  }
+  assert.match(source, new RegExp(wrapper.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${name} must use its offline package wrapper`);
+  const artifactPlatform = platform.startsWith('windows') ? 'windows' : 'macos';
+  for (const slot of ['a', 'b']) {
+    assert.match(source, new RegExp(`name:\\s*unverified-${artifactPlatform}-run-${slot}`), `${name} must upload unverified run ${slot}`);
+  }
+  assert.equal((source.match(/retention-days:\s*1\b/g) ?? []).length, 2, `${name} must retain unverified runs for the shortest period`);
+  assert.match(source, /needs:\s*\[run-a, run-b\]/, `${name} must compare both independent slots`);
+  assert.match(source, /verify\/verify-native\.sh[\s\S]*?inputs\.commit-sha[\s\S]*?native-runs\/run-a[\s\S]*?native-runs\/run-b/, `${name} must compare both transports against the requested commit`);
+  assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must expose only the verified caller-selected artifact`);
+  assert.deepEqual(uploadPaths(source, name), [
+    ['build/verification/native-runs/run-a/'],
+    ['build/verification/native-runs/run-b/'],
+    ['build/verification/native-bridge/'],
+  ], `${name} must expose only the comparison output while retaining slot transports internally`);
+}
+
+test('Windows native workflow produces a verified comparison from two offline transports', async () => {
+  const source = await workflow('build-native-windows.yml');
+  assertNativeWorkflow(source, 'build-native-windows.yml', 'windows-2025', 'verify/native/network-deny-windows.ps1');
+  assert.match(source, /node-version:\s*['"]26\.8\.1['"]/, 'Windows workflow must pin Node 26.8.1');
+  assert.match(source, /RUNNER_ARCH\s*-ne\s*'X64'/, 'Windows workflow must require an x64 runner');
+});
+
+test('macOS native workflow produces a verified comparison with the approved sandbox denial', async () => {
+  const source = await workflow('build-native-macos.yml');
+  assertNativeWorkflow(source, 'build-native-macos.yml', 'macos-26', 'verify/native/network-deny-macos.sh');
+  for (const contract of ['/Applications/Xcode_26.6.app', '17F113', 'macosx26.5']) {
+    assert.match(source, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `macOS workflow must enforce ${contract}`);
+  }
+  assert.match(source, /\[ "\$RUNNER_ARCH" = 'ARM64' \]/, 'macOS workflow must require an ARM64 runner');
+  assert.doesNotMatch(source, /pfctl/, 'macOS workflow must not mutate host PF configuration');
+});
+
+test('aggregate workflow consumes all and only verified component artifacts', async () => {
+  const source = await workflow('build-toolchain-manifest.yml');
+  assertReusableWorkflow(source, 'build-toolchain-manifest.yml');
+  assert.doesNotMatch(source, /unverified-/, 'aggregate workflow must never download unverified transports');
+  for (const input of ['android-artifact-name', 'web-extension-artifact-name', 'rust-artifact-name', 'native-windows-artifact-name', 'native-macos-artifact-name']) {
+    assert.match(source, new RegExp(`${input}:[\\s\\S]*?required:\\s*true`), `aggregate workflow must require ${input}`);
+  }
+  for (const artifact of ['verified-android', 'verified-web-extension', 'verified-rust', 'verified-native-windows', 'verified-native-macos']) {
+    assert.match(source, new RegExp(`default:\\s*${artifact}`), `aggregate workflow must default to ${artifact}`);
+  }
+  for (const path of ['build/verification/android', 'build/web-extension', 'build/rust-package', 'build/verification/native-bridge/windows', 'build/verification/native-bridge/macos']) {
+    assert.match(source, new RegExp(`path:\\s*${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `aggregate workflow must download into ${path}`);
+  }
+  assert.match(source, /verify\/aggregate-checksums\.sh[\s\S]*?inputs\.commit-sha/, 'aggregate workflow must directly validate and aggregate components');
+  assertExactUploadPaths(source, 'build-toolchain-manifest.yml', ['build/verification/SHA256SUMS.toolchains']);
+  assert.doesNotMatch(source, /secrets:/, 'aggregate workflow must not accept signing secrets');
+});
+
 test('workflow contract helpers reject elevated permissions, extra uploads, and every run syntax secret interpolation', () => {
   const upload = `      - uses: actions/upload-artifact@v7
         with:
