@@ -30,6 +30,7 @@ jobs:
           node-version: '26.8.1'
       - uses: gradle/actions/setup-gradle@v6
       - run: npm ci --ignore-scripts --prefix verify
+      - run: ./gradlew installCargoDeny
       - run: verify/verify-supply-chain.sh
       - uses: actions/upload-artifact@v7
         with:
@@ -38,6 +39,10 @@ jobs:
             build/sbom/web-extension.cdx.json
             build/sbom/rust.cdx.json
             build/sbom/native-bridge.cdx.json
-            build/verification/supply-chain/
+            build/verification/supply-chain/npm-licenses.txt
+            build/verification/supply-chain/cargo-licenses.txt
+            build/verification/supply-chain/npm-install-scripts.txt
+            build/verification/supply-chain/cargo-build-scripts.txt
+            build/verification/supply-chain/remote-code.txt
           if-no-files-found: error
           retention-days: 14
