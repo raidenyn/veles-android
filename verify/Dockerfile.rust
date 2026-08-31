@@ -41,17 +41,23 @@ ARG NDK_VERSION=29.0.14206865
 # drift. Split sdkmanager from the grep checks and give each pin its own
 # guarded `grep ... || { echo actual:; cat <path>/source.properties; exit 1; }`
 # block that prints the actual Pkg.Revision on mismatch before exiting 1. The
-# pins are kept (not guessed); the diagnostics will reveal any drift on the
-# next CI run. sdkmanager is isolated on its own line so its failure is not
-# masked by a misleading "Pkg.Revision drift" echo from a later check.
-RUN yes | sdkmanager --licenses > /dev/null \
- && sdkmanager "platforms;android-35" "build-tools;36.0.0" "ndk;${NDK_VERSION}" \
- && (grep -qx 'Pkg.Revision=2' ${ANDROID_HOME}/platforms/android-35/source.properties \
-      || { echo 'android-35 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/platforms/android-35/source.properties; exit 1; }) \
- && (grep -qx 'Pkg.Revision=36.0.0' ${ANDROID_HOME}/build-tools/36.0.0/source.properties \
-      || { echo 'build-tools/36.0.0 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/build-tools/36.0.0/source.properties; exit 1; }) \
- && (grep -qx "Pkg.Revision=${NDK_VERSION}" ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties \
-      || { echo "ndk/${NDK_VERSION} Pkg.Revision drift, actual:"; cat ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties; exit 1; })
+ # pins are kept (not guessed); the diagnostics will reveal any drift on the
+ # next CI run. sdkmanager is isolated on its own line so its failure is not
+ # masked by a misleading "Pkg.Revision drift" echo from a later check.
+ # The NDK source.properties uses "Pkg.Revision = <value>" (spaces around '='),
+ # unlike the platform-tools / build-tools / android-35 files which use the
+ # "Pkg.Revision=<value>" form. The NDK pin check uses grep -Eq with
+ # "Pkg\.Revision *= *<value>$" to match the actual NDK file's spaced form
+ # while still tolerating the no-space form. The android-35 and build-tools
+ # pins keep their exact -qx no-space greps (those files use the no-space form).
+ RUN yes | sdkmanager --licenses > /dev/null \
+  && sdkmanager "platforms;android-35" "build-tools;36.0.0" "ndk;${NDK_VERSION}" \
+  && (grep -qx 'Pkg.Revision=2' ${ANDROID_HOME}/platforms/android-35/source.properties \
+       || { echo 'android-35 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/platforms/android-35/source.properties; exit 1; }) \
+  && (grep -qx 'Pkg.Revision=36.0.0' ${ANDROID_HOME}/build-tools/36.0.0/source.properties \
+       || { echo 'build-tools/36.0.0 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/build-tools/36.0.0/source.properties; exit 1; }) \
+  && (grep -Eq "Pkg\\.Revision *= *${NDK_VERSION}\\$" ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties \
+       || { echo "ndk/${NDK_VERSION} Pkg.Revision drift, actual:"; cat ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties; exit 1; })
 
 ARG RUSTUP_VERSION=1.29.0
 ARG RUSTUP_SHA256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
