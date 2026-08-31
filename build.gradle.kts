@@ -889,12 +889,29 @@ tasks.named("check") {
 
 tasks.named<Delete>("clean") {
     dependsOn(":app:clean")
+    // Root `clean` removes every declared generated product, verification,
+    // SBOM, checksum, and tool output under `build/` plus the two named
+    // source-tree exceptions (`web-extension/dist` and the WASM package).
+    // `rust/scripts/assert-clean.sh` asserts none of these survive, so a stale
+    // artifact can never be mistaken for freshly built evidence.
     delete(
         layout.projectDirectory.dir("web-extension/dist"),
         wasmPackageDir,
         layout.projectDirectory.dir("native-bridge/src-tauri/target"),
         layout.projectDirectory.dir("native-bridge/dist"),
         layout.buildDirectory.dir("native-bridge"),
+        // Rust JNI/WASM staged package (rustPackage producer).
         rustPackageDir,
+        // Aggregate verification evidence and toolchain manifest.
+        layout.buildDirectory.dir("verification"),
+        // CycloneDX SBOM outputs.
+        layout.buildDirectory.dir("sbom"),
+        // Verification cargo-cyclonedx / cargo-deny install roots.
+        layout.buildDirectory.dir("verify-tools"),
+        // Web-extension deterministic package (npm run package producer).
+        layout.buildDirectory.dir("web-extension"),
+        // Rust build cache and auxiliary CLI install cache (local, gitignored).
+        layout.buildDirectory.dir("rust"),
+        layout.buildDirectory.dir("rust-tools"),
     )
 }

@@ -1,6 +1,6 @@
 # OTP-01 sub-project 1d: Verification and supply chain design
 
-Status: Draft pending written-spec review
+Status: Approved; implementation in progress
 Issue: raidenyn/veles-android#80
 Parent design: `docs/superpowers/specs/2026-08-26-otp-01-reproducible-toolchains-design.md`
 Predecessors: 1a PR #107, 1b PR #109, 1c PR #110
