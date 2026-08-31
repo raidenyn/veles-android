@@ -2,15 +2,16 @@
 // view from the Tauri bundle build outputs.
 //
 // The design (docs/superpowers/specs/2026-08-28-otp-01-1d-verification-supply-
-// chain-design.md:228-241) requires each native run to create an extracted
-// verification view containing:
-//   - the raw host binary;
-//   - the native-messaging host manifest;
-//   - NSIS and MSI installer outputs on Windows;
-//   - the .app tree, including executable modes and symlink targets, on macOS;
-//   - the DMG on macOS;
-//   - the deterministic outer package and sidecar; and
-//   - the standard checksum manifest.
+// chain-design.md:228-241) originally described the verification view as
+// containing the raw host binary, the native-messaging host manifest, the
+// NSIS/MSI installers (Windows) or .app tree + DMG (macOS), the deterministic
+// outer package and sidecar, and the standard checksum manifest. Per the
+// transport/aggregate contract adjudication, the view is RAW-PRODUCT-FILES
+// ONLY: the raw host binary, the native-messaging host manifest, and the
+// installer/.app/DMG outputs. The deterministic outer package, its sidecar,
+// and the product SHA256SUMS live in product/ (transported as product/
+// records) and are deliberately NOT copied into the view — duplicating them
+// would let component manifests leak into the aggregate records.
 //
 // `create-run.mjs` transports the product/ and view/ trees. The product tree
 // is build/native-bridge/<platform>/ (package + sidecar + SHA256SUMS, produced
