@@ -14,9 +14,13 @@
 //
 // `create-run.mjs` transports the product/ and view/ trees. The product tree
 // is build/native-bridge/<platform>/ (package + sidecar + SHA256SUMS, produced
-// by bridgePackage). This script assembles the view tree from the Tauri bundle
-// build outputs under src-tauri/target/release/ so the transport carries the
-// raw installer/host evidence the comparison job and aggregate rely on.
+// by bridgePackage). The Chrome native-messaging host manifest JSON is emitted
+// ONLY inside the deterministic archive (zip for Windows, tar.gz for macOS) by
+// native-bridge/scripts/package.mjs; there is no standalone manifest file in
+// the product dir. This script therefore reads the manifest out of the archive
+// (zip via verify/native/zip-reader.mjs, tar.gz via verify/native/
+// deterministic-tar.mjs + node:zlib gunzip) and writes it into the view as the
+// design's "native-messaging host manifest" evidence entry.
 //
 // Usage:
 //   node extract-view.mjs <platform> <release-dir> <product-dir> <view-dir>
@@ -30,13 +34,20 @@
 //   windows: host.exe, bundle/nsis/<setup>.exe, bundle/msi/<msi>, <manifest>.json
 //   macos:   bundle/macos/<app>/... (tree, preserving symlinks),
 //            bundle/dmg/<dmg>, <manifest>.json
-// The deterministic outer package and its sidecar (from product-dir) are also
-// placed at the view root so the view is self-contained evidence of both the
-// raw build and the final packaged artifact.
+// Per the transport/aggregate contract alignment, the view contains ONLY raw
+// product files (the installer/app files the design's view requires) plus the
+// extracted host manifest. It does NOT copy the outer deterministic package,
+// sidecar, or product SHA256SUMS — those live in product/ and are transported
+// as product/ records; duplicating them into the view would let component
+// manifests leak into the aggregate records.
 
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
+
+import { parseTar } from './deterministic-tar.mjs';
+import { readZipEntry, listZip } from './zip-reader.mjs';
 
 const SUPPORTED = new Set(['windows', 'macos']);
 const WINDOWS_BINARY = 'veles-native-bridge.exe';
@@ -80,15 +91,52 @@ function copyEntry(src, dst) {
   cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
 }
 
+// Locate the single deterministic outer package in the product dir and return
+// its name + absolute path. Windows -> .zip, macOS -> .tar.gz.
+function findPackage(productDir, platform) {
+  const ext = platform === 'windows' ? '.zip' : '.tar.gz';
+  const matches = readdirSync(productDir).filter((n) => n.endsWith(ext));
+  if (matches.length === 0) fail(`no deterministic outer package (${ext}) found in ${productDir}`);
+  if (matches.length > 1) fail(`multiple ${ext} packages found in ${productDir}: ${matches.join(', ')}`);
+  const name = matches[0];
+  return { name, abs: join(productDir, name) };
+}
+
+// Read the Chrome native-messaging host manifest JSON out of the deterministic
+// archive. The producer (native-bridge/scripts/package.mjs) archives it as
+// `${manifest.name}.json` (manifest.name = 'app.veles.native_bridge'); there is
+// no standalone manifest file in the product dir. Returns the manifest's
+// archive entry name and its decoded bytes.
+function readManifestFromArchive(packageAbs, platform) {
+  const bytes = readFileSync(packageAbs);
+  if (platform === 'windows') {
+    const names = listZip(bytes);
+    const jsonNames = names.filter((n) => n.endsWith('.json') && !n.includes('/'));
+    if (jsonNames.length !== 1) {
+      fail(`expected exactly one host manifest .json at the zip root, found: ${jsonNames.join(', ') || 'none'}`);
+    }
+    const name = jsonNames[0];
+    return { name, data: readZipEntry(bytes, name) };
+  }
+  // macOS: tar.gz. The deterministic-tar parser already validates the USTAR
+  // structure; gunzip then parse.
+  const tar = gunzipSync(bytes);
+  const entries = parseTar(tar);
+  const jsonEntries = entries.filter((e) => e.type === 'file' && e.path.endsWith('.json') && !e.path.includes('/'));
+  if (jsonEntries.length !== 1) {
+    fail(`expected exactly one host manifest .json at the tar root, found: ${jsonEntries.map((e) => e.path).join(', ') || 'none'}`);
+  }
+  const entry = jsonEntries[0];
+  return { name: entry.path, data: Buffer.from(entry.data) };
+}
+
 function buildWindowsView(releaseDir, productDir, viewDir) {
   const binaryPath = join(releaseDir, WINDOWS_BINARY);
   requireFile(binaryPath, 'Windows host binary');
   const nsis = singleMatch(join(releaseDir, 'bundle', 'nsis'), '-setup.exe', 'NSIS setup');
   const msi = singleMatch(join(releaseDir, 'bundle', 'msi'), '.msi', 'WiX msi');
-  // The host manifest JSON is produced by bridgePackage into the product dir
-  // alongside the package; copy it from there (it is the same in-memory
-  // manifest archived into the package).
-  const manifestName = findManifest(productDir);
+  const pkg = findPackage(productDir, 'windows');
+  const manifest = readManifestFromArchive(pkg.abs, 'windows');
   rmSync(viewDir, { recursive: true, force: true });
   mkdirSync(viewDir, { recursive: true });
   copyEntry(binaryPath, join(viewDir, WINDOWS_BINARY));
@@ -96,8 +144,7 @@ function buildWindowsView(releaseDir, productDir, viewDir) {
   copyEntry(nsis.abs, join(viewDir, 'bundle', 'nsis', nsis.name));
   mkdirSync(join(viewDir, 'bundle', 'msi'), { recursive: true });
   copyEntry(msi.abs, join(viewDir, 'bundle', 'msi', msi.name));
-  copyEntry(join(productDir, manifestName), join(viewDir, manifestName));
-  copyPackageAndSidecar(productDir, viewDir);
+  writeFileSync(join(viewDir, manifest.name), manifest.data);
 }
 
 function buildMacosView(releaseDir, productDir, viewDir) {
@@ -112,42 +159,15 @@ function buildMacosView(releaseDir, productDir, viewDir) {
   const hostPath = join(appBundlePath, 'Contents', 'MacOS', MACOS_BINARY);
   requireFile(hostPath, 'macOS app host executable');
   const dmg = singleMatch(join(releaseDir, 'bundle', 'dmg'), '.dmg', 'macOS .dmg');
-  const manifestName = findManifest(productDir);
+  const pkg = findPackage(productDir, 'macos');
+  const manifest = readManifestFromArchive(pkg.abs, 'macos');
   rmSync(viewDir, { recursive: true, force: true });
   mkdirSync(viewDir, { recursive: true });
   // Archive the .app under its own name so extraction reproduces the bundle.
   copyEntry(appBundlePath, join(viewDir, MACOS_APP_BUNDLE));
   mkdirSync(join(viewDir, 'bundle', 'dmg'), { recursive: true });
   copyEntry(dmg.abs, join(viewDir, 'bundle', 'dmg', dmg.name));
-  copyEntry(join(productDir, manifestName), join(viewDir, manifestName));
-  copyPackageAndSidecar(productDir, viewDir);
-}
-
-function findManifest(productDir) {
-  // The Chrome native-messaging host manifest JSON is emitted by bridgePackage
-  // as <manifest.name>.json (manifest.mjs buildHostManifest -> name). Locate
-  // the single .json file that is NOT the package sidecar.
-  const candidates = readdirSync(productDir).filter((n) => n.endsWith('.json'));
-  if (candidates.length !== 1) {
-    fail(`expected exactly one host manifest .json in product dir ${productDir}, found: ${candidates.join(', ') || 'none'}`);
-  }
-  return candidates[0];
-}
-
-function copyPackageAndSidecar(productDir, viewDir) {
-  // The deterministic outer package and its sidecar live in the product dir.
-  // Copy both into the view so the view is self-contained evidence of the
-  // final packaged artifact as well as the raw build.
-  const pkg = readdirSync(productDir).find((n) => n.endsWith('.zip') || n.endsWith('.tar.gz'));
-  if (!pkg) fail(`no deterministic outer package found in ${productDir}`);
-  copyEntry(join(productDir, pkg), join(viewDir, pkg));
-  const sidecar = `${pkg}.sha256`;
-  if (existsSync(join(productDir, sidecar))) {
-    copyEntry(join(productDir, sidecar), join(viewDir, sidecar));
-  }
-  if (existsSync(join(productDir, 'SHA256SUMS'))) {
-    copyEntry(join(productDir, 'SHA256SUMS'), join(viewDir, 'SHA256SUMS'));
-  }
+  writeFileSync(join(viewDir, manifest.name), manifest.data);
 }
 
 function main() {
