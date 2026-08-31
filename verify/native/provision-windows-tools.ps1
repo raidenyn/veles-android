@@ -14,14 +14,30 @@ $requiredFiles = @(
     'NSIS/Plugins/x86-unicode/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll', 'NSIS/Include/MUI2.nsh',
     'NSIS/Include/FileFunc.nsh', 'NSIS/Include/x64.nsh', 'NSIS/Include/nsDialogs.nsh',
-    'NSIS/Include/WinMessages.nsh'
+    'NSIS/Include/WinMessages.nsh',
+    # Tauri 2.6.0's NSIS installer template (installer.nsi) !includes these
+    # additional headers unconditionally, and its utils.nsh / FileAssociation.nsh
+    # use the nsDialogs and System plugins. They must be present in the
+    # provisioned cache so the offline NSIS build can resolve every !include
+    # and plugin call without a hidden download.
+    'NSIS/Include/WordFunc.nsh', 'NSIS/Include/StrFunc.nsh',
+    'NSIS/Include/Win/COM.nsh', 'NSIS/Include/Win/Propkey.nsh',
+    'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll'
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $manifest = Get-Content (Join-Path $scriptDir 'windows-tools.json') -Raw | ConvertFrom-Json
 $cache = [IO.Path]::GetFullPath($TauriCachePath)
 $parent = Split-Path -Parent $cache
-if (-not (Test-Path -LiteralPath $parent -PathType Container)) { throw "cache parent does not exist: $parent" }
+# The cache parent (e.g. native-bridge/src-tauri/target/) may not exist yet on
+# a fresh checkout — cargo would create it during bridgeBuild. Create it here
+# so provisioning can run before any build, but require the grandparent to exist
+# as a guard against a typo'd TauriCachePath pointing outside the repo.
+$grandparent = Split-Path -Parent $parent
+if (-not (Test-Path -LiteralPath $grandparent -PathType Container)) { throw "cache grandparent does not exist: $grandparent" }
+if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+    New-Item -ItemType Directory -Path $parent | Out-Null
+}
 if (Test-Path -LiteralPath $cache) { throw "isolated cache must not already exist: $cache" }
 $stage = Join-Path $parent ('.tauri-tools-' + [guid]::NewGuid().ToString('N'))
 $downloads = Join-Path $stage 'downloads'

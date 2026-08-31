@@ -16,6 +16,7 @@
     "bundle": {
         "active": false,
         "targets": [],
+        "useLocalToolsDir": true,
         "windows": {
             "webviewInstallMode": {
                 "type": "skip"

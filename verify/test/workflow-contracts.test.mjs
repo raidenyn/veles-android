@@ -368,7 +368,17 @@ function assertNativeWorkflow(source, name, platform, wrapper) {
     assert.match(source, new RegExp(`(?:test -n "\\$${field}"|foreach \\(\\$name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH'\\))`), `${name} must reject an empty ${field}`);
   }
   assert.match(source, new RegExp(wrapper.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${name} must use its offline package wrapper`);
+  // Each run slot must assemble an extracted verification view from the real
+  // Tauri bundle outputs (not a nonexistent native-bridge/dist) before
+  // transporting it. The view dir must live under the run's own upload tree so
+  // it is transported alongside the product.
   const artifactPlatform = platform.startsWith('windows') ? 'windows' : 'macos';
+  assert.match(source, new RegExp(`node verify/native/extract-view\\.mjs ${artifactPlatform} native-bridge/src-tauri/target/release build/native-bridge/${artifactPlatform} build/verification/native-runs/run-a/view`), `${name} run-a must assemble its extracted verification view from the real bundle outputs`);
+  assert.match(source, new RegExp(`node verify/native/extract-view\\.mjs ${artifactPlatform} native-bridge/src-tauri/target/release build/native-bridge/${artifactPlatform} build/verification/native-runs/run-b/view`), `${name} run-b must assemble its extracted verification view from the real bundle outputs`);
+  assert.doesNotMatch(source, /native-bridge\/dist/, `${name} must not reference the nonexistent native-bridge/dist view directory`);
+  for (const slot of ['a', 'b']) {
+    assert.match(source, new RegExp(`prepare-run\\.(?:sh|ps1)[\\s\\S]{0,120}build/verification/native-runs/run-${slot}/view`), `${name} run-${slot} must pass its assembled view dir to prepare-run`);
+  }
   for (const slot of ['a', 'b']) {
     assert.match(source, new RegExp(`name:\\s*unverified-${artifactPlatform}-run-${slot}`), `${name} must upload unverified run ${slot}`);
   }
@@ -390,7 +400,7 @@ test('Windows native workflow produces a verified comparison from two offline tr
   assert.match(source, /RUNNER_ARCH\s*-ne\s*'X64'/, 'Windows workflow must require an x64 runner');
   for (const [start, end] of [['  run-a:', '  run-b:'], ['  run-b:', '  compare:']]) {
     const slot = source.slice(source.indexOf(start), source.indexOf(end));
-    assert.match(slot, /pwsh -NoProfile -File verify\/native\/network-deny-windows\.ps1 -TauriCachePath "\$env:RUNNER_TEMP\\veles-tauri-cache"/, `${start.trim()} must execute the wrapper with its supported cache argument`);
+    assert.match(slot, /pwsh -NoProfile -File verify\/native\/network-deny-windows\.ps1 -TauriCachePath "native-bridge\/src-tauri\/target\/\.tauri"/, `${start.trim()} must execute the wrapper with the isolated cache path Tauri reads under useLocalToolsDir`);
   }
 });
 

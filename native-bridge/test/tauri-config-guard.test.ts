@@ -76,6 +76,19 @@ describe('tauri.conf.json headless posture (exact match)', () => {
         expect(windows).toEqual({ webviewInstallMode: { type: 'skip' } });
     });
 
+    it('bundle.useLocalToolsDir is true so Tauri reads the provisioned isolated cache', () => {
+        // Tauri 2.6.0 locates WiX/NSIS tools under <cargo target dir>/.tauri/
+        // when useLocalToolsDir is true, or the user platform cache dir when
+        // false. The verification workflow provisions a reviewed, hash-pinned
+        // WiX/NSIS toolset into native-bridge/src-tauri/target/.tauri/ and
+        // then denies outbound network for bridgePackage. useLocalToolsDir
+        // MUST be true so Tauri reads that provisioned cache (and never falls
+        // back to a mutable user cache or a hidden download). TAURI_WIX_PATH /
+        // TAURI_NSIS_PATH env vars are NOT how Tauri 2.6.0 locates bundler
+        // tools; this config is the authoritative mechanism.
+        expect((readConfig().bundle as { useLocalToolsDir?: boolean }).useLocalToolsDir).toBe(true);
+    });
+
     it('declares a committed Windows ICO for the WiX bundle target', () => {
         const bundle = readConfig().bundle as { icon?: unknown };
         expect(bundle.icon).toEqual(['icons/veles-native-bridge.ico']);
