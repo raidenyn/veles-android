@@ -94,4 +94,25 @@ else
   [ $? -eq 2 ]
 fi
 
+# --- Publication failure is atomic and exits 2 with nothing published ---
+# Both platform comparisons succeed, but the final rename into the output
+# location fails (its parent directory is read-only). The component must exit 2
+# (environment/output error), never 1, and must not leave any partial output
+# (no windows-published-while-macos-failed).
+readonly_parent="$tmp/readonly-parent"
+mkdir -p "$readonly_parent"
+chmod 0500 "$readonly_parent"
+unwritable_output="$readonly_parent/native-bridge"
+if VERIFY_NATIVE_OUTPUT="$unwritable_output" bash "$repo_root/verify/verify-native.sh" "$commit" "$run_a" "$run_b" 2>/dev/null; then
+  echo 'ERROR: publication failure must exit 2' >&2
+  chmod 0700 "$readonly_parent"
+  exit 1
+else
+  status=$?
+  chmod 0700 "$readonly_parent"
+  [ "$status" -eq 2 ]
+fi
+# Nothing was published at the unwritable output location.
+[ ! -e "$unwritable_output" ]
+
 echo 'PASS verify-native.sh two-platform and per-platform layouts'

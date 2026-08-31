@@ -56,3 +56,44 @@ test('a missing cargo-deny binary exits 2 (environment error, not mismatch)', as
     assert.equal(result.status, 2, `expected exit 2, got ${result.status}\nstderr: ${result.stderr}`);
   });
 });
+
+test('a cargo-deny license-policy rejection (licenses bit 0x4) exits 1 (mismatch, not environment error)', async () => {
+  await withSkeleton(async (root) => {
+    const { chmod } = await import('node:fs/promises');
+    // license-checker stub so the npm phase passes.
+    const npmStub = join(root, 'verify', 'node_modules', '.bin', 'license-checker-rseidelsohn');
+    await writeFile(npmStub, `#!/usr/bin/env node\nprocess.stdout.write('{}');\n`);
+    await chmod(npmStub, 0o755);
+    // cargo-deny stub that mimics a license-policy rejection: cargo-deny's
+    // `check` exit code is a bitset; the licenses bit is 0x4. It prints the
+    // diagnostic to stderr, just like the real tool.
+    const denyStub = join(root, 'build', 'verify-tools', 'cargo-deny', 'bin', 'cargo-deny');
+    await writeFile(
+      denyStub,
+      `#!/usr/bin/env node\nprocess.stderr.write('error[rejected]: license GPL-3.0 not allowed\\nbans FAILED\\n');\nprocess.exit(4);\n`,
+    );
+    await chmod(denyStub, 0o755);
+    const result = runScript(root);
+    assert.equal(result.status, 1, `expected exit 1 (mismatch), got ${result.status}\nstderr: ${result.stderr}`);
+    assert.match(result.stderr, /license policy rejected/i);
+  });
+});
+
+test('a cargo-deny environment/execution failure (non-licenses nonzero status) exits 2', async () => {
+  await withSkeleton(async (root) => {
+    const { chmod } = await import('node:fs/promises');
+    const npmStub = join(root, 'verify', 'node_modules', '.bin', 'license-checker-rseidelsohn');
+    await writeFile(npmStub, `#!/usr/bin/env node\nprocess.stdout.write('{}');\n`);
+    await chmod(npmStub, 0o755);
+    // cargo-deny stub simulating an internal/config error (status 1, no
+    // licenses bit) — not a policy rejection.
+    const denyStub = join(root, 'build', 'verify-tools', 'cargo-deny', 'bin', 'cargo-deny');
+    await writeFile(
+      denyStub,
+      `#!/usr/bin/env node\nprocess.stderr.write('error: could not parse deny.toml\\n');\nprocess.exit(1);\n`,
+    );
+    await chmod(denyStub, 0o755);
+    const result = runScript(root);
+    assert.equal(result.status, 2, `expected exit 2, got ${result.status}\nstderr: ${result.stderr}`);
+  });
+});
