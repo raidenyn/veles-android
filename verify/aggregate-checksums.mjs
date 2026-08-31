@@ -61,11 +61,19 @@ function excludedNativeViewPath(path) {
   return path.split('/').some((name) => (
     name === 'SOURCE-COMMIT'
     || name === 'IDENTITY'
+    || name === 'SHA256SUMS'
     || name === 'SHA256SUMS.native-bridge'
     || name === 'SHA256SUMS.toolchains'
     || name === 'METADATA.native-bridge.jsonl'
     || /^REPORT(?:\..*)?$/i.test(name)
+    // The view contains only raw product files (installers/.app tree/dmg) and
+    // the extracted host manifest. The deterministic outer package, its
+    // sidecar, and any zipped/tarred component manifest that leaked out of
+    // product/ are excluded so component manifests never enter the aggregate
+    // records. .dmg is a raw installer and stays allowed.
+    || /\.zip$/i.test(name)
     || /\.tar(?:\.gz)?$/i.test(name)
+    || /\.sha256$/i.test(name)
   ));
 }
 

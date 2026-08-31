@@ -158,6 +158,31 @@ test('rejects missing namespaces, duplicate names, and excluded evidence', async
       // accepted; only the producer's product-level SHA256SUMS is permitted.
       files['build/verification/native-bridge/windows/product/extra.bin'] = 'extra';
     }],
+    ['leaked component SHA256SUMS in view', 1, (files) => {
+      // The view must contain only raw product files; a component SHA256SUMS
+      // that leaked out of product/ is excluded evidence. The metadata must
+      // list it so the view-matches-metadata check passes and the excluded-
+      // evidence check is what rejects it.
+      files['build/verification/native-bridge/windows/view/SHA256SUMS'] = 'leaked';
+      files['build/verification/native-bridge/windows/METADATA.native-bridge.jsonl'] = [
+        { path: 'host.exe', type: 'file', mode: '0644', sha256: digest('windows-host') },
+        { path: 'SHA256SUMS', type: 'file', mode: '0644', sha256: digest('leaked') },
+      ].map(JSON.stringify).join('\n') + '\n';
+    }],
+    ['leaked outer package .zip in view', 1, (files) => {
+      files['build/verification/native-bridge/windows/view/leaked.zip'] = 'leaked';
+      files['build/verification/native-bridge/windows/METADATA.native-bridge.jsonl'] = [
+        { path: 'host.exe', type: 'file', mode: '0644', sha256: digest('windows-host') },
+        { path: 'leaked.zip', type: 'file', mode: '0644', sha256: digest('leaked') },
+      ].map(JSON.stringify).join('\n') + '\n';
+    }],
+    ['leaked outer package sidecar .sha256 in view', 1, (files) => {
+      files['build/verification/native-bridge/windows/view/leaked.sha256'] = 'leaked';
+      files['build/verification/native-bridge/windows/METADATA.native-bridge.jsonl'] = [
+        { path: 'host.exe', type: 'file', mode: '0644', sha256: digest('windows-host') },
+        { path: 'leaked.sha256', type: 'file', mode: '0644', sha256: digest('leaked') },
+      ].map(JSON.stringify).join('\n') + '\n';
+    }],
   ]) {
     const files = {
       ...requiredFiles,
