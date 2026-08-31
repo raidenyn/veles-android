@@ -1,8 +1,25 @@
 # Parameters are declared OPTIONAL/nullable so a mandatory-binding failure
-# (which happens BEFORE $ErrorActionPreference and the outer try/catch take
-# effect, surfacing as exit 1) cannot escape the 0/1/2 contract. They are
-# validated inside the guarded body below; a missing/invalid parameter exits 2
-# via env-fail like every other usage/environment failure.
+# (which happens BEFORE $ErrorActionPreference takes effect, surfacing as
+# exit 1) cannot escape the 0/1/2 contract. They are validated inside the
+# guarded body below; a missing/invalid parameter exits 2 via env-fail like
+# every other usage/environment failure.
+#
+# EXIT-CONTRACT DESIGN: every failure path performs a TOP-LEVEL `exit 2`.
+# GitHub Actions invokes pwsh via a `-command ". '<script>'"`-style wrapper,
+# and the host's should-exit hook + stderr writes interact badly with that
+# wrapper when an `exit` is issued from inside a try/catch, surfacing as
+# exit 1 instead of the intended 2. To keep the 0/1/2 contract:
+#   * There is NO outer try/catch around the whole body.
+#   * The host's should-exit hook is never invoked.
+#   * `env-fail` writes the message to stderr and `exit 2`s. It is only ever
+#     called from the script's TOP LEVEL (never from inside a try/catch), so
+#     the exit cannot be intercepted.
+#   * The only try/catch blocks (around the web-request probes and the
+#     firewall rule) set a flag or capture an error message and then `exit 2`
+#     directly from their catch handlers — but to be maximally defensive, the
+#     catch handlers only record state, and the resulting `env-fail`/`exit 2`
+#     call happens AFTER the try/catch at top level. The firewall block's
+#     `finally` only cleans up; it never exits.
 param(
     [string]$TauriCachePath,
     [string[]]$AcquireCommand = @('.\gradlew.bat', 'bridgeBuild'),
@@ -12,69 +29,91 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Environment/usage/identity failures exit 2 (never 1); artifact mismatches are
-# the responsibility of the caller's byte comparison, not this wrapper. Under
-# ErrorActionPreference=Stop a `throw` surfaces as exit 1, and Write-Error
-# becomes a terminating error that also unwinds without running the following
-# `exit 2`. So env-fail writes a non-terminating error to stderr (the message)
-# and then exits 2 explicitly; every failure path routes through env-fail or a
-# guarded try/catch that sets $LASTEXITCODE-based exit 2.
+# the responsibility of the caller's byte comparison, not this wrapper. env-fail
+# writes a non-terminating message to stderr and then `exit 2`s at TOP LEVEL.
+# It is never called from inside a try/catch in this script (see the header
+# design note). Under ErrorActionPreference=Stop a `throw` would surface as
+# exit 1, so env-fail deliberately avoids throw and uses exit 2.
 function env-fail {
     param([Parameter(Mandatory = $true)][string]$Message)
     [Console]::Error.WriteLine("env-fail: $Message")
-    $host.SetShouldExit(2)
     exit 2
 }
 
+if ([string]::IsNullOrWhiteSpace($TauriCachePath)) { env-fail 'TauriCachePath is required' }
+foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { env-fail "$name is required" }
+}
+# ImageOS for the windows-2025 runner label is `win25-vs2026` (the runner label
+# `windows-2025` is a versioned alias, not the ImageOS value). The workflow
+# `runs-on: windows-2025` label stays; only the wrapper's ImageOS pin is
+# updated to the observed value.
+if ($env:ImageOS -ne 'win25-vs2026') { env-fail "expected win25-vs2026, got $env:ImageOS" }
+if ((node --version) -ne 'v26.8.1') { env-fail 'Node version drift' }
+if ((npm --version) -ne '11.19.0') { env-fail 'npm version drift' }
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+& (Join-Path $scriptDir 'provision-windows-tools.ps1') -TauriCachePath $TauriCachePath
+if ($LASTEXITCODE -ne 0) { env-fail "provisioning failed: $LASTEXITCODE" }
+# Tauri 2.6.0 locates WiX under <cargo target dir>/.tauri/WixTools314 and NSIS
+# under <cargo target dir>/.tauri/NSIS when bundle.useLocalToolsDir is true.
+# The workflow passes TauriCachePath = native-bridge/src-tauri/target/.tauri so
+# the provisioned cache is exactly where Tauri reads. NSIS_PATH is forwarded as
+# a belt-and-suspenders override (Tauri's NSIS bundler reads NSIS_PATH, not
+# TAURI_NSIS_PATH); WiX has no env override and relies on useLocalToolsDir.
+$env:NSIS_PATH = Join-Path $TauriCachePath 'NSIS'
+& $AcquireCommand[0] $AcquireCommand[1..($AcquireCommand.Count - 1)]
+if ($LASTEXITCODE -ne 0) { env-fail "acquisition command failed: $LASTEXITCODE" }
+
+$probe = 'https://github.com/'
+$probeErrorMessage = $null
 try {
-    if ([string]::IsNullOrWhiteSpace($TauriCachePath)) { env-fail 'TauriCachePath is required' }
-    foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
-        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { env-fail "$name is required" }
-    }
-    if ($env:ImageOS -ne 'win25') { env-fail "expected win25, got $env:ImageOS" }
-    if ((node --version) -ne 'v26.8.1') { env-fail 'Node version drift' }
-    if ((npm --version) -ne '11.19.0') { env-fail 'npm version drift' }
+    Invoke-WebRequest -Uri $probe -UseBasicParsing | Out-Null
+} catch {
+    $probeErrorMessage = $_.Exception.Message
+}
+# env-fail called at TOP LEVEL (outside the try/catch above) so its exit 2
+# cannot be swallowed by the catch handler.
+if ($null -ne $probeErrorMessage) { env-fail "pre-denial network probe failed: $probeErrorMessage" }
 
-    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    & (Join-Path $scriptDir 'provision-windows-tools.ps1') -TauriCachePath $TauriCachePath
-    if ($LASTEXITCODE -ne 0) { env-fail "provisioning failed: $LASTEXITCODE" }
-    # Tauri 2.6.0 locates WiX under <cargo target dir>/.tauri/WixTools314 and NSIS
-    # under <cargo target dir>/.tauri/NSIS when bundle.useLocalToolsDir is true.
-    # The workflow passes TauriCachePath = native-bridge/src-tauri/target/.tauri so
-    # the provisioned cache is exactly where Tauri reads. NSIS_PATH is forwarded as
-    # a belt-and-suspenders override (Tauri's NSIS bundler reads NSIS_PATH, not
-    # TAURI_NSIS_PATH); WiX has no env override and relies on useLocalToolsDir.
-    $env:NSIS_PATH = Join-Path $TauriCachePath 'NSIS'
-    & $AcquireCommand[0] $AcquireCommand[1..($AcquireCommand.Count - 1)]
-    if ($LASTEXITCODE -ne 0) { env-fail "acquisition command failed: $LASTEXITCODE" }
-    $probe = 'https://github.com/'
-    try {
-        Invoke-WebRequest -Uri $probe -UseBasicParsing | Out-Null
-    } catch {
-        env-fail "pre-denial network probe failed: $($_.Exception.Message)"
-    }
-
-    $rule = 'VelesTargetRunnerOffline-' + [guid]::NewGuid().ToString('N')
-    try {
-        New-NetFirewallRule -DisplayName $rule -Direction Outbound -Action Block -Profile Any | Out-Null
-        if (-not (Get-NetFirewallRule -DisplayName $rule -ErrorAction Stop | Where-Object Enabled -eq 'True')) { env-fail 'outbound deny rule is not active' }
-        $probeSucceeded = $false
+$rule = 'VelesTargetRunnerOffline-' + [guid]::NewGuid().ToString('N')
+$firewallErrorMessage = $null
+$ruleActive = $false
+$probeSucceededAfterDeny = $false
+$packageExitCode = 0
+try {
+    New-NetFirewallRule -DisplayName $rule -Direction Outbound -Action Block -Profile Any | Out-Null
+    $ruleActive = $null -ne (Get-NetFirewallRule -DisplayName $rule -ErrorAction Stop | Where-Object Enabled -eq 'True')
+    if (-not $ruleActive) {
+        # Defer env-fail to after the try so the exit is top-level; record
+        # state and let the finally clean up first.
+        $firewallErrorMessage = 'outbound deny rule is not active'
+    } else {
         try {
             Invoke-WebRequest -Uri $probe -UseBasicParsing -ErrorAction Stop | Out-Null
-            $probeSucceeded = $true
+            $probeSucceededAfterDeny = $true
         } catch {
-            # Expected: the deny rule blocks the probe. AWebRequest throws under
-            # Stop; swallow it and treat as the required probe failure.
+            # Expected: the deny rule blocks the probe. Invoke-WebRequest
+            # throws under Stop; swallow it and treat as the required probe
+            # failure (probeSucceededAfterDeny stays $false).
         }
-        if ($probeSucceeded) { env-fail 'network probe succeeded after outbound denial' }
-        $env:CARGO_NET_OFFLINE = 'true'
-        & $PackageCommand[0] $PackageCommand[1..($PackageCommand.Count - 1)]
-        if ($LASTEXITCODE -ne 0) { env-fail "package command failed: $LASTEXITCODE" }
-    } finally {
-        Remove-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue
+        if ($probeSucceededAfterDeny) {
+            $firewallErrorMessage = 'network probe succeeded after outbound denial'
+        } else {
+            $env:CARGO_NET_OFFLINE = 'true'
+            & $PackageCommand[0] $PackageCommand[1..($PackageCommand.Count - 1)]
+            $packageExitCode = $LASTEXITCODE
+        }
     }
 } catch {
-    # Any terminating error that escaped a guarded path above is an
-    # environment/usage/tool failure (artifact mismatch is the caller's job),
-    # so normalize it to exit 2 rather than letting PowerShell surface exit 1.
-    env-fail "unhandled terminating error: $($_.Exception.Message)"
+    # A terminating error escaping the guarded firewall commands above is an
+    # environment/tool failure (artifact mismatch is the caller's job);
+    # record it and exit 2 at top level after the finally cleans up.
+    $firewallErrorMessage = "unhandled firewall-block error: $($_.Exception.Message)"
+} finally {
+    Remove-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue
 }
+# All env-fail calls below are at TOP LEVEL (after the try/finally), so their
+# exit 2 cannot be swallowed by any catch handler.
+if ($null -ne $firewallErrorMessage) { env-fail $firewallErrorMessage }
+if ($packageExitCode -ne 0) { env-fail "package command failed: $packageExitCode" }

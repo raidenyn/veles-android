@@ -78,7 +78,11 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
 test('Windows target wrapper validates its exact runner and safely proves offline packaging', async () => {
   const script = await native('network-deny-windows.ps1');
   for (const contract of [
-    "ImageOS -ne 'win25'", "ImageVersion", "RUNNER_ARCH", "node --version", "v26.8.1",
+    // ImageOS for the windows-2025 runner label is `win25-vs2026` (the runner
+    // label is a versioned alias, not the ImageOS value). The workflow
+    // `runs-on: windows-2025` label stays; only the wrapper's ImageOS pin
+    // matches the observed runner ImageOS.
+    "ImageOS -ne 'win25-vs2026'", "ImageVersion", "RUNNER_ARCH", "node --version", "v26.8.1",
     "npm --version", "11.19.0", 'https://github.com/', 'Invoke-WebRequest', 'New-NetFirewallRule',
     'Get-NetFirewallRule', 'CARGO_NET_OFFLINE', 'finally', 'Remove-NetFirewallRule', 'bridgePackage',
   ]) assert.match(script, literal(contract));
@@ -91,11 +95,19 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
   // otherwise surface as exit 1.
   assert.match(script, /function env-fail[\s\S]*?exit 2/);
   // The param() block must NOT mark TauriCachePath Mandatory: mandatory binding
-  // happens BEFORE $ErrorActionPreference and the outer try/catch take effect,
-  // so a missing -TauriCachePath would exit 1 instead of 2. TauriCachePath is
-  // validated inside the guarded body via env-fail so usage failures exit 2.
+  // happens BEFORE $ErrorActionPreference takes effect, so a missing
+  // -TauriCachePath would exit 1 instead of 2. TauriCachePath is validated
+  // inside the guarded body via env-fail so usage failures exit 2.
   assert.doesNotMatch(script, /\[Parameter\(Mandatory *= *\$true\)\][^\n]*\$TauriCachePath/);
   assert.match(script, /IsNullOrWhiteSpace\(\$TauriCachePath\)[\s\S]*?env-fail 'TauriCachePath is required'/);
+  // EXIT-CONTRACT: every `exit 2` must be reachable at TOP LEVEL (never from
+  // inside a try/catch). GitHub's pwsh `-command ". '<script>'"` wrapper
+  // interacts badly with `$host.SetShouldExit`/`exit` issued from inside a
+  // try/catch, surfacing as exit 1 instead of 2. Assert the script never
+  // calls `$host.SetShouldExit` and never calls `env-fail` from inside a
+  // try/catch block (the firewall try records state in variables and the
+  // env-fail calls happen AFTER the try/finally at top level).
+  assert.doesNotMatch(script, /SetShouldExit/);
 });
 
 test('macOS target wrapper validates its exact runner and safely proves offline packaging', async () => {

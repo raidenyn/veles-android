@@ -104,6 +104,16 @@ grep -q "IsNullOrWhiteSpace(\$TauriCachePath)" "$windows_script" \
   || fail "Windows wrapper must validate TauriCachePath inside the guarded body"
 grep -q "'TauriCachePath is required'" "$windows_script" \
   || fail "Windows wrapper must env-fail on a missing TauriCachePath"
+# EXIT-CONTRACT: the Windows wrapper must NEVER call `$host.SetShouldExit`
+# (it interacts badly with GitHub's pwsh `-command` wrapper and surfaces as
+# exit 1 instead of 2), and every `exit 2` must be reachable at TOP LEVEL
+# (never from inside a try/catch). This is the strongest runnable assertion
+# on a pwsh-less host; the behavior assertion below runs when pwsh is present.
+if grep -q 'SetShouldExit' "$windows_script"; then
+  fail "Windows wrapper must not call SetShouldExit (it surfaces as exit 1 under the pwsh wrapper)"
+fi
+grep -q "ImageOS -ne 'win25-vs2026'" "$windows_script" \
+  || fail "Windows wrapper must pin ImageOS to win25-vs2026 (the observed windows-2025 runner ImageOS)"
 
 if command -v pwsh >/dev/null 2>&1; then
   run_windows_with_stubs() {
@@ -129,7 +139,7 @@ NPM
     chmod +x "$tmp/bin/node" "$tmp/bin/npm"
     local rc
     (
-      ImageOS=win25 ImageVersion=2025 RUNNER_ARCH=X64 \
+      ImageOS=win25-vs2026 ImageVersion=2025 RUNNER_ARCH=X64 \
         PATH="$tmp/bin:$PATH" pwsh -NoProfile -File "$windows_script" -TauriCachePath "$tmp/.tauri" >/dev/null 2>&1
     )
     rc=$?
@@ -142,7 +152,7 @@ NPM
   [ "$status" -eq 2 ] || fail "Windows wrapper with missing ImageOS must exit 2, got $status"
 
   # Missing -TauriCachePath (usage failure) -> exit 2 (not 1 from mandatory binding).
-  status=$( ImageOS=win25 ImageVersion=2025 RUNNER_ARCH=X64 PATH="$PATH" pwsh -NoProfile -File "$windows_script" >/dev/null 2>&1; echo $? )
+  status=$( ImageOS=win25-vs2026 ImageVersion=2025 RUNNER_ARCH=X64 PATH="$PATH" pwsh -NoProfile -File "$windows_script" >/dev/null 2>&1; echo $? )
   [ "$status" -eq 2 ] || fail "Windows wrapper with missing -TauriCachePath must exit 2, got $status"
 
   # Node version drift -> exit 2.
