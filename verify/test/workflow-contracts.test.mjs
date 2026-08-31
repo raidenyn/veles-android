@@ -397,7 +397,7 @@ test('Windows native workflow produces a verified comparison from two offline tr
   const source = await workflow('build-native-windows.yml');
   assertNativeWorkflow(source, 'build-native-windows.yml', 'windows-2025', 'verify/native/network-deny-windows.ps1');
   assert.match(source, /node-version:\s*['"]26\.8\.1['"]/, 'Windows workflow must pin Node 26.8.1');
-  assert.match(source, /RUNNER_ARCH\s*-ne\s*'X64'/, 'Windows workflow must require an x64 runner');
+  assert.match(source, /RUNNER_ARCH['"]?\s*\)\s*-ne\s*'X64'/, 'Windows workflow must require an x64 runner');
   for (const [start, end] of [['  run-a:', '  run-b:'], ['  run-b:', '  compare:']]) {
     const slot = source.slice(source.indexOf(start), source.indexOf(end));
     assert.match(slot, /pwsh -NoProfile -File verify\/native\/network-deny-windows\.ps1 -TauriCachePath "native-bridge\/src-tauri\/target\/\.tauri"/, `${start.trim()} must execute the wrapper with the isolated cache path Tauri reads under useLocalToolsDir`);

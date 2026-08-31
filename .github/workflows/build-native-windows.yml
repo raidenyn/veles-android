@@ -27,9 +27,9 @@ jobs:
       - name: Validate runner identity
         run: |
           foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
-            if ([string]::IsNullOrWhiteSpace($env:$name)) { throw "$name is required" }
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required" }
           }
-          if ($env:RUNNER_ARCH -ne 'X64') { throw "expected X64, got $env:RUNNER_ARCH" }
+          if ([Environment]::GetEnvironmentVariable('RUNNER_ARCH') -ne 'X64') { throw "expected X64, got $([Environment]::GetEnvironmentVariable('RUNNER_ARCH'))" }
       - name: Produce offline native package
         run: pwsh -NoProfile -File verify/native/network-deny-windows.ps1 -TauriCachePath "native-bridge/src-tauri/target/.tauri"
       - name: Assemble extracted verification view
@@ -54,9 +54,9 @@ jobs:
       - name: Validate runner identity
         run: |
           foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
-            if ([string]::IsNullOrWhiteSpace($env:$name)) { throw "$name is required" }
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required" }
           }
-          if ($env:RUNNER_ARCH -ne 'X64') { throw "expected X64, got $env:RUNNER_ARCH" }
+          if ([Environment]::GetEnvironmentVariable('RUNNER_ARCH') -ne 'X64') { throw "expected X64, got $([Environment]::GetEnvironmentVariable('RUNNER_ARCH'))" }
       - name: Produce offline native package
         run: pwsh -NoProfile -File verify/native/network-deny-windows.ps1 -TauriCachePath "native-bridge/src-tauri/target/.tauri"
       - name: Assemble extracted verification view
@@ -82,9 +82,9 @@ jobs:
       - name: Validate runner identity
         run: |
           foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
-            if ([string]::IsNullOrWhiteSpace($env:$name)) { throw "$name is required" }
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required" }
           }
-          if ($env:RUNNER_ARCH -ne 'X64') { throw "expected X64, got $env:RUNNER_ARCH" }
+          if ([Environment]::GetEnvironmentVariable('RUNNER_ARCH') -ne 'X64') { throw "expected X64, got $([Environment]::GetEnvironmentVariable('RUNNER_ARCH'))" }
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: unverified-windows-run-a
