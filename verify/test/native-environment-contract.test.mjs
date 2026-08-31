@@ -127,11 +127,15 @@ test('macOS target wrapper validates its exact runner and safely proves offline 
   assert.ok(script.indexOf('bridgeBuild') < script.indexOf('curl --fail'));
   assert.ok(script.indexOf('curl --fail') < script.indexOf('sandbox-exec'));
   assert.ok(script.indexOf('sandbox-exec') < script.lastIndexOf('curl --fail'));
-  // The macOS sandbox-exec profile denies network-outbound, which blocks the
-  // Gradle daemon's loopback TCP control socket — a daemon started inside the
-  // sandbox fails with 'Could not connect to the Gradle daemon'. The default
-  // package command must therefore run Gradle with --no-daemon. The Windows
-  // wrapper does NOT need --no-daemon (Windows firewall outbound rules do not
+  // The macOS sandbox-exec profile denies network-outbound, then re-allows
+  // loopback ONLY (SBPL is last-match-wins, so the loopback allow follows the
+  // deny). Gradle 9 forks a single-use daemon even under --no-daemon and
+  // communicates with it over loopback TCP; a blanket deny blocks that socket
+  // ('Could not connect to the Gradle daemon'). --no-daemon is kept for parity
+  // with the Windows wrapper and to minimize daemon overhead, but it is no
+  // longer required for sandbox correctness: the loopback allow lets the
+  // daemon control socket work while real outbound stays denied. The Windows
+  // wrapper does NOT use --no-daemon (Windows firewall outbound rules do not
   // block loopback); that asymmetry is intentional and asserted below.
   assert.match(script, /set -- \.\/gradlew --no-daemon bridgePackage/);
 });
@@ -140,6 +144,7 @@ test('macOS target wrapper isolates only the package command tree without modify
   const script = await native('network-deny-macos.sh');
   for (const contract of [
     'command -v sandbox-exec', 'profile=$(mktemp)', '(deny network-outbound)',
+    '(allow network-outbound (local ip "127.0.0.1") (local ip "::1") (remote ip "127.0.0.1") (remote ip "::1"))',
     'trap cleanup EXIT', 'rm -f "$profile"', 'sandbox-exec -f "$profile" curl',
     'sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true',
   ]) assert.match(script, literal(contract));

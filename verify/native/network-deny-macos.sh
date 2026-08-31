@@ -32,19 +32,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-printf '%s\n' '(version 1)' '(allow default)' '(deny network-outbound)' > "$profile"
+# Sandbox profile: deny all outbound network, then re-allow loopback ONLY.
+# SBPL is last-match-wins, so the loopback allow MUST follow the deny.
+# Gradle 9 ALWAYS forks a single-use daemon process even under --no-daemon,
+# and that daemon communicates with the client over loopback TCP; a blanket
+# `(deny network-outbound)` blocks that socket and the build fails with
+# 'Could not connect to the Gradle daemon'. Allowing 127.0.0.1 / ::1
+# (both local and remote ends of the loopback pair) lets the daemon control
+# socket work while real outbound (e.g. curl https://github.com/) stays
+# denied, so the pre/post network probes still behave identically.
+printf '%s\n' \
+  '(version 1)' \
+  '(allow default)' \
+  '(deny network-outbound)' \
+  '(allow network-outbound (local ip "127.0.0.1") (local ip "::1") (remote ip "127.0.0.1") (remote ip "::1"))' \
+  > "$profile"
 sandbox-exec -f "$profile" /usr/bin/true || env_fail 'sandbox-exec self-test failed'
 if sandbox-exec -f "$profile" curl --fail --silent --show-error --output /dev/null "$probe"; then
   env_fail 'network probe succeeded after outbound denial'
 fi
 if [ "$#" -eq 0 ]; then set -- ./gradlew --no-daemon bridgePackage; fi
-# The default package command runs Gradle with --no-daemon because the
-# sandbox profile below denies network-outbound, which blocks the Gradle
-# daemon's loopback TCP control socket — a daemon started here fails with
-# 'Could not connect to the Gradle daemon'. --no-daemon runs the build in
-# the current process, which needs no loopback socket. The Windows wrapper
-# does NOT need --no-daemon: Windows firewall outbound rules do not block
-# loopback, so gradlew.bat's daemon works under the Windows deny rule. This
-# asymmetry is intentional and documented; the contract test treats the two
-# wrappers' default package commands separately for that reason.
+# --no-daemon is kept for parity with the Windows wrapper and to minimize
+# daemon overhead, but it is no longer required for sandbox correctness:
+# Gradle 9 forks a single-use daemon even with --no-daemon, and that daemon
+# uses a loopback control socket which the profile above now allows. The
+# Windows wrapper does not use --no-daemon: Windows firewall outbound rules
+# do not block loopback, so gradlew.bat's daemon works under the Windows
+# deny rule. This asymmetry is intentional and documented; the contract
+# test treats the two wrappers' default package commands separately for
+# that reason.
 sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true "$@" || env_fail 'sandboxed package command failed'
