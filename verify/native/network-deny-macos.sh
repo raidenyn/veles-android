@@ -1,21 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Environment/usage/identity failures exit 2 (never 1). A raw nonzero exit under
+# `set -e` would otherwise propagate the underlying command's status (e.g. 1 for
+# a Gradle build failure), so every acquisition/build failure is normalized to
+# exit 2 via explicit guards. Artifact mismatches are the caller's
+# responsibility (byte comparison), not this wrapper's.
+env_fail() {
+  printf '%s\n' "$*" >&2
+  exit 2
+}
+
 : "${ImageOS:?ImageOS is required}"
 : "${ImageVersion:?ImageVersion is required}"
 : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
-[ "$ImageOS" = 'macos-26' ] || { printf '%s\n' "expected macos-26, got $ImageOS" >&2; exit 2; }
-[ "$(node --version)" = 'v26.8.1' ] || { printf '%s\n' 'Node version drift' >&2; exit 2; }
-[ "$(npm --version)" = '11.19.0' ] || { printf '%s\n' 'npm version drift' >&2; exit 2; }
+[ "$ImageOS" = 'macos26' ] || env_fail "expected macos26, got $ImageOS"
+[ "$(node --version)" = 'v26.8.1' ] || env_fail 'Node version drift'
+[ "$(npm --version)" = '11.19.0' ] || env_fail 'npm version drift'
 
 export DEVELOPER_DIR=/Applications/Xcode_26.6.app
-[ "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113' ] || { printf '%s\n' 'Xcode version drift' >&2; exit 2; }
-xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+[ "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113' ] || env_fail 'Xcode version drift'
+xcrun --sdk macosx26.5 --show-sdk-path >/dev/null || env_fail 'macOS SDK not found'
 
-./gradlew bridgeBuild
+./gradlew bridgeBuild || env_fail 'bridgeBuild failed'
 probe='https://github.com/'
-curl --fail --silent --show-error --output /dev/null "$probe"
-command -v sandbox-exec >/dev/null || { printf '%s\n' 'sandbox-exec is required' >&2; exit 2; }
+curl --fail --silent --show-error --output /dev/null "$probe" || env_fail 'pre-denial network probe failed'
+command -v sandbox-exec >/dev/null || env_fail 'sandbox-exec is required'
 profile=$(mktemp)
 cleanup() {
   rm -f "$profile"
@@ -23,10 +33,9 @@ cleanup() {
 trap cleanup EXIT
 
 printf '%s\n' '(version 1)' '(allow default)' '(deny network-outbound)' > "$profile"
-sandbox-exec -f "$profile" /usr/bin/true
+sandbox-exec -f "$profile" /usr/bin/true || env_fail 'sandbox-exec self-test failed'
 if sandbox-exec -f "$profile" curl --fail --silent --show-error --output /dev/null "$probe"; then
-  printf '%s\n' 'network probe succeeded after outbound denial' >&2
-  exit 1
+  env_fail 'network probe succeeded after outbound denial'
 fi
 if [ "$#" -eq 0 ]; then set -- ./gradlew bridgePackage; fi
-sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true "$@"
+sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true "$@" || env_fail 'sandboxed package command failed'

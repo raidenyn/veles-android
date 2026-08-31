@@ -34,6 +34,11 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
     'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll', 'NSIS/Include/MUI2.nsh',
     'NSIS/Include/FileFunc.nsh', 'NSIS/Include/x64.nsh', 'NSIS/Include/nsDialogs.nsh',
     'NSIS/Include/WinMessages.nsh',
+    // Tauri 2.6.0's installer.nsi !includes these unconditionally; utils.nsh /
+    // FileAssociation.nsh use the nsDialogs and System plugins.
+    'NSIS/Include/WordFunc.nsh', 'NSIS/Include/StrFunc.nsh',
+    'NSIS/Include/Win/COM.nsh', 'NSIS/Include/Win/Propkey.nsh',
+    'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll',
   ]) assert.match(provisioner, new RegExp(path.replaceAll('/', '[\\\\/]')));
   for (const contract of ['Get-FileHash', 'SHA256', 'Expand-Archive', 'unexpected', 'missing']) {
     assert.match(provisioner, new RegExp(contract));
@@ -43,7 +48,7 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
 test('Windows target wrapper validates its exact runner and safely proves offline packaging', async () => {
   const script = await native('network-deny-windows.ps1');
   for (const contract of [
-    "ImageOS -ne 'windows-2025'", "ImageVersion", "RUNNER_ARCH", "node --version", "v26.8.1",
+    "ImageOS -ne 'win25'", "ImageVersion", "RUNNER_ARCH", "node --version", "v26.8.1",
     "npm --version", "11.19.0", 'https://github.com/', 'Invoke-WebRequest', 'New-NetFirewallRule',
     'Get-NetFirewallRule', 'CARGO_NET_OFFLINE', 'finally', 'Remove-NetFirewallRule', 'bridgePackage',
   ]) assert.match(script, literal(contract));
@@ -51,12 +56,16 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
   assert.ok(script.indexOf('bridgeBuild') < script.indexOf('Invoke-WebRequest'));
   assert.ok(script.indexOf('Invoke-WebRequest') < script.indexOf('New-NetFirewallRule'));
   assert.ok(script.indexOf('New-NetFirewallRule') < script.lastIndexOf('Invoke-WebRequest'));
+  // Environment/usage/identity failures normalize to exit 2 (never 1) per the
+  // 0/1/2 contract; a bare `throw` under ErrorActionPreference=Stop would
+  // otherwise surface as exit 1.
+  assert.match(script, /function env-fail[\s\S]*?exit 2/);
 });
 
 test('macOS target wrapper validates its exact runner and safely proves offline packaging', async () => {
   const script = await native('network-deny-macos.sh');
   for (const contract of [
-    'macos-26', 'ImageVersion', 'RUNNER_ARCH', 'node --version', 'v26.8.1', 'npm --version', '11.19.0',
+    'macos26', 'ImageVersion', 'RUNNER_ARCH', 'node --version', 'v26.8.1', 'npm --version', '11.19.0',
     'DEVELOPER_DIR=/Applications/Xcode_26.6.app', '17F113', 'macosx26.5', 'https://github.com/',
     'curl --fail --silent --show-error', 'sandbox-exec', 'CARGO_NET_OFFLINE=true', 'trap', 'bridgePackage',
   ]) assert.match(script, literal(contract));
@@ -76,9 +85,29 @@ test('macOS target wrapper isolates only the package command tree without modify
   assert.doesNotMatch(script, /pfctl/);
   assert.ok(script.indexOf('curl --fail') < script.indexOf('sandbox-exec -f "$profile" curl'));
   assert.ok(script.indexOf('sandbox-exec -f "$profile" curl') < script.indexOf('sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true'));
+  // Environment/build/identity failures normalize to exit 2 (never 1) per the
+  // 0/1/2 contract; a raw nonzero exit under `set -e` would otherwise
+  // propagate the underlying command's status.
+  assert.match(script, /env_fail\(\)[\s\S]*?exit 2/);
 });
 
-test('Gradle forwards only an isolated Tauri cache contract to native bundle builds', async () => {
+test('Tauri config and Gradle forward the isolated Tauri cache contract to native bundle builds', async () => {
   const gradle = await readFile(join(ROOT, 'build.gradle.kts'), 'utf8');
-  for (const contract of ['TAURI_WIX_PATH', 'TAURI_NSIS_PATH']) assert.match(gradle, new RegExp(contract));
+  // Tauri 2.6.0's NSIS bundler reads NSIS_PATH (not TAURI_NSIS_PATH); WiX has
+  // no env override and is located via the local-tools directory. Gradle
+  // forwards NSIS_PATH from the provisioned cache as a belt-and-suspenders
+  // override; the authoritative mechanism is useLocalToolsDir in tauri.conf.
+  // The Gradle bridgeBundle doFirst must not environment()-forward the inert
+  // TAURI_WIX_PATH / TAURI_NSIS_PATH names (a comment may reference them for
+  // historical context, but the code path must use NSIS_PATH).
+  assert.match(gradle, /NSIS_PATH/);
+  const bridgeBundleBlock = gradle.slice(gradle.indexOf('val bridgeBundle'), gradle.indexOf('val bridgeManifests'));
+  // The doFirst env-forwarding listOf(...) must use NSIS_PATH only; the inert
+  // TAURI_WIX_PATH / TAURI_NSIS_PATH names must not appear in the active
+  // environment() forwarding listOf(...) (a comment may reference them).
+  assert.match(bridgeBundleBlock, /listOf\("NSIS_PATH"\)\.forEach/);
+  assert.doesNotMatch(bridgeBundleBlock, /listOf\("TAURI_WIX_PATH",\s*"TAURI_NSIS_PATH"\)/);
+  assert.doesNotMatch(bridgeBundleBlock, /listOf\("TAURI_NSIS_PATH",\s*"TAURI_WIX_PATH"\)/);
+  const tauriConf = JSON.parse(await readFile(join(ROOT, 'native-bridge', 'src-tauri', 'tauri.conf.json'), 'utf8'));
+  assert.equal(tauriConf.bundle.useLocalToolsDir, true, 'tauri.conf.json bundle.useLocalToolsDir must be true so Tauri reads the provisioned isolated cache');
 });
