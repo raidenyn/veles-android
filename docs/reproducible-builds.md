@@ -257,27 +257,34 @@ never normalizes or ignores a differing identity field.
 
 ### Offline acquisition and package boundary
 
-Every product packaging flow separates **acquisition** from **execution**. The
-**candidate** (your local checkout) builds with normal host networking; the
-**reference** (inside the pinned Docker image) packages with `--network=none`
-so a reproducible reference can never fetch undisclosed inputs. Byte comparison
-then proves the host-built candidate equals the offline-built reference.
+The trust boundary differs per component. The **candidate** (your local
+checkout) always builds with normal host networking. The **reference** boundary
+is what each verifier actually enforces:
 
 - **Web** — the candidate runs `npm ci` + `npm run package` on the host
   (`verify/verify-web.sh:36-44`); the reference image installs with
   `npm ci --ignore-scripts` then runs `npm run package` inside a container with
-  `--network=none` (`verify/verify-web.sh:58`).
+  `--network=none` (`verify/verify-web.sh:58`). Byte comparison proves the
+  host-built candidate equals the offline-built reference.
 - **Rust** — the candidate runs `./gradlew rustPackage` on the host
   (`verify/verify-rust.sh:28`); the reference image builds the package in a
   copied worktree with `--network=none` (`verify/verify-rust.sh:38`).
-- **Native** — each CI job completes `npm ci`, `cargo fetch --locked`, Rust
-  toolchain setup, and (Windows) the pinned Tauri WiX/NSIS cache provisioning
-  **before** activating a platform outbound-network deny. The job proves
-  connectivity by reaching one fixed HTTPS probe immediately before denial,
-  activates and inspects the deny rule, requires the same probe to fail during
-  denial, sets Cargo offline mode, runs `bridgePackage`, and restores host
-  networking in an unconditional cleanup step. The candidate `bridgeBuild`/`bridgePackage` runs with host networking during acquisition; only the final
-  `bridgePackage` runs under the deny.
+- **Android** — the reference rebuild runs inside the pinned `verify/Dockerfile`
+  image **with networking**: `verify/verify.sh:67-68` invokes `docker run`
+  without `--network=none`, and `verify/verify-inner.sh:21-28` clones the
+  repository and runs `./gradlew assembleRelease` with network access so Gradle
+  can download dependencies. Reproducibility here rests on the pinned image,
+  committed lockfiles (`--locked`), and `apksigcopier` byte/signature
+  comparison — not on an offline package step. The APK is the one component
+  whose packaging is not network-denied.
+- **Native** — each CI job acquires online (`bridgeBuild` plus `npm ci`,
+  `cargo fetch --locked`, Rust toolchain setup, and on Windows the pinned Tauri
+  WiX/NSIS cache provisioning), then denies network **only for `bridgePackage`**.
+  The wrapper proves connectivity by reaching one fixed HTTPS probe immediately
+  before denial, activates and inspects the deny rule, requires the same probe
+  to fail during denial, sets Cargo offline mode, runs `bridgePackage`, and
+  restores host networking in an unconditional cleanup step. `bridgeBuild`
+  itself runs online; only the final `bridgePackage` runs under the deny.
   - **macOS** uses `sandbox-exec` **process-tree** isolation
     (`(deny network-outbound)`) instead of host-wide PF mutation. This is an
     accepted exception to the platform-wide-deny rule: it confines the deny to
@@ -451,9 +458,12 @@ rather than silently selecting a default.
   after later toolchain upgrades.
 - The rebuild clones with full history: `versionCode`/`versionName` come from git
   tags via the androidgitversion plugin.
-- Dependencies are downloaded during the rebuild, so APK/Rust verification needs
-  network access for acquisition; packaging itself runs offline (the build
-  embeds nothing environment-specific).
+- Dependencies are downloaded during the rebuild, so Android verification needs
+  network access (its reference build clones and `./gradlew assembleRelease` with
+  networking — see "Offline acquisition and package boundary" above). Web and
+  Rust references package with `--network=none`; their candidate builds need
+  network for acquisition. Native `bridgePackage` runs under a network deny;
+  acquisition is online.
 - Native `verify-all.sh` requires two independent run directories per platform
   as local inputs; the runs are produced by the reusable native workflows, not
   by the local orchestrator.

@@ -36,13 +36,21 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 output="${VERIFY_NATIVE_OUTPUT:-build/verification/native-bridge}"
 
 # Local verify-all.sh two-platform layout: each run dir carries both windows/
-# and macos/ subdirectories. Compare each platform independently and emit to
-# <output>/windows and <output>/macos so aggregate-checksums.mjs finds both
-# required namespaces.
+# and macos/ subdirectories. Compare each platform independently into a staging
+# area and publish both verified trees only after BOTH comparisons succeed, so a
+# component never emits a success manifest after a failure (spec: a component
+# never emits a success manifest after failure).
 if [ -d "$run_a/windows" ] && [ -d "$run_a/macos" ] && [ -d "$run_b/windows" ] && [ -d "$run_b/macos" ]; then
+  stage=$(mktemp -d)
+  trap 'rm -rf "$stage"' EXIT
   for platform in windows macos; do
-    node "$script_dir/native/compare-runs.mjs" "$resolved_commit" "$run_a/$platform" "$run_b/$platform" "$output/$platform"
+    node "$script_dir/native/compare-runs.mjs" "$resolved_commit" "$run_a/$platform" "$run_b/$platform" "$stage/$platform"
   done
+  # Both comparisons succeeded; publish both platform trees atomically.
+  rm -rf "$output/windows" "$output/macos"
+  mkdir -p "$output"
+  mv "$stage/windows" "$output/windows"
+  mv "$stage/macos" "$output/macos"
   exit 0
 fi
 

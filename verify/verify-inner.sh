@@ -18,9 +18,17 @@ echo "==> Cloning $REPO_URL at $REF (full history so androidgitversion resolves)
 # Trust local mounts regardless of host UID (container runs as root); the
 # https clone path is unaffected by this setting.
 git config --global --add safe.directory '*'
-git clone --quiet "$REPO_URL" /build/src
+# Clone/checkout failures are environment errors (exit 2), not artifact
+# mismatch (exit 1). git would otherwise propagate raw statuses (e.g. 128).
+if ! git clone --quiet "$REPO_URL" /build/src; then
+  echo "ERROR: cannot clone $REPO_URL" >&2
+  exit 2
+fi
 cd /build/src
-git checkout --quiet "$REF"
+if ! git checkout --quiet "$REF"; then
+  echo "ERROR: cannot checkout $REF" >&2
+  exit 2
+fi
 
 echo "==> Building unsigned release APK (no VELES_KEYSTORE_* in this environment)"
 # A build failure prevents comparison and is an environment/build error (exit 2),

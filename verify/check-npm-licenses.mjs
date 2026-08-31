@@ -3,10 +3,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { evaluateNpmLicense } from './lib/license-policy.mjs';
+import { error, mismatch } from './lib/checksum-manifest.mjs';
 
+// A tool invocation failure (missing binary, nonzero exit, spawn error) is an
+// environment/infrastructure failure (exit 2), not a license-policy mismatch.
 function run(command, arguments_, options) {
   const result = spawnSync(command, arguments_, { encoding: 'utf8', ...options });
-  if (result.status !== 0) throw new Error(`${command} failed: ${result.stderr || result.stdout}`);
+  if (result.error) throw error(`cannot run ${command}: ${result.error.message}`);
+  if (result.status !== 0) throw error(`${command} failed: ${result.stderr || result.stdout}`);
   return result.stdout;
 }
 
@@ -24,7 +28,7 @@ async function checkNpmProject(repository, project, policy) {
         licenseText: evidence.licenseFile ?? evidence.licenseText,
       },
     });
-    if (!result.allowed) throw new Error(result.diagnostic);
+    if (!result.allowed) throw mismatch(result.diagnostic);
     report.push(`${packageVersion}: ${result.selectedLicense}`);
   }
   return `${project}\n${report.sort().join('\n')}\n`;
@@ -49,4 +53,4 @@ async function main() {
   await writeFile(join(reports, 'cargo-licenses.txt'), cargoReports.join('\n'));
 }
 
-if (import.meta.main) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+if (import.meta.main) main().catch((caught) => { console.error(caught.message); process.exitCode = caught.exitCode ?? 2; });

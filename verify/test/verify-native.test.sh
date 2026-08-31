@@ -80,8 +80,11 @@ if VERIFY_NATIVE_OUTPUT="$output3" bash "$repo_root/verify/verify-native.sh" "$c
 else
   [ $? -eq 2 ]
 fi
-# The windows comparison succeeded before macOS failed, but macOS must not emit.
-[ ! -d "$output3/macos" ]
+# The windows comparison would succeed before macOS fails, but a component
+# never emits a success manifest after failure: NOTHING may be published.
+[ ! -e "$output3/windows" ]
+[ ! -e "$output3/macos" ]
+[ ! -d "$output3" ]
 
 # --- Wrong argument count exits 2 ---
 if bash "$repo_root/verify/verify-native.sh" "$commit" "$run_a" 2>/dev/null; then
