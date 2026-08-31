@@ -1,99 +1,231 @@
 name: release-build
 
+# Thin caller graph composing the verified reusable workflows from Tasks 10-11.
+# - Ordinary push to master runs only build-android.yml (preserves the existing
+#   release-build cost profile).
+# - A pull request carrying the `release-build` label runs the complete
+#   component graph (Android, web, Rust, supply-chain, both native platforms,
+#   and the toolchain aggregate).
+# - A manual workflow_dispatch has an initial guard requiring
+#   github.ref == 'refs/heads/master'; a dispatch from any selectable non-master
+#   ref fails before any build or publication. A valid master dispatch runs the
+#   complete graph and then publishes a prerelease from verified Android output,
+#   preserving the existing prerelease collision/replacement behavior.
+
 on:
-  workflow_dispatch:
-  pull_request:
-    types: [labeled, synchronize]
   push:
     branches: [master]
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
 
 concurrency:
   group: release-build-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release-build:
-    name: release-build
+  guard:
+    name: guard master-only dispatch
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail non-master dispatch before any build
+        if: github.ref != 'refs/heads/master'
+        run: |
+          echo "::error::Manual release-build dispatch must run from refs/heads/master; got $GITHUB_REF. Non-master dispatch is rejected before any build or publication."
+          exit 1
+
+  android:
+    name: android
+    # Android runs on ordinary master push (cost-preserving) and on the full
+    # graph (labeled PR and master manual dispatch). The guard only runs on
+    # workflow_dispatch; on push/PR the always() + guard-skip clause lets this
+    # job proceed without the guard dependency blocking it.
     if: |
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
-      (github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      always() &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      ))) &&
+      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-android.yml
+    with:
+      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      artifact-name: verified-android
+      release-evidence-artifact-name: android-release-evidence
+    secrets:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+  web-extension:
+    name: web-extension
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      ))) &&
+      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-web-extension.yml
+    with:
+      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      artifact-name: verified-web-extension
+
+  rust:
+    name: rust
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      ))) &&
+      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-rust.yml
+    with:
+      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      artifact-name: rust-jni-wasm
+
+  supply-chain:
+    name: supply-chain
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      ))) &&
+      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-supply-chain.yml
+    with:
+      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      artifact-name: verified-supply-chain
+
+  native-windows:
+    name: native-windows
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      ))) &&
+      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-native-windows.yml
+    with:
+      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      artifact-name: verified-native-windows
+
+  native-macos:
+    name: native-macos
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      ))) &&
+      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-native-macos.yml
+    with:
+      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      artifact-name: verified-native-macos
+
+  aggregate:
+    name: aggregate
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
+      ))) &&
+      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
+    needs: [guard, android, web-extension, rust, supply-chain, native-windows, native-macos]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-toolchain-manifest.yml
+    with:
+      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      artifact-name: SHA256SUMS.toolchains
+      android-artifact-name: verified-android
+      web-extension-artifact-name: verified-web-extension
+      rust-artifact-name: rust-jni-wasm
+      native-windows-artifact-name: verified-native-windows
+      native-macos-artifact-name: verified-native-macos
+
+  publish:
+    name: publish prerelease
+    if: |
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/master' &&
+      needs.guard.result == 'success' &&
+      needs.android.result == 'success' &&
+      needs.supply-chain.result == 'success' &&
+      needs.aggregate.result == 'success'
+    needs: [guard, android, supply-chain, aggregate]
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     env:
-      HAS_KEYSTORE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && secrets.KEYSTORE_BASE64 != '' }}
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version-file: .java-version
-      - uses: gradle/actions/setup-gradle@v6
-      - name: Activate pinned Rust toolchain
-        working-directory: rust
-        run: rustup show active-toolchain
-      - name: Install pinned Android NDK
+      - name: Resolve derived release version
+        id: version
         run: |
-          NDK_VERSION="$(./gradlew -q rustNdkVersion)"
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-      - uses: actions/cache@v5
+          VERSION=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved derived version: $VERSION"
+      - name: Download verified Android release evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          path: build/rust-tools
-          key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
-      - name: Decode keystore
-        if: env.HAS_KEYSTORE == 'true'
-        run: |
-          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ] || [ -z "${{ secrets.KEY_ALIAS }}" ] || [ -z "${{ secrets.KEY_PASSWORD }}" ]; then
-            echo "::error::KEYSTORE_BASE64 is set but one of KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD is missing."
-            exit 1
-          fi
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/keystore.jks"
-          {
-            echo "VELES_KEYSTORE_FILE=$RUNNER_TEMP/keystore.jks"
-            echo "VELES_KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}"
-            echo "VELES_KEY_ALIAS=${{ secrets.KEY_ALIAS }}"
-            echo "VELES_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"
-          } >> "$GITHUB_ENV"
-      - run: ./gradlew assembleRelease
-      - name: Rename APK
-        id: apk
-        run: |
-          APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -1)
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
-            NAME="Veles-PR${{ github.event.pull_request.number }}-${SHORT_SHA}.apk"
-          else
-            VERSION=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
-            NAME="Veles-${VERSION}-release.apk"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          fi
-          mv "$APK" "app/build/outputs/apk/release/$NAME"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "Renamed to $NAME"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.apk.outputs.name }}
-          path: |
-            app/build/outputs/apk/release/Veles-*.apk
-            app/build/outputs/mapping/release/mapping.txt
-          if-no-files-found: error
-      - name: Create GitHub Release
-        if: github.event_name == 'workflow_dispatch'
+          name: android-release-evidence
+          path: verified-android
+      - name: Publish prerelease from verified Android output
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ steps.apk.outputs.version }}"
+          VERSION="${{ steps.version.outputs.version }}"
           if [ "$HAS_KEYSTORE" = "true" ]; then
             SUFFIX=""
+            APK="verified-android/app-release.apk"
           else
             SUFFIX=" (unsigned)"
+            APK="verified-android/app-release-unsigned.apk"
           fi
 
+          # Preserve the existing prerelease collision/replacement behavior: a
+          # previous manual prerelease for the same derived version is replaced,
+          # but a real (non-prerelease) release is never overwritten.
           if EXISTING_JSON=$(gh release view "$VERSION" --json isPrerelease 2>/dev/null); then
             IS_PRERELEASE=$(echo "$EXISTING_JSON" | jq -r '.isPrerelease')
             if [ "$IS_PRERELEASE" = "true" ]; then
@@ -106,8 +238,8 @@ jobs:
           fi
 
           gh release create "$VERSION" \
-            "app/build/outputs/apk/release/${{ steps.apk.outputs.name }}" \
-            "app/build/outputs/mapping/release/mapping.txt" \
+            "$APK" \
+            "verified-android/mapping.txt" \
             --title "Veles $VERSION (manual build)$SUFFIX" \
             --prerelease \
             --generate-notes \

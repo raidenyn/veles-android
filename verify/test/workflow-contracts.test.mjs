@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +9,99 @@ const repository = fileURLToPath(root);
 
 async function workflow(name) {
   return readFile(new URL(`.github/workflows/${name}`, root), 'utf8');
+}
+
+async function workflowFiles() {
+  const entries = await readdir(new URL('.github/workflows', root), { withFileTypes: true });
+  return entries.filter((entry) => entry.isFile() && entry.name.endsWith('.yml')).map((entry) => entry.name);
+}
+
+// Reviewed immutable action pins (Task 12 brief). Every non-local `uses:` must
+// reference the exact 40-hex SHA followed by a `# vN` version comment.
+const ACTION_PINS = {
+  'actions/checkout': { sha: '3d3c42e5aac5ba805825da76410c181273ba90b1', version: 'v7' },
+  'actions/setup-java': { sha: 'b6effb05e454b25005698d916606bdc6ffcbf961', version: 'v5' },
+  'gradle/actions/setup-gradle': { sha: '4733eaac7c1b0da527e4206b7671e0061de1ce37', version: 'v6' },
+  'actions/cache': { sha: 'caa296126883cff596d87d8935842f9db880ef25', version: 'v5' },
+  'actions/upload-artifact': { sha: '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', version: 'v7' },
+  'actions/download-artifact': { sha: '37930b1c2abaa49bbe596cd826c3c89aef350131', version: 'v7' },
+  'actions/setup-node': { sha: '249970729cb0ef3589644e2896645e5dc5ba9c38', version: 'v6' },
+  'actions/attest-build-provenance': { sha: '43d14bc2b83dec42d39ecae14e916627a18bb661', version: 'v3' },
+  'reactivecircus/android-emulator-runner': { sha: '4c44018e59b437e86cdfc41da381398f93ed8808', version: 'v2' },
+  'actions/configure-pages': { sha: '983d7736d9b0ae728b81ab479565c72886d7745b', version: 'v5' },
+  'actions/upload-pages-artifact': { sha: '7b1f4a764d45c48632c6b24a0339c27f5614fb0b', version: 'v4' },
+  'actions/deploy-pages': { sha: 'd6db90164ac5ed86f2b6aed7e0febac5b3c0c03e', version: 'v4' },
+};
+
+function escapeRegexp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function usesReferences(source) {
+  const refs = [];
+  for (const line of source.split('\n')) {
+    const entry = mappingEntry(line);
+    if (entry?.key === 'uses') refs.push(entry.value.trim());
+    for (const value of flowValues(line, 'uses')) refs.push(value.trim());
+  }
+  return refs;
+}
+
+function assertActionsPinned(source, name) {
+  const refs = usesReferences(source);
+  assert.ok(refs.length > 0, `${name} must declare at least one uses: reference`);
+  for (const ref of refs) {
+    if (ref.startsWith('./')) continue; // repository-local reusable workflows are exempt
+    const match = ref.match(/^([^@]+)@([0-9a-f]{40})(?:\s+#\s*(v\d+))?$/);
+    assert.ok(match, `${name} uses "${ref}" which must be <owner>/<repo>@<40-hex SHA> # vN`);
+    const [, action, sha, version] = match;
+    const pin = ACTION_PINS[action];
+    assert.ok(pin, `${name} uses "${ref}" whose action ${action} is not in the reviewed pin snapshot`);
+    assert.equal(sha, pin.sha, `${name} uses "${ref}" which must pin ${action} to the reviewed SHA ${pin.sha}`);
+    assert.equal(version, pin.version, `${name} uses "${ref}" which must carry the # ${pin.version} comment`);
+  }
+}
+
+const FULL_GRAPH_JOBS = ['web-extension', 'rust', 'supply-chain', 'native-windows', 'native-macos'];
+
+function callerJobKeys(source) {
+  // Caller jobs reuse ./.github/workflows/*.yml; collect their top-level job keys.
+  const lines = source.split('\n');
+  const jobs = {};
+  let currentJob = null;
+  let inOnBlock = false;
+  let inJobsBlock = false;
+  for (const line of lines) {
+    if (/^on:\s*$/.test(line)) {
+      inOnBlock = true;
+      currentJob = null;
+      continue;
+    }
+    if (inOnBlock) {
+      // The on: block ends at the next top-level key (indent 0, non-empty).
+      if (line && !line.startsWith(' ') && !line.startsWith('#')) inOnBlock = false;
+    }
+    if (/^jobs:\s*$/.test(line)) {
+      inJobsBlock = true;
+      inOnBlock = false;
+      currentJob = null;
+      continue;
+    }
+    if (!inJobsBlock) continue;
+    const jobMatch = line.match(/^  ([A-Za-z0-9_-]+):\s*$/);
+    if (jobMatch) {
+      currentJob = jobMatch[1];
+      jobs[currentJob] = new Set();
+      continue;
+    }
+    if (currentJob) {
+      const entry = mappingEntry(line);
+      // Top-level keys within a job sit at indent 4 (job key is at indent 2).
+      if (entry && entry.indent === 4) jobs[currentJob].add(entry.key);
+    }
+  }
+  for (const key of Object.keys(jobs)) jobs[key] = [...jobs[key]];
+  return jobs;
 }
 
 function mappingEntry(line) {
@@ -213,7 +306,7 @@ test('Android workflow builds and verifies the explicit release evidence tree', 
 test('web extension workflow uses the exact Node reference and publishes only package files', async () => {
   const source = await workflow('build-web-extension.yml');
   assertReusableWorkflow(source, 'build-web-extension.yml');
-  assert.match(source, /actions\/setup-node@v6[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Web workflow must use Node 26.8.1');
+  assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Web workflow must use Node 26.8.1');
   assert.match(source, /npm ci --ignore-scripts/, 'Web workflow must disable install scripts');
   assert.match(source, /npm run package/, 'Web workflow must package the extension');
   assert.match(source, /verify\/verify-web\.sh/, 'Web workflow must run its reference comparison');
@@ -228,7 +321,7 @@ test('web extension workflow uses the exact Node reference and publishes only pa
 test('Rust workflow packages and reference-verifies rust-jni-wasm', async () => {
   const source = await workflow('build-rust.yml');
   assertReusableWorkflow(source, 'build-rust.yml');
-  assert.match(source, /actions\/setup-node@v6[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Rust workflow must use Node 26.8.1');
+  assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Rust workflow must use Node 26.8.1');
   assert.match(source, /\.\/gradlew rustPackage/, 'Rust workflow must produce the Rust package');
   assert.match(source, /verify\/verify-rust\.sh/, 'Rust workflow must run its reference comparison');
   assert.match(source, /default:\s*rust-jni-wasm/, 'Rust workflow must default to the stable artifact name');
@@ -241,11 +334,11 @@ test('Rust workflow packages and reference-verifies rust-jni-wasm', async () => 
 test('supply-chain workflow enforces reports before uploading exactly three SBOMs', async () => {
   const source = await workflow('build-supply-chain.yml');
   assertReusableWorkflow(source, 'build-supply-chain.yml');
-  assert.match(source, /actions\/setup-node@v6[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
+  assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
   assert.match(source, /\.\/gradlew installCargoDeny/, 'Supply-chain workflow must provision cargo-deny');
   assert.match(source, /verify\/verify-supply-chain\.sh/, 'Supply-chain workflow must enforce supply-chain policy');
   assert.ok(source.indexOf('./gradlew installCargoDeny') < source.indexOf('verify/verify-supply-chain.sh'), 'Supply-chain workflow must provision cargo-deny before enforcement');
-  assert.ok(source.indexOf('verify/verify-supply-chain.sh') < source.indexOf('actions/upload-artifact@v7'), 'Supply-chain workflow must enforce policy before upload');
+  assert.ok(source.indexOf('verify/verify-supply-chain.sh') < source.indexOf('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'), 'Supply-chain workflow must enforce policy before upload');
   assertExactUploadPaths(source, 'build-supply-chain.yml', [
     'build/sbom/web-extension.cdx.json',
     'build/sbom/rust.cdx.json',
@@ -270,7 +363,7 @@ function assertNativeWorkflow(source, name, platform, wrapper) {
     assert.match(source, new RegExp(`\\n  ${job}:`), `${name} must define ${job}`);
   }
   assert.equal((source.match(new RegExp(`runs-on:\\s*${platform}`, 'g')) ?? []).length, 3, `${name} must run both slots and comparison on ${platform}`);
-  assert.equal((source.match(/actions\/setup-node@v6[\s\S]*?node-version:\s*['"]26\.8\.1['"]/g) ?? []).length, 3, `${name} must pin Node 26.8.1 in every job`);
+  assert.equal((source.match(/actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/g) ?? []).length, 3, `${name} must pin Node 26.8.1 in every job`);
   for (const field of ['ImageOS', 'ImageVersion', 'RUNNER_ARCH']) {
     assert.match(source, new RegExp(`(?:test -n "\\$${field}"|foreach \\(\\$name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH'\\))`), `${name} must reject an empty ${field}`);
   }
@@ -367,7 +460,7 @@ test('aggregate artifact-name guard accepts only the five verified producers', (
 test('aggregate validates all artifact inputs before any download', async () => {
   const source = await workflow('build-toolchain-manifest.yml');
   const validation = source.indexOf('- name: Validate verified artifact names');
-  const download = source.indexOf('actions/download-artifact@v8');
+  const download = source.indexOf('actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131');
   assert.ok(validation !== -1 && validation < download, 'aggregate must validate artifact names before downloads');
   for (const input of ['android-artifact-name', 'web-extension-artifact-name', 'rust-artifact-name', 'native-windows-artifact-name', 'native-macos-artifact-name']) {
     assert.match(source.slice(validation, download), new RegExp(`inputs\\.${input}`), `aggregate guard must validate ${input}`);
@@ -464,5 +557,110 @@ jobs:
     '{ "run": "echo ${{ secrets.KEY }}" }',
   ]) {
     assert.throws(() => assertNoSecretRunInterpolation(`steps:\n  - ${run}`, 'fixture'), /must not interpolate secrets/);
+  }
+});
+
+test('release-build caller graph composes verified workflows with default-read and publisher-only write', async () => {
+  const source = await workflow('release-build.yml');
+  assert.match(source, /^permissions:\n  contents: read$/m, 'release-build default permissions must be contents: read only');
+
+  // Triggers: master push, release-build labeled PR, manual dispatch.
+  assert.match(source, /^on:\n  push:\n    branches: \[master\]/m, 'release-build must trigger on master push');
+  assert.match(source, /^  pull_request:\n    types: \[labeled, synchronize\]/m, 'release-build must trigger on labeled/synchronize PR events');
+  assert.doesNotMatch(source, /^  pull_request:\n    branches:/m, 'release-build must not restrict pull_request branches');
+  assert.match(source, /^  workflow_dispatch:\s*$/m, 'release-build must remain manually dispatchable');
+
+  // Non-master dispatch guard must fail before any build.
+  const guardIndex = source.indexOf('  guard:');
+  const firstBuildIndex = Math.min(
+    ...['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml', 'build-native-windows.yml', 'build-native-macos.yml', 'build-toolchain-manifest.yml']
+      .map((file) => source.indexOf(`./.github/workflows/${file}`))
+      .filter((index) => index !== -1),
+  );
+  assert.ok(guardIndex !== -1, 'release-build must declare a guard job');
+  assert.ok(firstBuildIndex !== -1, 'release-build must call at least one reusable workflow');
+  assert.ok(guardIndex < firstBuildIndex, 'release-build guard must precede every reusable-workflow call');
+  const guardBlock = source.slice(guardIndex, firstBuildIndex);
+  assert.match(guardBlock, /if: github\.event_name == 'workflow_dispatch'/, 'release-build guard must only run on workflow_dispatch');
+  assert.match(guardBlock, /github\.ref != 'refs\/heads\/master'/, 'release-build guard must test for a non-master ref');
+  assert.match(guardBlock, /::error::|exit 1/, 'release-build guard must fail the dispatch before builds');
+
+  // Reusable-workflow caller jobs contain only uses/with/secrets/needs/if/permissions.
+  const jobs = callerJobKeys(source);
+  for (const [job, keys] of Object.entries(jobs)) {
+    if (job === 'guard') continue; // guard is a local gate, not a reusable-workflow caller
+    // Only reusable-workflow caller jobs (uses: ./.github/workflows/...) are constrained.
+    const jobStart = source.indexOf(`  ${job}:`);
+    const nextJobMatch = source.slice(jobStart + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
+    const jobEnd = nextJobMatch ? jobStart + 1 + nextJobMatch.index : source.length;
+    const jobBlock = source.slice(jobStart, jobEnd);
+    if (!/uses: \.\/\.github\/workflows\//.test(jobBlock)) continue;
+    for (const key of keys) {
+      assert.ok(
+        ['uses', 'with', 'secrets', 'needs', 'if', 'permissions', 'name'].includes(key),
+        `release-build reusable-workflow caller job "${job}" must contain only caller fields; found "${key}"`,
+      );
+    }
+  }
+
+  const labelCondition = "github.event.action == 'labeled' && github.event.label.name == 'release-build'";
+  const synchronizeCondition = "github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build')";
+
+  // Android-only ordinary master push: android job's if includes push; the
+  // full-graph jobs exclude push and require workflow_dispatch or the label.
+  const androidBlock = source.slice(source.indexOf('  android:'), source.indexOf('  web-extension:'));
+  assert.match(androidBlock, /github\.event_name == 'push'/, 'release-build android job must run on ordinary master push');
+
+  for (const job of FULL_GRAPH_JOBS) {
+    const start = source.indexOf(`  ${job}:`);
+    const nextJobMatch = source.slice(start + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
+    const end = nextJobMatch ? start + 1 + nextJobMatch.index : source.length;
+    const jobBlock = source.slice(start, end);
+    assert.ok(jobBlock.length > 0, `release-build must define job ${job}`);
+    assert.doesNotMatch(jobBlock, /github\.event_name == 'push'/, `release-build job ${job} must not run on ordinary master push`);
+    assert.match(jobBlock, /github\.event_name == 'workflow_dispatch'/, `release-build job ${job} must gate on workflow_dispatch`);
+    assert.match(jobBlock, new RegExp(escapeRegexp(labelCondition)), `release-build job ${job} must include the labeled pull_request trigger`);
+    assert.match(jobBlock, new RegExp(escapeRegexp(synchronizeCondition)), `release-build job ${job} must include the synchronize pull_request trigger`);
+  }
+
+  // Labeled PR runs the complete component graph (every full-graph job + aggregate).
+  assert.ok(FULL_GRAPH_JOBS.every((job) => source.includes(`  ${job}:`)), 'release-build labeled PR must run every full-graph component');
+  const aggregateBlock = source.slice(source.indexOf('  aggregate:'), source.indexOf('  publish:'));
+  assert.match(aggregateBlock, /needs: \[guard, android, web-extension, rust, supply-chain, native-windows, native-macos\]/, 'release-build aggregate job must need guard and every component');
+
+  // Manual publication depends on Android, supply-chain, and aggregate, and is the only writer.
+  const publishStart = source.indexOf('  publish:');
+  const publishBlock = source.slice(publishStart);
+  assert.match(publishBlock, /needs: \[guard, android, supply-chain, aggregate\]/, 'release-build publish job must depend on guard, android, supply-chain, and aggregate');
+  assert.match(publishBlock, /github\.event_name == 'workflow_dispatch'[\s\S]*?github\.ref == 'refs\/heads\/master'/, 'release-build publish job must only run on a master manual dispatch');
+  assert.match(publishBlock, /permissions:\n      contents: write/, 'release-build publish job must declare contents: write');
+  // No other job grants contents: write.
+  const beforePublish = source.slice(0, publishStart);
+  assert.doesNotMatch(beforePublish, /contents: write/, 'release-build must grant contents: write only in the publish job');
+
+  // Publisher downloads verified Android output and preserves prerelease collision/replacement.
+  assert.match(publishBlock, /actions\/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7/, 'release-build publisher must download verified artifacts via the pinned download-artifact action');
+  assert.match(publishBlock, /name: android-release-evidence/, 'release-build publisher must download the verified Android release-evidence artifact');
+  assert.match(publishBlock, /gh release view "\$VERSION" --json isPrerelease/, 'release-build publish must preserve prerelease collision/replacement behavior');
+  assert.match(publishBlock, /gh release delete "\$VERSION" --cleanup-tag --yes/, 'release-build publish must replace a previous manual prerelease');
+  assert.match(publishBlock, /gh release create "\$VERSION"/, 'release-build publish must create the prerelease from verified Android output');
+  assertNoSecretRunInterpolation(publishBlock, 'release-build publish job');
+});
+
+test('every workflow pins external actions to the reviewed SHA plus version comment', async () => {
+  const files = await workflowFiles();
+  assert.ok(files.length >= 11, `expected at least 11 workflow files, found ${files.length}`);
+  for (const name of files) {
+    const source = await workflow(name);
+    assertActionsPinned(source, name);
+  }
+});
+
+test('reusable component workflows referenced by the caller graph exist and remain reusable', async () => {
+  const caller = await workflow('release-build.yml');
+  for (const file of ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml', 'build-native-windows.yml', 'build-native-macos.yml', 'build-toolchain-manifest.yml']) {
+    assert.match(caller, new RegExp(`uses: \\./\\.github/workflows/${file.replace(/\./g, '\\.')}`), `release-build caller must reuse ${file}`);
+    const reusable = await workflow(file);
+    assert.match(reusable, /workflow_call:/, `${file} must remain reusable (workflow_call)`);
   }
 });
