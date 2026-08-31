@@ -50,6 +50,11 @@ val verifyCargoToolsFile = layout.projectDirectory.file("verify/cargo-tools.toml
 val verifyToolsDir = layout.buildDirectory.dir("verify-tools")
 val wasmPackageDir = layout.projectDirectory.dir("web-extension/rust-wasm/pkg")
 val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
+// On Windows, Gradle's Exec task process launcher cannot exec the `npm` shell
+// script directly — it needs `npm.cmd`. Node ships `node.exe` so plain `node`
+// works, but `npm` does not. Resolved once at configuration time and reused by
+// every bridge Exec task that invokes npm.
+val npmCommand = if (windowsExecutableSuffix.isNotEmpty()) "npm.cmd" else "npm"
 
 fun pinnedToolVersion(name: String): String {
     val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
@@ -561,7 +566,7 @@ val bridgeInstall = tasks.register<Exec>("bridgeInstall") {
     inputs.file(bridgeDir.file("package-lock.json"))
     outputs.dir(bridgeDir.dir("node_modules"))
     workingDir(bridgeDir)
-    commandLine("npm", "ci")
+    commandLine(npmCommand, "ci")
 }
 
 val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
@@ -569,7 +574,7 @@ val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
     description = "Checks Prettier formatting for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "run", "format:check")
+    commandLine(npmCommand, "run", "format:check")
 }
 
 val bridgeLint = tasks.register<Exec>("bridgeLint") {
@@ -577,7 +582,7 @@ val bridgeLint = tasks.register<Exec>("bridgeLint") {
     description = "Runs ESLint for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "run", "lint")
+    commandLine(npmCommand, "run", "lint")
 }
 
 val bridgeTypecheck = tasks.register<Exec>("bridgeTypecheck") {
@@ -585,7 +590,7 @@ val bridgeTypecheck = tasks.register<Exec>("bridgeTypecheck") {
     description = "Runs TypeScript type-checking for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "run", "typecheck")
+    commandLine(npmCommand, "run", "typecheck")
 }
 
 val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
@@ -593,7 +598,7 @@ val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
     description = "Runs vitest source-level tests for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "test")
+    commandLine(npmCommand, "test")
 }
 
 val bridgeRustToolchainCheck = tasks.register("bridgeRustToolchainCheck") {
@@ -734,7 +739,7 @@ val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
         // no notarization, even if the calling environment inherited them.
         stripSigningEnv(this as Exec)
     }
-    commandLine("npm", "run", "build")
+    commandLine(npmCommand, "run", "build")
 }
 
 // OTP-01 sub-project 1c — separate unsigned Tauri *bundle* build.
@@ -823,7 +828,7 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
         // command. Resulting invocation:
         //   tauri build --ci --bundles <targets> -- --locked --features tauri-runtime
         commandLine(
-            "npm",
+            npmCommand,
             "run",
             "bundle",
             "--",
