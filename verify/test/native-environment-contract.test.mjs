@@ -39,7 +39,30 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
     'NSIS/Include/WordFunc.nsh', 'NSIS/Include/StrFunc.nsh',
     'NSIS/Include/Win/COM.nsh', 'NSIS/Include/Win/Propkey.nsh',
     'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll',
+    // MUI2.nsh redirects to Contrib\Modern UI 2\MUI2.nsh, which !includes
+    // LogicLib.nsh, LangFile.nsh, Sections.nsh, Util.nsh and the whole
+    // Contrib\Modern UI 2 tree (the offline build must resolve every !include).
+    'NSIS/Include/LogicLib.nsh', 'NSIS/Include/LangFile.nsh',
+    'NSIS/Include/Sections.nsh', 'NSIS/Include/Util.nsh',
+    'NSIS/Contrib/Modern UI 2/MUI2.nsh',
+    'NSIS/Contrib/Modern UI 2/Deprecated.nsh',
+    'NSIS/Contrib/Modern UI 2/Interface.nsh',
+    'NSIS/Contrib/Modern UI 2/Localization.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Components.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Directory.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Finish.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/InstallFiles.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/License.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/StartMenu.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/UninstallConfirm.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Welcome.nsh',
   ]) assert.match(provisioner, new RegExp(path.replaceAll('/', '[\\\\/]')));
+  // The provisioner must map the actual archive layouts into the expected
+  // cache roots: wix314-binaries.zip extracts flat (candle.exe at the archive
+  // root, no WixTools314/ prefix), and nsis-3.zip extracts under nsis-3.08/.
+  // The cache must end up with WixTools314/ and NSIS/ roots regardless.
+  assert.match(provisioner, /Resolve-ArchiveSource[\s\S]*?WixTools314\/\*[\s\S]*?nsis-3\.08/);
   for (const contract of ['Get-FileHash', 'SHA256', 'Expand-Archive', 'unexpected', 'missing']) {
     assert.match(provisioner, new RegExp(contract));
   }

@@ -5,24 +5,65 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# The expected cache layout Tauri 2.6.0 reads under
+# <cargo target dir>/.tauri/ when bundle.useLocalToolsDir is true:
+#   WixTools314/  (the wix314-binaries.zip archive contents, rooted flat)
+#   NSIS/         (the nsis-3.08 archive contents, rooted under NSIS/)
+#
+# The pinned archives do NOT extract into these roots directly:
+#   - wix314-binaries.zip extracts FLAT (candle.exe at the archive root, no
+#     WixTools314/ prefix), so the provisioner re-roots every WiX entry under
+#     WixTools314/ when copying into the cache.
+#   - nsis-3.zip extracts under nsis-3.08/ (makensis.exe at
+#     nsis-3.08/makensis.exe), so the provisioner strips the nsis-3.08/ prefix
+#     and re-roots every NSIS entry under NSIS/ when copying into the cache.
+#
+# The required set covers every file Tauri 2.6.0's NSIS installer template
+# (crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi) transitively
+# !includes plus the plugin DLLs its utils.nsh / FileAssociation.nsh use:
+#   - installer.nsi unconditionally !includes MUI2.nsh, FileFunc.nsh, x64.nsh,
+#     WordFunc.nsh, utils.nsh, FileAssociation.nsh, Win\COM.nsh, Win\Propkey.nsh,
+#     StrFunc.nsh.
+#   - MUI2.nsh redirects to Contrib\Modern UI 2\MUI2.nsh, which !includes
+#     WinMessages.nsh, LogicLib.nsh, nsDialogs.nsh, LangFile.nsh and the whole
+#     Contrib\Modern UI 2 tree (Deprecated/Interface/Localization/Pages +
+#     Pages\*). It also sets !addincludedir to Contrib\Modern UI 2.
+#   - utils.nsh and FileAssociation.nsh use the System and nsDialogs plugins.
+#   - Sections.nsh and Util.nsh are standard NSIS headers commonly pulled by
+#     the above; include them so the offline build resolves every !include.
+# The build uses the default currentUser INSTALLMODE, so MultiUser.nsh is NOT
+# required and is intentionally omitted.
 $requiredFiles = @(
     'WixTools314/candle.exe', 'WixTools314/candle.exe.config', 'WixTools314/darice.cub',
     'WixTools314/light.exe', 'WixTools314/light.exe.config', 'WixTools314/wconsole.dll',
     'WixTools314/winterop.dll', 'WixTools314/wix.dll', 'WixTools314/WixUIExtension.dll',
-    'WixTools314/WixUtilExtension.dll', 'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe',
+    'WixTools314/WixUtilExtension.dll',
+    'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe',
     'NSIS/Stubs/lzma-x86-unicode', 'NSIS/Stubs/lzma_solid-x86-unicode',
     'NSIS/Plugins/x86-unicode/nsis_tauri_utils.dll',
-    'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll', 'NSIS/Include/MUI2.nsh',
-    'NSIS/Include/FileFunc.nsh', 'NSIS/Include/x64.nsh', 'NSIS/Include/nsDialogs.nsh',
-    'NSIS/Include/WinMessages.nsh',
-    # Tauri 2.6.0's NSIS installer template (installer.nsi) !includes these
-    # additional headers unconditionally, and its utils.nsh / FileAssociation.nsh
-    # use the nsDialogs and System plugins. They must be present in the
-    # provisioned cache so the offline NSIS build can resolve every !include
-    # and plugin call without a hidden download.
+    'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll',
+    'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll',
+    'NSIS/Include/MUI2.nsh', 'NSIS/Include/FileFunc.nsh', 'NSIS/Include/x64.nsh',
+    'NSIS/Include/nsDialogs.nsh', 'NSIS/Include/WinMessages.nsh',
     'NSIS/Include/WordFunc.nsh', 'NSIS/Include/StrFunc.nsh',
     'NSIS/Include/Win/COM.nsh', 'NSIS/Include/Win/Propkey.nsh',
-    'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll'
+    'NSIS/Include/LogicLib.nsh', 'NSIS/Include/LangFile.nsh',
+    'NSIS/Include/Sections.nsh', 'NSIS/Include/Util.nsh',
+    # MUI2.nsh !includes the Contrib\Modern UI 2 tree and adds it as an
+    # !addincludedir; every header it pulls must be present offline.
+    'NSIS/Contrib/Modern UI 2/MUI2.nsh',
+    'NSIS/Contrib/Modern UI 2/Deprecated.nsh',
+    'NSIS/Contrib/Modern UI 2/Interface.nsh',
+    'NSIS/Contrib/Modern UI 2/Localization.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Components.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Directory.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Finish.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/InstallFiles.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/License.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/StartMenu.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/UninstallConfirm.nsh',
+    'NSIS/Contrib/Modern UI 2/Pages/Welcome.nsh'
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -43,6 +84,20 @@ $stage = Join-Path $parent ('.tauri-tools-' + [guid]::NewGuid().ToString('N'))
 $downloads = Join-Path $stage 'downloads'
 $unpacked = Join-Path $stage 'unpacked'
 $cacheStage = Join-Path $stage 'cache'
+
+# Map an expected cache path to its actual location under $unpacked by
+# replacing the cache root prefix with the archive's real root prefix.
+#   WixTools314/<rest> -> <rest>                       (flat archive)
+#   NSIS/<rest>        -> nsis-3.08/<rest>             (nsis-3.08-prefixed archive)
+function Resolve-ArchiveSource([string]$cachePath) {
+    if ($cachePath -like 'WixTools314/*') {
+        return Join-Path $unpacked $cachePath.Substring('WixTools314/'.Length)
+    }
+    if ($cachePath -like 'NSIS/*') {
+        return Join-Path $unpacked (Join-Path 'nsis-3.08' $cachePath.Substring('NSIS/'.Length))
+    }
+    throw "unexpected required cache path root: $cachePath"
+}
 
 function Get-VerifiedFile([object]$tool, [string]$name) {
     $destination = Join-Path $downloads $name
@@ -72,8 +127,8 @@ try {
     Expand-VerifiedArchive $wix $unpacked
     Expand-VerifiedArchive $nsis $unpacked
     foreach ($path in $requiredFiles | Where-Object { $_ -notmatch 'nsis_tauri_utils\.dll$' }) {
-        $source = Join-Path $unpacked $path
-        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "missing Tauri archive file: $path" }
+        $source = Resolve-ArchiveSource $path
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "missing Tauri archive file: $path (looked at $source)" }
         $destination = Join-Path $cacheStage $path
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
         Copy-Item -LiteralPath $source -Destination $destination
