@@ -49,31 +49,33 @@ function files(entries) {
 // deterministic outer package and its sidecar. The producer also writes a
 // product-level SHA256SUMS (a component checksum manifest listing the package
 // and sidecar); the design excludes component checksum manifests from the
-// transport manifest, but requires it to be VALIDATED against its own content
-// (i.e. its records must correctly hash the package and sidecar that the
-// transport carries). This returns the product file paths that the transport
-// manifest must cover (package + sidecar only, excluding SHA256SUMS) and
-// validates the component SHA256SUMS if present.
+// transport manifest, but REQUIRES it to be present and valid (its records
+// must correctly hash the package and sidecar that the transport carries).
+// This returns the product file paths that the transport manifest must cover
+// (package + sidecar only, excluding SHA256SUMS) and validates the component
+// SHA256SUMS digests against the actual transported files.
 async function productManifestFiles(root, productEntries) {
   const productFiles = files(productEntries);
-  const hasComponentSums = productFiles.includes('SHA256SUMS');
   const manifestPaths = productFiles.filter((path) => path !== 'SHA256SUMS');
-  if (hasComponentSums) {
-    // Validate the component SHA256SUMS against the package + sidecar it
-    // claims to cover. parseStandardManifest rejects malformed records; each
-    // digest must match the corresponding transported file's bytes.
-    const sumsText = (await readFile(join(root, 'SHA256SUMS'))).toString('utf8');
-    const sums = parseStandardManifest(sumsText);
-    const byPath = new Map(productEntries.filter((e) => e.type === 'file').map((e) => [e.path, e]));
-    const sumsPaths = [...sums.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-    if (sumsPaths.length !== manifestPaths.length || sumsPaths.some((p, i) => p !== [...manifestPaths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))[i])) {
-      throw mismatch('component SHA256SUMS path set must match the transport product artifact set');
-    }
-    for (const [path, digest] of sums) {
-      const entry = byPath.get(path);
-      if (!entry || sha256(entry.data) !== digest) {
-        throw mismatch(`component SHA256SUMS mismatch: ${path}`);
-      }
+  if (!productFiles.includes('SHA256SUMS')) {
+    throw mismatch('component SHA256SUMS is required in the product dir');
+  }
+  // Validate the component SHA256SUMS against the package + sidecar it
+  // claims to cover. parseStandardManifest rejects malformed records; each
+  // digest must match the corresponding transported file's bytes, and the
+  // record path set must exactly match the transport product artifact set.
+  const sumsText = (await readFile(join(root, 'SHA256SUMS'))).toString('utf8');
+  const sums = parseStandardManifest(sumsText);
+  const byPath = new Map(productEntries.filter((e) => e.type === 'file').map((e) => [e.path, e]));
+  const sumsPaths = [...sums.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  const manifestSorted = [...manifestPaths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  if (sumsPaths.length !== manifestSorted.length || sumsPaths.some((p, i) => p !== manifestSorted[i])) {
+    throw mismatch('component SHA256SUMS path set must match the transport product artifact set');
+  }
+  for (const [path, digest] of sums) {
+    const entry = byPath.get(path);
+    if (!entry || sha256(entry.data) !== digest) {
+      throw mismatch(`component SHA256SUMS mismatch: ${path}`);
     }
   }
   return manifestPaths;

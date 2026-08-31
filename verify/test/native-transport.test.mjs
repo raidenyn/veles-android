@@ -40,6 +40,8 @@ async function withRun(run) {
     await mkdir(view);
     await writeFile(join(product, 'bridge.zip'), 'package');
     await writeFile(join(product, 'bridge.zip.sha256'), `${sha256('package')}  bridge.zip\n`);
+    // The component SHA256SUMS is required and must validly cover the package
+    // and sidecar the transport carries.
     await writeFile(join(product, 'SHA256SUMS'), [
       `${sha256('package')}  bridge.zip`,
       `${sha256(`${sha256('package')}  bridge.zip\n`)}  bridge.zip.sha256`,
@@ -165,4 +167,60 @@ test('rejects symlinked transport roots before emission', async () => {
       await assert.rejects(() => readTransport(output), (error) => error.exitCode === 1, name);
     }
   });
+});
+
+test('create-run requires a component SHA256SUMS in the product dir', async () => {
+  const { createRun } = await import('../native/create-run.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'veles-native-transport-nosums-'));
+  try {
+    const product = join(root, 'product');
+    const view = join(root, 'view');
+    await mkdir(product);
+    await mkdir(view);
+    await writeFile(join(product, 'bridge.zip'), 'package');
+    await writeFile(join(product, 'bridge.zip.sha256'), `${sha256('package')}  bridge.zip\n`);
+    // No SHA256SUMS — transport creation must reject it as a product mismatch.
+    await assert.rejects(
+      () => createRun({
+        output: join(root, 'run.tar'),
+        sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+        identity: { ImageOS: 'Windows', ImageVersion: '2025', RUNNER_ARCH: 'X64' },
+        product,
+        view,
+      }),
+      (error) => error.exitCode === 1 && /component SHA256SUMS is required/.test(error.message),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('create-run rejects a component SHA256SUMS with a tampered digest', async () => {
+  const { createRun } = await import('../native/create-run.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'veles-native-transport-tampered-'));
+  try {
+    const product = join(root, 'product');
+    const view = join(root, 'view');
+    await mkdir(product);
+    await mkdir(view);
+    await writeFile(join(product, 'bridge.zip'), 'package');
+    await writeFile(join(product, 'bridge.zip.sha256'), `${sha256('package')}  bridge.zip\n`);
+    // Component SHA256SUMS with a wrong digest for bridge.zip (tampered).
+    await writeFile(join(product, 'SHA256SUMS'), [
+      `${'0'.repeat(64)}  bridge.zip`,
+      `${sha256(`${sha256('package')}  bridge.zip\n`)}  bridge.zip.sha256`,
+    ].join('\n') + '\n');
+    await assert.rejects(
+      () => createRun({
+        output: join(root, 'run.tar'),
+        sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+        identity: { ImageOS: 'Windows', ImageVersion: '2025', RUNNER_ARCH: 'X64' },
+        product,
+        view,
+      }),
+      (error) => error.exitCode === 1 && /component SHA256SUMS mismatch: bridge\.zip/.test(error.message),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

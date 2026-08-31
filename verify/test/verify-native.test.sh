@@ -24,7 +24,16 @@ make_run() {
   local product="$tmp/$platform-product"
   local view="$tmp/$platform-view"
   mkdir -p "$product" "$view" "$(dirname "$dst")"
-  printf 'artifact-%s' "$platform" >"$product/artifact"
+  local artifact="artifact-$platform"
+  printf '%s' "$artifact" >"$product/artifact"
+  local sidecar_digest
+  sidecar_digest=$(sha256sum "$product/artifact" | cut -d' ' -f1)
+  printf '%s  artifact\n' "$sidecar_digest" >"$product/artifact.sha256"
+  # Component SHA256SUMS must validly cover the package (artifact) and sidecar
+  # (artifact.sha256); compute each digest over the actual file bytes.
+  local sidecar_sha
+  sidecar_sha=$(sha256sum "$product/artifact.sha256" | cut -d' ' -f1)
+  printf '%s  artifact\n%s  artifact.sha256\n' "$sidecar_digest" "$sidecar_sha" >"$product/SHA256SUMS"
   printf 'host-%s' "$platform" >"$view/host"
   node "$script_dir/../native/create-run.mjs" "$dst" "$commit" "$os" "$image_version" "$arch" "$product" "$view"
 }
@@ -100,6 +109,10 @@ product_e="$tmp/windows-product-e"
 view_e="$tmp/windows-view-e"
 mkdir -p "$product_e" "$view_e"
 printf 'artifact-windows-DIFFERENT' >"$product_e/artifact"
+e_digest=$(sha256sum "$product_e/artifact" | cut -d' ' -f1)
+printf '%s  artifact\n' "$e_digest" >"$product_e/artifact.sha256"
+e_sidecar_sha=$(sha256sum "$product_e/artifact.sha256" | cut -d' ' -f1)
+printf '%s  artifact\n%s  artifact.sha256\n' "$e_digest" "$e_sidecar_sha" >"$product_e/SHA256SUMS"
 printf 'host-windows' >"$view_e/host"
 node "$script_dir/../native/create-run.mjs" "$run_e/windows/native-windows-run.tar" "$commit" Windows 2025 X64 "$product_e" "$view_e"
 # macOS: identical between run-d and run-e (so the mismatch is windows-only).

@@ -183,6 +183,19 @@ test('rejects missing namespaces, duplicate names, and excluded evidence', async
         { path: 'leaked.sha256', type: 'file', mode: '0644', sha256: digest('leaked') },
       ].map(JSON.stringify).join('\n') + '\n';
     }],
+    ['missing component SHA256SUMS in native product', 1, (files) => {
+      // The component SHA256SUMS is required; deleting it must be rejected
+      // rather than silently stripped from the aggregate records.
+      delete files['build/verification/native-bridge/windows/product/SHA256SUMS'];
+    }],
+    ['tampered component SHA256SUMS digest in native product', 1, (files) => {
+      // A component SHA256SUMS whose digest does not match the actual product
+      // file must be rejected as a product mismatch (exit 1).
+      files['build/verification/native-bridge/windows/product/SHA256SUMS'] = manifest({
+        'veles-native.zip': 'tampered-package',
+        'veles-native.zip.sha256': 'windows-sidecar',
+      });
+    }],
   ]) {
     const files = {
       ...requiredFiles,

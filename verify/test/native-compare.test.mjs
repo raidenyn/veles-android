@@ -5,13 +5,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+
 async function makeRun(root, name, overrides = {}) {
   const { createRun } = await import('../native/create-run.mjs');
   const product = join(root, `${name}-product`);
   const view = join(root, `${name}-view`);
   await mkdir(product);
   await mkdir(view);
-  await writeFile(join(product, 'artifact'), overrides.product ?? 'artifact');
+  const artifactContent = overrides.product ?? 'artifact';
+  await writeFile(join(product, 'artifact'), artifactContent);
+  const sidecarContent = `${sha256(artifactContent)}  artifact\n`;
+  await writeFile(join(product, 'artifact.sha256'), sidecarContent);
+  // The component SHA256SUMS is required and must validly cover the package
+  // and sidecar the transport carries.
+  await writeFile(join(product, 'SHA256SUMS'), [
+    `${sha256(artifactContent)}  artifact`,
+    `${sha256(sidecarContent)}  artifact.sha256`,
+  ].join('\n') + '\n');
   await writeFile(join(view, 'host'), overrides.host ?? 'host');
   const output = join(root, `${name}.tar`);
   await createRun({
@@ -135,6 +146,12 @@ test('rejects metadata symlink target drift even when archived target is unchang
     await mkdir(product);
     await mkdir(view);
     await writeFile(join(product, 'artifact'), 'artifact');
+    const sidecarContent = `${sha256('artifact')}  artifact\n`;
+    await writeFile(join(product, 'artifact.sha256'), sidecarContent);
+    await writeFile(join(product, 'SHA256SUMS'), [
+      `${sha256('artifact')}  artifact`,
+      `${sha256(sidecarContent)}  artifact.sha256`,
+    ].join('\n') + '\n');
     await writeFile(join(view, 'host'), 'host');
     await (await import('node:fs/promises')).symlink('host', join(view, 'current'));
     const right = join(root, 'right.tar');
@@ -151,6 +168,45 @@ test('rejects metadata symlink target drift even when archived target is unchang
     await assert.rejects(
       () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
       (error) => error.exitCode === 1 && error.message.includes('native metadata mismatch: current'),
+    );
+  });
+});
+
+test('compare-runs rejects a transport missing the component SHA256SUMS as a product mismatch', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  const { readTransport } = await import('../native/create-run.mjs');
+  const { createTar } = await import('../native/deterministic-tar.mjs');
+  await withRuns(async (root) => {
+    const left = await makeRun(root, 'left');
+    const right = await makeRun(root, 'right');
+    // Drop the component SHA256SUMS from the right transport; comparison must
+    // reject it as a product mismatch (exit 1), not an environment error.
+    const transport = await readTransport(right);
+    const filtered = transport.entries.filter((entry) => entry.path !== 'product/SHA256SUMS');
+    const tar = createTar(filtered);
+    await writeFile(right, tar);
+    await writeFile(`${right}.sha256`, `${createHash('sha256').update(tar).digest('hex')}  right.tar\n`);
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && /component SHA256SUMS is required/.test(error.message),
+    );
+  });
+});
+
+test('compare-runs rejects a transport with a tampered component SHA256SUMS digest as a product mismatch', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  await withRuns(async (root) => {
+    const left = await makeRun(root, 'left');
+    const right = await makeRun(root, 'right');
+    // Corrupt the component SHA256SUMS digest for artifact.
+    await rewriteRun(right, (entry) => {
+      if (entry.path !== 'product/SHA256SUMS') return entry;
+      const tampered = entry.data.toString('utf8').replace(/^[0-9a-f]{64}  artifact$/m, `${'0'.repeat(64)}  artifact`);
+      return { ...entry, data: Buffer.from(tampered) };
+    });
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && /component SHA256SUMS mismatch: artifact/.test(error.message),
     );
   });
 });

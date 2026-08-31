@@ -47,11 +47,15 @@ function verifyProductManifest(run) {
   // producer also writes a product-level SHA256SUMS (a component checksum
   // manifest) which the transport carries as product/SHA256SUMS but which the
   // design excludes from the native manifest. Exclude it from the path-set
-  // comparison against the manifest, but validate it against its own content
-  // (its records must correctly hash the package and sidecar the transport
-  // carries).
+  // comparison against the manifest, but REQUIRE it to be present and valid:
+  // its records must correctly hash the package and sidecar the transport
+  // carries. A missing or corrupted component manifest is a product mismatch
+  // (exit 1) per the 0/1/2 contract.
   const productFiles = productEntries(run);
   const componentSumsEntry = productFiles.find((entry) => entry.path === 'product/SHA256SUMS');
+  if (!componentSumsEntry) {
+    throw mismatch('component SHA256SUMS is required in the product dir');
+  }
   const artifactEntries = productFiles.filter((entry) => entry.path !== 'product/SHA256SUMS');
   const actual = new Map(artifactEntries.map((entry) => [entry.path.slice(8), entry]));
   if (actual.size !== manifest.checksums.size || [...actual.keys()].some((path) => !manifest.checksums.has(path))) {
@@ -60,17 +64,15 @@ function verifyProductManifest(run) {
   for (const [path, digest] of manifest.checksums) {
     if (sha256(actual.get(path).data) !== digest) throw mismatch(`native product checksum mismatch: ${path}`);
   }
-  if (componentSumsEntry) {
-    const sums = parseStandardManifest(componentSumsEntry.data.toString('utf8'));
-    const sumsPaths = [...sums.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-    const artifactPaths = [...actual.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-    if (sumsPaths.length !== artifactPaths.length || sumsPaths.some((p, i) => p !== artifactPaths[i])) {
-      throw mismatch('component SHA256SUMS path set must match the transport product artifact set');
-    }
-    for (const [path, expected] of sums) {
-      if (sha256(actual.get(path).data) !== expected) {
-        throw mismatch(`component SHA256SUMS mismatch: ${path}`);
-      }
+  const sums = parseStandardManifest(componentSumsEntry.data.toString('utf8'));
+  const sumsPaths = [...sums.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  const artifactPaths = [...actual.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  if (sumsPaths.length !== artifactPaths.length || sumsPaths.some((p, i) => p !== artifactPaths[i])) {
+    throw mismatch('component SHA256SUMS path set must match the transport product artifact set');
+  }
+  for (const [path, expected] of sums) {
+    if (sha256(actual.get(path).data) !== expected) {
+      throw mismatch(`component SHA256SUMS mismatch: ${path}`);
     }
   }
   return manifest;

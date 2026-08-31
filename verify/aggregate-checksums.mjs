@@ -119,17 +119,39 @@ async function nativeRecords(root, platform) {
   // package and sidecar. The transport carries it as product/SHA256SUMS. The
   // native manifest (SHA256SUMS.native-bridge) lists exactly the package and
   // sidecar; the product SHA256SUMS is a component checksum manifest that the
-  // design excludes from the aggregate records. Allow the real three-file
-  // layout (package + sidecar + SHA256SUMS) but reject any other extra file.
+  // design excludes from the aggregate records, but REQUIRES to be present and
+  // valid. Reject a native namespace whose component SHA256SUMS is missing or
+  // whose digest is invalid; allow the real three-file layout (package +
+  // sidecar + SHA256SUMS) but reject any other extra file.
+  if (!product.includes('SHA256SUMS')) {
+    throw mismatch(`native ${platform} product is missing the component SHA256SUMS`);
+  }
   const productArtifactFiles = product.filter((path) => path !== 'SHA256SUMS');
   exact(productArtifactFiles, [...manifest.checksums.keys()], `native ${platform} product`);
   const packagePaths = productArtifactFiles.filter((path) => !path.endsWith('.sha256'));
   if (packagePaths.length !== 1 || productArtifactFiles.length !== 2 || productArtifactFiles[1] !== `${packagePaths[0]}.sha256`) {
     throw mismatch(`native ${platform} product must contain one package and sidecar`);
   }
-  // A product SHA256SUMS, if present, is the only permitted non-manifest file.
+  // The product SHA256SUMS is the only permitted non-manifest file.
   const extra = product.filter((path) => path !== 'SHA256SUMS' && !manifest.checksums.has(path));
   if (extra.length > 0) throw mismatch(`native ${platform} product contains unexpected files: ${extra.join(', ')}`);
+  // Validate the component SHA256SUMS against the package + sidecar it claims
+  // to cover. parseStandardManifest rejects malformed records; each digest
+  // must match the corresponding file's bytes, and the record path set must
+  // exactly match the product artifact set.
+  const componentSumsText = await readFile(join(root, 'product', 'SHA256SUMS'), 'utf8');
+  const componentSums = parseStandardManifest(componentSumsText);
+  const sumsPaths = [...componentSums.keys()].sort(comparePaths);
+  const artifactPathsSorted = [...productArtifactFiles].sort(comparePaths);
+  if (sumsPaths.length !== artifactPathsSorted.length || sumsPaths.some((p, i) => p !== artifactPathsSorted[i])) {
+    throw mismatch(`native ${platform} component SHA256SUMS path set must match the product artifact set`);
+  }
+  for (const [path, expected] of componentSums) {
+    const bytes = await readFile(join(root, 'product', path));
+    if (sha256(bytes) !== expected) {
+      throw mismatch(`native ${platform} component SHA256SUMS mismatch: ${path}`);
+    }
+  }
   const view = await viewEntries(join(root, 'view'));
   const metadataByPath = new Map(metadata.map((entry) => [entry.path, entry]));
   const different = view.find((entry) => {
