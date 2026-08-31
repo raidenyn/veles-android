@@ -33,6 +33,11 @@ $ErrorActionPreference = 'Stop'
 #     the above; include them so the offline build resolves every !include.
 # The build uses the default currentUser INSTALLMODE, so MultiUser.nsh is NOT
 # required and is intentionally omitted.
+# installer.nsi also uses the MUI2 StartMenu page (MUI_PAGE_STARTMENU, which
+# loads the StartMenu.dll plugin), MUI_RESERVEFILE_LANGDLL (which reserves
+# LangDLL.dll), and the default MUI_LANGUAGE "English" (which requires
+# Contrib/Language files/English.nlf and English.nsh). These four files are
+# required even though they are not !included by name in installer.nsi.
 $requiredFiles = @(
     'WixTools314/candle.exe', 'WixTools314/candle.exe.config', 'WixTools314/darice.cub',
     'WixTools314/light.exe', 'WixTools314/light.exe.config', 'WixTools314/wconsole.dll',
@@ -43,6 +48,9 @@ $requiredFiles = @(
     'NSIS/Plugins/x86-unicode/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll',
+    # MUI2 StartMenu page (MUI_PAGE_STARTMENU) loads StartMenu.dll; the MUI
+    # language dialog (MUI_RESERVEFILE_LANGDLL) reserves LangDLL.dll.
+    'NSIS/Plugins/x86-unicode/StartMenu.dll', 'NSIS/Plugins/x86-unicode/LangDLL.dll',
     'NSIS/Include/MUI2.nsh', 'NSIS/Include/FileFunc.nsh', 'NSIS/Include/x64.nsh',
     'NSIS/Include/nsDialogs.nsh', 'NSIS/Include/WinMessages.nsh',
     'NSIS/Include/WordFunc.nsh', 'NSIS/Include/StrFunc.nsh',
@@ -63,7 +71,11 @@ $requiredFiles = @(
     'NSIS/Contrib/Modern UI 2/Pages/License.nsh',
     'NSIS/Contrib/Modern UI 2/Pages/StartMenu.nsh',
     'NSIS/Contrib/Modern UI 2/Pages/UninstallConfirm.nsh',
-    'NSIS/Contrib/Modern UI 2/Pages/Welcome.nsh'
+    'NSIS/Contrib/Modern UI 2/Pages/Welcome.nsh',
+    # The default MUI_LANGUAGE "English" requires the English language files
+    # (English.nlf + English.nsh) under Contrib\Language files\.
+    'NSIS/Contrib/Language files/English.nlf',
+    'NSIS/Contrib/Language files/English.nsh'
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path

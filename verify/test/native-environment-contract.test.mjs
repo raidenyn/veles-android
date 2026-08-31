@@ -39,6 +39,9 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
     'NSIS/Include/WordFunc.nsh', 'NSIS/Include/StrFunc.nsh',
     'NSIS/Include/Win/COM.nsh', 'NSIS/Include/Win/Propkey.nsh',
     'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll',
+    // MUI2 StartMenu page (MUI_PAGE_STARTMENU) loads StartMenu.dll; the MUI
+    // language dialog (MUI_RESERVEFILE_LANGDLL) reserves LangDLL.dll.
+    'NSIS/Plugins/x86-unicode/StartMenu.dll', 'NSIS/Plugins/x86-unicode/LangDLL.dll',
     // MUI2.nsh redirects to Contrib\Modern UI 2\MUI2.nsh, which !includes
     // LogicLib.nsh, LangFile.nsh, Sections.nsh, Util.nsh and the whole
     // Contrib\Modern UI 2 tree (the offline build must resolve every !include).
@@ -57,6 +60,10 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
     'NSIS/Contrib/Modern UI 2/Pages/StartMenu.nsh',
     'NSIS/Contrib/Modern UI 2/Pages/UninstallConfirm.nsh',
     'NSIS/Contrib/Modern UI 2/Pages/Welcome.nsh',
+    // The default MUI_LANGUAGE "English" requires the English language files
+    // (English.nlf + English.nsh) under Contrib\Language files\.
+    'NSIS/Contrib/Language files/English.nlf',
+    'NSIS/Contrib/Language files/English.nsh',
   ]) assert.match(provisioner, new RegExp(path.replaceAll('/', '[\\\\/]')));
   // The provisioner must map the actual archive layouts into the expected
   // cache roots: wix314-binaries.zip extracts flat (candle.exe at the archive

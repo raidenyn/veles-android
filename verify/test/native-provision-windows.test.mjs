@@ -136,6 +136,8 @@ function nsisFixture() {
     'makensis.exe', 'Bin/makensis.exe',
     'Stubs/lzma-x86-unicode', 'Stubs/lzma_solid-x86-unicode',
     'Plugins/x86-unicode/nsDialogs.dll', 'Plugins/x86-unicode/System.dll',
+    // MUI2 StartMenu page + MUI language dialog plugins.
+    'Plugins/x86-unicode/StartMenu.dll', 'Plugins/x86-unicode/LangDLL.dll',
     'Include/MUI2.nsh', 'Include/FileFunc.nsh', 'Include/x64.nsh',
     'Include/nsDialogs.nsh', 'Include/WinMessages.nsh', 'Include/WordFunc.nsh',
     'Include/StrFunc.nsh', 'Include/Win/COM.nsh', 'Include/Win/Propkey.nsh',
@@ -153,6 +155,9 @@ function nsisFixture() {
     'Contrib/Modern UI 2/Pages/StartMenu.nsh',
     'Contrib/Modern UI 2/Pages/UninstallConfirm.nsh',
     'Contrib/Modern UI 2/Pages/Welcome.nsh',
+    // Default MUI_LANGUAGE "English" language files.
+    'Contrib/Language files/English.nlf',
+    'Contrib/Language files/English.nsh',
   ];
   const out = {};
   for (const name of files) out[name] = `nsis:${name}`;
@@ -214,6 +219,23 @@ test('provisioner produces the exact expected cache from archive-realistic fixtu
       readFileSync(join(cacheStage, 'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll'), 'utf8'),
       'plugin:nsis_tauri_utils',
     );
+    // Spot-check the MUI2/language files added to complete the NSIS allow-list.
+    assert.equal(
+      readFileSync(join(cacheStage, 'NSIS/Plugins/x86-unicode/StartMenu.dll'), 'utf8'),
+      'nsis:Plugins/x86-unicode/StartMenu.dll',
+    );
+    assert.equal(
+      readFileSync(join(cacheStage, 'NSIS/Plugins/x86-unicode/LangDLL.dll'), 'utf8'),
+      'nsis:Plugins/x86-unicode/LangDLL.dll',
+    );
+    assert.equal(
+      readFileSync(join(cacheStage, 'NSIS/Contrib/Language files/English.nlf'), 'utf8'),
+      'nsis:Contrib/Language files/English.nlf',
+    );
+    assert.equal(
+      readFileSync(join(cacheStage, 'NSIS/Contrib/Language files/English.nsh'), 'utf8'),
+      'nsis:Contrib/Language files/English.nsh',
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -247,6 +269,21 @@ test('provisioner required-file set includes every NSIS header/plugin MUI2 trans
     );
   }
   assert.ok(requiredFiles.includes('NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll'));
+  // MUI2 StartMenu page (MUI_PAGE_STARTMENU) loads StartMenu.dll; the MUI
+  // language dialog (MUI_RESERVEFILE_LANGDLL) reserves LangDLL.dll.
+  for (const p of ['StartMenu.dll', 'LangDLL.dll']) {
+    assert.ok(
+      requiredFiles.includes(`NSIS/Plugins/x86-unicode/${p}`),
+      `missing MUI2/language plugin: NSIS/Plugins/x86-unicode/${p}`,
+    );
+  }
+  // Default MUI_LANGUAGE "English" requires the English language files.
+  for (const lf of ['English.nlf', 'English.nsh']) {
+    assert.ok(
+      requiredFiles.includes(`NSIS/Contrib/Language files/${lf}`),
+      `missing English language file: NSIS/Contrib/Language files/${lf}`,
+    );
+  }
   // MultiUser.nsh is NOT required (currentUser mode is the default).
   assert.ok(!requiredFiles.includes('NSIS/Include/MultiUser.nsh'), 'MultiUser.nsh must not be required under currentUser mode');
 });
