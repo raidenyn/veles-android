@@ -24,7 +24,16 @@ function tarFiles(buffer) {
 async function optionalTarball(packageName, version, integrity) {
   const directory = await mkdtemp(join(tmpdir(), 'veles-npm-tarball-'));
   try {
-    const packed = spawnSync('npm', ['pack', '--ignore-scripts', '--offline', '--pack-destination', directory, `${packageName}@${version}`], { encoding: 'utf8' });
+    // Acquisition phase: fetch the locked optional tarball (e.g. the macOS-only
+    // fsevents optional dep) so the supply-chain verifier does not require it
+    // to already be in the local npm cache. On a Linux CI host, `npm ci` does
+    // not download fsevents at all, so an `--offline` pack would fail with
+    // ENOTCACHED. `--ignore-scripts` keeps the acquisition safe (no lifecycle
+    // scripts run); the sha512 integrity check below is the security gate that
+    // binds the fetched bytes to the lockfile, so allowing the network fetch
+    // here is consistent with the plan's "offline product packaging after
+    // acquisition" boundary.
+    const packed = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', directory, `${packageName}@${version}`], { encoding: 'utf8' });
     if (packed.status !== 0) throw new Error(`Cannot acquire locked optional package ${packageName}@${version}: ${packed.stderr}`);
     const tarball = join(directory, (await readdir(directory))[0]);
     const bytes = await readFile(tarball);
