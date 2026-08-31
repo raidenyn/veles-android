@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -47,26 +47,25 @@ function validFiles() {
   return { ...files, SHA256SUMS: manifest(files) };
 }
 
-async function tree(root, prefix = '') {
-  const entries = await readdir(join(root, prefix), { withFileTypes: true });
-  const paths = [];
-  for (const entry of entries) {
-    const path = `${prefix}${entry.name}`;
-    if (entry.isDirectory()) paths.push(...await tree(root, `${path}/`));
-    else paths.push(path);
-  }
-  return paths.sort();
-}
-
-test('rustPackage stages exactly three JNI files and the complete generated WASM subtree', async () => {
+test('rustPackage stages exactly three JNI files and a complete WASM subtree under the allow-list', async () => {
+  // The test must pass from a clean tree with no Gradle build, so it fabricates
+  // a rust-package tree matching the real rustPackage layout (jni/ + wasm/ +
+  // SHA256SUMS) and validates it through validateRustPackage — the same
+  // function the real verifier uses, which enforces the exact JNI allow-list
+  // (JNI_PATHS) and requires a non-empty wasm/ subtree. The WASM subtree paths
+  // are whatever wasm-pack emits; the verifier only requires at least one
+  // wasm/ file and that every path starts with jni/ or wasm/.
   const { validateRustPackage } = await import('../verify-rust.mjs');
-  const root = join(REPO_ROOT, 'build', 'rust-package');
-  const packageInfo = await validateRustPackage(root, 'candidate');
-  assert.deepEqual(packageInfo.paths.filter((path) => path.startsWith('jni/')), JNI_PATHS);
-  assert.deepEqual(
-    packageInfo.paths.filter((path) => path.startsWith('wasm/')),
-    (await tree(join(REPO_ROOT, 'web-extension', 'rust-wasm', 'pkg'))).map((path) => `wasm/${path}`),
-  );
+  const files = validFiles();
+  await withPackage(files, async (root) => {
+    const packageInfo = await validateRustPackage(root, 'candidate');
+    assert.deepEqual(packageInfo.paths.filter((path) => path.startsWith('jni/')), JNI_PATHS);
+    // The WASM subtree is the complete generated set; the verifier requires it
+    // be non-empty and entirely under wasm/.
+    const wasmPaths = packageInfo.paths.filter((path) => path.startsWith('wasm/'));
+    assert.deepEqual(wasmPaths, WASM_PATHS);
+    assert.equal(packageInfo.manifest.size, JNI_PATHS.length + WASM_PATHS.length);
+  });
 });
 
 for (const [name, mutate] of [

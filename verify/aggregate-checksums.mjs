@@ -106,11 +106,22 @@ async function nativeRecords(root, platform) {
   }
   const metadata = parseNativeMetadata(metadataText);
   const product = await files(join(root, 'product'));
-  exact(product, [...manifest.checksums.keys()], `native ${platform} product`);
-  const packagePaths = product.filter((path) => !path.endsWith('.sha256'));
-  if (packagePaths.length !== 1 || product.length !== 2 || product[1] !== `${packagePaths[0]}.sha256`) {
+  // The producer (native-bridge/scripts/package.mjs writeChecksumManifest)
+  // writes a product-level SHA256SUMS into the product dir alongside the
+  // package and sidecar. The transport carries it as product/SHA256SUMS. The
+  // native manifest (SHA256SUMS.native-bridge) lists exactly the package and
+  // sidecar; the product SHA256SUMS is a component checksum manifest that the
+  // design excludes from the aggregate records. Allow the real three-file
+  // layout (package + sidecar + SHA256SUMS) but reject any other extra file.
+  const productArtifactFiles = product.filter((path) => path !== 'SHA256SUMS');
+  exact(productArtifactFiles, [...manifest.checksums.keys()], `native ${platform} product`);
+  const packagePaths = productArtifactFiles.filter((path) => !path.endsWith('.sha256'));
+  if (packagePaths.length !== 1 || productArtifactFiles.length !== 2 || productArtifactFiles[1] !== `${packagePaths[0]}.sha256`) {
     throw mismatch(`native ${platform} product must contain one package and sidecar`);
   }
+  // A product SHA256SUMS, if present, is the only permitted non-manifest file.
+  const extra = product.filter((path) => path !== 'SHA256SUMS' && !manifest.checksums.has(path));
+  if (extra.length > 0) throw mismatch(`native ${platform} product contains unexpected files: ${extra.join(', ')}`);
   const view = await viewEntries(join(root, 'view'));
   const metadataByPath = new Map(metadata.map((entry) => [entry.path, entry]));
   const different = view.find((entry) => {

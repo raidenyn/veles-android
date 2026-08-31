@@ -55,11 +55,24 @@ const requiredFiles = {
   'build/rust-package/wasm/veles_crypto_bg.wasm': 'wasm',
   'build/verification/native-bridge/windows/product/veles-native.zip': 'windows-package',
   'build/verification/native-bridge/windows/product/veles-native.zip.sha256': 'windows-sidecar',
+  // The real producer (native-bridge/scripts/package.mjs writeChecksumManifest)
+  // writes a product-level SHA256SUMS into the product dir. The transport
+  // carries it as product/SHA256SUMS; the aggregate accepts it but excludes it
+  // from records (it is a component checksum manifest, not a verified product
+  // file per the design's aggregate exclusion list).
+  'build/verification/native-bridge/windows/product/SHA256SUMS': manifest({
+    'veles-native.zip': 'windows-package',
+    'veles-native.zip.sha256': 'windows-sidecar',
+  }),
   'build/verification/native-bridge/windows/view': { directory: true },
   'build/verification/native-bridge/windows/view/host.exe': 'windows-host',
   'build/verification/native-bridge/windows/METADATA.native-bridge.jsonl': nativeMetadata.windows,
   'build/verification/native-bridge/macos/product/veles-native.tar.gz': 'mac-package',
   'build/verification/native-bridge/macos/product/veles-native.tar.gz.sha256': 'mac-sidecar',
+  'build/verification/native-bridge/macos/product/SHA256SUMS': manifest({
+    'veles-native.tar.gz': 'mac-package',
+    'veles-native.tar.gz.sha256': 'mac-sidecar',
+  }),
   'build/verification/native-bridge/macos/view/Veles.app/Contents/MacOS/host': 'mac-host',
   'build/verification/native-bridge/macos/view/Veles.app/Contents/MacOS/current': { link: 'host' },
   'build/verification/native-bridge/macos/METADATA.native-bridge.jsonl': nativeMetadata.macos,
@@ -139,6 +152,11 @@ test('rejects missing namespaces, duplicate names, and excluded evidence', async
     }],
     ['duplicate native manifest name', 1, (files) => {
       files['build/verification/native-bridge/windows/SHA256SUMS.native-bridge'] = `# ImageOS=Windows\n# ImageVersion=2025\n# RUNNER_ARCH=X64\n${digest('windows-package')}  veles-native.zip\n${digest('windows-package')}  veles-native.zip\n`;
+    }],
+    ['unexpected extra product file beyond SHA256SUMS', 1, (files) => {
+      // A product file other than the package, sidecar, and SHA256SUMS is never
+      // accepted; only the producer's product-level SHA256SUMS is permitted.
+      files['build/verification/native-bridge/windows/product/extra.bin'] = 'extra';
     }],
   ]) {
     const files = {
