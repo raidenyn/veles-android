@@ -108,6 +108,12 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
   // try/catch block (the firewall try records state in variables and the
   // env-fail calls happen AFTER the try/finally at top level).
   assert.doesNotMatch(script, /SetShouldExit/);
+  // ASYMMETRY: the Windows default package command does NOT use --no-daemon.
+  // Windows firewall outbound rules do not block loopback, so gradlew.bat's
+  // daemon works under the Windows deny rule. (The macOS wrapper needs
+  // --no-daemon because sandbox-exec denies the daemon's loopback socket.)
+  assert.match(script, /\$PackageCommand = @\('\.\\gradlew\.bat', 'bridgePackage'\)/);
+  assert.doesNotMatch(script, /--no-daemon/);
 });
 
 test('macOS target wrapper validates its exact runner and safely proves offline packaging', async () => {
@@ -121,6 +127,13 @@ test('macOS target wrapper validates its exact runner and safely proves offline 
   assert.ok(script.indexOf('bridgeBuild') < script.indexOf('curl --fail'));
   assert.ok(script.indexOf('curl --fail') < script.indexOf('sandbox-exec'));
   assert.ok(script.indexOf('sandbox-exec') < script.lastIndexOf('curl --fail'));
+  // The macOS sandbox-exec profile denies network-outbound, which blocks the
+  // Gradle daemon's loopback TCP control socket — a daemon started inside the
+  // sandbox fails with 'Could not connect to the Gradle daemon'. The default
+  // package command must therefore run Gradle with --no-daemon. The Windows
+  // wrapper does NOT need --no-daemon (Windows firewall outbound rules do not
+  // block loopback); that asymmetry is intentional and asserted below.
+  assert.match(script, /set -- \.\/gradlew --no-daemon bridgePackage/);
 });
 
 test('macOS target wrapper isolates only the package command tree without modifying PF', async () => {
