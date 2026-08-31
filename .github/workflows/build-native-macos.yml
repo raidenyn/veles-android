@@ -35,8 +35,10 @@ jobs:
           xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
       - name: Produce sandboxed offline native package
         run: verify/native/network-deny-macos.sh
+      - name: Assemble extracted verification view
+        run: node verify/native/extract-view.mjs macos native-bridge/src-tauri/target/release build/native-bridge/macos build/verification/native-runs/run-a/view
       - name: Create run transport
-        run: verify/native/prepare-run.sh build/verification/native-runs/run-a/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos native-bridge/dist
+        run: verify/native/prepare-run.sh build/verification/native-runs/run-a/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos build/verification/native-runs/run-a/view
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: unverified-macos-run-a
@@ -63,8 +65,10 @@ jobs:
           xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
       - name: Produce sandboxed offline native package
         run: verify/native/network-deny-macos.sh
+      - name: Assemble extracted verification view
+        run: node verify/native/extract-view.mjs macos native-bridge/src-tauri/target/release build/native-bridge/macos build/verification/native-runs/run-b/view
       - name: Create run transport
-        run: verify/native/prepare-run.sh build/verification/native-runs/run-b/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos native-bridge/dist
+        run: verify/native/prepare-run.sh build/verification/native-runs/run-b/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos build/verification/native-runs/run-b/view
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: unverified-macos-run-b
