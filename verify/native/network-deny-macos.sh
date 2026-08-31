@@ -11,9 +11,9 @@ env_fail() {
   exit 2
 }
 
-: "${ImageOS:?ImageOS is required}"
-: "${ImageVersion:?ImageVersion is required}"
-: "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+[ -n "${ImageOS:-}" ] || env_fail 'ImageOS is required'
+[ -n "${ImageVersion:-}" ] || env_fail 'ImageVersion is required'
+[ -n "${RUNNER_ARCH:-}" ] || env_fail 'RUNNER_ARCH is required'
 [ "$ImageOS" = 'macos26' ] || env_fail "expected macos26, got $ImageOS"
 [ "$(node --version)" = 'v26.8.1' ] || env_fail 'Node version drift'
 [ "$(npm --version)" = '11.19.0' ] || env_fail 'npm version drift'

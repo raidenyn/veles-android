@@ -86,3 +86,9 @@ repo_root="$(cd "$script_dir/../.." && pwd)"
 # contract. .gitignore MUST ignore it so the contract stays satisfiable
 # locally while still rejecting every other untracked file.
 grep -q '^/verify/node_modules/$' "$repo_root/.gitignore"
+
+# The native offline-package wrappers (network-deny-macos.sh /
+# network-deny-windows.ps1) must honor the 0/1/2 exit contract: environment,
+# usage, identity, tool, and probe failures exit 2 (never 1). The behavior
+# test executes the scripts with stub commands on PATH and asserts exit codes.
+bash "$script_dir/native-exit-codes.test.sh"
