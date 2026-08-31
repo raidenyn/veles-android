@@ -1,5 +1,10 @@
+# Parameters are declared OPTIONAL/nullable so a mandatory-binding failure
+# (which happens BEFORE $ErrorActionPreference and the outer try/catch take
+# effect, surfacing as exit 1) cannot escape the 0/1/2 contract. They are
+# validated inside the guarded body below; a missing/invalid parameter exits 2
+# via env-fail like every other usage/environment failure.
 param(
-    [Parameter(Mandatory = $true)] [string]$TauriCachePath,
+    [string]$TauriCachePath,
     [string[]]$AcquireCommand = @('.\gradlew.bat', 'bridgeBuild'),
     [string[]]$PackageCommand = @('.\gradlew.bat', 'bridgePackage')
 )
@@ -21,6 +26,7 @@ function env-fail {
 }
 
 try {
+    if ([string]::IsNullOrWhiteSpace($TauriCachePath)) { env-fail 'TauriCachePath is required' }
     foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
         if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { env-fail "$name is required" }
     }

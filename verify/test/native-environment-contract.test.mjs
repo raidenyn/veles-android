@@ -83,6 +83,12 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
   // 0/1/2 contract; a bare `throw` under ErrorActionPreference=Stop would
   // otherwise surface as exit 1.
   assert.match(script, /function env-fail[\s\S]*?exit 2/);
+  // The param() block must NOT mark TauriCachePath Mandatory: mandatory binding
+  // happens BEFORE $ErrorActionPreference and the outer try/catch take effect,
+  // so a missing -TauriCachePath would exit 1 instead of 2. TauriCachePath is
+  // validated inside the guarded body via env-fail so usage failures exit 2.
+  assert.doesNotMatch(script, /\[Parameter\(Mandatory *= *\$true\)\][^\n]*\$TauriCachePath/);
+  assert.match(script, /IsNullOrWhiteSpace\(\$TauriCachePath\)[\s\S]*?env-fail 'TauriCachePath is required'/);
 });
 
 test('macOS target wrapper validates its exact runner and safely proves offline packaging', async () => {

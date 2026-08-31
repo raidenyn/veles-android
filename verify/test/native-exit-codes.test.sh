@@ -87,6 +87,24 @@ status=$( set +e; run_macos_with_stubs 1; echo $? )
 # ---------------------------------------------------------------------------
 # Windows wrapper: only run behavior tests when pwsh is available.
 # ---------------------------------------------------------------------------
+# Regardless of pwsh availability, assert the structural contract that makes
+# usage failures exit 2: the param() block must NOT mark TauriCachePath
+# Mandatory (mandatory binding happens BEFORE $ErrorActionPreference and the
+# outer try/catch take effect, surfacing as exit 1), and the guarded body must
+# validate TauriCachePath via env-fail (exit 2). This is the strongest runnable
+# assertion on a pwsh-less host; the behavior assertion below runs when pwsh
+# is present.
+if grep -q 'Mandatory *= *$true.*TauriCachePath' "$windows_script" \
+   || grep -q '\[Parameter(Mandatory *= *\$true)\] *\[\string\]\$TauriCachePath' "$windows_script"; then
+  fail "Windows wrapper param() must not bind TauriCachePath as Mandatory (it would exit 1 before the try/catch)"
+fi
+# TauriCachePath must be validated inside the guarded body via env-fail so a
+# missing -TauriCachePath exits 2.
+grep -q "IsNullOrWhiteSpace(\$TauriCachePath)" "$windows_script" \
+  || fail "Windows wrapper must validate TauriCachePath inside the guarded body"
+grep -q "'TauriCachePath is required'" "$windows_script" \
+  || fail "Windows wrapper must env-fail on a missing TauriCachePath"
+
 if command -v pwsh >/dev/null 2>&1; then
   run_windows_with_stubs() {
     # $1 = exit code the stub node should force for the version check, or 0
@@ -123,11 +141,15 @@ NPM
   status=$( ImageVersion=2025 RUNNER_ARCH=X64 PATH="$PATH" pwsh -NoProfile -File "$windows_script" -TauriCachePath /tmp/.tauri-unused >/dev/null 2>&1; echo $? )
   [ "$status" -eq 2 ] || fail "Windows wrapper with missing ImageOS must exit 2, got $status"
 
+  # Missing -TauriCachePath (usage failure) -> exit 2 (not 1 from mandatory binding).
+  status=$( ImageOS=win25 ImageVersion=2025 RUNNER_ARCH=X64 PATH="$PATH" pwsh -NoProfile -File "$windows_script" >/dev/null 2>&1; echo $? )
+  [ "$status" -eq 2 ] || fail "Windows wrapper with missing -TauriCachePath must exit 2, got $status"
+
   # Node version drift -> exit 2.
   status=$( set +e; run_windows_with_stubs 'v99.0.0'; echo $? )
   [ "$status" -eq 2 ] || fail "Windows wrapper Node version drift must exit 2, got $status"
 else
-  printf 'SKIP Windows wrapper behavior tests (pwsh not available on this host); structural assertions in native-environment-contract.test.mjs remain authoritative.\n'
+  printf 'SKIP Windows wrapper behavior tests (pwsh not available on this host); structural assertions in native-exit-codes.test.sh and native-environment-contract.test.mjs remain authoritative.\n'
 fi
 
 echo 'PASS native wrapper exit-code behavior contract'
