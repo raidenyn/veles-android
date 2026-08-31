@@ -39,7 +39,6 @@ jobs:
           exit 1
 
   android:
-    name: android
     # Android runs on ordinary master push (cost-preserving) and on the full
     # graph (labeled PR and master manual dispatch). The guard only runs on
     # workflow_dispatch; on push/PR the always() + guard-skip clause lets this
@@ -67,7 +66,6 @@ jobs:
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
   web-extension:
-    name: web-extension
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -85,7 +83,6 @@ jobs:
       artifact-name: verified-web-extension
 
   rust:
-    name: rust
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -103,7 +100,6 @@ jobs:
       artifact-name: rust-jni-wasm
 
   supply-chain:
-    name: supply-chain
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -121,7 +117,6 @@ jobs:
       artifact-name: verified-supply-chain
 
   native-windows:
-    name: native-windows
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -139,7 +134,6 @@ jobs:
       artifact-name: verified-native-windows
 
   native-macos:
-    name: native-macos
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -157,7 +151,6 @@ jobs:
       artifact-name: verified-native-macos
 
   aggregate:
-    name: aggregate
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||

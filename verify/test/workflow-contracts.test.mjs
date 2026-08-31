@@ -597,7 +597,7 @@ test('release-build caller graph composes verified workflows with default-read a
     if (!/uses: \.\/\.github\/workflows\//.test(jobBlock)) continue;
     for (const key of keys) {
       assert.ok(
-        ['uses', 'with', 'secrets', 'needs', 'if', 'permissions', 'name'].includes(key),
+        ['uses', 'with', 'secrets', 'needs', 'if', 'permissions'].includes(key),
         `release-build reusable-workflow caller job "${job}" must contain only caller fields; found "${key}"`,
       );
     }
