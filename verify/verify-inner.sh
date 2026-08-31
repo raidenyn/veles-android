@@ -23,12 +23,17 @@ cd /build/src
 git checkout --quiet "$REF"
 
 echo "==> Building unsigned release APK (no VELES_KEYSTORE_* in this environment)"
-./gradlew --no-daemon assembleRelease
+# A build failure prevents comparison and is an environment/build error (exit 2),
+# not an artifact mismatch (exit 1).
+if ! ./gradlew --no-daemon assembleRelease; then
+  echo "ERROR: release APK build failed; cannot compare." >&2
+  exit 2
+fi
 
 REBUILT=app/build/outputs/apk/release/app-release-unsigned.apk
 if [ ! -f "$REBUILT" ]; then
   echo "ERROR: $REBUILT not found after build." >&2
-  exit 1
+  exit 2
 fi
 
 if [ -d /out ]; then

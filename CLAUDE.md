@@ -74,6 +74,13 @@ verify/verify-native.sh <commit> <run-a> <run-b>    # two native runs, identity 
 verify/verify-supply-chain.sh                        # SBOM + license + install-script + remote-code
 verify/aggregate-checksums.sh <commit>               # build/verification/SHA256SUMS.toolchains
 
+# Supply-chain verifier local prerequisites (CI provisions these in
+# build-supply-chain.yml; locally you must run them first):
+#   npm ci --ignore-scripts --prefix verify   # cyclonedx-npm + license-checker -> verify/node_modules/.bin/
+#   ./gradlew installCargoDeny                 # cargo-deny -> build/verify-tools/ (cargo-cyclonedx is installed by generate-sboms.sh)
+# `verify/verify-supply-chain.sh` asserts Node 26.8.1 / npm 11.19.0 and the
+# active Rust toolchain (generate-sboms.sh shells out to ./gradlew verifyCargoCyclonedx).
+
 # Assert every declared generated output was removed by `./gradlew clean`.
 rust/scripts/assert-clean.sh
 ```

@@ -94,7 +94,7 @@ first failure:
 1. `verify/verify.sh <apk> <resolved-commit>` — Android rebuild + signature-stripped compare; also exports the canonical unsigned reference APK to `build/verification/android/app-release-unsigned.apk`.
 2. `verify/verify-web.sh` — web-extension candidate/reference byte compare.
 3. `verify/verify-rust.sh` — Rust JNI/WASM candidate/reference byte compare.
-4. `verify/verify-native.sh <resolved-commit> <native-run-a-dir> <native-run-b-dir>` — two independent Windows and two macOS runs, identity gate, then byte compare; output under `build/verification/native-bridge/`.
+4. `verify/verify-native.sh <resolved-commit> <native-run-a-dir> <native-run-b-dir>` — two independent Windows and two macOS runs, identity gate, then byte compare; output under `build/verification/native-bridge/windows/` and `build/verification/native-bridge/macos/`. (CI calls `verify-native.sh` once per platform with a single-tar run dir, uploading the flat `build/verification/native-bridge/` tree per platform; the toolchain-manifest workflow then downloads each into its platform subdirectory. The local `verify-all.sh` two-platform layout drives both platforms in one call.)
 5. `verify/verify-supply-chain.sh` — SBOM, license, install-script, and remote-code enforcement; reports under `build/verification/supply-chain/`.
 6. `verify/aggregate-checksums.sh <resolved-commit>` — assembles `build/verification/SHA256SUMS.toolchains`.
 
@@ -114,10 +114,36 @@ component in its own `build-<component>.yml` reusable workflow.
 | Android APK | `verify/verify.sh <apk> <ref>` | `./gradlew assembleRelease` in `verify/Dockerfile` | `build/verification/android/app-release-unsigned.apk` |
 | Web-extension | `npm run package --prefix web-extension` then `verify/verify-web.sh` | Vite build + deterministic zip | `build/web-extension/{veles-extension-<version>.zip,.zip.sha256,SHA256SUMS}` |
 | Rust JNI/WASM | `./gradlew rustPackage` then `verify/verify-rust.sh` | three ABIs + WASM package | `build/rust-package/{jni,wasm,SHA256SUMS}` |
-| Native Windows | `bridgePackage` on `windows-2025` (two runs) | unsigned WiX/NSIS + `.app` view | `build/native-bridge/windows/`, `build/verification/native-bridge/windows/` |
-| Native macOS | `bridgePackage` on `macos-26` (two runs) | unsigned `.app`/`.dmg` | `build/native-bridge/macos/`, `build/verification/native-bridge/macos/` |
+| Native Windows | `./gradlew bridgePackage` on `windows-2025` (two runs) | unsigned WiX/NSIS installers | `build/native-bridge/windows/`, `build/verification/native-bridge/windows/` |
+| Native macOS | `./gradlew bridgePackage` on `macos-26` (two runs) | unsigned `.app`/`.dmg` | `build/native-bridge/macos/`, `build/verification/native-bridge/macos/` |
 | Supply chain | `verify/verify-supply-chain.sh` | SBOM + license + script + remote-code reports | `build/sbom/*.cdx.json`, `build/verification/supply-chain/*.txt` |
 | Aggregate | `verify/aggregate-checksums.sh <commit>` | namespaced checksum manifest | `build/verification/SHA256SUMS.toolchains` |
+
+#### Supply-chain verifier local prerequisites
+
+`verify/verify-supply-chain.sh` assumes the verification tooling is already
+provisioned (CI does this in `build-supply-chain.yml`; locally you must do it
+first). Exact prerequisites:
+
+1. **Node 26.8.1 + npm 11.19.0** on PATH (the script asserts both).
+2. **npm verification tools** — install once:
+   ```
+   npm ci --ignore-scripts --prefix verify
+   ```
+   This populates `verify/node_modules/.bin/` with `cyclonedx-npm` and
+   `license-checker-rseidelsohn` from `verify/package-lock.json`.
+3. **Cargo verification tools** — `verify/generate-sboms.sh` installs
+   `cargo-cyclonedx` via `./gradlew verifyCargoCyclonedx`, but `cargo-deny` must
+   be provisioned beforehand:
+   ```
+   ./gradlew installCargoDeny
+   ```
+   (Both land under `build/verify-tools/`; `cargo-deny` is also installed by
+   this Gradle task from `verify/cargo-tools.toml`.)
+
+Only then run `verify/verify-supply-chain.sh`. The Rust toolchain
+(`rust/rust-toolchain.toml`) must also be active because `generate-sboms.sh`
+shells out to `./gradlew verifyCargoCyclonedx`.
 
 ### Output and evidence paths
 
@@ -231,20 +257,27 @@ never normalizes or ignores a differing identity field.
 
 ### Offline acquisition and package boundary
 
-Every product packaging flow separates **acquisition** from **execution**:
+Every product packaging flow separates **acquisition** from **execution**. The
+**candidate** (your local checkout) builds with normal host networking; the
+**reference** (inside the pinned Docker image) packages with `--network=none`
+so a reproducible reference can never fetch undisclosed inputs. Byte comparison
+then proves the host-built candidate equals the offline-built reference.
 
-- **Web** — dependencies are installed first (`npm ci --ignore-scripts`), then
-  the candidate and reference package commands run in containers with
-  `--network=none`.
-- **Rust** — dependencies are acquired from committed lockfiles, then the
-  reference build runs with `--network=none`.
-- **Native** — each job completes `npm ci`, `cargo fetch --locked`, Rust
+- **Web** — the candidate runs `npm ci` + `npm run package` on the host
+  (`verify/verify-web.sh:36-44`); the reference image installs with
+  `npm ci --ignore-scripts` then runs `npm run package` inside a container with
+  `--network=none` (`verify/verify-web.sh:58`).
+- **Rust** — the candidate runs `./gradlew rustPackage` on the host
+  (`verify/verify-rust.sh:28`); the reference image builds the package in a
+  copied worktree with `--network=none` (`verify/verify-rust.sh:38`).
+- **Native** — each CI job completes `npm ci`, `cargo fetch --locked`, Rust
   toolchain setup, and (Windows) the pinned Tauri WiX/NSIS cache provisioning
   **before** activating a platform outbound-network deny. The job proves
   connectivity by reaching one fixed HTTPS probe immediately before denial,
   activates and inspects the deny rule, requires the same probe to fail during
   denial, sets Cargo offline mode, runs `bridgePackage`, and restores host
-  networking in an unconditional cleanup step.
+  networking in an unconditional cleanup step. The candidate `bridgeBuild`/`bridgePackage` runs with host networking during acquisition; only the final
+  `bridgePackage` runs under the deny.
   - **macOS** uses `sandbox-exec` **process-tree** isolation
     (`(deny network-outbound)`) instead of host-wide PF mutation. This is an
     accepted exception to the platform-wide-deny rule: it confines the deny to
@@ -364,10 +397,16 @@ skipping any step can silently break reproducibility.
    base image tag + digest together; a Node reference bump touches
    `verify/Dockerfile.web`, `verify/Dockerfile.rust`, and any asserted
    `node --version`/`npm --version` checks together).
-2. **Regenerate and review the affected committed lockfile.** Run
-   `npm install` (then commit the updated `package-lock.json`) or
-   `cargo update -p <crate>` (then commit the updated `Cargo.lock`). CI uses
-   `npm ci` and Cargo `--locked`; it never repairs drift.
+2. **Regenerate and review the affected committed lockfile.** Use the
+   least-drift regeneration flags so unrelated pins do not move:
+   - npm: `npm install --package-lock-only` in the affected tree (`web-extension`,
+     `native-bridge`, or `verify/`), then review and commit `package-lock.json`.
+   - Cargo: `cargo update -p <crate> --precise <new-version>` (or `cargo update
+     -p <crate>` for a latest-compatible bump) with `--locked` removed for the
+     update command only, then review and commit `Cargo.lock`.
+   - Verification cargo tools: bump the version in `verify/cargo-tools.toml` and
+     let `./gradlew verifyCargoCyclonedx verifyCargoDeny` reinstall.
+   CI uses `npm ci` and Cargo `--locked`; it never repairs drift.
 3. **Review tool and runner-image release notes.** Toolchain bumps (new R8, new
    resource packer, new Tauri bundler) are the most likely source of
    reproducibility breakage; runner-image bumps can change WiX/NSIS/Xcode
@@ -375,10 +414,21 @@ skipping any step can silently break reproducibility.
 4. **Update lifecycle/license exceptions only with package text and rationale.**
    A new npm lifecycle script, cargo build-script exception, or license
    expression requires the exact package/version and the reviewed content/hash
-   recorded in the relevant policy file — never a floating name-only exception.
-5. **Run the affected component workflow.** Re-verify determinism locally before
-   merging: build the affected artifact from the branch and run the matching
-   `verify/verify-<component>.sh` from the same checkout.
+   recorded in the relevant policy file (`verify/install-script-policy.json`,
+   `verify/cargo-build-script-policy.json`, `licenses.toml`, or
+   `.license-policy.json`) — never a floating name-only exception.
+5. **Re-verify the affected component locally before merging.** Build the
+   affected artifact from the branch and run the matching component verifier
+   from the same checkout:
+   | Affected component | Build | Verify |
+   |---|---|---|
+   | Android APK | `./gradlew assembleRelease` | `verify/verify.sh <apk> <ref>` |
+   | Web-extension | `npm run package --prefix web-extension` | `verify/verify-web.sh` |
+   | Rust JNI/WASM | `./gradlew rustPackage` | `verify/verify-rust.sh` |
+   | Native Windows/macOS | `./gradlew bridgePackage` (on the target platform) | `verify/verify-native.sh <commit> <run-a> <run-b>` with two independent run dirs |
+   | Supply chain | (no separate build) | `verify/verify-supply-chain.sh` |
+   The Docker-based verifiers (`verify.sh`, `verify-web.sh`, `verify-rust.sh`)
+   require Docker; the native verifier requires two pre-built run directories.
 6. **Run the complete labeled or manually dispatched graph before accepting the
    new reference environment.** A pull request carrying the `release-build`
    label, or a manual `workflow_dispatch` from `master`, runs the complete
