@@ -476,19 +476,22 @@ remote executable launch patterns. An exact reviewed package/checksum exception
 is required for any ambiguous script; no floating name-only exception is
 accepted.
 
-Every product packaging flow separates acquisition from execution. Web
-dependencies are installed first, then candidate and reference package commands
-run in containers with `--network=none`. Native jobs complete `npm ci`,
-`cargo fetch --locked`, Rust toolchain setup, and the pinned Windows Tauri-cache
-provisioning before activating a platform outbound-network deny. The job proves
+Every product packaging flow separates acquisition from execution. The web
+candidate package is built on the host; the web reference package is built in
+a Docker container with `--network=none` (the verifier compares candidate and
+reference bytes afterward). Native jobs complete `npm ci`, `cargo fetch --locked`,
+Rust toolchain setup, and the pinned Windows Tauri-cache provisioning before
+activating an outbound-network deny for the packaging step only. The job proves
 connectivity by successfully reaching one fixed HTTPS probe endpoint immediately
-before denial, activates and inspects the platform-wide outbound-deny rule, then
-requires the same endpoint to fail during denial. It sets Cargo offline mode,
-runs `bridgePackage`, and restores host networking in an unconditional cleanup
-step. Failure of the pre-denial probe is an environment error, not proof of
-isolation. A platform that cannot prove the rule and before/after behavior fails
-with exit 2; static scanning alone is not accepted as evidence that packaging
-was offline.
+before denial, then requires the same endpoint to fail during denial. Windows
+activates and inspects a platform-wide outbound NetFirewall rule; macOS denies
+outbound network only for the `bridgePackage` process tree via `sandbox-exec`
+(never mutating host PF configuration). Both set Cargo offline mode, run
+`bridgePackage` under the deny, and Windows restores host networking in an
+unconditional cleanup step. Failure of the pre-denial probe is an environment
+error, not proof of isolation. A platform that cannot prove the rule and
+before/after behavior fails with exit 2; static scanning alone is not accepted
+as evidence that packaging was offline.
 
 Repository source and configuration scans reject:
 

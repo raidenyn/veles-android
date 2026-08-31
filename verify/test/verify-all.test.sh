@@ -78,3 +78,11 @@ if PATH="$bin:$PATH" CALL_LOG="$root/calls" "$scripts/verify-all.sh" only-three 
 [ ! -e "$stale" ]
 
 ! grep -Eq 'aggregateChecksums|parseNative|node ' "$scripts/verify-all.sh"
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root="$(cd "$script_dir/../.." && pwd)"
+# The documented `npm ci --prefix verify` prerequisite creates
+# verify/node_modules/, which would violate verify-all.sh's clean-checkout
+# contract. .gitignore MUST ignore it so the contract stays satisfiable
+# locally while still rejecting every other untracked file.
+grep -q '^/verify/node_modules/$' "$repo_root/.gitignore"
