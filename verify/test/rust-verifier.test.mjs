@@ -114,7 +114,14 @@ test('pins and verifies all Rust-image Android downloads and apt packages', asyn
   assert.match(dockerfile, /platform-tools_r\$\{PLATFORM_TOOLS_VERSION\}-linux\.zip/);
   assert.match(dockerfile, /d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1/);
   assert.match(dockerfile, /2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258/);
-  assert.match(dockerfile, /curl=8\.5\.0-2ubuntu10\.6/);
+  // Base apt packages are installed unversioned, matching the reviewed pattern
+  // in verify/Dockerfile; the supply-chain pin discipline is on the build tools
+  // (Rust/Node/NDK), not apt plumbing whose patch versions churn.
+  assert.match(dockerfile, /apt-get install -y --no-install-recommends[\s\S]*?curl unzip ca-certificates build-essential/);
+  assert.doesNotMatch(dockerfile, /curl=[0-9]/);
+  assert.doesNotMatch(dockerfile, /unzip=[0-9]/);
+  assert.doesNotMatch(dockerfile, /ca-certificates=[0-9]/);
+  assert.doesNotMatch(dockerfile, /build-essential=[0-9]/);
   assert.doesNotMatch(dockerfile, /sdkmanager "platform-tools"/);
 });
 

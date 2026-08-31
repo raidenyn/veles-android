@@ -6,12 +6,13 @@ ENV TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8
 ENV ANDROID_HOME=/opt/android-sdk RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
 ENV PATH=${CARGO_HOME}/bin:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/36.0.0:/opt/node/bin:${PATH}
 
+# Base apt packages are installed unversioned to match the reviewed pattern in
+# verify/Dockerfile: the supply-chain pin discipline is on the build tools
+# (Rust/Node/NDK below, each SHA-pinned), not on apt plumbing whose exact
+# patch versions churn out of the base image's repo between image rebuilds.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      curl=8.5.0-2ubuntu10.6 \
-      unzip=6.0-28ubuntu4.1 \
-      ca-certificates=20240203 \
-      build-essential=12.10ubuntu1 \
+      curl unzip ca-certificates build-essential \
  && rm -rf /var/lib/apt/lists/*
 
 ARG CMDLINE_TOOLS=11076708
