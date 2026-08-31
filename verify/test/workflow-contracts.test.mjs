@@ -674,3 +674,40 @@ test('reusable component workflows referenced by the caller graph exist and rema
     assert.match(reusable, /workflow_call:/, `${file} must remain reusable (workflow_call)`);
   }
 });
+
+// A `run: <path>` step (with no explicit interpreter like `bash`, `pwsh`, or
+// `node`) executes the named file directly, so it must carry the executable
+// bit in git. Regression guard for the macOS `network-deny-macos.sh`
+// "Permission denied" failure where the file was committed with mode 100644.
+function runDirectScriptPaths(source) {
+  const paths = new Set();
+  for (const command of runCommands(source)) {
+    const lines = command.split('\n');
+    for (const line of lines) {
+      // Match a leading script path with a repo-relative location (no
+      // interpreter prefix, no `${{ }}` interpolation, no shell builtin).
+      const match = line.match(/^\s*(\.\.?\/[^\s#]+|verify\/[^\s#]+|rust\/scripts\/[^\s#]+)\s*$/);
+      if (!match) continue;
+      // Skip steps that only chain through bash/pwsh/node via a leading
+      // interpreter token (already covered by the negative lookabove).
+      paths.add(match[1]);
+    }
+  }
+  return [...paths];
+}
+
+test('every workflow script invoked directly is committed executable in git', async () => {
+  const files = await workflowFiles();
+  const direct = new Set();
+  for (const name of files) {
+    const source = await workflow(name);
+    for (const path of runDirectScriptPaths(source)) direct.add(path);
+  }
+  assert.ok(direct.size > 0, 'expected at least one directly-invoked workflow script');
+  for (const path of direct) {
+    const result = spawnSync('git', ['ls-tree', 'HEAD', path], { cwd: repository, encoding: 'utf8' });
+    assert.equal(result.status, 0, `git ls-tree HEAD ${path} failed: ${result.stderr}`);
+    const [mode] = result.stdout.trim().split(/\s+/);
+    assert.equal(mode, '100755', `directly-invoked workflow script ${path} must be committed with mode 100755, found ${mode}`);
+  }
+});
