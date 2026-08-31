@@ -140,13 +140,18 @@ if [ -d "$run_a/windows" ] && [ -d "$run_a/macos" ] && [ -d "$run_b/windows" ] &
   if ! mv "$publish_stage" "$new_output"; then
     result=2
     printf '%s\n' "ERROR: failed to publish native output to $output" >&2
-    publish_stage=""  # the failed mv left it in place; trap will not double-remove
+    # Leave `publish_stage` set: the failed rename left the staged tree at its
+    # staging path, and the EXIT trap must clean it up.
     if [ -n "$old_output" ]; then
       if ! mv "$old_output" "$new_output"; then
         printf '%s\n' "ERROR: could not restore previous output at $output" >&2
         old_output=""  # restore failed; do not let the trap remove the leftover
       else
+        # Restore succeeded: the prior output is back at $output. Clear
+        # `new_output` so the EXIT trap's `rm -rf "$new_output"` does NOT delete
+        # the restored prior output on script exit.
         old_output=""
+        new_output=""
       fi
     fi
     exit 2

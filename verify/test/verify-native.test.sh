@@ -151,35 +151,97 @@ fi
 staging_leftover=$(find "$readonly_parent" -maxdepth 1 -name '.verify-native-*' 2>/dev/null | head -1)
 [ -z "$staging_leftover" ]
 
-# --- Rollback restores a pre-existing output on publication failure ---
-# Seed a valid prior output, then point the verifier at a read-only parent so
-# staging (and publication) fails. The pre-existing output must survive
-# unchanged: rollback restores it, and nothing partial is published alongside.
+# --- Early staging failure (read-only parent) survives without exercising rollback ---
+# The output's parent is read-only, so the initial comparison staging `mktemp`
+# (verify-native.sh:68) fails BEFORE any pre-existing output is moved aside. The
+# component exits 2 and must not leave a partial output. This proves survival on
+# an early-staging failure; the genuine rollback branch is exercised below.
+readonly_parent="$tmp/readonly-parent"
+mkdir -p "$readonly_parent/native-bridge/windows/product" \
+         "$readonly_parent/native-bridge/macos/product"
+printf 'prior-windows' >"$readonly_parent/native-bridge/windows/product/artifact"
+printf 'prior-macos' >"$readonly_parent/native-bridge/macos/product/artifact"
+chmod 0500 "$readonly_parent"
+readonly_output="$readonly_parent/native-bridge"
+if VERIFY_NATIVE_OUTPUT="$readonly_output" bash "$repo_root/verify/verify-native.sh" "$commit" "$run_a" "$run_b" 2>/dev/null; then
+  echo 'ERROR: early staging failure must exit 2' >&2
+  chmod 0700 "$readonly_parent"
+  exit 1
+else
+  status=$?
+  chmod 0700 "$readonly_parent"
+  [ "$status" -eq 2 ]
+fi
+# The pre-existing output was untouched (no rollback ran; nothing was published).
+[ -f "$readonly_output/windows/product/artifact" ]
+[ -f "$readonly_output/macos/product/artifact" ]
+[ "$(cat "$readonly_output/windows/product/artifact")" = 'prior-windows' ]
+[ "$(cat "$readonly_output/macos/product/artifact")" = 'prior-macos' ]
+# No sibling staging/backup directories were left behind in the parent.
+readonly_leftover=$(find "$readonly_parent" -maxdepth 1 -name '.verify-native-*' -o -maxdepth 1 -name '*.old.*' 2>/dev/null | head -1)
+[ -z "$readonly_leftover" ]
+rm -rf "$readonly_parent"
+
+# --- Rollback genuinely restores a pre-existing output after a failed publish ---
+# Both platform comparisons succeed, the staged tree is built, and the pre-existing
+# output is moved aside (verify-native.sh:132-138). The FINAL publish rename
+# (verify-native.sh:140, `mv publish_stage $output`) is then forced to fail, so the
+# rollback branch (verify-native.sh:144-151) runs and must restore the prior output
+# from its sibling staging name. The script exits 2, and the restored prior output
+# MUST survive script exit (the EXIT trap at verify-native.sh:84 must not delete it).
+#
+# Mechanism: a shim `mv` on PATH that delegates to the real `mv` for every call
+# EXCEPT the publish rename (arg1 basename begins with `.verify-native-publish.` and
+# arg2 is the target output), which it fails. The restore rename (arg1 basename
+# `*.old.$$`) and the comparison/staging renames are allowed through unchanged, so
+# the failure is isolated to the publish step AFTER the pre-existing output has been
+# moved aside — exactly the rollback branch.
 rollback_parent="$tmp/rollback-parent"
 mkdir -p "$rollback_parent/native-bridge/windows/product" \
          "$rollback_parent/native-bridge/macos/product"
 printf 'prior-windows' >"$rollback_parent/native-bridge/windows/product/artifact"
 printf 'prior-macos' >"$rollback_parent/native-bridge/macos/product/artifact"
-chmod 0500 "$rollback_parent"
 rollback_output="$rollback_parent/native-bridge"
-if VERIFY_NATIVE_OUTPUT="$rollback_output" bash "$repo_root/verify/verify-native.sh" "$commit" "$run_a" "$run_b" 2>/dev/null; then
+rollback_fakebin="$tmp/rollback-fakebin"
+mkdir -p "$rollback_fakebin"
+cat >"$rollback_fakebin/mv" <<'ROLLBACK_MV'
+#!/usr/bin/env bash
+# Shim mv: fail the publish rename only (arg1 is the publish stage, arg2 is the
+# final output). All other renames (comparison staging, move-aside, restore) are
+# delegated to the real mv so the failure is isolated to the publish step.
+real=/usr/bin/mv
+bname=$(basename -- "$1")
+case "$bname" in
+  .verify-native-publish.*)
+    if [ "$2" = "$ROLLBACK_BLOCK_OUTPUT" ]; then exit 1; fi
+    ;;
+esac
+exec "$real" "$@"
+ROLLBACK_MV
+chmod +x "$rollback_fakebin/mv"
+if ROLLBACK_BLOCK_OUTPUT="$rollback_output" \
+     VERIFY_NATIVE_OUTPUT="$rollback_output" \
+     PATH="$rollback_fakebin:$PATH" \
+     bash "$repo_root/verify/verify-native.sh" "$commit" "$run_a" "$run_b" 2>/dev/null; then
   echo 'ERROR: rollback publication failure must exit 2' >&2
-  chmod 0700 "$rollback_parent"
+  rm -rf "$rollback_parent" "$rollback_fakebin"
   exit 1
 else
   status=$?
-  chmod 0700 "$rollback_parent"
-  [ "$status" -eq 2 ]
+  [ "$status" -eq 2 ] || { echo "ERROR: rollback must exit 2, got $status" >&2; rm -rf "$rollback_parent" "$rollback_fakebin"; exit 1; }
 fi
-# The pre-existing output was restored (not deleted, not nested, not partial).
-[ -f "$rollback_output/windows/product/artifact" ]
-[ -f "$rollback_output/macos/product/artifact" ]
+# The pre-existing output was restored and MUST STILL EXIST after the script has
+# exited. This is the regression guard: the EXIT trap must not `rm -rf` the restored
+# prior output (the defect deleted it because `new_output` still pointed at $output
+# after rollback succeeded).
+[ -f "$rollback_output/windows/product/artifact" ] || { echo 'ERROR: restored prior windows output missing after script exit' >&2; rm -rf "$rollback_parent" "$rollback_fakebin"; exit 1; }
+[ -f "$rollback_output/macos/product/artifact" ] || { echo 'ERROR: restored prior macos output missing after script exit' >&2; rm -rf "$rollback_parent" "$rollback_fakebin"; exit 1; }
 [ "$(cat "$rollback_output/windows/product/artifact")" = 'prior-windows' ]
 [ "$(cat "$rollback_output/macos/product/artifact")" = 'prior-macos' ]
 # No sibling staging/backup directories were left behind in the parent.
 rollback_leftover=$(find "$rollback_parent" -maxdepth 1 -name '.verify-native-*' -o -maxdepth 1 -name '*.old.*' 2>/dev/null | head -1)
 [ -z "$rollback_leftover" ]
-rm -rf "$rollback_parent"
+rm -rf "$rollback_parent" "$rollback_fakebin"
 
 # --- Staging is created on the output's filesystem (same parent as output) ---
 # The comparison and publish staging directories must be siblings of the final
