@@ -123,6 +123,17 @@ test('pins and verifies all Rust-image Android downloads and apt packages', asyn
   assert.doesNotMatch(dockerfile, /ca-certificates=[0-9]/);
   assert.doesNotMatch(dockerfile, /build-essential=[0-9]/);
   assert.doesNotMatch(dockerfile, /sdkmanager "platform-tools"/);
+  // Each installed package's Pkg.Revision pin must print the actual
+  // source.properties on mismatch before exiting 1, so the next CI run
+  // pinpoints drift instead of failing silently. The three pins are
+  // android-35, build-tools/36.0.0, and ndk/<NDK_VERSION>.
+  for (const pin of [
+    "platforms/android-35/source.properties",
+    "build-tools/36.0.0/source.properties",
+    "ndk/${NDK_VERSION}/source.properties",
+  ]) {
+    assert.match(dockerfile, new RegExp(`${pin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?cat \\$\\{ANDROID_HOME\\}/${pin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `Dockerfile.rust must print the actual ${pin} on pin mismatch`);
+  }
 });
 
 test('pins the JDK, NDK, Rust, Node, npm, and Android helper in the reference files', async () => {

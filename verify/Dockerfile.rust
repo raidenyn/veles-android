@@ -33,11 +33,25 @@ RUN curl -fsSL -o /tmp/platform-tools.zip "https://dl.google.com/android/reposit
  && grep -qx "Pkg.Revision=${PLATFORM_TOOLS_VERSION}" ${ANDROID_HOME}/platform-tools/source.properties
 
 ARG NDK_VERSION=29.0.14206865
+# Install the Android SDK packages the Rust reference image needs, then verify
+# each installed package's Pkg.Revision pin. The previous single RUN chained
+# `sdkmanager ... && grep -qx ...` for all three pins in one command; when
+# sdkmanager exited 1 (after unzipping) the subsequent grep checks failed
+# SILENTLY with no diagnostics, so the next CI run could not pinpoint the
+# drift. Split sdkmanager from the grep checks and give each pin its own
+# guarded `grep ... || { echo actual:; cat <path>/source.properties; exit 1; }`
+# block that prints the actual Pkg.Revision on mismatch before exiting 1. The
+# pins are kept (not guessed); the diagnostics will reveal any drift on the
+# next CI run. sdkmanager is isolated on its own line so its failure is not
+# masked by a misleading "Pkg.Revision drift" echo from a later check.
 RUN yes | sdkmanager --licenses > /dev/null \
  && sdkmanager "platforms;android-35" "build-tools;36.0.0" "ndk;${NDK_VERSION}" \
- && grep -qx 'Pkg.Revision=2' ${ANDROID_HOME}/platforms/android-35/source.properties \
- && grep -qx 'Pkg.Revision=36.0.0' ${ANDROID_HOME}/build-tools/36.0.0/source.properties \
- && grep -qx "Pkg.Revision=${NDK_VERSION}" ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties
+ && (grep -qx 'Pkg.Revision=2' ${ANDROID_HOME}/platforms/android-35/source.properties \
+      || { echo 'android-35 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/platforms/android-35/source.properties; exit 1; }) \
+ && (grep -qx 'Pkg.Revision=36.0.0' ${ANDROID_HOME}/build-tools/36.0.0/source.properties \
+      || { echo 'build-tools/36.0.0 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/build-tools/36.0.0/source.properties; exit 1; }) \
+ && (grep -qx "Pkg.Revision=${NDK_VERSION}" ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties \
+      || { echo "ndk/${NDK_VERSION} Pkg.Revision drift, actual:"; cat ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties; exit 1; })
 
 ARG RUSTUP_VERSION=1.29.0
 ARG RUSTUP_SHA256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
