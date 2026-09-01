@@ -108,6 +108,25 @@ test('prepares dependencies online and produces the reference package offline', 
   assert.doesNotMatch(wrapper, /verify-rust\.mjs" "\$RUST_PACKAGE_DIR" "\$RUST_PACKAGE_DIR"/);
 });
 
+test('pre-caches the pinned Gradle wrapper distribution for the offline package run', async () => {
+  // The offline `package` container (docker run --network=none) cannot reach
+  // services.gradle.org. The image must pre-cache gradle-9.5.0-bin.zip during
+  // the online build, and rust-inner.sh must use a volume-backed
+  // GRADLE_USER_HOME seeded from that pre-cache so the wrapper resolves the
+  // distribution locally in both the prepare and package containers.
+  const [dockerfile, inner] = await Promise.all([
+    readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8'),
+    readFile(RUST_INNER, 'utf8'),
+  ]);
+  assert.match(dockerfile, /ENV GRADLE_USER_HOME=\/opt\/gradle-home/);
+  assert.match(dockerfile, /ARG GRADLE_DISTRIBUTION_SHA256=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746/);
+  assert.match(dockerfile, /COPY gradle\/wrapper\/gradle-wrapper\.properties gradle\/wrapper\/gradle-wrapper\.jar gradlew \/tmp\/veles-gradle\//);
+  assert.match(dockerfile, /\.\/gradlew --version/);
+  assert.match(inner, /export GRADLE_USER_HOME=\/work\/gradle-home/);
+  assert.match(inner, /seed_gradle_distribution/);
+  assert.match(inner, /\/opt\/gradle-home\/wrapper\/dists/);
+});
+
 test('pins and verifies all Rust-image Android downloads and apt packages', async () => {
   const dockerfile = await readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8');
   assert.match(dockerfile, /ARG PLATFORM_TOOLS_VERSION=37\.0\.1/);

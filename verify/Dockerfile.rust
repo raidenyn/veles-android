@@ -4,6 +4,14 @@ FROM ${JAVA_IMAGE}
 
 ENV TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8
 ENV ANDROID_HOME=/opt/android-sdk RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+# Pin GRADLE_USER_HOME inside the image so the Gradle wrapper distribution
+# cached during the online image build (see the wrapper pre-cache step below)
+# is found by BOTH the online `prepare` and the offline `--network=none`
+# `package` container runs. The wrapper stores its downloaded distribution
+# under ${GRADLE_USER_HOME}/wrapper/dists/; without this pre-cache the offline
+# package run re-downloaded gradle-9.5.0-bin.zip and failed with
+# java.net.UnknownHostException: services.gradle.org.
+ENV GRADLE_USER_HOME=/opt/gradle-home
 ENV PATH=${CARGO_HOME}/bin:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/36.0.0:/opt/node/bin:${PATH}
 
 # Base apt packages are installed unversioned to match the reviewed pattern in
@@ -84,6 +92,27 @@ RUN cd /tmp/veles-rust \
  && rustup default 1.98.0-x86_64-unknown-linux-gnu \
  && rustc --version \
  && rm -rf /tmp/veles-rust
+
+# Pre-cache the exact pinned Gradle wrapper distribution during the online
+# image build so the offline `package` container run (docker run --network=none)
+# resolves gradle-9.5.0-bin.zip from ${GRADLE_USER_HOME}/wrapper/dists instead
+# of hitting services.gradle.org (which is unreachable under network denial).
+# The distribution SHA-256 is pinned by the wrapper itself
+# (gradle/wrapper/gradle-wrapper.properties distributionSha256Sum is absent, so
+# the wrapper only downloads the exact distributionUrl; we additionally assert
+# the downloaded dist sha256 matches the upstream-published checksum to guard
+# against a compromised or drifted distribution). Only the wrapper files and
+# gradlew are needed to drive `--version`; no project source is copied here.
+ARG GRADLE_DISTRIBUTION_SHA256=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746
+COPY gradle/wrapper/gradle-wrapper.properties gradle/wrapper/gradle-wrapper.jar gradlew /tmp/veles-gradle/
+RUN cd /tmp/veles-gradle \
+ && chmod +x gradlew \
+ && ./gradlew --version \
+ && dist_dir="$(find ${GRADLE_USER_HOME}/wrapper/dists -name 'gradle-9.5.0-bin.zip' -print -quit)" \
+ && test -n "$dist_dir" \
+ && actual_sha="$(sha256sum "$dist_dir" | cut -d' ' -f1)" \
+ && test "$actual_sha" = "$GRADLE_DISTRIBUTION_SHA256" \
+ && rm -rf /tmp/veles-gradle
 
 COPY verify/rust-inner.sh /usr/local/bin/rust-inner.sh
 RUN chmod +x /usr/local/bin/rust-inner.sh
