@@ -84,10 +84,25 @@ jobs:
         if: env.KEYSTORE_BASE64 != ''
         run: ./gradlew assembleRelease
       - name: Verify APK and JNI allow-list
+        # The JNI allow-list runs against the canonical UNSIGNED APK (the
+        # aggregate artifact). The Docker byte-compare (verify.sh) runs against
+        # the SIGNED release APK when signing material was present, so
+        # apksigcopier can compare the signed release against the signature-
+        # stripped Docker rebuild (the "signed-versus-signature-stripped"
+        # check). When no signing material is present the canonical unsigned
+        # APK is the only release output and verify.sh byte-compares two
+        # unsigned builds via its `cmp` fallback. Passing the unsigned canonical
+        # to verify.sh on the signed path made apksigcopier fail with
+        # "Missing META-INF/MANIFEST.MF" because an unsigned APK carries no
+        # v2/v3 signing block manifest to strip.
         run: |
-          APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          rust/scripts/verify-apk-jni.sh "$APK"
-          verify/verify.sh "$APK" "${{ inputs.commit-sha }}"
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          rust/scripts/verify-apk-jni.sh "$UNSIGNED"
+          if [ -f "build/verification/android-release-evidence/app-release.apk" ]; then
+            verify/verify.sh "build/verification/android-release-evidence/app-release.apk" "${{ inputs.commit-sha }}"
+          else
+            verify/verify.sh "$UNSIGNED" "${{ inputs.commit-sha }}"
+          fi
       - name: Export canonical unsigned APK
         run: |
           mkdir -p build/verification/android

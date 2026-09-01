@@ -289,6 +289,19 @@ test('Android workflow builds and verifies the explicit release evidence tree', 
   assert.match(source, /verify\/verify\.sh[\s\S]*?inputs\.commit-sha/, 'Android workflow must run Docker APK verification for the requested commit');
   assert.match(source, /rust\/scripts\/verify-apk-jni\.sh/, 'Android workflow must enforce the APK JNI allow-list');
   assert.match(source, /build\/verification\/android\/app-release-unsigned\.apk/, 'Android workflow must export the canonical unsigned APK');
+  // Regression: the JNI allow-list runs against the canonical UNSIGNED APK,
+  // but verify.sh (Docker byte-compare) must run against the SIGNED release
+  // APK on the signed path so apksigcopier can compare the signed release
+  // against the signature-stripped Docker rebuild. Passing the unsigned
+  // canonical to verify.sh made apksigcopier fail with "Missing
+  // META-INF/MANIFEST.MF" because an unsigned APK has no v2/v3 manifest.
+  const verifyStep = source.slice(
+    source.indexOf('- name: Verify APK and JNI allow-list'),
+    source.indexOf('- name: Export canonical unsigned APK'),
+  );
+  assert.match(verifyStep, /rust\/scripts\/verify-apk-jni\.sh "\$UNSIGNED"/, 'JNI allow-list must run against the canonical unsigned APK');
+  assert.match(verifyStep, /verify\/verify\.sh "build\/verification\/android-release-evidence\/app-release\.apk"/, 'verify.sh must byte-compare the SIGNED release APK on the signed path (signed-versus-signature-stripped)');
+  assert.match(verifyStep, /verify\/verify\.sh "\$UNSIGNED"/, 'verify.sh must byte-compare the unsigned APK on the no-signing path');
   assert.match(source, /name:\s*\$\{\{ inputs\.release-evidence-artifact-name \}\}/, 'Android workflow must upload caller-selected release evidence');
   assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, 'Android workflow must upload the caller-selected aggregate reference');
   assert.deepEqual(uploadPaths(source, 'build-android.yml'), [
