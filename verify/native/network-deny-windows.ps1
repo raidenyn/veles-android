@@ -66,6 +66,16 @@ if ($LASTEXITCODE -ne 0) { env-fail "provisioning failed: $LASTEXITCODE" }
 # NSIS_PATH (not TAURI_NSIS_PATH); WiX has no env override and relies on
 # useLocalToolsDir.
 $env:NSIS_PATH = Join-Path $tauriCache 'NSIS'
+$makensis = Join-Path $env:NSIS_PATH 'makensis.exe'
+$makensisOutput = ''
+$makensisErrorMessage = $null
+try {
+    $makensisOutput = & $makensis /VERSION 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { $makensisErrorMessage = $makensisOutput }
+} catch {
+    $makensisErrorMessage = "$($_.Exception.Message)`n$makensisOutput"
+}
+if ($null -ne $makensisErrorMessage) { env-fail "makensis preflight failed: $makensisErrorMessage" }
 & $AcquireCommand[0] $AcquireCommand[1..($AcquireCommand.Count - 1)]
 if ($LASTEXITCODE -ne 0) { env-fail "acquisition command failed: $LASTEXITCODE" }
 

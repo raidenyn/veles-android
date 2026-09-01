@@ -133,7 +133,7 @@ function wixFixture() {
 // entries under nsis-3.08/ (mirroring the real nsis-3.zip layout).
 function nsisFixture() {
   const files = [
-    'makensis.exe', 'Bin/makensis.exe',
+    'makensis.exe', 'Bin/makensis.exe', 'Bin/zlib1.dll',
     'Stubs/lzma-x86-unicode', 'Stubs/lzma_solid-x86-unicode',
     'Plugins/x86-unicode/nsDialogs.dll', 'Plugins/x86-unicode/System.dll',
     // MUI2 StartMenu page + MUI language dialog plugins.
@@ -242,6 +242,10 @@ test('provisioner produces the exact expected cache from archive-realistic fixtu
 });
 
 test('provisioner required-file set includes every NSIS header/plugin MUI2 transitively pulls', () => {
+  // The root makensis.exe launcher starts Bin/makensis.exe, which imports
+  // zlib1.dll from its own directory. It must be present before any bundle
+  // command, not merely the NSIS template files.
+  assert.ok(requiredFiles.includes('NSIS/Bin/zlib1.dll'), 'missing makensis runtime dependency: NSIS/Bin/zlib1.dll');
   // installer.nsi unconditional !includes:
   for (const h of ['MUI2.nsh', 'FileFunc.nsh', 'x64.nsh', 'WordFunc.nsh', 'StrFunc.nsh', 'Win/COM.nsh', 'Win/Propkey.nsh']) {
     assert.ok(requiredFiles.includes(`NSIS/Include/${h}`), `missing installer.nsi !include: NSIS/Include/${h}`);

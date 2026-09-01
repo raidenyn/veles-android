@@ -28,7 +28,7 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
     'WixTools314/candle.exe', 'WixTools314/candle.exe.config', 'WixTools314/darice.cub',
     'WixTools314/light.exe', 'WixTools314/light.exe.config', 'WixTools314/wconsole.dll',
     'WixTools314/winterop.dll', 'WixTools314/wix.dll', 'WixTools314/WixUIExtension.dll',
-    'WixTools314/WixUtilExtension.dll', 'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe',
+    'WixTools314/WixUtilExtension.dll', 'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe', 'NSIS/Bin/zlib1.dll',
     'NSIS/Stubs/lzma-x86-unicode', 'NSIS/Stubs/lzma_solid-x86-unicode',
     'NSIS/Plugins/x86-unicode/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll', 'NSIS/Include/MUI2.nsh',
@@ -122,6 +122,10 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
   assert.match(script, /\$tauriCache = \[IO\.Path\]::GetFullPath\(\$TauriCachePath\)/);
   assert.match(script, /\$env:NSIS_PATH = Join-Path \$tauriCache 'NSIS'/);
   assert.doesNotMatch(script, /\$env:NSIS_PATH = Join-Path \$TauriCachePath 'NSIS'/);
+  assert.match(script, /\$makensis = Join-Path \$env:NSIS_PATH 'makensis\.exe'/,
+    'preflight must invoke the canonical provisioned makensis executable');
+  assert.match(script, /& \$makensis \/VERSION[\s\S]*?makensis preflight failed/,
+    'preflight failures must report makensis output via the exit-2 environment path');
 });
 
 test('macOS target wrapper validates its exact runner and safely proves offline packaging', async () => {
@@ -152,10 +156,11 @@ test('macOS target wrapper isolates only the package command tree without modify
   const script = await native('network-deny-macos.sh');
   for (const contract of [
     'command -v sandbox-exec', 'profile=$(mktemp)', '(deny network-outbound)',
-    '(allow network-outbound (local ip "127.0.0.1:*") (local ip "::1:*") (remote ip "127.0.0.1:*") (remote ip "::1:*"))',
+    '(allow network-outbound (local ip "localhost:*") (remote ip "localhost:*"))',
     'trap cleanup EXIT', 'rm -f "$profile"', 'sandbox-exec -f "$profile" curl',
     'sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true',
   ]) assert.match(script, literal(contract));
+  assert.doesNotMatch(script, /127\.0\.0\.1|::1/, 'SBPL rejects numeric IP addresses with port wildcards');
   assert.doesNotMatch(script, /pfctl/);
   assert.ok(script.indexOf('curl --fail') < script.indexOf('sandbox-exec -f "$profile" curl'));
   assert.ok(script.indexOf('sandbox-exec -f "$profile" curl') < script.indexOf('sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true'));

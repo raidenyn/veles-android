@@ -151,11 +151,17 @@ test('pins the JDK, NDK, Rust, Node, npm, and Android helper in the reference fi
 });
 
 test('uses a shell-safe NDK Pkg.Revision regex that accepts spacing but rejects drift', async () => {
-  const dockerfile = await readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8');
+  const [dockerfile, inner] = await Promise.all([
+    readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8'),
+    readFile(RUST_INNER, 'utf8'),
+  ]);
   assert.match(dockerfile, /grep -Eq 'Pkg\\\.Revision \*= \*'"\$\{NDK_VERSION\}"'\$'/,
     'the NDK pin must use one ERE escape level and a shell-quoted end anchor');
   assert.doesNotMatch(dockerfile, /Pkg\\\\\.Revision \*= \*\$\{NDK_VERSION\}\\\\\$/,
     'double escaping makes grep look for a literal backslash and dollar sign');
+  assert.match(inner, /Pkg\\\.Revision\[\[:space:\]\]\*=\[\[:space:\]\]\*/,
+    'the outer verifier must accept source.properties spaces around =');
+  assert.match(inner, /29\.0\.14206865/, 'the outer verifier must retain the exact NDK pin');
 });
 
 test('preserves exit 1 for a byte mismatch after valid package paths', async () => {
