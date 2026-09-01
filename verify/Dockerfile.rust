@@ -104,7 +104,12 @@ RUN cd /tmp/veles-rust \
 # against a compromised or drifted distribution). Only the wrapper files and
 # gradlew are needed to drive `--version`; no project source is copied here.
 ARG GRADLE_DISTRIBUTION_SHA256=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746
-COPY gradle/wrapper/gradle-wrapper.properties gradle/wrapper/gradle-wrapper.jar gradlew /tmp/veles-gradle/
+# The gradlew script resolves its launcher jar at APP_HOME/gradle/wrapper/
+# relative to its own location, so the wrapper files must keep their
+# gradle/wrapper/ subdirectory under /tmp/veles-gradle (a flat COPY put the
+# jar beside gradlew and the wrapper failed with "Unable to access jarfile").
+COPY gradle/wrapper/gradle-wrapper.properties gradle/wrapper/gradle-wrapper.jar /tmp/veles-gradle/gradle/wrapper/
+COPY gradlew /tmp/veles-gradle/gradlew
 RUN cd /tmp/veles-gradle \
  && chmod +x gradlew \
  && ./gradlew --version \
