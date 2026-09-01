@@ -28,6 +28,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Under PowerShell 7.4+, $PSNativeCommandUseErrorActionPreference defaults to
+# $true, which makes a native command that writes to stderr and exits non-zero
+# throw under $ErrorActionPreference='Stop'. The Gradle/Tauri package command
+# routinely writes build diagnostics to stderr and exits 1 on a bundle failure;
+# if that threw, control would land in the outer firewall catch and surface as
+# "unhandled firewall-block error" instead of the dedicated "package command
+# failed" env-fail, and the env-fail exit 2 could be rerouted or masked by the
+# pwsh wrapper. Disable native-command error-action propagation so the package
+# command's exit code is captured cleanly via $LASTEXITCODE and the
+# package-command env-fail (exit 2) is the deterministic, top-level outcome.
+$PSNativeCommandUseErrorActionPreference = $false
+
 # Environment/usage/identity failures exit 2 (never 1); artifact mismatches are
 # the responsibility of the caller's byte comparison, not this wrapper. env-fail
 # writes a non-terminating message to stderr and then `exit 2`s at TOP LEVEL.
@@ -76,6 +88,47 @@ try {
     $makensisErrorMessage = "$($_.Exception.Message)`n$makensisOutput"
 }
 if ($null -ne $makensisErrorMessage) { env-fail "makensis preflight failed: $makensisErrorMessage" }
+
+# Compile a minimal MUI2 installer offline to prove the provisioned NSIS cache
+# contains every Contrib/UIs/Stubs/Include file the Tauri installer.nsi
+# template transitively pulls. `/VERSION` only initializes CEXEBuild and
+# loads the default Unicode zlib stub; it does NOT exercise MUI2, so a cache
+# gap (e.g. a missing Contrib\UIs\modern.exe) passed `/VERSION` but failed the
+# real Tauri bundle step with "Can't read ...Contrib\UIs\modern.exe". The
+# minimal .nsi below mirrors the MUI2 surface Tauri's installer.nsi uses
+# (!include MUI2.nsh, MUI_PAGE_WELCOME, MUI_PAGE_INSTFILES, MUI_LANGUAGE
+# English, a no-op Section) so any missing MUI2 default (UI exe, welcome
+# bitmap, default icons, English language files) is named by makensis itself
+# before the slower Gradle/Tauri package step runs.
+$preflightDir = Join-Path $env:TEMP "veles-nsis-preflight-$( [guid]::NewGuid().ToString('N') )"
+$null = New-Item -ItemType Directory -Path $preflightDir -Force
+$preflightNsi = Join-Path $preflightDir 'preflight.nsi'
+$preflightOut = Join-Path $preflightDir 'preflight-setup.exe'
+# NSIS ${NSISDIR} resolves to the parent of the invoking makensis
+# (NSIS\Bin\makensis.exe -> NSIS\), so Contrib\UIs\modern.exe etc. are found
+# under $env:NSIS_PATH without further configuration.
+$nsiContent = @"
+Unicode true
+OutFile "$preflightOut"
+!include MUI2.nsh
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_LANGUAGE English
+Section noop
+SectionEnd
+"@
+Set-Content -LiteralPath $preflightNsi -Value $nsiContent -Encoding UTF8
+$preflightCompileError = $null
+try {
+    & $makensis -V2 $preflightNsi 2>&1 | Out-String | Write-Host
+    if ($LASTEXITCODE -ne 0) { $preflightCompileError = "makensis preflight compile failed: exit $LASTEXITCODE" }
+} catch {
+    $preflightCompileError = "makensis preflight compile failed: $($_.Exception.Message)"
+} finally {
+    Remove-Item -LiteralPath $preflightDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+if ($null -ne $preflightCompileError) { env-fail $preflightCompileError }
+
 & $AcquireCommand[0] $AcquireCommand[1..($AcquireCommand.Count - 1)]
 if ($LASTEXITCODE -ne 0) { env-fail "acquisition command failed: $LASTEXITCODE" }
 

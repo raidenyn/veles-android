@@ -65,6 +65,20 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
     // (English.nlf + English.nsh) under Contrib\Language files\.
     'NSIS/Contrib/Language files/English.nlf',
     'NSIS/Contrib/Language files/English.nsh',
+    // MUI_INTERFACE (Interface.nsh) defaults MUI_UI to Contrib\UIs\modern.exe
+    // and ChangeUI all reads it at compile time. The Tauri installer.nsi does
+    // not override MUI_UI, so the default modern.exe is required.
+    'NSIS/Contrib/UIs/modern.exe',
+    // MUI_PAGE_WELCOME defaults MUI_WELCOMEFINISHPAGE_BITMAP to
+    // Contrib\Graphics\Wizard\win.bmp and File-extracts it at compile time.
+    // The Tauri installer.nsi overrides it only with a configured
+    // sidebar_image (Veles has none), so win.bmp is required.
+    'NSIS/Contrib/Graphics/Wizard/win.bmp',
+    // MUI_INTERFACE defaults MUI_ICON/MUI_UNICON to these icons. The Tauri
+    // installer.nsi overrides MUI_ICON only with a configured installer_icon;
+    // the defaults are required for the offline preflight MUI2 compile.
+    'NSIS/Contrib/Graphics/Icons/modern-install.ico',
+    'NSIS/Contrib/Graphics/Icons/modern-uninstall.ico',
   ]) assert.match(provisioner, new RegExp(path.replaceAll('/', '[\\\\/]')));
   // The provisioner must map the actual archive layouts into the expected
   // cache roots: wix314-binaries.zip extracts flat (candle.exe at the archive
@@ -127,6 +141,23 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
     'preflight must invoke the canonical provisioned makensis executable');
   assert.match(script, /& \$makensis \/VERSION[\s\S]*?makensis preflight failed/,
     'preflight failures must report makensis output via the exit-2 environment path');
+  // The preflight must COMPILE a minimal MUI2 installer (not just /VERSION) so
+  // a cache gap (e.g. a missing Contrib\UIs\modern.exe) is named by makensis
+  // before the slower Gradle/Tauri package step runs. /VERSION only exercises
+  // the default zlib stub and does not pull MUI2 Contrib files.
+  assert.match(script, /!include MUI2\.nsh/, 'preflight must include MUI2.nsh to exercise the MUI2 Contrib tree');
+  assert.match(script, /MUI_PAGE_WELCOME/, 'preflight must use MUI_PAGE_WELCOME to pull the default welcome bitmap');
+  assert.match(script, /MUI_LANGUAGE English/, 'preflight must use the default English language to pull language files');
+  assert.match(script, /preflight-setup\.exe/, 'preflight must compile a real installer (OutFile a setup.exe)');
+  assert.match(script, /makensis preflight compile failed/, 'preflight compile failures must env-fail (exit 2)');
+  // Under pwsh 7.4+, $PSNativeCommandUseErrorActionPreference defaults to true,
+  // which would make the Gradle package command (stderr + non-zero exit) throw
+  // under ErrorActionPreference=Stop and reroute the package-command failure to
+  // the firewall catch instead of the dedicated package-command env-fail. Disable
+  // it so $LASTEXITCODE is captured cleanly and the package-command env-fail
+  // (exit 2) is the deterministic, top-level outcome.
+  assert.match(script, /PSNativeCommandUseErrorActionPreference = \$false/);
+  assert.match(script, /package command failed/, 'package-command failure must env-fail (exit 2) at top level');
 });
 
 test('macOS target wrapper validates its exact runner and safely proves offline packaging', async () => {

@@ -159,6 +159,15 @@ function nsisFixture() {
     // Default MUI_LANGUAGE "English" language files.
     'Contrib/Language files/English.nlf',
     'Contrib/Language files/English.nsh',
+    // MUI_INTERFACE default MUI_UI (ChangeUI all "${MUI_UI}") + the
+    // MUI_PAGE_WELCOME default welcome/finish bitmap + the default
+    // MUI_ICON/MUI_UNICON icons. See provision-windows-tools.ps1 for the
+    // rationale on which MUI2 defaults the Tauri installer.nsi does NOT
+    // override.
+    'Contrib/UIs/modern.exe',
+    'Contrib/Graphics/Wizard/win.bmp',
+    'Contrib/Graphics/Icons/modern-install.ico',
+    'Contrib/Graphics/Icons/modern-uninstall.ico',
   ];
   const out = {};
   for (const name of files) out[name] = `nsis:${name}`;
@@ -298,6 +307,20 @@ test('provisioner required-file set includes every NSIS header/plugin MUI2 trans
       requiredFiles.includes(`NSIS/Contrib/Language files/${lf}`),
       `missing English language file: NSIS/Contrib/Language files/${lf}`,
     );
+  }
+  // MUI_INTERFACE default MUI_UI + MUI_PAGE_WELCOME default bitmap + default
+  // MUI_ICON/MUI_UNICON icons. Tauri's installer.nsi does not override
+  // MUI_UI, the welcome bitmap (no sidebar_image), so these MUI2 defaults are
+  // required at compile time.
+  assert.ok(requiredFiles.includes('NSIS/Contrib/UIs/modern.exe'), 'missing MUI2 default UI: NSIS/Contrib/UIs/modern.exe');
+  assert.ok(requiredFiles.includes('NSIS/Contrib/Graphics/Wizard/win.bmp'), 'missing MUI2 default welcome bitmap: NSIS/Contrib/Graphics/Wizard/win.bmp');
+  assert.ok(requiredFiles.includes('NSIS/Contrib/Graphics/Icons/modern-install.ico'), 'missing MUI2 default install icon: NSIS/Contrib/Graphics/Icons/modern-install.ico');
+  assert.ok(requiredFiles.includes('NSIS/Contrib/Graphics/Icons/modern-uninstall.ico'), 'missing MUI2 default uninstall icon: NSIS/Contrib/Graphics/Icons/modern-uninstall.ico');
+  // The MUI_HEADERIMAGE UI variants are only loaded when MUI_HEADERIMAGE is
+  // defined, which Tauri sets only with a configured header_image. Veles does
+  // not configure one, so they must NOT be provisioned (strict allow-list).
+  for (const extra of ['modern_headerbmp.exe', 'modern_headerbmpr.exe', 'modern_nodesc.exe', 'modern_smalldesc.exe']) {
+    assert.ok(!requiredFiles.includes(`NSIS/Contrib/UIs/${extra}`), `MUI_HEADERIMAGE-only UI must not be provisioned: NSIS/Contrib/UIs/${extra}`);
   }
   // MultiUser.nsh is NOT required (currentUser mode is the default).
   assert.ok(!requiredFiles.includes('NSIS/Include/MultiUser.nsh'), 'MultiUser.nsh must not be required under currentUser mode');

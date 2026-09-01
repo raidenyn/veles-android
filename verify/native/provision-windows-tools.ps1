@@ -82,7 +82,27 @@ $requiredFiles = @(
     # The default MUI_LANGUAGE "English" requires the English language files
     # (English.nlf + English.nsh) under Contrib\Language files\.
     'NSIS/Contrib/Language files/English.nlf',
-    'NSIS/Contrib/Language files/English.nsh'
+    'NSIS/Contrib/Language files/English.nsh',
+    # MUI_INTERFACE (Interface.nsh) defaults MUI_UI to Contrib\UIs\modern.exe
+    # and ChangeUI all "${MUI_UI}" reads it at compile time. The Tauri
+    # installer.nsi does not override MUI_UI, so the default modern.exe is
+    # required. The headerbmp variants are only loaded when MUI_HEADERIMAGE is
+    # defined, which Tauri sets only when a header image is configured
+    # (Veles does not), so they are intentionally omitted.
+    'NSIS/Contrib/UIs/modern.exe',
+    # MUI_PAGE_WELCOME (Welcome.nsh) defaults
+    # MUI_WELCOMEFINISHPAGE_BITMAP to Contrib\Graphics\Wizard\win.bmp and
+    # File-extracts it into $PLUGINSDIR at compile time. The Tauri installer.nsi
+    # overrides this only when sidebar_image is configured (Veles does not), so
+    # the default win.bmp is required.
+    'NSIS/Contrib/Graphics/Wizard/win.bmp',
+    # MUI_INTERFACE defaults MUI_ICON to modern-install.ico and MUI_UNICON to
+    # modern-uninstall.ico. The Tauri installer.nsi overrides MUI_ICON only
+    # when an installer_icon is configured; the default icons are required for
+    # the offline preflight compile (which uses MUI2 defaults) and remain
+    # available for the real build if it ever falls back to them.
+    'NSIS/Contrib/Graphics/Icons/modern-install.ico',
+    'NSIS/Contrib/Graphics/Icons/modern-uninstall.ico'
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
