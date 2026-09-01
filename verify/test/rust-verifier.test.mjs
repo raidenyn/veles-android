@@ -150,6 +150,14 @@ test('pins the JDK, NDK, Rust, Node, npm, and Android helper in the reference fi
   }
 });
 
+test('uses a shell-safe NDK Pkg.Revision regex that accepts spacing but rejects drift', async () => {
+  const dockerfile = await readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8');
+  assert.match(dockerfile, /grep -Eq 'Pkg\\\.Revision \*= \*'"\$\{NDK_VERSION\}"'\$'/,
+    'the NDK pin must use one ERE escape level and a shell-quoted end anchor');
+  assert.doesNotMatch(dockerfile, /Pkg\\\\\.Revision \*= \*\$\{NDK_VERSION\}\\\\\$/,
+    'double escaping makes grep look for a literal backslash and dollar sign');
+});
+
 test('preserves exit 1 for a byte mismatch after valid package paths', async () => {
   const { verifyRustPackages } = await import('../verify-rust.mjs');
   await withPackage({

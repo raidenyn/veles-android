@@ -56,7 +56,7 @@ ARG NDK_VERSION=29.0.14206865
        || { echo 'android-35 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/platforms/android-35/source.properties; exit 1; }) \
   && (grep -qx 'Pkg.Revision=36.0.0' ${ANDROID_HOME}/build-tools/36.0.0/source.properties \
        || { echo 'build-tools/36.0.0 Pkg.Revision drift, actual:'; cat ${ANDROID_HOME}/build-tools/36.0.0/source.properties; exit 1; }) \
-  && (grep -Eq "Pkg\\.Revision *= *${NDK_VERSION}\\$" ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties \
+  && (grep -Eq 'Pkg\.Revision *= *'"${NDK_VERSION}"'$' ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties \
        || { echo "ndk/${NDK_VERSION} Pkg.Revision drift, actual:"; cat ${ANDROID_HOME}/ndk/${NDK_VERSION}/source.properties; exit 1; })
 
 ARG RUSTUP_VERSION=1.29.0

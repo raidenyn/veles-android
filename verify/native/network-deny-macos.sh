@@ -37,15 +37,16 @@ trap cleanup EXIT
 # Gradle 9 ALWAYS forks a single-use daemon process even under --no-daemon,
 # and that daemon communicates with the client over loopback TCP; a blanket
 # `(deny network-outbound)` blocks that socket and the build fails with
-# 'Could not connect to the Gradle daemon'. Allowing 127.0.0.1 / ::1
-# (both local and remote ends of the loopback pair) lets the daemon control
-# socket work while real outbound (e.g. curl https://github.com/) stays
-# denied, so the pre/post network probes still behave identically.
+# 'Could not connect to the Gradle daemon'. SBPL `ip` network filters require
+# an address and port; `:*` means every TCP port for that loopback address.
+# Allowing 127.0.0.1 / ::1 at both local and remote ends lets the daemon
+# control socket work while real outbound (e.g. curl https://github.com/)
+# stays denied, so the pre/post network probes still behave identically.
 printf '%s\n' \
   '(version 1)' \
   '(allow default)' \
   '(deny network-outbound)' \
-  '(allow network-outbound (local ip "127.0.0.1") (local ip "::1") (remote ip "127.0.0.1") (remote ip "::1"))' \
+  '(allow network-outbound (local ip "127.0.0.1:*") (local ip "::1:*") (remote ip "127.0.0.1:*") (remote ip "::1:*"))' \
   > "$profile"
 sandbox-exec -f "$profile" /usr/bin/true || env_fail 'sandbox-exec self-test failed'
 if sandbox-exec -f "$profile" curl --fail --silent --show-error --output /dev/null "$probe"; then

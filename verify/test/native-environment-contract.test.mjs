@@ -114,6 +114,14 @@ test('Windows target wrapper validates its exact runner and safely proves offlin
   // --no-daemon because sandbox-exec denies the daemon's loopback socket.)
   assert.match(script, /\$PackageCommand = @\('\.\\gradlew\.bat', 'bridgePackage'\)/);
   assert.doesNotMatch(script, /--no-daemon/);
+  // The workflow supplies a relative cache path, but Gradle invokes Tauri from
+  // native-bridge/. NSIS_PATH must therefore be canonical before it reaches
+  // Tauri, or makensis resolves against native-bridge/native-bridge/...
+  const relativeCachePath = 'native-bridge/src-tauri/target/.tauri';
+  assert.equal(relativeCachePath.startsWith('/'), false, 'fixture must model the workflow relative cache path');
+  assert.match(script, /\$tauriCache = \[IO\.Path\]::GetFullPath\(\$TauriCachePath\)/);
+  assert.match(script, /\$env:NSIS_PATH = Join-Path \$tauriCache 'NSIS'/);
+  assert.doesNotMatch(script, /\$env:NSIS_PATH = Join-Path \$TauriCachePath 'NSIS'/);
 });
 
 test('macOS target wrapper validates its exact runner and safely proves offline packaging', async () => {
@@ -144,7 +152,7 @@ test('macOS target wrapper isolates only the package command tree without modify
   const script = await native('network-deny-macos.sh');
   for (const contract of [
     'command -v sandbox-exec', 'profile=$(mktemp)', '(deny network-outbound)',
-    '(allow network-outbound (local ip "127.0.0.1") (local ip "::1") (remote ip "127.0.0.1") (remote ip "::1"))',
+    '(allow network-outbound (local ip "127.0.0.1:*") (local ip "::1:*") (remote ip "127.0.0.1:*") (remote ip "::1:*"))',
     'trap cleanup EXIT', 'rm -f "$profile"', 'sandbox-exec -f "$profile" curl',
     'sandbox-exec -f "$profile" env CARGO_NET_OFFLINE=true',
   ]) assert.match(script, literal(contract));
