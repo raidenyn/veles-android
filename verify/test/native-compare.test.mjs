@@ -19,7 +19,7 @@ async function makeRun(root, name, overrides = {}) {
   await writeFile(join(product, 'artifact.sha256'), sidecarContent);
   // The component SHA256SUMS is required and must validly cover the package
   // and sidecar the transport carries.
-  await writeFile(join(product, 'SHA256SUMS'), [
+  await writeFile(join(product, 'SHA256SUMS'), overrides.componentSums ?? [
     `${sha256(artifactContent)}  artifact`,
     `${sha256(sidecarContent)}  artifact.sha256`,
   ].join('\n') + '\n');
@@ -111,6 +111,34 @@ test('reports the first product byte drift and emits a tree only after a verifie
     await compareRuns('0123456789abcdef0123456789abcdef01234567', left, matching, output);
     assert.equal(await readFile(join(output, 'view', 'host'), 'utf8'), 'host');
     assert.equal(await readFile(join(output, 'product', 'artifact'), 'utf8'), 'artifact');
+  });
+});
+
+test('accepts separately serialized component SHA256SUMS evidence after validating each local product', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  await withRuns(async (root) => {
+    const artifact = 'artifact';
+    const sidecar = `${sha256(artifact)}  artifact\n`;
+    const left = await makeRun(root, 'left');
+    const right = await makeRun(root, 'right', {
+      componentSums: [
+        `${sha256(sidecar)}  artifact.sha256`,
+        `${sha256(artifact)}  artifact`,
+      ].join('\n') + '\n',
+    });
+    await compareRuns('0123456789abcdef0123456789abcdef01234567', left, right);
+  });
+});
+
+test('reports the first actual product path when a validated package differs', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  await withRuns(async (root) => {
+    const left = await makeRun(root, 'left');
+    const right = await makeRun(root, 'right', { product: 'changed-artifact' });
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && error.message.includes('byte mismatch: product/artifact'),
+    );
   });
 });
 

@@ -134,7 +134,7 @@ function wixFixture() {
 function nsisFixture() {
   const files = [
     'makensis.exe', 'Bin/makensis.exe', 'Bin/zlib1.dll',
-    'Stubs/lzma-x86-unicode', 'Stubs/lzma_solid-x86-unicode',
+    'Stubs/lzma-x86-unicode', 'Stubs/lzma_solid-x86-unicode', 'Stubs/uninst',
     'Stubs/zlib-x86-unicode', 'Stubs/zlib_solid-x86-unicode',
     'Plugins/x86-unicode/nsDialogs.dll', 'Plugins/x86-unicode/System.dll',
     // MUI2 StartMenu page + MUI language dialog plugins.
@@ -243,10 +243,15 @@ test('provisioner produces the exact expected cache from archive-realistic fixtu
 });
 
 test('provisioner required-file set includes every NSIS header/plugin MUI2 transitively pulls', () => {
-  // The root makensis.exe launcher starts Bin/makensis.exe, which imports
-  // zlib1.dll from its own directory. It must be present before any bundle
-  // command, not merely the NSIS template files.
-  assert.ok(requiredFiles.includes('NSIS/Bin/zlib1.dll'), 'missing makensis runtime dependency: NSIS/Bin/zlib1.dll');
+  // `/VERSION` reaches CEXEBuild: the root launcher starts Bin/makensis.exe,
+  // which imports zlib1.dll, initializes the default Unicode zlib stub, and
+  // loads the uninstaller icon from Stubs/uninst before reading a script.
+  for (const path of [
+    'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe', 'NSIS/Bin/zlib1.dll',
+    'NSIS/Stubs/zlib-x86-unicode', 'NSIS/Stubs/uninst',
+  ]) {
+    assert.ok(requiredFiles.includes(path), `missing makensis launch dependency: ${path}`);
+  }
   // Tauri's generated installer enables solid compression. NSIS requires both
   // the normal and solid zlib Unicode stubs while compiling that installer.
   for (const stub of ['zlib-x86-unicode', 'zlib_solid-x86-unicode']) {

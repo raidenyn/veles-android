@@ -65,7 +65,7 @@ async function productManifestFiles(root, productEntries) {
   // digest must match the corresponding transported file's bytes, and the
   // record path set must exactly match the transport product artifact set.
   const sumsText = (await readFile(join(root, 'SHA256SUMS'))).toString('utf8');
-  const sums = parseStandardManifest(sumsText);
+  const sums = parseStandardManifest(sumsText, { allowUnsorted: true });
   const byPath = new Map(productEntries.filter((e) => e.type === 'file').map((e) => [e.path, e]));
   const sumsPaths = [...sums.keys()].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
   const manifestSorted = [...manifestPaths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));

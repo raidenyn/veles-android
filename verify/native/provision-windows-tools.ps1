@@ -48,7 +48,9 @@ $requiredFiles = @(
     # The root launcher runs Bin/makensis.exe, whose zlib1.dll import must be
     # present next to the compiler for the Windows loader to start it.
     'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe', 'NSIS/Bin/zlib1.dll',
-    'NSIS/Stubs/lzma-x86-unicode', 'NSIS/Stubs/lzma_solid-x86-unicode',
+    # `/VERSION` initializes CEXEBuild before it reads an installer script:
+    # it selects the default Unicode zlib stub and loads the uninstaller icon.
+    'NSIS/Stubs/lzma-x86-unicode', 'NSIS/Stubs/lzma_solid-x86-unicode', 'NSIS/Stubs/uninst',
     'NSIS/Stubs/zlib-x86-unicode', 'NSIS/Stubs/zlib_solid-x86-unicode',
     'NSIS/Plugins/x86-unicode/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll',

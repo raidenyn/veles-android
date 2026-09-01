@@ -80,7 +80,7 @@ export function parseStandardManifest(text, options = {}) {
     validateRelativePath(path);
     if (path === options.selfPath) throw mismatch(`self-referential manifest path: ${path}`);
     if (checksums.has(path)) throw mismatch(`duplicate manifest path: ${path}`);
-    if (previousPath !== undefined && comparePaths(previousPath, path) >= 0) {
+    if (!options.allowUnsorted && previousPath !== undefined && comparePaths(previousPath, path) >= 0) {
       throw mismatch(`manifest paths are not sorted: ${path}`);
     }
     checksums.set(path, digest);
