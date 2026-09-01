@@ -27,6 +27,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readTar, readZip, type TarEntry } from './archive-reader';
 
@@ -560,6 +561,50 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         runPackage();
         const second = readFileSync(join(buildOutDir, 'macos', 'veles-native-bridge-0.1.0.tar.gz'));
         expect(first.equals(second)).toBe(true);
+    });
+
+    it('pins fixed tar metadata and a fixed gzip header for cross-run determinism', () => {
+        // The macOS product tarball is byte-compared across two CI runs on the
+        // same image. Every tar header must carry mtime=0, uid=0, gid=0, empty
+        // uname/gname, and zeroed devmajor/devminor, and the gzip wrapper must
+        // carry mtime=0 so the archive is reproducible regardless of the build
+        // host or wall clock. parseTar (archive-reader) already reads these
+        // fields; assert them here as a determinism regression.
+        runPackage();
+        const gz = readFileSync(join(buildOutDir, 'macos', 'veles-native-bridge-0.1.0.tar.gz'));
+        // gzip header: bytes 4-7 are MTIME (must be 0 for a fixed header).
+        expect(gz[0]).toBe(0x1f);
+        expect(gz[1]).toBe(0x8b);
+        expect(gz.subarray(4, 8).equals(Buffer.from([0, 0, 0, 0]))).toBe(true);
+        const entries = readTar(gz);
+        expect(entries.length).toBeGreaterThan(0);
+        for (const entry of entries) {
+            expect(entry.mtime, `tar entry ${entry.name} mtime must be epoch 0`).toBe(0);
+        }
+        // Re-parse the raw (unzipped) tar to assert uid/gid are 0 (readTar does
+        // not expose uid/gid, so re-slice the header fields directly).
+        const tar = gz[0] === 0x1f && gz[1] === 0x8b ? gunzipSync(gz) : gz;
+        let off = 0;
+        while (off + 512 <= tar.length) {
+            const header = tar.subarray(off, off + 512);
+            if (header.every((b) => b === 0)) break;
+            const uid = parseInt(header.subarray(108, 116).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const gid = parseInt(header.subarray(116, 124).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const uname = header.subarray(265, 297).every((b) => b === 0);
+            const gname = header.subarray(297, 329).every((b) => b === 0);
+            const devmajor = header.subarray(329, 337).every((b) => b === 0);
+            const devminor = header.subarray(337, 345).every((b) => b === 0);
+            const name = header.subarray(0, header.indexOf(0) < 0 ? 100 : header.indexOf(0)).toString('utf8');
+            expect(uid, `tar entry ${name} uid must be 0`).toBe(0);
+            expect(gid, `tar entry ${name} gid must be 0`).toBe(0);
+            expect(uname, `tar entry ${name} uname must be empty`).toBe(true);
+            expect(gname, `tar entry ${name} gname must be empty`).toBe(true);
+            expect(devmajor, `tar entry ${name} devmajor must be 0`).toBe(true);
+            expect(devminor, `tar entry ${name} devminor must be 0`).toBe(true);
+            const size = parseInt(header.subarray(124, 136).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const blocks = Math.ceil(size / 512);
+            off += 512 + blocks * 512;
+        }
     });
 
     it('writes a sha256 sidecar matching the archive', () => {
