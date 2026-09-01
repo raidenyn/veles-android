@@ -38,6 +38,8 @@ $ErrorActionPreference = 'Stop'
 # LangDLL.dll), and the default MUI_LANGUAGE "English" (which requires
 # Contrib/Language files/English.nlf and English.nsh). These four files are
 # required even though they are not !included by name in installer.nsi.
+# Tauri's NSIS template uses solid compression. Its zlib path reads both Unicode
+# zlib stubs while compiling, so keep the normal and solid pair below.
 $requiredFiles = @(
     'WixTools314/candle.exe', 'WixTools314/candle.exe.config', 'WixTools314/darice.cub',
     'WixTools314/light.exe', 'WixTools314/light.exe.config', 'WixTools314/wconsole.dll',
@@ -47,6 +49,7 @@ $requiredFiles = @(
     # present next to the compiler for the Windows loader to start it.
     'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe', 'NSIS/Bin/zlib1.dll',
     'NSIS/Stubs/lzma-x86-unicode', 'NSIS/Stubs/lzma_solid-x86-unicode',
+    'NSIS/Stubs/zlib-x86-unicode', 'NSIS/Stubs/zlib_solid-x86-unicode',
     'NSIS/Plugins/x86-unicode/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/nsDialogs.dll', 'NSIS/Plugins/x86-unicode/System.dll',

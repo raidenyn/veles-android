@@ -191,6 +191,54 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         rmSync(base, { recursive: true, force: true });
     });
 
+    it("accepts Tauri's product icon beside the .dmg installer without archiving it", () => {
+        const base = mkdtempSync(join(tmpdir(), 'veles-pkg-macos-dmg-icon-'));
+        const rel = join(base, 'target', 'release');
+        const bOut = join(base, 'build', 'native-bridge');
+        const macosDir = join(rel, 'bundle', 'macos', APP_BUNDLE, 'Contents', 'MacOS');
+        mkdirSync(macosDir, { recursive: true });
+        writeFileSync(join(macosDir, EXEC_NAME), 'x');
+        chmodSync(join(macosDir, EXEC_NAME), 0o755);
+        writeDmg(rel);
+        writeFileSync(join(rel, 'bundle', 'dmg', 'Veles Native Bridge.icns'), 'ICNS-BYTES');
+        const env = {
+            ...process.env,
+            VELES_BRIDGE_PLATFORM: 'macos',
+            VELES_BRIDGE_RELEASE_DIR: rel,
+            VELES_BRIDGE_BUILD_OUT_DIR: bOut,
+            VELES_BRIDGE_INSTALL_ROOT: installRoot,
+        };
+        expect(() =>
+            execFileSync('node', [PACKAGE_SCRIPT], { cwd: BRIDGE_DIR, encoding: 'utf8', env }),
+        ).not.toThrow();
+        const entries = readTar(readFileSync(join(bOut, 'macos', 'veles-native-bridge-0.1.0.tar.gz')));
+        expect(entries.some((entry) => entry.name.endsWith('.icns'))).toBe(false);
+        rmSync(base, { recursive: true, force: true });
+    });
+
+    it('rejects an arbitrary sibling beside the .dmg installer', () => {
+        const base = mkdtempSync(join(tmpdir(), 'veles-pkg-macos-dmg-stray-'));
+        const rel = join(base, 'target', 'release');
+        const bOut = join(base, 'build', 'native-bridge');
+        const macosDir = join(rel, 'bundle', 'macos', APP_BUNDLE, 'Contents', 'MacOS');
+        mkdirSync(macosDir, { recursive: true });
+        writeFileSync(join(macosDir, EXEC_NAME), 'x');
+        chmodSync(join(macosDir, EXEC_NAME), 0o755);
+        writeDmg(rel);
+        writeFileSync(join(rel, 'bundle', 'dmg', 'unexpected.txt'), 'stray');
+        const env = {
+            ...process.env,
+            VELES_BRIDGE_PLATFORM: 'macos',
+            VELES_BRIDGE_RELEASE_DIR: rel,
+            VELES_BRIDGE_BUILD_OUT_DIR: bOut,
+            VELES_BRIDGE_INSTALL_ROOT: installRoot,
+        };
+        expect(() =>
+            execFileSync('node', [PACKAGE_SCRIPT], { cwd: BRIDGE_DIR, encoding: 'utf8', env }),
+        ).toThrow(/unexpected|stray|installer/i);
+        rmSync(base, { recursive: true, force: true });
+    });
+
     it('rejects a stale/unexpected .dmg (only the bundle/dmg/ installer is allow-listed)', () => {
         // A stray .dmg outside bundle/dmg/ must NOT be archived; the allow-list
         // is exactly the .app tree + bundle/dmg/*.dmg + the manifest.

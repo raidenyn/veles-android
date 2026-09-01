@@ -135,6 +135,7 @@ function nsisFixture() {
   const files = [
     'makensis.exe', 'Bin/makensis.exe', 'Bin/zlib1.dll',
     'Stubs/lzma-x86-unicode', 'Stubs/lzma_solid-x86-unicode',
+    'Stubs/zlib-x86-unicode', 'Stubs/zlib_solid-x86-unicode',
     'Plugins/x86-unicode/nsDialogs.dll', 'Plugins/x86-unicode/System.dll',
     // MUI2 StartMenu page + MUI language dialog plugins.
     'Plugins/x86-unicode/StartMenu.dll', 'Plugins/x86-unicode/LangDLL.dll',
@@ -246,6 +247,11 @@ test('provisioner required-file set includes every NSIS header/plugin MUI2 trans
   // zlib1.dll from its own directory. It must be present before any bundle
   // command, not merely the NSIS template files.
   assert.ok(requiredFiles.includes('NSIS/Bin/zlib1.dll'), 'missing makensis runtime dependency: NSIS/Bin/zlib1.dll');
+  // Tauri's generated installer enables solid compression. NSIS requires both
+  // the normal and solid zlib Unicode stubs while compiling that installer.
+  for (const stub of ['zlib-x86-unicode', 'zlib_solid-x86-unicode']) {
+    assert.ok(requiredFiles.includes(`NSIS/Stubs/${stub}`), `missing NSIS zlib stub: ${stub}`);
+  }
   // installer.nsi unconditional !includes:
   for (const h of ['MUI2.nsh', 'FileFunc.nsh', 'x64.nsh', 'WordFunc.nsh', 'StrFunc.nsh', 'Win/COM.nsh', 'Win/Propkey.nsh']) {
     assert.ok(requiredFiles.includes(`NSIS/Include/${h}`), `missing installer.nsi !include: NSIS/Include/${h}`);

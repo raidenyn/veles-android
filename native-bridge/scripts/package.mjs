@@ -210,12 +210,14 @@ function requireSingleInstaller(dir, kind, suffix, label) {
                 `\nRemove stale installers before packaging.`,
         );
     }
-    // Tauri's macOS DMG bundler emits this helper beside the generated disk
-    // image. It is a build-time implementation detail, not archive payload;
-    // permit it while retaining the exact installer allow-list for all other
-    // files and for Windows bundle directories.
+    // Tauri's macOS DMG bundler emits these implementation details beside the
+    // generated disk image. They are not archive payload; permit only their
+    // exact names while retaining the strict installer allow-list for all
+    // other files and for Windows bundle directories.
     const unexpected = all.filter(
-        (n) => !n.endsWith(suffix) && !(kind === 'dmg' && n === 'bundle_dmg.sh'),
+        (n) =>
+            !n.endsWith(suffix) &&
+            !(kind === 'dmg' && (n === 'bundle_dmg.sh' || n === 'Veles Native Bridge.icns')),
     );
     if (unexpected.length > 0) {
         fail(

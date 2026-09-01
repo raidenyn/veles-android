@@ -76,7 +76,14 @@ RUN curl -fsSL -o /tmp/node.tar.xz https://nodejs.org/dist/v26.8.1/node-v26.8.1-
  && test "$(npm --version)" = 11.19.0
 
 COPY rust/rust-toolchain.toml rust/toolchain-tools.toml /tmp/veles-rust/
-RUN cd /tmp/veles-rust && rustup show active-toolchain && rustc --version && rm -rf /tmp/veles-rust
+# rust-toolchain.toml activates the exact pin only while this directory is
+# current. Make its installed Linux host toolchain the image default so the
+# later /work/src commands have rustc and cargo before source is copied.
+RUN cd /tmp/veles-rust \
+ && rustup show active-toolchain \
+ && rustup default 1.98.0-x86_64-unknown-linux-gnu \
+ && rustc --version \
+ && rm -rf /tmp/veles-rust
 
 COPY verify/rust-inner.sh /usr/local/bin/rust-inner.sh
 RUN chmod +x /usr/local/bin/rust-inner.sh

@@ -30,6 +30,7 @@ test('pins the reviewed Windows Tauri tool inputs and required cache files', asy
     'WixTools314/winterop.dll', 'WixTools314/wix.dll', 'WixTools314/WixUIExtension.dll',
     'WixTools314/WixUtilExtension.dll', 'NSIS/makensis.exe', 'NSIS/Bin/makensis.exe', 'NSIS/Bin/zlib1.dll',
     'NSIS/Stubs/lzma-x86-unicode', 'NSIS/Stubs/lzma_solid-x86-unicode',
+    'NSIS/Stubs/zlib-x86-unicode', 'NSIS/Stubs/zlib_solid-x86-unicode',
     'NSIS/Plugins/x86-unicode/nsis_tauri_utils.dll',
     'NSIS/Plugins/x86-unicode/additional/nsis_tauri_utils.dll', 'NSIS/Include/MUI2.nsh',
     'NSIS/Include/FileFunc.nsh', 'NSIS/Include/x64.nsh', 'NSIS/Include/nsDialogs.nsh',

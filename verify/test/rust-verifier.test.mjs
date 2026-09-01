@@ -150,6 +150,16 @@ test('pins the JDK, NDK, Rust, Node, npm, and Android helper in the reference fi
   }
 });
 
+test('sets the exact temporary Rust toolchain as the image default before source is copied', async () => {
+  const dockerfile = await readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8');
+  assert.match(dockerfile, /COPY rust\/rust-toolchain\.toml rust\/toolchain-tools\.toml \/tmp\/veles-rust\//);
+  assert.match(
+    dockerfile,
+    /cd \/tmp\/veles-rust\s*\\?\s*&& rustup show active-toolchain\s*\\?\s*&& rustup default 1\.98\.0-x86_64-unknown-linux-gnu/,
+    'the temporary rust-toolchain.toml override must become the global default for /work/src',
+  );
+});
+
 test('uses a shell-safe NDK Pkg.Revision regex that accepts spacing but rejects drift', async () => {
   const [dockerfile, inner] = await Promise.all([
     readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8'),
