@@ -121,22 +121,19 @@ test('pre-caches the pinned Gradle wrapper distribution for the offline package 
   ]);
   assert.match(dockerfile, /ENV GRADLE_USER_HOME=\/opt\/gradle-home/);
   assert.match(dockerfile, /ARG GRADLE_DISTRIBUTION_SHA256=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746/);
-  // Gradle 9.5.0's wrapper DELETES gradle-9.5.0-bin.zip after unpacking
-  // (only gradle-9.5.0/, gradle-9.5.0-bin.zip.lck, and gradle-9.5.0-bin.zip.ok
-  // remain), so the image can never assert on the zip bytes. The canonical
-  // distribution pin lives in gradle/wrapper/gradle-wrapper.properties
-  // (distributionSha256Sum — the wrapper verifies it at download time), and
-  // the Dockerfile asserts the unpacked distribution + .ok marker that the
-  // offline seed actually consumes.
+  // Gradle 9.5.0 retains no ZIP after unpacking. The canonical distribution pin
+  // lives in gradle/wrapper/gradle-wrapper.properties (distributionSha256Sum —
+  // the wrapper verifies it at download time), and the Dockerfile asserts the
+  // nested .ok marker plus the unpacked distribution the offline seed consumes.
   assert.match(wrapperProperties, /distributionSha256Sum=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746/);
   assert.match(dockerfile, /COPY gradle\/wrapper\/gradle-wrapper\.properties gradle\/wrapper\/gradle-wrapper\.jar \/tmp\/veles-gradle\/gradle\/wrapper\//);
   assert.match(dockerfile, /\.\/gradlew --version/);
-  // Gradle 9.5.0's wrapper deletes the zip after unpacking, so the image must
-  // assert on the persisting unpacked-distribution evidence: the .ok marker
-  // (whose presence makes the offline wrapper skip the download) and the
-  // unpacked gradle launcher itself. A find for 'gradle-9.5.0-bin.zip' can
-  // never match (CI run 33500934265 evidence).
-  assert.match(dockerfile, /find \$\{GRADLE_USER_HOME\}\/wrapper\/dists -type d -name 'gradle-9\.5\.0-bin'/);
+  // The .ok marker is one level below the distribution's hash directory. The
+  // Dockerfile must derive that directory from the actual marker, then assert
+  // the extracted Gradle launcher. Searching the parent `gradle-9.5.0-bin`
+  // directory puts the marker lookup at the wrong level.
+  assert.match(dockerfile, /find \$\{GRADLE_USER_HOME\}\/wrapper\/dists -type f -name 'gradle-9\.5\.0-bin\.zip\.ok'/);
+  assert.match(dockerfile, /dist_dir="\$\(dirname "\$dist_marker"\)"/);
   assert.match(dockerfile, /gradle-9\.5\.0-bin\.zip\.ok/);
   assert.match(dockerfile, /gradle-9\.5\.0\/bin\/gradle/);
   assert.doesNotMatch(dockerfile, /find \$\{GRADLE_USER_HOME\}\/wrapper\/dists -name 'gradle-9\.5\.0-bin\.zip'/);

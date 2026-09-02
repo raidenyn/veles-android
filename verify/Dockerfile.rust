@@ -100,14 +100,14 @@ RUN cd /tmp/veles-rust \
 # The distribution SHA-256 is pinned by the wrapper itself
 # (gradle/wrapper/gradle-wrapper.properties distributionSha256Sum — the wrapper
 # verifies the downloaded zip against it before unpacking, so a compromised or
-# drifted distribution fails HERE at download time). Gradle 9.5.0's wrapper
-# DELETES the zip after unpacking: the cached dist dir retains only the
-# unpacked gradle-9.5.0/ tree, gradle-9.5.0-bin.zip.lck, and the
+# drifted distribution fails HERE at download time). Gradle 9.5.0 removes the
+# ZIP after unpacking; the cached hash directory retains the unpacked
+# gradle-9.5.0/ tree, gradle-9.5.0-bin.zip.lck, and the
 # gradle-9.5.0-bin.zip.ok marker. The offline seed consumes exactly that
 # unpacked tree (a present .ok marker makes the wrapper skip the download), so
-# this step asserts the marker and the unpacked distribution exist instead of
-# hashing the deleted zip. Only the wrapper files and gradlew are needed to
-# drive `--version`; no project source is copied here.
+# this step asserts the nested marker and unpacked distribution rather than a
+# deleted ZIP. Only the wrapper files and gradlew are needed to drive
+# `--version`; no project source is copied here.
 ARG GRADLE_DISTRIBUTION_SHA256=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746
 # The gradlew script resolves its launcher jar at APP_HOME/gradle/wrapper/
 # relative to its own location, so the wrapper files must keep their
@@ -117,11 +117,12 @@ COPY gradle/wrapper/gradle-wrapper.properties gradle/wrapper/gradle-wrapper.jar 
 COPY gradlew /tmp/veles-gradle/gradlew
 RUN cd /tmp/veles-gradle \
  && chmod +x gradlew \
+ && grep -qx "distributionSha256Sum=${GRADLE_DISTRIBUTION_SHA256}" gradle/wrapper/gradle-wrapper.properties \
  && ./gradlew --version \
- && dist_root="$(find ${GRADLE_USER_HOME}/wrapper/dists -type d -name 'gradle-9.5.0-bin' -print -quit)" \
- && test -n "$dist_root" \
- && test -f "$dist_root/gradle-9.5.0-bin.zip.ok" \
- && test -x "$dist_root/gradle-9.5.0/bin/gradle" \
+ && dist_marker="$(find ${GRADLE_USER_HOME}/wrapper/dists -type f -name 'gradle-9.5.0-bin.zip.ok' -print -quit)" \
+ && test -n "$dist_marker" \
+ && dist_dir="$(dirname "$dist_marker")" \
+ && test -x "$dist_dir/gradle-9.5.0/bin/gradle" \
  && rm -rf /tmp/veles-gradle
 
 COPY verify/rust-inner.sh /usr/local/bin/rust-inner.sh
