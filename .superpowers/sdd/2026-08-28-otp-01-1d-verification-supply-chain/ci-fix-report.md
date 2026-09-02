@@ -80,3 +80,43 @@ assumption was incomplete.
   to validate the Rust image only; no CI run was pushed or triggered.
 - Windows behavioral wrapper tests could not run locally because `pwsh` is not
   installed.
+
+## Fix Round 1/5
+
+### Status
+
+Addressed all three blocking review findings.
+
+### Corrections
+
+- The macOS app host path
+  `Veles Native Bridge.app/Contents/MacOS/veles-native-bridge` is no longer
+  exempt from cross-run comparison. Other `.app` payload entries remain within
+  the documented Tauri nondeterminism exception.
+- `compare-runs.mjs` now opens each real ZIP or tar.gz package and requires its
+  payload files and symlinks to match the transported verification view before
+  comparison can succeed. A malformed package, extra view payload, or changed
+  payload now exits 1 as a package/view binding mismatch.
+- Aggregate documentation and implementation comments now distinguish stable
+  host/manifest records (cross-run compared) from package, installer, and
+  non-host app evidence (package-bound and self-validated per run only).
+
+### Regression Evidence
+
+- Added a test that differing macOS app-host bytes are rejected even while an
+  unrelated `.app` payload differs.
+- Added a test that arbitrary text named `.zip` cannot pass as a package with
+  an unrelated view.
+- Existing real-producer end-to-end coverage passes for Windows ZIP and macOS
+  tar.gz package/view binding, including macOS app symlinks.
+
+### Commands
+
+- `node --test verify/test/native-compare.test.mjs verify/test/native-end-to-end.test.mjs verify/test/native-extract-view.test.mjs verify/test/aggregate-checksums.test.mjs`: 21 passed.
+
+### Remaining Concerns
+
+- The documented Tauri installer/package exception remains: matching runner
+  slots do not cross-compare NSIS/MSI/DMG/non-host-app bytes. The new archive
+  binding prevents a package from claiming unrelated view payloads, and each
+  slot still validates its manifests and checksums.

@@ -152,28 +152,64 @@ test('reports the first actual product path when a validated package differs', a
 test('accepts self-validated Tauri installer transport drift but still compares stable view evidence', async () => {
   const { compareRuns } = await import('../native/compare-runs.mjs');
   await withRuns(async (root) => {
-    const installer = 'veles-native-bridge-0.1.0.zip';
     const left = await makeRun(root, 'left', {
-      artifactName: installer,
-      product: 'first Tauri installer bytes',
+      product: 'same package placeholder',
       viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'first NSIS payload bytes' },
     });
     const right = await makeRun(root, 'right', {
-      artifactName: installer,
-      product: 'second Tauri installer bytes',
+      product: 'same package placeholder',
       viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'second NSIS payload bytes' },
     });
     await compareRuns('0123456789abcdef0123456789abcdef01234567', left, right);
 
     const changedStableEvidence = await makeRun(root, 'changed-stable-evidence', {
-      artifactName: installer,
-      product: 'second Tauri installer bytes',
+      product: 'same package placeholder',
       host: 'changed raw host binary',
       viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'second NSIS payload bytes' },
     });
     await assert.rejects(
       () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, changedStableEvidence),
       (error) => error.exitCode === 1 && error.message.includes('view/host'),
+    );
+  });
+});
+
+test('rejects macOS app host byte drift while allowing other app payloads to vary', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  await withRuns(async (root) => {
+    const appHost = 'Veles Native Bridge.app/Contents/MacOS/veles-native-bridge';
+    const left = await makeRun(root, 'left', {
+      viewEntries: {
+        [appHost]: 'first host bytes',
+        'Veles Native Bridge.app/Contents/Info.plist': 'first producer timestamp',
+      },
+    });
+    const right = await makeRun(root, 'right', {
+      viewEntries: {
+        [appHost]: 'second host bytes',
+        'Veles Native Bridge.app/Contents/Info.plist': 'second producer timestamp',
+      },
+    });
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && error.message.includes(`view/${appHost}`),
+    );
+  });
+});
+
+test('rejects a package that cannot bind its declared ZIP payload to the verification view', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  await withRuns(async (root) => {
+    const invalidPackage = {
+      artifactName: 'veles-native-bridge-0.1.0.zip',
+      product: 'arbitrary text is not a ZIP archive',
+      viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'installer bytes' },
+    };
+    const left = await makeRun(root, 'left', invalidPackage);
+    const right = await makeRun(root, 'right', invalidPackage);
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && error.message.includes('native package/view binding mismatch'),
     );
   });
 });

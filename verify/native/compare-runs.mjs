@@ -1,10 +1,13 @@
 import { chmod, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 
 import { error, mismatch, parseNativeManifest, parseStandardManifest, sha256 } from '../lib/checksum-manifest.mjs';
 import { parseNativeMetadata } from '../lib/native-metadata.mjs';
 import { readTransport } from './create-run.mjs';
+import { parseTar } from './deterministic-tar.mjs';
+import { listZip, readZipEntry } from './zip-reader.mjs';
 
 async function transportPath(path) {
   if (path.endsWith('.tar')) return path;
@@ -43,12 +46,70 @@ function artifactDifference(path, left, right) {
 
 // Tauri's platform installers contain producer-controlled timestamps and image
 // identifiers. Their enclosing package and checksum sidecar necessarily drift
-// with those bytes too. Each run validates these records against its native and
-// component manifests; cross-run comparison is limited to stable raw evidence.
+// with those bytes too. Each run binds archive payloads to the extracted view
+// and validates them against native/component manifests; cross-run comparison
+// is limited to stable raw evidence.
 function isNondeterministicTauriTransport(path) {
   return /^product\/[^/]+\.(?:zip|tar\.gz)(?:\.sha256)?$/.test(path)
     || /^view\/bundle\/(?:nsis\/[^/]+-setup\.exe|msi\/[^/]+\.msi|dmg\/[^/]+\.dmg)$/.test(path)
-    || /^view\/[^/]+\.app(?:\/|$)/.test(path);
+    || (/^view\/[^/]+\.app(?:\/|$)/.test(path)
+      && !/^view\/[^/]+\.app\/Contents\/MacOS\/veles-native-bridge$/.test(path));
+}
+
+function archiveViewEntries(packageEntry) {
+  if (packageEntry.path.endsWith('.zip')) {
+    return new Map(listZip(packageEntry.data).map((path) => [path, {
+      type: 'file', mode: undefined, data: readZipEntry(packageEntry.data, path), target: undefined,
+    }]));
+  }
+  if (packageEntry.path.endsWith('.tar.gz')) {
+    return new Map(parseTar(gunzipSync(packageEntry.data)).map((entry) => [entry.path.replace(/\/$/, ''), entry]));
+  }
+  return null;
+}
+
+function verifyPackageViewBinding(run) {
+  const packages = productEntries(run).filter((entry) => /\.(?:zip|tar\.gz)$/.test(entry.path));
+  if (packages.length === 0) return; // Synthetic non-package fixtures have no archive to bind.
+  if (packages.length !== 1) throw mismatch('native package/view binding mismatch: expected one package archive');
+  let archived;
+  try {
+    archived = archiveViewEntries(packages[0]);
+  } catch (caught) {
+    throw mismatch(`native package/view binding mismatch: cannot read package archive (${caught.message})`);
+  }
+  const view = new Map([...viewEntries(run)].filter(([path]) => path !== ''));
+  if (packages[0].path.endsWith('.zip')) {
+    // ZIP stores Windows modes inconsistently across extractors; its payload
+    // binding is file paths and bytes, while transport metadata validates view
+    // modes independently.
+    for (const [path, entry] of view) {
+      if (entry.type !== 'file') continue;
+      const archive = archived.get(path);
+      if (!archive || !archive.data.equals(entry.data)) {
+        throw mismatch(`native package/view binding mismatch: ${path}`);
+      }
+    }
+    if ([...archived.keys()].some((path) => view.get(path)?.type !== 'file')) {
+      throw mismatch('native package/view binding mismatch: archive path set');
+    }
+    return;
+  }
+  // The producer TAR omits parent directories for the appended DMG while the
+  // view must create them to materialize the file. Bind payload files and
+  // symlinks; view directory metadata is validated separately.
+  const archivedPayloads = new Map([...archived].filter(([, entry]) => entry.type !== 'directory'));
+  const viewPayloads = new Map([...view].filter(([, entry]) => entry.type !== 'directory'));
+  const paths = [...new Set([...archivedPayloads.keys(), ...viewPayloads.keys()])].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  for (const path of paths) {
+    const archive = archivedPayloads.get(path);
+    const entry = viewPayloads.get(path);
+    if (!archive || !entry || archive.type !== entry.type
+      || (archive.type === 'file' && !archive.data.equals(entry.data))
+      || (archive.type === 'symlink' && archive.target !== entry.target)) {
+      throw mismatch(`native package/view binding mismatch: ${path}`);
+    }
+  }
 }
 
 function verifyProductManifest(run) {
@@ -137,6 +198,8 @@ export async function compareRuns(resolvedCommit, leftPath, rightPath, output) {
   const [leftMetadata, rightMetadata] = [parseNativeMetadata(left.metadata), parseNativeMetadata(right.metadata)];
   verifyMetadata(left, leftMetadata);
   verifyMetadata(right, rightMetadata);
+  verifyPackageViewBinding(left);
+  verifyPackageViewBinding(right);
   const leftView = viewEntries(left);
   const rightView = viewEntries(right);
   // SHA256SUMS is validated above as component evidence. Do not compare its

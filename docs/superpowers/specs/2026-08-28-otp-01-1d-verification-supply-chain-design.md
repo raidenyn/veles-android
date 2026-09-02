@@ -240,11 +240,13 @@ packaged release input. Archive bytes cover normalized archive metadata; the
 extracted view identifies the first differing product file and independently
 enforces the package allow-list. Tauri 2.6.0's Windows NSIS/MSI and macOS
 DMG/.app producers embed platform timestamps or identifiers that cannot be
-made byte-reproducible with supported tool flags. Those installer payloads,
-their enclosing outer package, and its sidecar are therefore individually
-validated against each run's native and component checksum manifests but are
-excluded from cross-run byte equality. The raw host binary and host manifest
-remain cross-run byte compared.
+made byte-reproducible with supported tool flags. Each run first proves that
+its outer package payload exactly matches the transported verification view,
+then validates that package and sidecar against its native and component
+checksum manifests. Installer payloads, their enclosing outer package, and its
+sidecar are excluded from cross-run byte equality. The raw host binary,
+including `Veles Native Bridge.app/Contents/MacOS/veles-native-bridge`, and the
+host manifest remain cross-run byte compared.
 
 Each run also emits canonical `METADATA.native-bridge.jsonl`, sorted by path.
 Each JSON line records path, entry type, and four-digit octal mode; regular-file
@@ -255,7 +257,8 @@ the verification view, metadata JSONL, checksum files, and identity. The run
 slot uploads only that tar plus its SHA-256 sidecar, preserving all evidence as
 bytes even if GitHub artifact extraction would otherwise alter modes or
 symlinks. The comparison job validates the tar allow-list before extraction,
-then compares both metadata JSONL and product bytes.
+binds every package payload to its view, validates metadata for each run, and
+then compares only the stable raw evidence bytes.
 
 The transport also contains `SOURCE-COMMIT`, exactly one lowercase 40-character
 Git commit followed by a newline. It is covered by the transport sidecar but is
@@ -292,9 +295,11 @@ only these records:
 - `android/`: the canonical unsigned reference APK;
 - `web-extension/`: the compared extension ZIP and its sidecar;
 - `rust/`: every compared regular file under `jni/` and `wasm/`; and
-- each native namespace: the compared outer package and sidecar, each compared
-  raw product file from the verification view, and
-  `METADATA.native-bridge.jsonl`.
+- each native namespace: the stable host binary and host manifest, which were
+  cross-run compared; and the outer package, sidecar, installer/app payload
+  records, and `METADATA.native-bridge.jsonl`, which are package-bound and
+  self-validated in their emitting run but intentionally not cross-run byte
+  compared.
 
 Signed APK bytes, mapping files, run-slot transport archives, runner identity,
 component checksum manifests, SBOMs, license reports, and audit reports are

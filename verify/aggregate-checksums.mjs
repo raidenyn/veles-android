@@ -163,6 +163,10 @@ async function nativeRecords(root, platform) {
   }
   const excluded = view.find((entry) => excludedNativeViewPath(entry.path));
   if (excluded) throw mismatch(`native ${platform} view contains excluded evidence: ${excluded.path}`);
+  // The aggregate retains both classes of verified native evidence. Package,
+  // installer, and non-host app records are self-validated and package-bound
+  // per run but intentionally not cross-run byte compared; stable host and
+  // manifest entries were compared before this verified tree was emitted.
   const output = await recordsFromManifest(
     join(root, 'product'),
     manifest.checksums,

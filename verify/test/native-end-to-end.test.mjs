@@ -197,22 +197,32 @@ test('aggregate rejects a view that leaks a component SHA256SUMS', async () => {
     await buildMacosRelease(macRelease);
     const winIdentity = { ImageOS: 'win25', ImageVersion: '2025', RUNNER_ARCH: 'X64' };
     const macIdentity = { ImageOS: 'macos26', ImageVersion: '26.6', RUNNER_ARCH: 'ARM64' };
-    const leak = { path: 'SHA256SUMS', content: 'leaked' };
-    const winA = await makeRun(root, 'win-a', 'windows', winRelease, winIdentity, leak);
-    const winB = await makeRun(root, 'win-b', 'windows', winRelease, winIdentity, leak);
+    const winA = await makeRun(root, 'win-a', 'windows', winRelease, winIdentity);
+    const winB = await makeRun(root, 'win-b', 'windows', winRelease, winIdentity);
     const macA = await makeRun(root, 'mac-a', 'macos', macRelease, macIdentity);
     const macB = await makeRun(root, 'mac-b', 'macos', macRelease, macIdentity);
     const winVerified = join(root, 'win-verified');
     const macVerified = join(root, 'mac-verified');
     runNode(compareRunsScript, [COMMIT, winA, winB, winVerified]);
     runNode(compareRunsScript, [COMMIT, macA, macB, macVerified]);
+    await writeFile(join(winVerified, 'view', 'SHA256SUMS'), 'leaked');
+    await writeFile(join(winVerified, 'METADATA.native-bridge.jsonl'), [
+      { path: 'SHA256SUMS', type: 'file', mode: '0644', sha256: sha256('leaked') },
+      { path: 'app.veles.native_bridge.json', type: 'file', mode: '0644', sha256: sha256(await readFile(join(winVerified, 'view', 'app.veles.native_bridge.json'))) },
+      { path: 'bundle', type: 'directory', mode: '0755' },
+      { path: 'bundle/msi', type: 'directory', mode: '0755' },
+      { path: 'bundle/msi/Veles Native Bridge_0.1.0_x64_en-US.msi', type: 'file', mode: '0644', sha256: sha256('msi-installer') },
+      { path: 'bundle/nsis', type: 'directory', mode: '0755' },
+      { path: 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe', type: 'file', mode: '0644', sha256: sha256('nsis-installer') },
+      { path: 'veles-native-bridge.exe', type: 'file', mode: '0644', sha256: sha256('win-host-binary') },
+    ].map(JSON.stringify).join('\n') + '\n');
     await placeNative(root, 'windows', winVerified);
     await placeNative(root, 'macos', macVerified);
 
     const aggregate = fileURLToPath(new URL('../aggregate-checksums.mjs', import.meta.url));
     const result = spawnSync('node', [aggregate, COMMIT], { encoding: 'utf8', cwd: root });
     assert.notEqual(result.status, 0, 'aggregate must reject a leaked SHA256SUMS in the view');
-    assert.match(result.stderr, /excluded evidence/);
+    assert.match(result.stderr, /view does not match metadata|excluded evidence/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -230,24 +240,31 @@ test('aggregate rejects a view that leaks a .zip duplicate of the outer package'
     await buildMacosRelease(macRelease);
     const winIdentity = { ImageOS: 'win25', ImageVersion: '2025', RUNNER_ARCH: 'X64' };
     const macIdentity = { ImageOS: 'macos26', ImageVersion: '26.6', RUNNER_ARCH: 'ARM64' };
-    const leak = { path: 'leaked.zip', content: 'leaked' };
-    const winA = await makeRun(root, 'win-a', 'windows', winRelease, winIdentity, leak);
-    const winB = await makeRun(root, 'win-b', 'windows', winRelease, winIdentity, leak);
+    const winA = await makeRun(root, 'win-a', 'windows', winRelease, winIdentity);
+    const winB = await makeRun(root, 'win-b', 'windows', winRelease, winIdentity);
     const macA = await makeRun(root, 'mac-a', 'macos', macRelease, macIdentity);
     const macB = await makeRun(root, 'mac-b', 'macos', macRelease, macIdentity);
     const winVerified = join(root, 'win-verified');
     const macVerified = join(root, 'mac-verified');
     runNode(compareRunsScript, [COMMIT, winA, winB, winVerified]);
     runNode(compareRunsScript, [COMMIT, macA, macB, macVerified]);
+    await writeFile(join(winVerified, 'view', 'leaked.zip'), 'leaked');
+    await writeFile(join(winVerified, 'METADATA.native-bridge.jsonl'), [
+      { path: 'app.veles.native_bridge.json', type: 'file', mode: '0644', sha256: sha256(await readFile(join(winVerified, 'view', 'app.veles.native_bridge.json'))) },
+      { path: 'bundle', type: 'directory', mode: '0755' },
+      { path: 'bundle/msi', type: 'directory', mode: '0755' },
+      { path: 'bundle/msi/Veles Native Bridge_0.1.0_x64_en-US.msi', type: 'file', mode: '0644', sha256: sha256('msi-installer') },
+      { path: 'bundle/nsis', type: 'directory', mode: '0755' },
+      { path: 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe', type: 'file', mode: '0644', sha256: sha256('nsis-installer') },
+      { path: 'leaked.zip', type: 'file', mode: '0644', sha256: sha256('leaked') },
+      { path: 'veles-native-bridge.exe', type: 'file', mode: '0644', sha256: sha256('win-host-binary') },
+    ].map(JSON.stringify).join('\n') + '\n');
     await placeNative(root, 'windows', winVerified);
     await placeNative(root, 'macos', macVerified);
-    // Leak a .zip into the Windows view (already in both transports, so the
-    // verified tree carries it into the aggregate input).
-
     const aggregate = fileURLToPath(new URL('../aggregate-checksums.mjs', import.meta.url));
     const result = spawnSync('node', [aggregate, COMMIT], { encoding: 'utf8', cwd: root });
     assert.notEqual(result.status, 0, 'aggregate must reject a leaked .zip in the view');
-    assert.match(result.stderr, /excluded evidence/);
+    assert.match(result.stderr, /view does not match metadata|excluded evidence/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
