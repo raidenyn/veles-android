@@ -68,10 +68,22 @@ function archiveViewEntries(packageEntry) {
   return null;
 }
 
+function viewRequiresPackageBinding(run) {
+  return [...viewEntries(run)].some(([path, entry]) => entry.type !== 'directory' && (
+    /^bundle\/(?:nsis\/[^/]+-setup\.exe|msi\/[^/]+\.msi|dmg\/[^/]+\.dmg)$/.test(path)
+    || (/^[^/]+\.app(?:\/|$)/.test(path)
+      && !/^[^/]+\.app\/Contents\/MacOS\/veles-native-bridge$/.test(path))
+  ));
+}
+
 function verifyPackageViewBinding(run) {
   const packages = productEntries(run).filter((entry) => /\.(?:zip|tar\.gz)$/.test(entry.path));
-  if (packages.length === 0) return; // Synthetic non-package fixtures have no archive to bind.
-  if (packages.length !== 1) throw mismatch('native package/view binding mismatch: expected one package archive');
+  if (packages.length !== 1) {
+    if (viewRequiresPackageBinding(run)) {
+      throw mismatch('native package/view binding mismatch: expected one package archive');
+    }
+    return; // Host-only synthetic fixtures contain no exempt producer payload.
+  }
   let archived;
   try {
     archived = archiveViewEntries(packages[0]);

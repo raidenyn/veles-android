@@ -149,7 +149,7 @@ test('reports the first actual product path when a validated package differs', a
   });
 });
 
-test('accepts self-validated Tauri installer transport drift but still compares stable view evidence', async () => {
+test('rejects an extensionless product when its installer view requires package binding', async () => {
   const { compareRuns } = await import('../native/compare-runs.mjs');
   await withRuns(async (root) => {
     const left = await makeRun(root, 'left', {
@@ -160,34 +160,25 @@ test('accepts self-validated Tauri installer transport drift but still compares 
       product: 'same package placeholder',
       viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'second NSIS payload bytes' },
     });
-    await compareRuns('0123456789abcdef0123456789abcdef01234567', left, right);
-
-    const changedStableEvidence = await makeRun(root, 'changed-stable-evidence', {
-      product: 'same package placeholder',
-      host: 'changed raw host binary',
-      viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'second NSIS payload bytes' },
-    });
     await assert.rejects(
-      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, changedStableEvidence),
-      (error) => error.exitCode === 1 && error.message.includes('view/host'),
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && error.message.includes('expected one package archive'),
     );
   });
 });
 
-test('rejects macOS app host byte drift while allowing other app payloads to vary', async () => {
+test('rejects macOS app host byte drift', async () => {
   const { compareRuns } = await import('../native/compare-runs.mjs');
   await withRuns(async (root) => {
     const appHost = 'Veles Native Bridge.app/Contents/MacOS/veles-native-bridge';
     const left = await makeRun(root, 'left', {
       viewEntries: {
         [appHost]: 'first host bytes',
-        'Veles Native Bridge.app/Contents/Info.plist': 'first producer timestamp',
       },
     });
     const right = await makeRun(root, 'right', {
       viewEntries: {
         [appHost]: 'second host bytes',
-        'Veles Native Bridge.app/Contents/Info.plist': 'second producer timestamp',
       },
     });
     await assert.rejects(

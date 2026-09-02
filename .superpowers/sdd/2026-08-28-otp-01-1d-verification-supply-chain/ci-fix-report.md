@@ -120,3 +120,30 @@ Addressed all three blocking review findings.
   slots do not cross-compare NSIS/MSI/DMG/non-host-app bytes. The new archive
   binding prevents a package from claiming unrelated view payloads, and each
   slot still validates its manifests and checksums.
+
+## Fix Round 2/5
+
+### Status
+
+Addressed the extensionless-product package/view binding bypass.
+
+### Correction
+
+`compare-runs.mjs` now requires exactly one recognized ZIP or tar.gz package
+whenever a view contains an exempt NSIS/MSI/DMG installer or non-host `.app`
+payload. An unknown or extensionless product can no longer carry installer/app
+bytes around archive-to-view binding. Host-only synthetic fixtures remain
+permitted because their bytes are always cross-run compared and do not exercise
+the Tauri nondeterminism exception.
+
+### Regression Evidence
+
+- Replaced the prior accepted extensionless installer fixture with a regression
+  that requires an exit-1 `expected one package archive` binding error.
+- Retained real producer end-to-end ZIP/tar.gz binding coverage and the macOS
+  raw-host comparison regression.
+
+### Commands
+
+- `node --test verify/test/native-compare.test.mjs verify/test/native-end-to-end.test.mjs verify/test/native-extract-view.test.mjs`: 19 passed.
+- `bash verify/test/verify-native.test.sh`: passed.

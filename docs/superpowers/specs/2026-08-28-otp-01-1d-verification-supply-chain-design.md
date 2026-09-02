@@ -247,6 +247,9 @@ checksum manifests. Installer payloads, their enclosing outer package, and its
 sidecar are excluded from cross-run byte equality. The raw host binary,
 including `Veles Native Bridge.app/Contents/MacOS/veles-native-bridge`, and the
 host manifest remain cross-run byte compared.
+Any view carrying an installer or non-host `.app` payload requires exactly one
+recognized ZIP or tar.gz package; an unknown or extensionless product cannot
+claim exempt producer payloads.
 
 Each run also emits canonical `METADATA.native-bridge.jsonl`, sorted by path.
 Each JSON line records path, entry type, and four-digit octal mode; regular-file
