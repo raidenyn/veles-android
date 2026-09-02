@@ -98,6 +98,33 @@ fun requireNdkVersion(ndkDir: File, expected: String) {
     }
 }
 
+// rustc embeds the absolute source paths of panic locations (function, file,
+// line) into release binaries whenever panic is not fully stripped
+// (CARGO_PROFILE_RELEASE_PANIC=unwind keeps the panic machinery for JNI).
+// Dependency crates come from ${CARGO_HOME}/registry/src/<registry-hash>/..., so
+// two builds with different CARGO_HOME (CI runner /home/runner/.cargo vs the
+// verification Docker image /opt/cargo) embed different byte strings, shifting
+// every ELF section offset and producing a .so (and APK) that differs between
+// builds of identical source. Remapping the registry prefix to a stable
+// "/cargo-registry" path makes the embedded strings identical regardless of
+// where cargo stores its registry (proven locally: two builds with different
+// CARGO_HOME produce byte-identical .so with this flag). The workspace crate's
+// own path is NOT embedded (no panic locations from the workspace crate carry
+// an absolute path into the binary), so only the registry prefix needs
+// remapping. RUSTFLAGS is set as a task environment (overriding any inherited
+// RUSTFLAGS) so the remap is not optional: a verification-relevant build must
+// not silently pick up an ambient RUSTFLAGS that omits it.
+fun cargoRegistryRemapRustFlags(): String {
+    val cargoHomeEnv = System.getenv("CARGO_HOME")
+    val cargoHome: File = if (cargoHomeEnv.isNullOrBlank()) {
+        File(System.getProperty("user.home"), ".cargo")
+    } else {
+        File(cargoHomeEnv)
+    }
+    val registrySrc = File(cargoHome, "registry/src").absolutePath
+    return "--remap-path-prefix=$registrySrc=/cargo-registry/src"
+}
+
 val rustToolchainCheck = tasks.register("rustToolchainCheck") {
     group = "rust"
     inputs.file(rustDir.file("rust-toolchain.toml"))
@@ -313,6 +340,11 @@ val rustWasm = tasks.register<Exec>("rustWasm") {
                 bindgenBinDir.prependToPath(System.getenv("PATH")),
             ),
         )
+        // Registry-path remap for a byte-reproducible WASM binary (see
+        // cargoRegistryRemapRustFlags): wasm-bindgen panic locations embed
+        // ${CARGO_HOME}/registry/src/... into veles_crypto_bg.wasm, so builds
+        // with different CARGO_HOME produce different bytes without it.
+        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
         executable(wasmPackBin)
         setArgs(
             listOf(
@@ -393,6 +425,10 @@ val rustJni = tasks.register<Exec>("rustJni") {
         environment("ANDROID_NDK_HOME", ndkDir)
         environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
         environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
+        // Registry-path remap for byte-reproducible JNI libraries (see
+        // cargoRegistryRemapRustFlags): without it, CI runner vs Docker
+        // rebuilds embed different CARGO_HOME paths and the APK compare fails.
+        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
     }
     commandLine(
         "cargo", "ndk", "--platform", "33",

@@ -94,3 +94,20 @@ test('rustPackage is registered as a root Rust task and is not an APK dependency
   assert.match(build, /dependsOn\(rustJni, rustWasm\)/);
   assert.doesNotMatch(build, /assemble(?:Debug|Release)[\s\S]{0,500}rustPackage/);
 });
+
+// CI run 33500934265 (android / build) failed its APK byte comparison because
+// the JNI libraries embedded absolute CARGO_HOME registry paths: the runner
+// builds with /home/runner/.cargo, the verification Docker image with
+// /opt/cargo, and the embedded panic-location strings differ, shifting
+// every ELF section offset. rustJni and rustWasm must remap the registry
+// prefix so identical source produces identical bytes regardless of CARGO_HOME.
+test('rustJni and rustWasm remap the cargo registry prefix for byte-reproducible binaries', async () => {
+  const build = await (await import('node:fs/promises')).readFile(join(REPO_ROOT, 'build.gradle.kts'), 'utf8');
+  assert.match(build, /fun cargoRegistryRemapRustFlags\(\): String \{[\s\S]*?--remap-path-prefix=\$registrySrc=\/cargo-registry\/src[\s\S]*?\}/);
+  const jniTask = build.match(/tasks\.register<Exec>\("rustJni"\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  const wasmTask = build.match(/tasks\.register<Exec>\("rustWasm"\) \{[\s\S]*?\n\}\n\nval rustNativeTest/)?.[0] ?? '';
+  assert.ok(jniTask, 'rustJni task must be registered');
+  assert.ok(wasmTask, 'rustWasm task must be registered');
+  assert.match(jniTask, /environment\("RUSTFLAGS", cargoRegistryRemapRustFlags\(\)\)/, 'rustJni must set the remap RUSTFLAGS');
+  assert.match(wasmTask, /environment\("RUSTFLAGS", cargoRegistryRemapRustFlags\(\)\)/, 'rustWasm must set the remap RUSTFLAGS');
+});
