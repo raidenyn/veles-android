@@ -66,6 +66,31 @@ assumption was incomplete.
   portion skipped because `pwsh` is unavailable locally, structural assertions
   passed.
 - `bash verify/test/verify-native.test.sh`: passed.
+
+## Fix Round 3/5
+
+### Status
+
+Addressed the multiple-recognized-archive bypass.
+
+### Correction
+
+Package-count handling now distinguishes the only permitted synthetic case
+(zero recognized archives with a host-only view) from malformed product layout.
+More than one ZIP/tar.gz archive always exits 1 with `expected one package
+archive`, before archive binding or cross-run comparison can be bypassed.
+
+### Regression Evidence
+
+- Added a host-only fixture with two recognized, byte-different archive names;
+  it failed before the control-flow change and now requires exit 1.
+- Extensionless installer-view rejection and real producer ZIP/tar.gz paths
+  remain covered.
+
+### Commands
+
+- `node --test verify/test/native-compare.test.mjs verify/test/native-end-to-end.test.mjs verify/test/native-extract-view.test.mjs verify/test/native-transport.test.mjs`: 26 passed.
+- `bash verify/test/verify-native.test.sh`: passed.
 - `bash verify/test/verify-all.test.sh`: passed.
 - `git diff --check`: passed.
 

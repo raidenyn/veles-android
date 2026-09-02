@@ -15,14 +15,15 @@ async function makeRun(root, name, overrides = {}) {
   await mkdir(view);
   const artifactName = overrides.artifactName ?? 'artifact';
   const artifactContent = overrides.product ?? 'artifact';
-  await writeFile(join(product, artifactName), artifactContent);
+  const artifacts = [[artifactName, artifactContent], ...(overrides.extraArtifacts ?? [])];
+  for (const [name, content] of artifacts) await writeFile(join(product, name), content);
   const sidecarName = `${artifactName}.sha256`;
   const sidecarContent = `${sha256(artifactContent)}  ${artifactName}\n`;
   await writeFile(join(product, sidecarName), sidecarContent);
   // The component SHA256SUMS is required and must validly cover the package
   // and sidecar the transport carries.
   await writeFile(join(product, 'SHA256SUMS'), overrides.componentSums ?? [
-    `${sha256(artifactContent)}  ${artifactName}`,
+    ...artifacts.map(([name, content]) => `${sha256(content)}  ${name}`),
     `${sha256(sidecarContent)}  ${sidecarName}`,
   ].join('\n') + '\n');
   await writeFile(join(view, 'host'), overrides.host ?? 'host');
@@ -160,6 +161,24 @@ test('rejects an extensionless product when its installer view requires package 
       product: 'same package placeholder',
       viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'second NSIS payload bytes' },
     });
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
+      (error) => error.exitCode === 1 && error.message.includes('expected one package archive'),
+    );
+  });
+});
+
+test('rejects multiple recognized archives even for a host-only view', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  await withRuns(async (root) => {
+    const products = {
+      extraArtifacts: [
+        ['first.zip', 'first malformed archive'],
+        ['second.tar.gz', 'second malformed archive'],
+      ],
+    };
+    const left = await makeRun(root, 'left', products);
+    const right = await makeRun(root, 'right', products);
     await assert.rejects(
       () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
       (error) => error.exitCode === 1 && error.message.includes('expected one package archive'),

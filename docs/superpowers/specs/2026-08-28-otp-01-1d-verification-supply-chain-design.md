@@ -249,7 +249,9 @@ including `Veles Native Bridge.app/Contents/MacOS/veles-native-bridge`, and the
 host manifest remain cross-run byte compared.
 Any view carrying an installer or non-host `.app` payload requires exactly one
 recognized ZIP or tar.gz package; an unknown or extensionless product cannot
-claim exempt producer payloads.
+claim exempt producer payloads. The host-only synthetic-fixture exception is
+limited to zero recognized archives; multiple recognized archives are an
+artifact mismatch.
 
 Each run also emits canonical `METADATA.native-bridge.jsonl`, sorted by path.
 Each JSON line records path, entry type, and four-digit octal mode; regular-file

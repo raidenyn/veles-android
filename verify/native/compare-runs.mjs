@@ -78,7 +78,10 @@ function viewRequiresPackageBinding(run) {
 
 function verifyPackageViewBinding(run) {
   const packages = productEntries(run).filter((entry) => /\.(?:zip|tar\.gz)$/.test(entry.path));
-  if (packages.length !== 1) {
+  if (packages.length > 1) {
+    throw mismatch('native package/view binding mismatch: expected one package archive');
+  }
+  if (packages.length === 0) {
     if (viewRequiresPackageBinding(run)) {
       throw mismatch('native package/view binding mismatch: expected one package archive');
     }
