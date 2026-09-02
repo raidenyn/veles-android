@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -13,17 +13,24 @@ async function makeRun(root, name, overrides = {}) {
   const view = join(root, `${name}-view`);
   await mkdir(product);
   await mkdir(view);
+  const artifactName = overrides.artifactName ?? 'artifact';
   const artifactContent = overrides.product ?? 'artifact';
-  await writeFile(join(product, 'artifact'), artifactContent);
-  const sidecarContent = `${sha256(artifactContent)}  artifact\n`;
-  await writeFile(join(product, 'artifact.sha256'), sidecarContent);
+  await writeFile(join(product, artifactName), artifactContent);
+  const sidecarName = `${artifactName}.sha256`;
+  const sidecarContent = `${sha256(artifactContent)}  ${artifactName}\n`;
+  await writeFile(join(product, sidecarName), sidecarContent);
   // The component SHA256SUMS is required and must validly cover the package
   // and sidecar the transport carries.
   await writeFile(join(product, 'SHA256SUMS'), overrides.componentSums ?? [
-    `${sha256(artifactContent)}  artifact`,
-    `${sha256(sidecarContent)}  artifact.sha256`,
+    `${sha256(artifactContent)}  ${artifactName}`,
+    `${sha256(sidecarContent)}  ${sidecarName}`,
   ].join('\n') + '\n');
   await writeFile(join(view, 'host'), overrides.host ?? 'host');
+  for (const [path, content] of Object.entries(overrides.viewEntries ?? {})) {
+    const entry = join(view, path);
+    await mkdir(dirname(entry), { recursive: true });
+    await writeFile(entry, content);
+  }
   const output = join(root, `${name}.tar`);
   await createRun({
     output,
@@ -138,6 +145,35 @@ test('reports the first actual product path when a validated package differs', a
     await assert.rejects(
       () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, right),
       (error) => error.exitCode === 1 && error.message.includes('byte mismatch: product/artifact'),
+    );
+  });
+});
+
+test('accepts self-validated Tauri installer transport drift but still compares stable view evidence', async () => {
+  const { compareRuns } = await import('../native/compare-runs.mjs');
+  await withRuns(async (root) => {
+    const installer = 'veles-native-bridge-0.1.0.zip';
+    const left = await makeRun(root, 'left', {
+      artifactName: installer,
+      product: 'first Tauri installer bytes',
+      viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'first NSIS payload bytes' },
+    });
+    const right = await makeRun(root, 'right', {
+      artifactName: installer,
+      product: 'second Tauri installer bytes',
+      viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'second NSIS payload bytes' },
+    });
+    await compareRuns('0123456789abcdef0123456789abcdef01234567', left, right);
+
+    const changedStableEvidence = await makeRun(root, 'changed-stable-evidence', {
+      artifactName: installer,
+      product: 'second Tauri installer bytes',
+      host: 'changed raw host binary',
+      viewEntries: { 'bundle/nsis/Veles Native Bridge_0.1.0_x64-setup.exe': 'second NSIS payload bytes' },
+    });
+    await assert.rejects(
+      () => compareRuns('0123456789abcdef0123456789abcdef01234567', left, changedStableEvidence),
+      (error) => error.exitCode === 1 && error.message.includes('view/host'),
     );
   });
 });

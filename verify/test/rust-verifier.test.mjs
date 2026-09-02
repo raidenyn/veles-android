@@ -114,14 +114,32 @@ test('pre-caches the pinned Gradle wrapper distribution for the offline package 
   // the online build, and rust-inner.sh must use a volume-backed
   // GRADLE_USER_HOME seeded from that pre-cache so the wrapper resolves the
   // distribution locally in both the prepare and package containers.
-  const [dockerfile, inner] = await Promise.all([
+  const [dockerfile, inner, wrapperProperties] = await Promise.all([
     readFile(join(REPO_ROOT, 'verify', 'Dockerfile.rust'), 'utf8'),
     readFile(RUST_INNER, 'utf8'),
+    readFile(join(REPO_ROOT, 'gradle', 'wrapper', 'gradle-wrapper.properties'), 'utf8'),
   ]);
   assert.match(dockerfile, /ENV GRADLE_USER_HOME=\/opt\/gradle-home/);
   assert.match(dockerfile, /ARG GRADLE_DISTRIBUTION_SHA256=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746/);
-  assert.match(dockerfile, /COPY gradle\/wrapper\/gradle-wrapper\.properties gradle\/wrapper\/gradle-wrapper\.jar gradlew \/tmp\/veles-gradle\//);
+  // Gradle 9.5.0's wrapper DELETES gradle-9.5.0-bin.zip after unpacking
+  // (only gradle-9.5.0/, gradle-9.5.0-bin.zip.lck, and gradle-9.5.0-bin.zip.ok
+  // remain), so the image can never assert on the zip bytes. The canonical
+  // distribution pin lives in gradle/wrapper/gradle-wrapper.properties
+  // (distributionSha256Sum — the wrapper verifies it at download time), and
+  // the Dockerfile asserts the unpacked distribution + .ok marker that the
+  // offline seed actually consumes.
+  assert.match(wrapperProperties, /distributionSha256Sum=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746/);
+  assert.match(dockerfile, /COPY gradle\/wrapper\/gradle-wrapper\.properties gradle\/wrapper\/gradle-wrapper\.jar \/tmp\/veles-gradle\/gradle\/wrapper\//);
   assert.match(dockerfile, /\.\/gradlew --version/);
+  // Gradle 9.5.0's wrapper deletes the zip after unpacking, so the image must
+  // assert on the persisting unpacked-distribution evidence: the .ok marker
+  // (whose presence makes the offline wrapper skip the download) and the
+  // unpacked gradle launcher itself. A find for 'gradle-9.5.0-bin.zip' can
+  // never match (CI run 33500934265 evidence).
+  assert.match(dockerfile, /find \$\{GRADLE_USER_HOME\}\/wrapper\/dists -type d -name 'gradle-9\.5\.0-bin'/);
+  assert.match(dockerfile, /gradle-9\.5\.0-bin\.zip\.ok/);
+  assert.match(dockerfile, /gradle-9\.5\.0\/bin\/gradle/);
+  assert.doesNotMatch(dockerfile, /find \$\{GRADLE_USER_HOME\}\/wrapper\/dists -name 'gradle-9\.5\.0-bin\.zip'/);
   assert.match(inner, /export GRADLE_USER_HOME=\/work\/gradle-home/);
   assert.match(inner, /seed_gradle_distribution/);
   assert.match(inner, /\/opt\/gradle-home\/wrapper\/dists/);

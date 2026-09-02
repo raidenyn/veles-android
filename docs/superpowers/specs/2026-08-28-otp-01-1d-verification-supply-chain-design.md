@@ -238,7 +238,13 @@ The native build workflow creates an extracted verification view containing:
 The verification view is evidence for comparison and does not replace the
 packaged release input. Archive bytes cover normalized archive metadata; the
 extracted view identifies the first differing product file and independently
-enforces the package allow-list.
+enforces the package allow-list. Tauri 2.6.0's Windows NSIS/MSI and macOS
+DMG/.app producers embed platform timestamps or identifiers that cannot be
+made byte-reproducible with supported tool flags. Those installer payloads,
+their enclosing outer package, and its sidecar are therefore individually
+validated against each run's native and component checksum manifests but are
+excluded from cross-run byte equality. The raw host binary and host manifest
+remain cross-run byte compared.
 
 Each run also emits canonical `METADATA.native-bridge.jsonl`, sorted by path.
 Each JSON line records path, entry type, and four-digit octal mode; regular-file
@@ -364,9 +370,11 @@ match.
 
 If identities differ, verification exits 2 and prints both triples plus the
 instruction `re-run on matched image`. It does not classify an environment
-mismatch as artifact drift. If identities match but paths or bytes differ,
-verification exits 1 and prints the first differing relative path and both
-hashes.
+mismatch as artifact drift. If identities match but stable raw evidence paths
+or bytes differ, verification exits 1 and prints the first differing relative
+path and both hashes. Tauri installer payloads and the outer package transport
+are the documented exception: both slots must independently validate their
+native and component manifests, but their bytes are not compared across slots.
 
 No native verifier claims that `windows-2025` or `macos-26` pins an underlying
 image SHA. Self-hosted immutable images remain a future extension point.
@@ -629,11 +637,15 @@ component implementation.
 - Each target-native workflow is the acceptance test for that platform's
   reproducibility and runner-identity behavior.
 
-Any nondeterministic raw binary, MSI, NSIS installer, `.app` file, DMG, archive,
-mode, symlink, or manifest is a hard 1d blocker. A fix must make the production
-artifact deterministic. The verifier may not hide product differences through
-post-production normalization or compare only extracted semantic content when
-the accepted artifact is byte-comparable.
+Any nondeterministic raw binary, mode, symlink, or manifest is a hard 1d
+blocker. A fix must make the production artifact deterministic. The sole
+exception is the documented Tauri NSIS/MSI/DMG/.app producer payloads and their
+enclosing package/sidecar: Tauri 2.6.0 cannot produce those bytes
+reproducibly with supported flags, so each slot's manifest validates them
+locally while raw host evidence remains cross-run byte-comparable. The verifier
+may not otherwise hide product differences through post-production
+normalization or compare only extracted semantic content when the accepted
+artifact is byte-comparable.
 
 ## Documentation and upgrades
 
