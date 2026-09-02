@@ -91,6 +91,57 @@ archive`, before archive binding or cross-run comparison can be bypassed.
 
 - `node --test verify/test/native-compare.test.mjs verify/test/native-end-to-end.test.mjs verify/test/native-extract-view.test.mjs verify/test/native-transport.test.mjs`: 26 passed.
 - `bash verify/test/verify-native.test.sh`: passed.
+
+## Fix Round 4/5
+
+### Status
+
+Addressed the Windows raw-host byte mismatch without weakening its cross-run
+comparison.
+
+### Root Cause
+
+CI run `33649898862`, job `100316397431` downloaded both producer transports
+successfully and rejected only `view/veles-native-bridge.exe`:
+
+- run-a SHA-256: `ad9bcb2cb3bcf9c99983ed22811b68fd74c524e961ca1706e9f2036db6e522ee`
+- run-b SHA-256: `8f9bc191fcbdd4959e5ecd6ced9cc81fcfba9af87be6530afe0c7503ddbb5247`
+
+The recovered 239104-byte producer binaries differ in only 21 byte positions:
+the PE COFF timestamp, three debug-directory timestamps, and the 16-byte
+CodeView PDB GUID. All source, host payload, and transport bytes otherwise
+match. This is MSVC linker metadata, not a Cargo path/cache, Tauri package, or
+artifact transport issue.
+
+### Correction
+
+Both serialized Windows Tauri Cargo invocations, `bridgeBuild` and
+`bridgeBundle`, now pass `RUSTFLAGS="-C link-arg=/Brepro"`. MSVC `/Brepro`
+derives PE/debug timestamps and the PDB GUID from link inputs. The flag is
+limited to Windows, so macOS continues using its existing toolchain behavior.
+
+### Regression Evidence
+
+- Added a Gradle environment contract test requiring the Windows-only `/Brepro`
+  flag on both build phases.
+- The test failed before the implementation with `bridgeBuild must pass /Brepro
+  to the MSVC linker`, then passed after the correction.
+- The raw `view/veles-native-bridge.exe` comparison remains unchanged; no
+  exemption or normalization was added.
+
+### Commands
+
+- `node --test verify/test/native-environment-contract.test.mjs`: 6 passed.
+- `node --test verify/test/native-environment-contract.test.mjs verify/test/native-compare.test.mjs verify/test/native-end-to-end.test.mjs verify/test/native-extract-view.test.mjs`: 26 passed.
+- `JAVA_HOME="$JAVA_ROOT/zulu21" ./gradlew help`: passed.
+- `git diff --check`: passed.
+
+### Remaining Concerns
+
+- `pwsh` is unavailable locally, so a Windows build cannot be exercised in this
+  workspace. The structural regression is tied to byte-level evidence from the
+  actual CI producers; the next Windows CI comparison remains the behavioral
+  authority for `/Brepro` on the pinned runner image.
 - `bash verify/test/verify-all.test.sh`: passed.
 - `git diff --check`: passed.
 

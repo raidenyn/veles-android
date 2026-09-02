@@ -774,6 +774,12 @@ val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
         // Hard-code unsigned output: no updater signature, no macOS codesign,
         // no notarization, even if the calling environment inherited them.
         stripSigningEnv(this as Exec)
+        val osName = System.getProperty("os.name")
+        if (osName.startsWith("Windows")) {
+            // MSVC otherwise writes wall-clock PE/debug timestamps and a random
+            // PDB GUID. /Brepro derives both from link inputs instead.
+            environment("RUSTFLAGS", "-C link-arg=/Brepro")
+        }
     }
     commandLine(npmCommand, "run", "build")
 }
@@ -851,6 +857,10 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
         }
 
         val osName = System.getProperty("os.name")
+        if (osName.startsWith("Windows")) {
+            // Keep the bundle's Cargo link invocation consistent with bridgeBuild.
+            environment("RUSTFLAGS", "-C link-arg=/Brepro")
+        }
         val targets = bridgeBundleTargetsFor(osName)
             ?: throw GradleException(
                 "bridgeBundle: unsupported host platform '$osName'. " +

@@ -222,3 +222,14 @@ test('Tauri config and Gradle forward the isolated Tauri cache contract to nativ
   const tauriConf = JSON.parse(await readFile(join(ROOT, 'native-bridge', 'src-tauri', 'tauri.conf.json'), 'utf8'));
   assert.equal(tauriConf.bundle.useLocalToolsDir, true, 'tauri.conf.json bundle.useLocalToolsDir must be true so Tauri reads the provisioned isolated cache');
 });
+
+test('Windows native bridge builds enable MSVC reproducible-linker metadata', async () => {
+  const gradle = await readFile(join(ROOT, 'build.gradle.kts'), 'utf8');
+  const bridgeBuildBlock = gradle.slice(gradle.indexOf('val bridgeBuild = tasks'), gradle.indexOf('fun bridgeBundleTargetsFor'));
+  const bridgeBundleBlock = gradle.slice(gradle.indexOf('val bridgeBundle = tasks'), gradle.indexOf('val bridgeManifests'));
+
+  for (const [name, block] of [['bridgeBuild', bridgeBuildBlock], ['bridgeBundle', bridgeBundleBlock]]) {
+    assert.match(block, /osName\.startsWith\("Windows"\)/, `${name} must limit the MSVC linker flag to Windows`);
+    assert.match(block, /environment\("RUSTFLAGS", "-C link-arg=\/Brepro"\)/, `${name} must pass /Brepro to the MSVC linker`);
+  }
+});
