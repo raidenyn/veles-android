@@ -67,6 +67,31 @@ assumption was incomplete.
   passed.
 - `bash verify/test/verify-native.test.sh`: passed.
 
+## Windows host binary drift
+
+CI run `33649898862`, job `100316397431`, rejected only the raw host:
+`view/veles-native-bridge.exe` was
+`ad9bcb2cb3bcf9c99983ed22811b68fd74c524e961ca1706e9f2036db6e522ee`
+in run-a and
+`8f9bc191fcbdd4959e5ecd6ced9cc81fcfba9af87be6530afe0c7503ddbb5247`
+in run-b. The recovered 239104-byte binaries differ only in the PE COFF
+timestamp, three debug-directory timestamps, and the 16-byte CodeView PDB GUID.
+
+The Windows workflow invokes `network-deny-windows.ps1`, which runs Gradle
+`bridgeBuild` and then `bridgePackage`/`bridgeBundle`; both Tauri commands invoke
+Cargo and MSVC. This excludes source, package transport, and cache-path drift.
+MSVC `/Brepro` derives those PE/debug metadata fields from link inputs, making it
+the confirmed corrective flag.
+
+`build.gradle.kts` sets `RUSTFLAGS="-C link-arg=/Brepro"` for Windows in both
+`bridgeBuild` and `bridgeBundle`. Regression test `Windows native bridge builds
+enable MSVC reproducible-linker metadata` in
+`verify/test/native-environment-contract.test.mjs` passed via
+`node --test verify/test/native-environment-contract.test.mjs` (6 passed).
+
+`pwsh` is unavailable locally, so the Windows build remains CI-only behavioral
+verification on the pinned runner image.
+
 ## Fix Round 3/5
 
 ### Status
@@ -288,3 +313,121 @@ or network-denial behavior changed.
   cache fix. CI remains the behavioral authority for the Android signed APK
   path because a signed release artifact was not produced locally.
 - `verify/node_modules/` was not modified or removed.
+
+## Fix Round 1/5 - Android Ownership Exit Precedence
+
+### Root Cause and Correction
+
+The previous ownership repair copied, validated, and attempted to `chown` the
+`/out` artifact before comparing the released and rebuilt APKs. A failed
+handoff therefore returned exit 2 before a genuine byte/signature mismatch
+could return exit 1.
+
+`verify-inner.sh` now performs the APK comparison first. Only after a successful
+comparison does it restore output ownership. Handoff is conditional: an audit
+caller that supplies neither `VELES_OUTPUT_UID` nor `VELES_OUTPUT_GID` retains
+the documented `/out` audit mode; a partial or nonnumeric explicit handoff and
+a failed `chown` remain environment errors (exit 2). `verify.sh` continues to
+supply both host IDs for workflow staging.
+
+### Regression Evidence
+
+- Replaced the source-text-only Android verifier check with an executable
+  harness that runs `verify-inner.sh` against controlled APKs and commands.
+- Before the correction, a byte mismatch plus numeric handoff and failing
+  `chown` exited 2 with the ownership error. It now exits 1 and emits the
+  mismatch result before attempting ownership restoration.
+- The same harness proves audit mode copies the rebuilt APK and exits 0 without
+  ownership variables.
+- `node --test verify/test/android-verifier.test.mjs && bash -n verify/verify-inner.sh`: 2 passed.
+- `bash -n verify/verify.sh verify/verify-inner.sh verify/rust-inner.sh && node --test verify/test/*.test.mjs && bash verify/test/verify-all.test.sh && git diff --check`: 126 Node tests passed; `verify-all.test.sh` passed its Android, web, Rust, native, supply-chain, aggregate, clean-checkout, and exit-code contract cases. Windows behavioral wrapper subtests were skipped because `pwsh` is unavailable.
+
+### Commit
+
+- `e049822 fix(verify): preserve APK mismatch exit status`
+
+### Concerns
+
+- The executable regression isolates the verifier using controlled command
+  doubles; signed release behavior remains CI-authoritative.
+
+## Fix Round 6/5 - Rust Offline wasm-pack Update Check
+
+### Status
+
+Addressed the Rust reference package failure from PR #111 CI run `33783218187`,
+job `100741672124`. The macOS native comparison is intentionally unchanged:
+its run-a/run-b `ImageVersion` values (`20260831.0337.3` and
+`20260728.0273.1`) differ, so its existing environment gate correctly exits 2.
+
+### Root Cause
+
+`verify/rust-inner.sh` exports `CARGO_HOME=/work/cargo-home` so the online
+prepare container's fetched registry survives to the separate
+`--network=none` package container. Docker's image-level `PATH`, however, was
+expanded when the image was built and still begins with `/opt/cargo/bin`; the
+`CARGO_HOME` export does not rewrite it. This is valid because Rustup's cargo
+shim remains available there.
+
+During `rustWasm`, Gradle's `doFirst` executes the pinned absolute binary
+`/work/src/build/rust-tools/wasm-pack/bin/wasm-pack`. It constructs the child
+`PATH` as that binary directory, then the pinned local
+`wasm-bindgen-cli/bin`, then Gradle's inherited image PATH; the task also
+inherits `CARGO_HOME=/work/cargo-home`. Thus Cargo and the pinned tools are
+available and the JNI ABIs plus WASM package build successfully offline.
+
+`verifyWasmPack` is not the failing validation: it invokes that same absolute
+binary with `--version` and checks exact `0.15.0` output. wasm-pack 0.15.0
+also starts a detached crates.io update check on *every* invocation. Its
+short-lived `--version` process need not leave its sibling update stamp before
+it exits. The longer `rustWasm` invocation gives that check time to reach
+`https://crates.io/api/v1/crates/wasm-pack`; under the required network denial
+it emits `[WARN]: failed to get wasm-pack version`. The warning follows the
+successful package output and was the observed offline reference boundary
+failure.
+
+### Correction
+
+After online `rustInstall` has created and exact-version-validated the pinned
+binary, `seed_wasm_pack_update_stamp` writes its normal sibling
+`wasm-pack.stamp` with a current ISO-8601 `created` value. wasm-pack treats the
+fresh stamp as its documented 24-hour update-check cache and makes no optional
+crates.io request in the network-denied package invocation. The stamp does not
+change binary pin validation, Rust `1.98.0`, `CARGO_NET_OFFLINE=true`, Docker
+`--network=none`, or the verifier's 0/1/2 exit semantics.
+
+### Red/Green Evidence
+
+- Added `seeds wasm-pack update metadata before the network-denied package run`
+  in `verify/test/rust-verifier.test.mjs`. It asserts the post-`rustInstall`
+  preparation ordering, the exact sibling stamp path, and the unchanged offline
+  package command.
+- Red: `node --test --test-name-pattern='seeds wasm-pack update metadata'
+  verify/test/rust-verifier.test.mjs` failed before production changes with
+  `AssertionError`: the prepare body lacked `seed_wasm_pack_update_stamp`.
+- Green: `bash -n verify/rust-inner.sh && node --test
+  verify/test/rust-verifier.test.mjs` passed 11/11.
+
+### Commands and Output
+
+- `node --test verify/test/rust-package.test.mjs
+  verify/test/rust-verifier.test.mjs && bash -n verify/rust-inner.sh && git
+  diff --check`: 18/18 Node tests passed; shell syntax and whitespace checks
+  passed.
+- `docker build -t veles-verify-rust-pr111 -f verify/Dockerfile.rust .`:
+  passed.
+- A local online prepare attempt reproduced a separate existing Docker/Android
+  configuration failure at `app/build.gradle.kts:31` (`Cannot invoke method
+  getTarget() on null object`) before `rustInstall`; it cannot exercise this
+  CI-only package boundary locally and is unrelated to the supplied CI trace.
+
+### Commit
+
+- `53e46dd fix(verify): suppress wasm-pack update check offline`
+
+### Concerns
+
+- wasm-pack's update check is upstream behavior and its `.stamp` cache is
+  timestamped. It is outside the staged Rust package and does not affect
+  compared JNI/WASM bytes. The next CI run remains the end-to-end authority for
+  the offline reference container.
