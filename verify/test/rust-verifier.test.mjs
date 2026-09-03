@@ -108,6 +108,22 @@ test('prepares dependencies online and produces the reference package offline', 
   assert.doesNotMatch(wrapper, /verify-rust\.mjs" "\$RUST_PACKAGE_DIR" "\$RUST_PACKAGE_DIR"/);
 });
 
+test('persists the locked workspace Cargo registry before the offline package container starts', async () => {
+  const inner = await readFile(RUST_INNER, 'utf8');
+  const prepare = inner.match(/prepare\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+
+  // The two containers share /work only. Fetching into the image-local
+  // /opt/cargo home leaves the offline container without the crates.io index.
+  assert.match(inner, /export CARGO_HOME=\/work\/cargo-home/);
+  assert.match(prepare, /\(cd rust && cargo fetch --locked\)/);
+  assert.match(prepare, /\.\/gradlew --refresh-dependencies rustInstall/);
+  assert.ok(
+    prepare.indexOf('(cd rust && cargo fetch --locked)') < prepare.indexOf('./gradlew --refresh-dependencies rustInstall'),
+    'prepare must fetch the locked workspace graph before installing build tools',
+  );
+  assert.match(inner, /CARGO_NET_OFFLINE=true \.\/gradlew --offline rustPackage/);
+});
+
 test('pre-caches the pinned Gradle wrapper distribution for the offline package run', async () => {
   // The offline `package` container (docker run --network=none) cannot reach
   // services.gradle.org. The image must pre-cache gradle-9.5.0-bin.zip during

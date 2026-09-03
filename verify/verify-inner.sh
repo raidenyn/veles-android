@@ -47,6 +47,16 @@ fi
 if [ -d /out ]; then
   cp "$REBUILT" /out/
   /build/src/rust/scripts/verify-apk-jni.sh /out/app-release-unsigned.apk
+  VELES_OUTPUT_UID="${VELES_OUTPUT_UID:-}"
+  VELES_OUTPUT_GID="${VELES_OUTPUT_GID:-}"
+  if [[ ! "$VELES_OUTPUT_UID" =~ ^[0-9]+$ ]] || [[ ! "$VELES_OUTPUT_GID" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: output ownership must be numeric host UID:GID." >&2
+    exit 2
+  fi
+  if ! chown "$VELES_OUTPUT_UID:$VELES_OUTPUT_GID" /out/app-release-unsigned.apk; then
+    echo "ERROR: cannot return rebuilt APK with host ownership." >&2
+    exit 2
+  fi
   echo "==> Copied rebuilt APK to /out"
 fi
 

@@ -3,13 +3,10 @@ set -euo pipefail
 
 fail() { echo "ERROR: $1" >&2; exit 2; }
 
-# Use a volume-backed GRADLE_USER_HOME so the Gradle wrapper distribution and
-# dependencies cached during the online `prepare` run survive into the offline
-# `package` run (both containers share the /work volume). The image pre-caches
-# the pinned gradle-9.5.0-bin.zip distribution under /opt/gradle-home (set in
-# Dockerfile.rust); seed the volume-backed home with that distribution on the
-# first prepare so the wrapper never hits services.gradle.org, even offline.
+# The prepare and package containers share only /work. Keep both dependency
+# homes there so their online caches remain available under network denial.
 export GRADLE_USER_HOME=/work/gradle-home
+export CARGO_HOME=/work/cargo-home
 seed_gradle_distribution() {
   local seed_dir=/opt/gradle-home/wrapper/dists
   local dest_dir="$GRADLE_USER_HOME/wrapper/dists"
@@ -35,8 +32,8 @@ prepare() {
   cp -a /source/. /work/src/
   cd /work/src
   seed_gradle_distribution
-  ./gradlew --refresh-dependencies rustInstall
   (cd rust && cargo fetch --locked)
+  ./gradlew --refresh-dependencies rustInstall
 }
 
 package_reference() {
