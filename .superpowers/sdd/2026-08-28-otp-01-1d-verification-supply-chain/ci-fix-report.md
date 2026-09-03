@@ -223,3 +223,68 @@ the Tauri nondeterminism exception.
 
 - `node --test verify/test/native-compare.test.mjs verify/test/native-end-to-end.test.mjs verify/test/native-extract-view.test.mjs`: 19 passed.
 - `bash verify/test/verify-native.test.sh`: passed.
+
+## Fix Round 5/5 - Android and Rust Docker Boundaries
+
+### Status
+
+Addressed both remaining component failures from PR #111 CI run `33652769090`.
+The aggregate job is downstream only and needs no source change.
+
+### Android Root Cause and Correction
+
+Job `100323668361` completed the Docker byte comparison successfully, including
+the signed-input `apksigcopier compare <released> --unsigned <rebuilt>` path.
+The container then copied the rebuilt unsigned APK to the `/out` bind mount as
+container root. Docker preserved that root ownership on
+`build/verification/android/app-release-unsigned.apk`, so the following host
+workflow `cp` failed with permission denied.
+
+`verify/verify.sh` now passes the invoking host UID and GID to the container.
+After the rebuilt APK passes the JNI allow-list, `verify-inner.sh` validates
+those numeric values and changes only `/out/app-release-unsigned.apk` to the
+host ownership. Invalid ownership handoff or `chown` is an environment error
+with exit 2. The signed-versus-signature-stripped comparison is unchanged.
+
+### Rust Root Cause and Correction
+
+Job `100323667995` shows `cargo fetch --locked` downloading `wasm-bindgen`
+after the online `rustInstall`. The online `prepare` and offline `package`
+containers shared `/work` only, but Cargo used image-local `/opt/cargo`; its
+registry index/cache disappeared with the prepare container's writable layer.
+The offline package container therefore could not resolve `wasm-bindgen` under
+`CARGO_NET_OFFLINE=true` and Docker `--network=none`.
+
+`rust-inner.sh` now uses `/work/cargo-home` as `CARGO_HOME` and fetches the
+locked workspace graph before `rustInstall`. The package invocation remains
+`CARGO_NET_OFFLINE=true ./gradlew --offline rustPackage`; no pin, allow-list,
+or network-denial behavior changed.
+
+### Regression Tests and Verification
+
+- New `verify/test/android-verifier.test.mjs` failed before the change because
+  neither UID/GID handoff nor output ownership restoration existed; it now
+  verifies both while retaining the `apksigcopier` assertion.
+- New Rust cache-persistence assertion in `verify/test/rust-verifier.test.mjs`
+  failed before the change because `CARGO_HOME` was image-local and fetch ran
+  after tool installation; it now verifies volume persistence, locked-fetch
+  ordering, and the unchanged offline invocation.
+- `node --test verify/test/android-verifier.test.mjs verify/test/rust-verifier.test.mjs`: 11 passed after implementation; 2 expected failures before it.
+- `bash -n verify/verify.sh verify/verify-inner.sh verify/rust-inner.sh && node --test verify/test/workflow-contracts.test.mjs verify/test/rust-package.test.mjs verify/test/rust-verifier.test.mjs verify/test/android-verifier.test.mjs`: 34 passed.
+- `docker build -t veles-verify-rust-ci-fix -f verify/Dockerfile.rust .`: passed.
+- Online `prepare` followed by `docker run --rm --network=none ... package`:
+  passed; all three JNI ABIs and the WASM package were produced offline, with
+  `wasm-bindgen` resolved from the shared Cargo home.
+
+### Commits
+
+- `cc09ec0 fix(verify): persist Docker verifier boundaries`
+
+### Concerns
+
+- The local checkout is a Git worktree, whose `.git` pointer lies outside the
+  mounted source. The real Docker validation mounted that parent Git metadata
+  read-only to emulate CI's ordinary checkout; this is unrelated to the Cargo
+  cache fix. CI remains the behavioral authority for the Android signed APK
+  path because a signed release artifact was not produced locally.
+- `verify/node_modules/` was not modified or removed.
