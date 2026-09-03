@@ -124,6 +124,22 @@ test('persists the locked workspace Cargo registry before the offline package co
   assert.match(inner, /CARGO_NET_OFFLINE=true \.\/gradlew --offline rustPackage/);
 });
 
+test('seeds wasm-pack update metadata before the network-denied package run', async () => {
+  const inner = await readFile(RUST_INNER, 'utf8');
+  const prepare = inner.match(/prepare\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+
+  // wasm-pack 0.15 performs a crates.io update check on every invocation. Its
+  // sibling stamp suppresses that non-build request for 24 hours, while
+  // verifyWasmPack still verifies the exact pinned executable separately.
+  assert.match(prepare, /seed_wasm_pack_update_stamp/);
+  assert.match(inner, /build\/rust-tools\/wasm-pack\/bin\/wasm-pack\.stamp/);
+  assert.ok(
+    prepare.indexOf('seed_wasm_pack_update_stamp') > prepare.indexOf('./gradlew --refresh-dependencies rustInstall'),
+    'the stamp must be created after rustInstall creates the pinned wasm-pack binary',
+  );
+  assert.match(inner, /CARGO_NET_OFFLINE=true \.\/gradlew --offline rustPackage/);
+});
+
 test('pre-caches the pinned Gradle wrapper distribution for the offline package run', async () => {
   // The offline `package` container (docker run --network=none) cannot reach
   // services.gradle.org. The image must pre-cache gradle-9.5.0-bin.zip during

@@ -16,6 +16,14 @@ seed_gradle_distribution() {
   fi
 }
 
+seed_wasm_pack_update_stamp() {
+  local wasm_pack=/work/src/build/rust-tools/wasm-pack/bin/wasm-pack
+  local stamp=/work/src/build/rust-tools/wasm-pack/bin/wasm-pack.stamp
+  [ -x "$wasm_pack" ] || fail "pinned wasm-pack is missing after rustInstall"
+  # wasm-pack 0.15 otherwise performs an optional crates.io update check.
+  printf 'created %s\n' "$(date --iso-8601=seconds)" > "$stamp" || fail "cannot seed wasm-pack update stamp"
+}
+
 assert_pins() {
   java -version 2>&1 | grep -q '21.0.12' || fail "JDK version drift"
   [ "$(sdkmanager --version)" = "12.0" ] || fail "Android SDK helper version drift"
@@ -34,6 +42,7 @@ prepare() {
   seed_gradle_distribution
   (cd rust && cargo fetch --locked)
   ./gradlew --refresh-dependencies rustInstall
+  seed_wasm_pack_update_stamp
 }
 
 package_reference() {
