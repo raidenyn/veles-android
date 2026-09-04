@@ -18,7 +18,7 @@ REFERENCE_DIR="$(mktemp -d)" || fail "cannot create reference directory"
 cleanup() {
   "$DOCKER_BIN" volume rm -f "$VOLUME" >/dev/null 2>&1 || true
   "$DOCKER_BIN" image rm -f "$IMAGE" >/dev/null 2>&1 || true
-  rm -rf "$REFERENCE_DIR"
+  rm -rf "$REFERENCE_DIR" || true
 }
 trap cleanup EXIT
 
@@ -37,7 +37,10 @@ fi
 "$DOCKER_BIN" run --rm -v "$REPO_ROOT:/source:ro" -v "$VOLUME:/work" "$IMAGE" prepare || fail "reference preparation failed"
 "$DOCKER_BIN" run --rm --network=none -e "VELES_OUTPUT_UID=$(id -u)" -e "VELES_OUTPUT_GID=$(id -g)" -v "$VOLUME:/work" -v "$REFERENCE_DIR:/out" "$IMAGE" package || fail "offline Rust reference package failed"
 
-if node "$SCRIPT_DIR/verify-rust.mjs" "$RUST_PACKAGE_DIR" "$REFERENCE_DIR"; then exit 0; else
+if node "$SCRIPT_DIR/verify-rust.mjs" "$RUST_PACKAGE_DIR" "$REFERENCE_DIR"; then
+  "$DOCKER_BIN" run --rm -e "VELES_OUTPUT_UID=$(id -u)" -e "VELES_OUTPUT_GID=$(id -g)" -v "$REFERENCE_DIR:/out" "$IMAGE" restore-output-ownership || fail "reference output ownership restoration failed"
+  exit 0
+else
   status=$?
   [ "$status" -eq 1 ] && exit 1
   fail "artifact comparison failed"

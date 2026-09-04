@@ -97,7 +97,7 @@ test('maps a Docker build failure to exit 2', async () => {
   });
 });
 
-test('restores reference-output ownership so cleanup removes it after a verified match', async () => {
+test('preserves comparison and ownership exit statuses while restoring reference-output ownership', async () => {
   await withFakeTools({
     git: cleanGit,
     gradle: successfulGradle,
@@ -105,33 +105,44 @@ test('restores reference-output ownership so cleanup removes it after a verified
 set -euo pipefail
 if [ "$1" = build ] || [ "$1" = volume ]; then exit 0; fi
 reference=''
-owner_handoff=false
+uid_handoff=false
+gid_handoff=false
 for arg in "$@"; do
   case "$arg" in
     *:/out) reference="\${arg%:/out}" ;;
-    VELES_OUTPUT_UID=*) owner_handoff=true ;;
+    VELES_OUTPUT_UID=*) uid_handoff=true ;;
+    VELES_OUTPUT_GID=*) gid_handoff=true ;;
   esac
 done
 if [ "\${!#}" = package ]; then
   mkdir -p "$reference/jni/arm64-v8a" "$reference/jni/armeabi-v7a" "$reference/jni/x86_64" "$reference/wasm"
   for path in jni/arm64-v8a/libveles_crypto.so jni/armeabi-v7a/libveles_crypto.so jni/x86_64/libveles_crypto.so wasm/veles_crypto.js; do
-    printf candidate > "$reference/$path"
+    printf "\${REFERENCE_CONTENT:-candidate}" > "$reference/$path"
   done
   (cd "$reference" && sha256sum jni/arm64-v8a/libveles_crypto.so jni/armeabi-v7a/libveles_crypto.so jni/x86_64/libveles_crypto.so wasm/veles_crypto.js) > "$reference/SHA256SUMS"
   printf %s "$reference" > "$REFERENCE_MARKER"
-  "$owner_handoff" || chmod 500 "$reference"
+  chmod 500 "$reference"
+elif [ "\${!#}" = restore-output-ownership ]; then
+  "$uid_handoff" && "$gid_handoff" || exit 42
+  [ "\${RESTORE_FAIL:-false}" = true ] && exit 42
+  chmod 700 "$reference"
 fi
 `,
   }, async (bin) => {
-    const candidate = await mkdtemp(join(tmpdir(), 'veles-rust-candidate-'));
-    const marker = join(bin, 'reference-path');
-    try {
-      const result = runVerifier(bin, { GRADLE_BIN: join(bin, 'gradle'), RUST_PACKAGE_DIR: candidate, DOCKER_BIN: join(bin, 'docker'), REFERENCE_MARKER: marker });
-      assert.equal(result.status, 0, result.stderr);
-      const reference = await readFile(marker, 'utf8');
-      await assert.rejects(access(reference));
-    } finally {
-      await rm(candidate, { recursive: true, force: true });
+    for (const [environment, expectedStatus] of [
+      [{}, 0],
+      [{ REFERENCE_CONTENT: 'mismatch', RESTORE_FAIL: 'true' }, 1],
+      [{ RESTORE_FAIL: 'true' }, 2],
+    ]) {
+      const candidate = await mkdtemp(join(tmpdir(), 'veles-rust-candidate-'));
+      const marker = join(bin, `reference-path-${expectedStatus}`);
+      try {
+        const result = runVerifier(bin, { ...environment, GRADLE_BIN: join(bin, 'gradle'), RUST_PACKAGE_DIR: candidate, DOCKER_BIN: join(bin, 'docker'), REFERENCE_MARKER: marker });
+        assert.equal(result.status, expectedStatus, result.stderr);
+        if (expectedStatus === 0) await assert.rejects(access(await readFile(marker, 'utf8')));
+      } finally {
+        await rm(candidate, { recursive: true, force: true });
+      }
     }
   });
 });

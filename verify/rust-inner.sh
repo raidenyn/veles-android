@@ -42,6 +42,9 @@ package_reference() {
   CARGO_NET_OFFLINE=true ./gradlew --offline rustPackage
   mkdir -p /out
   cp -a build/rust-package/. /out/
+}
+
+restore_output_ownership() {
   [[ "${VELES_OUTPUT_UID:-}" =~ ^[0-9]+$ && "${VELES_OUTPUT_GID:-}" =~ ^[0-9]+$ ]] || fail "invalid output ownership handoff"
   chown -R "$VELES_OUTPUT_UID:$VELES_OUTPUT_GID" /out || fail "cannot restore output ownership"
 }
@@ -49,5 +52,6 @@ package_reference() {
 case "${1:-}" in
   prepare) prepare ;;
   package) package_reference ;;
+  restore-output-ownership) restore_output_ownership ;;
   *) fail "usage: rust-inner.sh <prepare|package>" ;;
 esac
