@@ -469,3 +469,36 @@ environment failure (exit 2); byte mismatch behavior remains exit 1.
 ### Commit
 
 - `5ff0396 fix(verify): restore Rust reference output ownership`
+
+## Reviewer Fix Round 2 - Rust Exit Precedence
+
+### Root Cause and Correction
+
+The EXIT trap's unguarded `rm -rf` could replace any requested verifier status
+with cleanup exit 1. Ownership restoration also ran in `package`, before the
+outer verifier compared artifacts, so a `chown` failure could mask a genuine
+byte mismatch.
+
+Cleanup now ignores reference-directory removal failures. The package command
+only creates the reference output; after a successful byte comparison,
+`verify-rust.sh` invokes a separate `restore-output-ownership` container
+command. That command validates numeric UID/GID and performs `chown -R`.
+Consequently mismatch remains exit 1, invalid or failed ownership restoration
+is exit 2, and successful restoration keeps host cleanup working.
+
+### Red/Green Evidence
+
+- Red: executable fake-Docker coverage made the reference directory
+  non-removable; the previous flow exited 1 after a verified comparison with
+  `rm: cannot remove ... Permission denied`.
+- Green: the same test covers successful UID/GID restoration and cleanup, a
+  mismatched package plus forced restore failure (exit 1), and a forced restore
+  failure after a match (exit 2).
+- `node --test verify/test/rust-package.test.mjs
+  verify/test/rust-verifier.test.mjs`: 18/18 passed.
+- `bash -n verify/verify-rust.sh verify/rust-inner.sh` and `git diff --check`:
+  passed.
+
+### Commit
+
+- `749c1a5 fix(verify): preserve Rust comparison exit status`
