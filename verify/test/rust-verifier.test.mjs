@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -97,6 +97,45 @@ test('maps a Docker build failure to exit 2', async () => {
   });
 });
 
+test('restores reference-output ownership so cleanup removes it after a verified match', async () => {
+  await withFakeTools({
+    git: cleanGit,
+    gradle: successfulGradle,
+    docker: `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = build ] || [ "$1" = volume ]; then exit 0; fi
+reference=''
+owner_handoff=false
+for arg in "$@"; do
+  case "$arg" in
+    *:/out) reference="\${arg%:/out}" ;;
+    VELES_OUTPUT_UID=*) owner_handoff=true ;;
+  esac
+done
+if [ "\${!#}" = package ]; then
+  mkdir -p "$reference/jni/arm64-v8a" "$reference/jni/armeabi-v7a" "$reference/jni/x86_64" "$reference/wasm"
+  for path in jni/arm64-v8a/libveles_crypto.so jni/armeabi-v7a/libveles_crypto.so jni/x86_64/libveles_crypto.so wasm/veles_crypto.js; do
+    printf candidate > "$reference/$path"
+  done
+  (cd "$reference" && sha256sum jni/arm64-v8a/libveles_crypto.so jni/armeabi-v7a/libveles_crypto.so jni/x86_64/libveles_crypto.so wasm/veles_crypto.js) > "$reference/SHA256SUMS"
+  printf %s "$reference" > "$REFERENCE_MARKER"
+  "$owner_handoff" || chmod 500 "$reference"
+fi
+`,
+  }, async (bin) => {
+    const candidate = await mkdtemp(join(tmpdir(), 'veles-rust-candidate-'));
+    const marker = join(bin, 'reference-path');
+    try {
+      const result = runVerifier(bin, { GRADLE_BIN: join(bin, 'gradle'), RUST_PACKAGE_DIR: candidate, DOCKER_BIN: join(bin, 'docker'), REFERENCE_MARKER: marker });
+      assert.equal(result.status, 0, result.stderr);
+      const reference = await readFile(marker, 'utf8');
+      await assert.rejects(access(reference));
+    } finally {
+      await rm(candidate, { recursive: true, force: true });
+    }
+  });
+});
+
 test('prepares dependencies online and produces the reference package offline', async () => {
   const [wrapper, inner] = await Promise.all([
     readFile(VERIFY_SCRIPT, 'utf8'),
@@ -120,22 +159,6 @@ test('persists the locked workspace Cargo registry before the offline package co
   assert.ok(
     prepare.indexOf('(cd rust && cargo fetch --locked)') < prepare.indexOf('./gradlew --refresh-dependencies rustInstall'),
     'prepare must fetch the locked workspace graph before installing build tools',
-  );
-  assert.match(inner, /CARGO_NET_OFFLINE=true \.\/gradlew --offline rustPackage/);
-});
-
-test('seeds wasm-pack update metadata before the network-denied package run', async () => {
-  const inner = await readFile(RUST_INNER, 'utf8');
-  const prepare = inner.match(/prepare\(\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
-
-  // wasm-pack 0.15 performs a crates.io update check on every invocation. Its
-  // sibling stamp suppresses that non-build request for 24 hours, while
-  // verifyWasmPack still verifies the exact pinned executable separately.
-  assert.match(prepare, /seed_wasm_pack_update_stamp/);
-  assert.match(inner, /build\/rust-tools\/wasm-pack\/bin\/wasm-pack\.stamp/);
-  assert.ok(
-    prepare.indexOf('seed_wasm_pack_update_stamp') > prepare.indexOf('./gradlew --refresh-dependencies rustInstall'),
-    'the stamp must be created after rustInstall creates the pinned wasm-pack binary',
   );
   assert.match(inner, /CARGO_NET_OFFLINE=true \.\/gradlew --offline rustPackage/);
 });

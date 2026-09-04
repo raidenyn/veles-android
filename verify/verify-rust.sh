@@ -35,7 +35,7 @@ fi
 "$DOCKER_BIN" build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile.rust" "$REPO_ROOT" || fail "failed to build Rust reference image"
 "$DOCKER_BIN" volume create "$VOLUME" >/dev/null || fail "failed to create reference work volume"
 "$DOCKER_BIN" run --rm -v "$REPO_ROOT:/source:ro" -v "$VOLUME:/work" "$IMAGE" prepare || fail "reference preparation failed"
-"$DOCKER_BIN" run --rm --network=none -v "$VOLUME:/work" -v "$REFERENCE_DIR:/out" "$IMAGE" package || fail "offline Rust reference package failed"
+"$DOCKER_BIN" run --rm --network=none -e "VELES_OUTPUT_UID=$(id -u)" -e "VELES_OUTPUT_GID=$(id -g)" -v "$VOLUME:/work" -v "$REFERENCE_DIR:/out" "$IMAGE" package || fail "offline Rust reference package failed"
 
 if node "$SCRIPT_DIR/verify-rust.mjs" "$RUST_PACKAGE_DIR" "$REFERENCE_DIR"; then exit 0; else
   status=$?
