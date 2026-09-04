@@ -431,3 +431,41 @@ change binary pin validation, Rust `1.98.0`, `CARGO_NET_OFFLINE=true`, Docker
   timestamped. It is outside the staged Rust package and does not affect
   compared JNI/WASM bytes. The next CI run remains the end-to-end authority for
   the offline reference container.
+
+## Reviewer Fix Round 1 - Rust Output Ownership
+
+### Root Cause
+
+The actual PR #111 Rust failure occurred after the verified package comparison:
+the root-run package container copied reference files into the host bind mount,
+then `verify-rust.sh`'s EXIT cleanup could not remove those root-owned entries.
+The resulting cleanup failure changed a successful verification into exit 1.
+
+The prior wasm-pack stamp fix was removed. `rustInstall` declares its output
+directory, and the subsequent `rustPackage` invocation may replace that output,
+so the stamp was not a reliable cache. Upstream's update request is a warning,
+not a reproduced fatal error.
+
+### Correction and Evidence
+
+`verify-rust.sh` now passes its numeric caller UID/GID to the offline package
+container. After the offline package has copied the reference output,
+`rust-inner.sh` validates both values and recursively restores `/out`
+ownership. Invalid handoff or failed ownership restoration remains an
+environment failure (exit 2); byte mismatch behavior remains exit 1.
+
+- Red: the new behavioral fake-Docker test produced a matching reference tree,
+  made it non-removable when no ownership handoff was present, and failed after
+  verified comparison with `rm: cannot remove ... Permission denied` and exit
+  1.
+- Green: `restores reference-output ownership so cleanup removes it after a
+  verified match` passes by requiring the output handoff and observing that the
+  temporary reference directory no longer exists after the verifier exits.
+- `node --test verify/test/rust-package.test.mjs
+  verify/test/rust-verifier.test.mjs`: 18/18 passed.
+- `bash -n verify/verify-rust.sh verify/rust-inner.sh` and `git diff --check`:
+  passed.
+
+### Commit
+
+- `5ff0396 fix(verify): restore Rust reference output ownership`
