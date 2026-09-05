@@ -400,11 +400,12 @@ function assertNativeWorkflow(source, name, platform, wrapper) {
   assert.match(source, /needs:\s*\[run-a, run-b\]/, `${name} must compare both independent slots`);
   assert.match(source, /verify\/verify-native\.sh[\s\S]*?inputs\.commit-sha[\s\S]*?native-runs\/run-a[\s\S]*?native-runs\/run-b/, `${name} must compare both transports against the requested commit`);
   assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must expose only the verified caller-selected artifact`);
+  assert.match(source, new RegExp(`node verify/native/verified-artifact\\.mjs stage build/verification/native-bridge build/verification/verified-native-${artifactPlatform}\\.tar`), `${name} must stage the verified tree into a metadata-preserving tar before artifact upload`);
   assert.deepEqual(uploadPaths(source, name), [
     ['build/verification/native-runs/run-a/'],
     ['build/verification/native-runs/run-b/'],
-    ['build/verification/native-bridge/'],
-  ], `${name} must expose only the comparison output while retaining slot transports internally`);
+    [`build/verification/verified-native-${artifactPlatform}.tar`],
+  ], `${name} must expose only the staged comparison output while retaining slot transports internally`);
 }
 
 test('Windows native workflow produces a verified comparison from two offline transports', async () => {
@@ -438,8 +439,11 @@ test('aggregate workflow consumes all and only verified component artifacts', as
   for (const artifact of ['verified-android', 'verified-web-extension', 'rust-jni-wasm', 'verified-native-windows', 'verified-native-macos']) {
     assert.match(source, new RegExp(`default:\\s*${artifact}`), `aggregate workflow must default to ${artifact}`);
   }
-  for (const path of ['build/verification/android', 'build/web-extension', 'build/rust-package', 'build/verification/native-bridge/windows', 'build/verification/native-bridge/macos']) {
+  for (const path of ['build/verification/android', 'build/web-extension', 'build/rust-package', 'build/verification/native-bridge/windows-artifact', 'build/verification/native-bridge/macos-artifact']) {
     assert.match(source, new RegExp(`path:\\s*${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `aggregate workflow must download into ${path}`);
+  }
+  for (const platform of ['windows', 'macos']) {
+    assert.match(source, new RegExp(`node verify/native/verified-artifact\\.mjs restore build/verification/native-bridge/${platform}-artifact/verified-native-${platform}\\.tar build/verification/native-bridge/${platform}`), `aggregate workflow must restore the ${platform} verified tree with its recorded metadata`);
   }
   assert.match(source, /verify\/aggregate-checksums\.sh[\s\S]*?inputs\.commit-sha/, 'aggregate workflow must directly validate and aggregate components');
   assertExactUploadPaths(source, 'build-toolchain-manifest.yml', ['build/verification/SHA256SUMS.toolchains']);

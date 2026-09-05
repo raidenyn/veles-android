@@ -64,11 +64,15 @@ jobs:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: ${{ inputs.native-windows-artifact-name }}
-          path: build/verification/native-bridge/windows
+          path: build/verification/native-bridge/windows-artifact
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: ${{ inputs.native-macos-artifact-name }}
-          path: build/verification/native-bridge/macos
+          path: build/verification/native-bridge/macos-artifact
+      - name: Restore verified native artifacts
+        run: |
+          node verify/native/verified-artifact.mjs restore build/verification/native-bridge/windows-artifact/verified-native-windows.tar build/verification/native-bridge/windows
+          node verify/native/verified-artifact.mjs restore build/verification/native-bridge/macos-artifact/verified-native-macos.tar build/verification/native-bridge/macos
       - name: Validate and aggregate component manifests
         run: verify/aggregate-checksums.sh "${{ inputs.commit-sha }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

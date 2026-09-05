@@ -95,9 +95,11 @@ jobs:
           path: build/verification/native-runs/run-b
       - name: Compare native transports
         run: bash verify/verify-native.sh "${{ inputs.commit-sha }}" build/verification/native-runs/run-a build/verification/native-runs/run-b
+      - name: Stage verified artifact
+        run: node verify/native/verified-artifact.mjs stage build/verification/native-bridge build/verification/verified-native-windows.tar
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ inputs.artifact-name }}
-          path: build/verification/native-bridge/
+          path: build/verification/verified-native-windows.tar
           if-no-files-found: error
           retention-days: 14
