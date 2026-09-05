@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { createTar, parseTar } from './deterministic-tar.mjs';
 
+const SYMLINK_MODES = 'ARCHIVED-SYMLINK-MODES.jsonl';
+
 async function entries(root, prefix = '') {
   const result = [];
   const children = await readdir(join(root, prefix), { withFileTypes: true });
@@ -35,21 +37,28 @@ export async function restoreVerifiedArtifact(archive, output) {
   const tree = parseTar(await readFile(archive));
   await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
-  for (const entry of tree) {
+  for (const entry of tree.filter((entry) => entry.type === 'directory')) {
     const path = join(output, entry.path);
-    if (entry.type === 'directory') {
-      await mkdir(path, { recursive: true, mode: entry.mode });
+    await mkdir(path, { recursive: true, mode: 0o755 });
+  }
+  for (const entry of tree.filter((entry) => entry.type !== 'directory')) {
+    const path = join(output, entry.path);
+    await mkdir(join(path, '..'), { recursive: true });
+    if (entry.type === 'file') {
+      await writeFile(path, entry.data, { mode: entry.mode });
       await chmod(path, entry.mode);
     } else {
-      await mkdir(join(path, '..'), { recursive: true });
-      if (entry.type === 'file') {
-        await writeFile(path, entry.data, { mode: entry.mode });
-        await chmod(path, entry.mode);
-      } else {
-        await symlink(entry.target, path);
-      }
+      await symlink(entry.target, path);
     }
   }
+  for (const entry of tree.filter((entry) => entry.type === 'directory').sort((left, right) => Buffer.compare(Buffer.from(right.path), Buffer.from(left.path)))) {
+    await chmod(join(output, entry.path), entry.mode);
+  }
+  const modes = tree
+    .filter((entry) => entry.type === 'symlink' && entry.path.startsWith('view/'))
+    .map((entry) => JSON.stringify({ path: entry.path.slice('view/'.length), mode: entry.mode.toString(8).padStart(4, '0') }))
+    .join('\n');
+  if (modes) await writeFile(join(output, SYMLINK_MODES), `${modes}\n`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

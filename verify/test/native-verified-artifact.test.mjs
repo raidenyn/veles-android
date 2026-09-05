@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { restoreVerifiedArtifact, stageVerifiedArtifact } from '../native/verified-artifact.mjs';
+import { createTar } from '../native/deterministic-tar.mjs';
 
 async function entry(path) {
   const stat = await lstat(path);
@@ -31,6 +32,45 @@ test('verified native artifact staging preserves metadata through file-only tran
 
     assert.deepEqual(await entry(join(restored, 'view', 'app.veles.native_bridge.json')), await entry(join(source, 'view', 'app.veles.native_bridge.json')));
     assert.deepEqual(await entry(join(restored, 'view', 'current-manifest')), await entry(join(source, 'view', 'current-manifest')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('restore records archived macOS symlink modes for Linux aggregate validation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'veles-verified-symlink-mode-'));
+  try {
+    const archive = join(root, 'verified-native.tar');
+    const restored = join(root, 'restored');
+    await writeFile(archive, createTar([
+      { path: 'view/', type: 'directory', mode: 0o755 },
+      { path: 'view/current', type: 'symlink', mode: 0o755, target: 'host' },
+    ]));
+
+    await restoreVerifiedArtifact(archive, restored);
+
+    assert.equal((await lstat(join(restored, 'view', 'current'))).mode & 0o7777, 0o777, 'Linux represents symlinks as 0777');
+    assert.equal(await readFile(join(restored, 'ARCHIVED-SYMLINK-MODES.jsonl'), 'utf8'), '{"path":"current","mode":"0755"}\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('restore populates a 0555 directory before applying its restrictive mode', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'veles-verified-directory-mode-'));
+  try {
+    const archive = join(root, 'verified-native.tar');
+    const restored = join(root, 'restored');
+    await writeFile(archive, createTar([
+      { path: 'view/', type: 'directory', mode: 0o555 },
+      { path: 'view/host', type: 'file', mode: 0o644, data: 'host' },
+    ]));
+
+    await restoreVerifiedArtifact(archive, restored);
+
+    assert.equal(await readFile(join(restored, 'view', 'host'), 'utf8'), 'host');
+    assert.equal((await lstat(join(restored, 'view'))).mode & 0o7777, 0o555);
+    await chmod(join(restored, 'view'), 0o755);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

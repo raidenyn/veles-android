@@ -40,7 +40,9 @@ const nativeMetadata = {
     { path: 'Veles.app', type: 'directory', mode: '0755' },
     { path: 'Veles.app/Contents', type: 'directory', mode: '0755' },
     { path: 'Veles.app/Contents/MacOS', type: 'directory', mode: '0755' },
-    { path: 'Veles.app/Contents/MacOS/current', type: 'symlink', mode: '0777', target: 'host', sha256: digest('host') },
+    // Linux restores a symlink as 0777 even when the macOS archive recorded
+    // 0755. The restore-generated ledger is authoritative for this mode.
+    { path: 'Veles.app/Contents/MacOS/current', type: 'symlink', mode: '0755', target: 'host', sha256: digest('host') },
     { path: 'Veles.app/Contents/MacOS/host', type: 'file', mode: '0644', sha256: digest('mac-host') },
   ].map(JSON.stringify).join('\n') + '\n',
 };
@@ -76,6 +78,7 @@ const requiredFiles = {
   'build/verification/native-bridge/macos/view/Veles.app/Contents/MacOS/host': 'mac-host',
   'build/verification/native-bridge/macos/view/Veles.app/Contents/MacOS/current': { link: 'host' },
   'build/verification/native-bridge/macos/METADATA.native-bridge.jsonl': nativeMetadata.macos,
+  'build/verification/native-bridge/macos/ARCHIVED-SYMLINK-MODES.jsonl': '{"path":"Veles.app/Contents/MacOS/current","mode":"0755"}\n',
 };
 
 test('aggregates exactly the verified artifact namespaces in byte order', async () => {

@@ -2,7 +2,7 @@ import { lstat, mkdir, readdir, readFile, readlink, rm, writeFile } from 'node:f
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { error, mismatch, parseNativeManifest, parseStandardManifest, sha256 } from './lib/checksum-manifest.mjs';
+import { error, mismatch, parseNativeManifest, parseStandardManifest, sha256, validateRelativePath } from './lib/checksum-manifest.mjs';
 import { parseNativeMetadata } from './lib/native-metadata.mjs';
 
 function comparePaths(left, right) {
@@ -75,6 +75,42 @@ function excludedNativeViewPath(path) {
     || /\.tar(?:\.gz)?$/i.test(name)
     || /\.sha256$/i.test(name)
   ));
+}
+
+async function archivedSymlinkModes(root) {
+  const name = 'ARCHIVED-SYMLINK-MODES.jsonl';
+  let text;
+  try {
+    text = await readFile(join(root, name), 'utf8');
+  } catch (caught) {
+    if (caught?.code === 'ENOENT') return new Map();
+    throw error(`cannot read archived symlink modes`);
+  }
+  if (text.includes('\r') || !text.endsWith('\n') || text === '\n') {
+    throw mismatch('invalid archived symlink modes');
+  }
+  const modes = new Map();
+  let previous;
+  for (const line of text.slice(0, -1).split('\n')) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      throw mismatch('invalid archived symlink modes');
+    }
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)
+      || Object.keys(entry).length !== 2 || typeof entry.path !== 'string'
+      || !/^[0-7]{4}$/.test(entry.mode)) {
+      throw mismatch('invalid archived symlink modes');
+    }
+    validateRelativePath(entry.path, mismatch);
+    if (previous !== undefined && comparePaths(previous, entry.path) >= 0) {
+      throw mismatch('archived symlink modes are not sorted');
+    }
+    previous = entry.path;
+    modes.set(entry.path, entry.mode);
+  }
+  return modes;
 }
 
 async function readManifest(root, name, native = false) {
@@ -152,7 +188,15 @@ async function nativeRecords(root, platform) {
       throw mismatch(`native ${platform} component SHA256SUMS mismatch: ${path}`);
     }
   }
-  const view = await viewEntries(join(root, 'view'));
+  const physicalView = await viewEntries(join(root, 'view'));
+  const archivedModes = await archivedSymlinkModes(root);
+  const symlinkPaths = physicalView.filter((entry) => entry.type === 'symlink').map((entry) => entry.path);
+  if (archivedModes.size > 0 && (archivedModes.size !== symlinkPaths.length || symlinkPaths.some((path) => !archivedModes.has(path)))) {
+    throw mismatch(`native ${platform} archived symlink modes do not match view`);
+  }
+  const view = physicalView.map((entry) => entry.type === 'symlink' && archivedModes.has(entry.path)
+    ? { ...entry, mode: archivedModes.get(entry.path) }
+    : entry);
   const metadataByPath = new Map(metadata.map((entry) => [entry.path, entry]));
   const different = view.find((entry) => {
     const expected = metadataByPath.get(entry.path);
@@ -176,7 +220,7 @@ async function nativeRecords(root, platform) {
     if (entry.type === 'file') output.push([`native-bridge/${platform}/view/${entry.path}`, entry.sha256]);
   }
   output.push([`native-bridge/${platform}/${metadataName}`, sha256(metadataText)]);
-  const allowed = ['product', 'view', manifestName, metadataName];
+  const allowed = ['product', 'view', manifestName, metadataName, 'ARCHIVED-SYMLINK-MODES.jsonl'];
   const topLevel = await readdir(root);
   if (topLevel.some((path) => !allowed.includes(path))) {
     throw mismatch(`native ${platform} contains excluded evidence`);
