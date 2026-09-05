@@ -49,6 +49,29 @@ or by rebuilding it bit-for-bit yourself with nothing but Docker. CI refuses to
 publish a release whose APK it cannot independently reproduce. See
 [docs/reproducible-builds.md](docs/reproducible-builds.md).
 
+### Full toolchain verification (OTP-01 sub-project 1d)
+
+Beyond the APK, every reproducible artifact — the web-extension ZIP, the shared
+Rust JNI/WASM package, and the unsigned native-bridge builds — can be verified
+against a pinned reference environment, with auditable SBOM, license,
+install-script, and remote-code enforcement. The local aggregate entry point is:
+
+```
+verify/verify-all.sh <apk> <git-ref> <native-run-a-dir> <native-run-b-dir>
+```
+
+It runs the six component verifiers in order (Android, web, Rust, native,
+supply-chain, aggregate) and stops on the first failure. Exit codes:
+**0** = all matched, **1** = artifact/policy mismatch, **2** = usage/pin/
+environment/identity error. CI does **not** invoke `verify-all.sh`; each
+component is built and verified in its own reusable `build-<component>.yml`
+workflow. Output and evidence land under `build/verification/` (aggregate
+`SHA256SUMS.toolchains`, native verified trees, supply-chain reports) and
+`build/sbom/` (CycloneDX JSON). See
+[docs/reproducible-builds.md](docs/reproducible-builds.md) for the exact
+component commands, output paths, reference environments, runner identities,
+and the pinned-tool upgrade procedure.
+
 ## Requirements
 
 - Android device running **Android 13 (API 33)** or newer.
@@ -83,7 +106,9 @@ sub-project layout:
 - `web-extension/` — npm/Vite MV3 extension and deterministic package.
 - `rust/` — shared Rust core with Android JNI and browser WASM bindings.
 - `native-bridge/` — Tauri 2.x headless Native Messaging host (unsigned, Windows/macOS).
-- `verify/` — reproducible APK verifier; broader toolchain verification lands in 1d.
+- `verify/` — reproducible APK verifier plus the OTP-01 1d component verifiers
+  (`verify-web.sh`, `verify-rust.sh`, `verify-native.sh`, `verify-supply-chain.sh`,
+  `aggregate-checksums.sh`) and the local `verify-all.sh` orchestrator.
 
 ## Install
 

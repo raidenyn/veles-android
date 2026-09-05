@@ -394,6 +394,14 @@ remote runtime code, or an undeclared ABI.
 
 ## Sub-project 1d: Verification & supply chain
 
+The full 1d design is now specified in
+`docs/superpowers/specs/2026-08-28-otp-01-1d-verification-supply-chain-design.md`.
+That design records the user-approved reference-runner amendments from
+`windows-2022` / `macos-15` to the versioned `windows-2025` / `macos-26`
+labels. Its exact environment, workflow, artifact, SBOM, license, checksum,
+and error-handling decisions supersede the boundary-level details below where
+they differ.
+
 - **Environment strategy is asymmetric, matching technical reality.** Pure
   Linux-side toolchains (Android via existing `verify/Dockerfile`, plus new
   `verify/Dockerfile.web` for the extension and `verify/Dockerfile.rust`

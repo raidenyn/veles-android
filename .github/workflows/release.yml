@@ -23,7 +23,7 @@ jobs:
       release_id: ${{ steps.create_draft.outputs.release_id }}
       apk_sha256: ${{ steps.apk.outputs.apk_sha256 }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Guard against pre-existing release
@@ -70,11 +70,11 @@ jobs:
           else
             echo "No pre-existing release for $GITHUB_REF_NAME"
           fi
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version-file: .java-version
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
       - name: Activate pinned Rust toolchain
         working-directory: rust
         run: rustup show active-toolchain
@@ -82,7 +82,7 @@ jobs:
         run: |
           NDK_VERSION="$(./gradlew -q rustNdkVersion)"
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-      - uses: actions/cache@v5
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/rust-tools
           key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
@@ -125,13 +125,13 @@ jobs:
           sha256sum "veles-$GITHUB_REF_NAME.apk" mapping.txt > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: |
             veles-${{ github.ref_name }}.apk
             mapping.txt
       - name: Upload APK for the verify job
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-apk
           path: veles-${{ github.ref_name }}.apk
@@ -188,8 +188,8 @@ jobs:
       contents: read
     steps:
       # Default checkout of the tag ref — brings the TAG'S OWN verify/ toolkit and pins.
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: release-apk
       - name: Rebuild from source and compare

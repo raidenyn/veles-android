@@ -16,3 +16,7 @@ local.properties
 .worktrees
 .superpowers
 .kotlin
+# verify/ local tooling: pre-existing untracked node_modules produced by the
+# documented `npm ci --prefix verify` prerequisite. Never committed or removed;
+# ignored so verify-all.sh's clean-checkout contract stays satisfiable locally.
+/verify/node_modules/

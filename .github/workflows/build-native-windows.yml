@@ -1,0 +1,105 @@
+name: build-native-windows
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: verified-native-windows
+
+permissions:
+  contents: read
+
+jobs:
+  run-a:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity
+        run: |
+          foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required" }
+          }
+          if ([Environment]::GetEnvironmentVariable('RUNNER_ARCH') -ne 'X64') { throw "expected X64, got $([Environment]::GetEnvironmentVariable('RUNNER_ARCH'))" }
+      - name: Produce offline native package
+        run: pwsh -NoProfile -File verify/native/network-deny-windows.ps1 -TauriCachePath "native-bridge/src-tauri/target/.tauri"
+      - name: Assemble extracted verification view
+        run: node verify/native/extract-view.mjs windows native-bridge/src-tauri/target/release build/native-bridge/windows build/verification/native-runs/run-a/view
+      - name: Create run transport
+        run: pwsh -File verify/native/prepare-run.ps1 build/verification/native-runs/run-a/native-windows-run.tar "${{ inputs.commit-sha }}" build/native-bridge/windows build/verification/native-runs/run-a/view
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unverified-windows-run-a
+          path: build/verification/native-runs/run-a/
+          if-no-files-found: error
+          retention-days: 1
+  run-b:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity
+        run: |
+          foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required" }
+          }
+          if ([Environment]::GetEnvironmentVariable('RUNNER_ARCH') -ne 'X64') { throw "expected X64, got $([Environment]::GetEnvironmentVariable('RUNNER_ARCH'))" }
+      - name: Produce offline native package
+        run: pwsh -NoProfile -File verify/native/network-deny-windows.ps1 -TauriCachePath "native-bridge/src-tauri/target/.tauri"
+      - name: Assemble extracted verification view
+        run: node verify/native/extract-view.mjs windows native-bridge/src-tauri/target/release build/native-bridge/windows build/verification/native-runs/run-b/view
+      - name: Create run transport
+        run: pwsh -File verify/native/prepare-run.ps1 build/verification/native-runs/run-b/native-windows-run.tar "${{ inputs.commit-sha }}" build/native-bridge/windows build/verification/native-runs/run-b/view
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unverified-windows-run-b
+          path: build/verification/native-runs/run-b/
+          if-no-files-found: error
+          retention-days: 1
+  compare:
+    needs: [run-a, run-b]
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate runner identity
+        run: |
+          foreach ($name in 'ImageOS', 'ImageVersion', 'RUNNER_ARCH') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required" }
+          }
+          if ([Environment]::GetEnvironmentVariable('RUNNER_ARCH') -ne 'X64') { throw "expected X64, got $([Environment]::GetEnvironmentVariable('RUNNER_ARCH'))" }
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: unverified-windows-run-a
+          path: build/verification/native-runs/run-a
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: unverified-windows-run-b
+          path: build/verification/native-runs/run-b
+      - name: Compare native transports
+        run: bash verify/verify-native.sh "${{ inputs.commit-sha }}" build/verification/native-runs/run-a build/verification/native-runs/run-b
+      - name: Stage verified artifact
+        run: node verify/native/verified-artifact.mjs stage build/verification/native-bridge build/verification/verified-native-windows.tar
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/verification/verified-native-windows.tar
+          if-no-files-found: error
+          retention-days: 14

@@ -58,12 +58,74 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 
 # Platform-specific deterministic packaging into build/native-bridge/
 ./gradlew bridgePackage
+
+# OTP-01 sub-project 1d — verification & supply chain
+# Local aggregate verifier (NOT used by CI). Runs all six component verifiers
+# in order and stops on the first failure. Exit 0 = all matched, 1 = mismatch,
+# 2 = usage/pin/environment/identity error.
+verify/verify-all.sh <apk> <git-ref> <native-run-a-dir> <native-run-b-dir>
+
+# Component verifiers (each builds + verifies one artifact; CI calls these
+# directly from build-<component>.yml reusable workflows, not verify-all.sh).
+verify/verify.sh <apk> <git-ref>                    # Android rebuild + signature-stripped compare
+verify/verify-web.sh                                # web-extension candidate/reference byte compare
+verify/verify-rust.sh                               # Rust JNI/WASM candidate/reference byte compare
+verify/verify-native.sh <commit> <run-a> <run-b>    # two native runs, identity gate, byte compare
+verify/verify-supply-chain.sh                        # SBOM + license + install-script + remote-code
+verify/aggregate-checksums.sh <commit>               # build/verification/SHA256SUMS.toolchains
+
+# Supply-chain verifier local prerequisites (CI provisions these in
+# build-supply-chain.yml; locally you must run them first):
+#   npm ci --ignore-scripts --prefix verify   # cyclonedx-npm + license-checker -> verify/node_modules/.bin/
+#   ./gradlew installCargoDeny                 # cargo-deny -> build/verify-tools/ (cargo-cyclonedx is installed by generate-sboms.sh)
+# `verify/verify-supply-chain.sh` asserts Node 26.8.1 / npm 11.19.0 and the
+# active Rust toolchain (generate-sboms.sh shells out to ./gradlew verifyCargoCyclonedx).
+
+# Assert every declared generated output was removed by `./gradlew clean`.
+rust/scripts/assert-clean.sh
 ```
 
 Clean APK assembly now requires rustup/cargo and NDK r29 (`rustJni` is a dependency of
 `:app:assembleDebug`/`assembleRelease`). Node >= 22 is required for `rustTest` (which
 runs a WASM smoke test), the WASM/extension commands, and the native-bridge commands
 above — it is not needed to build the APK on its own.
+
+**Verification Node (OTP-01 1d).** Reproducibility and supply-chain environments
+require an **exact** Node pin — Node **26.8.1** with bundled npm **11.19.0** —
+asserted by `verify/Dockerfile.web`, `verify/Dockerfile.rust`, and
+`verify/verify-supply-chain.sh`. The developer-facing package contract remains a
+floor (`engines.node = ">=22.0.0"`); only the reference environments require the
+exact pin. `verify/package.json` pins `@cyclonedx/cyclonedx-npm` 6.0.1 and
+`license-checker-rseidelsohn` 5.0.1 (whose CLI banner prints a stale `4.4.2` — the
+lockfile is authoritative; this is a documented upstream discrepancy).
+
+**Reusable workflow ownership (OTP-01 1d).** Each component is built and verified
+in its own reusable workflow, not via `verify-all.sh`:
+
+| Workflow | Builds & verifies |
+|---|---|
+| `build-android.yml` | APK, mapping, checksums; Docker APK rebuild + ABI/JNI allow-list |
+| `build-web-extension.yml` | extension ZIP tree; bundle allow-list + web reference byte compare |
+| `build-rust.yml` | `rust-jni-wasm`; Rust reference byte compare + JNI/WASM allow-list |
+| `build-native-windows.yml` | verified Windows bridge tree; two runs, identity gate, byte compare |
+| `build-native-macos.yml` | verified macOS bridge tree; two runs, identity gate, byte compare |
+| `build-supply-chain.yml` | SBOM/license/audit reports; report validation + policy enforcement |
+| `build-toolchain-manifest.yml` | `SHA256SUMS.toolchains`; component-manifest validation + aggregation |
+
+Windows runs on `windows-2025` (X64 asserted); macOS runs on `macos-26` (ARM64
+asserted, `DEVELOPER_DIR=/Applications/Xcode_26.6.app`, Xcode build `17F113`, SDK
+`macosx26.5`). Runner labels are versioned, not immutable image SHAs — the
+project makes no image-SHA claim; each run records `ImageOS`/`ImageVersion`/
+`RUNNER_ARCH` and compares bytes only when all three match across both runs.
+Identity mismatch exits 2 and prints `re-run on matched image`.
+
+**Clean contract (OTP-01 1d).** Root `./gradlew clean` removes every declared
+generated product, verification, SBOM, checksum, and tool output under `build/`
+plus the two named source-tree exceptions (`web-extension/dist` and
+`web-extension/rust-wasm/pkg`) and the native-bridge source-tree outputs.
+`rust/scripts/assert-clean.sh` asserts none survive. See
+`docs/reproducible-builds.md` for the full verification supply chain, output
+paths, and the six-step pinned-tool upgrade procedure.
 
 ## Architecture Overview
 

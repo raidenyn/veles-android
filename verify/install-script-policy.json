@@ -1,0 +1,32 @@
+{
+  "policyPath": "verify/install-script-policy.json",
+  "exceptions": [
+    {
+      "project": "web-extension",
+      "package": "esbuild",
+      "version": "0.25.12",
+      "integrity": "sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg==",
+      "command": "node install.js",
+      "referencedFile": "install.js",
+      "referencedFileSha256": "10f6fa3644d8d23d066ff67b0ae449074e75884503546a9fedb667f1dcb9ade2"
+    },
+    {
+      "project": "native-bridge",
+      "package": "esbuild",
+      "version": "0.28.2",
+      "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==",
+      "command": "node install.js",
+      "referencedFile": "install.js",
+      "referencedFileSha256": "612294e278914443bdcf81cb17f54afec34dbdd2ebd999a6ee187912320cc315"
+    },
+    {
+      "project": "web-extension,native-bridge",
+      "package": "fsevents",
+      "version": "2.3.3",
+      "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+      "command": "node-gyp rebuild",
+      "referencedFile": "package.json",
+      "referencedFileSha256": "500839fcc76f6c5efcb454e6614b23c26775e75e1140619fff9ca64c291aec2b"
+    }
+  ]
+}

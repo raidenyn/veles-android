@@ -41,6 +41,7 @@ import {
     readFileSync,
     readdirSync,
     mkdirSync,
+    rmSync,
     writeFileSync,
     existsSync,
     readlinkSync,
@@ -50,6 +51,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import yazl from 'yazl';
 import { buildHostManifest } from '../src/manifest.mjs';
+import { createStandardManifest } from '../../verify/lib/checksum-manifest.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const BRIDGE_DIR = resolve(__dirname, '..');
@@ -157,6 +159,13 @@ function writeSidecar(artifactPath, name) {
     console.log(`sha256: ${digest}`);
 }
 
+async function writeChecksumManifest(outputDir, artifactName) {
+    const sidecarName = `${artifactName}.sha256`;
+    const sumsPath = join(outputDir, 'SHA256SUMS');
+    writeFileSync(sumsPath, await createStandardManifest(outputDir, [artifactName, sidecarName]));
+    console.log(sumsPath);
+}
+
 function sortByRel(entries) {
     entries.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
 }
@@ -201,12 +210,14 @@ function requireSingleInstaller(dir, kind, suffix, label) {
                 `\nRemove stale installers before packaging.`,
         );
     }
-    // Tauri's macOS DMG bundler emits this helper beside the generated disk
-    // image. It is a build-time implementation detail, not archive payload;
-    // permit it while retaining the exact installer allow-list for all other
-    // files and for Windows bundle directories.
+    // Tauri's macOS DMG bundler emits these implementation details beside the
+    // generated disk image. They are not archive payload; permit only their
+    // exact names while retaining the strict installer allow-list for all
+    // other files and for Windows bundle directories.
     const unexpected = all.filter(
-        (n) => !n.endsWith(suffix) && !(kind === 'dmg' && n === 'bundle_dmg.sh'),
+        (n) =>
+            !n.endsWith(suffix) &&
+            !(kind === 'dmg' && (n === 'bundle_dmg.sh' || n === 'Veles Native Bridge.icns')),
     );
     if (unexpected.length > 0) {
         fail(
@@ -227,7 +238,7 @@ function requireSingleInstaller(dir, kind, suffix, label) {
     return name;
 }
 
-function packageWindows(version, manifest) {
+async function packageWindows(version, manifest) {
     const releaseDir = resolveReleaseDir();
     const bundleRoot = join(releaseDir, 'bundle');
     const nsisDir = join(bundleRoot, 'nsis');
@@ -249,6 +260,7 @@ function packageWindows(version, manifest) {
     const msiFile = requireSingleInstaller(msiDir, 'msi', '.msi', 'WiX msi');
 
     const outDir = join(resolveBuildDir(), 'windows');
+    rmSync(outDir, { recursive: true, force: true });
     mkdirSync(outDir, { recursive: true });
     const zipName = `veles-native-bridge-${version}.zip`;
     const zipPath = join(outDir, zipName);
@@ -300,15 +312,17 @@ function packageWindows(version, manifest) {
             });
         }
     }
-    zipfile.end();
-
     const chunks = [];
-    zipfile.outputStream.on('data', (c) => chunks.push(c));
-    zipfile.outputStream.on('end', () => {
-        writeFileSync(zipPath, Buffer.concat(chunks));
-        console.log(zipPath);
-        writeSidecar(zipPath, zipName);
+    await new Promise((resolve, reject) => {
+        zipfile.outputStream.on('data', (c) => chunks.push(c));
+        zipfile.outputStream.once('end', resolve);
+        zipfile.outputStream.once('error', reject);
+        zipfile.end();
     });
+    writeFileSync(zipPath, Buffer.concat(chunks));
+    console.log(zipPath);
+    writeSidecar(zipPath, zipName);
+    await writeChecksumManifest(outDir, zipName);
 }
 
 // Build a deterministic USTAR tar archive entirely in pure JS so the macOS
@@ -426,7 +440,7 @@ function createTar(entries) {
     return Buffer.concat(blocks);
 }
 
-function packageMacos(version, manifest) {
+async function packageMacos(version, manifest) {
     const releaseDir = resolveReleaseDir();
     const bundleMacosDir = join(releaseDir, 'bundle', 'macos');
     const bundleDmgDir = join(releaseDir, 'bundle', 'dmg');
@@ -469,6 +483,7 @@ function packageMacos(version, manifest) {
     const dmgAbs = join(bundleDmgDir, dmgName);
 
     const outDir = join(resolveBuildDir(), 'macos');
+    rmSync(outDir, { recursive: true, force: true });
     mkdirSync(outDir, { recursive: true });
     const tarName = `veles-native-bridge-${version}.tar.gz`;
     const tarPath = join(outDir, tarName);
@@ -504,9 +519,10 @@ function packageMacos(version, manifest) {
     writeFileSync(tarPath, gzBuffer);
     console.log(tarPath);
     writeSidecar(tarPath, tarName);
+    await writeChecksumManifest(outDir, tarName);
 }
 
-function main() {
+async function main() {
     const pkg = readJson(join(BRIDGE_DIR, 'package.json'));
     const version = pkg.version;
     if (typeof version !== 'string' || version.length === 0) {
@@ -524,13 +540,13 @@ function main() {
 
     if (platform === 'windows') {
         const manifest = buildHostManifest('windows');
-        packageWindows(version, manifest);
+        await packageWindows(version, manifest);
     } else {
         // macOS: emit a concrete absolute host path (no {{INSTALL_DIR}}).
         const installRoot = resolveMacosInstallRoot();
         const manifest = buildHostManifest('macos', installRoot);
-        packageMacos(version, manifest);
+        await packageMacos(version, manifest);
     }
 }
 
-main();
+main().catch((caught) => fail(caught.message));
