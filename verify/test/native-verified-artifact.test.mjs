@@ -56,6 +56,25 @@ test('restore records archived macOS symlink modes for Linux aggregate validatio
   }
 });
 
+test('restore orders symlink ledger entries by their stripped view paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'veles-verified-symlink-order-'));
+  try {
+    const source = join(root, 'source');
+    const archive = join(root, 'verified-native.tar');
+    const restored = join(root, 'restored');
+    await mkdir(join(source, 'view', 'a'), { recursive: true });
+    await symlink('host', join(source, 'view', 'a', 'link'));
+    await symlink('host', join(source, 'view', 'a!'));
+
+    await stageVerifiedArtifact(source, archive);
+    await restoreVerifiedArtifact(archive, restored);
+
+    assert.equal(await readFile(join(restored, 'ARCHIVED-SYMLINK-MODES.jsonl'), 'utf8'), '{"path":"a!","mode":"0777"}\n{"path":"a/link","mode":"0777"}\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('restore populates a 0555 directory before applying its restrictive mode', async () => {
   const root = await mkdtemp(join(tmpdir(), 'veles-verified-directory-mode-'));
   try {

@@ -56,7 +56,9 @@ export async function restoreVerifiedArtifact(archive, output) {
   }
   const modes = tree
     .filter((entry) => entry.type === 'symlink' && entry.path.startsWith('view/'))
-    .map((entry) => JSON.stringify({ path: entry.path.slice('view/'.length), mode: entry.mode.toString(8).padStart(4, '0') }))
+    .map((entry) => ({ path: entry.path.slice('view/'.length), mode: entry.mode.toString(8).padStart(4, '0') }))
+    .sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)))
+    .map(JSON.stringify)
     .join('\n');
   if (modes) await writeFile(join(output, SYMLINK_MODES), `${modes}\n`);
 }
