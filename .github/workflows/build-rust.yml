@@ -42,5 +42,6 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
           path: build/rust-package/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14

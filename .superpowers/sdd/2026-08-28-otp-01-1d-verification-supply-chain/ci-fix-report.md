@@ -502,3 +502,30 @@ is exit 2, and successful restoration keeps host cleanup working.
 ### Commit
 
 - `749c1a5 fix(verify): preserve Rust comparison exit status`
+
+## Fix Round 7 - Rust Aggregate Artifact Layout
+
+### Root Cause and Correction
+
+CI run `33891496647` completed every component job, then downloaded artifact
+`rust-jni-wasm` into `build/rust-package` for the aggregate job. The producer's
+`rustPackage` task intentionally copies `wasm/.gitignore` and records it in
+`build/rust-package/SHA256SUMS`. `actions/upload-artifact` excludes hidden files
+by default, so the downloaded artifact lacked `wasm/.gitignore` while its
+manifest still required it. The aggregate validator correctly rejected that
+producer/consumer mismatch with `rust package contains unexpected or missing
+files`.
+
+`build-rust.yml` now sets `include-hidden-files: true` on the existing
+`rust-jni-wasm` upload. No aggregate allow-list or manifest validation was
+relaxed: the downloaded package must still exactly match `SHA256SUMS`.
+
+### Red/Green Evidence
+
+- Added a Rust workflow contract assertion requiring hidden-file upload because
+  the package manifest includes `wasm/.gitignore`.
+- Red: `node --test verify/test/workflow-contracts.test.mjs` failed with `Rust
+  workflow must upload the manifest-listed wasm/.gitignore` before the workflow
+  option was added.
+- Green: `node --test verify/test/workflow-contracts.test.mjs
+  verify/test/aggregate-checksums.test.mjs`: 18 passed.

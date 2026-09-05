@@ -341,6 +341,7 @@ test('Rust workflow packages and reference-verifies rust-jni-wasm', async () => 
   assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, 'Rust workflow must publish the requested artifact name');
   assert.match(source, /path:\s*build\/rust-package\//, 'Rust workflow must upload only its package tree');
   assertExactUploadPaths(source, 'build-rust.yml', ['build/rust-package/']);
+  assert.match(source, /include-hidden-files:\s*true/, 'Rust workflow must upload the manifest-listed wasm/.gitignore');
   assert.doesNotMatch(source, /secrets:/, 'Rust workflow must not accept signing secrets');
 });
 
