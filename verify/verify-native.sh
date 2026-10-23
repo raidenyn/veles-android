@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Compare two native-bridge runs of one platform (CI per-platform layout) or
+# Compare two native-bridge runs of one platform (single-platform layout) or
 # two runs each of both platforms (local verify-all.sh layout), and emit the
-# verified tree(s) for aggregation.
+# verified tree(s). Optional local diagnostic: production CI neither produces
+# nor compares native run transports.
 #
 # Synopsis:
 #   verify-native.sh <resolved-commit> <run-a-dir> <run-b-dir>
 #
-# CI per-platform layout (each run dir contains exactly one transport tar for
-# ONE platform, produced by build-native-<platform>.yml):
+# Single-platform layout (each run dir contains exactly one transport tar for
+# ONE platform, produced locally from an isolated clean build — see
+# docs/reproducible-builds.md; CI no longer creates run transports):
 #   <run-a-dir>/<platform>-<platform>-run.tar[.sha256]
 #   <run-b-dir>/<platform>-<platform>-run.tar[.sha256]
 #   -> verified tree emitted flat under $VERIFY_NATIVE_OUTPUT (default
@@ -167,7 +169,7 @@ if [ -d "$run_a/windows" ] && [ -d "$run_a/macos" ] && [ -d "$run_b/windows" ] &
   exit 0
 fi
 
-# CI per-platform layout: each run dir contains exactly one transport tar for a
-# single platform; emit the verified tree flat under $output, which the calling
-# workflow uploads per-platform.
+# Single-platform layout: each run dir contains exactly one transport tar for
+# a single platform; emit the verified tree flat under $output. The transport
+# is produced locally from an isolated clean build per run.
 node "$script_dir/native/compare-runs.mjs" "$resolved_commit" "$run_a" "$run_b" "$output"

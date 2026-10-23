@@ -1,9 +1,22 @@
 # OTP-01 sub-project 1d: Verification and supply chain design
 
-Status: Approved; implementation in progress
+Status: Approved; **partially superseded** — see the supersession note below
 Issue: raidenyn/veles-android#80
 Parent design: `docs/superpowers/specs/2026-08-26-otp-01-reproducible-toolchains-design.md`
 Predecessors: 1a PR #107, 1b PR #109, 1c PR #110
+
+> **Supersession note (2026-10-23, PR #111).** The CI-side A/B verification
+> requirements in this design are superseded by
+> `docs/superpowers/specs/2026-10-23-single-build-pipelines-design.md`:
+> production component workflows now build each artifact exactly once and
+> never invoke reproducibility verifiers, create A/B run transports, compare
+> runner identities, or require Docker reference builds; the
+> `build-toolchain-manifest.yml` aggregate workflow is retired. The verifier
+> CLIs, offline wrappers, run-transport helpers, and their focused tests are
+> retained as **optional local diagnostics**. The native comparison is a
+> stable-payload comparison (host executable + Chrome manifests; Tauri
+> installer and outer-archive bytes are exempt). This document is preserved
+> as historical design; do not follow its production-gate requirements.
 
 ## Purpose
 

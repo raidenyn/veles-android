@@ -2,6 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Supersession note (2026-10-23, PR #111).** This plan's CI-gating
+> requirements (A/B run transports in `build-native-*.yml`, reference byte
+> compares in the producer workflows, the toolchain aggregate workflow, and
+> the tag release verify job) are superseded by
+> `docs/superpowers/plans/2026-10-23-single-build-pipelines.md`. Producers now
+> build once per invocation; the verifier CLIs and their focused tests remain
+> as optional local tools. This plan is preserved as historical progress
+> evidence; do not re-implement its production verification gates.
+
 **Goal:** Add reproducible component builds, byte comparison, checksums, SBOMs, license and remote-code enforcement, and target-native CI evidence that closes OTP-01.
 
 **Architecture:** Existing npm, Gradle, Cargo, and Tauri commands remain artifact producers. Focused Node ESM libraries implement cross-platform manifest, metadata, policy, and comparison logic; thin shell/PowerShell wrappers own environment setup. Reusable `build-<component>.yml` workflows verify the artifacts they produce, while `release-build.yml` composes them and `verify-all.sh` remains a local-only orchestrator.

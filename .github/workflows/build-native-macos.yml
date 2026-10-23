@@ -9,14 +9,19 @@ on:
       artifact-name:
         required: true
         type: string
-        default: verified-native-macos
+        default: native-macos
 
 permissions:
   contents: read
 
 jobs:
-  run-a:
+  build:
     runs-on: macos-26
+    # Job-level environment so the pinned Xcode actually reaches the build
+    # process: every step below (xcodebuild validation and the Gradle/Tauri
+    # packaging tree) inherits DEVELOPER_DIR.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -24,91 +29,25 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '26.8.1'
-      - name: Validate runner identity and Xcode
+      - name: Validate pinned Xcode toolchain
         run: |
-          test -n "$ImageOS"
-          test -n "$ImageVersion"
-          test -n "$RUNNER_ARCH"
-          [ "$RUNNER_ARCH" = 'ARM64' ]
-          export DEVELOPER_DIR=/Applications/Xcode_26.6.app
           test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
           xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
-      - name: Produce sandboxed offline native package
-        run: verify/native/network-deny-macos.sh
-      - name: Assemble extracted verification view
-        run: node verify/native/extract-view.mjs macos native-bridge/src-tauri/target/release build/native-bridge/macos build/verification/native-runs/run-a/view
-      - name: Create run transport
-        run: verify/native/prepare-run.sh build/verification/native-runs/run-a/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos build/verification/native-runs/run-a/view
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: unverified-macos-run-a
-          path: build/verification/native-runs/run-a/
-          if-no-files-found: error
-          retention-days: 1
-  run-b:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ inputs.commit-sha }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: '26.8.1'
-      - name: Validate runner identity and Xcode
-        run: |
-          test -n "$ImageOS"
-          test -n "$ImageVersion"
-          test -n "$RUNNER_ARCH"
-          [ "$RUNNER_ARCH" = 'ARM64' ]
-          export DEVELOPER_DIR=/Applications/Xcode_26.6.app
-          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
-          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
-      - name: Produce sandboxed offline native package
-        run: verify/native/network-deny-macos.sh
-      - name: Assemble extracted verification view
-        run: node verify/native/extract-view.mjs macos native-bridge/src-tauri/target/release build/native-bridge/macos build/verification/native-runs/run-b/view
-      - name: Create run transport
-        run: verify/native/prepare-run.sh build/verification/native-runs/run-b/native-macos-run.tar "${{ inputs.commit-sha }}" build/native-bridge/macos build/verification/native-runs/run-b/view
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: unverified-macos-run-b
-          path: build/verification/native-runs/run-b/
-          if-no-files-found: error
-          retention-days: 1
-  compare:
-    needs: [run-a, run-b]
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ inputs.commit-sha }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: '26.8.1'
-      - name: Validate runner identity and Xcode
-        run: |
-          test -n "$ImageOS"
-          test -n "$ImageVersion"
-          test -n "$RUNNER_ARCH"
-          [ "$RUNNER_ARCH" = 'ARM64' ]
-          export DEVELOPER_DIR=/Applications/Xcode_26.6.app
-          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
-          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: unverified-macos-run-a
-          path: build/verification/native-runs/run-a
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: unverified-macos-run-b
-          path: build/verification/native-runs/run-b
-      - name: Compare native transports
-        run: verify/verify-native.sh "${{ inputs.commit-sha }}" build/verification/native-runs/run-a build/verification/native-runs/run-b
-      - name: Stage verified artifact
-        run: node verify/native/verified-artifact.mjs stage build/verification/native-bridge build/verification/verified-native-macos.tar
+      # Normal packaging on the target runner: the executable, .app bundle,
+      # and DMG are built and packaged by one Gradle invocation with no
+      # sandbox wrapper.
+      - name: Package native bridge
+        run: ./gradlew bridgePackage
+      # Upload the packaged product directly: the outer archive, its sha256
+      # sidecar, and the component SHA256SUMS. The payload (including the
+      # symlinked .app entries) stays inside the outer archive, so
+      # artifact-upload mode changes cannot affect it.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ inputs.artifact-name }}
-          path: build/verification/verified-native-macos.tar
+          path: |
+            build/native-bridge/macos/veles-native-bridge-*.tar.gz
+            build/native-bridge/macos/veles-native-bridge-*.tar.gz.sha256
+            build/native-bridge/macos/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

@@ -11,9 +11,11 @@ from that source. Every release can be verified two ways.
 | Attestation (one-liner) | This exact file was built by this repo's release workflow at this tagged commit | GitHub (runner + Sigstore) |
 | Reproducible rebuild | This exact file is byte-identical (ignoring the signature) to what the tagged source produces | Nothing but the source tree and your own machine |
 
-Additionally, CI rebuilds every release independently **before** it is published:
-the release is created as a draft, verified by a second job, and only published if
-the rebuild matches. A release that cannot be reproduced never goes public.
+CI builds each release **once** and publishes it after an integrity check: the
+draft release's APK asset must match the SHA-256 digest the build job
+computed, and every release is attested and ships `SHA256SUMS`. Publication
+does **not** require a successful reproducibility comparison — the rebuild
+paths below are opt-in diagnostics you can run yourself.
 
 ## Path 1 — attestation (seconds)
 
@@ -50,15 +52,22 @@ Requirements: Docker, plus `bash`, `realpath`, `grep`, and `tr` on the host
 
 `SHA256SUMS` on each release lists the digests of the published artifacts.
 
-## Path 3 — full toolchain verification (OTP-01 sub-project 1d)
+## Path 3 — full toolchain verification (OTP-01 sub-project 1d, optional local tools)
 
-1d closes OTP-01 by proving the Android APK, web-extension, shared Rust JNI/WASM,
-and unsigned native-bridge artifacts are reproducible in their documented build
-environments, and by adding auditable SBOM, license, install-script, and
-remote-code enforcement. It does **not** replace npm, Gradle, Cargo, Vite,
-wasm-pack, or Tauri as artifact producers; it adds small component verifiers,
-reusable component workflows, and a tiny local aggregate entry point around
-those existing producers.
+1d closes OTP-01 by making the Android APK, web-extension, shared Rust
+JNI/WASM, and unsigned native-bridge artifacts **verifiable in their
+documented build environments** with small optional component verifiers, and
+by adding auditable SBOM, license, install-script, and remote-code
+enforcement. It does **not** replace npm, Gradle, Cargo, Vite, wasm-pack, or
+Tauri as artifact producers. The reproducibility verifiers are **opt-in local
+diagnostics**: CI builds each component exactly once in its own
+`build-<component>.yml` reusable workflow and uploads its product with
+component checksums — it runs no reference rebuilds, A/B comparisons, or
+aggregation, and publication requires none of them. The one CI-side
+exception is `verify/verify-supply-chain.sh`: `build-supply-chain.yml` runs it
+as its supply-chain **policy** job (SBOM/license/script/remote-code
+enforcement — not a reproducibility comparison), and it remains runnable
+locally.
 
 ### Local aggregate entry point
 
@@ -75,7 +84,8 @@ evidence to one clean source tree. It passes the resolved commit to native
 verification and aggregation.
 
 The native input layout (two independent runs per platform, transferred as
-deterministic transport tars with SHA-256 sidecars) is:
+deterministic transport tars with SHA-256 sidecars) is produced **locally**
+with the committed helper scripts — CI no longer creates run transports:
 
 ```
 <native-run-a-dir>/windows/native-windows-run.tar
@@ -88,15 +98,52 @@ deterministic transport tars with SHA-256 sidecars) is:
 <native-run-b-dir>/macos/native-macos-run.tar.sha256
 ```
 
+Each run must come from its own **isolated, clean build of the exact commit**
+— a separate fresh checkout (or worktree, or a fresh target runner) per slot.
+Two `bridgePackage` invocations in the same Gradle workspace are **not**
+independent: `bridgeBuild`/`bridgeBundle` declare outputs, so on the second
+invocation Gradle may mark the host and bundle tasks up to date and repackage
+the first build's executable and installers — yielding two transports of one
+underlying compilation, which proves nothing about cross-run stability.
+
+Per slot, from a **clean checkout of the resolved commit** on the target
+platform (run all three steps before any `./gradlew clean` or output move —
+they read `native-bridge/src-tauri/target/release` and
+`build/native-bridge/<platform>/`):
+
+1. Build and package once, optionally under the committed offline wrappers
+   (`verify/native/network-deny-macos.sh`, or on Windows
+   `pwsh -NoProfile -File verify/native/network-deny-windows.ps1 -TauriCachePath "native-bridge/src-tauri/target/.tauri"`):
+   `./gradlew bridgePackage` (Windows: `.\gradlew.bat bridgePackage`).
+2. Assemble the extracted verification view (replace `<platform>` with
+   `windows` or `macos`):
+   ```
+   node verify/native/extract-view.mjs <platform> native-bridge/src-tauri/target/release build/native-bridge/<platform> <run-dir>/view
+   ```
+3. Create the transport (macOS/Linux shell, or Windows PowerShell — same four
+   arguments, matching the layout block above):
+   ```
+   verify/native/prepare-run.sh    <run-dir>/<platform>/native-<platform>-run.tar <resolved-commit> build/native-bridge/<platform> <run-dir>/view
+   pwsh -File verify/native/prepare-run.ps1 <run-dir>/<platform>/native-<platform>-run.tar <resolved-commit> build/native-bridge/<platform> <run-dir>/view   # Windows
+   ```
+
+`prepare-run.*` requires the environment variables `ImageOS`, `ImageVersion`,
+and `RUNNER_ARCH` to be set and records them into the transport manifest.
+Source them truthfully from the machine that produced the build: GitHub
+runners provide all three natively; on any other host, set them to values
+that honestly describe that machine. The identity gate exists to detect that
+the two runs did not come from the same image — it is an environment check,
+not a requirement to use GitHub runners.
+
 From the repository root, `verify-all.sh` invokes, in order, and stops on the
 first failure:
 
 1. `verify/verify.sh <apk> <resolved-commit>` — Android rebuild + signature-stripped compare; also exports the canonical unsigned reference APK to `build/verification/android/app-release-unsigned.apk`.
 2. `verify/verify-web.sh` — web-extension candidate/reference byte compare.
 3. `verify/verify-rust.sh` — Rust JNI/WASM candidate/reference byte compare.
-4. `verify/verify-native.sh <resolved-commit> <native-run-a-dir> <native-run-b-dir>` — two independent Windows and two macOS runs, identity gate, then byte compare; output under `build/verification/native-bridge/windows/` and `build/verification/native-bridge/macos/`. (CI calls `verify-native.sh` once per platform with a single-tar run dir, uploading the flat `build/verification/native-bridge/` tree per platform; the toolchain-manifest workflow then downloads each into its platform subdirectory. The local `verify-all.sh` two-platform layout drives both platforms in one call.)
+4. `verify/verify-native.sh <resolved-commit> <native-run-a-dir> <native-run-b-dir>` — two independent Windows and two macOS runs, identity gate, then stable-payload compare; output under `build/verification/native-bridge/windows/` and `build/verification/native-bridge/macos/`.
 5. `verify/verify-supply-chain.sh` — SBOM, license, install-script, and remote-code enforcement; reports under `build/verification/supply-chain/`.
-6. `verify/aggregate-checksums.sh <resolved-commit>` — assembles `build/verification/SHA256SUMS.toolchains`.
+6. `verify/aggregate-checksums.sh <resolved-commit>` — assembles `build/verification/SHA256SUMS.toolchains` (a local convenience manifest; CI publishes per-component checksums inside each artifact instead).
 
 `verify-all.sh` is intentionally small: it validates arguments, calls the
 component verifiers in a fixed documented order, stops on the first failure,
@@ -104,20 +151,39 @@ normalizes and propagates the component exit status, and prints a component
 summary. It contains no build implementation, checksum parser, runner-identity
 parser, artifact allow-list, SBOM generator, license decision, or remote-code
 scanner. It fails with exit 2 rather than silently skipping an input or
-component. **CI never invokes `verify-all.sh`**; CI builds and verifies each
-component in its own `build-<component>.yml` reusable workflow.
+component. **CI never invokes `verify-all.sh` or any reproducibility-comparison
+verifier.** The single CI-side exception is `verify/verify-supply-chain.sh`,
+which `build-supply-chain.yml` runs as its policy job (see the component
+table); it is a policy check, not a reproducibility comparison.
 
 ### Component commands
 
-| Component | Command | Builds | Verifier output |
+Each component has one CI producer (builds the product once and uploads it
+with component checksums) and one optional local verifier:
+
+| Component | CI producer (single build) | Optional local verifier | Verifier output |
 |---|---|---|---|
-| Android APK | `verify/verify.sh <apk> <ref>` | `./gradlew assembleRelease` in `verify/Dockerfile` | `build/verification/android/app-release-unsigned.apk` |
-| Web-extension | `npm run package --prefix web-extension` then `verify/verify-web.sh` | Vite build + deterministic zip | `build/web-extension/{veles-extension-<version>.zip,.zip.sha256,SHA256SUMS}` |
-| Rust JNI/WASM | `./gradlew rustPackage` then `verify/verify-rust.sh` | three ABIs + WASM package | `build/rust-package/{jni,wasm,SHA256SUMS}` |
-| Native Windows | `./gradlew bridgePackage` on `windows-2025` (two runs) | unsigned WiX/NSIS installers | `build/native-bridge/windows/`, `build/verification/native-bridge/windows/` |
-| Native macOS | `./gradlew bridgePackage` on `macos-26` (two runs) | unsigned `.app`/`.dmg` | `build/native-bridge/macos/`, `build/verification/native-bridge/macos/` |
-| Supply chain | `verify/verify-supply-chain.sh` | SBOM + license + script + remote-code reports | `build/sbom/*.cdx.json`, `build/verification/supply-chain/*.txt` |
-| Aggregate | `verify/aggregate-checksums.sh <commit>` | namespaced checksum manifest | `build/verification/SHA256SUMS.toolchains` |
+| Android APK | `./gradlew assembleRelease` in `build-android.yml`; artifact `android-release` = actual APK + `mapping.txt` + `SHA256SUMS` | `verify/verify.sh <apk> <ref>` (Docker rebuild + signature-stripped compare) | `build/verification/android/app-release-unsigned.apk` |
+| Web-extension | `npm run package` in `build-web-extension.yml`; artifact `web-extension` = ZIP + sidecar + `SHA256SUMS` | `verify/verify-web.sh` (candidate/reference byte compare) | `build/web-extension/{veles-extension-<version>.zip,.zip.sha256,SHA256SUMS}` |
+| Rust JNI/WASM | `./gradlew rustPackage` in `build-rust.yml`; artifact `rust-jni-wasm` | `verify/verify-rust.sh` (candidate/reference byte compare) | `build/rust-package/{jni,wasm,SHA256SUMS}` |
+| Native Windows | `./gradlew bridgePackage` **once** on `windows-2025` in `build-native-windows.yml`; artifact `native-windows` = archive + sidecar + `SHA256SUMS` | `verify/verify-native.sh` with two locally produced run dirs | `build/native-bridge/windows/`, `build/verification/native-bridge/windows/` |
+| Native macOS | `./gradlew bridgePackage` **once** on `macos-26` in `build-native-macos.yml`; artifact `native-macos` = archive + sidecar + `SHA256SUMS` | `verify/verify-native.sh` with two locally produced run dirs | `build/native-bridge/macos/`, `build/verification/native-bridge/macos/` |
+| Supply chain | `verify/verify-supply-chain.sh` in `build-supply-chain.yml` (policy enforcement runs in CI); artifact `supply-chain-reports` | same script locally | `build/sbom/*.cdx.json`, `build/verification/supply-chain/*.txt` |
+
+#### What the native comparison actually proves
+
+`verify/verify-native.sh` is a **stable-payload comparison**, not
+installer-byte reproducibility. After its runner-identity gate, it compares
+byte-for-byte across the two runs only the stable raw evidence — the raw host
+executable (`veles-native-bridge`, exposed inside the `.app` bundle on macOS)
+and the Chrome native-messaging manifest files. Tauri's platform installers
+(NSIS `-setup.exe`, `.msi`, `.dmg`, and `.app` bundle metadata) embed
+producer-controlled timestamps and image identifiers, so they — and the
+enclosing deterministic archive plus its `.sha256` sidecar, which necessarily
+drift with those bytes — are **exempt** from cross-run byte equality. Within
+each single run the verifier still binds the packaged archive byte-for-byte
+to the extracted view, so a run cannot ship a payload that differs from its
+packaging.
 
 #### Supply-chain verifier local prerequisites
 
@@ -146,6 +212,10 @@ Only then run `verify/verify-supply-chain.sh`. The Rust toolchain
 shells out to `./gradlew verifyCargoCyclonedx`.
 
 ### Output and evidence paths
+
+CI uploads each component's product artifact under its neutral name (see the
+component table above); the paths below are the **optional local verifier**
+outputs (plus the ordinary producer trees every build creates):
 
 | Path | Contents |
 |---|---|
@@ -226,34 +296,36 @@ installs with `npm ci --ignore-scripts`, executing only from
 | `verify/Dockerfile.web` | digest-pinned `node:26.8.1-bookworm-slim` | Node 26.8.1, npm 11.19.0 |
 | `verify/Dockerfile.rust` | digest-pinned base + committed archive hashes | JDK 21, Android SDK/NDK, Rust 1.98.0, cargo-ndk 4.1.2, wasm-pack 0.15.0, wasm-bindgen-cli 0.2.127, Node 26.8.1 |
 
-### Runner identities (native)
+### Runner identities (native, optional local comparison only)
 
-Native builds run on **versioned** GitHub-hosted runner labels, not immutable
-image identifiers. The project makes **no claim** that `windows-2025` or
-`macos-26` pins an underlying image SHA; GitHub-hosted runner images update
-weekly. Each run records and compares three identity fields — `ImageOS`,
-`ImageVersion`, and `RUNNER_ARCH` — and bytes are compared only when all three
-match across both independent runs of a platform.
+Native CI builds run on **versioned** GitHub-hosted runner labels, not
+immutable image identifiers. The project makes **no claim** that
+`windows-2025` or `macos-26` pins an underlying image SHA; GitHub-hosted
+runner images update weekly. Production jobs build once per platform and
+perform **no** identity comparison. The three identity fields — `ImageOS`,
+`ImageVersion`, and `RUNNER_ARCH` — are recorded and compared only by the
+optional local `verify-native.sh` two-run comparison, which compares stable
+payloads only when all three match across both runs.
 
-| Platform | Runner label | Architecture | Toolchain pins |
-|---|---|---|---|
-| Windows | `windows-2025` | `X64` (asserted) | Node 26.8.1, Rust 1.98.0, Tauri CLI 2.6.0, isolated WiX/NSIS cache |
-| macOS | `macos-26` | `ARM64` (asserted) | Node 26.8.1, Rust 1.98.0, Tauri CLI 2.6.0 |
+| Platform | Runner label | Toolchain pins |
+|---|---|---|
+| Windows | `windows-2025` | Node 26.8.1, Rust 1.98.0, Tauri CLI 2.6.0, isolated WiX/NSIS cache (provisioned by `verify/native/provision-windows-tools.ps1`, with its absolute `NSIS_PATH` exported) |
+| macOS | `macos-26` | Node 26.8.1, Rust 1.98.0, Tauri CLI 2.6.0, job-level `DEVELOPER_DIR=/Applications/Xcode_26.6.app` (Xcode build `17F113`, SDK `macosx26.5` asserted) |
 
-macOS additionally sets `DEVELOPER_DIR=/Applications/Xcode_26.6.app`, asserts Xcode
-build **17F113**, and asserts SDK **macosx26.5**. Windows asserts `RUNNER_ARCH`
-is `X64`. If identities differ between the two runs, verification exits 2 and
-prints both triples plus `re-run on matched image`. Identity mismatch is an
-environment error, not artifact drift.
+If identities differ between the two local runs, the optional verifier exits
+2 and prints both triples plus `re-run on matched image`. Identity mismatch is
+an environment error, not artifact drift.
 
-### Native re-run instruction
+### Identity-mismatch recovery (local tool)
 
-When the two independent runs of a platform record different `ImageOS`,
-`ImageVersion`, or `RUNNER_ARCH` triples, the verifier does **not** compare bytes.
-It exits 2, prints both triples, and instructs the operator to **re-run on a
-matched image** (re-dispatch the workflow until both land on the same weekly
-image). This is the only recovery path for an identity mismatch; the verifier
-never normalizes or ignores a differing identity field.
+When the two local runs of a platform record different `ImageOS`,
+`ImageVersion`, or `RUNNER_ARCH` triples, `verify-native.sh` does **not**
+compare bytes. It exits 2, prints both triples, and instructs the operator to
+**re-run on a matched image** — produce the two run directories again (e.g.
+from fresh builds after the weekly runner image rolls) until both record the
+same triple. The verifier never normalizes or ignores a differing identity
+field. Production CI is unaffected: it performs no such comparison and needs
+no re-running.
 
 ### Offline acquisition and package boundary
 
@@ -277,20 +349,16 @@ is what each verifier actually enforces:
   committed lockfiles (`--locked`), and `apksigcopier` byte/signature
   comparison — not on an offline package step. The APK is the one component
   whose packaging is not network-denied.
-- **Native** — each CI job acquires online (`bridgeBuild` plus `npm ci`,
-  `cargo fetch --locked`, Rust toolchain setup, and on Windows the pinned Tauri
-  WiX/NSIS cache provisioning), then denies network **only for `bridgePackage`**.
-  The wrapper proves connectivity by reaching one fixed HTTPS probe immediately
-  before denial, activates and inspects the deny rule, requires the same probe
-  to fail during denial, sets Cargo offline mode, runs `bridgePackage`, and
-  restores host networking in an unconditional cleanup step. `bridgeBuild`
-  itself runs online; only the final `bridgePackage` runs under the deny.
-  - **macOS** uses `sandbox-exec` **process-tree** isolation
-    (`(deny network-outbound)`) instead of host-wide PF mutation. This is an
-    accepted exception to the platform-wide-deny rule: it confines the deny to
-    the packaging process tree and avoids mutating shared host firewall state on
-    a multi-tenant runner.
-  - **Windows** uses a `NetFirewallRule` outbound deny.
+- **Native** — production CI acquires and builds with normal host networking:
+  `bridgeInstall`, `bridgeBuild`, and `bridgePackage` run online on the target
+  platform runner, and the pinned WiX/NSIS cache is provisioned before
+  packaging. The committed offline wrappers (`verify/native/network-deny-windows.ps1`,
+  `verify/native/network-deny-macos.sh`) remain **optional local diagnostics**:
+  they provision the same pinned cache, prove connectivity with a fixed HTTPS
+  probe, deny outbound network **only for `bridgePackage`** (Windows via a
+  `NetFirewallRule` outbound deny; macOS via a `sandbox-exec` process-tree
+  profile instead of host-wide PF mutation), require the probe to fail during
+  denial, set Cargo offline mode, and restore host networking in cleanup.
 - Failure of the pre-denial probe is an environment error (exit 2), not proof of
   isolation. Static scanning alone is not accepted as evidence that packaging
   was offline.
@@ -387,8 +455,11 @@ manifests). The bridge is headless (`windows = []`, no tray/menu/autostart),
 exits on stdin EOF, and produces unsigned artifacts only — Tauri signing env
 vars are documented as absent and `tauri.conf.json` hard-codes unsigned output.
 Windows and macOS builds run on pinned GitHub-hosted runners (`windows-2025`,
-`macos-26`); two independent runs per platform are compared after an identity
-gate, and the verified output lands under `build/verification/native-bridge/`.
+`macos-26`); production CI builds and packages each platform exactly once
+(`bridgePackage`, with the executable and its installers created on the same
+target runner rather than via a Linux cross-toolchain), and the optional local
+`verify-native.sh` two-run comparison is what checks the stable payload across
+independent runs.
 
 The Play "dependency metadata" block (`dependenciesInfo`) is disabled — it is
 encrypted with a Google key and inherently non-reproducible.
@@ -436,18 +507,21 @@ skipping any step can silently break reproducibility.
    | Supply chain | (no separate build) | `verify/verify-supply-chain.sh` |
    The Docker-based verifiers (`verify.sh`, `verify-web.sh`, `verify-rust.sh`)
    require Docker; the native verifier requires two pre-built run directories.
-6. **Run the complete labeled or manually dispatched graph before accepting the
-   new reference environment.** A pull request carrying the `release-build`
-   label, or a manual `workflow_dispatch` from `master`, runs the complete
-   component graph. The release workflow's verify job is the enforcement gate:
-   if the bump broke determinism, the next release stays an unpublished draft
-   until fixed. If a tool is nondeterministic at the new version, pin or
-   configure around it and record the finding here.
+6. **Run the complete labeled or manually dispatched graph before merging.** A
+   pull request carrying the `release-build` label, or a manual
+   `workflow_dispatch` from `master`, runs the complete single-build component
+   graph and the supply-chain policy checks. These producers plus the optional
+   local verifiers from step 5 are the determinism evidence: publication itself
+   no longer gates on a reproducibility comparison, so a tool that breaks
+   determinism shows up in step 5's local comparison rather than blocking a
+   release. If a tool is nondeterministic at the new version, pin or configure
+   around it and record the finding here.
 
 Runner documentation states that image labels are versioned but images update
-weekly. Recorded identity permits post-hoc equality only. If stable labels or
-installed Xcode/tool versions disappear, the pin update follows this procedure
-rather than silently selecting a default.
+weekly. Recorded identity permits post-hoc equality only (in the optional local
+native comparison). If stable labels or installed Xcode/tool versions
+disappear, the pin update follows this procedure rather than silently
+selecting a default.
 
 ## Caveats
 
@@ -462,8 +536,15 @@ rather than silently selecting a default.
   network access (its reference build clones and `./gradlew assembleRelease` with
   networking — see "Offline acquisition and package boundary" above). Web and
   Rust references package with `--network=none`; their candidate builds need
-  network for acquisition. Native `bridgePackage` runs under a network deny;
-  acquisition is online.
+  network for acquisition. Production native `bridgePackage` runs online; the
+  network-deny wrappers are optional local offline diagnostics.
 - Native `verify-all.sh` requires two independent run directories per platform
-  as local inputs; the runs are produced by the reusable native workflows, not
-  by the local orchestrator.
+  as local inputs. CI no longer produces run transports, so produce both runs
+  yourself — each from its own **clean checkout** of the exact commit on the
+  target platform (two `bridgePackage` invocations in one Gradle workspace are
+  not independent; Gradle may reuse the first build's outputs). Assemble each
+  transport with `verify/native/extract-view.mjs` and
+  `verify/native/prepare-run.sh` / `prepare-run.ps1` as described above.
+- Publication makes **no reproducibility claim**: releases are attested and
+  checksummed, but a passing build is not evidence that a second build would
+  be byte-identical. Only the optional local verifiers provide that evidence.

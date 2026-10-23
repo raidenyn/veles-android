@@ -9,7 +9,7 @@ on:
       artifact-name:
         required: true
         type: string
-        default: verified-supply-chain
+        default: supply-chain-reports
 
 permissions:
   contents: read

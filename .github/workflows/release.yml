@@ -130,12 +130,6 @@ jobs:
           subject-path: |
             veles-${{ github.ref_name }}.apk
             mapping.txt
-      - name: Upload APK for the verify job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-apk
-          path: veles-${{ github.ref_name }}.apk
-          if-no-files-found: error
       - name: Create draft GitHub Release
         id: create_draft
         env:
@@ -180,26 +174,9 @@ jobs:
             -f tag_name="$GITHUB_REF_NAME" \
             -f body="$NOTES"
 
-  verify:
-    name: verify reproducibility
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      # Default checkout of the tag ref — brings the TAG'S OWN verify/ toolkit and pins.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: release-apk
-      - name: Rebuild from source and compare
-        run: |
-          VELES_REPO_URL="https://github.com/$GITHUB_REPOSITORY" \
-            verify/verify.sh "veles-$GITHUB_REF_NAME.apk" "$GITHUB_REF_NAME"
-
   publish:
     name: publish
-    needs: [build, verify]
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       contents: write

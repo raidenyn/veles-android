@@ -1,16 +1,16 @@
 name: release-build
 
-# Thin caller graph composing the verified reusable workflows from Tasks 10-11.
+# Thin caller graph composing the single-build reusable workflows.
 # - Ordinary push to master runs only build-android.yml (preserves the existing
 #   release-build cost profile).
 # - A pull request carrying the `release-build` label runs the complete
-#   component graph (Android, web, Rust, supply-chain, both native platforms,
-#   and the toolchain aggregate).
+#   component graph (Android, web, Rust, supply-chain, both native platforms).
 # - A manual workflow_dispatch has an initial guard requiring
 #   github.ref == 'refs/heads/master'; a dispatch from any selectable non-master
 #   ref fails before any build or publication. A valid master dispatch runs the
-#   complete graph and then publishes a prerelease from verified Android output,
-#   preserving the existing prerelease collision/replacement behavior.
+#   complete graph and then publishes a prerelease from the single-build
+#   Android artifact, preserving the existing prerelease collision/replacement
+#   behavior.
 
 on:
   push:
@@ -57,8 +57,7 @@ jobs:
     uses: ./.github/workflows/build-android.yml
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: verified-android
-      release-evidence-artifact-name: android-release-evidence
+      artifact-name: android-release
     secrets:
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -80,7 +79,7 @@ jobs:
     uses: ./.github/workflows/build-web-extension.yml
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: verified-web-extension
+      artifact-name: web-extension
 
   rust:
     if: |
@@ -114,7 +113,7 @@ jobs:
     uses: ./.github/workflows/build-supply-chain.yml
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: verified-supply-chain
+      artifact-name: supply-chain-reports
 
   native-windows:
     if: |
@@ -131,7 +130,7 @@ jobs:
     uses: ./.github/workflows/build-native-windows.yml
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: verified-native-windows
+      artifact-name: native-windows
 
   native-macos:
     if: |
@@ -148,41 +147,25 @@ jobs:
     uses: ./.github/workflows/build-native-macos.yml
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: verified-native-macos
-
-  aggregate:
-    if: |
-      always() &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && (
-        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
-        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
-      ))) &&
-      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
-    needs: [guard, android, web-extension, rust, supply-chain, native-windows, native-macos]
-    permissions:
-      contents: read
-    uses: ./.github/workflows/build-toolchain-manifest.yml
-    with:
-      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: SHA256SUMS.toolchains
-      android-artifact-name: verified-android
-      web-extension-artifact-name: verified-web-extension
-      rust-artifact-name: rust-jni-wasm
-      native-windows-artifact-name: verified-native-windows
-      native-macos-artifact-name: verified-native-macos
+      artifact-name: native-macos
 
   publish:
     name: publish prerelease
+    # Publication requires the master guard and the explicit success of every
+    # full-graph producer and supply-chain policy job; there is no aggregate
+    # safety net anymore.
     if: |
       always() &&
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/master' &&
       needs.guard.result == 'success' &&
       needs.android.result == 'success' &&
+      needs.web-extension.result == 'success' &&
+      needs.rust.result == 'success' &&
       needs.supply-chain.result == 'success' &&
-      needs.aggregate.result == 'success'
-    needs: [guard, android, supply-chain, aggregate]
+      needs.native-windows.result == 'success' &&
+      needs.native-macos.result == 'success'
+    needs: [guard, android, web-extension, rust, supply-chain, native-windows, native-macos]
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -198,23 +181,26 @@ jobs:
           VERSION=$(./gradlew -q :app:androidGitVersion | awk -F'\t' '/androidGitVersion.name/ {print $2}')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved derived version: $VERSION"
-      - name: Download verified Android release evidence
+      - name: Download Android release artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: android-release-evidence
-          path: verified-android
-      - name: Publish prerelease from verified Android output
+          name: android-release
+          path: android-release
+      - name: Publish prerelease from the single-build Android artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           if [ "$HAS_KEYSTORE" = "true" ]; then
             SUFFIX=""
-            APK="verified-android/app-release.apk"
+            APK="android-release/app-release.apk"
           else
             SUFFIX=" (unsigned)"
-            APK="verified-android/app-release-unsigned.apk"
+            APK="android-release/app-release-unsigned.apk"
           fi
+          test -f "$APK"
+          test -f "android-release/mapping.txt"
+          test -f "android-release/SHA256SUMS"
 
           # Preserve the existing prerelease collision/replacement behavior: a
           # previous manual prerelease for the same derived version is replaced,
@@ -232,7 +218,8 @@ jobs:
 
           gh release create "$VERSION" \
             "$APK" \
-            "verified-android/mapping.txt" \
+            "android-release/mapping.txt" \
+            "android-release/SHA256SUMS" \
             --title "Veles $VERSION (manual build)$SUFFIX" \
             --prerelease \
             --generate-notes \
