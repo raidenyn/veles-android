@@ -18,6 +18,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    readdirSync,
     rmSync,
     symlinkSync,
     writeFileSync,
@@ -26,6 +27,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readTar, readZip, type TarEntry } from './archive-reader';
 
@@ -187,6 +189,54 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         expect(() =>
             execFileSync('node', [PACKAGE_SCRIPT], { cwd: BRIDGE_DIR, encoding: 'utf8', env }),
         ).not.toThrow();
+        rmSync(base, { recursive: true, force: true });
+    });
+
+    it("accepts Tauri's product icon beside the .dmg installer without archiving it", () => {
+        const base = mkdtempSync(join(tmpdir(), 'veles-pkg-macos-dmg-icon-'));
+        const rel = join(base, 'target', 'release');
+        const bOut = join(base, 'build', 'native-bridge');
+        const macosDir = join(rel, 'bundle', 'macos', APP_BUNDLE, 'Contents', 'MacOS');
+        mkdirSync(macosDir, { recursive: true });
+        writeFileSync(join(macosDir, EXEC_NAME), 'x');
+        chmodSync(join(macosDir, EXEC_NAME), 0o755);
+        writeDmg(rel);
+        writeFileSync(join(rel, 'bundle', 'dmg', 'Veles Native Bridge.icns'), 'ICNS-BYTES');
+        const env = {
+            ...process.env,
+            VELES_BRIDGE_PLATFORM: 'macos',
+            VELES_BRIDGE_RELEASE_DIR: rel,
+            VELES_BRIDGE_BUILD_OUT_DIR: bOut,
+            VELES_BRIDGE_INSTALL_ROOT: installRoot,
+        };
+        expect(() =>
+            execFileSync('node', [PACKAGE_SCRIPT], { cwd: BRIDGE_DIR, encoding: 'utf8', env }),
+        ).not.toThrow();
+        const entries = readTar(readFileSync(join(bOut, 'macos', 'veles-native-bridge-0.1.0.tar.gz')));
+        expect(entries.some((entry) => entry.name.endsWith('.icns'))).toBe(false);
+        rmSync(base, { recursive: true, force: true });
+    });
+
+    it('rejects an arbitrary sibling beside the .dmg installer', () => {
+        const base = mkdtempSync(join(tmpdir(), 'veles-pkg-macos-dmg-stray-'));
+        const rel = join(base, 'target', 'release');
+        const bOut = join(base, 'build', 'native-bridge');
+        const macosDir = join(rel, 'bundle', 'macos', APP_BUNDLE, 'Contents', 'MacOS');
+        mkdirSync(macosDir, { recursive: true });
+        writeFileSync(join(macosDir, EXEC_NAME), 'x');
+        chmodSync(join(macosDir, EXEC_NAME), 0o755);
+        writeDmg(rel);
+        writeFileSync(join(rel, 'bundle', 'dmg', 'unexpected.txt'), 'stray');
+        const env = {
+            ...process.env,
+            VELES_BRIDGE_PLATFORM: 'macos',
+            VELES_BRIDGE_RELEASE_DIR: rel,
+            VELES_BRIDGE_BUILD_OUT_DIR: bOut,
+            VELES_BRIDGE_INSTALL_ROOT: installRoot,
+        };
+        expect(() =>
+            execFileSync('node', [PACKAGE_SCRIPT], { cwd: BRIDGE_DIR, encoding: 'utf8', env }),
+        ).toThrow(/unexpected|stray|installer/i);
         rmSync(base, { recursive: true, force: true });
     });
 
@@ -513,6 +563,50 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         expect(first.equals(second)).toBe(true);
     });
 
+    it('pins fixed tar metadata and a fixed gzip header for cross-run determinism', () => {
+        // The macOS product tarball is byte-compared across two CI runs on the
+        // same image. Every tar header must carry mtime=0, uid=0, gid=0, empty
+        // uname/gname, and zeroed devmajor/devminor, and the gzip wrapper must
+        // carry mtime=0 so the archive is reproducible regardless of the build
+        // host or wall clock. parseTar (archive-reader) already reads these
+        // fields; assert them here as a determinism regression.
+        runPackage();
+        const gz = readFileSync(join(buildOutDir, 'macos', 'veles-native-bridge-0.1.0.tar.gz'));
+        // gzip header: bytes 4-7 are MTIME (must be 0 for a fixed header).
+        expect(gz[0]).toBe(0x1f);
+        expect(gz[1]).toBe(0x8b);
+        expect(gz.subarray(4, 8).equals(Buffer.from([0, 0, 0, 0]))).toBe(true);
+        const entries = readTar(gz);
+        expect(entries.length).toBeGreaterThan(0);
+        for (const entry of entries) {
+            expect(entry.mtime, `tar entry ${entry.name} mtime must be epoch 0`).toBe(0);
+        }
+        // Re-parse the raw (unzipped) tar to assert uid/gid are 0 (readTar does
+        // not expose uid/gid, so re-slice the header fields directly).
+        const tar = gz[0] === 0x1f && gz[1] === 0x8b ? gunzipSync(gz) : gz;
+        let off = 0;
+        while (off + 512 <= tar.length) {
+            const header = tar.subarray(off, off + 512);
+            if (header.every((b) => b === 0)) break;
+            const uid = parseInt(header.subarray(108, 116).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const gid = parseInt(header.subarray(116, 124).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const uname = header.subarray(265, 297).every((b) => b === 0);
+            const gname = header.subarray(297, 329).every((b) => b === 0);
+            const devmajor = header.subarray(329, 337).every((b) => b === 0);
+            const devminor = header.subarray(337, 345).every((b) => b === 0);
+            const name = header.subarray(0, header.indexOf(0) < 0 ? 100 : header.indexOf(0)).toString('utf8');
+            expect(uid, `tar entry ${name} uid must be 0`).toBe(0);
+            expect(gid, `tar entry ${name} gid must be 0`).toBe(0);
+            expect(uname, `tar entry ${name} uname must be empty`).toBe(true);
+            expect(gname, `tar entry ${name} gname must be empty`).toBe(true);
+            expect(devmajor, `tar entry ${name} devmajor must be 0`).toBe(true);
+            expect(devminor, `tar entry ${name} devminor must be 0`).toBe(true);
+            const size = parseInt(header.subarray(124, 136).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const blocks = Math.ceil(size / 512);
+            off += 512 + blocks * 512;
+        }
+    });
+
     it('writes a sha256 sidecar matching the archive', () => {
         runPackage();
         const tarPath = join(buildOutDir, 'macos', 'veles-native-bridge-0.1.0.tar.gz');
@@ -523,6 +617,24 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         expect(digest).toMatch(/^[0-9a-f]{64}$/);
         const actual = createHash('sha256').update(readFileSync(tarPath)).digest('hex');
         expect(digest).toBe(actual);
+    });
+
+    it('replaces stale output and writes SHA256SUMS for only the package and sidecar', () => {
+        runPackage();
+        const outDir = join(buildOutDir, 'macos');
+        const tarName = 'veles-native-bridge-0.1.0.tar.gz';
+        const sidecarName = `${tarName}.sha256`;
+        writeFileSync(join(outDir, 'stale-sentinel'), 'stale');
+
+        runPackage();
+
+        expect(readdirSync(outDir).sort()).toEqual(['SHA256SUMS', sidecarName, tarName].sort());
+        const archive = readFileSync(join(outDir, tarName));
+        const sidecar = readFileSync(join(outDir, sidecarName));
+        expect(readFileSync(join(outDir, 'SHA256SUMS'), 'utf8')).toBe(
+            `${createHash('sha256').update(archive).digest('hex')}  ${tarName}\n` +
+                `${createHash('sha256').update(sidecar).digest('hex')}  ${sidecarName}\n`,
+        );
     });
 });
 
@@ -745,5 +857,23 @@ describe('package.mjs Windows zip (extraction-tested)', () => {
         const digest = sidecar.split(/\s+/)[0];
         const actual = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
         expect(digest).toBe(actual);
+    });
+
+    it('replaces stale output and writes SHA256SUMS for only the package and sidecar', () => {
+        runPackage();
+        const outDir = join(buildOutDir, 'windows');
+        const zipName = 'veles-native-bridge-0.1.0.zip';
+        const sidecarName = `${zipName}.sha256`;
+        writeFileSync(join(outDir, 'stale-sentinel'), 'stale');
+
+        runPackage();
+
+        expect(readdirSync(outDir).sort()).toEqual(['SHA256SUMS', sidecarName, zipName].sort());
+        const archive = readFileSync(join(outDir, zipName));
+        const sidecar = readFileSync(join(outDir, sidecarName));
+        expect(readFileSync(join(outDir, 'SHA256SUMS'), 'utf8')).toBe(
+            `${createHash('sha256').update(archive).digest('hex')}  ${zipName}\n` +
+                `${createHash('sha256').update(sidecar).digest('hex')}  ${sidecarName}\n`,
+        );
     });
 });

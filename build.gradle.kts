@@ -2,9 +2,11 @@
 import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.MessageDigest
 import java.util.Properties
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.Sync
 
 plugins {
     base
@@ -44,13 +46,27 @@ val rustCrateDir = rustDir.dir("veles-crypto")
 val rustToolsFile = rustDir.file("toolchain-tools.toml")
 val rustTargetDir = layout.buildDirectory.dir("rust/target")
 val rustToolsDir = layout.buildDirectory.dir("rust-tools")
+val verifyCargoToolsFile = layout.projectDirectory.file("verify/cargo-tools.toml")
+val verifyToolsDir = layout.buildDirectory.dir("verify-tools")
 val wasmPackageDir = layout.projectDirectory.dir("web-extension/rust-wasm/pkg")
 val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
+// On Windows, Gradle's Exec task process launcher cannot exec the `npm` shell
+// script directly — it needs `npm.cmd`. Node ships `node.exe` so plain `node`
+// works, but `npm` does not. Resolved once at configuration time and reused by
+// every bridge Exec task that invokes npm.
+val npmCommand = if (windowsExecutableSuffix.isNotEmpty()) "npm.cmd" else "npm"
 
 fun pinnedToolVersion(name: String): String {
     val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
     return requireNotNull(pattern.find(rustToolsFile.asFile.readText())) {
         "Missing '$name' pin in ${rustToolsFile.asFile}"
+    }.groupValues[1]
+}
+
+fun pinnedVerificationToolVersion(name: String): String {
+    val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
+    return requireNotNull(pattern.find(verifyCargoToolsFile.asFile.readText())) {
+        "Missing '$name' pin in ${verifyCargoToolsFile.asFile}"
     }.groupValues[1]
 }
 
@@ -80,6 +96,33 @@ fun requireNdkVersion(ndkDir: File, expected: String) {
         "Expected Android NDK $expected at $ndkDir, found '$actual'. " +
             "Install the pinned version with sdkmanager \"ndk;$expected\"."
     }
+}
+
+// rustc embeds the absolute source paths of panic locations (function, file,
+// line) into release binaries whenever panic is not fully stripped
+// (CARGO_PROFILE_RELEASE_PANIC=unwind keeps the panic machinery for JNI).
+// Dependency crates come from ${CARGO_HOME}/registry/src/<registry-hash>/..., so
+// two builds with different CARGO_HOME (CI runner /home/runner/.cargo vs the
+// verification Docker image /opt/cargo) embed different byte strings, shifting
+// every ELF section offset and producing a .so (and APK) that differs between
+// builds of identical source. Remapping the registry prefix to a stable
+// "/cargo-registry" path makes the embedded strings identical regardless of
+// where cargo stores its registry (proven locally: two builds with different
+// CARGO_HOME produce byte-identical .so with this flag). The workspace crate's
+// own path is NOT embedded (no panic locations from the workspace crate carry
+// an absolute path into the binary), so only the registry prefix needs
+// remapping. RUSTFLAGS is set as a task environment (overriding any inherited
+// RUSTFLAGS) so the remap is not optional: a verification-relevant build must
+// not silently pick up an ambient RUSTFLAGS that omits it.
+fun cargoRegistryRemapRustFlags(): String {
+    val cargoHomeEnv = System.getenv("CARGO_HOME")
+    val cargoHome: File = if (cargoHomeEnv.isNullOrBlank()) {
+        File(System.getProperty("user.home"), ".cargo")
+    } else {
+        File(cargoHomeEnv)
+    }
+    val registrySrc = File(cargoHome, "registry/src").absolutePath
+    return "--remap-path-prefix=$registrySrc=/cargo-registry/src"
 }
 
 val rustToolchainCheck = tasks.register("rustToolchainCheck") {
@@ -166,6 +209,57 @@ fun registerCargoTool(
     return install to verify
 }
 
+fun registerVerificationCargoTool(
+    taskStem: String,
+    crateName: String,
+    binaryName: String,
+    versionArguments: List<String> = listOf("--version"),
+): Pair<TaskProvider<Exec>, TaskProvider<Task>> {
+    val version = pinnedVerificationToolVersion(crateName)
+    val installRoot = verifyToolsDir.map { it.dir(crateName) }
+    val binary = installRoot.map {
+        it.file("bin/$binaryName$windowsExecutableSuffix")
+    }
+    val install = tasks.register<Exec>("install$taskStem") {
+        group = "verification"
+        description = "Installs $crateName $version into the verification tool directory."
+        dependsOn("rustToolchainCheck")
+        inputs.property("crateName", crateName)
+        inputs.property("version", version)
+        inputs.file(verifyCargoToolsFile)
+        inputs.file(rustDir.file("rust-toolchain.toml"))
+        outputs.dir(installRoot)
+        workingDir(rustDir)
+        environment(
+            "CARGO_TARGET_DIR",
+            layout.buildDirectory.dir("verify-tools/tool-install-target/$crateName").get().asFile,
+        )
+        doFirst { delete(installRoot) }
+        commandLine(
+            "cargo", "install", "--locked", "--version", version,
+            "--root", installRoot.get().asFile, crateName,
+        )
+    }
+    val verify = tasks.register("verify$taskStem") {
+        group = "verification"
+        description = "Verifies the isolated $crateName tool version."
+        dependsOn(install)
+        inputs.property("version", version)
+        inputs.file(binary.map { it.asFile })
+        doLast {
+            val output = providers.exec {
+                commandLine(binary.get().asFile, *versionArguments.toTypedArray())
+            }.standardOutput.asText.get().trim()
+            val actualVersion = output.split(Regex("\\s+"))
+                .firstOrNull { it.matches(Regex("\\d+\\.\\d+\\.\\d+(-\\S+)?")) }
+            check(actualVersion == version) {
+                "Expected $crateName $version at ${binary.get().asFile}, got: $output"
+            }
+        }
+    }
+    return install to verify
+}
+
 val (_, verifyCargoNdk) = registerCargoTool("CargoNdk", "cargo-ndk", "cargo-ndk")
 val (_, verifyWasmPack) = registerCargoTool("WasmPack", "wasm-pack", "wasm-pack")
 val (_, verifyWasmBindgen) = registerCargoTool(
@@ -173,6 +267,13 @@ val (_, verifyWasmBindgen) = registerCargoTool(
     "wasm-bindgen-cli",
     "wasm-bindgen",
 )
+val (_, verifyCargoCyclonedx) = registerVerificationCargoTool(
+    "CargoCyclonedx",
+    "cargo-cyclonedx",
+    "cargo-cyclonedx",
+    listOf("cyclonedx", "--version"),
+)
+val (_, verifyCargoDeny) = registerVerificationCargoTool("CargoDeny", "cargo-deny", "cargo-deny")
 
 val rustWasmBindgenConsistency = tasks.register("rustWasmBindgenConsistency") {
     group = "rust"
@@ -239,6 +340,11 @@ val rustWasm = tasks.register<Exec>("rustWasm") {
                 bindgenBinDir.prependToPath(System.getenv("PATH")),
             ),
         )
+        // Registry-path remap for a byte-reproducible WASM binary (see
+        // cargoRegistryRemapRustFlags): wasm-bindgen panic locations embed
+        // ${CARGO_HOME}/registry/src/... into veles_crypto_bg.wasm, so builds
+        // with different CARGO_HOME produce different bytes without it.
+        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
         executable(wasmPackBin)
         setArgs(
             listOf(
@@ -319,6 +425,10 @@ val rustJni = tasks.register<Exec>("rustJni") {
         environment("ANDROID_NDK_HOME", ndkDir)
         environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
         environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
+        // Registry-path remap for byte-reproducible JNI libraries (see
+        // cargoRegistryRemapRustFlags): without it, CI runner vs Docker
+        // rebuilds embed different CARGO_HOME paths and the APK compare fails.
+        environment("RUSTFLAGS", cargoRegistryRemapRustFlags())
     }
     commandLine(
         "cargo", "ndk", "--platform", "33",
@@ -328,6 +438,57 @@ val rustJni = tasks.register<Exec>("rustJni") {
         "--output-dir", rustJniOutput.get().asFile,
         "build", "--workspace", "--release", "--locked",
     )
+}
+
+val rustPackageDir = layout.buildDirectory.dir("rust-package")
+val rustJniPaths = listOf(
+    "arm64-v8a/libveles_crypto.so",
+    "armeabi-v7a/libveles_crypto.so",
+    "x86_64/libveles_crypto.so",
+)
+
+val rustPackage = tasks.register<Sync>("rustPackage") {
+    group = "rust"
+    description = "Stages the JNI and WASM artifacts as the rust-jni-wasm package."
+    dependsOn(rustJni, rustWasm)
+    from(rustJniOutput) {
+        include(rustJniPaths)
+        into("jni")
+    }
+    from(wasmPackageDir) { into("wasm") }
+    into(rustPackageDir)
+    doFirst {
+        val actual = rustJniOutput.get().asFile.walkTopDown()
+            .filter { it.isFile }
+            .map { it.relativeTo(rustJniOutput.get().asFile).invariantSeparatorsPath }
+            .sorted()
+            .toList()
+        check(actual == rustJniPaths.sorted()) {
+            "Unexpected JNI artifact paths: $actual"
+        }
+    }
+    doLast {
+        val root = rustPackageDir.get().asFile
+        // Gradle's Sync excludes dotfiles, but wasm-pack emits .gitignore as
+        // part of the package contract, so copy it before recording checksums.
+        wasmPackageDir.file(".gitignore").asFile.copyTo(root.resolve("wasm/.gitignore"), overwrite = true)
+        val paths = root.walkTopDown()
+            .filter { it.isFile && it.name != "SHA256SUMS" }
+            .map { it.relativeTo(root).invariantSeparatorsPath }
+            .sorted()
+            .toList()
+        check(paths.filter { it.startsWith("jni/") } == rustJniPaths.map { "jni/$it" }.sorted()) {
+            "Rust package JNI paths are invalid: $paths"
+        }
+        check(paths.any { it.startsWith("wasm/") }) { "Rust package has no WASM files" }
+        val sums = paths.joinToString(separator = "\n", postfix = "\n") { path ->
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(root.resolve(path).readBytes())
+                .joinToString("") { byte -> "%02x".format(byte) }
+            "$digest  $path"
+        }
+        root.resolve("SHA256SUMS").writeText(sums)
+    }
 }
 
 val rustFormat = tasks.register<Exec>("rustFormat") {
@@ -441,7 +602,7 @@ val bridgeInstall = tasks.register<Exec>("bridgeInstall") {
     inputs.file(bridgeDir.file("package-lock.json"))
     outputs.dir(bridgeDir.dir("node_modules"))
     workingDir(bridgeDir)
-    commandLine("npm", "ci")
+    commandLine(npmCommand, "ci")
 }
 
 val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
@@ -449,7 +610,7 @@ val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
     description = "Checks Prettier formatting for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "run", "format:check")
+    commandLine(npmCommand, "run", "format:check")
 }
 
 val bridgeLint = tasks.register<Exec>("bridgeLint") {
@@ -457,7 +618,7 @@ val bridgeLint = tasks.register<Exec>("bridgeLint") {
     description = "Runs ESLint for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "run", "lint")
+    commandLine(npmCommand, "run", "lint")
 }
 
 val bridgeTypecheck = tasks.register<Exec>("bridgeTypecheck") {
@@ -465,7 +626,7 @@ val bridgeTypecheck = tasks.register<Exec>("bridgeTypecheck") {
     description = "Runs TypeScript type-checking for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "run", "typecheck")
+    commandLine(npmCommand, "run", "typecheck")
 }
 
 val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
@@ -473,7 +634,7 @@ val bridgeNpmTest = tasks.register<Exec>("bridgeNpmTest") {
     description = "Runs vitest source-level tests for native-bridge/."
     dependsOn(bridgeInstall)
     workingDir(bridgeDir)
-    commandLine("npm", "test")
+    commandLine(npmCommand, "test")
 }
 
 val bridgeRustToolchainCheck = tasks.register("bridgeRustToolchainCheck") {
@@ -613,8 +774,14 @@ val bridgeBuild = tasks.register<Exec>("bridgeBuild") {
         // Hard-code unsigned output: no updater signature, no macOS codesign,
         // no notarization, even if the calling environment inherited them.
         stripSigningEnv(this as Exec)
+        val osName = System.getProperty("os.name")
+        if (osName.startsWith("Windows")) {
+            // MSVC otherwise writes wall-clock PE/debug timestamps and a random
+            // PDB GUID. /Brepro derives both from link inputs instead.
+            environment("RUSTFLAGS", "-C link-arg=/Brepro")
+        }
     }
-    commandLine("npm", "run", "build")
+    commandLine(npmCommand, "run", "build")
 }
 
 // OTP-01 sub-project 1c — separate unsigned Tauri *bundle* build.
@@ -673,8 +840,27 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
         // Tauri's DMG bundler checks specifically for CI=true before enabling
         // its headless --skip-jenkins path.
         environment("CI", "true")
+        // Tauri 2.6.0 locates WiX under <cargo target dir>/.tauri/WixTools314
+        // and NSIS under <cargo target dir>/.tauri/NSIS when
+        // bundle.useLocalToolsDir is true (see native-bridge/src-tauri/
+        // tauri.conf.json). The verification workflow provisions a reviewed,
+        // hash-pinned toolset into native-bridge/src-tauri/target/.tauri/ via
+        // verify/native/provision-windows-tools.ps1 before denying outbound
+        // network for bridgePackage. TAURI_WIX_PATH / TAURI_NSIS_PATH env vars
+        // are NOT read by Tauri 2.6.0 (the NSIS bundler reads NSIS_PATH, not
+        // TAURI_NSIS_PATH; WiX has no env override). Forward NSIS_PATH from
+        // the provisioned cache as a belt-and-suspenders override so a stale
+        // user NSIS install can never be selected even if the local-tools
+        // directory resolution were somehow bypassed.
+        listOf("NSIS_PATH").forEach { key ->
+            System.getenv(key)?.takeIf(String::isNotBlank)?.let { environment(key, it) }
+        }
 
         val osName = System.getProperty("os.name")
+        if (osName.startsWith("Windows")) {
+            // Keep the bundle's Cargo link invocation consistent with bridgeBuild.
+            environment("RUSTFLAGS", "-C link-arg=/Brepro")
+        }
         val targets = bridgeBundleTargetsFor(osName)
             ?: throw GradleException(
                 "bridgeBundle: unsupported host platform '$osName'. " +
@@ -688,7 +874,7 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
         // command. Resulting invocation:
         //   tauri build --ci --bundles <targets> -- --locked --features tauri-runtime
         commandLine(
-            "npm",
+            npmCommand,
             "run",
             "bundle",
             "--",
@@ -763,11 +949,29 @@ tasks.named("check") {
 
 tasks.named<Delete>("clean") {
     dependsOn(":app:clean")
+    // Root `clean` removes every declared generated product, verification,
+    // SBOM, checksum, and tool output under `build/` plus the two named
+    // source-tree exceptions (`web-extension/dist` and the WASM package).
+    // `rust/scripts/assert-clean.sh` asserts none of these survive, so a stale
+    // artifact can never be mistaken for freshly built evidence.
     delete(
         layout.projectDirectory.dir("web-extension/dist"),
         wasmPackageDir,
         layout.projectDirectory.dir("native-bridge/src-tauri/target"),
         layout.projectDirectory.dir("native-bridge/dist"),
         layout.buildDirectory.dir("native-bridge"),
+        // Rust JNI/WASM staged package (rustPackage producer).
+        rustPackageDir,
+        // Aggregate verification evidence and toolchain manifest.
+        layout.buildDirectory.dir("verification"),
+        // CycloneDX SBOM outputs.
+        layout.buildDirectory.dir("sbom"),
+        // Verification cargo-cyclonedx / cargo-deny install roots.
+        layout.buildDirectory.dir("verify-tools"),
+        // Web-extension deterministic package (npm run package producer).
+        layout.buildDirectory.dir("web-extension"),
+        // Rust build cache and auxiliary CLI install cache (local, gitignored).
+        layout.buildDirectory.dir("rust"),
+        layout.buildDirectory.dir("rust-tools"),
     )
 }

@@ -38,16 +38,43 @@ Everything Veles does happens locally, inside the Android NotificationListenerSe
 
 ### Verify your download
 
-Every release can be verified against its source — either in one command
-(trusting GitHub):
+Every release is built once by CI, attested, and published with a `SHA256SUMS`
+manifest covering the APK and its mapping. You can verify what you downloaded
+in seconds (trusting GitHub):
 
 ```
 gh attestation verify veles-X.Y.Z.apk --repo raidenyn/veles-android
 ```
 
-or by rebuilding it bit-for-bit yourself with nothing but Docker. CI refuses to
-publish a release whose APK it cannot independently reproduce. See
-[docs/reproducible-builds.md](docs/reproducible-builds.md).
+or rebuild it bit-for-bit yourself with nothing but Docker using the optional
+`verify/verify.sh` tool. Publication does **not** require a successful
+reproducibility comparison — reproducibility is an opt-in diagnostic, not a
+release gate. See [docs/reproducible-builds.md](docs/reproducible-builds.md).
+
+### Optional full toolchain verification (OTP-01 sub-project 1d)
+
+Beyond the APK, the web-extension ZIP, the shared Rust JNI/WASM package, and
+the unsigned native-bridge builds can each be checked against a pinned
+reference environment with the optional local verifiers under `verify/`
+(`verify-web.sh`, `verify-rust.sh`, `verify-native.sh`,
+`verify-supply-chain.sh`), plus auditable SBOM, license, install-script, and
+remote-code enforcement. The local aggregate entry point is:
+
+```
+verify/verify-all.sh <apk> <git-ref> <native-run-a-dir> <native-run-b-dir>
+```
+
+Exit codes: **0** = all matched, **1** = artifact/policy mismatch, **2** =
+usage/pin/environment/identity error. These are **opt-in local diagnostics**:
+CI builds each component exactly once in its own `build-<component>.yml`
+workflow and publishes its product with component checksums — it no longer
+performs A/B rebuild comparisons or aggregation. The native comparison
+covers the stable payload (the host executable and Chrome manifest files);
+Tauri installer bytes (NSIS/MSI/DMG, `.app` metadata) and the enclosing
+archive are exempt from cross-run byte equality because Tauri embeds
+timestamps and image identifiers. See
+[docs/reproducible-builds.md](docs/reproducible-builds.md) for the exact
+component commands, output paths, and the pinned-tool upgrade procedure.
 
 ## Requirements
 
@@ -83,7 +110,9 @@ sub-project layout:
 - `web-extension/` — npm/Vite MV3 extension and deterministic package.
 - `rust/` — shared Rust core with Android JNI and browser WASM bindings.
 - `native-bridge/` — Tauri 2.x headless Native Messaging host (unsigned, Windows/macOS).
-- `verify/` — reproducible APK verifier; broader toolchain verification lands in 1d.
+- `verify/` — reproducible APK verifier plus the OTP-01 1d component verifiers
+  (`verify-web.sh`, `verify-rust.sh`, `verify-native.sh`, `verify-supply-chain.sh`,
+  `aggregate-checksums.sh`) and the local `verify-all.sh` orchestrator.
 
 ## Install
 

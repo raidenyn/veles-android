@@ -1,0 +1,4 @@
+{
+  "policyPath": "verify/cargo-build-script-policy.json",
+  "exceptions": []
+}

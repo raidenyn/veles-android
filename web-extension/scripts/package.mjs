@@ -14,6 +14,7 @@
 // Outputs (at the repo-root `build/web-extension/`, NOT inside web-extension/):
 //   - veles-extension-<version>.zip      deterministic zip of dist/
 //   - veles-extension-<version>.zip.sha256  "<hexdigest>  <zipname>\n"
+//   - SHA256SUMS                            canonical checksums for the two files above
 //
 // Deterministic-zip recipe (mirrors the former Kotlin DSL):
 //   - entries sorted lexicographically by path
@@ -27,10 +28,12 @@
 //     entry to read as a regular file / directory rather than `?`.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yazl from 'yazl';
+
+import { createStandardManifest } from '../../verify/lib/checksum-manifest.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const WEB_EXT_DIR = resolve(__dirname, '..');
@@ -78,7 +81,7 @@ function walkFiles(dir, base = '') {
     return { files, dirs };
 }
 
-function main() {
+async function main() {
     // Ensure dist/ exists and is current. The `package` npm script runs
     // `vite build` first, but be defensive: if dist/ is missing, fail.
     const distStat = (() => {
@@ -109,7 +112,8 @@ function main() {
         a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0,
     );
 
-    // Prepare the output directory.
+    // Recreate the output directory so every package has exactly its declared files.
+    rmSync(BUILD_DIR, { recursive: true, force: true });
     mkdirSync(BUILD_DIR, { recursive: true });
     const zipName = `veles-extension-${version}.zip`;
     const zipPath = join(BUILD_DIR, zipName);
@@ -132,19 +136,24 @@ function main() {
             });
         }
     }
-    zipfile.end();
-
     const chunks = [];
-    zipfile.outputStream.on('data', (c) => chunks.push(c));
-    zipfile.outputStream.on('end', () => {
-        writeFileSync(zipPath, Buffer.concat(chunks));
-        const digest = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
-        const sidecarPath = join(BUILD_DIR, `${zipName}.sha256`);
-        writeFileSync(sidecarPath, `${digest}  ${zipName}\n`);
-        console.log(zipPath);
-        console.log(sidecarPath);
-        console.log(`sha256: ${digest}`);
+    await new Promise((resolve, reject) => {
+        zipfile.outputStream.on('data', (chunk) => chunks.push(chunk));
+        zipfile.outputStream.once('end', resolve);
+        zipfile.outputStream.once('error', reject);
+        zipfile.end();
     });
+    writeFileSync(zipPath, Buffer.concat(chunks));
+    const digest = createHash('sha256').update(readFileSync(zipPath)).digest('hex');
+    const sidecarName = `${zipName}.sha256`;
+    const sidecarPath = join(BUILD_DIR, sidecarName);
+    writeFileSync(sidecarPath, `${digest}  ${zipName}\n`);
+    const sumsPath = join(BUILD_DIR, 'SHA256SUMS');
+    writeFileSync(sumsPath, await createStandardManifest(BUILD_DIR, [zipName, sidecarName]));
+    console.log(zipPath);
+    console.log(sidecarPath);
+    console.log(sumsPath);
+    console.log(`sha256: ${digest}`);
 }
 
-main();
+main().catch((caught) => fail(caught.message));

@@ -1,0 +1,2 @@
+cargo-cyclonedx = "0.5.9"
+cargo-deny = "0.20.2"

@@ -1,0 +1,57 @@
+name: build-native-windows
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: native-windows
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.8.1'
+      # Provision the pinned, hash-verified WiX/NSIS toolset into the isolated
+      # Tauri local-tools cache (bundle.useLocalToolsDir), then export the
+      # absolute NSIS_PATH the packaging build reads. The cache path must be
+      # canonicalized before use: Gradle launches Tauri from native-bridge/, so
+      # NSIS_PATH must point at the resolved cache rather than the relative
+      # workflow argument, and Tauri's NSIS bundler reads NSIS_PATH (not
+      # TAURI_NSIS_PATH). GITHUB_ENV carries it into the packaging step below.
+      - name: Provision pinned Windows installer tools
+        run: |
+          $cache = [IO.Path]::GetFullPath('native-bridge/src-tauri/target/.tauri')
+          pwsh -NoProfile -File verify/native/provision-windows-tools.ps1 -TauriCachePath $cache
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "NSIS_PATH=$(Join-Path $cache 'NSIS')" >> $env:GITHUB_ENV
+      # Normal packaging on the target runner: the executable, NSIS, and MSI
+      # installers are built and packaged by one Gradle invocation with no
+      # offline/firewall wrapper.
+      - name: Package native bridge
+        run: .\gradlew.bat bridgePackage
+      # Upload the packaged product directly: the outer archive, its sha256
+      # sidecar, and the component SHA256SUMS. The installer payload stays
+      # inside the outer archive, so artifact-upload mode changes cannot
+      # affect it.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            build/native-bridge/windows/veles-native-bridge-*.zip
+            build/native-bridge/windows/veles-native-bridge-*.zip.sha256
+            build/native-bridge/windows/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

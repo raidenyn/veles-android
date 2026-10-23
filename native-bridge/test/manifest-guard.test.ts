@@ -6,8 +6,27 @@ import { buildHostManifest, VELES_EXTENSION_ID } from '../src/manifest';
 // the bridge via chrome.runtime.connectNative. Exact-match assertions so a
 // wrong extension ID, a wrong path, or a weak type is caught at `npm test`.
 describe('native-messaging host manifest (exact match)', () => {
-    it('VELES_EXTENSION_ID is a 32-char lowercase [a-p] string', () => {
-        expect(VELES_EXTENSION_ID).toMatch(/^[a-p]{32}$/);
+    it('VELES_EXTENSION_ID is exactly the Veles extension identity', () => {
+        expect(VELES_EXTENSION_ID).toBe('abcdefghijklmnopabcdefghijklmnop');
+    });
+
+    it('Windows manifest preserves the exact host name and binary name', () => {
+        const manifest = buildHostManifest('windows');
+        expect(manifest.name).toBe('app.veles.native_bridge');
+        expect(manifest.path).toBe('veles-native-bridge.exe');
+    });
+
+    it('macOS manifest preserves the exact app bundle and binary name', () => {
+        const manifest = buildHostManifest('macos');
+        expect(manifest.path).toBe(
+            '{{INSTALL_DIR}}/Veles Native Bridge.app/Contents/MacOS/veles-native-bridge',
+        );
+    });
+
+    it('manifests preserve the exact allowed extension origin', () => {
+        expect(buildHostManifest('windows').allowed_origins).toEqual([
+            'chrome-extension://abcdefghijklmnopabcdefghijklmnop/',
+        ]);
     });
 
     it('buildHostManifest("windows") produces the exact Windows manifest', () => {

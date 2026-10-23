@@ -1,0 +1,53 @@
+name: build-native-macos
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+      artifact-name:
+        required: true
+        type: string
+        default: native-macos
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    # Job-level environment so the pinned Xcode actually reaches the build
+    # process: every step below (xcodebuild validation and the Gradle/Tauri
+    # packaging tree) inherits DEVELOPER_DIR.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.8.1'
+      - name: Validate pinned Xcode toolchain
+        run: |
+          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
+          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+      # Normal packaging on the target runner: the executable, .app bundle,
+      # and DMG are built and packaged by one Gradle invocation with no
+      # sandbox wrapper.
+      - name: Package native bridge
+        run: ./gradlew bridgePackage
+      # Upload the packaged product directly: the outer archive, its sha256
+      # sidecar, and the component SHA256SUMS. The payload (including the
+      # symlinked .app entries) stays inside the outer archive, so
+      # artifact-upload mode changes cannot affect it.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            build/native-bridge/macos/veles-native-bridge-*.tar.gz
+            build/native-bridge/macos/veles-native-bridge-*.tar.gz.sha256
+            build/native-bridge/macos/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
