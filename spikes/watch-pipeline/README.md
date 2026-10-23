@@ -93,11 +93,17 @@ bridge code the VPS uses.
 **BLE central (esp32-nimble 0.13, NimBLE)**
 - An active 5 s scan from the watch saw 17 advertisers. Free heap after NimBLE init was 324 KB.
 - Not yet run: `ble.probe` against the Android spike peripheral, which needs that debug APK on a
-  phone.
+  phone. This is the one remaining unverified step of the pipeline.
 
 **JTAG**
 - Windows binds the USB-JTAG interface (MI_02) to the in-box `winusb.inf` without a device
   interface GUID. OpenOCD's libusb then finds the device but fails with `LIBUSB_ERROR_NOT_FOUND`.
-  The home PC installer registers a GUID; a gdb attach is still to be confirmed after that.
+  With a GUID registered (home PC installer), OpenOCD v0.12.0-esp32-20260831 examines both cores
+  and serves gdb, alongside the serial bridge (separate USB interfaces).
+- esp-gdb 17.1 attaches with FreeRTOS thread awareness (`main`, `nimble_host`, `btController`,
+  `esp_timer`, IDLE0/1, ipc0/1). **Attaching gdb resets the chip** with
+  `board/esp32s3-builtin.cfg`'s defaults: uptime restarted, and the threads sat at the ROM reset
+  vector `0x40000400`. Debug from boot, with breakpoints set at attach; don't count on inspecting
+  live state undisturbed. The firmware runs normally after detach.
 
 `pytest tests -v` through the bridge: 3 passed, 1 skipped (the phone peer).
