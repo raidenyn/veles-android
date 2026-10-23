@@ -1,0 +1,30 @@
+[package]
+name = "watch-pipeline"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+rust-version = "1.82"
+publish = false
+description = "Disposable T-Watch-S3 pipeline-proof firmware: remote build/flash/serial/JTAG/BLE-central checks"
+
+[[bin]]
+name = "watch-pipeline"
+harness = false # no built-in test harness on the target; host tests live in tests/
+
+[profile.release]
+opt-level = "s"
+debug = true # symbols stay in the ELF (not flashed); needed for remote gdb
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[dependencies]
+anyhow = "1"
+esp-idf-svc = "0.53"
+esp32-nimble = "0.13"
+log = "0.4"
+serde_json = "1"
+
+[build-dependencies]
+embuild = "0.33.7"
