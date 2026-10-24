@@ -382,7 +382,7 @@ test('Rust workflow packages rust-jni-wasm without a reference rebuild', async (
   assert.doesNotMatch(source, /secrets:/, 'Rust workflow must not accept signing secrets');
 });
 
-test('supply-chain workflow enforces reports before uploading exactly three SBOMs', async () => {
+test('supply-chain workflow enforces reports before uploading exactly four SBOMs', async () => {
   const source = await workflow('build-supply-chain.yml');
   assertReusableWorkflow(source, 'build-supply-chain.yml');
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
@@ -393,6 +393,7 @@ test('supply-chain workflow enforces reports before uploading exactly three SBOM
   assert.match(source, /artifact-name:[\s\S]*?default:\s*supply-chain-reports/, 'Supply-chain artifact name must default to the neutral supply-chain-reports');
   assertExactUploadPaths(source, 'build-supply-chain.yml', [
     'build/sbom/web-extension.cdx.json',
+    'build/sbom/protocol.cdx.json',
     'build/sbom/rust.cdx.json',
     'build/sbom/native-bridge.cdx.json',
     'build/verification/supply-chain/npm-licenses.txt',

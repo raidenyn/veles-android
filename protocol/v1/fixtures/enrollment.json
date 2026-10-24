@@ -1,0 +1,3118 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.fixtures",
+  "description": "OTP-02 Task 4 state fixtures: phone pairing attempt/rate accounting, confirmation ordering, identity-record admission, and enrollment-interruption behavior. All traces model one synthetic endpoint (role) driven by simulated inputs; crypto-valid flags (pB_point_valid, cB_mac_ok, ...) are simulated OTP observations (OTP2-FIX-004), not cryptographic conformance evidence (Task 5).",
+  "fixtures": [
+    {
+      "id": "st-en-attempts-five-ok-sixth-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-010",
+        "OTP2-SCP-016"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 61000,
+            "event": "pairing_request",
+            "connection": "c2"
+          },
+          {
+            "t_ms": 62000,
+            "event": "pairing_client_point",
+            "connection": "c2",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 63000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 122000,
+            "event": "pairing_request",
+            "connection": "c3"
+          },
+          {
+            "t_ms": 123000,
+            "event": "pairing_client_point",
+            "connection": "c3",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 124000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 183000,
+            "event": "pairing_request",
+            "connection": "c4"
+          },
+          {
+            "t_ms": 184000,
+            "event": "pairing_client_point",
+            "connection": "c4",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 185000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 244000,
+            "event": "pairing_request",
+            "connection": "c5"
+          },
+          {
+            "t_ms": 245000,
+            "event": "pairing_client_point",
+            "connection": "c5",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 246000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 250000,
+            "event": "pairing_request",
+            "connection": "c6"
+          },
+          {
+            "t_ms": 251000,
+            "event": "pairing_client_point",
+            "connection": "c6",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 252000,
+            "event": "connection_lost"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=window_open",
+        "effects": {
+          "require": [
+            "consume_attempt",
+            "emit_pairing_offer",
+            "reject_attempts_per_pairing_id",
+            "preauth_reject",
+            "connection_lost_window_resumable"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-rolling-attempts-boundaries",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-010",
+        "OTP2-SCP-016"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 10000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 20000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 21000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 61000,
+            "event": "pairing_request",
+            "connection": "c2"
+          },
+          {
+            "t_ms": 62000,
+            "event": "pairing_client_point",
+            "connection": "c2",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 63000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 122000,
+            "event": "pairing_request",
+            "connection": "c3"
+          },
+          {
+            "t_ms": 123000,
+            "event": "pairing_client_point",
+            "connection": "c3",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 124000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 300010,
+            "event": "window_expired"
+          },
+          {
+            "t_ms": 300020,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 305000,
+            "event": "pairing_request",
+            "connection": "c4"
+          },
+          {
+            "t_ms": 306000,
+            "event": "pairing_client_point",
+            "connection": "c4",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 307000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 310000,
+            "event": "pairing_request",
+            "connection": "c5"
+          },
+          {
+            "t_ms": 311000,
+            "event": "pairing_client_point",
+            "connection": "c5",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 312000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 315000,
+            "event": "pairing_request",
+            "connection": "c6"
+          },
+          {
+            "t_ms": 316000,
+            "event": "pairing_client_point",
+            "connection": "c6",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 317000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 600030,
+            "event": "window_expired"
+          },
+          {
+            "t_ms": 600040,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 600050,
+            "event": "pairing_request",
+            "connection": "c7"
+          },
+          {
+            "t_ms": 600060,
+            "event": "pairing_client_point",
+            "connection": "c7",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 600070,
+            "event": "connection_lost"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=window_open",
+        "effects": {
+          "require": [
+            "window_closed_code_erased",
+            "reject_attempts_rolling",
+            "consume_attempt",
+            "connection_lost_window_resumable"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-malformed-point-no-consumption",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-005a"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": false
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_request",
+            "connection": "c2"
+          },
+          {
+            "t_ms": 3100,
+            "event": "pairing_client_point",
+            "connection": "c2",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3200,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 4000,
+            "event": "pairing_request",
+            "connection": "c3"
+          },
+          {
+            "t_ms": 4100,
+            "event": "pairing_client_point",
+            "connection": "c3",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 4200,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 5000,
+            "event": "pairing_request",
+            "connection": "c4"
+          },
+          {
+            "t_ms": 5100,
+            "event": "pairing_client_point",
+            "connection": "c4",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 5200,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 61000,
+            "event": "pairing_request",
+            "connection": "c5"
+          },
+          {
+            "t_ms": 61100,
+            "event": "pairing_client_point",
+            "connection": "c5",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 61200,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 121000,
+            "event": "pairing_request",
+            "connection": "c6"
+          },
+          {
+            "t_ms": 121100,
+            "event": "pairing_client_point",
+            "connection": "c6",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 121200,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 122000,
+            "event": "pairing_request",
+            "connection": "c7"
+          },
+          {
+            "t_ms": 122100,
+            "event": "pairing_client_point",
+            "connection": "c7",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 122200,
+            "event": "connection_lost"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=window_open",
+        "effects": {
+          "require": [
+            "reject_malformed_point_no_consumption",
+            "execution_disconnected",
+            "consume_attempt",
+            "reject_attempts_per_pairing_id"
+          ],
+          "forbid": [
+            "reject_attempts_rolling"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-valid-pb-consumes-before-sensitive-operations",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-006"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "expect": {
+              "phone_pairing:main": "awaiting_cB"
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=window_open",
+        "effects": {
+          "require": [
+            "consume_attempt",
+            "compute_cA",
+            "send_confirm_a",
+            "preauth_reject",
+            "generic_pairing_failure"
+          ],
+          "forbid": [
+            "derive_enrollment_keys",
+            "send_enroll_identity"
+          ],
+          "order": [
+            "consume_attempt",
+            "compute_cA",
+            "send_confirm_a"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-pa-churn-rolling-and-per-connection",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 61000,
+            "event": "pairing_request",
+            "connection": "c2"
+          },
+          {
+            "t_ms": 61500,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 62000,
+            "event": "pairing_request",
+            "connection": "c3"
+          },
+          {
+            "t_ms": 62500,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 63000,
+            "event": "pairing_request",
+            "connection": "c4"
+          },
+          {
+            "t_ms": 63500,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 64000,
+            "event": "pairing_request",
+            "connection": "c5"
+          },
+          {
+            "t_ms": 64500,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 65000,
+            "event": "pairing_request",
+            "connection": "c6"
+          },
+          {
+            "t_ms": 65500,
+            "event": "connection_lost"
+          },
+          {
+            "t_ms": 66000,
+            "event": "pairing_request",
+            "connection": "c7"
+          },
+          {
+            "t_ms": 122000,
+            "event": "pairing_request",
+            "connection": "c8"
+          },
+          {
+            "t_ms": 123000,
+            "event": "connection_lost"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=window_open",
+        "effects": {
+          "require": [
+            "reject_pa_per_connection",
+            "reject_pa_rolling",
+            "emit_pairing_offer",
+            "preauth_reject",
+            "connection_lost_window_resumable"
+          ],
+          "forbid": [
+            "consume_attempt"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-second-request-in-flight-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_request",
+            "connection": "c2"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=spake_in_flight",
+        "effects": {
+          "require": [
+            "emit_pairing_offer",
+            "preauth_reject",
+            "reject_second_concurrent_request"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-window-expiry-closes",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-009",
+        "OTP2-CRY-011"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 300000,
+            "event": "window_expired"
+          },
+          {
+            "t_ms": 300010,
+            "event": "pairing_request",
+            "connection": "c1"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "window_closed_code_erased",
+            "preauth_reject",
+            "reject_window_not_open"
+          ],
+          "forbid": [
+            "emit_pairing_offer"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-role-mismatch-frame-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-ENC-004",
+        "OTP2-CRY-002"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "connection": "c1"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=window_open",
+        "effects": {
+          "require": [
+            "preauth_reject",
+            "reject_direction_violation",
+            "execution_disconnected"
+          ],
+          "forbid": [
+            "derive_enrollment_keys"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-client-confirms-in-order",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-006",
+        "OTP2-REC-010"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "awaiting_phone_identity"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "awaiting_prepare",
+              "durable_client_record:main": "pending"
+            }
+          },
+          {
+            "t_ms": 4500,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "verified_prepare_ready"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "send_activation_commit"
+          },
+          {
+            "t_ms": 6000,
+            "event": "activation_complete",
+            "simulate": {
+              "act_mac_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "active",
+              "durable_client_record:main": "active_activation_pending"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "client_pairing:main=active;durable_client_record:main=active_activation_pending",
+        "effects": {
+          "order": [
+            "verify_confirm_a",
+            "send_confirm_b",
+            "compute_et",
+            "persist_pending_record",
+            "send_enroll_identity",
+            "verify_enrollment_prepare",
+            "send_activation_commit",
+            "record_active_client",
+            "send_activation_ack",
+            "erase_enrollment_keys"
+          ],
+          "require": [
+            "compute_pB",
+            "close_enrollment_connection",
+            "display_fp_pair",
+            "record_persisted_pending"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-phone-identity-device-type-mismatch",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-REC-010"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": false,
+              "persist_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=absent;phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "reject_client_device_type",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "forbid": [
+            "record_persisted_pending",
+            "persist_pending_record"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-duplicate-installation-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-012"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "active",
+          "installation_id": "0x000102030405060708090a0b0c0d0e0f",
+          "et": "0x00"
+        },
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": true,
+              "persist_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=active;phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "send_app_error_enrollment_rejected",
+            "reject_duplicate_installation",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "forbid": [
+            "record_persisted_pending",
+            "erase_trust_record_revoked",
+            "delete_incomplete_materials"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-enrollment-full-success-then-no-otp-on-enrollment-connection",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-CRY-020a",
+        "OTP2-REC-035"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "pending"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "activation_commit",
+            "simulate": {
+              "act_mac_ok": true
+            },
+            "expect": {
+              "phone_pairing:main": "committed_waiting_ack",
+              "durable_phone_record:main": "committed_waiting_ack"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "activation_ack",
+            "simulate": {
+              "act_mac_ok": true
+            },
+            "expect": {
+              "phone_pairing:main": "active",
+              "durable_phone_record:main": "active"
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=active;phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "consume_attempt",
+            "derive_enrollment_keys",
+            "persist_pending_record",
+            "compute_et",
+            "persist_committed_waiting_ack",
+            "record_active_by_ack",
+            "record_persisted_pending",
+            "record_committed",
+            "record_activated_by_ack",
+            "erase_enrollment_remnants",
+            "erase_enrollment_keys",
+            "close_enrollment_connection",
+            "reject_unauthorized_enrollment_record"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-cancel-cancels-pending",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-011",
+        "OTP2-CRY-019e",
+        "OTP2-STA-010c"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "cancel_pairing"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "pairing_cancelled",
+            "erase_pairing_state",
+            "close_pairing_window",
+            "erase_incomplete_materials",
+            "record_persisted_pending"
+          ],
+          "forbid": [
+            "record_committed",
+            "record_activated_by_ack"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-neg-unknown-event",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "frobnicate"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "transition",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-neg-nonmonotonic-time",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "steps": [
+          {
+            "t_ms": 2000,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "enable_pairing"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "time",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-neg-timeout-early",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-009",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 299000,
+            "event": "window_expired"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "time",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-neg-unknown-machine",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session_bogus"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "trace",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-neg-step-expect-wrong",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-FIX-004",
+        "OTP2-ACC-002"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing",
+            "expect": {
+              "phone_pairing:main": "spake_in_flight"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "expectation",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-en-window-deadline-pb-299999-allowed",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-009"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 299999,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=awaiting_cB",
+        "effects": {
+          "require": [
+            "consume_attempt",
+            "compute_cA"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-window-deadline-pb-300000-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-009"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 300000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 300010,
+            "event": "pairing_request",
+            "connection": "c2"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "preauth_reject",
+            "reject_window_expired_no_compute",
+            "window_closed_code_erased",
+            "reject_window_not_open"
+          ],
+          "forbid": [
+            "consume_attempt",
+            "compute_cA"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-window-deadline-pb-300001-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-009"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 300001,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "preauth_reject",
+            "reject_window_expired_no_compute"
+          ],
+          "forbid": [
+            "consume_attempt",
+            "compute_cA"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-window-deadline-cb-299999-allowed",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-009"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 299999,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=enrollment_protected",
+        "effects": {
+          "require": [
+            "consume_attempt",
+            "derive_enrollment_keys",
+            "send_enroll_identity"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-window-deadline-cb-300000-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-009"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 300000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "preauth_reject",
+            "reject_window_expired_no_compute",
+            "window_closed_code_erased"
+          ],
+          "forbid": [
+            "derive_enrollment_keys"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-window-deadline-cb-300001-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-CRY-009"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 300001,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "phone_pairing:main=idle",
+        "effects": {
+          "require": [
+            "preauth_reject",
+            "reject_window_expired_no_compute"
+          ],
+          "forbid": [
+            "derive_enrollment_keys"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-enrollment-no-otp-client-receives",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-020a",
+        "OTP2-REC-035",
+        "OTP2-STA-010a"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "awaiting_prepare",
+              "durable_client_record:main": "pending"
+            }
+          },
+          {
+            "t_ms": 4500,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "verified_prepare_ready"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "send_activation_commit"
+          },
+          {
+            "t_ms": 6000,
+            "event": "activation_complete",
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0203",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "client_pairing:main=idle;durable_client_record:main=active_activation_pending",
+        "effects": {
+          "require": [
+            "reject_unauthorized_enrollment_record",
+            "close_enrollment_connection",
+            "record_active_client",
+            "activation_pending_flag_set"
+          ],
+          "forbid": [
+            "push_event_transferred",
+            "advance_rx_sequence",
+            "record_accepted"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-neg-same-connection-pb-after-invalid-point",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-008",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": false
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "transition",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-en-prepare-sent-after-persist-pairing",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-STA-010",
+        "OTP2-CRY-009a"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "pending",
+              "phone_pairing:main": "awaiting_commit"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "activation_commit",
+            "simulate": {
+              "act_mac_ok": true
+            },
+            "expect": {
+              "phone_pairing:main": "committed_waiting_ack",
+              "durable_phone_record:main": "committed_waiting_ack"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=committed_waiting_ack;phone_pairing:main=committed_waiting_ack",
+        "effects": {
+          "order": [
+            "compute_et",
+            "persist_pending_record",
+            "send_enrollment_prepare",
+            "persist_committed_waiting_ack"
+          ],
+          "require": [
+            "pairing_code_consumed_one_use",
+            "close_pairing_window",
+            "derive_enrollment_keys",
+            "send_enroll_identity",
+            "record_persisted_pending"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-client-prepare-gate-full-flow",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-STA-010"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "awaiting_prepare",
+              "durable_client_record:main": "pending"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "verified_prepare_ready"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "send_activation_commit"
+          },
+          {
+            "t_ms": 7000,
+            "event": "activation_complete",
+            "simulate": {
+              "act_mac_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "active",
+              "durable_client_record:main": "active_activation_pending"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "client_pairing:main=active;durable_client_record:main=active_activation_pending",
+        "effects": {
+          "order": [
+            "compute_et",
+            "persist_pending_record",
+            "verify_enrollment_prepare",
+            "send_activation_commit",
+            "record_active_client"
+          ],
+          "require": [
+            "verify_enrollment_prepare",
+            "compute_pB",
+            "send_confirm_b",
+            "send_activation_ack"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-neg-commit-without-verified-prepare",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "awaiting_prepare"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "send_activation_commit"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "transition",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-neg-early-prepare-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 3500,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "client_pairing:main=idle;durable_client_record:main=absent",
+        "effects": {
+          "require": [
+            "reject_out_of_order_prepare",
+            "erase_pairing_state",
+            "close_enrollment_connection"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-neg-prepare-mismatch-erases",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-CRY-019a",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "awaiting_prepare",
+              "durable_client_record:main": "pending"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "act_mac_ok": false,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "client_pairing:main=idle;durable_client_record:main=deleted",
+        "effects": {
+          "require": [
+            "activation_mac_failure",
+            "erase_pending_record",
+            "erase_incomplete_materials",
+            "close_enrollment_connection"
+          ],
+          "forbid": [
+            "verify_enrollment_prepare",
+            "send_activation_commit"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-code-one-use-window-closed-after-cb",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-009a",
+        "OTP2-CRY-009",
+        "OTP2-STA-012"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "connection": "c1",
+            "simulate": {
+              "pB_point_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "connection": "c1",
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "connection": "c1",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "pending",
+              "phone_pairing:main": "awaiting_commit"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "connection_lost",
+            "connection": "c1",
+            "expect": {
+              "phone_pairing:main": "idle"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "pairing_request"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=pending;phone_pairing:main=idle",
+        "effects": {
+          "order": [
+            "pairing_code_consumed_one_use",
+            "close_pairing_window",
+            "connection_lost_pending_record_continues_via_recovery",
+            "preauth_reject"
+          ],
+          "require": [
+            "reject_window_not_open",
+            "persist_pending_record",
+            "close_enrollment_connection"
+          ],
+          "forbid": [
+            "window_closed_code_erased",
+            "reject_pa_per_connection",
+            "record_activated_by_ack"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-cb-disconnect-before-identity-repair-only",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-009a",
+        "OTP2-STA-010b",
+        "OTP2-STA-012"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "simulate": {
+              "cB_mac_ok": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 4000,
+            "event": "connection_lost",
+            "expect": {
+              "phone_pairing:main": "idle",
+              "durable_phone_record:main": "absent"
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 5000,
+            "event": "pairing_request",
+            "connection": "c9"
+          },
+          {
+            "t_ms": 6000,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 7000,
+            "event": "pairing_request",
+            "connection": "c2"
+          },
+          {
+            "t_ms": 8000,
+            "event": "pairing_client_point",
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "connection": "c2"
+          },
+          {
+            "t_ms": 9000,
+            "event": "pairing_confirm_b",
+            "simulate": {
+              "cB_mac_ok": true
+            },
+            "connection": "c2"
+          },
+          {
+            "t_ms": 10000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "pending"
+            },
+            "connection": "c2"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=pending;phone_pairing:main=awaiting_commit",
+        "effects": {
+          "order": [
+            "pairing_code_consumed_one_use",
+            "close_pairing_window",
+            "connection_lost_no_usable_peer_record_repair_only",
+            "reject_window_not_open",
+            "generate_pairing_id_and_code",
+            "compute_et",
+            "persist_pending_record",
+            "send_enrollment_prepare"
+          ],
+          "require": [
+            "close_enrollment_connection"
+          ],
+          "forbid": [
+            "activation_commit_processed",
+            "connection_lost_pending_record_continues_via_recovery"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-client-one-sided-pending-cancelled-then-fresh-pairing",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-009a",
+        "OTP2-STA-010b",
+        "OTP2-STA-012",
+        "OTP2-STA-010"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_client_record:main": "pending",
+              "client_pairing:main": "awaiting_prepare"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "connection_lost",
+            "expect": {
+              "durable_client_record:main": "pending",
+              "client_pairing:main": "idle"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "cancel_pairing",
+            "expect": {
+              "durable_client_record:main": "deleted"
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 8000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 9000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 10000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_client_record:main": "pending",
+              "client_pairing:main": "awaiting_prepare"
+            }
+          },
+          {
+            "t_ms": 11000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "client_pairing:main": "verified_prepare_ready"
+            }
+          },
+          {
+            "t_ms": 12000,
+            "event": "send_activation_commit"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "client_pairing:main=awaiting_complete;durable_client_record:main=pending",
+        "effects": {
+          "order": [
+            "compute_et",
+            "persist_pending_record",
+            "send_enroll_identity",
+            "record_persisted_pending",
+            "connection_lost",
+            "erase_incomplete_materials",
+            "compute_et",
+            "persist_pending_record",
+            "send_enroll_identity",
+            "verify_enrollment_prepare",
+            "send_activation_commit"
+          ],
+          "require": [
+            "pairing_failed_generic"
+          ],
+          "forbid": [
+            "otp_events_transferred"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-no-peer-record-no-recovery",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-009a",
+        "OTP2-REV-001",
+        "OTP2-STA-010b"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "absent"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": false
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=absent;session:main=closed",
+        "effects": {
+          "require": [
+            "preauth_reject",
+            "reject_unknown_installation"
+          ],
+          "forbid": [
+            "reply_phone_hello",
+            "compute_rbase",
+            "send_reconnect_confirm",
+            "mutual_authentication_complete",
+            "set_class_activation_recovery"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-inactivity-before-identity-repair-only",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-009a",
+        "OTP2-STA-010a",
+        "OTP2-STA-012",
+        "OTP2-CRY-008"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "simulate": {
+              "cB_mac_ok": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 33500,
+            "event": "inactivity_timeout",
+            "expect": {
+              "durable_phone_record:main": "absent",
+              "phone_pairing:main": "idle"
+            }
+          },
+          {
+            "t_ms": 34000,
+            "event": "pairing_request",
+            "connection": "c9"
+          },
+          {
+            "t_ms": 35000,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 36000,
+            "event": "pairing_request",
+            "connection": "c2"
+          },
+          {
+            "t_ms": 37000,
+            "event": "pairing_client_point",
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "connection": "c2"
+          },
+          {
+            "t_ms": 38000,
+            "event": "pairing_confirm_b",
+            "simulate": {
+              "cB_mac_ok": true
+            },
+            "connection": "c2"
+          },
+          {
+            "t_ms": 39000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "pending",
+              "phone_pairing:main": "awaiting_commit"
+            },
+            "connection": "c2"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=pending;phone_pairing:main=awaiting_commit",
+        "effects": {
+          "order": [
+            "pairing_code_consumed_one_use",
+            "close_pairing_window",
+            "pairing_step_inactivity_timeout",
+            "inactivity_timeout_no_usable_peer_record_repair_only",
+            "reject_window_not_open",
+            "generate_pairing_id_and_code",
+            "pairing_code_consumed_one_use",
+            "compute_et",
+            "persist_pending_record",
+            "send_enrollment_prepare"
+          ],
+          "require": [
+            "close_enrollment_connection",
+            "inactivity_timeout_no_usable_peer_record_repair_only"
+          ],
+          "forbid": [
+            "inactivity_timeout_pending_record_continues_via_recovery",
+            "connection_lost_no_usable_peer_record_repair_only"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-neg-client-persist-failure-publishes-nothing",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-CRY-019g",
+        "OTP2-CRY-009a"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "client_pairing"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_pairing_request"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_offer",
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_a",
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": false
+            },
+            "expect": {
+              "client_pairing:main": "idle",
+              "durable_client_record:main": "deleted"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "client_pairing:main=idle;durable_client_record:main=deleted",
+        "effects": {
+          "order": [
+            "persist_failed_no_usable_record_published",
+            "erase_pairing_state"
+          ],
+          "require": [
+            "close_enrollment_connection"
+          ],
+          "forbid": [
+            "send_enroll_identity",
+            "persist_pending_record",
+            "record_persisted_pending",
+            "verify_enrollment_prepare",
+            "send_activation_commit"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-neg-phone-persist-failure-sends-no-prepare",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-CRY-019g",
+        "OTP2-CRY-009a"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "simulate": {
+              "cB_mac_ok": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": false
+            },
+            "expect": {
+              "phone_pairing:main": "idle",
+              "durable_phone_record:main": "deleted"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;phone_pairing:main=idle",
+        "effects": {
+          "order": [
+            "persist_failed_no_usable_record_published",
+            "close_enrollment_connection"
+          ],
+          "require": [
+            "persist_failed_no_usable_record_published",
+            "close_enrollment_connection"
+          ],
+          "forbid": [
+            "send_enrollment_prepare",
+            "persist_pending_record",
+            "record_persisted_pending",
+            "activation_commit_sent",
+            "persist_committed_waiting_ack"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-en-phone-pending-survives-interruption-with-et",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010a",
+        "OTP2-CRY-019g",
+        "OTP2-CRY-009a",
+        "OTP2-STA-010b"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "phone_pairing"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "et": "0x00"
+        },
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "enable_pairing"
+          },
+          {
+            "t_ms": 1000,
+            "event": "pairing_request",
+            "connection": "c1"
+          },
+          {
+            "t_ms": 2000,
+            "event": "pairing_client_point",
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 3000,
+            "event": "pairing_confirm_b",
+            "simulate": {
+              "cB_mac_ok": true
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 4000,
+            "event": "enroll_identity",
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "pending",
+              "phone_pairing:main": "awaiting_commit"
+            },
+            "connection": "c1"
+          },
+          {
+            "t_ms": 5000,
+            "event": "connection_lost",
+            "expect": {
+              "durable_phone_record:main": "pending",
+              "phone_pairing:main": "idle"
+            },
+            "connection": "c1"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=pending;phone_pairing:main=idle",
+        "effects": {
+          "order": [
+            "compute_et",
+            "persist_pending_record",
+            "send_enrollment_prepare",
+            "record_persisted_pending",
+            "connection_lost_pending_record_continues_via_recovery"
+          ],
+          "require": [
+            "compute_et",
+            "persist_pending_record",
+            "record_persisted_pending",
+            "send_enrollment_prepare",
+            "connection_lost_pending_record_continues_via_recovery"
+          ],
+          "forbid": [
+            "inactivity_timeout_no_usable_peer_record_repair_only",
+            "connection_lost_no_usable_peer_record_repair_only",
+            "persist_failed_no_usable_record_published"
+          ]
+        }
+      }
+    }
+  ]
+}

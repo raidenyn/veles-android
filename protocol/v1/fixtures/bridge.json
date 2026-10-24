@@ -1,0 +1,3119 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.fixtures",
+  "description": "Bridge (Native Messaging envelope v1) fixtures: negotiation offer validation, canonical base64 records, bound below/at/above cases, host event shape, and lifecycle/order/count traces (driven end-to-end by checks/bridge.test.mjs). Synthetic identifiers only. See docs/protocol/veles-v1.md sections 10 (OTP2-BRD-*).",
+  "fixtures": [
+    {
+      "id": "brd-req-hello-pre-ready-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1,2]}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-hello-range-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_version_range\":{\"min\":1,\"max\":1}}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-hello-both-offers",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1],\"api_version_range\":{\"min\":1,\"max\":1}}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-hello-no-offer",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-hello-api-versions-count-17-above-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "negotiation",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-hello-api-versions-unsorted",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[2,1]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "negotiation",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-hello-api-versions-duplicate",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1,1]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "negotiation",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-hello-api-versions-noninteger",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1.5]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-hello-range-inverted",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_version_range\":{\"min\":2,\"max\":1}}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "negotiation",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-pre-ready-start-scan-rejected",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"start_scan\",\"request_id\":\"s0\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "phase",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-pre-ready-unparseable-json-silent",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\" \"api_versions\":[1]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "json",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-pre-ready-duplicate-keys-raw-text",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-002",
+        "OTP2-SCP-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1],\"envelope_version\":1}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "duplicate_key",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-pre-ready-envelope-version-2",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "pre",
+        "api_version": null,
+        "text": "{\"envelope_version\":2,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "version",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-hello-nested-duplicate-keys",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-002"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"s1\",\"request_id\":\"s1\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "duplicate_key",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-start-scan-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-start-scan-bad-uuid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8E400000-8F3C-4D1A-B64A-8E3C9B0D2A51\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-post-ready-api-version-mismatch",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":2,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "phase",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-post-ready-envelope-version-2",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":2,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"r-shut\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "version",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-post-ready-unknown-type",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"frobnicate\",\"request_id\":\"r1\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-post-ready-missing-request-id",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-post-ready-hello-duplicate",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "phase",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-stop-scan-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"stop_scan\",\"request_id\":\"r-stop\",\"scan_handle\":\"a000000000000001\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-connect-device-handle-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-connect-both-handles",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\",\"platform_hint\":\"Veles Watch\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-connect-neither-handle",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-disconnect-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"disconnect\",\"request_id\":\"r-disc\",\"connection_handle\":\"a000000000000003\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-shutdown-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"r-shut\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-request-id-64-at-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-request-id-65-over-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-connect-platform-hint-256-at-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"platform_hint\":\"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-connect-platform-hint-257-over-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"platform_hint\":\"hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-send-record-5119-below-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-030",
+        "OTP2-BRD-030a",
+        "OTP2-BRD-031"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-send-record-5120-at-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-030",
+        "OTP2-BRD-030a",
+        "OTP2-BRD-031"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-send-record-5121-over-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-030",
+        "OTP2-BRD-030a",
+        "OTP2-BRD-031"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "bounds",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-send-record-empty",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "bounds",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-send-base64-nonzero-pad-bits",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-003",
+        "OTP2-CON-004",
+        "OTP2-ACC-007"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AB==\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "base64",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-send-base64-zero-pad-bits-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-003",
+        "OTP2-CON-004",
+        "OTP2-ACC-007"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-req-send-base64-whitespace",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-003",
+        "OTP2-CON-004",
+        "OTP2-ACC-007"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"aGk A\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-send-base64-embedded-padding",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-003",
+        "OTP2-CON-004",
+        "OTP2-ACC-007"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"aGk==\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-send-base64-odd-length",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-003",
+        "OTP2-CON-004",
+        "OTP2-ACC-007"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"aGk\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-req-send-base64-url-alphabet",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-003",
+        "OTP2-CON-004",
+        "OTP2-ACC-007"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "request",
+        "phase": "ready",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"a-Gk\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-ready-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-ready-unknown-capability-rejected",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-010"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\",\"time_travel\"]}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "negotiation",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-device-found-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-021",
+        "OTP2-BRD-030"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Phone\",\"platform_hint\":\"Veles Phone\",\"advertisement\":\"Aw0DAw==\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-device-found-advert-256-at-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-030",
+        "OTP2-BRD-030a",
+        "OTP2-BRD-031"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Phone\",\"advertisement\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-device-found-advert-257-over-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-030",
+        "OTP2-BRD-030a",
+        "OTP2-BRD-031"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Phone\",\"advertisement\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "bounds",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-device-found-label-64-at-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-device-found-label-65-over-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-message-binary-record-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-003",
+        "OTP2-CON-004",
+        "OTP2-ACC-007"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"message\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AP+AgQ3+\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-message-binary-round-trip-preserved",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-ACC-007",
+        "OTP2-CON-004",
+        "OTP2-EVD-003"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"message\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AP+AgQ3+\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-message-unsolicited-must-not-carry-request-id",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"message\",\"request_id\":\"r1\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-sent-missing-request-id",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"connection_handle\":\"a000000000000003\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-scan-state-started-correlated",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-scan-state-stopped-unsolicited",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"scan_handle\":\"a000000000000001\",\"status\":\"stopped\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-disconnected-correlated",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"disconnected\",\"request_id\":\"r-disc\",\"connection_handle\":\"a000000000000003\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-disconnected-unsolicited",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"disconnected\",\"connection_handle\":\"a000000000000003\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-connected-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000003\",\"platform_hint\":\"Veles Phone\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-shutdown-complete-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown_complete\",\"request_id\":\"r-shut\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-error-correlated-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"r1\",\"code\":\"invalid_request\",\"recoverability\":\"fatal\",\"stage\":\"pre_ready\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-error-unsolicited-valid",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"code\":\"scan_failed\",\"recoverability\":\"fatal\",\"stage\":\"scan\",\"scan_handle\":\"a000000000000001\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-error-unknown-code",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"r1\",\"code\":\"not_a_code\",\"recoverability\":\"fatal\",\"stage\":\"pre_ready\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-error-stage-33-over-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"r1\",\"code\":\"internal\",\"recoverability\":\"fatal\",\"stage\":\"sssssssssssssssssssssssssssssssss\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-error-stage-32-at-limit",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"r1\",\"code\":\"internal\",\"recoverability\":\"fatal\",\"stage\":\"ssssssssssssssssssssssssssssssss\"}"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-ev-error-stage-uppercase",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"r1\",\"code\":\"internal\",\"recoverability\":\"fatal\",\"stage\":\"Bad-Stage\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-error-two-handles",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"r1\",\"code\":\"internal\",\"recoverability\":\"fatal\",\"stage\":\"pre_ready\",\"scan_handle\":\"a000000000000001\",\"connection_handle\":\"a000000000000003\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "schema",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-envelope-version-2",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":2,\"api_version\":1,\"type\":\"shutdown_complete\",\"request_id\":\"r-shut\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "version",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-ev-post-ready-api-version-mismatch",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-011",
+        "OTP2-BRD-020",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "envelope",
+        "direction": "event",
+        "api_version": 1,
+        "text": "{\"envelope_version\":1,\"api_version\":2,\"type\":\"sent\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\"}"
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "phase",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "brd-neg-67",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-004",
+        "OTP2-CON-003"
+      ],
+      "input": {
+        "kind": "negotiation",
+        "offer": {
+          "api_versions": [
+            2,
+            1
+          ]
+        },
+        "host_supported_api": [
+          1,
+          2
+        ],
+        "selected_api": 2
+      },
+      "expected": {
+        "accepted": true,
+        "selected_api": 2
+      }
+    },
+    {
+      "id": "brd-neg-68",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-004",
+        "OTP2-CON-003"
+      ],
+      "input": {
+        "kind": "negotiation",
+        "offer": {
+          "api_versions": [
+            1
+          ]
+        },
+        "host_supported_api": [
+          1
+        ],
+        "selected_api": 1
+      },
+      "expected": {
+        "accepted": true,
+        "selected_api": 1
+      }
+    },
+    {
+      "id": "brd-neg-69",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-004",
+        "OTP2-CON-003"
+      ],
+      "input": {
+        "kind": "negotiation",
+        "offer": {
+          "api_version_range": {
+            "min": 1,
+            "max": 4
+          }
+        },
+        "host_supported_api": [
+          3
+        ],
+        "selected_api": 3
+      },
+      "expected": {
+        "accepted": true,
+        "selected_api": 3
+      }
+    },
+    {
+      "id": "brd-neg-70",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-004",
+        "OTP2-CON-003"
+      ],
+      "input": {
+        "kind": "negotiation",
+        "offer": {
+          "api_version_range": {
+            "min": 2,
+            "max": 3
+          }
+        },
+        "host_supported_api": [
+          1,
+          2
+        ],
+        "selected_api": 2
+      },
+      "expected": {
+        "accepted": true,
+        "selected_api": 2
+      }
+    },
+    {
+      "id": "brd-neg-71",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-004",
+        "OTP2-CON-003"
+      ],
+      "input": {
+        "kind": "negotiation",
+        "offer": {
+          "api_versions": [
+            2,
+            3
+          ]
+        },
+        "host_supported_api": [
+          1
+        ],
+        "selected_api": null
+      },
+      "expected": {
+        "accepted": true,
+        "selected_api": null
+      }
+    },
+    {
+      "id": "brd-neg-72",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-004",
+        "OTP2-CON-003"
+      ],
+      "input": {
+        "kind": "negotiation",
+        "offer": {
+          "api_version_range": {
+            "min": 2,
+            "max": 2
+          }
+        },
+        "host_supported_api": [
+          1
+        ],
+        "selected_api": null
+      },
+      "expected": {
+        "accepted": true,
+        "selected_api": null
+      }
+    },
+    {
+      "id": "brd-neg-73",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010b",
+        "OTP2-ACC-004",
+        "OTP2-CON-003"
+      ],
+      "input": {
+        "kind": "negotiation",
+        "offer": {
+          "api_versions": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+          ]
+        },
+        "host_supported_api": [
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        "selected_api": 16
+      },
+      "expected": {
+        "accepted": true,
+        "selected_api": 16
+      }
+    },
+    {
+      "id": "brd-trace-scan-connect-send-shutdown",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 100,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 100,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 101,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 101,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 102,
+            "synthetic": "device_found",
+            "scan_handle": "a000000000000001",
+            "label": "Veles Watch"
+          },
+          {
+            "from": "host",
+            "t_ms": 102,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 103,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"stop_scan\",\"request_id\":\"r-stop\",\"scan_handle\":\"a000000000000001\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 103,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-stop\",\"scan_handle\":\"a000000000000001\",\"status\":\"stopped\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 104,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 104,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 105,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 106,
+            "synthetic": "writes_complete"
+          },
+          {
+            "from": "host",
+            "t_ms": 106,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 107,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"r-shut\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 107,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"disconnected\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 108,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown_complete\",\"request_id\":\"r-shut\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-trace-duplicate-hello-correlated-error",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 10,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"hello\",\"request_id\":\"h2\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 10,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"h2\",\"code\":\"invalid_request\",\"recoverability\":\"fatal\",\"stage\":\"post_ready\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-trace-link-loss-errors-before-disconnect",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 2,
+            "synthetic": "device_found",
+            "scan_handle": "a000000000000001",
+            "label": "Veles Watch"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 4,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 5,
+            "synthetic": "link_loss",
+            "connection_handle": "a000000000000003"
+          },
+          {
+            "from": "host",
+            "t_ms": 5,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"r-send\",\"code\":\"send_failed\",\"recoverability\":\"fatal\",\"stage\":\"disconnect\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 5,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"disconnected\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 6,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"r-shut\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 6,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"scan_handle\":\"a000000000000001\",\"status\":\"stopped\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 7,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown_complete\",\"request_id\":\"r-shut\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-trace-port-loss-synthesized-failures",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"platform_hint\":\"Veles Watch\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000001\",\"platform_hint\":\"Veles Watch\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000001\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 3,
+            "synthetic": "port_closed"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 3,
+            "synthetic": "port_error",
+            "request_id": "r-send"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "brd-trace-scan-expiry-300s-cap",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 300000,
+            "synthetic": "scan_expired",
+            "scan_handle": "a000000000000001"
+          },
+          {
+            "from": "host",
+            "t_ms": 300000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"scan_handle\":\"a000000000000001\",\"status\":\"stopped\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 300001,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"r-shut\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 300001,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown_complete\",\"request_id\":\"r-shut\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-message-before-connected",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000004\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"message\",\"connection_handle\":\"a000000000000004\",\"record_base64\":\"AQ==\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "handle",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-device-found-before-started",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "handle",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-duplicate-sent-event",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 2,
+            "synthetic": "device_found",
+            "scan_handle": "a000000000000001",
+            "label": "Veles Watch"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 4,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 5,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 6,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "completion",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-send-after-release",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 2,
+            "synthetic": "device_found",
+            "scan_handle": "a000000000000001",
+            "label": "Veles Watch"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 4,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 5,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 6,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"disconnect\",\"request_id\":\"r-disc\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 6,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"disconnected\",\"request_id\":\"r-disc\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 7,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send2\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 8,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"request_id\":\"r-send2\",\"connection_handle\":\"a000000000000003\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "handle",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-event-after-shutdown-complete",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"r-shut\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown_complete\",\"request_id\":\"r-shut\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"code\":\"internal\",\"recoverability\":\"fatal\",\"stage\":\"shutdown\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "shutdown",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-shutdown-outstanding-send",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 2,
+            "synthetic": "device_found",
+            "scan_handle": "a000000000000001",
+            "label": "Veles Watch"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 4,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 5,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown\",\"request_id\":\"r-shut\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 5,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"shutdown_complete\",\"request_id\":\"r-shut\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "shutdown",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-port-missing-synthesis",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"platform_hint\":\"Veles Watch\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000002\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 3,
+            "synthetic": "port_closed"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "synthesis",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-port-error-for-completed-send",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"platform_hint\":\"Veles Watch\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000002\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 4,
+            "synthetic": "port_closed"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 4,
+            "synthetic": "port_error",
+            "request_id": "r-send"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "synthesis",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-device-found-rate-65-per-second",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-030",
+        "OTP2-BRD-021"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000000\",\"label\":\"d0\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000001\",\"label\":\"d1\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000002\",\"label\":\"d2\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000003\",\"label\":\"d3\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000004\",\"label\":\"d4\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000005\",\"label\":\"d5\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000006\",\"label\":\"d6\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000007\",\"label\":\"d7\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000008\",\"label\":\"d8\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000009\",\"label\":\"d9\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000010\",\"label\":\"d10\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000011\",\"label\":\"d11\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000012\",\"label\":\"d12\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000013\",\"label\":\"d13\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000014\",\"label\":\"d14\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000015\",\"label\":\"d15\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000016\",\"label\":\"d16\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000017\",\"label\":\"d17\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000018\",\"label\":\"d18\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000019\",\"label\":\"d19\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000020\",\"label\":\"d20\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000021\",\"label\":\"d21\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000022\",\"label\":\"d22\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000023\",\"label\":\"d23\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000024\",\"label\":\"d24\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000025\",\"label\":\"d25\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000026\",\"label\":\"d26\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000027\",\"label\":\"d27\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000028\",\"label\":\"d28\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000029\",\"label\":\"d29\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000030\",\"label\":\"d30\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000031\",\"label\":\"d31\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000032\",\"label\":\"d32\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000033\",\"label\":\"d33\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000034\",\"label\":\"d34\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000035\",\"label\":\"d35\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000036\",\"label\":\"d36\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000037\",\"label\":\"d37\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000038\",\"label\":\"d38\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000039\",\"label\":\"d39\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000040\",\"label\":\"d40\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000041\",\"label\":\"d41\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000042\",\"label\":\"d42\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000043\",\"label\":\"d43\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000044\",\"label\":\"d44\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000045\",\"label\":\"d45\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000046\",\"label\":\"d46\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000047\",\"label\":\"d47\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000048\",\"label\":\"d48\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000049\",\"label\":\"d49\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000050\",\"label\":\"d50\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000051\",\"label\":\"d51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000052\",\"label\":\"d52\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000053\",\"label\":\"d53\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000054\",\"label\":\"d54\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000055\",\"label\":\"d55\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000056\",\"label\":\"d56\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000057\",\"label\":\"d57\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000058\",\"label\":\"d58\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000059\",\"label\":\"d59\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000060\",\"label\":\"d60\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000061\",\"label\":\"d61\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000062\",\"label\":\"d62\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000063\",\"label\":\"d63\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"c000000000000064\",\"label\":\"d64\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "rate",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-send-terminates-past-30s",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "synthetic",
+            "t_ms": 2,
+            "synthetic": "device_found",
+            "scan_handle": "a000000000000001",
+            "label": "Veles Watch"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connect\",\"request_id\":\"r-conn\",\"device_handle\":\"a000000000000002\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"connected\",\"request_id\":\"r-conn\",\"connection_handle\":\"a000000000000003\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1000,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"send\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\",\"record_base64\":\"AQ==\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 31001,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"sent\",\"request_id\":\"r-send\",\"connection_handle\":\"a000000000000003\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "timeout",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-error-unknown-request-id",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"request_id\":\"ghost\",\"code\":\"unknown_handle\",\"recoverability\":\"fatal\",\"stage\":\"handle\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "completion",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-device-found-after-stopped",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-020",
+        "OTP2-BRD-022",
+        "OTP2-BRD-011",
+        "OTP2-SCP-022"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"start_scan\",\"request_id\":\"r-scan\",\"service_uuid\":\"8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 1,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-scan\",\"scan_handle\":\"a000000000000001\",\"status\":\"started\"}"
+          },
+          {
+            "from": "connector",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"stop_scan\",\"request_id\":\"r-stop\",\"scan_handle\":\"a000000000000001\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 2,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"scan_state\",\"request_id\":\"r-stop\",\"scan_handle\":\"a000000000000001\",\"status\":\"stopped\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 3,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"device_found\",\"scan_handle\":\"a000000000000001\",\"device_handle\":\"a000000000000002\",\"label\":\"Veles Watch\"}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "handle",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "neg-brd-trace-pre-ready-unsolicited-host-event",
+      "fixture_version": 1,
+      "category": "bridge",
+      "requirement_ids": [
+        "OTP2-BRD-010",
+        "OTP2-BRD-010a",
+        "OTP2-BRD-010b",
+        "OTP2-ACC-003"
+      ],
+      "input": {
+        "kind": "trace",
+        "handles": [
+          "a000000000000001",
+          "a000000000000002",
+          "a000000000000003"
+        ],
+        "steps": [
+          {
+            "from": "connector",
+            "t_ms": 0,
+            "text": "{\"envelope_version\":1,\"type\":\"hello\",\"request_id\":\"h1\",\"api_versions\":[1]}"
+          },
+          {
+            "from": "host",
+            "t_ms": 10,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"error\",\"code\":\"scan_failed\",\"recoverability\":\"fatal\",\"stage\":\"scan\",\"scan_handle\":\"a000000000000001\"}"
+          },
+          {
+            "from": "host",
+            "t_ms": 20,
+            "text": "{\"envelope_version\":1,\"api_version\":1,\"type\":\"ready\",\"request_id\":\"h1\",\"bridge_version\":\"veles-bridge-test-1.0.0\",\"platform\":\"windows\",\"capabilities\":[\"veles_record_v1\"]}"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "phase",
+        "no_state_mutation": true
+      }
+    }
+  ]
+}

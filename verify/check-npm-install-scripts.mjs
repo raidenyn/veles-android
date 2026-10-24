@@ -100,7 +100,7 @@ async function main() {
   const policy = JSON.parse(await readFile(join(repository, 'verify', 'install-script-policy.json'), 'utf8'));
   const reports = join(repository, 'build', 'verification', 'supply-chain');
   const results = [];
-  for (const project of ['web-extension', 'native-bridge']) {
+  for (const project of ['web-extension', 'native-bridge', 'protocol']) {
     const findings = await verifyNpmInstallScripts({ root: join(repository, project), project, policy });
     results.push(`${project}\n${findings.join('\n')}\n`);
   }

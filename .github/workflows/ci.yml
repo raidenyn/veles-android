@@ -57,6 +57,31 @@ jobs:
           path: app/build/test-results/
           if-no-files-found: ignore
 
+  protocol-contract:
+    name: protocol-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            protocol/package-lock.json
+            web-extension/package-lock.json
+            native-bridge/package-lock.json
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Assert system Python version
+        run: python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8), sys.version'
+      - run: ./gradlew protocolCheck
+
   instrumented-tests:
     name: instrumented-tests
     runs-on: ubuntu-latest
@@ -111,7 +136,7 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: web-extension/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: web-extension
       - run: npm run format:check
         working-directory: web-extension

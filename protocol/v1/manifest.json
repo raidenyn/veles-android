@@ -1,0 +1,2135 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.manifest",
+  "schema_version": 1,
+  "document": "veles-v1.md",
+  "status_values": [
+    "specified_awaiting_controller_review",
+    "specified_evidence_collected",
+    "reviewed",
+    "accepted"
+  ],
+  "status": "116 requirement entries carry closed fixture/check evidence references (specified_evidence_collected); 40 are deliberately documentary-only — traceability text, registry clauses, and product-level constraints this OTP-02 contract package cannot exhibit without product code (specified_awaiting_controller_review). No entry claims reviewed or accepted: the scoped re-review of the fix wave and user acceptance remain pending; per-finding dispositions live in docs/protocol/reviews/otp-02-disposition.md.",
+  "entries": [
+    {
+      "id": "OTP2-CON-001",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-CON-002",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-CON-003",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-67",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-68",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-69",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-70",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-71",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-72",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-73",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-protocol-version-2",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-schema-version-2",
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CON-004",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-binary-record-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-binary-round-trip-preserved",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-embedded-padding",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-nonzero-pad-bits",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-odd-length",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-url-alphabet",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-whitespace",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-zero-pad-bits-valid",
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SEC-001",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SEC-002",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-context-mismatch",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-role-mismatch",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-wrong-code",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-bad-ciphersuite",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-bad-protocol-version",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-protocol-version-2",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-schema-version-2",
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SEC-003",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-hello-phone-min",
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SEC-004",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-preauth-reject-oversize",
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SEC-005",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SEC-006",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-ENC-001",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#rfc9382-p256-sha256-hkdf-hmac-nil-identities",
+        "fixture:protocol/v1/fixtures/crypto.json#rfc9382-p256-sha256-hkdf-hmac-server-client",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-le-endian",
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-002",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "test:protocol/checks/contract.test.mjs#decodeHex accepts lowercase even-length hex, including empty",
+        "test:protocol/checks/contract.test.mjs#decodeHex rejects odd-length hex",
+        "test:protocol/checks/contract.test.mjs#decodeHex rejects uppercase hex",
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-003",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-reason-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-control-char",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-control-char",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-multibyte-code",
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-004",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-activation-commit-mac-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-heartbeat-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-noncanonical-flags",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-reserved-flags",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-request-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-reconnect-confirm-unknown-peer-state",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-removal-request-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-label-mutated",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-unknown-cap",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-long",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-confirm-a-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-offer-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-bad-protocol-version",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-truncated",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-unknown-type",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-preauth-reject-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-preauth-reject-nonempty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-hello-wrong-role",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-signature-client-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-direction-invalid-byte",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-type-unknown",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-role-mismatch-frame-rejected",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-direction-mismatch-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-session-role-mismatch-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-unknown-type-terminates",
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-010",
+      "document_anchor": "veles-v1.md#sec-plain-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-offer-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-unknown-type",
+        "veles-v1.md#sec-plain-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-010a",
+      "document_anchor": "veles-v1.md#sec-plain-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-bad-protocol-version",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-duplicate",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-fourth-unknown",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-le-endian",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-three",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-unsorted",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-zero",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-highbits",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-truncated",
+        "veles-v1.md#sec-plain-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-010b",
+      "document_anchor": "veles-v1.md#sec-plain-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-offer-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-offer-point-compressed",
+        "veles-v1.md#sec-plain-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-010c",
+      "document_anchor": "veles-v1.md#sec-plain-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-long",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-short",
+        "veles-v1.md#sec-plain-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-010d",
+      "document_anchor": "veles-v1.md#sec-plain-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-confirm-a-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-confirm-a-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-confirm-b-min",
+        "veles-v1.md#sec-plain-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-010e",
+      "document_anchor": "veles-v1.md#sec-plain-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-preauth-reject-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-preauth-reject-nonempty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-preauth-reject-oversize",
+        "veles-v1.md#sec-plain-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-020",
+      "document_anchor": "veles-v1.md#sec-record-types",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-direction",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-heartbeat-empty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-events-six",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-direction-conflict",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-type-reserved-zero",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-type-unknown",
+        "veles-v1.md#sec-record-types"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ENC-021",
+      "document_anchor": "veles-v1.md#sec-record-types",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-reason-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-reason-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-reason-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-unknown-code",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-app-error-terminal",
+        "veles-v1.md#sec-record-types"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-001",
+      "document_anchor": "veles-v1.md#sec-spake-suite",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#rfc9382-p256-sha256-hkdf-hmac-nil-identities",
+        "fixture:protocol/v1/fixtures/crypto.json#rfc9382-p256-sha256-hkdf-hmac-server-client",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-bad-ciphersuite",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-offer-min",
+        "veles-v1.md#sec-spake-suite"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-002",
+      "document_anchor": "veles-v1.md#sec-spake-suite",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-role-mismatch",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-role-swap",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-wrong-marker",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-role-mismatch-frame-rejected",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-session-role-mismatch-terminates",
+        "veles-v1.md#sec-spake-suite"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-003",
+      "document_anchor": "veles-v1.md#sec-spake-transcript",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "veles-v1.md#sec-spake-transcript"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-004a",
+      "document_anchor": "veles-v1.md#sec-spake-code",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-wrong-code",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "veles-v1.md#sec-spake-code"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-004b",
+      "document_anchor": "veles-v1.md#sec-spake-code",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "veles-v1.md#sec-spake-code"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-005a",
+      "document_anchor": "veles-v1.md#sec-spake-suite",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-point-compressed",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-point-infinity",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-point-off-curve",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-point-zero-coordinates",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-shared-secret-identity",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-client-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-offer-point-compressed",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-malformed-point-no-consumption",
+        "veles-v1.md#sec-spake-suite"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-006",
+      "document_anchor": "veles-v1.md#sec-spake-transcript",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-context-mismatch",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-role-swap",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-wrong-code",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-confirm-a-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-confirm-b-min",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-confirms-in-order",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-valid-pb-consumes-before-sensitive-operations",
+        "veles-v1.md#sec-spake-transcript"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-007a",
+      "document_anchor": "veles-v1.md#sec-enrollment-schedule",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "veles-v1.md#sec-enrollment-schedule"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-007b",
+      "document_anchor": "veles-v1.md#sec-enrollment-schedule",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "veles-v1.md#sec-enrollment-schedule"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-007c",
+      "document_anchor": "veles-v1.md#sec-enrollment-schedule",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "veles-v1.md#sec-enrollment-schedule"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-008",
+      "document_anchor": "veles-v1.md#sec-spake-attempts",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-shared-secret-identity",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-attempts-five-ok-sixth-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-inactivity-before-identity-repair-only",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-malformed-point-no-consumption",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-pa-churn-rolling-and-per-connection",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-rolling-attempts-boundaries",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-second-request-in-flight-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-valid-pb-consumes-before-sensitive-operations",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-cb-299999-allowed",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-cb-300000-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-cb-300001-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-pb-299999-allowed",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-pb-300000-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-pb-300001-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-same-connection-pb-after-invalid-point",
+        "veles-v1.md#sec-spake-attempts"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-009",
+      "document_anchor": "veles-v1.md#sec-spake-code",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-code-one-use-window-closed-after-cb",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-cb-299999-allowed",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-cb-300000-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-cb-300001-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-pb-299999-allowed",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-pb-300000-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-deadline-pb-300001-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-expiry-closes",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-timeout-early",
+        "veles-v1.md#sec-spake-code"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-009a",
+      "document_anchor": "veles-v1.md#sec-spake-code",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-cb-disconnect-before-identity-repair-only",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-one-sided-pending-cancelled-then-fresh-pairing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-code-one-use-window-closed-after-cb",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-inactivity-before-identity-repair-only",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-phone-pending-survives-interruption-with-et",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-prepare-sent-after-persist-pairing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-client-persist-failure-publishes-nothing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-phone-persist-failure-sends-no-prepare",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-rec-no-peer-record-no-recovery",
+        "veles-v1.md#sec-spake-code"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-010",
+      "document_anchor": "veles-v1.md#sec-spake-code",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-attempts-five-ok-sixth-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-rolling-attempts-boundaries",
+        "veles-v1.md#sec-spake-code"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-011",
+      "document_anchor": "veles-v1.md#sec-enrollment-schedule",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-cancel-cancels-pending",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-window-expiry-closes",
+        "veles-v1.md#sec-enrollment-schedule"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-012",
+      "document_anchor": "veles-v1.md#sec-spake-context",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-context-mismatch",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-bad-ciphersuite",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-label-mutated",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-wrong-marker",
+        "veles-v1.md#sec-spake-context"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-012a",
+      "document_anchor": "veles-v1.md#sec-spake-context",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-caps-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-caps-unsorted",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-unknown-cap",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-duplicate",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-fourth-unknown",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-three",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-unsorted",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-caps-zero",
+        "veles-v1.md#sec-spake-context"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-016a",
+      "document_anchor": "veles-v1.md#sec-record-header",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-ct-mismatch-extra",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-ct-mismatch-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-direction-invalid-byte",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-heartbeat-client-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-protocol-version-2",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-push-max-seq-u64",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-schema-version-2",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-reassembled-heartbeat-record",
+        "veles-v1.md#sec-record-header"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-016b",
+      "document_anchor": "veles-v1.md#sec-record-header",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-direction",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-sequence",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-session",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-tag",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-bad-tag-terminates-without-advance",
+        "veles-v1.md#sec-record-header"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-016c",
+      "document_anchor": "veles-v1.md#sec-record-format",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-ct-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-error-max-ct",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-heartbeat-client-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-short-tag",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-max-total-4096",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-total-over-max",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-excess-length-terminates",
+        "veles-v1.md#sec-record-format"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-017",
+      "document_anchor": "veles-v1.md#sec-sequences",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-sequence",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-push-max-seq-u64",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-replay-of-prior-session-rejected",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-records-after-bad-tag-cannot-continue",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-seq-u64-overflow",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-duplicate-sequence-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-max-u64-sequence-then-terminated",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-peer-isolation",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-reordered-sequence-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-skipped-sequence-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-unauthenticated-record-before-confirm-terminates",
+        "veles-v1.md#sec-sequences"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-019a",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-activation-ack-mac",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-activation-commit-mac",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-activation-commit-mac-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-activation-complete-mac",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-enrollment-prepare-mac",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-prepare-mismatch-erases",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-commit-mac-mismatch",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-complete-mac-mismatch",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-019e",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-cancel-cancels-pending",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-commit-lost-recovery",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-020a",
+      "document_anchor": "veles-v1.md#sec-enrollment-header",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-enrollment-no-otp-client-receives",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-enrollment-full-success-then-no-otp-on-enrollment-connection",
+        "veles-v1.md#sec-enrollment-header"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-020b",
+      "document_anchor": "veles-v1.md#sec-enrollment-header",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "veles-v1.md#sec-enrollment-header"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SID-001",
+      "document_anchor": "veles-v1.md#sec-reconnect-confirm",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-reconnect-authentication",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-reconnect-confirm-peer-inactive",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-reconnect-confirm-phone-active",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-reconnect-confirm-unknown-peer-state",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-ack-lost-active-client-direct-ack",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-authentication-without-authorization",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-client-activation-pending-upgrades-on-phone-proof",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-phone-complete-lost-prepares-then-full-session",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-client-full-pull-delivers",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-phone-full-on-first-reconnect-peer-active",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-unauthenticated-record-before-confirm-terminates",
+        "veles-v1.md#sec-reconnect-confirm"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-STA-010",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-one-sided-pending-cancelled-then-fresh-pairing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-prepare-gate-full-flow",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-prepare-sent-after-persist-pairing",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-neg-pull-authorized-while-record-pending",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-authentication-without-authorization",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-pending-expiry-deletes-incomplete",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-session-stays-recovery-only",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-full-pending-peer-commit-duplicate-no-regression",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-phone-full-on-first-reconnect-peer-active",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-STA-010a",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-enrollment-prepare-mac",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-prepare-gate-full-flow",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-enrollment-no-otp-client-receives",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-inactivity-before-identity-repair-only",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-phone-pending-survives-interruption-with-et",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-prepare-sent-after-persist-pairing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-enrollment-full-success-then-no-otp-on-enrollment-connection",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-client-persist-failure-publishes-nothing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-commit-without-verified-prepare",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-early-prepare-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-phone-persist-failure-sends-no-prepare",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-prepare-mismatch-erases",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-ack-lost-active-client-direct-ack",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-phone-complete-lost-prepares-then-full-session",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-STA-010b",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-reconnect-confirm-peer-inactive",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-cb-disconnect-before-identity-repair-only",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-one-sided-pending-cancelled-then-fresh-pairing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-phone-pending-survives-interruption-with-et",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-rec-no-peer-record-no-recovery",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-ack-lost-active-client-direct-ack",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-client-mirror-durable-across-restart",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-commit-lost-recovery",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-complete-lost-recovery-client",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-phone-complete-lost-prepares-then-full-session",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-session-stays-recovery-only",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-replay-of-prior-session-rejected",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-full-pending-peer-commit-duplicate-no-regression",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-STA-010c",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-cancel-cancels-pending",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-boot-continuity-loss-deletes-incomplete-only",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-client-activation-pending-upgrades-on-phone-proof",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-client-mirror-durable-across-restart",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-complete-lost-recovery-client",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-pending-expiry-deletes-incomplete",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-STA-012",
+      "document_anchor": "veles-v1.md#sec-identity-record",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-cb-disconnect-before-identity-repair-only",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-one-sided-pending-cancelled-then-fresh-pairing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-code-one-use-window-closed-after-cb",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-duplicate-installation-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-inactivity-before-identity-repair-only",
+        "veles-v1.md#sec-identity-record"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-STA-015",
+      "document_anchor": "veles-v1.md#sec-reconnect-confirm",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/records.json#st-rec-bad-tag-terminates-without-advance",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-duplicate-sequence-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-excess-length-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-reordered-sequence-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-skipped-sequence-terminates",
+        "veles-v1.md#sec-reconnect-confirm"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-010",
+      "document_anchor": "veles-v1.md#sec-identity-record",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-body-under-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-desktop-max-label",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-device-type-unknown",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-control-char",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-phone-empty-label",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-point-compressed",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-watch-mid-label",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-client-confirms-in-order",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-phone-identity-device-type-mismatch",
+        "veles-v1.md#sec-identity-record"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-011",
+      "document_anchor": "veles-v1.md#sec-identity-record",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "veles-v1.md#sec-identity-record"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-013",
+      "document_anchor": "veles-v1.md#sec-identity-record",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-removal-request-empty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-removal-request-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-removal-response-empty",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-removal-mutual-authenticated",
+        "veles-v1.md#sec-identity-record"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-020",
+      "document_anchor": "veles-v1.md#sec-reconnect-hello",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-reconnect-authentication",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-hello-client-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-hello-phone-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-hello-wrong-role",
+        "veles-v1.md#sec-reconnect-hello"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-020a",
+      "document_anchor": "veles-v1.md#sec-reconnect-hello",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-sig-der",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-sig-high-s",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-sig-truncated",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-reconnect-authentication",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-signature-client",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-signature-client-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-signature-phone",
+        "veles-v1.md#sec-reconnect-hello"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-020b",
+      "document_anchor": "veles-v1.md#sec-reconnect-hello",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-reconnect-authentication",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "veles-v1.md#sec-reconnect-hello"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-020c",
+      "document_anchor": "veles-v1.md#sec-reconnect-hello",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-reconnect-authentication",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "veles-v1.md#sec-reconnect-hello"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-030",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-control-char",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-empty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-currency-lowercase",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-currency-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-max-bounds",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-merchant-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-multibyte-code",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-scale-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-events-five",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-030a",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-lifetime-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-min",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-pull-five-events-max",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-031",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-always-eligible",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-noncanonical-flags",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-reserved-flags",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-response-flag",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-response-flag-locked-policy",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-unknown-policy",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-events-empty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-events-five",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-events-six",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-request-empty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-request-trailing",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-event-count-over-max",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-policy-notice-does-not-settle-pull",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-blocked-pull-vs-empty-history",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-client-full-pull-delivers",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-phone-full-on-first-reconnect-peer-active",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-policy-response-flag-settles-pull",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-pull-five-events-max",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-032",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-push-event-event",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-peer-isolation",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-033",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/records.json#st-rec-ack-idempotent-unknown-noop",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-push-retransmit-drops-after-max",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-034",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-heartbeat-empty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-heartbeat-trailing",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-heartbeat-rate-terminates",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-035",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-direction-conflict",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-enrollment-no-otp-client-receives",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-enrollment-full-success-then-no-otp-on-enrollment-connection",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-authentication-without-authorization",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-session-stays-recovery-only",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-blocked-pull-vs-empty-history",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-direction-mismatch-terminates",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-full-pending-peer-commit-duplicate-no-regression",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-unknown-type-terminates",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REV-001",
+      "document_anchor": "veles-v1.md#sec-reconnect-confirm",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-rec-no-peer-record-no-recovery",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-revocation-is-generic-preauth-failure",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-revoke-disconnects-connected-peer",
+        "veles-v1.md#sec-reconnect-confirm"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-GAT-001",
+      "document_anchor": "veles-v1.md#sec-gatt-profile",
+      "evidence_ids": [
+        "veles-v1.md#sec-gatt-profile"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-GAT-002",
+      "document_anchor": "veles-v1.md#sec-gatt-profile",
+      "evidence_ids": [
+        "veles-v1.md#sec-gatt-profile"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-GAT-003",
+      "document_anchor": "veles-v1.md#sec-gatt-profile",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-single-full-budget",
+        "veles-v1.md#sec-gatt-profile"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-GAT-004",
+      "document_anchor": "veles-v1.md#sec-gatt-profile",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-revoke-disconnects-connected-peer",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-peer-isolation",
+        "veles-v1.md#sec-gatt-profile"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-GAT-010",
+      "document_anchor": "veles-v1.md#sec-fragmentation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-final-zero-payload",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-single-full-budget",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-total-min-1",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-two-fragments",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-nonfinal-payload-short",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-payload-over-budget",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-reserved-nonzero",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-short-header",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-txid-zero",
+        "veles-v1.md#sec-fragmentation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-GAT-011",
+      "document_anchor": "veles-v1.md#sec-fragmentation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-final-then-extra-fragment",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-first-fragment-nonzero-index",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-index-duplicate",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-index-gap",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-live-transaction-duplicate-ignored",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-max-total-4096",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-total-min-1",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-two-fragments",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-reassembled-heartbeat-record",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-sum-mismatch",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-total-over-max",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-total-zero",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-txid-zero",
+        "veles-v1.md#sec-fragmentation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-GAT-012",
+      "document_anchor": "veles-v1.md#sec-fragmentation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-third-transaction-cap",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-two-concurrent-incomplete",
+        "veles-v1.md#sec-fragmentation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-GAT-013",
+      "document_anchor": "veles-v1.md#sec-fragmentation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-mtu185-single-full-budget",
+        "veles-v1.md#sec-fragmentation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-WAT-001",
+      "document_anchor": "veles-v1.md#sec-watch",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-device-type-unknown",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-watch-mid-label",
+        "veles-v1.md#sec-watch"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-WAT-002",
+      "document_anchor": "veles-v1.md#sec-watch",
+      "evidence_ids": [
+        "veles-v1.md#sec-watch"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-BRD-001",
+      "document_anchor": "veles-v1.md#sec-bridge-framing",
+      "evidence_ids": [
+        "test:protocol/checks/bridge.test.mjs#decodeHostFrame accepts framing exactly within 1..65536 bytes and rejects outside",
+        "test:protocol/checks/bridge.test.mjs#decodeHostFrame enforces the message-length limit at the byte level with stage length",
+        "veles-v1.md#sec-bridge-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-002",
+      "document_anchor": "veles-v1.md#sec-bridge-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-nested-duplicate-keys",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-duplicate-keys-raw-text",
+        "test:protocol/checks/bridge.test.mjs#duplicate JSON keys in a hello are rejected from raw text before parsing",
+        "test:protocol/checks/bridge.test.mjs#nested duplicate keys are also rejected (raw text scan covers the whole document)",
+        "veles-v1.md#sec-bridge-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-002a",
+      "document_anchor": "veles-v1.md#sec-bridge-framing",
+      "evidence_ids": [
+        "test:protocol/checks/bridge.test.mjs#label, platform_hint, advertisement and error-stage bounds hold at the schema level",
+        "veles-v1.md#sec-bridge-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-003",
+      "document_anchor": "veles-v1.md#sec-bridge-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-binary-record-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-embedded-padding",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-nonzero-pad-bits",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-odd-length",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-url-alphabet",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-whitespace",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-zero-pad-bits-valid",
+        "veles-v1.md#sec-bridge-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-010",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-count-17-above-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-noninteger",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-unsorted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-both-offers",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-no-offer",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-pre-ready-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-inverted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-hello-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-start-scan-rejected",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-unparseable-json-silent",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-duplicate-hello-correlated-error",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-pre-ready-unsolicited-host-event",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-010a",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-count-17-above-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-noninteger",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-unsorted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-both-offers",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-no-offer",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-pre-ready-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-inverted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-hello-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-start-scan-rejected",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-unparseable-json-silent",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-duplicate-hello-correlated-error",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-pre-ready-unsolicited-host-event",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-010b",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-ready-unknown-capability-rejected",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-ready-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-67",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-68",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-69",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-70",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-71",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-72",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-73",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-count-17-above-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-noninteger",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-unsorted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-both-offers",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-no-offer",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-pre-ready-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-inverted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-hello-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-start-scan-rejected",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-unparseable-json-silent",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-duplicate-hello-correlated-error",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-pre-ready-unsolicited-host-event",
+        "test:protocol/checks/bridge.test.mjs#ready events validate; unknown capabilities reject at negotiation; api_version rules hold",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-010c",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "test:protocol/checks/bridge.test.mjs#no overlap flushes incompatible_api then exits 3",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-011",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-connected-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-disconnected-correlated",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-disconnected-unsolicited",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-correlated-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-32-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-33-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-uppercase",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-two-handles",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-unknown-code",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-unsolicited-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-unsolicited-must-not-carry-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-post-ready-api-version-mismatch",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-scan-state-started-correlated",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-scan-state-stopped-unsolicited",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-sent-missing-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-shutdown-complete-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-both-handles",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-device-handle-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-neither-handle",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-platform-hint-256-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-platform-hint-257-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-disconnect-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-api-version-mismatch",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-missing-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-unknown-type",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-request-id-64-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-request-id-65-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-empty",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-shutdown-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-start-scan-bad-uuid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-start-scan-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-stop-scan-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-link-loss-errors-before-disconnect",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-port-loss-synthesized-failures",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-connect-send-shutdown",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-expiry-300s-cap",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-after-stopped",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-before-started",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-duplicate-sent-event",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-error-unknown-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-event-after-shutdown-complete",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-message-before-connected",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-error-for-completed-send",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-missing-synthesis",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-after-release",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-terminates-past-30s",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-shutdown-outstanding-send",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-020",
+      "document_anchor": "veles-v1.md#sec-bridge-messages",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-connected-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-disconnected-correlated",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-disconnected-unsolicited",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-correlated-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-32-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-33-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-uppercase",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-two-handles",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-unknown-code",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-unsolicited-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-unsolicited-must-not-carry-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-post-ready-api-version-mismatch",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-scan-state-started-correlated",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-scan-state-stopped-unsolicited",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-sent-missing-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-shutdown-complete-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-both-handles",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-device-handle-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-neither-handle",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-platform-hint-256-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-platform-hint-257-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-disconnect-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-api-version-mismatch",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-missing-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-unknown-type",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-request-id-64-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-request-id-65-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-empty",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-shutdown-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-start-scan-bad-uuid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-start-scan-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-stop-scan-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-link-loss-errors-before-disconnect",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-port-loss-synthesized-failures",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-connect-send-shutdown",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-expiry-300s-cap",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-after-stopped",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-before-started",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-duplicate-sent-event",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-error-unknown-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-event-after-shutdown-complete",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-message-before-connected",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-error-for-completed-send",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-missing-synthesis",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-after-release",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-terminates-past-30s",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-shutdown-outstanding-send",
+        "veles-v1.md#sec-bridge-messages"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-021",
+      "document_anchor": "veles-v1.md#sec-bridge-messages",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-connected-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-label-64-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-label-65-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-disconnected-correlated",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-disconnected-unsolicited",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-correlated-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-32-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-33-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-stage-uppercase",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-two-handles",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-unknown-code",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-error-unsolicited-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-unsolicited-must-not-carry-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-post-ready-api-version-mismatch",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-ready-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-scan-state-started-correlated",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-scan-state-stopped-unsolicited",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-sent-missing-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-shutdown-complete-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-both-handles",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-device-handle-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-neither-handle",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-platform-hint-256-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-connect-platform-hint-257-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-disconnect-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-api-version-mismatch",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-missing-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-unknown-type",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-request-id-64-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-request-id-65-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-empty",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-shutdown-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-start-scan-bad-uuid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-start-scan-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-stop-scan-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-rate-65-per-second",
+        "veles-v1.md#sec-bridge-messages"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-022",
+      "document_anchor": "veles-v1.md#sec-bridge-messages",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-link-loss-errors-before-disconnect",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-port-loss-synthesized-failures",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-connect-send-shutdown",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-expiry-300s-cap",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-after-stopped",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-before-started",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-duplicate-sent-event",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-error-unknown-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-event-after-shutdown-complete",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-message-before-connected",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-error-for-completed-send",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-missing-synthesis",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-after-release",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-terminates-past-30s",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-shutdown-outstanding-send",
+        "veles-v1.md#sec-bridge-messages"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-030",
+      "document_anchor": "veles-v1.md#sec-bridge-bounds",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-advert-256-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-advert-257-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5119-below-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5120-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5121-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-rate-65-per-second",
+        "veles-v1.md#sec-bridge-bounds"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-030a",
+      "document_anchor": "veles-v1.md#sec-bridge-bounds",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-advert-256-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-advert-257-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5119-below-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5120-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5121-over-limit",
+        "veles-v1.md#sec-bridge-bounds"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-031",
+      "document_anchor": "veles-v1.md#sec-bridge-bounds",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-advert-256-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-device-found-advert-257-over-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5119-below-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5120-at-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-record-5121-over-limit",
+        "veles-v1.md#sec-bridge-bounds"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-BRD-032",
+      "document_anchor": "veles-v1.md#sec-bridge-bounds",
+      "evidence_ids": [
+        "test:protocol/checks/bridge.test.mjs#fail close during frozen output synthesizes queued terminals, still-pending requests and the overflowing request, all bounded",
+        "test:protocol/checks/bridge.test.mjs#frozen stdout pressure fails closed at the queue ceiling; synthesis covers queued completions; sustained 10k pressure stays closed and bounded",
+        "test:protocol/checks/bridge.test.mjs#no overlap flushes incompatible_api then exits 3",
+        "test:protocol/checks/bridge.test.mjs#pre-ready: a recognizable non-hello request gets one correlated error, flushes, exits 2",
+        "veles-v1.md#sec-bridge-bounds"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-FIX-001",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-FIX-002",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-max-bounds",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-request-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-push-max-seq-u64",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-seq-u64-overflow",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-max-u64-sequence-then-terminated",
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-FIX-003",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-phone-empty-label",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-pairing-offer-min",
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-FIX-004",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-activation-commit-mac-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-reason-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-reason-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-error-unknown-code",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-app-heartbeat-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-event-ack-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-body-under-min",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-device-type-unknown",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-control-char",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-label-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-identity-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-control-char",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-empty",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-nonutf8",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-code-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-currency-lowercase",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-currency-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-lifetime-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-merchant-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-otp-event-scale-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-noncanonical-flags",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-reserved-flags",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-phone-policy-state-unknown-policy",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-events-six",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-pull-request-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-reconnect-confirm-unknown-peer-state",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-removal-request-trailing",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-bad-ciphersuite",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-caps-unsorted",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-label-mutated",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-unknown-cap",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-context-wrong-marker",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-ct-mismatch-extra",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-ct-mismatch-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-ct-over-max",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-direction-conflict",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-short-tag",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-record-type-reserved-zero",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-commit-without-verified-prepare",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-early-prepare-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-nonmonotonic-time",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-prepare-mismatch-erases",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-same-connection-pb-after-invalid-point",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-step-expect-wrong",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-timeout-early",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-unknown-event",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-unknown-machine",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-final-then-extra-fragment",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-first-fragment-nonzero-index",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-index-duplicate",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-index-gap",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-live-transaction-duplicate-ignored",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-nonfinal-payload-short",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-payload-over-budget",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-reserved-nonzero",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-short-header",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-sum-mismatch",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-third-transaction-cap",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-total-over-max",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-total-zero",
+        "fixture:protocol/v1/fixtures/fragmentation.json#frag-txid-zero",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-neg-pull-authorized-while-record-pending",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-neg-secret-in-persisted-state",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-event-count-over-max",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-policy-notice-does-not-settle-pull",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-records-after-bad-tag-cannot-continue",
+        "fixture:protocol/v1/fixtures/records.json#st-neg-seq-u64-overflow",
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-FIX-005",
+      "document_anchor": "veles-v1.md#sec-rfc-vectors",
+      "evidence_ids": [
+        "test:protocol/checks/crypto.test.mjs#generated candidate is byte-equal to the committed fixtures (deterministic, never auto-overwritten)",
+        "test:protocol/checks/crypto.test.mjs#stale or tampered independent reports cannot approve fixtures",
+        "veles-v1.md#sec-rfc-vectors"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-FIX-006",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-PRD-001",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-PRD-002",
+      "document_anchor": "veles-v1.md#sec-gatt-profile",
+      "evidence_ids": [
+        "veles-v1.md#sec-gatt-profile"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-PRD-003",
+      "document_anchor": "veles-v1.md#sec-reconnect",
+      "evidence_ids": [
+        "veles-v1.md#sec-reconnect"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-PRD-004",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-PRD-005",
+      "document_anchor": "veles-v1.md#sec-watch",
+      "evidence_ids": [
+        "veles-v1.md#sec-watch"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-PRD-006",
+      "document_anchor": "veles-v1.md#sec-app-records",
+      "evidence_ids": [
+        "veles-v1.md#sec-app-records"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-001",
+      "document_anchor": "veles-v1.md#sec-spake-suite",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#rfc9382-p256-sha256-hkdf-hmac-nil-identities",
+        "fixture:protocol/v1/fixtures/crypto.json#rfc9382-p256-sha256-hkdf-hmac-server-client",
+        "veles-v1.md#sec-spake-suite"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-002",
+      "document_anchor": "veles-v1.md#sec-spake-suite",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-role-mismatch",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-role-swap",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-000000",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-pairing-code-123456",
+        "veles-v1.md#sec-spake-suite"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-003",
+      "document_anchor": "veles-v1.md#sec-spake-code",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-wrong-code",
+        "veles-v1.md#sec-spake-code"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-004",
+      "document_anchor": "veles-v1.md#sec-spake-context",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-context-mismatch",
+        "veles-v1.md#sec-spake-context"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-005",
+      "document_anchor": "veles-v1.md#sec-identity-record",
+      "evidence_ids": [
+        "veles-v1.md#sec-identity-record"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-006",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-007",
+      "document_anchor": "veles-v1.md#sec-reconnect-hello",
+      "evidence_ids": [
+        "veles-v1.md#sec-reconnect-hello"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-008",
+      "document_anchor": "veles-v1.md#sec-reconnect-hello",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-sig-der",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-sig-high-s",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-sig-truncated",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-signature-client",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-signature-client-short",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-frame-reconnect-signature-phone",
+        "veles-v1.md#sec-reconnect-hello"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-009",
+      "document_anchor": "veles-v1.md#sec-enrollment-schedule",
+      "evidence_ids": [
+        "veles-v1.md#sec-enrollment-schedule"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-010",
+      "document_anchor": "veles-v1.md#sec-record-format",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-direction",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-session",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-tag",
+        "veles-v1.md#sec-record-format"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-011",
+      "document_anchor": "veles-v1.md#sec-record-header",
+      "evidence_ids": [
+        "veles-v1.md#sec-record-header"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-012",
+      "document_anchor": "veles-v1.md#sec-sequences",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-sequence",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-record-session",
+        "veles-v1.md#sec-sequences"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-013",
+      "document_anchor": "veles-v1.md#sec-plain-framing",
+      "evidence_ids": [
+        "veles-v1.md#sec-plain-framing"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-014",
+      "document_anchor": "veles-v1.md#sec-fragmentation",
+      "evidence_ids": [
+        "veles-v1.md#sec-fragmentation"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-015",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-016",
+      "document_anchor": "veles-v1.md#sec-spake-attempts",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-attempts-five-ok-sixth-rejected",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-rolling-attempts-boundaries",
+        "veles-v1.md#sec-spake-attempts"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-017",
+      "document_anchor": "veles-v1.md#sec-spake-context",
+      "evidence_ids": [
+        "veles-v1.md#sec-spake-context"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-018",
+      "document_anchor": "veles-v1.md#sec-record-types",
+      "evidence_ids": [
+        "veles-v1.md#sec-record-types"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-019",
+      "document_anchor": "veles-v1.md#sec-reconnect-hello",
+      "evidence_ids": [
+        "veles-v1.md#sec-reconnect-hello"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-020",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-021",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-duplicate-keys-raw-text",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-022",
+      "document_anchor": "veles-v1.md#sec-bridge-messages",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-link-loss-errors-before-disconnect",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-port-loss-synthesized-failures",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-connect-send-shutdown",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-scan-expiry-300s-cap",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-after-stopped",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-device-found-before-started",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-duplicate-sent-event",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-error-unknown-request-id",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-event-after-shutdown-complete",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-message-before-connected",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-error-for-completed-send",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-port-missing-synthesis",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-after-release",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-send-terminates-past-30s",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-shutdown-outstanding-send",
+        "veles-v1.md#sec-bridge-messages"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-SCP-023",
+      "document_anchor": "veles-v1.md#sec-conventions",
+      "evidence_ids": [
+        "veles-v1.md#sec-conventions"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-024",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-SCP-025",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-ACC-001",
+      "document_anchor": "veles-v1.md#sec-traceability",
+      "evidence_ids": [
+        "veles-v1.md#sec-traceability"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-ACC-002",
+      "document_anchor": "veles-v1.md#sec-states",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-step-expect-wrong",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-neg-pull-authorized-while-record-pending",
+        "veles-v1.md#sec-states"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ACC-003",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-count-17-above-limit",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-noninteger",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-api-versions-unsorted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-both-offers",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-no-offer",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-pre-ready-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-inverted",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-hello-range-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-post-ready-hello-duplicate",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-envelope-version-2",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-start-scan-rejected",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-pre-ready-unparseable-json-silent",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-trace-duplicate-hello-correlated-error",
+        "fixture:protocol/v1/fixtures/bridge.json#neg-brd-trace-pre-ready-unsolicited-host-event",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ACC-004",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-67",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-68",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-69",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-70",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-71",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-72",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-neg-73",
+        "test:protocol/checks/bridge.test.mjs#committed negotiation fixtures: highest-overlap selection is recomputed, not trusted",
+        "test:protocol/checks/bridge.test.mjs#selectApi picks the highest mutually supported version",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ACC-005",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "test:protocol/checks/bridge.test.mjs#no overlap flushes incompatible_api then exits 3",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ACC-006",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "test:protocol/checks/bridge.test.mjs#post-ready requests carry envelope 1 and the selected api_version",
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ACC-007",
+      "document_anchor": "veles-v1.md#sec-bridge-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-binary-record-valid",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-binary-round-trip-preserved",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-embedded-padding",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-nonzero-pad-bits",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-odd-length",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-url-alphabet",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-whitespace",
+        "fixture:protocol/v1/fixtures/bridge.json#brd-req-send-base64-zero-pad-bits-valid",
+        "veles-v1.md#sec-bridge-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ACC-008",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "test:protocol/checks/bridge.test.mjs#committed envelope fixtures: valid texts accept, invalid reject at declared stage",
+        "test:protocol/checks/bridge.test.mjs#committed negotiation fixtures: highest-overlap selection is recomputed, not trusted",
+        "test:protocol/checks/crypto.test.mjs#every negative crypto fixture references a positive base and names its rejection stage",
+        "test:protocol/checks/crypto.test.mjs#generated candidate is byte-equal to the committed fixtures (deterministic, never auto-overwritten)",
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-ACC-009",
+      "document_anchor": "veles-v1.md#sec-traceability",
+      "evidence_ids": [
+        "veles-v1.md#sec-traceability"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-ACC-010",
+      "document_anchor": "veles-v1.md#sec-threat-model",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-ready-unknown-capability-rejected",
+        "veles-v1.md#sec-threat-model"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-EVD-001",
+      "document_anchor": "veles-v1.md#sec-traceability",
+      "evidence_ids": [
+        "veles-v1.md#sec-traceability"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-EVD-002",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-EVD-003",
+      "document_anchor": "veles-v1.md#sec-bridge-framing",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/bridge.json#brd-ev-message-binary-round-trip-preserved",
+        "veles-v1.md#sec-bridge-framing"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-EVD-004",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-EVD-005",
+      "document_anchor": "veles-v1.md#sec-bridge-negotiation",
+      "evidence_ids": [
+        "veles-v1.md#sec-bridge-negotiation"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-EVD-006",
+      "document_anchor": "veles-v1.md#sec-traceability",
+      "evidence_ids": [
+        "veles-v1.md#sec-traceability"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-EVD-007",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-EVD-008",
+      "document_anchor": "veles-v1.md#sec-verification",
+      "evidence_ids": [
+        "veles-v1.md#sec-verification"
+      ],
+      "status": "specified_awaiting_controller_review"
+    },
+    {
+      "id": "OTP2-REC-011a",
+      "document_anchor": "veles-v1.md#sec-identity-record",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-enrollment-schedule",
+        "veles-v1.md#sec-identity-record"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-REC-032a",
+      "document_anchor": "veles-v1.md#sec-otp-event",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-event-ack-ok",
+        "fixture:protocol/v1/fixtures/encoding.json#enc-body-event-ack-short",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-ack-idempotent-unknown-noop",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-bad-tag-terminates-without-advance",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-client-full-pull-delivers",
+        "fixture:protocol/v1/fixtures/records.json#st-rec-policy-response-flag-settles-pull",
+        "veles-v1.md#sec-otp-event"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-019f",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-reconnect-authentication",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-push-event",
+        "fixture:protocol/v1/fixtures/crypto.json#veles-record-reconnect-confirm",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-commit-lost-recovery",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-complete-lost-recovery-client",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-phone-complete-lost-prepares-then-full-session",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-commit-mac-mismatch",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-complete-mac-mismatch",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-019g",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/enrollment.json#st-en-phone-pending-survives-interruption-with-et",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-client-persist-failure-publishes-nothing",
+        "fixture:protocol/v1/fixtures/enrollment.json#st-neg-phone-persist-failure-sends-no-prepare",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-neg-secret-in-persisted-state",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-boot-continuity-loss-deletes-incomplete-only",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-client-activation-pending-upgrades-on-phone-proof",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-client-mirror-durable-across-restart",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-commit-lost-recovery",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-commit-mac-mismatch",
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-recovery-complete-mac-mismatch",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-CRY-003a",
+      "document_anchor": "veles-v1.md#sec-spake-transcript",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/crypto.json#veles-neg-shared-secret-identity",
+        "test:protocol/checks/crypto.test.mjs#a shared group element collapsing to the identity aborts generically before any KDF output or confirmation (OTP2-CRY-003a)",
+        "veles-v1.md#sec-spake-transcript"
+      ],
+      "status": "specified_evidence_collected"
+    },
+    {
+      "id": "OTP2-STA-010d",
+      "document_anchor": "veles-v1.md#sec-activation",
+      "evidence_ids": [
+        "fixture:protocol/v1/fixtures/reconnect.json#st-rec-client-mirror-durable-across-restart",
+        "veles-v1.md#sec-activation"
+      ],
+      "status": "specified_evidence_collected"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# local npm installs for protocol contract checks (ajv, exact-pinned); never committed
+node_modules/

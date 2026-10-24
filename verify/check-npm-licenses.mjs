@@ -60,7 +60,7 @@ async function main() {
   const policy = JSON.parse(await readFile(join(repository, '.license-policy.json'), 'utf8'));
   const reports = join(repository, 'build', 'verification', 'supply-chain');
   await mkdir(reports, { recursive: true });
-  const npm = await Promise.all(['web-extension', 'native-bridge'].map((project) => checkNpmProject(repository, project, policy)));
+  const npm = await Promise.all(['web-extension', 'native-bridge', 'protocol'].map((project) => checkNpmProject(repository, project, policy)));
   await writeFile(join(reports, 'npm-licenses.txt'), npm.join('\n'));
 
   const cargoDeny = join(repository, 'build', 'verify-tools', 'cargo-deny', 'bin', 'cargo-deny');

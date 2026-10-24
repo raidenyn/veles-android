@@ -1,0 +1,1884 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.fixtures",
+  "description": "OTP-02 Task 4 state fixtures: enrollment interruption and recovery at every activation boundary, class fixation (recovery-only sessions), revocation, expiry, boot continuity, replay rejection and mutual removal. Simulated flags (sig_ok, hmac_ok, act_mac_ok, tag_ok, peer_state, record_exists) model endpoint observations (OTP2-FIX-004); they are not cryptographic conformance evidence (Task 5).",
+  "fixtures": [
+    {
+      "id": "st-rec-commit-lost-recovery",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010b",
+        "OTP2-CRY-019e",
+        "OTP2-CRY-019f",
+        "OTP2-CRY-019g"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "pending",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "installation_id": "0x000102030405060708090a0b0c0d0e0f",
+          "peer_installation_id": "0x11121314151617181910111213141516",
+          "et": "0x00",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            },
+            "expect": {
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 3500,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "sequence": "1"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0101",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true,
+              "act_mac_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "committed_waiting_ack"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0102",
+              "sequence": "2"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0103",
+              "sequence": "2",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true,
+              "act_mac_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "active"
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0002",
+              "sequence": "3",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 8000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "4",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 9000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 10000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 11000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 12000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 13000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0202",
+              "sequence": "1",
+              "event_count": 1
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=active;session:main=session_open",
+        "effects": {
+          "require": [
+            "mutual_authentication_complete",
+            "set_class_activation_recovery",
+            "set_class_full",
+            "reset_session_slot",
+            "record_committed",
+            "record_activated_by_ack",
+            "erase_enrollment_remnants",
+            "terminate_session",
+            "erase_session_keys",
+            "reject_unauthorized_record",
+            "counter_not_advanced",
+            "otp_events_transferred",
+            "enrollment_prepare_sent"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-ack-lost-active-client-direct-ack",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010b",
+        "OTP2-STA-010a",
+        "OTP2-SID-001"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "committed_waiting_ack",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "et": "0x00",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0103",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true,
+              "act_mac_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "active"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "2",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 8000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 9000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 10000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0202",
+              "sequence": "1",
+              "event_count": 1
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=active;session:main=session_open",
+        "effects": {
+          "require": [
+            "mutual_authentication_complete",
+            "set_class_activation_recovery",
+            "set_class_full",
+            "record_activated_by_ack",
+            "erase_enrollment_remnants",
+            "reset_session_slot",
+            "terminate_session",
+            "reject_unauthorized_record",
+            "otp_events_transferred",
+            "reconnect_confirm_sent_peer_state_below_active"
+          ],
+          "forbid": [
+            "activation_commit_processed",
+            "record_committed",
+            "pull_blocked_reported",
+            "enrollment_prepare_sent",
+            "enrollment_prepare_processed"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-complete-lost-recovery-client",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010b",
+        "OTP2-CRY-019f",
+        "OTP2-STA-010c"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_client_record:main": "pending",
+          "created_monotonic_ms:durable_client_record:main": "0",
+          "et": "0x00",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_hello"
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "send_reconnect_confirm"
+          },
+          {
+            "t_ms": 5000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            },
+            "expect": {
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "sequence": "1",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0101",
+              "sequence": "1"
+            }
+          },
+          {
+            "t_ms": 8000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0102",
+              "sequence": "2",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "durable_client_record:main": "active_activation_pending"
+            }
+          },
+          {
+            "t_ms": 9000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0103",
+              "sequence": "2"
+            }
+          },
+          {
+            "t_ms": 10000,
+            "event": "close_connection"
+          },
+          {
+            "t_ms": 11000,
+            "event": "send_hello"
+          },
+          {
+            "t_ms": 12000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 13000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 14000,
+            "event": "send_reconnect_confirm"
+          },
+          {
+            "t_ms": 15000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            },
+            "expect": {
+              "durable_client_record:main": "active",
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 16000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_client_record:main=active;session:main=session_open",
+        "effects": {
+          "require": [
+            "mutual_authentication_complete",
+            "set_class_activation_recovery",
+            "reconnect_confirm_sent_peer_state_below_active",
+            "enrollment_prepare_processed",
+            "prepare_verified",
+            "activation_commit_sent",
+            "activation_complete_processed",
+            "record_active_client",
+            "activation_pending_flag_set",
+            "activation_ack_sent",
+            "reconnect_confirm_sent_peer_state_active",
+            "record_upgraded_fully_active",
+            "phone_active_proof_received",
+            "set_class_full"
+          ],
+          "forbid": [
+            "reject_unauthorized_record",
+            "otp_events_transferred"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-recovery-session-stays-recovery-only",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010b",
+        "OTP2-REC-035",
+        "OTP2-STA-010"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "committed_waiting_ack",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "et": "0x00",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0103",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true,
+              "act_mac_ok": true
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "2",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=active;session:main=terminated",
+        "effects": {
+          "require": [
+            "set_class_activation_recovery",
+            "record_activated_by_ack",
+            "reject_unauthorized_record",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced",
+            "mutual_authentication_complete"
+          ],
+          "forbid": [
+            "otp_events_transferred",
+            "set_class_full",
+            "set_class_full_pending_peer"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-client-activation-pending-upgrades-on-phone-proof",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010c",
+        "OTP2-SID-001",
+        "OTP2-CRY-019g"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_client_record:main": "active_activation_pending",
+          "created_monotonic_ms:durable_client_record:main": "0",
+          "et": "0x00",
+          "activation_pending": "true",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_hello"
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "send_reconnect_confirm"
+          },
+          {
+            "t_ms": 5000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            },
+            "expect": {
+              "durable_client_record:main": "active",
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1"
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0202",
+              "sequence": "1",
+              "event_count": 1,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 8000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0204",
+              "sequence": "2"
+            }
+          },
+          {
+            "t_ms": 9000,
+            "event": "close_connection"
+          },
+          {
+            "t_ms": 10000,
+            "event": "send_hello"
+          },
+          {
+            "t_ms": 11000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 12000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 13000,
+            "event": "send_reconnect_confirm"
+          },
+          {
+            "t_ms": 14000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 15000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_client_record:main=active;session:main=session_open",
+        "effects": {
+          "require": [
+            "record_upgraded_fully_active",
+            "phone_active_proof_received",
+            "set_class_full",
+            "reconnect_confirm_sent_peer_state_active",
+            "reset_session_slot",
+            "pull_request_sent",
+            "pull_request_processed",
+            "otp_events_transferred",
+            "event_ack_sent"
+          ],
+          "forbid": [
+            "set_class_activation_recovery",
+            "set_class_full_pending_peer",
+            "reject_unauthorized_record",
+            "reject_sequence_violation"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-revocation-is-generic-preauth-failure",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-REV-001"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "deleted"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": false
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;session:main=closed",
+        "effects": {
+          "require": [
+            "preauth_reject",
+            "reject_unknown_installation"
+          ],
+          "forbid": [
+            "reply_phone_hello",
+            "compute_rbase",
+            "send_reconnect_confirm",
+            "verify_client_signature",
+            "mutual_authentication_complete"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-revoke-disconnects-connected-peer",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-REV-001",
+        "OTP2-GAT-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "active"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "revoke"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;session:main=closed",
+        "effects": {
+          "require": [
+            "pull_request_processed",
+            "revocation_disconnect",
+            "erase_trust_record_revoked",
+            "erase_session_keys",
+            "set_class_full"
+          ],
+          "forbid": [
+            "terminate_session"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-pending-expiry-deletes-incomplete",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010c",
+        "OTP2-STA-010"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "pending",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "close_connection"
+          },
+          {
+            "t_ms": 86400000,
+            "event": "pending_expiry",
+            "expect": {
+              "durable_phone_record:main": "deleted"
+            }
+          },
+          {
+            "t_ms": 86400010,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;session:main=closed",
+        "effects": {
+          "require": [
+            "delete_incomplete_materials",
+            "preauth_reject",
+            "reject_unknown_installation"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-boot-continuity-loss-deletes-incomplete-only",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010c",
+        "OTP2-CRY-019g"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "durable_phone_record",
+            "peer": "main"
+          },
+          {
+            "machine": "durable_phone_record",
+            "peer": "other"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "pending",
+          "durable_phone_record:other": "active",
+          "continuity_token": "boot0"
+        },
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "process_load",
+            "peer": "main",
+            "simulate": {
+              "continuity_token_matches": false
+            }
+          },
+          {
+            "t_ms": 10,
+            "event": "process_load",
+            "peer": "other",
+            "simulate": {
+              "continuity_token_matches": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;durable_phone_record:other=active",
+        "effects": {
+          "require": [
+            "delete_incomplete_materials"
+          ],
+          "forbid": [
+            "erase_trust_record_revoked"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-authentication-without-authorization",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010",
+        "OTP2-REC-035",
+        "OTP2-SID-001"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "pending",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "et": "0x00"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=pending;session:main=terminated",
+        "effects": {
+          "require": [
+            "mutual_authentication_complete",
+            "set_class_activation_recovery",
+            "reject_unauthorized_record",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "forbid": [
+            "otp_events_transferred",
+            "set_class_full",
+            "record_active_by_ack"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-replay-of-prior-session-rejected",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010b",
+        "OTP2-CRY-017"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "committed_waiting_ack",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "et": "0x00",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0103",
+              "sequence": "1",
+              "session_id_ok": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=committed_waiting_ack;session:main=terminated",
+        "effects": {
+          "require": [
+            "reject_replayed_or_foreign_session_record",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "forbid": [
+            "activation_ack_processed",
+            "record_activated_by_ack"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-removal-mutual-authenticated",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-REC-013"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "active"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0205",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "deleted"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0206",
+              "sequence": "1"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "close_connection"
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;session:main=closed",
+        "effects": {
+          "require": [
+            "removal_request_processed",
+            "erase_trust_record_removed",
+            "removal_response_sent",
+            "removal_response_processed",
+            "erase_session_keys",
+            "set_class_full"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-neg-secret-in-persisted-state",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-019g",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "pending",
+          "enrollment_prk": "0xdeadbeef"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "persisted_state",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-neg-pull-authorized-while-record-pending",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010",
+        "OTP2-FIX-004",
+        "OTP2-ACC-002"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "pending",
+          "et": "0x00"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "session:main": "session_open"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "stage": "expectation",
+        "no_state_mutation": true
+      }
+    },
+    {
+      "id": "st-rec-recovery-commit-mac-mismatch",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-019a",
+        "OTP2-CRY-019g",
+        "OTP2-CRY-019f"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "pending",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "et": "0x11",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            }
+          },
+          {
+            "t_ms": 3500,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "sequence": "1"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0101",
+              "sequence": "1",
+              "act_mac_ok": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=deleted;session:main=terminated",
+        "effects": {
+          "require": [
+            "reject_activation_mac_mismatch",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced",
+            "erase_incomplete_materials",
+            "enrollment_prepare_sent"
+          ],
+          "forbid": [
+            "record_committed",
+            "advance_rx_sequence",
+            "activation_commit_processed"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-recovery-complete-mac-mismatch",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-CRY-019a",
+        "OTP2-CRY-019g",
+        "OTP2-CRY-019f"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_client_record:main": "pending",
+          "created_monotonic_ms:durable_client_record:main": "0",
+          "et": "0x22",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "send_hello"
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "send_reconnect_confirm"
+          },
+          {
+            "t_ms": 5000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0102",
+              "sequence": "1",
+              "act_mac_ok": false
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_client_record:main=deleted;session:main=terminated",
+        "effects": {
+          "require": [
+            "reject_activation_mac_mismatch",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced",
+            "erase_incomplete_materials"
+          ],
+          "forbid": [
+            "record_active_client",
+            "activation_pending_flag_set",
+            "advance_rx_sequence"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-phone-complete-lost-prepares-then-full-session",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010b",
+        "OTP2-STA-010a",
+        "OTP2-CRY-019f",
+        "OTP2-SID-001"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "phone",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_phone_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_phone_record:main": "committed_waiting_ack",
+          "created_monotonic_ms:durable_phone_record:main": "0",
+          "et": "0x00",
+          "continuity_token": "boot1"
+        },
+        "steps": [
+          {
+            "t_ms": 1000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            },
+            "expect": {
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 3500,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0104",
+              "sequence": "1"
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0101",
+              "sequence": "1",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "committed_waiting_ack"
+            }
+          },
+          {
+            "t_ms": 5000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0102",
+              "sequence": "2"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0103",
+              "sequence": "2",
+              "act_mac_ok": true,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "expect": {
+              "durable_phone_record:main": "active"
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "3",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 8000,
+            "event": "close_connection"
+          },
+          {
+            "t_ms": 9000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 10000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 11000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            },
+            "expect": {
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 12000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1",
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 13000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0202",
+              "sequence": "1",
+              "event_count": 1
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_phone_record:main=active;session:main=session_open",
+        "effects": {
+          "order": [
+            "set_class_activation_recovery",
+            "enrollment_prepare_sent",
+            "activation_commit_processed",
+            "record_committed",
+            "activation_complete_sent",
+            "record_activated_by_ack",
+            "erase_enrollment_remnants",
+            "reject_unauthorized_record",
+            "set_class_full",
+            "otp_events_transferred"
+          ],
+          "require": [
+            "reconnect_confirm_sent_peer_state_below_active",
+            "prepare_peer_reported_below_active"
+          ],
+          "forbid": [
+            "set_class_full_pending_peer"
+          ]
+        }
+      }
+    },
+    {
+      "id": "st-rec-client-mirror-durable-across-restart",
+      "fixture_version": 1,
+      "category": "state",
+      "requirement_ids": [
+        "OTP2-STA-010d",
+        "OTP2-STA-010c",
+        "OTP2-STA-010b",
+        "OTP2-CRY-019g"
+      ],
+      "input": {
+        "kind": "trace",
+        "role": "client",
+        "machines": [
+          {
+            "machine": "session"
+          },
+          {
+            "machine": "durable_client_record"
+          }
+        ],
+        "persisted_state": {
+          "durable_client_record:main": "active_activation_pending",
+          "created_monotonic_ms:durable_client_record:main": "0",
+          "et": "0x00",
+          "activation_pending": "true",
+          "continuity_token": "gone"
+        },
+        "steps": [
+          {
+            "t_ms": 0,
+            "event": "process_load",
+            "simulate": {
+              "continuity_token_matches": false
+            },
+            "expect": {
+              "durable_client_record:main": "active_activation_pending"
+            }
+          },
+          {
+            "t_ms": 1000,
+            "event": "send_hello"
+          },
+          {
+            "t_ms": 2000,
+            "event": "reconnect_hello",
+            "simulate": {
+              "hello_valid": true
+            }
+          },
+          {
+            "t_ms": 3000,
+            "event": "reconnect_signature",
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          {
+            "t_ms": 4000,
+            "event": "send_reconnect_confirm"
+          },
+          {
+            "t_ms": 5000,
+            "event": "reconnect_confirm",
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            },
+            "expect": {
+              "durable_client_record:main": "active",
+              "session:main": "session_open"
+            }
+          },
+          {
+            "t_ms": 6000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0200",
+              "sequence": "1"
+            }
+          },
+          {
+            "t_ms": 7000,
+            "event": "protected_record",
+            "simulate": {
+              "record_type": "0x0202",
+              "sequence": "1",
+              "event_count": 1,
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            }
+          },
+          {
+            "t_ms": 8000,
+            "event": "send_protected_record",
+            "simulate": {
+              "record_type": "0x0204",
+              "sequence": "2"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "final_state": "durable_client_record:main=active;session:main=session_open",
+        "effects": {
+          "require": [
+            "record_upgraded_fully_active",
+            "phone_active_proof_received",
+            "set_class_full",
+            "reconnect_confirm_sent_peer_state_active",
+            "pull_request_sent",
+            "otp_events_transferred",
+            "event_ack_sent"
+          ],
+          "forbid": [
+            "delete_incomplete_materials",
+            "erase_incomplete_materials",
+            "set_class_activation_recovery"
+          ]
+        }
+      }
+    }
+  ]
+}

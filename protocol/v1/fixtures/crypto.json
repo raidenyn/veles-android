@@ -1,0 +1,1088 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.fixtures",
+  "description": "Deterministic cryptographic vectors (OTP-02 Plan Task 5). Expected values were produced by protocol/tools/generate-vectors.mjs from fixed synthetic inputs and independently cross-checked by protocol/tools/crosscheck-vectors/oracle.py (stdlib affine P-256) and openssl-check.mjs (Node/OpenSSL) before acceptance; the generator never rewrites this file (see fixtures/PROVENANCE.md). Published RFC 9382 Appendix B anchors are quoted verbatim. This fixture set is a DRAFT pending controller/final review - the normative contract (docs/protocol/veles-v1.md) is the frozen authority; these derived fixtures carry no acceptance claim beyond the recorded Task 5 evidence. Negative fixtures name the deviation and rejection stage; a state/trace pass is not cryptographic evidence (OTP2-FIX-004) and every crypto claim here requires the Task 5 independent provenance (OTP2-FIX-005).",
+  "fixtures": [
+    {
+      "id": "rfc9382-p256-sha256-hkdf-hmac-server-client",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-SCP-001",
+        "OTP2-CRY-001",
+        "OTP2-ENC-001"
+      ],
+      "input": {
+        "kind": "rfc9382_anchor",
+        "ciphersuite": "SPAKE2-P256-SHA256-HKDF-HMAC",
+        "id_a": "server",
+        "id_b": "client",
+        "w": "0x2ee57912099d31560b3a44b1184b9b4866e904c49d12ac5042c97dca461b1a5f",
+        "x": "0x43dd0fd7215bdcb482879fca3220c6a968e66d70b1356cac18bb26c84a78d729",
+        "y": "0xdcb60106f276b02606d8ef0a328c02e4b629f84f89786af5befb0bc75b6e66be"
+      },
+      "expected": {
+        "verified": true,
+        "source": "RFC 9382 Appendix B, first P256-SHA256-HKDF-HMAC test vector (A='server', B='client'); values quoted verbatim from https://www.rfc-editor.org/rfc/rfc9382.txt",
+        "outputs": {
+          "p_a": "0x04a56fa807caaa53a4d28dbb9853b9815c61a411118a6fe516a8798434751470f9010153ac33d0d5f2047ffdb1a3e42c9b4e6be662766e1eeb4116988ede5f912c",
+          "p_b": "0x0406557e482bd03097ad0cbaa5df82115460d951e3451962f1eaf4367a420676d09857ccbc522686c83d1852abfa8ed6e4a1155cf8f1543ceca528afb591a1e0b7",
+          "k": "0x0412af7e89717850671913e6b469ace67bd90a4df8ce45c2af19010175e37eed69f75897996d539356e2fa6a406d528501f907e04d97515fbe83db277b715d3325",
+          "tt": "0x06000000000000007365727665720600000000000000636c69656e74410000000000000004a56fa807caaa53a4d28dbb9853b9815c61a411118a6fe516a8798434751470f9010153ac33d0d5f2047ffdb1a3e42c9b4e6be662766e1eeb4116988ede5f912c41000000000000000406557e482bd03097ad0cbaa5df82115460d951e3451962f1eaf4367a420676d09857ccbc522686c83d1852abfa8ed6e4a1155cf8f1543ceca528afb591a1e0b741000000000000000412af7e89717850671913e6b469ace67bd90a4df8ce45c2af19010175e37eed69f75897996d539356e2fa6a406d528501f907e04d97515fbe83db277b715d332520000000000000002ee57912099d31560b3a44b1184b9b4866e904c49d12ac5042c97dca461b1a5f",
+          "hash_tt": "0x0e0672dc86f8e45565d338b0540abe6915bdf72e2b35b5c9e5663168e960a91b",
+          "ke": "0x0e0672dc86f8e45565d338b0540abe69",
+          "ka": "0x15bdf72e2b35b5c9e5663168e960a91b",
+          "kc_a": "0x00c12546835755c86d8c0db7851ae86f",
+          "kc_b": "0xa9fa3406c3b781b93d804485430ca27a",
+          "c_a": "0x58ad4aa88e0b60d5061eb6b5dd93e80d9c4f00d127c65b3b35b1b5281fee38f0",
+          "c_b": "0xd3e2e547f1ae04f2dbdbf0fc4b79f8ecff2dff314b5d32fe9fcef2fb26dc459b"
+        }
+      }
+    },
+    {
+      "id": "rfc9382-p256-sha256-hkdf-hmac-nil-identities",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-SCP-001",
+        "OTP2-CRY-001",
+        "OTP2-ENC-001"
+      ],
+      "input": {
+        "kind": "rfc9382_anchor",
+        "ciphersuite": "SPAKE2-P256-SHA256-HKDF-HMAC",
+        "id_a": "",
+        "id_b": "",
+        "w": "0x7bf46c454b4c1b25799527d896508afd5fc62ef4ec59db1efb49113063d70cca",
+        "x": "0x8cef65df64bb2d0f83540c53632de911b5b24b3eab6cc74a97609fd659e95473",
+        "y": "0xd7a66f64074a84652d8d623a92e20c9675c61cb5b4f6a0063e4648a2fdc02d53"
+      },
+      "expected": {
+        "verified": true,
+        "source": "RFC 9382 Appendix B, fourth P256-SHA256-HKDF-HMAC test vector (A='', B=''); values quoted verbatim from https://www.rfc-editor.org/rfc/rfc9382.txt",
+        "outputs": {
+          "p_a": "0x04a65b367a3f613cf9f0654b1b28a1e3a8a40387956c8ba6063e8658563890f46ca1ef6a676598889fc28de2950ab8120b79a5ef1ea4c9f44bc98f585634b46d66",
+          "p_b": "0x04589f13218822710d98d8b2123a079041052d9941b9cf88c6617ddb2fcc0494662eea8ba6b64692dc318250030c6af045cb738bc81ba35b043c3dcb46adf6f58d",
+          "k": "0x041a3c03d51b452537ca2a1fea6110353c6d5ed483c4f0f86f4492ca3f378d40a994b4477f93c64d928edbbcd3e85a7c709b7ea73ee97986ce3d1438e135543772",
+          "tt": "0x00000000000000000000000000000000410000000000000004a65b367a3f613cf9f0654b1b28a1e3a8a40387956c8ba6063e8658563890f46ca1ef6a676598889fc28de2950ab8120b79a5ef1ea4c9f44bc98f585634b46d66410000000000000004589f13218822710d98d8b2123a079041052d9941b9cf88c6617ddb2fcc0494662eea8ba6b64692dc318250030c6af045cb738bc81ba35b043c3dcb46adf6f58d4100000000000000041a3c03d51b452537ca2a1fea6110353c6d5ed483c4f0f86f4492ca3f378d40a994b4477f93c64d928edbbcd3e85a7c709b7ea73ee97986ce3d1438e13554377220000000000000007bf46c454b4c1b25799527d896508afd5fc62ef4ec59db1efb49113063d70cca",
+          "hash_tt": "0xfc6374762ba5cf11f4b2caa08b2cd1b9907ae0e26e8d6234318d91583cd74c86",
+          "ke": "0xfc6374762ba5cf11f4b2caa08b2cd1b9",
+          "ka": "0x907ae0e26e8d6234318d91583cd74c86",
+          "kc_a": "0x5dbd2f477166b7fb6d61febbd77a5563",
+          "kc_b": "0x7689b4654407a5faeffdc8f18359d8a3",
+          "c_a": "0xdfb4db8d48ae5a675963ea5e6c19d98d4ea028d8e898dad96ea19a80ade95dca",
+          "c_b": "0xd0f0609d1613138d354f7e95f19fb556bf52d751947241e8c7118df5ef0ae175"
+        }
+      }
+    },
+    {
+      "id": "veles-pairing-code-000000",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-SCP-002",
+        "OTP2-CRY-004a",
+        "OTP2-CRY-004b",
+        "OTP2-CRY-009",
+        "OTP2-CRY-012",
+        "OTP2-CRY-012a",
+        "OTP2-CRY-002",
+        "OTP2-CRY-003",
+        "OTP2-CRY-006"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0"
+      },
+      "expected": {
+        "verified": true,
+        "outputs": {
+          "ctx": "0x56656c6573205350414b4532207075626c696320636f6e7465787420763100010001000176656c65732d70616972696e672d3031010270686f6e652d6e6f6e63652d30303031636c69656e742d6e6f6e63652d6130310002010200020103",
+          "ctx_len": "94",
+          "ctx_len_le": "0x5e00000000000000",
+          "password_prk": "0xc9d35b8437c75734f37dfb3823e496bb6a4c536cf9a24baa135043eb7e551f25",
+          "password_okm": "0x3c40972c13bab4df245cc80def04d3155234dd3ec2b7d35bdb27bf7508bc3b25a6a60b998dbe7596",
+          "w": "0x38177cec9f09870a61ffa85ec38b97005b1029bb85a9746de01b33a5b0fccf1b",
+          "p_a": "0x0401f4923cf15bbffdf14347ed685e395623b29cb3d9eb69554c9354147b1fc9cebe9c56d1388a66d1120cc0e2159051d34f26f9d8092826482830d8849334fd6d",
+          "p_b": "0x04cf1c3c2789d48c46440e09933aab44298c67dd73492244c975f86c0012d4edbde0fecaef2f7c492f60921bc74a1e2a10d1fdb96261eb5d6d4998d4801e617120",
+          "k": "0x048df37f734771be1c553bf66b1aa98be8f373fdf322bd7ecec60be875b299430fbecade3aa03a71abd78c63ac7db99ef3d6f27667dc89dea6e402f6e46c541e91",
+          "tt": "0x1f0000000000000056656c657320416e64726f6964205350414b453220706172747920412076311e0000000000000056656c657320636c69656e74205350414b4532207061727479204220763141000000000000000401f4923cf15bbffdf14347ed685e395623b29cb3d9eb69554c9354147b1fc9cebe9c56d1388a66d1120cc0e2159051d34f26f9d8092826482830d8849334fd6d410000000000000004cf1c3c2789d48c46440e09933aab44298c67dd73492244c975f86c0012d4edbde0fecaef2f7c492f60921bc74a1e2a10d1fdb96261eb5d6d4998d4801e6171204100000000000000048df37f734771be1c553bf66b1aa98be8f373fdf322bd7ecec60be875b299430fbecade3aa03a71abd78c63ac7db99ef3d6f27667dc89dea6e402f6e46c541e91200000000000000038177cec9f09870a61ffa85ec38b97005b1029bb85a9746de01b33a5b0fccf1b",
+          "hash_tt": "0x874504c33c136895f187bd73e0b7df0f2da87f0736a089c598d30c3b2a19a671",
+          "ke": "0x874504c33c136895f187bd73e0b7df0f",
+          "ka": "0x2da87f0736a089c598d30c3b2a19a671",
+          "kc_a": "0x0391dc6fd494a04bb0afd6142e6f7ecc",
+          "kc_b": "0x4b661090bfee4aed234a574032b6fb01",
+          "c_a": "0x54ce25852ab61a43d86dd980eaf7ddc8e2118265ebe646498147c0ec4c332e38",
+          "c_b": "0xa0efcee83a4d8571fe4a9f8dd2b6677641d502f133f8038f37c913bb999a4056"
+        }
+      }
+    },
+    {
+      "id": "veles-pairing-code-123456",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-SCP-002",
+        "OTP2-CRY-004a",
+        "OTP2-CRY-004b",
+        "OTP2-CRY-009",
+        "OTP2-CRY-012",
+        "OTP2-CRY-012a",
+        "OTP2-CRY-002",
+        "OTP2-CRY-003",
+        "OTP2-CRY-006"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "123456",
+        "pairing_id": "0x76656c65732d70616972696e672d3032",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303032",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d623031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x2a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40414243444546474849",
+        "y": "0xb2b3b4b5b6b7b8b9babbbcbdbebec0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1"
+      },
+      "expected": {
+        "verified": true,
+        "outputs": {
+          "ctx": "0x56656c6573205350414b4532207075626c696320636f6e7465787420763100010001000176656c65732d70616972696e672d3032010270686f6e652d6e6f6e63652d30303032636c69656e742d6e6f6e63652d6230310002010200020103",
+          "ctx_len": "94",
+          "ctx_len_le": "0x5e00000000000000",
+          "password_prk": "0x699e9171920b889676d75763ea943a363155918c30613cb8fdd7af337094bf96",
+          "password_okm": "0xb3980ff388bd0dc3fd235bacba8779e014f63c600c233d27b452fe5d0120905f2aeb9b0d2871d175",
+          "w": "0x85e0696f7e325c2944089622442b9554d7d59c372ccedaeab67739352272f78e",
+          "p_a": "0x04f3fcbb3554a0dedf64a922cc11f8c5306292bc2d780e684f8897eadbfda1b3de337b8015fc6501b523a25c38c875be590132fdb57c35f09d5ac4c0e62d64f507",
+          "p_b": "0x041828b5d1498a184e439ce1ebc7f2de0e4a573ed72e27dd121d192e558c1d6eae942cc1a3a37e777fd25963f76d8851fd464dcff8c2f35e95e810dc06ac3125ef",
+          "k": "0x047b58c0266a71d6bc7a41de96ac7f9f4ffa3f4a87c98f8e077aa646ea9a0c7972dad22acf1efe5ec2e19d95086963e31651d1433500b5eed8541214c3de6c6be9",
+          "tt": "0x1f0000000000000056656c657320416e64726f6964205350414b453220706172747920412076311e0000000000000056656c657320636c69656e74205350414b45322070617274792042207631410000000000000004f3fcbb3554a0dedf64a922cc11f8c5306292bc2d780e684f8897eadbfda1b3de337b8015fc6501b523a25c38c875be590132fdb57c35f09d5ac4c0e62d64f5074100000000000000041828b5d1498a184e439ce1ebc7f2de0e4a573ed72e27dd121d192e558c1d6eae942cc1a3a37e777fd25963f76d8851fd464dcff8c2f35e95e810dc06ac3125ef4100000000000000047b58c0266a71d6bc7a41de96ac7f9f4ffa3f4a87c98f8e077aa646ea9a0c7972dad22acf1efe5ec2e19d95086963e31651d1433500b5eed8541214c3de6c6be9200000000000000085e0696f7e325c2944089622442b9554d7d59c372ccedaeab67739352272f78e",
+          "hash_tt": "0x80bebbd2455a0ef5b067a11ee59811be8a69aed82be793ba9745041d59f5db79",
+          "ke": "0x80bebbd2455a0ef5b067a11ee59811be",
+          "ka": "0x8a69aed82be793ba9745041d59f5db79",
+          "kc_a": "0x975ba08456c3b46b17215951b65c8494",
+          "kc_b": "0x70f4acd3b52b32c028d54cfc37c71f2d",
+          "c_a": "0x5c3b8f4105cf85524950c1d73c82be0f6a5abe96175a64e32808f31898e6f33a",
+          "c_b": "0xd0337c099c6e452c0fbbd416b165745dadaeb48981ebf98bc6bb056f33e96f73"
+        }
+      }
+    },
+    {
+      "id": "veles-enrollment-schedule",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-007a",
+        "OTP2-CRY-007b",
+        "OTP2-CRY-007c",
+        "OTP2-CRY-020a",
+        "OTP2-CRY-020b",
+        "OTP2-REC-010",
+        "OTP2-REC-011a",
+        "OTP2-REC-011",
+        "OTP2-CRY-019a"
+      ],
+      "input": {
+        "kind": "enrollment",
+        "ke": "0x874504c33c136895f187bd73e0b7df0f",
+        "ctx": "0x56656c6573205350414b4532207075626c696320636f6e7465787420763100010001000176656c65732d70616972696e672d3031010270686f6e652d6e6f6e63652d30303031636c69656e742d6e6f6e63652d6130310002010200020103",
+        "p_a": "0x0401f4923cf15bbffdf14347ed685e395623b29cb3d9eb69554c9354147b1fc9cebe9c56d1388a66d1120cc0e2159051d34f26f9d8092826482830d8849334fd6d",
+        "p_b": "0x04cf1c3c2789d48c46440e09933aab44298c67dd73492244c975f86c0012d4edbde0fecaef2f7c492f60921bc74a1e2a10d1fdb96261eb5d6d4998d4801e617120",
+        "c_a": "0x54ce25852ab61a43d86dd980eaf7ddc8e2118265ebe646498147c0ec4c332e38",
+        "c_b": "0xa0efcee83a4d8571fe4a9f8dd2b6677641d502f133f8038f37c913bb999a4056",
+        "phone_identity": {
+          "installation_id": "0x70686f6e652d696e7374616c6c2d3031",
+          "label": "phone-label-32b-0123456789abcdef",
+          "device_type": "0x00",
+          "nonce": "0x404142434445464748494a4b4c4d4e4f",
+          "priv": "0x101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30"
+        },
+        "client_identity": {
+          "installation_id": "0x636c69656e742d696e7374616c6c2d31",
+          "label": "",
+          "device_type": "0x01",
+          "nonce": "0x505152535455565758595a5b5c5d5e5f",
+          "priv": "0xa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+        }
+      },
+      "expected": {
+        "verified": true,
+        "outputs": {
+          "phone_identity_pub": "0x0424eebc61af2f15cb5f9f87a067a2eb975da046957959c92d2c97adf1e516e5d511844429db6690479ba3f99a82404710572526d6fcb2e21f725e7aedd60f7da1",
+          "client_identity_pub": "0x040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba",
+          "phone_identity_body": "0x70686f6e652d696e7374616c6c2d3031002070686f6e652d6c6162656c2d3332622d30313233343536373839616263646566000424eebc61af2f15cb5f9f87a067a2eb975da046957959c92d2c97adf1e516e5d511844429db6690479ba3f99a82404710572526d6fcb2e21f725e7aedd60f7da13480eb61d9b9f69be7412408888625737732500f8a385f4388b3076da4638051404142434445464748494a4b4c4d4e4f",
+          "client_identity_body": "0x636c69656e742d696e7374616c6c2d31000001040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430babab6aa38aa535cafc58af4cf31c452ef9db831144fb94806dd4d5e319193eca878505152535455565758595a5b5c5d5e5f",
+          "fp_self_phone": "0x3480eb61d9b9f69be7412408888625737732500f8a385f4388b3076da4638051",
+          "fp_self_client": "0xb6aa38aa535cafc58af4cf31c452ef9db831144fb94806dd4d5e319193eca878",
+          "fp_pair": "0x273208ed8f9b395d8f34a5f423df3b6cd29fe8e42200898f13c3ced92c59af6a",
+          "fp_pair_display": "2732 08ED 8F9B",
+          "enrollment_salt": "0x9c36c46d20f7fd4e9990da8e8c90536115f7b71716015636ef33e2476c58f9f8",
+          "enrollment_prk": "0x51973f6fc83bc019f99d620864372c7baa6a75a74fca7a6bfc4312cb59c8c8b4",
+          "k_ab_aes": "0x038434d89e3ad5e63284274a6da0d85042252a315eb600d5c82ac59fe2e839d3",
+          "k_ab_nonce_prefix": "0x2e4ea7ee",
+          "k_act_a": "0xb43959019eac43145d7f60e5fa6f69cf1394c1699be75f36856c36f71c1c9212",
+          "k_ba_aes": "0xdbf50ec4205a38aaf1fbd830200419baae46ccefa553986d2d764c07562ab59e",
+          "k_ba_nonce_prefix": "0xcce0abae",
+          "k_act_b": "0x83e5a49346b2291dd56e0c49c2d1875cb6bafa2e548a4cb77ca13d7642c74864",
+          "act_prepare_mac": "0x8c90d4c6830da66bf4779eb16e46f27519d10b24573d7284c76097039ae4c3f5",
+          "act_commit_mac": "0x340fba54a0c4d41c4758e46040445dfaa87760f74f05e7639a57c311bf8410f3",
+          "act_complete_mac": "0x16e43339fed018438b991698f76fb6f916e92eac9bc6b5c44a2561cfd52e99b9",
+          "act_ack_mac": "0x158fcb7cebe4547efb97ae4a1f52a0d40b4e195d861c9225f16bac07c3f29b10",
+          "enrollment_nonce_ab_seq0": "0x2e4ea7ee0000000000000000",
+          "enrollment_nonce_ba_seq7": "0xcce0abae0000000000000007",
+          "session_id_prefix": "0x0162911f416e7fe8",
+          "et": "0x932a7d3bc89b67f27ca8a07be056ca957f13b7525e39a27ad4992afd51afb325"
+        }
+      }
+    },
+    {
+      "id": "veles-reconnect-authentication",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-REC-020",
+        "OTP2-REC-020a",
+        "OTP2-REC-020b",
+        "OTP2-REC-020c",
+        "OTP2-CRY-019f",
+        "OTP2-SID-001"
+      ],
+      "input": {
+        "kind": "reconnect",
+        "et": "0x932a7d3bc89b67f27ca8a07be056ca957f13b7525e39a27ad4992afd51afb325",
+        "phone_identity_priv": "0x101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30",
+        "client_identity_priv": "0xa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "phone_ephemeral_priv": "0x020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e40",
+        "client_ephemeral_priv": "0x030507090b0d0f11131517191b1d1f21232527292b2d2f31333335373b3d3f41",
+        "phone_installation_id": "0x70686f6e652d696e7374616c6c2d3031",
+        "client_installation_id": "0x636c69656e742d696e7374616c6c2d31",
+        "phone_nonce": "0x72636f6e6e2d6e6f6e63652d70683031",
+        "client_nonce": "0x72636f6e6e2d6e6f6e63652d636c3031",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ]
+      },
+      "expected": {
+        "verified": true,
+        "outputs": {
+          "phone_identity_pub": "0x0424eebc61af2f15cb5f9f87a067a2eb975da046957959c92d2c97adf1e516e5d511844429db6690479ba3f99a82404710572526d6fcb2e21f725e7aedd60f7da1",
+          "client_identity_pub": "0x040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba",
+          "phone_ephemeral_pub": "0x047d5c6b392211dac53c9f46961d99a705e224bc6bf22b937302df7f1ad79a90382e8dd865ef944d0452746b1b2da0d22cd3a7d8bc67ba77f461fcc19fcb70da6f",
+          "client_ephemeral_pub": "0x04ad5df1774aeae379d1fa22e495347b8bdba94034c38e94553907b3b189e8a3121a3177a9afe2e9103957cc01a20fb31acf0e7ffcd872ce9e9f36e2b4f7d7aa24",
+          "phone_hello_payload": "0x70686f6e652d696e7374616c6c2d30310424eebc61af2f15cb5f9f87a067a2eb975da046957959c92d2c97adf1e516e5d511844429db6690479ba3f99a82404710572526d6fcb2e21f725e7aedd60f7da172636f6e6e2d6e6f6e63652d7068303101000100020102",
+          "client_hello_payload": "0x636c69656e742d696e7374616c6c2d31040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba72636f6e6e2d6e6f6e63652d636c303102000100020103",
+          "rbase": "0x56656c6573207265636f6e6e656374207472616e73637269707420763170686f6e652d696e7374616c6c2d30310424eebc61af2f15cb5f9f87a067a2eb975da046957959c92d2c97adf1e516e5d511844429db6690479ba3f99a82404710572526d6fcb2e21f725e7aedd60f7da172636f6e6e2d6e6f6e63652d7068303101000100020102636c69656e742d696e7374616c6c2d31040d0918a04198474605615b6df90fdcb34791fb3ecb822f4b26eb6e4fc4511b9d19b90c1b83c0c35cfbbb31ead32bb52ae33622f57e3cc1638097ce97f430baba72636f6e6e2d6e6f6e63652d636c303102000100020103",
+          "rbase_digest": "0x07425a5bf662cfdd3bcdd6b0a7076b51e3284757b2081c883a329497b55d02ea",
+          "phone_sig": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb10f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf19",
+          "phone_sig_r": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb",
+          "phone_sig_s": "0x10f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf19",
+          "client_sig": "0xe2666d38840ad7e72548e716effd144c317aeb0af8e4ae6a3d4ee5037edd799278ff7e0bd234d4eee8a958b36a7f5076c8b8d27ce7a369ce368496fc4cfdf596",
+          "ss": "0xaaca38e89eb0df8fe9b15eb1e04a0446b41bbcaf391d5e4da90072d920a2fa2e",
+          "reconnect_salt": "0x12f06110679d79dba5aaa342fc415f8e5e79e382f0077be99d64de2c027854e8",
+          "reconnect_prk": "0x8d795aa4559166b9b23548bf538c2aa6a24faf6194da44387fd02508de348da0",
+          "k_ba_aes": "0x008b48ba1d7868575930ceb870e4fe98ff376dca119e86d44dd2f060a12c429a",
+          "k_ba_nonce_prefix": "0x868e6c57",
+          "k_ba_confirmation": "0x14c6eb19951ef0c5305d963bee2ecd95de7462801e70e1b4200368d8cf0181cc",
+          "k_ab_aes": "0xc10e7f13b2cadc1145668a37c3d0a0044812d59c449a25830fd7d7153ec35921",
+          "k_ab_nonce_prefix": "0xf864217a",
+          "k_ab_confirmation": "0xd6958862c12c6bf919e798855894b2a6dea544a55fae90af178a688ecb523724",
+          "session_id": "0xb238edc27e8234dd2374c1d72fb86e44380a7236becb2a1b28bcefd05c523788",
+          "session_id_prefix": "0xb238edc27e8234dd",
+          "reconnect_confirm_input": "0xfd90c0895f5000c2fdf1a3a9ae99bfff5ee83a04a064a85de23dcd16260deb8e",
+          "conf_a": "0xcf64cdf517f8c6fac5dd64d8a2625c8693344b726571fc99ae24c5f3ee698fe0",
+          "conf_b": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f",
+          "k_rec_client": "0x92f84eba245ae7bded1e3dab26507ddeb874a9bc6e5f1bcbf16c9bf323595c64",
+          "k_rec_phone": "0xf98dba45a3b3e41efb59d8af5a822d1ae4c5895662a73bf106a747db5cf9fe7e"
+        }
+      }
+    },
+    {
+      "id": "veles-record-reconnect-confirm",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-REC-020",
+        "OTP2-REC-020a",
+        "OTP2-REC-020b",
+        "OTP2-REC-020c",
+        "OTP2-CRY-019f",
+        "OTP2-SID-001",
+        "OTP2-CRY-016a",
+        "OTP2-CRY-016b",
+        "OTP2-CRY-017"
+      ],
+      "input": {
+        "kind": "record_gcm",
+        "key": "0x008b48ba1d7868575930ceb870e4fe98ff376dca119e86d44dd2f060a12c429a",
+        "nonce_prefix": "0x868e6c57",
+        "sequence": "0",
+        "direction": "0x01",
+        "record_type": "0x0001",
+        "session_id_prefix": "0xb238edc27e8234dd",
+        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01"
+      },
+      "expected": {
+        "verified": true,
+        "outputs": {
+          "header": "0x010101000100000000000000000021b238edc27e8234dd",
+          "nonce": "0x868e6c570000000000000000",
+          "ciphertext": "0xe577bc8ac09b4cbab23af284b541b9120386d0a20daee72ca44b5e4fd19342a5d0",
+          "tag": "0x4b580d062c745732706e6aa09deb1d6d",
+          "record": "0x010101000100000000000000000021b238edc27e8234dde577bc8ac09b4cbab23af284b541b9120386d0a20daee72ca44b5e4fd19342a5d04b580d062c745732706e6aa09deb1d6d"
+        }
+      }
+    },
+    {
+      "id": "veles-record-push-event",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-REC-020",
+        "OTP2-REC-020a",
+        "OTP2-REC-020b",
+        "OTP2-REC-020c",
+        "OTP2-CRY-019f",
+        "OTP2-SID-001",
+        "OTP2-CRY-016a",
+        "OTP2-CRY-016b",
+        "OTP2-CRY-017",
+        "OTP2-ENC-020"
+      ],
+      "input": {
+        "kind": "record_gcm",
+        "key": "0xc10e7f13b2cadc1145668a37c3d0a0044812d59c449a25830fd7d7153ec35921",
+        "nonce_prefix": "0xf864217a",
+        "sequence": "5",
+        "direction": "0x02",
+        "record_type": "0x0203",
+        "session_id_prefix": "0xb238edc27e8234dd",
+        "body": "0x70686f6e652d696e7374616c6c2d30316576656e742d6576742d30303030303100000000684ee180000001f4000636353433323100054b494f534b000000000012d68700544842"
+      },
+      "expected": {
+        "verified": true,
+        "outputs": {
+          "header": "0x010102020300000000000000050047b238edc27e8234dd",
+          "nonce": "0xf864217a0000000000000005",
+          "ciphertext": "0x0ecc2d36f79707b8ff9d87feb099856d0b12862736dad07759b512ad1b3cf3b04c7b4ef6e775776f528b8e6e5f8ba893731b8157b414ebb618b78078792dc5c5b889cab22c3bad",
+          "tag": "0x9137947803cce8be515f2684f496609f",
+          "record": "0x010102020300000000000000050047b238edc27e8234dd0ecc2d36f79707b8ff9d87feb099856d0b12862736dad07759b512ad1b3cf3b04c7b4ef6e775776f528b8e6e5f8ba893731b8157b414ebb618b78078792dc5c5b889cab22c3bad9137947803cce8be515f2684f496609f"
+        }
+      }
+    },
+    {
+      "id": "veles-neg-wrong-code",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-004a",
+        "OTP2-CRY-006",
+        "OTP2-SEC-002",
+        "OTP2-SCP-003"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "wrong_code",
+          "negates": "veles-pairing-code-000000",
+          "value": "654321"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "code",
+        "no_state_mutation": true,
+        "proof": "confirmation_mismatch",
+        "note": "a wrong pairing code yields different w and therefore different SPAKE2 confirmations; the phone rejects generically (OTP2-CRY-008)",
+        "distinguishes": [
+          "password_prk",
+          "password_okm",
+          "w",
+          "p_a",
+          "p_b",
+          "tt",
+          "hash_tt",
+          "ke",
+          "ka",
+          "kc_a",
+          "kc_b",
+          "c_a",
+          "c_b"
+        ]
+      }
+    },
+    {
+      "id": "veles-neg-context-mismatch",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-012",
+        "OTP2-CRY-006",
+        "OTP2-SEC-002",
+        "OTP2-SCP-004"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "context_mismatch",
+          "negates": "veles-pairing-code-000000",
+          "value": "0xdeadbeefdeadbeefdeadbeefdeadbeef"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "context",
+        "no_state_mutation": true,
+        "proof": "confirmation_mismatch",
+        "note": "an endpoint constructing a different public context derives different confirmation keys while TT and K stay identical; the confirmation stage is where context binding is proven",
+        "distinguishes": [
+          "ctx",
+          "kc_a",
+          "kc_b",
+          "c_a",
+          "c_b"
+        ]
+      }
+    },
+    {
+      "id": "veles-neg-role-swap",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-SCP-002",
+        "OTP2-CRY-002",
+        "OTP2-CRY-006"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "swap_roles",
+          "negates": "veles-pairing-code-000000"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "role",
+        "no_state_mutation": true,
+        "proof": "confirmation_mismatch",
+        "note": "A blinds with N and B with M: the shared element K is unchanged, but every transcript-derived key and confirmation differs from the fixed-role execution (OTP2-CRY-002 roles are not negotiable)",
+        "distinguishes": [
+          "p_a",
+          "p_b",
+          "tt",
+          "hash_tt",
+          "ke",
+          "ka",
+          "kc_a",
+          "kc_b",
+          "c_a",
+          "c_b"
+        ]
+      }
+    },
+    {
+      "id": "veles-neg-role-mismatch",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-SCP-002",
+        "OTP2-CRY-002",
+        "OTP2-SEC-002"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "role_mismatch",
+          "negates": "veles-pairing-code-000000"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "role",
+        "no_state_mutation": true,
+        "proof": "confirmation_mismatch",
+        "note": "both endpoints act as party A (the client blinds pB with w*M): the peers' shared elements disagree, confirmations fail, and the attempt budget is consumed generically",
+        "distinguishes": [
+          "p_b",
+          "k",
+          "tt",
+          "hash_tt",
+          "ke",
+          "ka",
+          "kc_a",
+          "kc_b",
+          "c_a",
+          "c_b"
+        ]
+      }
+    },
+    {
+      "id": "veles-neg-point-off-curve",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-005a"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "off_curve_point",
+          "negates": "veles-pairing-code-000000",
+          "value": "0x04cf1c3c2789d48c46440e09933aab44298c67dd73492244c975f86c0012d4edbde0fecaef2f7c492f60921bc74a1e2a10d1fdb96261eb5d6d4998d4801e617121"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "point",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "the last y-coordinate byte of pB is flipped so the encoding is a valid SEC1-uncompressed shape but the point is not on P-256; complete validation must reject before any password-sensitive operation"
+      }
+    },
+    {
+      "id": "veles-neg-point-zero-coordinates",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-005a"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "zero_point",
+          "negates": "veles-pairing-code-000000",
+          "value": "0x0400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "point",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "a 65-byte uncompressed SEC1 shape carrying all-zero coordinates is NOT the wire encoding of the identity (SEC1 encodes the point at infinity as the single octet 0x00); x=y=0 does not satisfy the P-256 curve equation, so this rejects as an off-curve point at stage point"
+      }
+    },
+    {
+      "id": "veles-neg-point-infinity",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-005a"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "identity_point",
+          "negates": "veles-pairing-code-000000",
+          "value": "0x00"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "point",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "the single 0x00 octet IS the SEC1 encoding of the point at infinity; OTP2-CRY-005a requires rejecting the identity element, so this octet is recognized and rejected as the identity before any password-sensitive operation (on a cofactor-1 curve it is the only group element outside the prime-order subgroup)"
+      }
+    },
+    {
+      "id": "veles-neg-point-compressed",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-005a",
+        "OTP2-CRY-001"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "compressed_point",
+          "negates": "veles-pairing-code-000000",
+          "value": "0x02886e2f97ace46e55ba9dd7242579f2993b64e16ef3dcab95afd497333d8fa12f"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "point_format",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "the on-curve RFC 9382 M point arrives in its 33-byte compressed form; the Veles wire sends only 65-byte uncompressed SEC1, so this rejects at point_format"
+      }
+    },
+    {
+      "id": "veles-neg-shared-secret-identity",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-003a",
+        "OTP2-CRY-005a",
+        "OTP2-CRY-008"
+      ],
+      "input": {
+        "kind": "spake2_pairing",
+        "code": "000000",
+        "pairing_id": "0x76656c65732d70616972696e672d3031",
+        "phone_nonce": "0x70686f6e652d6e6f6e63652d30303031",
+        "client_nonce": "0x636c69656e742d6e6f6e63652d613031",
+        "phone_role": "0x01",
+        "client_role": "0x02",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "protocol_version": 1,
+        "schema_version": 1,
+        "ciphersuite_id": 1,
+        "x": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "y": "0xa1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebec0",
+        "deviation": {
+          "type": "shared_secret_identity",
+          "negates": "veles-pairing-code-000000",
+          "value": "0x042943a046aa9741584551e9bb5e816a34ab54b5d1941b2103aa917066e26e6e0cfc271b4d2f80bfaa8b9677f64a3e8105260351698a5f2244013fdeaa27a19842",
+          "value2": "0x047fcaaa4675867db89d8e1178c108f8801d142f493f84e0b29dead3aa2fa8980003c4811075636fc58d093ed4d1b0991bcb8a0c2caf2a478d41c5c3cedf3d9702"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "shared_secret",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "with the same code and both own scalars as the positive base, a peer point pB = w\u00b7N (phone view) or pA = w\u00b7M (client view) collapses the shared group element to the identity: both endpoint views must abort with the generic pre-auth failure BEFORE any Ke/Ka, KDF output, or confirmation value is produced or transmitted, and the phone's already-consumed attempt is not refunded (OTP2-CRY-008). deviation.value/value2 are the exact committed forced peer points (pB/cB-wire = w\u00b7N; pA/cA-wire = w\u00b7M), derived from the base's committed w; both implementations parse, validate and USE them (never a local tautological re-derivation)."
+      }
+    },
+    {
+      "id": "veles-neg-sig-high-s",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-REC-020a",
+        "OTP2-SCP-008"
+      ],
+      "input": {
+        "kind": "reconnect",
+        "et": "0x932a7d3bc89b67f27ca8a07be056ca957f13b7525e39a27ad4992afd51afb325",
+        "phone_identity_priv": "0x101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30",
+        "client_identity_priv": "0xa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "phone_ephemeral_priv": "0x020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e40",
+        "client_ephemeral_priv": "0x030507090b0d0f11131517191b1d1f21232527292b2d2f31333335373b3d3f41",
+        "phone_installation_id": "0x70686f6e652d696e7374616c6c2d3031",
+        "client_installation_id": "0x636c69656e742d696e7374616c6c2d31",
+        "phone_nonce": "0x72636f6e6e2d6e6f6e63652d70683031",
+        "client_nonce": "0x72636f6e6e2d6e6f6e63652d636c3031",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "deviation": {
+          "type": "high_s",
+          "negates": "veles-reconnect-authentication",
+          "value": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fbef0abbe4f3172d40c811620e86b06892afa829fd86e09d07ba93e7b933d45638"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "signature_format",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "s := n - s of the authentic phone signature: the signature is mathematically valid ECDSA but violates the low-S canonical half-order rule"
+      }
+    },
+    {
+      "id": "veles-neg-sig-der",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-REC-020a",
+        "OTP2-SCP-008"
+      ],
+      "input": {
+        "kind": "reconnect",
+        "et": "0x932a7d3bc89b67f27ca8a07be056ca957f13b7525e39a27ad4992afd51afb325",
+        "phone_identity_priv": "0x101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30",
+        "client_identity_priv": "0xa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "phone_ephemeral_priv": "0x020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e40",
+        "client_ephemeral_priv": "0x030507090b0d0f11131517191b1d1f21232527292b2d2f31333335373b3d3f41",
+        "phone_installation_id": "0x70686f6e652d696e7374616c6c2d3031",
+        "client_installation_id": "0x636c69656e742d696e7374616c6c2d31",
+        "phone_nonce": "0x72636f6e6e2d6e6f6e63652d70683031",
+        "client_nonce": "0x72636f6e6e2d6e6f6e63652d636c3031",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "deviation": {
+          "type": "der_encoding",
+          "negates": "veles-reconnect-authentication",
+          "value": "0x3045022100d2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb022010f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf19"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "signature_format",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "the same valid (r, s) in DER encoding: verification accepts only 64-byte P1363 fixed-width r||s"
+      }
+    },
+    {
+      "id": "veles-neg-sig-truncated",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-REC-020a",
+        "OTP2-SCP-008"
+      ],
+      "input": {
+        "kind": "reconnect",
+        "et": "0x932a7d3bc89b67f27ca8a07be056ca957f13b7525e39a27ad4992afd51afb325",
+        "phone_identity_priv": "0x101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30",
+        "client_identity_priv": "0xa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+        "phone_ephemeral_priv": "0x020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e40",
+        "client_ephemeral_priv": "0x030507090b0d0f11131517191b1d1f21232527292b2d2f31333335373b3d3f41",
+        "phone_installation_id": "0x70686f6e652d696e7374616c6c2d3031",
+        "client_installation_id": "0x636c69656e742d696e7374616c6c2d31",
+        "phone_nonce": "0x72636f6e6e2d6e6f6e63652d70683031",
+        "client_nonce": "0x72636f6e6e2d6e6f6e63652d636c3031",
+        "phone_caps": [
+          "0x01",
+          "0x02"
+        ],
+        "client_caps": [
+          "0x01",
+          "0x03"
+        ],
+        "deviation": {
+          "type": "truncated_sig",
+          "negates": "veles-reconnect-authentication",
+          "value": "0xd2fd812b56d0071bd89a04eee0cc5e5805636808353bb6ac7b3f00f0bb7eb8fb10f5441a0ce8d2c037ee9df1794f976d0d3ed0b02037017d3925e309c88ecf"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "signature_format",
+        "no_state_mutation": true,
+        "proof": "strict_validation",
+        "note": "the authentic signature truncated to 63 bytes: any width other than 64 rejects"
+      }
+    },
+    {
+      "id": "veles-neg-record-tag",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-016b",
+        "OTP2-SCP-010"
+      ],
+      "input": {
+        "kind": "record_gcm",
+        "key": "0x008b48ba1d7868575930ceb870e4fe98ff376dca119e86d44dd2f060a12c429a",
+        "nonce_prefix": "0x868e6c57",
+        "sequence": "0",
+        "direction": "0x01",
+        "record_type": "0x0001",
+        "session_id_prefix": "0xb238edc27e8234dd",
+        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01",
+        "deviation": {
+          "type": "bad_tag",
+          "negates": "veles-record-reconnect-confirm"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "tag",
+        "no_state_mutation": true,
+        "proof": "aead_failure",
+        "note": "one bit of the committed authentication tag is flipped: AES-256-GCM verification must fail and the session tears down without state mutation"
+      }
+    },
+    {
+      "id": "veles-neg-record-session",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-016b",
+        "OTP2-SCP-010",
+        "OTP2-SCP-012"
+      ],
+      "input": {
+        "kind": "record_gcm",
+        "key": "0x008b48ba1d7868575930ceb870e4fe98ff376dca119e86d44dd2f060a12c429a",
+        "nonce_prefix": "0x868e6c57",
+        "sequence": "0",
+        "direction": "0x01",
+        "record_type": "0x0001",
+        "session_id_prefix": "0xb238edc27e8234dd",
+        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01",
+        "deviation": {
+          "type": "mutated_session",
+          "negates": "veles-record-reconnect-confirm"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "session",
+        "no_state_mutation": true,
+        "proof": "aead_failure",
+        "note": "a header session_id_prefix byte is altered: the header is part of the AAD, so the tag no longer verifies; cross-session record injection is impossible"
+      }
+    },
+    {
+      "id": "veles-neg-record-direction",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-016b",
+        "OTP2-SCP-010",
+        "OTP2-ENC-020"
+      ],
+      "input": {
+        "kind": "record_gcm",
+        "key": "0x008b48ba1d7868575930ceb870e4fe98ff376dca119e86d44dd2f060a12c429a",
+        "nonce_prefix": "0x868e6c57",
+        "sequence": "0",
+        "direction": "0x01",
+        "record_type": "0x0001",
+        "session_id_prefix": "0xb238edc27e8234dd",
+        "body": "0x7a05f054defe033b2a3683877cc5cce0d136f3197937ee8567ab476bb794100f01",
+        "deviation": {
+          "type": "mutated_direction",
+          "negates": "veles-record-reconnect-confirm"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "direction",
+        "no_state_mutation": true,
+        "proof": "aead_failure",
+        "note": "the direction byte is rewritten from 0x01 to 0x02 in the header only: the AAD binding makes the tag fail, and direction bytes are independently checked"
+      }
+    },
+    {
+      "id": "veles-neg-record-sequence",
+      "fixture_version": 1,
+      "category": "crypto",
+      "requirement_ids": [
+        "OTP2-CRY-016b",
+        "OTP2-CRY-017",
+        "OTP2-SCP-012"
+      ],
+      "input": {
+        "kind": "record_gcm",
+        "key": "0xc10e7f13b2cadc1145668a37c3d0a0044812d59c449a25830fd7d7153ec35921",
+        "nonce_prefix": "0xf864217a",
+        "sequence": "5",
+        "direction": "0x02",
+        "record_type": "0x0203",
+        "session_id_prefix": "0xb238edc27e8234dd",
+        "body": "0x70686f6e652d696e7374616c6c2d30316576656e742d6576742d30303030303100000000684ee180000001f4000636353433323100054b494f534b000000000012d68700544842",
+        "deviation": {
+          "type": "mutated_sequence",
+          "negates": "veles-record-push-event"
+        }
+      },
+      "expected": {
+        "rejected": true,
+        "stage": "sequence",
+        "no_state_mutation": true,
+        "proof": "aead_failure",
+        "note": "the u64 sequence number is bumped in the header of a record whose real sequence was 5: AAD binding makes the tag fail and the sequence rule terminates the session"
+      }
+    }
+  ]
+}

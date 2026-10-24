@@ -23,5 +23,6 @@ generate_cargo() {
 }
 
 generate_npm web-extension web-extension.cdx.json
+generate_npm protocol protocol.cdx.json
 generate_cargo rust/Cargo.toml rust/veles-crypto rust.cdx.json
 generate_cargo native-bridge/src-tauri/Cargo.toml native-bridge/src-tauri native-bridge.cdx.json

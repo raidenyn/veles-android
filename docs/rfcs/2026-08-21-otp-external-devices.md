@@ -240,8 +240,11 @@ require new SPAKE2 enrollment unless trust was revoked or lost.
 - Either endpoint can delete one peer trust record without affecting other
   peers.
 - Android immediately disconnects sessions belonging to a revoked client
-  installation; a revoked watch learns this at its next reconnect and shows
-  "pairing revoked — re-pair required."
+  installation. After peer-record deletion, a later reconnect fails with the
+  same generic authentication failure as other untrusted peers; it does not
+  provide authenticated proof of revocation. The watch shows
+  "Could not authenticate — re-pair required" rather than asserting revocation.
+  No durable revoked-peer record is required solely to distinguish that failure.
 - A connected peer may request mutual removal. Offline removal is local; the UI
   explains that the other endpoint may retain its local record until it is
   separately removed.
