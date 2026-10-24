@@ -3,7 +3,8 @@ package me.nagaev.veles.crypto
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
-import org.junit.Assert.*
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeNotNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -29,21 +30,29 @@ class PairingInstrumentedTest {
     )
 
     private fun exchange(a: ByteArray, b: ByteArray, call: (ByteArray) -> ByteArray, expected: JSONObject? = null) {
-        assertEquals(74, a.size); assertEquals(74, b.size)
-        assertEquals(0, a[0].toInt()); assertEquals(0, b[0].toInt())
-        val ah = a.copyOfRange(1, 9); val bh = b.copyOfRange(1, 9)
+        assertEquals(74, a.size)
+        assertEquals(74, b.size)
+        assertEquals(0, a[0].toInt())
+        assertEquals(0, b[0].toInt())
+        val ah = a.copyOfRange(1, 9)
+        val bh = b.copyOfRange(1, 9)
         if (expected != null) {
             assertArrayEquals(hex(expected.getString("p_a")), a.copyOfRange(9, 74))
             assertArrayEquals(hex(expected.getString("p_b")), b.copyOfRange(9, 74))
         }
         val ca = call(command(2, ah, b.copyOfRange(9, 74)))
-        assertEquals(33, ca.size); assertEquals(0, ca[0].toInt())
+        assertEquals(33, ca.size)
+        assertEquals(0, ca[0].toInt())
         assertArrayEquals(byteArrayOf(0), call(command(2, bh, a.copyOfRange(9, 74))))
         val cb = call(command(3, bh, ca.copyOfRange(1, 33)))
-        assertEquals(33, cb.size); assertEquals(0, cb[0].toInt())
+        assertEquals(33, cb.size)
+        assertEquals(0, cb[0].toInt())
         assertArrayEquals(byteArrayOf(0), call(command(3, ah, cb.copyOfRange(1, 33))))
-        val ka = call(command(4, ah)); val kb = call(command(4, bh))
-        assertEquals(17, ka.size); assertEquals(0, ka[0].toInt()); assertArrayEquals(ka, kb)
+        val ka = call(command(4, ah))
+        val kb = call(command(4, bh))
+        assertEquals(17, ka.size)
+        assertEquals(0, ka[0].toInt())
+        assertArrayEquals(ka, kb)
         if (expected != null) {
             assertArrayEquals(hex(expected.getString("c_a")), ca.copyOfRange(1, 33))
             assertArrayEquals(hex(expected.getString("c_b")), cb.copyOfRange(1, 33))
@@ -56,8 +65,10 @@ class PairingInstrumentedTest {
         val base = fixtures.first { it.getString("id") == "veles-pairing-code-000000" }
         val ctx = hex(base.getJSONObject("expected").getJSONObject("outputs").getString("ctx"))
         exchange(start(1, "000000", ctx), start(2, "000000", ctx), VelesCrypto::pairingCommand)
-        val a = start(1, "000000", ctx); val b = start(2, "123456", ctx)
-        val ah = a.copyOfRange(1, 9); val bh = b.copyOfRange(1, 9)
+        val a = start(1, "000000", ctx)
+        val b = start(2, "123456", ctx)
+        val ah = a.copyOfRange(1, 9)
+        val bh = b.copyOfRange(1, 9)
         val ca = VelesCrypto.pairingCommand(command(2, ah, b.copyOfRange(9, 74)))
         VelesCrypto.pairingCommand(command(2, bh, a.copyOfRange(9, 74)))
         assertArrayEquals(byteArrayOf(1), VelesCrypto.pairingCommand(command(3, bh, ca.copyOfRange(1, 33))))
@@ -74,17 +85,22 @@ class PairingInstrumentedTest {
         System.load(path!!)
         var count = 0
         for (f in fixtures) {
-            val i = f.getJSONObject("input"); val e = f.getJSONObject("expected")
+            val i = f.getJSONObject("input")
+            val e = f.getJSONObject("expected")
             if (i.getString("kind") !in listOf("rfc9382_anchor", "spake2_pairing") || !e.has("outputs")) continue
-            val o = e.getJSONObject("outputs"); val rfc = i.getString("kind") == "rfc9382_anchor"
+            val o = e.getJSONObject("outputs")
+            val rfc = i.getString("kind") == "rfc9382_anchor"
             val idA = if (rfc) i.getString("id_a") else "Veles Android SPAKE2 party A v1"
             val idB = if (rfc) i.getString("id_b") else "Veles client SPAKE2 party B v1"
             val ctx = if (rfc) byteArrayOf() else hex(o.getString("ctx"))
             fun make(role: Int, scalar: String) = VelesCryptoConformance.pairingCommand(
-                if (rfc) byteArrayOf(1, 127, role.toByte()) + hex(i.getString("w")) +
-                    hex(scalar) + byteArrayOf(idA.length.toByte(), idB.length.toByte()) +
-                    idA.toByteArray(Charsets.US_ASCII) + idB.toByteArray(Charsets.US_ASCII) + ctx
-                else byteArrayOf(1, 128.toByte(), role.toByte()) + hex(scalar) + i.getString("code").toByteArray(Charsets.US_ASCII) + ctx,
+                if (rfc) {
+                    byteArrayOf(1, 127, role.toByte()) + hex(i.getString("w")) +
+                        hex(scalar) + byteArrayOf(idA.length.toByte(), idB.length.toByte()) +
+                        idA.toByteArray(Charsets.US_ASCII) + idB.toByteArray(Charsets.US_ASCII) + ctx
+                } else {
+                    byteArrayOf(1, 128.toByte(), role.toByte()) + hex(scalar) + i.getString("code").toByteArray(Charsets.US_ASCII) + ctx
+                },
             )
             exchange(make(1, i.getString("x")), make(2, i.getString("y")), VelesCryptoConformance::pairingCommand, o)
             count++
@@ -100,7 +116,8 @@ class PairingInstrumentedTest {
             val e = f.getJSONObject("expected")
             if (e.optString("stage") !in listOf("point", "point_format", "shared_secret")) continue
             val d = f.getJSONObject("input").getJSONObject("deviation")
-            val a = start(1, "000000", ctx); val ah = a.copyOfRange(1, 9)
+            val a = start(1, "000000", ctx)
+            val ah = a.copyOfRange(1, 9)
             assertArrayEquals(f.getString("id"), byteArrayOf(1), VelesCrypto.pairingCommand(command(2, ah, hex(d.getString("value")))))
             assertArrayEquals(byteArrayOf(1), VelesCrypto.pairingCommand(command(4, ah)))
             count++
@@ -112,8 +129,10 @@ class PairingInstrumentedTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("velesRunExpiry") == "true")
         val base = fixtures.first { it.getString("id") == "veles-pairing-code-000000" }
         val ctx = hex(base.getJSONObject("expected").getJSONObject("outputs").getString("ctx"))
-        val a = start(1, "000000", ctx); val b = start(2, "000000", ctx)
-        assertEquals(74, a.size); assertEquals(74, b.size)
+        val a = start(1, "000000", ctx)
+        val b = start(2, "000000", ctx)
+        assertEquals(74, a.size)
+        assertEquals(74, b.size)
         android.os.SystemClock.sleep(300_001)
         assertArrayEquals(byteArrayOf(1), VelesCrypto.pairingCommand(command(2, a.copyOfRange(1, 9), b.copyOfRange(9, 74))))
         assertArrayEquals(byteArrayOf(1), VelesCrypto.pairingCommand(command(5, b.copyOfRange(1, 9))))
