@@ -55,6 +55,7 @@ val windowsExecutableSuffix = if (System.getProperty("os.name").startsWith("Wind
 // works, but `npm` does not. Resolved once at configuration time and reused by
 // every bridge Exec task that invokes npm.
 val npmCommand = if (windowsExecutableSuffix.isNotEmpty()) "npm.cmd" else "npm"
+val protocolDir = layout.projectDirectory.dir("protocol")
 
 fun pinnedToolVersion(name: String): String {
     val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
@@ -365,6 +366,86 @@ val rustNativeTest = tasks.register<Exec>("rustNativeTest") {
     commandLine("cargo", "test", "--workspace", "--locked")
 }
 
+val protocolNodeCheck = tasks.register("protocolNodeCheck") {
+    group = "verification"
+    doLast {
+        requireNpm("Install Node.js >=22.0.0 to run the OTP-02 contract checks.")
+        requireOnPath("python3", "Python 3.8+", "Install Python 3.8 or newer")
+        val nodeVersion = providers.exec { commandLine("node", "--version") }.standardOutput.asText.get().trim()
+        val pythonVersion = providers.exec { commandLine("python3", "--version") }.standardOutput.asText.get().trim()
+        fun atLeast(version: String, major: Int, minor: Int): Boolean {
+            val match = Regex("(\\d+)\\.(\\d+)").find(version) ?: return false
+            val foundMajor = match.groupValues[1].toInt()
+            val foundMinor = match.groupValues[2].toInt()
+            return foundMajor > major || (foundMajor == major && foundMinor >= minor)
+        }
+        check(atLeast(nodeVersion, 22, 0)) { "Node >=22.0.0 is required; found '$nodeVersion'" }
+        check(atLeast(pythonVersion, 3, 8)) { "Python >=3.8 is required; found '$pythonVersion'" }
+    }
+}
+
+val protocolInstall = tasks.register<Exec>("protocolInstall") {
+    group = "verification"
+    description = "Installs exact-pinned, script-free npm dependencies for protocol checks."
+    dependsOn(protocolNodeCheck)
+    inputs.file(protocolDir.file("package.json"))
+    inputs.file(protocolDir.file("package-lock.json"))
+    outputs.dir(protocolDir.dir("node_modules"))
+    workingDir(protocolDir)
+    commandLine(npmCommand, "ci", "--ignore-scripts")
+}
+
+val protocolContractCheck = tasks.register<Exec>("protocolContractCheck") {
+    group = "verification"
+    description = "Runs OTP-02 Node contract checks with fresh crypto evidence."
+    dependsOn(protocolInstall)
+    inputs.files(
+        fileTree(protocolDir.dir("checks")) { include("**/*.mjs") },
+        fileTree(protocolDir.dir("tools")) { include("**/*.mjs", "**/*.py") },
+        fileTree(protocolDir.dir("v1")) { include("**/*.json") },
+        layout.projectDirectory.file("docs/protocol/veles-v1.md"),
+    )
+    // The command deletes and recreates evidence, so Gradle must never reuse it.
+    outputs.upToDateWhen { false }
+    workingDir(layout.projectDirectory)
+    commandLine("node", "protocol/checks/check.mjs")
+}
+
+val protocolRustTest = tasks.register<Exec>("protocolRustTest") {
+    group = "verification"
+    description = "Runs the host-only Rust OTP-02 shared-fixture consumer."
+    dependsOn(rustToolchainCheck)
+    workingDir(rustDir)
+    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+    commandLine("cargo", "test", "--locked", "--test", "protocol_fixtures")
+}
+
+val protocolWebInstall = tasks.register<Exec>("protocolWebInstall") {
+    group = "verification"
+    description = "Installs script-free dependencies for the web OTP-02 consumer."
+    dependsOn(protocolNodeCheck)
+    workingDir(layout.projectDirectory.dir("web-extension"))
+    commandLine(npmCommand, "ci", "--ignore-scripts")
+}
+
+val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
+    group = "verification"
+    description = "Runs the web extension OTP-02 shared-fixture consumer."
+    dependsOn(protocolWebInstall)
+    workingDir(layout.projectDirectory.dir("web-extension"))
+    commandLine(npmCommand, "exec", "vitest", "run", "test/protocol-fixtures.test.ts")
+}
+
+val protocolFreshEvidenceCheck = tasks.register<Exec>("protocolFreshEvidenceCheck") {
+    group = "verification"
+    description = "Regenerates and independently checks fresh OTP-02 crypto evidence only."
+    dependsOn(protocolInstall)
+    inputs.files(protocolContractCheck.get().inputs.files)
+    outputs.upToDateWhen { false }
+    workingDir(layout.projectDirectory)
+    commandLine("node", "protocol/checks/check.mjs", "--evidence-only")
+}
+
 val rustWasmSmoke = tasks.register<Exec>("rustWasmSmoke") {
     group = "rust"
     dependsOn(rustWasm)
@@ -602,7 +683,15 @@ val bridgeInstall = tasks.register<Exec>("bridgeInstall") {
     inputs.file(bridgeDir.file("package-lock.json"))
     outputs.dir(bridgeDir.dir("node_modules"))
     workingDir(bridgeDir)
-    commandLine(npmCommand, "ci")
+    commandLine(npmCommand, "ci", "--ignore-scripts")
+}
+
+val protocolBridgeTest = tasks.register<Exec>("protocolBridgeTest") {
+    group = "verification"
+    description = "Runs the native-bridge OTP-02 shared-fixture consumer without Tauri."
+    dependsOn(bridgeInstall)
+    workingDir(bridgeDir)
+    commandLine(npmCommand, "exec", "vitest", "run", "test/protocol-fixtures.test.ts")
 }
 
 val bridgeFormat = tasks.register<Exec>("bridgeFormat") {
@@ -944,7 +1033,14 @@ tasks.named("check") {
         bridgeLint,
         bridgeTypecheck,
         bridgeTest,
+        "protocolCheck",
     )
+}
+
+tasks.register("protocolCheck") {
+    group = "verification"
+    description = "Runs all host-runnable OTP-02 fixture consumers and contract checks."
+    dependsOn(protocolContractCheck, protocolRustTest, protocolWebTest, protocolBridgeTest, ":app:protocolJvmTest")
 }
 
 tasks.named<Delete>("clean") {
@@ -973,5 +1069,6 @@ tasks.named<Delete>("clean") {
         // Rust build cache and auxiliary CLI install cache (local, gitignored).
         layout.buildDirectory.dir("rust"),
         layout.buildDirectory.dir("rust-tools"),
+        layout.buildDirectory.dir("protocol"),
     )
 }

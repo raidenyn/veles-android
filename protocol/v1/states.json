@@ -1,0 +1,3433 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.states",
+  "document": "veles-v1.md",
+  "description": "Test-only declarative transition/state descriptor for veles-v1.md section 11 (pairing, client pairing, session, authorization classes) plus the durable trust-record machines of section 5 (OTP2-STA-010/010a/010b/010c). Every transition mirrors a normative table row or requirement; effects are the Effect/Timeout/Failure columns. The normative document governs; a disagreement between this descriptor and veles-v1.md is a defect that fails the checks. Numeric ceilings are never duplicated here: guards reference limits.json names, resolved by checks/state.mjs. Simulated crypto outcomes (tag_ok, hmac_ok, sig_ok, act_mac_ok, peer_state) are trace inputs (OTP2-FIX-004), never conformance evidence. record_type_directions = originating direction of each record type (OTP2-ENC-020, 0x01 client->phone, 0x02 phone->client). record_effects = orientation-neutral effect names appended for accepted session records. record_flow = per-record pull/push outstanding counter bookkeeping (0x0204 settles outstanding push only on known events; unknown ack is a semantic no-op). record_state_machinesrecord_flags = OTP2-REC-031 canonical response_to_pull correlation is carried in the flags byte (bit3) and modeled in traces via the simulate flag pull_response; record_effects may carry {always, on_flag} and record_flow may carry dec_if_flag for the conditional settle. One-use code: phone pairing encodes OTP2-CRY-009a (code consumed at successful cB verification); post-code connection loss resumes via signed recovery ONLY where usable persisted peer records exist on both endpoints (an interruption before the peer identity was persisted leaves no usable record: repair via a fresh explicit pairing window; OTP2-CRY-009a). Prepare gates encode OTP2-STA-010a (original enrollment) and 010b step 0 (recovery prepare under OTP2-CRY-019f keys). Session class selection encodes OTP2-SID-001 with the client upgrade-before-selection rule. binds each trace role to its local durable-record machine for class determination (OTP2-SID-001).",
+  "frame_directions": {
+    "description": "Pre-auth plaintext frame payload directions (OTP2-ENC-010): direction byte 0x01 = client->phone, 0x02 = phone->client. Frames arrive at the endpoint whose inbound direction matches; arrival at the opposite endpoint is a role/context mismatch.",
+    "pairing_request": [
+      "0x01"
+    ],
+    "pairing_offer": [
+      "0x02"
+    ],
+    "pairing_client_point": [
+      "0x01"
+    ],
+    "pairing_confirm_a": [
+      "0x02"
+    ],
+    "pairing_confirm_b": [
+      "0x01"
+    ],
+    "reconnect_hello": [
+      "0x01",
+      "0x02"
+    ],
+    "reconnect_signature": [
+      "0x01",
+      "0x02"
+    ],
+    "preauth_reject": [
+      "0x02"
+    ]
+  },
+  "record_types": {
+    "0x0000": "reserved-invalid",
+    "0x0001": "reconnect_confirm",
+    "0x0002": "app_heartbeat",
+    "0x0003": "app_error",
+    "0x0100": "enroll_identity",
+    "0x0101": "activation_commit",
+    "0x0102": "activation_complete",
+    "0x0103": "activation_ack",
+    "0x0104": "enrollment_prepare",
+    "0x0200": "pull_request",
+    "0x0202": "pull_events",
+    "0x0203": "push_event",
+    "0x0204": "event_ack",
+    "0x0205": "removal_request",
+    "0x0206": "removal_response",
+    "0x0207": "phone_policy_state"
+  },
+  "record_type_directions": {
+    "0x0001": [
+      "0x01",
+      "0x02"
+    ],
+    "0x0002": [
+      "0x01",
+      "0x02"
+    ],
+    "0x0003": [
+      "0x01",
+      "0x02"
+    ],
+    "0x0100": [
+      "0x01",
+      "0x02"
+    ],
+    "0x0101": [
+      "0x01"
+    ],
+    "0x0102": [
+      "0x02"
+    ],
+    "0x0103": [
+      "0x01"
+    ],
+    "0x0104": [
+      "0x02"
+    ],
+    "0x0200": [
+      "0x01"
+    ],
+    "0x0202": [
+      "0x02"
+    ],
+    "0x0203": [
+      "0x02"
+    ],
+    "0x0204": [
+      "0x01"
+    ],
+    "0x0205": [
+      "0x01",
+      "0x02"
+    ],
+    "0x0206": [
+      "0x01",
+      "0x02"
+    ],
+    "0x0207": [
+      "0x02"
+    ]
+  },
+  "framework_types": [
+    "0x0002",
+    "0x0003"
+  ],
+  "connection_types": [
+    "0x0001"
+  ],
+  "enrollment_types": {
+    "description": "OTP2-CRY-020a: record types allowed on the original enrollment connection.",
+    "types": [
+      "0x0100",
+      "0x0101",
+      "0x0102",
+      "0x0103",
+      "0x0104",
+      "0x0003",
+      "0x0002"
+    ]
+  },
+  "session_classes": {
+    "enrollment": [
+      "0x0100",
+      "0x0101",
+      "0x0102",
+      "0x0103",
+      "0x0104"
+    ],
+    "activation_recovery": [
+      "0x0101",
+      "0x0102",
+      "0x0103",
+      "0x0104"
+    ],
+    "full_pending_peer": [
+      "0x0101",
+      "0x0102",
+      "0x0103",
+      "0x0104"
+    ],
+    "full": [
+      "0x0200",
+      "0x0202",
+      "0x0203",
+      "0x0204",
+      "0x0205",
+      "0x0206",
+      "0x0207"
+    ]
+  },
+  "record_effects": {
+    "0x0002": "heartbeat_processed",
+    "0x0100": "identity_record_processed",
+    "0x0101": "activation_commit_processed",
+    "0x0102": "activation_complete_processed",
+    "0x0103": "activation_ack_processed",
+    "0x0104": "enrollment_prepare_processed",
+    "0x0200": "pull_request_processed",
+    "0x0202": "otp_events_transferred",
+    "0x0203": "push_event_transferred",
+    "0x0204": "event_ack_processed",
+    "0x0205": "removal_request_processed",
+    "0x0206": "removal_response_processed",
+    "0x0207": {
+      "always": "phone_policy_observed",
+      "on_flag": {
+        "description": "OTP2-REC-031 canonical response_to_pull correlation (flags bit3): set only when this record answers one pull_request; a stale flag report with no outstanding pull is accepted, never underflows the counter, and settles nothing beyond a legitimate outstanding pull.",
+        "flag": "pull_response",
+        "effects": [
+          "pull_blocked_reported",
+          "pull_response_settles"
+        ]
+      }
+    }
+  },
+  "record_flow": {
+    "0x0200": {
+      "inc": "outstanding_pull"
+    },
+    "0x0202": {
+      "dec": "outstanding_pull"
+    },
+    "0x0203": {
+      "inc": "outstanding_push"
+    },
+    "0x0204": {
+      "event_known_settles": "outstanding_push"
+    },
+    "0x0207": {
+      "dec_if_flag": {
+        "description": "flags bit3 response_to_pull: settle exactly one outstanding pull; absent/clear flag (unsolicited notice) never settles; no underflow when nothing is outstanding (stale report).",
+        "flag": "pull_response",
+        "counter": "outstanding_pull"
+      }
+    }
+  },
+  "record_state_machines": {
+    "phone": "durable_phone_record",
+    "client": "durable_client_record"
+  },
+  "public_persisted_fields": {
+    "description": "OTP2-CRY-019g: only these fields may appear as persisted-state keys (besides machine:peer overrides). Any other key - in particular any secret - is a trust-boundary violation.",
+    "fields": [
+      "installation_id",
+      "peer_installation_id",
+      "phone_identity_pubkey",
+      "client_identity_pubkey",
+      "label",
+      "device_type",
+      "et",
+      "activation_pending",
+      "continuity_token",
+      "created_monotonic_ms"
+    ],
+    "prefixes": [
+      "created_monotonic_ms:"
+    ]
+  },
+  "machines": {
+    "phone_pairing": {
+      "document_anchor": "veles-v1.md#sec-states-pairing",
+      "role": "P",
+      "initial": "idle",
+      "states": [
+        "idle",
+        "window_open",
+        "spake_in_flight",
+        "awaiting_cB",
+        "enrollment_protected",
+        "awaiting_commit",
+        "committed_waiting_ack",
+        "active"
+      ],
+      "on_direction_mismatch": {
+        "description": "A frame arriving in the phone's own outbound direction is a role/context mismatch: generic pre-auth failure, and while a pairing execution is in flight the current connection is disconnected (ephemeral execution state erased; the pairing window, attempt budget and rate accounting persist; a next attempt requires a fresh connection).",
+        "effects": [
+          "preauth_reject",
+          "reject_direction_violation",
+          "execution_disconnected"
+        ],
+        "flight_states": [
+          "spake_in_flight",
+          "awaiting_cB"
+        ],
+        "to": "window_open"
+      },
+      "trans": [
+        {
+          "from": "idle",
+          "event": "enable_pairing",
+          "effects": [
+            "generate_pairing_id_and_code",
+            "show_code"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "idle",
+          "event": "pairing_request",
+          "effects": [
+            "preauth_reject",
+            "reject_window_not_open"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "window_open",
+          "event": "enable_pairing",
+          "effects": [
+            "reject_one_window"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "window_open",
+          "event": "pairing_request",
+          "guards": {
+            "window_age_below": {
+              "limit_s": "pairing_window_seconds"
+            },
+            "fresh_pa_below": {
+              "per_connection": "fresh_pa_per_connection",
+              "max": "fresh_pa_rolling_max",
+              "window_s": "fresh_pa_rolling_interval_seconds"
+            }
+          },
+          "effects": [
+            "emit_pairing_offer"
+          ],
+          "to": "spake_in_flight"
+        },
+        {
+          "from": "window_open",
+          "event": "pairing_request",
+          "guards": {
+            "fresh_pa_connection_exhausted": "fresh_pa_per_connection"
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_pa_per_connection"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "window_open",
+          "event": "pairing_request",
+          "guards": {
+            "fresh_pa_rolling_exhausted": {
+              "max": "fresh_pa_rolling_max",
+              "window_s": "fresh_pa_rolling_interval_seconds"
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_pa_rolling"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "pairing_request",
+          "effects": [
+            "preauth_reject",
+            "reject_second_concurrent_request"
+          ],
+          "to": "spake_in_flight"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "pairing_client_point",
+          "guards": {
+            "window_age_below": {
+              "limit_s": "pairing_window_seconds"
+            },
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "attempts_below": "pairing_attempts_per_pairing_id",
+            "rolling_attempts_below": {
+              "max": "pairing_rolling_attempts_max",
+              "window_s": "pairing_rolling_attempts_interval_seconds"
+            }
+          },
+          "effects": [
+            "consume_attempt",
+            "compute_cA",
+            "send_confirm_a"
+          ],
+          "to": "awaiting_cB"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "pairing_client_point",
+          "guards": {
+            "window_age_at_least": {
+              "limit_s": "pairing_window_seconds"
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_window_expired_no_compute",
+            "window_closed_code_erased"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "pairing_client_point",
+          "guards": {
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "attempts_exhausted": "pairing_attempts_per_pairing_id"
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_attempts_per_pairing_id"
+          ],
+          "to": "spake_in_flight"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "pairing_client_point",
+          "guards": {
+            "simulate": {
+              "pB_point_valid": true
+            },
+            "rolling_attempts_exhausted": {
+              "max": "pairing_rolling_attempts_max",
+              "window_s": "pairing_rolling_attempts_interval_seconds"
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_attempts_rolling"
+          ],
+          "to": "spake_in_flight"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "pairing_client_point",
+          "guards": {
+            "simulate": {
+              "pB_point_valid": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_malformed_point_no_consumption",
+            "execution_disconnected"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "awaiting_cB",
+          "event": "pairing_confirm_b",
+          "guards": {
+            "window_age_below": {
+              "limit_s": "pairing_window_seconds"
+            },
+            "simulate": {
+              "cB_mac_ok": true
+            }
+          },
+          "effects": [
+            "derive_enrollment_keys",
+            "pairing_code_consumed_one_use",
+            "close_pairing_window",
+            "send_enroll_identity"
+          ],
+          "to": "enrollment_protected",
+          "description": "OTP2-CRY-009a: verifying cB consumes the code — the pairing window closes for this pairing_id and the code is erased. Later continuation is CONDITIONAL on usable persisted peer records: once the peer's identity record was authenticated and the durable pending record exists, a disconnect resumes via signed recovery (OTP2-STA-010b) — never a second code entry; if the interruption lands BEFORE the peer's identity was persisted (no usable peer record), recovery does not exist and the only path is an explicitly user-opened NEW pairing window (fresh pairing_id, fresh code) after the one-sided record is cancelled/revoked/expired (OTP2-STA-012)."
+        },
+        {
+          "from": "awaiting_cB",
+          "event": "pairing_confirm_b",
+          "guards": {
+            "window_age_at_least": {
+              "limit_s": "pairing_window_seconds"
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_window_expired_no_compute",
+            "window_closed_code_erased"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_cB",
+          "event": "pairing_confirm_b",
+          "guards": {
+            "simulate": {
+              "cB_mac_ok": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "generic_pairing_failure"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            }
+          },
+          "effects": [
+            "compute_et",
+            "persist_pending_record",
+            "send_enrollment_prepare"
+          ],
+          "to": "awaiting_commit",
+          "description": "OTP2-STA-010a (atomic usable-record persistence): the phone derives `ET` from the canonical identity bodies — its own is locally known; the client's once authenticated — and ATOMICALLY persists the COMPLETE `pending` record INCLUDING `ET` (public fields only), entering `awaiting_commit` and releasing `enrollment_prepare` ONLY after durable persistence success. A persistence failure or crash before completion publishes nothing (no prepare is sent) and leaves no usable record (repair via a fresh explicit pairing window; OTP2-CRY-009a)."
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "duplicate_installation": true
+            }
+          },
+          "effects": [
+            "send_app_error_enrollment_rejected",
+            "reject_duplicate_installation",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "device_type_ok": false
+            }
+          },
+          "effects": [
+            "reject_client_device_type",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": false
+            }
+          },
+          "effects": [
+            "persist_failed_no_usable_record_published",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "R1 persistence boundary: the durable persist failed/crashed before completion — nothing usable is or may be published: no `enrollment_prepare` is sent, no pending record exists (durable deleted); repair via a fresh explicit pairing window (OTP2-CRY-009a)."
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "enroll_identity",
+          "effects": [
+            "reject_invalid_identity_record",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_commit",
+          "event": "activation_commit",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "persist_committed_waiting_ack"
+          ],
+          "to": "committed_waiting_ack"
+        },
+        {
+          "from": "awaiting_commit",
+          "event": "activation_commit",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "activation_mac_failure",
+            "erase_pending_record",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "activation_commit",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "persist_committed_waiting_ack"
+          ],
+          "to": "committed_waiting_ack"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "activation_ack",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_active_by_ack",
+            "erase_enrollment_keys",
+            "erase_enrollment_remnants",
+            "close_enrollment_connection"
+          ],
+          "to": "active"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "activation_ack",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "activation_mac_failure",
+            "erase_pending_record",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false
+          },
+          "effects": [
+            "reject_unauthorized_enrollment_record",
+            "erase_pending_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_commit",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false
+          },
+          "effects": [
+            "reject_unauthorized_enrollment_record",
+            "erase_pending_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false
+          },
+          "effects": [
+            "reject_unauthorized_enrollment_record",
+            "erase_pending_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false
+          },
+          "effects": [
+            "reject_unauthorized_enrollment_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0003"
+          },
+          "effects": [
+            "app_error_terminal",
+            "erase_pending_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_commit",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0003"
+          },
+          "effects": [
+            "app_error_terminal",
+            "erase_pending_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0003"
+          },
+          "effects": [
+            "app_error_terminal",
+            "erase_pending_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0003"
+          },
+          "effects": [
+            "app_error_terminal",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "connection_lost",
+          "effects": [
+            "connection_lost_window_resumable"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "awaiting_cB",
+          "event": "connection_lost",
+          "effects": [
+            "connection_lost_window_resumable"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "window_open",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "spake_in_flight",
+          "event": "inactivity_timeout",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "last_activity",
+              "limit_s": "pairing_request_inactivity_timeout_seconds"
+            }
+          },
+          "effects": [
+            "pairing_step_inactivity_timeout"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "awaiting_cB",
+          "event": "inactivity_timeout",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "last_activity",
+              "limit_s": "pairing_request_inactivity_timeout_seconds"
+            }
+          },
+          "effects": [
+            "pairing_step_inactivity_timeout"
+          ],
+          "to": "window_open"
+        },
+        {
+          "from": "window_open",
+          "event": "window_expired",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "window_created",
+              "limit_s": "pairing_window_seconds"
+            }
+          },
+          "effects": [
+            "window_closed_code_erased"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_cB",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_commit",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state",
+            "close_pairing_window"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_commit",
+          "event": "connection_lost",
+          "effects": [
+            "connection_lost_pending_record_continues_via_recovery",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "OTP2-CRY-009a: after the code is consumed and the closed window, the enrollment connection cannot resume by re-entering the code. A usable persisted peer record exists here by construction (pending/committed_waiting_ack), so continuation on a NEW connection is signed recovery (OTP2-STA-010b); the record persists (OTP2-STA-012 refuses a second enrollment while held)."
+        },
+        {
+          "from": "awaiting_commit",
+          "event": "inactivity_timeout",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "last_activity",
+              "limit_s": "pairing_request_inactivity_timeout_seconds"
+            }
+          },
+          "effects": [
+            "pairing_step_inactivity_timeout",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "Post-code states (the durable record is pending/committed_waiting_ack by construction): the window is closed, so the 30 s inactivity timeout drops the enrollment connection to idle; continuation happens via signed recovery (OTP2-STA-010b), which exists exactly because the persisted peer record exists."
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "connection_lost",
+          "effects": [
+            "connection_lost_pending_record_continues_via_recovery",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "OTP2-CRY-009a: after the code is consumed and the closed window, the enrollment connection cannot resume by re-entering the code. A usable persisted peer record exists here by construction (pending/committed_waiting_ack), so continuation on a NEW connection is signed recovery (OTP2-STA-010b); the record persists (OTP2-STA-012 refuses a second enrollment while held)."
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "inactivity_timeout",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "last_activity",
+              "limit_s": "pairing_request_inactivity_timeout_seconds"
+            }
+          },
+          "effects": [
+            "pairing_step_inactivity_timeout",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "Post-code states (the durable record is pending/committed_waiting_ack by construction): the window is closed, so the 30 s inactivity timeout drops the enrollment connection to idle; continuation happens via signed recovery (OTP2-STA-010b), which exists exactly because the persisted peer record exists."
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "connection_lost",
+          "guards": {
+            "record_state_in": [
+              "pending",
+              "committed_waiting_ack"
+            ]
+          },
+          "effects": [
+            "connection_lost_pending_record_continues_via_recovery",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "Defensive row: enrollment_protected with a persisted record exists only if the client identity was authenticated and the machine ordering changed; recovery of OTP2-STA-010b exists."
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "connection_lost",
+          "guards": {
+            "record_state_in": [
+              "absent",
+              "deleted"
+            ]
+          },
+          "effects": [
+            "connection_lost_no_usable_peer_record_repair_only",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "R1 (reviewer subagent): the interruption came before the client identity record was authenticated/persisted — NO usable peer record exists; the code stays consumed (OTP2-CRY-009a) and recovery does not exist. The pairing continuation is repair-only: an explicitly user-opened NEW pairing window (fresh pairing_id, fresh code) re-enrolls the same installation (OTP2-STA-012 governs a still-held one-sided record)."
+        },
+        {
+          "from": "idle",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state"
+          ],
+          "to": "idle",
+          "description": "R1: cancelling with no in-flight pairing execution only clears ephemeral remnants on this machine; the durable one-sided record removal is the durable record machine's own cancel/revocation/expiry path (OTP2-CRY-009a)."
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "inactivity_timeout",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "last_activity",
+              "limit_s": "pairing_request_inactivity_timeout_seconds"
+            },
+            "record_state_in": [
+              "pending",
+              "committed_waiting_ack"
+            ]
+          },
+          "effects": [
+            "pairing_step_inactivity_timeout",
+            "inactivity_timeout_pending_record_continues_via_recovery",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "Defensive row (record exists only after the client identity was authenticated; see connection_lost split): the inactivity timeout drops the enrollment connection; continuation via signed recovery only (OTP2-STA-010b)."
+        },
+        {
+          "from": "enrollment_protected",
+          "event": "inactivity_timeout",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "last_activity",
+              "limit_s": "pairing_request_inactivity_timeout_seconds"
+            },
+            "record_state_in": [
+              "absent",
+              "deleted"
+            ]
+          },
+          "effects": [
+            "pairing_step_inactivity_timeout",
+            "inactivity_timeout_no_usable_peer_record_repair_only",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "R1 residual: no usable persisted peer record — the timeout drops the connection; signed recovery does not exist and the only path is an explicitly user-opened NEW pairing window (fresh pairing_id, fresh code; the consumed code is never reused) after the one-sided record is cancelled/revoked/expired (OTP2-STA-012)."
+        }
+      ]
+    },
+    "client_pairing": {
+      "document_anchor": "veles-v1.md#sec-states-pairing-client",
+      "role": "C",
+      "initial": "idle",
+      "states": [
+        "idle",
+        "awaiting_offer",
+        "awaiting_ca",
+        "awaiting_phone_identity",
+        "verified_prepare_ready",
+        "awaiting_complete",
+        "active",
+        "awaiting_prepare"
+      ],
+      "on_direction_mismatch": {
+        "description": "A frame arriving in the client's own outbound direction is a role/context mismatch: visible generic failure; while pairing is in flight the current connection is disconnected.",
+        "effects": [
+          "pairing_failed_generic",
+          "reject_direction_violation",
+          "execution_disconnected"
+        ],
+        "flight_states": [
+          "awaiting_ca",
+          "awaiting_complete",
+          "awaiting_offer",
+          "awaiting_phone_identity",
+          "awaiting_prepare",
+          "verified_prepare_ready"
+        ],
+        "to": "idle"
+      },
+      "trans": [
+        {
+          "from": "idle",
+          "event": "send_pairing_request",
+          "effects": [
+            "send_pairing_request"
+          ],
+          "to": "awaiting_offer"
+        },
+        {
+          "from": "awaiting_offer",
+          "event": "pairing_offer",
+          "guards": {
+            "simulate": {
+              "offer_valid": true
+            }
+          },
+          "effects": [
+            "compute_pB"
+          ],
+          "to": "awaiting_ca"
+        },
+        {
+          "from": "awaiting_offer",
+          "event": "pairing_offer",
+          "guards": {
+            "simulate": {
+              "offer_valid": false
+            }
+          },
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_ca",
+          "event": "pairing_confirm_a",
+          "guards": {
+            "simulate": {
+              "cA_mac_ok": true
+            }
+          },
+          "effects": [
+            "verify_confirm_a",
+            "send_confirm_b"
+          ],
+          "to": "awaiting_phone_identity"
+        },
+        {
+          "from": "awaiting_ca",
+          "event": "pairing_confirm_a",
+          "guards": {
+            "simulate": {
+              "cA_mac_ok": false
+            }
+          },
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": true
+            }
+          },
+          "effects": [
+            "compute_et",
+            "persist_pending_record",
+            "send_enroll_identity"
+          ],
+          "to": "awaiting_prepare",
+          "description": "OTP2-STA-010a (atomic usable-record persistence): the client derives `ET` from the canonical identity bodies — the phone's once authenticated + its own locally known — and ATOMICALLY persists the COMPLETE `pending` record INCLUDING `ET` (public fields only); its own identity record is released ONLY after durable persistence success. A persistence failure or crash before completion publishes nothing (no identity is sent) and leaves no usable record (repair via a fresh explicit pairing window; OTP2-CRY-009a)."
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "device_type_ok": false
+            }
+          },
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": false
+            }
+          },
+          "effects": [
+            "persist_failed_no_usable_record_published",
+            "erase_pairing_state",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "R1 persistence boundary: the durable persist failed/crashed before completion — the client's identity is NOT released, nothing usable is published, and no pending record exists (durable deleted); the endpoint requires the no-usable-record cleanup/fresh-window path (OTP2-CRY-009a)."
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "enroll_identity",
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "verified_prepare_ready",
+          "event": "send_activation_commit",
+          "effects": [
+            "send_activation_commit"
+          ],
+          "to": "awaiting_complete"
+        },
+        {
+          "from": "awaiting_complete",
+          "event": "activation_complete",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_active_client",
+            "send_activation_ack",
+            "erase_enrollment_keys",
+            "close_enrollment_connection",
+            "display_fp_pair"
+          ],
+          "to": "active"
+        },
+        {
+          "from": "awaiting_complete",
+          "event": "activation_complete",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "activation_mac_failure",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_prepare",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0104",
+            "simulate": {
+              "act_mac_ok": true
+            },
+            "class_is": "enrollment"
+          },
+          "effects": [
+            "verify_enrollment_prepare"
+          ],
+          "to": "verified_prepare_ready",
+          "description": "OTP2-STA-010a prepare gate: the client's commit is authorized only by verifying the enrollment_prepare MAC (stage 0x00) of the CURRENT enrollment connection. verified_prepare_ready is the prepare-verified state; no commit is ever sent from awaiting_prepare."
+        },
+        {
+          "from": "awaiting_prepare",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0104",
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "activation_mac_failure",
+            "erase_pending_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0104"
+          },
+          "effects": [
+            "reject_out_of_order_prepare",
+            "erase_pairing_state",
+            "close_enrollment_connection"
+          ],
+          "to": "idle",
+          "description": "Early-prepare guard: an enrollment_prepare arriving before the client released its own identity record is an ordering violation (the phone cannot legitimately have produced it yet)."
+        },
+        {
+          "from": "awaiting_prepare",
+          "event": "preauth_reject",
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_prepare",
+          "event": "connection_lost",
+          "effects": [
+            "pairing_failed_generic",
+            "connection_lost"
+          ],
+          "to": "idle",
+          "description": "OTP2-STA-010a: a lost prepare means this client sends NO commit on this connection; its durable pending record persists and continuation goes through recovery (OTP2-STA-010b)."
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false
+          },
+          "effects": [
+            "reject_unauthorized_enrollment_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false
+          },
+          "effects": [
+            "reject_unauthorized_enrollment_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "verified_prepare_ready",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false
+          },
+          "effects": [
+            "reject_unauthorized_enrollment_record",
+            "erase_enrollment_keys",
+            "close_enrollment_connection"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_offer",
+          "event": "preauth_reject",
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_ca",
+          "event": "preauth_reject",
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "preauth_reject",
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "verified_prepare_ready",
+          "event": "preauth_reject",
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_complete",
+          "event": "preauth_reject",
+          "effects": [
+            "pairing_failed_generic"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_offer",
+          "event": "connection_lost",
+          "effects": [
+            "pairing_failed_generic",
+            "connection_lost"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_ca",
+          "event": "connection_lost",
+          "effects": [
+            "pairing_failed_generic",
+            "connection_lost"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_phone_identity",
+          "event": "connection_lost",
+          "effects": [
+            "pairing_failed_generic",
+            "connection_lost"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "verified_prepare_ready",
+          "event": "connection_lost",
+          "effects": [
+            "pairing_failed_generic",
+            "connection_lost"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "awaiting_complete",
+          "event": "connection_lost",
+          "effects": [
+            "pairing_failed_generic",
+            "connection_lost"
+          ],
+          "to": "idle"
+        },
+        {
+          "from": "idle",
+          "event": "cancel_pairing",
+          "effects": [
+            "pairing_cancelled",
+            "erase_pairing_state"
+          ],
+          "to": "idle",
+          "description": "R1: cancelling with no in-flight pairing execution only clears ephemeral remnants on this machine; the durable one-sided record removal is the durable record machine's own cancel/revocation/expiry path (OTP2-CRY-009a)."
+        }
+      ]
+    },
+    "session": {
+      "document_anchor": "veles-v1.md#sec-states-session",
+      "initial": "none",
+      "states": [
+        "none",
+        "awaiting_phone_hello",
+        "awaiting_phone_signature",
+        "keys_derived",
+        "awaiting_phone_confirm",
+        "awaiting_client_signature",
+        "awaiting_peer_confirm",
+        "session_open",
+        "closed",
+        "terminated"
+      ],
+      "trans": [
+        {
+          "from": "none",
+          "event": "send_hello",
+          "roles": [
+            "C"
+          ],
+          "effects": [
+            "send_client_hello"
+          ],
+          "to": "awaiting_phone_hello"
+        },
+        {
+          "from": "none",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          "effects": [
+            "reply_phone_hello",
+            "compute_rbase"
+          ],
+          "to": "awaiting_client_signature"
+        },
+        {
+          "from": "none",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "record_exists": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_unknown_installation"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "none",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "hello_valid": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_invalid_hello"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_phone_hello",
+          "event": "reconnect_hello",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "hello_valid": true
+            }
+          },
+          "effects": [
+            "compute_rbase"
+          ],
+          "to": "awaiting_phone_signature"
+        },
+        {
+          "from": "awaiting_phone_hello",
+          "event": "reconnect_hello",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "hello_valid": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_invalid_hello"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_phone_signature",
+          "event": "reconnect_signature",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "sig_ok": true
+            }
+          },
+          "effects": [
+            "verify_phone_signature",
+            "send_client_signature"
+          ],
+          "to": "keys_derived"
+        },
+        {
+          "from": "awaiting_phone_signature",
+          "event": "reconnect_signature",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "sig_ok": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_invalid_signature"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_client_signature",
+          "event": "reconnect_signature",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "sig_ok": true
+            },
+            "record_state_in": [
+              "active"
+            ]
+          },
+          "effects": [
+            "verify_client_signature",
+            "derive_session_keys",
+            "send_reconnect_confirm",
+            "reconnect_confirm_sent_peer_state_active"
+          ],
+          "to": "awaiting_peer_confirm",
+          "description": "OTP2-SID-001: phone record active → peer_state 0x01."
+        },
+        {
+          "from": "awaiting_client_signature",
+          "event": "reconnect_signature",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "sig_ok": true
+            },
+            "record_state_in": [
+              "pending",
+              "committed_waiting_ack"
+            ]
+          },
+          "effects": [
+            "verify_client_signature",
+            "derive_session_keys",
+            "send_reconnect_confirm",
+            "reconnect_confirm_sent_peer_state_below_active"
+          ],
+          "to": "awaiting_peer_confirm",
+          "description": "OTP2-SID-001: phone record below active → peer_state 0x02."
+        },
+        {
+          "from": "awaiting_client_signature",
+          "event": "reconnect_signature",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "sig_ok": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_invalid_signature"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "keys_derived",
+          "event": "send_reconnect_confirm",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "record_state_in": [
+              "active",
+              "active_activation_pending"
+            ]
+          },
+          "effects": [
+            "derive_session_keys",
+            "send_reconnect_confirm",
+            "reconnect_confirm_sent_peer_state_active"
+          ],
+          "to": "awaiting_phone_confirm",
+          "description": "OTP2-SID-001: client outbound peer_state 0x01 while its record is in the active family — including the incomplete active_activation_pending mirror."
+        },
+        {
+          "from": "keys_derived",
+          "event": "send_reconnect_confirm",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "record_state_in": [
+              "pending",
+              "committed_waiting_ack"
+            ]
+          },
+          "effects": [
+            "derive_session_keys",
+            "send_reconnect_confirm",
+            "reconnect_confirm_sent_peer_state_below_active"
+          ],
+          "to": "awaiting_phone_confirm",
+          "description": "OTP2-SID-001: client record pending reports peer_state 0x02 (below active)."
+        },
+        {
+          "from": "awaiting_phone_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            },
+            "record_state_in": [
+              "active"
+            ]
+          },
+          "effects": [
+            "mutual_authentication_complete",
+            "set_class_full",
+            "peer_state_reported_0x01"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "awaiting_phone_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            },
+            "record_state_in": [
+              "active_activation_pending"
+            ]
+          },
+          "effects": [
+            "mutual_authentication_complete",
+            "record_upgraded_fully_active",
+            "phone_active_proof_received",
+            "set_class_full",
+            "peer_state_reported_0x01"
+          ],
+          "to": "session_open",
+          "description": "OTP2-SID-001 / OTP2-STA-010c: the signed+encrypted phone-active proof upgrades the incomplete active_activation_pending mirror to fully-active BEFORE class selection; both endpoints fix the class full on this first valid post-pairing reconnect. The client's outbound confirmation byte in this state is 0x01 (active family)."
+        },
+        {
+          "from": "awaiting_phone_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            },
+            "record_state_in": [
+              "active_activation_pending"
+            ]
+          },
+          "effects": [
+            "mutual_authentication_complete",
+            "set_class_activation_recovery",
+            "peer_state_reported_0x02"
+          ],
+          "to": "session_open",
+          "description": "OTP2-STA-010b step 5: phone still below active — no upgrade; recovery class, the client re-sends the activation_ack."
+        },
+        {
+          "from": "awaiting_phone_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": true
+            },
+            "record_state_in": [
+              "pending"
+            ]
+          },
+          "effects": [
+            "mutual_authentication_complete",
+            "set_class_activation_recovery"
+          ],
+          "to": "session_open",
+          "description": "Defensively exact: a client record still pending is always recovery-only; the client re-commits after this session's verified prepare (OTP2-STA-010b step 0/1)."
+        },
+        {
+          "from": "awaiting_phone_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": false
+            }
+          },
+          "effects": [
+            "confirm_verify_failed",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "awaiting_peer_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x01"
+            },
+            "record_state_in": [
+              "active"
+            ]
+          },
+          "effects": [
+            "mutual_authentication_complete",
+            "set_class_full",
+            "peer_state_reported_0x01"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "awaiting_peer_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": true,
+              "peer_state": "0x02"
+            },
+            "record_state_in": [
+              "active"
+            ]
+          },
+          "effects": [
+            "mutual_authentication_complete",
+            "set_class_full_pending_peer",
+            "peer_state_reported_0x02"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "awaiting_peer_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": true
+            },
+            "record_state_in": [
+              "pending",
+              "committed_waiting_ack"
+            ]
+          },
+          "effects": [
+            "mutual_authentication_complete",
+            "set_class_activation_recovery"
+          ],
+          "to": "session_open",
+          "description": "OTP2-SID-001: a phone record below active is always activation_recovery on both its own side and (by the client matrix) for a pending client; committed_waiting_ack re-ack per step 5."
+        },
+        {
+          "from": "awaiting_peer_confirm",
+          "event": "reconnect_confirm",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "hmac_ok": false
+            }
+          },
+          "effects": [
+            "confirm_verify_failed",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "counter_seek",
+          "effects": [
+            "test_probe_counter_seek"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0003"
+          },
+          "effects": [
+            "record_accepted",
+            "app_error_terminal",
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true,
+              "event_known": true
+            },
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0204"
+          },
+          "effects": [
+            "record_accepted",
+            "advance_rx_sequence",
+            "push_settled",
+            "event_ack_settles_push"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true,
+              "event_known": false
+            },
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0204"
+          },
+          "effects": [
+            "record_accepted",
+            "advance_rx_sequence",
+            "event_ack_unknown_noop"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            },
+            "type_is": "0x0101"
+          },
+          "effects": [
+            "reject_activation_mac_mismatch",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            },
+            "type_is": "0x0102"
+          },
+          "effects": [
+            "reject_activation_mac_mismatch",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            },
+            "type_is": "0x0103"
+          },
+          "effects": [
+            "reject_activation_mac_mismatch",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            },
+            "type_is": "0x0104",
+            "class_in": [
+              "activation_recovery",
+              "full_pending_peer"
+            ],
+            "class_allows": true
+          },
+          "effects": [
+            "record_accepted",
+            "advance_rx_sequence",
+            "enrollment_prepare_processed",
+            "prepare_verified"
+          ],
+          "to": "session_open",
+          "description": "OTP2-STA-010b step 0 (client view): the phone's recovery prepare (stage 0x00 under K_rec_phone) re-attests the durable ET; prepare_verified gates this session's commit."
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            },
+            "type_is": "0x0104"
+          },
+          "effects": [
+            "reject_activation_mac_mismatch",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "roles": [
+            "C"
+          ],
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0101",
+            "class_in": [
+              "activation_recovery",
+              "full_pending_peer"
+            ],
+            "prepare_verified": true,
+            "record_state_in": [
+              "pending"
+            ]
+          },
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "activation_commit_sent"
+          ],
+          "to": "session_open",
+          "description": "OTP2-STA-010a/010b step 1: a recovery commit is sent ONLY after this session's verified enrollment_prepare (the fresh-ET proof bound to the signed handshake), and only while the local client record is pending."
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0104",
+            "class_in": [
+              "activation_recovery",
+              "full_pending_peer"
+            ],
+            "peer_reported": "0x02"
+          },
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "enrollment_prepare_sent",
+            "prepare_peer_reported_below_active"
+          ],
+          "to": "session_open",
+          "description": "OTP2-STA-010b step 0 (exact peer rule): whenever the CLIENT's confirmation reported peer_state 0x02 (the client is below active-confirmed) — whether the phone's own record is pending or committed_waiting_ack, and on full_pending_peer sessions — the phone sends the recovery prepare (recovery MAC, stage 0x00 under K_rec_phone, bound to the persisted ET) BEFORE the client's commit. When the client reported 0x01 no prepare is sent: the client is beyond commit and re-sends the ack (step 5), or the session is full."
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "tag_ok": true,
+              "length_ok": true,
+              "session_id_ok": true
+            },
+            "class_allows": true,
+            "sequence_is_next": true
+          },
+          "effects": [
+            "record_accepted",
+            "advance_rx_sequence"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "tag_ok": false
+            }
+          },
+          "effects": [
+            "reject_bad_tag",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "session_id_ok": false
+            }
+          },
+          "effects": [
+            "reject_replayed_or_foreign_session_record",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "simulate": {
+              "length_ok": false
+            }
+          },
+          "effects": [
+            "reject_oversize_record",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "sequence_mismatched": true
+          },
+          "effects": [
+            "reject_sequence_violation",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "protected_record",
+          "guards": {
+            "class_allows": false
+          },
+          "effects": [
+            "reject_unauthorized_record",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0003"
+          },
+          "effects": [
+            "record_sent",
+            "app_error_terminal",
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0200",
+            "pull_outstanding_below": "pull_outstanding_max"
+          },
+          "roles": [
+            "C"
+          ],
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "pull_request_sent"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0202",
+            "pull_response_allowed": true
+          },
+          "roles": [
+            "P"
+          ],
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "otp_events_transferred"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0207",
+            "simulate": {
+              "pull_response": true
+            },
+            "pull_response_allowed": true
+          },
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "pull_blocked_reported",
+            "pull_response_settles"
+          ],
+          "to": "session_open",
+          "description": "OTP2-REC-031: the blocked policy response (flags bit3 response_to_pull set) answers exactly one outstanding pull_request; the client settles on it."
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0207",
+            "simulate": {
+              "pull_response": false
+            }
+          },
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "policy_notice_sent"
+          ],
+          "to": "session_open",
+          "description": "OTP2-REC-031: an unsolicited policy observation (bit3 clear) — at full-session start or when the observed policy changes before an eligible delivery; it NEVER settles a pull."
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0203",
+            "push_outstanding_below": "push_outstanding_max"
+          },
+          "roles": [
+            "P"
+          ],
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "push_event_transferred"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "push_retransmit",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0203",
+            "push_outstanding_at_least": true,
+            "elapsed_at_least": {
+              "since": "push_sent",
+              "limit_s": "push_ack_timeout_seconds"
+            },
+            "push_retransmits_below": "push_max_retransmits"
+          },
+          "roles": [
+            "P"
+          ],
+          "effects": [
+            "advance_tx_sequence",
+            "push_retransmitted"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "push_retransmit",
+          "guards": {
+            "push_outstanding_at_least": true,
+            "elapsed_at_least": {
+              "since": "push_sent",
+              "limit_s": "push_ack_timeout_seconds"
+            },
+            "push_retransmits_exhausted": "push_max_retransmits"
+          },
+          "roles": [
+            "P"
+          ],
+          "effects": [
+            "push_queue_dropped"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0204"
+          },
+          "roles": [
+            "C"
+          ],
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "event_ack_processed",
+            "event_ack_sent"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0002",
+            "tx_rate_below": {
+              "max": 4,
+              "window_s": 60
+            }
+          },
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "heartbeat_sent"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "type_is": "0x0002",
+            "tx_rate_exceeded": {
+              "max": 4,
+              "window_s": 60
+            }
+          },
+          "effects": [
+            "heartbeat_rate_violation",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0205"
+          },
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "removal_requested"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0206"
+          },
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "removal_response_sent"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0102",
+            "class_in": [
+              "activation_recovery",
+              "full_pending_peer"
+            ],
+            "record_state_in": [
+              "committed_waiting_ack",
+              "active"
+            ]
+          },
+          "roles": [
+            "P"
+          ],
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "activation_complete_sent"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": true,
+            "sequence_is_next": true,
+            "type_is": "0x0103",
+            "class_in": [
+              "activation_recovery",
+              "full_pending_peer"
+            ],
+            "record_state_in": [
+              "active",
+              "active_activation_pending"
+            ]
+          },
+          "roles": [
+            "C"
+          ],
+          "effects": [
+            "record_sent",
+            "advance_tx_sequence",
+            "activation_ack_sent"
+          ],
+          "to": "session_open"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "class_allows": false
+          },
+          "effects": [
+            "reject_unauthorized_record",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "send_protected_record",
+          "guards": {
+            "sequence_mismatched": true
+          },
+          "effects": [
+            "reject_sequence_violation",
+            "terminate_session",
+            "erase_session_keys",
+            "counter_not_advanced"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "session_open",
+          "event": "close_connection",
+          "effects": [
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "session_open",
+          "event": "idle_timeout",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "last_activity",
+              "limit_s": "reconnect_idle_timeout_seconds"
+            }
+          },
+          "effects": [
+            "session_idle_timeout_fired",
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "session_open",
+          "event": "revoke",
+          "roles": [
+            "P"
+          ],
+          "effects": [
+            "revocation_disconnect",
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "none",
+          "event": "protected_record",
+          "effects": [
+            "preauth_reject",
+            "reject_unauthenticated_record"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_phone_hello",
+          "event": "protected_record",
+          "effects": [
+            "reject_unauthenticated_record",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "awaiting_phone_signature",
+          "event": "protected_record",
+          "effects": [
+            "reject_unauthenticated_record",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "keys_derived",
+          "event": "protected_record",
+          "effects": [
+            "reject_unauthenticated_record",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "awaiting_phone_confirm",
+          "event": "protected_record",
+          "effects": [
+            "reject_unauthenticated_record",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "awaiting_client_signature",
+          "event": "protected_record",
+          "effects": [
+            "reject_unauthenticated_record",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "awaiting_peer_confirm",
+          "event": "protected_record",
+          "effects": [
+            "reject_unauthenticated_record",
+            "terminate_session",
+            "erase_session_keys"
+          ],
+          "to": "terminated"
+        },
+        {
+          "from": "awaiting_phone_hello",
+          "event": "close_connection",
+          "effects": [
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_phone_signature",
+          "event": "close_connection",
+          "effects": [
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "keys_derived",
+          "event": "close_connection",
+          "effects": [
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_phone_confirm",
+          "event": "close_connection",
+          "effects": [
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_client_signature",
+          "event": "close_connection",
+          "effects": [
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "awaiting_peer_confirm",
+          "event": "close_connection",
+          "effects": [
+            "erase_session_keys"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "closed",
+          "event": "send_hello",
+          "roles": [
+            "C"
+          ],
+          "effects": [
+            "reset_session_slot",
+            "send_client_hello"
+          ],
+          "to": "awaiting_phone_hello"
+        },
+        {
+          "from": "terminated",
+          "event": "send_hello",
+          "roles": [
+            "C"
+          ],
+          "effects": [
+            "reset_session_slot",
+            "send_client_hello"
+          ],
+          "to": "awaiting_phone_hello"
+        },
+        {
+          "from": "closed",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          "effects": [
+            "reset_session_slot",
+            "reply_phone_hello",
+            "compute_rbase"
+          ],
+          "to": "awaiting_client_signature"
+        },
+        {
+          "from": "closed",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "record_exists": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_unknown_installation"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "closed",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "hello_valid": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_invalid_hello"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "terminated",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "record_exists": true,
+              "hello_valid": true
+            }
+          },
+          "effects": [
+            "reset_session_slot",
+            "reply_phone_hello",
+            "compute_rbase"
+          ],
+          "to": "awaiting_client_signature"
+        },
+        {
+          "from": "terminated",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "record_exists": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_unknown_installation"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "terminated",
+          "event": "reconnect_hello",
+          "roles": [
+            "P"
+          ],
+          "guards": {
+            "simulate": {
+              "hello_valid": false
+            }
+          },
+          "effects": [
+            "preauth_reject",
+            "reject_invalid_hello"
+          ],
+          "to": "closed"
+        },
+        {
+          "from": "none",
+          "event": "process_load",
+          "effects": [],
+          "to": "none",
+          "description": "A process load (or restart) with no session slot present leaves the slot absent; durable trust is unaffected here — the record machines own restart semantics."
+        }
+      ],
+      "on_direction_mismatch": {
+        "description": "A Veles pre-auth frame arriving on a session-machine connection in the endpoint's own outbound direction is rejected, never ignored; on an open session it tears the session down.",
+        "to": "terminated",
+        "effects": [
+          "reject_direction_violation",
+          "terminate_session",
+          "erase_session_keys"
+        ]
+      }
+    },
+    "durable_phone_record": {
+      "document_anchor": "veles-v1.md#sec-activation",
+      "initial": "absent",
+      "states": [
+        "absent",
+        "pending",
+        "committed_waiting_ack",
+        "active",
+        "deleted"
+      ],
+      "trans": [
+        {
+          "from": "absent",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            }
+          },
+          "effects": [
+            "record_persisted_pending"
+          ],
+          "to": "pending"
+        },
+        {
+          "from": "pending",
+          "event": "activation_commit",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_committed"
+          ],
+          "to": "committed_waiting_ack"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "activation_commit",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_committed"
+          ],
+          "to": "committed_waiting_ack"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "activation_ack",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_activated_by_ack",
+            "erase_enrollment_remnants"
+          ],
+          "to": "active"
+        },
+        {
+          "from": "pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0101",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_committed"
+          ],
+          "to": "committed_waiting_ack"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0101",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_committed"
+          ],
+          "to": "committed_waiting_ack"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0103",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_activated_by_ack",
+            "erase_enrollment_remnants"
+          ],
+          "to": "active"
+        },
+        {
+          "from": "pending",
+          "event": "activation_commit",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_pending_record"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "activation_ack",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_pending_record"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "pending_expiry",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "pending_created",
+              "limit_s": "pending_record_expiry_seconds"
+            }
+          },
+          "effects": [
+            "delete_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "pending_expiry",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "pending_created",
+              "limit_s": "pending_record_expiry_seconds"
+            }
+          },
+          "effects": [
+            "delete_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "process_load",
+          "guards": {
+            "simulate": {
+              "continuity_token_matches": false
+            }
+          },
+          "effects": [
+            "delete_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "process_load",
+          "guards": {
+            "simulate": {
+              "continuity_token_matches": false
+            }
+          },
+          "effects": [
+            "delete_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "cancel_pairing",
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "cancel_pairing",
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "revoke",
+          "effects": [
+            "erase_trust_record_revoked"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "revoke",
+          "effects": [
+            "erase_trust_record_revoked"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active",
+          "event": "revoke",
+          "effects": [
+            "erase_trust_record_revoked"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0205"
+          },
+          "effects": [
+            "erase_trust_record_removed"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0206"
+          },
+          "effects": [
+            "erase_trust_record_removed"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false,
+            "enrollment_channel_attempt": [
+              "enrollment_protected",
+              "awaiting_commit",
+              "committed_waiting_ack"
+            ]
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false,
+            "enrollment_channel_attempt": [
+              "enrollment_protected",
+              "awaiting_commit",
+              "committed_waiting_ack"
+            ]
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0101",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "committed_waiting_ack",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0103",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0101",
+            "class_is": "full_pending_peer",
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "commit_duplicate_accepted_no_regression"
+          ],
+          "to": "active",
+          "description": "OTP2-REC-035 full_pending_peer reachability note: a late/duplicate commit against an already-active record is an idempotent statement duplicate — NO state regression (committed state is never re-entered); the phone re-sends activation_complete so a still-pending peer can complete."
+        },
+        {
+          "from": "deleted",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            }
+          },
+          "effects": [
+            "record_persisted_pending"
+          ],
+          "to": "pending",
+          "description": "R1: a same-installation re-enrollment after the earlier one-sided/inactive record was genuinely deleted (explicit cancel/revocation or expiry, OTP2-CRY-009a) creates a fresh pending record; while any record is HELD the duplicate guard (OTP2-STA-012) refuses it."
+        },
+        {
+          "from": "absent",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": false
+            }
+          },
+          "effects": [
+            "persist_failed_no_usable_record_published"
+          ],
+          "to": "deleted",
+          "description": "R1 persistence boundary: a persist failure/crash before completion leaves NO usable record — the durable machine records the cleanup (deleted), and nothing usable exists to publish."
+        }
+      ]
+    },
+    "durable_client_record": {
+      "document_anchor": "veles-v1.md#sec-activation",
+      "initial": "absent",
+      "states": [
+        "absent",
+        "pending",
+        "active_activation_pending",
+        "active",
+        "deleted"
+      ],
+      "trans": [
+        {
+          "from": "absent",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": true
+            }
+          },
+          "effects": [
+            "record_persisted_pending"
+          ],
+          "to": "pending"
+        },
+        {
+          "from": "pending",
+          "event": "activation_complete",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_active_client",
+            "activation_pending_flag_set"
+          ],
+          "to": "active_activation_pending"
+        },
+        {
+          "from": "pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0102",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "record_active_client",
+            "activation_pending_flag_set"
+          ],
+          "to": "active_activation_pending"
+        },
+        {
+          "from": "active_activation_pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0102",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": true
+            }
+          },
+          "effects": [
+            "activation_pending_flag_set"
+          ],
+          "to": "active_activation_pending"
+        },
+        {
+          "from": "active_activation_pending",
+          "event": "reconnect_confirm",
+          "guards": {
+            "simulate": {
+              "peer_state": "0x01"
+            }
+          },
+          "effects": [
+            "record_upgraded_fully_active",
+            "phone_active_proof_received"
+          ],
+          "to": "active"
+        },
+        {
+          "from": "pending",
+          "event": "pending_expiry",
+          "guards": {
+            "elapsed_at_least": {
+              "since": "pending_created",
+              "limit_s": "pending_record_expiry_seconds"
+            }
+          },
+          "effects": [
+            "delete_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "process_load",
+          "guards": {
+            "simulate": {
+              "continuity_token_matches": false
+            }
+          },
+          "effects": [
+            "delete_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "revoke",
+          "effects": [
+            "erase_trust_record_revoked"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active_activation_pending",
+          "event": "revoke",
+          "effects": [
+            "erase_trust_record_revoked"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active",
+          "event": "revoke",
+          "effects": [
+            "erase_trust_record_revoked"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0205"
+          },
+          "effects": [
+            "erase_trust_record_removed"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0206"
+          },
+          "effects": [
+            "erase_trust_record_removed"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "cancel_pairing",
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active_activation_pending",
+          "event": "cancel_pairing",
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "protected_record",
+          "guards": {
+            "type_in_enrollment_allowlist": false,
+            "enrollment_channel_attempt": [
+              "awaiting_phone_identity",
+              "verified_prepare_ready",
+              "awaiting_complete",
+              "awaiting_prepare"
+            ]
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "activation_complete",
+          "guards": {
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0102",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "active_activation_pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0102",
+            "class_is": "activation_recovery",
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted"
+        },
+        {
+          "from": "pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0104",
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted",
+          "description": "OTP2-CRY-019a: an activation MAC that does not verify rejects the activation sequence (generic failure, erase the incomplete state, no partial access) — mirrors the phone's commit/ack MAC-failure erasure."
+        },
+        {
+          "from": "active_activation_pending",
+          "event": "protected_record",
+          "guards": {
+            "type_is": "0x0104",
+            "simulate": {
+              "act_mac_ok": false
+            }
+          },
+          "effects": [
+            "erase_incomplete_materials"
+          ],
+          "to": "deleted",
+          "description": "OTP2-CRY-019a: an activation MAC that does not verify rejects the activation sequence (generic failure, erase the incomplete state, no partial access) — mirrors the phone's commit/ack MAC-failure erasure."
+        },
+        {
+          "from": "deleted",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "duplicate_installation": false,
+              "persist_ok": true
+            }
+          },
+          "effects": [
+            "record_persisted_pending"
+          ],
+          "to": "pending",
+          "description": "R1: a same-installation re-enrollment after the earlier one-sided/inactive record was genuinely deleted (explicit cancel/revocation or expiry, OTP2-CRY-009a) creates a fresh pending record; while any record is HELD the duplicate guard (OTP2-STA-012) refuses it."
+        },
+        {
+          "from": "absent",
+          "event": "enroll_identity",
+          "guards": {
+            "simulate": {
+              "aead_ok": true,
+              "fingerprint_ok": true,
+              "device_type_ok": true,
+              "persist_ok": false
+            }
+          },
+          "effects": [
+            "persist_failed_no_usable_record_published"
+          ],
+          "to": "deleted",
+          "description": "R1 persistence boundary: a persist failure/crash before completion leaves NO usable record — the durable machine records the cleanup (deleted), and nothing usable exists to publish."
+        }
+      ]
+    }
+  }
+}

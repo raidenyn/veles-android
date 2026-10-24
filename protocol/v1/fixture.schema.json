@@ -1,0 +1,1736 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "veles.protocol.fixtures.v1",
+  "title": "Veles OTP-02 fixture format v1",
+  "description": "Schema for shared protocol fixture files under protocol/v1/fixtures/. A file is an envelope holding fixtures. Fixture shape: {id, fixture_version:1, category, requirement_ids, input, expected}. Bytes are lowercase even-length hex; u64-valued field values are canonical unsigned decimal strings (max 18446744073709551615); rejected expectations name the validation stage and absence of state mutation. Category vocabulary is fixed per plan task: Tasks 3-5 extend the category enum and input/expected shapes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "schema",
+    "fixtures"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "schema": {
+      "const": "veles.protocol.fixtures"
+    },
+    "description": {
+      "type": "string"
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/fixture"
+      }
+    }
+  },
+  "$defs": {
+    "hex": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{2})*$"
+    },
+    "stage": {
+      "enum": [
+        "framing",
+        "literal",
+        "length",
+        "trailing",
+        "utf8",
+        "enum",
+        "direction",
+        "point_format",
+        "signature_format",
+        "fragment_header",
+        "fragment_index",
+        "fragment_final",
+        "fragment_total",
+        "fragment_caps"
+      ]
+    },
+    "bridge_stage": {
+      "description": "Rejection stage names used by the bridge/envelope checks (Task 3): text framing/JSON stages, schema and version stages, negotiation and phase stages, base64/decoded-bound stages, and trace-level lifecycle stages (OTP2-BRD-*).",
+      "enum": [
+        "framing",
+        "json",
+        "duplicate_key",
+        "schema",
+        "version",
+        "phase",
+        "negotiation",
+        "base64",
+        "bounds",
+        "utf8",
+        "ordering",
+        "handle",
+        "request_id",
+        "completion",
+        "timeout",
+        "rate",
+        "shutdown",
+        "synthesis"
+      ]
+    },
+    "state_stage": {
+      "description": "Rejection stage names used by the state/authorization checks (Task 4): descriptor-shape failures, malformed trace inputs, monotonic-time violations, transitions the protocol machines do not have, fixture declarations contradicting the independently recomputed outcome, persisted-state trust-boundary violations (public fields only, OTP2-CRY-019g), and simulated-body bound violations.",
+      "enum": [
+        "descriptor",
+        "trace",
+        "time",
+        "transition",
+        "expectation",
+        "persisted_state",
+        "bounds"
+      ]
+    },
+    "bridge_handle": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "bridge_request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$"
+    },
+    "input_bridge_env_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "direction",
+        "phase",
+        "api_version",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "envelope"
+        },
+        "direction": {
+          "const": "request"
+        },
+        "phase": {
+          "enum": [
+            "pre",
+            "ready"
+          ]
+        },
+        "api_version": {
+          "description": "The selected api_version under test; null before ready.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "const": "pre"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_version": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "const": "ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "api_version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1048576
+              }
+            }
+          }
+        }
+      ]
+    },
+    "input_bridge_env_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "direction",
+        "api_version",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "envelope"
+        },
+        "direction": {
+          "const": "event"
+        },
+        "api_version": {
+          "description": "The selected api_version under test; null validates shape only.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      }
+    },
+    "input_bridge_negotiation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "offer",
+        "host_supported_api",
+        "selected_api"
+      ],
+      "properties": {
+        "kind": {
+          "const": "negotiation"
+        },
+        "offer": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "api_versions"
+              ],
+              "properties": {
+                "api_versions": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "api_version_range"
+              ],
+              "properties": {
+                "api_version_range": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "min",
+                    "max"
+                  ],
+                  "properties": {
+                    "min": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1048576
+                    },
+                    "max": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1048576
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "host_supported_api": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1048576
+          }
+        },
+        "selected_api": {
+          "description": "Expected highest mutually supported version; null means no overlap (incompatible_api).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      }
+    },
+    "input_bridge_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "steps"
+      ],
+      "properties": {
+        "kind": {
+          "const": "trace"
+        },
+        "host_supported_api": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1048576
+          }
+        },
+        "handles": {
+          "description": "Deterministic host handle generation order for driving (test-only convention).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bridge_handle"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "t_ms"
+            ],
+            "properties": {
+              "from": {
+                "enum": [
+                  "connector",
+                  "host",
+                  "synthetic"
+                ]
+              },
+              "t_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 65536
+              },
+              "synthetic": {
+                "enum": [
+                  "device_found",
+                  "link_loss",
+                  "scan_expired",
+                  "writes_complete",
+                  "port_closed",
+                  "stdout_close",
+                  "freeze",
+                  "unfreeze",
+                  "port_error"
+                ]
+              },
+              "scan_handle": {
+                "$ref": "#/$defs/bridge_handle"
+              },
+              "connection_handle": {
+                "$ref": "#/$defs/bridge_handle"
+              },
+              "device_handle": {
+                "$ref": "#/$defs/bridge_handle"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "platform_hint": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "advertisement": {
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/$defs/bridge_request_id"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected_bridge": {
+      "description": "Bridge expectations. Accepted: recomputed selection (negotiation) or plain accept (envelope/trace). Rejected: the named bridge stage and absence of state mutation. Deliberately excludes `fields` so committed encoding/fragmentation fixtures can never match this branch.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accepted"
+          ],
+          "properties": {
+            "accepted": {
+              "const": true
+            },
+            "selected_api": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 1048576
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accepted",
+            "stage",
+            "no_state_mutation"
+          ],
+          "properties": {
+            "accepted": {
+              "const": false
+            },
+            "stage": {
+              "$ref": "#/$defs/bridge_stage"
+            },
+            "no_state_mutation": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "crypto_stage": {
+      "description": "Rejection stage names used by the crypto checks (Task 5): wrong pairing inputs (code/context/role), invalid group elements and encodings (point/point_format), a shared group element that collapses to the identity (shared_secret, OTP2-CRY-003a), non-canonical P1363 signatures (signature_format), and AEAD/sequence violations (tag/session/direction/sequence).",
+      "enum": [
+        "code",
+        "context",
+        "role",
+        "point",
+        "point_format",
+        "shared_secret",
+        "signature_format",
+        "tag",
+        "session",
+        "direction",
+        "sequence"
+      ]
+    },
+    "crypto_deviation": {
+      "description": "The deliberate deviation in a negative crypto fixture. negates references the positive base fixture id; value carries deviation bytes where applicable. Mutation semantics are re-derived independently by the cross-checkers, never trusted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "negates"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "wrong_code",
+            "context_mismatch",
+            "swap_roles",
+            "role_mismatch",
+            "off_curve_point",
+            "identity_point",
+            "zero_point",
+            "compressed_point",
+            "shared_secret_identity",
+            "high_s",
+            "der_encoding",
+            "truncated_sig",
+            "bad_tag",
+            "mutated_session",
+            "mutated_direction",
+            "mutated_sequence"
+          ]
+        },
+        "negates": {
+          "type": "string"
+        },
+        "value": {
+          "description": "Deviation payload. Semantics are per-type (asserted below): wrong_code carries the wrong six-ASCII-digit code; context_mismatch, the point rejections, the signature encodings and shared_secret_identity carry 0x-prefixed lowercase even-length hex bytes; role swaps and record mutations take no value.",
+          "type": "string"
+        },
+        "value2": {
+          "description": "Second committed deviation payload, shared_secret_identity only: the exact forced client-view peer point pA := w·M (deviation.value carries the phone-view pB := w·N).",
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "shared_secret_identity"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "value2": {
+                "$ref": "#/$defs/crypto_hex"
+              }
+            },
+            "required": [
+              "value",
+              "value2"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "wrong_code"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "context_mismatch",
+                  "off_curve_point",
+                  "identity_point",
+                  "zero_point",
+                  "compressed_point",
+                  "high_s",
+                  "der_encoding",
+                  "truncated_sig"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/crypto_hex"
+              }
+            },
+            "required": [
+              "value"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "swap_roles",
+                  "role_mismatch",
+                  "bad_tag",
+                  "mutated_session",
+                  "mutated_direction",
+                  "mutated_sequence"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "crypto_hex": {
+      "type": "string",
+      "pattern": "^0x([0-9a-f]{2})*$"
+    },
+    "crypto_caps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "pattern": "^0x[0-9a-f]{2}$"
+      }
+    },
+    "crypto_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "installation_id",
+        "label",
+        "device_type",
+        "nonce",
+        "priv"
+      ],
+      "properties": {
+        "installation_id": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "label": {
+          "description": "UTF-8 identity label, 0..32 bytes (OTP2-ENC-003/OTP2-REC-010).",
+          "type": "string",
+          "maxLength": 32
+        },
+        "device_type": {
+          "type": "string",
+          "pattern": "^0x0[0-2]$"
+        },
+        "nonce": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "priv": {
+          "description": "Fixed synthetic private scalar for deterministic derivation (test-only).",
+          "$ref": "#/$defs/crypto_hex"
+        }
+      }
+    },
+    "crypto_outputs": {
+      "description": "Derived outputs. Values are 0x-prefixed lowercase even-length hex bytes, or plain strings (decimal lengths, display formats).",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "input_crypto": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "rfc9382_anchor",
+            "spake2_pairing",
+            "enrollment",
+            "reconnect",
+            "record_gcm"
+          ]
+        },
+        "deviation": {
+          "$ref": "#/$defs/crypto_deviation"
+        },
+        "ciphersuite": {
+          "const": "SPAKE2-P256-SHA256-HKDF-HMAC"
+        },
+        "id_a": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "id_b": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "w": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "x": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "y": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$"
+        },
+        "pairing_id": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "phone_nonce": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "client_nonce": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "phone_role": {
+          "type": "string",
+          "pattern": "^0x01$"
+        },
+        "client_role": {
+          "type": "string",
+          "pattern": "^0x02$"
+        },
+        "phone_caps": {
+          "$ref": "#/$defs/crypto_caps"
+        },
+        "client_caps": {
+          "$ref": "#/$defs/crypto_caps"
+        },
+        "protocol_version": {
+          "const": 1
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "ciphersuite_id": {
+          "const": 1
+        },
+        "ke": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "ctx": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "p_a": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "p_b": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "c_a": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "c_b": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "phone_identity": {
+          "$ref": "#/$defs/crypto_identity"
+        },
+        "client_identity": {
+          "$ref": "#/$defs/crypto_identity"
+        },
+        "et": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "phone_identity_priv": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "client_identity_priv": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "phone_ephemeral_priv": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "client_ephemeral_priv": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "phone_installation_id": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "client_installation_id": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "key": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "nonce_prefix": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "sequence": {
+          "description": "Canonical unsigned decimal string (u64).",
+          "type": "string",
+          "pattern": "^0$|^[1-9][0-9]{0,19}$"
+        },
+        "direction": {
+          "type": "string",
+          "pattern": "^0x0[12]$"
+        },
+        "record_type": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{4}$"
+        },
+        "session_id_prefix": {
+          "$ref": "#/$defs/crypto_hex"
+        },
+        "body": {
+          "$ref": "#/$defs/crypto_hex"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "rfc9382_anchor"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ciphersuite": {
+                "const": "SPAKE2-P256-SHA256-HKDF-HMAC"
+              },
+              "id_a": {
+                "type": "string"
+              },
+              "id_b": {
+                "type": "string"
+              },
+              "w": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "x": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "y": {
+                "$ref": "#/$defs/crypto_hex"
+              }
+            },
+            "required": [
+              "ciphersuite",
+              "id_a",
+              "id_b",
+              "w",
+              "x",
+              "y"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "spake2_pairing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
+              },
+              "pairing_id": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_nonce": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "client_nonce": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_role": {
+                "type": "string",
+                "pattern": "^0x01$"
+              },
+              "client_role": {
+                "type": "string",
+                "pattern": "^0x02$"
+              },
+              "phone_caps": {
+                "$ref": "#/$defs/crypto_caps"
+              },
+              "client_caps": {
+                "$ref": "#/$defs/crypto_caps"
+              },
+              "x": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "y": {
+                "$ref": "#/$defs/crypto_hex"
+              }
+            },
+            "required": [
+              "code",
+              "pairing_id",
+              "phone_nonce",
+              "client_nonce",
+              "phone_role",
+              "client_role",
+              "phone_caps",
+              "client_caps",
+              "x",
+              "y"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "enrollment"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ke": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "ctx": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "p_a": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "p_b": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "c_a": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "c_b": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_identity": {
+                "$ref": "#/$defs/crypto_identity"
+              },
+              "client_identity": {
+                "$ref": "#/$defs/crypto_identity"
+              }
+            },
+            "required": [
+              "ke",
+              "ctx",
+              "p_a",
+              "p_b",
+              "c_a",
+              "c_b",
+              "phone_identity",
+              "client_identity"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "reconnect"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "et": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_identity_priv": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "client_identity_priv": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_ephemeral_priv": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "client_ephemeral_priv": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_installation_id": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "client_installation_id": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_nonce": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "client_nonce": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "phone_caps": {
+                "$ref": "#/$defs/crypto_caps"
+              },
+              "client_caps": {
+                "$ref": "#/$defs/crypto_caps"
+              }
+            },
+            "required": [
+              "et",
+              "phone_identity_priv",
+              "client_identity_priv",
+              "phone_ephemeral_priv",
+              "client_ephemeral_priv",
+              "phone_installation_id",
+              "client_installation_id",
+              "phone_nonce",
+              "client_nonce",
+              "phone_caps",
+              "client_caps"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "record_gcm"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "key": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "nonce_prefix": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "sequence": {
+                "type": "string",
+                "pattern": "^0$|^[1-9][0-9]{0,19}$"
+              },
+              "direction": {
+                "type": "string",
+                "pattern": "^0x0[12]$"
+              },
+              "record_type": {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{4}$"
+              },
+              "session_id_prefix": {
+                "$ref": "#/$defs/crypto_hex"
+              },
+              "body": {
+                "$ref": "#/$defs/crypto_hex"
+              }
+            },
+            "required": [
+              "key",
+              "nonce_prefix",
+              "sequence",
+              "direction",
+              "record_type",
+              "session_id_prefix",
+              "body"
+            ]
+          }
+        }
+      ]
+    },
+    "expected_crypto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "verified",
+            "outputs"
+          ],
+          "properties": {
+            "verified": {
+              "const": true
+            },
+            "source": {
+              "description": "Provenance of the expected values (mandatory for published RFC anchors).",
+              "type": "string"
+            },
+            "outputs": {
+              "$ref": "#/$defs/crypto_outputs"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rejected",
+            "stage",
+            "proof",
+            "no_state_mutation"
+          ],
+          "properties": {
+            "rejected": {
+              "const": true
+            },
+            "stage": {
+              "$ref": "#/$defs/crypto_stage"
+            },
+            "proof": {
+              "description": "How rejection is independently proven: derived outputs differ (confirmation_mismatch), the strict validator rejects the encoding (strict_validation), or AEAD verification fails (aead_failure).",
+              "enum": [
+                "confirmation_mismatch",
+                "strict_validation",
+                "aead_failure"
+              ]
+            },
+            "no_state_mutation": {
+              "const": true
+            },
+            "note": {
+              "type": "string"
+            },
+            "distinguishes": {
+              "description": "Outputs that must differ from the positive base (required for confirmation_mismatch).",
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "proof": {
+                    "const": "confirmation_mismatch"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "distinguishes": {
+                    "description": "Outputs that must differ from the positive base (required for confirmation_mismatch).",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "distinguishes"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "input_state_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "role",
+        "steps"
+      ],
+      "properties": {
+        "kind": {
+          "const": "trace"
+        },
+        "role": {
+          "description": "Synthetic endpoint the trace models: phone (party A / GATT peripheral) or client (party B).",
+          "enum": [
+            "phone",
+            "client"
+          ]
+        },
+        "machines": {
+          "description": "State-machine instances the trace drives. Defaults (when absent) to the role's pairing machine and its durable record machine, peer `main`.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "machine"
+            ],
+            "properties": {
+              "machine": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "peer": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]+$",
+                "minLength": 1,
+                "maxLength": 16
+              }
+            }
+          }
+        },
+        "persisted_state": {
+          "description": "Durable state the endpoint starts from: keys are `machine:peer` initial-state overrides or public persisted fields (OTP2-CRY-019g). Values are strings. Secrets reject at stage=persisted_state.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 120
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "t_ms",
+              "event"
+            ],
+            "properties": {
+              "t_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "event": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "peer": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]+$",
+                "minLength": 1,
+                "maxLength": 16
+              },
+              "pairing_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]+$",
+                "minLength": 1,
+                "maxLength": 16
+              },
+              "connection": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]+$",
+                "minLength": 1,
+                "maxLength": 16
+              },
+              "simulate": {
+                "description": "Explicit SIMULATED inputs (OTP2-FIX-004): protocol outcomes like tag_ok/hmac_ok/sig_ok/act_mac_ok/peer_state, sequence numbers (canonical u64 decimal strings), and body fields. These model endpoint observations; they are NOT cryptographic conformance evidence (Plan Task 5 covers real vectors).",
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              },
+              "expect": {
+                "description": "Per-step declared machine states (`machine:peer` -> state). Cross-checked against the interpreter's own recomputation, never trusted.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "minProperties": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected_state": {
+      "description": "State-trace expectations. Accepted: the checker's independently recomputed final state (canonical `machine:peer=state;...` string) must equal the declared one, and every required effect must occur (forbidden effects must not). Rejected: the named state stage and absence of state mutation.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accepted"
+          ],
+          "properties": {
+            "accepted": {
+              "const": true
+            },
+            "final_state": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "effects": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "require": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "forbid": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "order": {
+                  "description": "The listed effects must occur as a subsequence in exactly this relative order in the recomputed effect list.",
+                  "type": "array",
+                  "minItems": 2,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accepted",
+            "stage",
+            "no_state_mutation"
+          ],
+          "properties": {
+            "accepted": {
+              "const": false
+            },
+            "stage": {
+              "$ref": "#/$defs/state_stage"
+            },
+            "no_state_mutation": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "requirement_id": {
+      "type": "string",
+      "pattern": "^OTP2-[A-Z]{3}-[0-9]{3}[a-z]{0,2}$"
+    },
+    "field": {
+      "description": "One decoded field value: canonical decimal string (numeric), 0x-scalar (enum), 0x-prefixed hex (byte fields), plain text string, or nested array/object. Loader applies the per-key value class derived from binary-layouts.json; the schema keeps the outer shape.",
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^0$|^[1-9][0-9]{0,19}$"
+        },
+        {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{2}$|^0x[0-9a-f]{4}$"
+        },
+        {
+          "type": "string",
+          "pattern": "^0x([0-9a-f]{2})+$"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{2}$|^0x[0-9a-f]{4}$"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/$defs/field"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/field"
+          }
+        }
+      ]
+    },
+    "fields_object": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/field"
+      }
+    },
+    "fragment_outcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "completed",
+            "reassembled"
+          ],
+          "properties": {
+            "completed": {
+              "const": true
+            },
+            "reassembled": {
+              "$ref": "#/$defs/hex"
+            },
+            "reassembled_layout": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "completed",
+            "incomplete",
+            "no_state_mutation"
+          ],
+          "properties": {
+            "completed": {
+              "const": false
+            },
+            "incomplete": {
+              "const": true
+            },
+            "no_state_mutation": {
+              "const": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "completed",
+            "ignored",
+            "no_state_mutation"
+          ],
+          "properties": {
+            "completed": {
+              "const": false
+            },
+            "ignored": {
+              "const": true
+            },
+            "no_state_mutation": {
+              "const": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "completed",
+            "stage",
+            "no_state_mutation"
+          ],
+          "properties": {
+            "completed": {
+              "const": false
+            },
+            "stage": {
+              "$ref": "#/$defs/stage"
+            },
+            "no_state_mutation": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "expected_encoding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accepted",
+            "fields"
+          ],
+          "properties": {
+            "accepted": {
+              "const": true
+            },
+            "fields": {
+              "$ref": "#/$defs/fields_object"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accepted",
+            "stage",
+            "no_state_mutation"
+          ],
+          "properties": {
+            "accepted": {
+              "const": false
+            },
+            "stage": {
+              "$ref": "#/$defs/stage"
+            },
+            "no_state_mutation": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "expected_fragmentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted",
+        "transactions"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "transactions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fragment_outcome"
+          }
+        }
+      }
+    },
+    "input_encoding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layout",
+        "bytes"
+      ],
+      "properties": {
+        "layout": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bytes": {
+          "$ref": "#/$defs/hex"
+        }
+      }
+    },
+    "input_fragmentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mtu",
+        "transactions"
+      ],
+      "properties": {
+        "mtu": {
+          "type": "integer",
+          "minimum": 185
+        },
+        "transactions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "transaction_id",
+              "fragments"
+            ],
+            "properties": {
+              "transaction_id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 255
+              },
+              "fragments": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/hex"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "fixture_version",
+        "category",
+        "requirement_ids",
+        "input",
+        "expected"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "fixture_version": {
+          "const": 1
+        },
+        "category": {
+          "enum": [
+            "encoding",
+            "fragmentation",
+            "bridge",
+            "state",
+            "crypto"
+          ]
+        },
+        "requirement_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/requirement_id"
+          }
+        },
+        "input": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/input_encoding"
+            },
+            {
+              "$ref": "#/$defs/input_fragmentation"
+            },
+            {
+              "$ref": "#/$defs/input_bridge_env_request"
+            },
+            {
+              "$ref": "#/$defs/input_bridge_env_event"
+            },
+            {
+              "$ref": "#/$defs/input_bridge_negotiation"
+            },
+            {
+              "$ref": "#/$defs/input_bridge_trace"
+            },
+            {
+              "$ref": "#/$defs/input_state_trace"
+            },
+            {
+              "$ref": "#/$defs/input_crypto"
+            }
+          ]
+        },
+        "expected": true
+      },
+      "allOf": [
+        {
+          "description": "The category selects the expected shape: crypto fixtures use the crypto branch (positives carry verified outputs, negatives name the rejection stage); bridge fixtures must use the bridge branch (they can never be structurally distinguished otherwise); state-trace fixtures must use the state branch.",
+          "if": {
+            "required": [
+              "category"
+            ],
+            "properties": {
+              "category": {
+                "const": "crypto"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "expected": {
+                "$ref": "#/$defs/expected_crypto"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "required": [
+                "category"
+              ],
+              "properties": {
+                "category": {
+                  "const": "bridge"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "expected": {
+                  "$ref": "#/$defs/expected_bridge"
+                }
+              }
+            },
+            "else": {
+              "if": {
+                "required": [
+                  "category"
+                ],
+                "properties": {
+                  "category": {
+                    "const": "state"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "expected": {
+                    "$ref": "#/$defs/expected_state"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "expected": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/expected_encoding"
+                      },
+                      {
+                        "$ref": "#/$defs/expected_fragmentation"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -34,8 +34,8 @@ export async function validateSboms(root, expectedRoots, lockComponents = {}) {
     throw failure(`Missing SBOM directory: ${directory}`);
   }
   const expected = Object.keys(expectedRoots).map((name) => `${name}.cdx.json`).sort();
-  if (files.length !== 3 || files.join('\n') !== expected.join('\n')) {
-    throw failure(`Expected exactly three SBOMs (${expected.join(', ')}), found ${files.join(', ') || 'none'}`);
+  if (files.length !== expected.length || files.join('\n') !== expected.join('\n')) {
+    throw failure(`Expected exactly ${expected.length} SBOMs (${expected.join(', ')}), found ${files.join(', ') || 'none'}`);
   }
   for (const file of files) {
     let bom;
@@ -73,14 +73,16 @@ if (import.meta.main) {
   const root = process.cwd();
   const expectedRoots = {
     'web-extension': '@veles/web-extension@0.1.0',
+    protocol: 'veles-protocol-contract-checks@1.0.0',
     rust: 'veles-crypto@0.1.0',
     'native-bridge': 'veles-native-bridge@0.1.0',
   };
   Promise.all([
     deriveLockComponents(join(root, 'web-extension', 'package-lock.json'), 'npm'),
+    deriveLockComponents(join(root, 'protocol', 'package-lock.json'), 'npm'),
     deriveLockComponents(join(root, 'rust', 'Cargo.lock'), 'cargo'),
     deriveLockComponents(join(root, 'native-bridge', 'src-tauri', 'Cargo.lock'), 'cargo'),
-  ]).then(([web, rust, bridge]) => validateSboms(root, expectedRoots, { 'web-extension': web, rust, 'native-bridge': bridge })).catch((error) => {
+  ]).then(([web, protocol, rust, bridge]) => validateSboms(root, expectedRoots, { 'web-extension': web, protocol, rust, 'native-bridge': bridge })).catch((error) => {
     console.error(error.message);
     process.exitCode = error.exitCode ?? 2;
   });

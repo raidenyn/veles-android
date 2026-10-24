@@ -14,6 +14,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run unit tests (JVM, no device needed)
 ./gradlew testDebugUnitTest
 
+# OTP-02 contract: fresh Node crypto evidence plus Kotlin, Rust and both TypeScript consumers
+./gradlew protocolCheck
+
 # Run a single unit test class
 ./gradlew testDebugUnitTest --tests "me.nagaev.veles.otp.handlers.RegexMessageHandlerTest"
 

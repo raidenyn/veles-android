@@ -1,0 +1,498 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.limits",
+  "schema_version": 1,
+  "document": "veles-v1.md",
+  "description": "Named integer ceilings for Veles protocol v1. Values are JSON integers; the one value at the u64 extreme is a canonical unsigned decimal string (fixture/check convention) because JSON numbers cannot exactly represent it.",
+  "limits": [
+    {
+      "name": "pairing_window_seconds",
+      "value": 300,
+      "unit": "seconds",
+      "scope": "per pairing window (phone)",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "pairing_attempts_per_pairing_id",
+      "value": 5,
+      "unit": "attempts",
+      "scope": "per pairing_id (phone)",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "pairing_rolling_attempts_interval_seconds",
+      "value": 300,
+      "unit": "seconds",
+      "scope": "phone rolling interval across pairing IDs",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "pairing_rolling_attempts_max",
+      "value": 5,
+      "unit": "attempts",
+      "scope": "phone within rolling five-minute interval across pairing IDs",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "spake_operations_in_flight",
+      "value": 1,
+      "unit": "operations",
+      "scope": "phone, globally",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "fresh_pa_per_connection",
+      "value": 1,
+      "unit": "values",
+      "scope": "phone, per connection",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "fresh_pa_rolling_interval_seconds",
+      "value": 60,
+      "unit": "seconds",
+      "scope": "phone rolling interval across pairing IDs",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "fresh_pa_rolling_max",
+      "value": 5,
+      "unit": "values",
+      "scope": "phone within rolling one-minute interval across pairing IDs",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-spake-attempts"
+    },
+    {
+      "name": "pairing_request_inactivity_timeout_seconds",
+      "value": 30,
+      "unit": "seconds",
+      "scope": "per pairing handshake step",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-states-pairing"
+    },
+    {
+      "name": "pending_record_expiry_seconds",
+      "value": 86400,
+      "unit": "seconds",
+      "scope": "per pending or committed_waiting_ack trust record; a BOOT-SCOPED MONOTONIC deadline (creation + 86400 on the current boot's monotonic clock), with a persisted per-boot continuity token: incomplete records are deleted at boot/restart where continuity cannot be proven (OTP2-STA-010c). Client-side mapping (OTP2-STA-010d): the phone's authoritative below-active lifetime bounds the pair; genuinely-pending CLIENT records use a connector-owned monotonic interval (deleted on context loss); the client's durable active-family mirror has NO independent local deadline",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-enrollment"
+    },
+    {
+      "name": "reconnect_idle_timeout_seconds",
+      "value": 180,
+      "unit": "seconds",
+      "scope": "per protected session, no valid record either direction",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "heartbeat_min_interval_seconds",
+      "value": 30,
+      "unit": "seconds",
+      "scope": "per direction, per session",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "push_ack_timeout_seconds",
+      "value": 10,
+      "unit": "seconds",
+      "scope": "per outstanding push, per session",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "push_max_retransmits",
+      "value": 3,
+      "unit": "retransmissions",
+      "scope": "per queued event, per session",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "otp_events_global",
+      "value": 5,
+      "unit": "events",
+      "scope": "all endpoints, global buffer",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "otp_max_lifetime_seconds",
+      "value": 600,
+      "unit": "seconds",
+      "scope": "per event, all endpoints",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "record_max_bytes",
+      "value": 4096,
+      "unit": "bytes",
+      "scope": "total protected record size (header+ciphertext+tag); also reassembled record total",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-record-format"
+    },
+    {
+      "name": "record_ciphertext_max_bytes",
+      "value": 4057,
+      "unit": "bytes",
+      "scope": "per protected record ciphertext (record_max_bytes minus 23-byte header and 16-byte tag)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-record-header"
+    },
+    {
+      "name": "sequence_max",
+      "value": "18446744073709551615",
+      "unit": "count",
+      "scope": "per direction, per session (u64; string because JSON numbers cannot represent it exactly)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-sequences",
+      "note": "Counters never wrap; the direction that issued sequence_max terminates before any further record."
+    },
+    {
+      "name": "gatt_max_clients",
+      "value": 8,
+      "unit": "connections",
+      "scope": "phone GATT service, simultaneous clients",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "gatt_mtu_min",
+      "value": 185,
+      "unit": "bytes",
+      "scope": "negotiated ATT MTU, per connection",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "fragment_payload_bytes_at_min_mtu",
+      "value": 178,
+      "unit": "bytes",
+      "scope": "non-final fragment payload at the MTU floor 185 (185 - 3 ATT header - 4 fragment header); the tested conservative chunk (M1): the largest record needs <= ceil(4096/178) = 24 fragments",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-fragmentation"
+    },
+    {
+      "name": "fragment_index_max",
+      "value": 127,
+      "unit": "index",
+      "scope": "per transaction",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-fragmentation"
+    },
+    {
+      "name": "fragment_transaction_count_max_per_peer",
+      "value": 2,
+      "unit": "transactions",
+      "scope": "incomplete fragment transactions per peer (TOTAL across the peer's inbound traffic, not per direction) (OTP2-GAT-012)",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "reassembly_incomplete_max_per_peer",
+      "value": 2,
+      "unit": "messages",
+      "scope": "incomplete reassemblies per peer (TOTAL across the peer's inbound traffic, not per direction) (OTP2-GAT-012)",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "reassembly_bytes_max_per_peer",
+      "value": 8192,
+      "unit": "bytes",
+      "scope": "reassembly buffer bytes per peer (TOTAL across the peer's inbound traffic, not per direction) (OTP2-GAT-012)",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "reassembly_incomplete_max_global",
+      "value": 16,
+      "unit": "messages",
+      "scope": "incomplete reassemblies, phone global",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "reassembly_bytes_max_global",
+      "value": 65536,
+      "unit": "bytes",
+      "scope": "reassembly buffer bytes, phone global",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "deliver_queue_messages_max_per_peer",
+      "value": 16,
+      "unit": "messages",
+      "scope": "transport delivery queue per peer",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "deliver_queue_bytes_max_per_peer",
+      "value": 16384,
+      "unit": "bytes",
+      "scope": "transport delivery queue per peer",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "deliver_queue_messages_max_global",
+      "value": 128,
+      "unit": "messages",
+      "scope": "transport delivery queue, phone global",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "deliver_queue_bytes_max_global",
+      "value": 131072,
+      "unit": "bytes",
+      "scope": "transport delivery queue, phone global",
+      "origin": "rfc",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "fragment_timeout_seconds",
+      "value": 5,
+      "unit": "seconds",
+      "scope": "between consecutive fragments of one transaction (monotonic, millisecond precision)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "disconnect_cleanup_max_seconds",
+      "value": 1,
+      "unit": "seconds",
+      "scope": "per peer state erasure after link loss",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
+      "name": "frame_total_max_bytes",
+      "value": 4096,
+      "unit": "bytes",
+      "scope": "pre-auth plaintext frame total (tag+length+payload)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-plain-framing"
+    },
+    {
+      "name": "spake_context_max_bytes",
+      "value": 4096,
+      "unit": "bytes",
+      "scope": "canonical public context (AAD); inside RFC 9382's 8168-byte AAD bound",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-spake-context"
+    },
+    {
+      "name": "identity_label_max_bytes",
+      "value": 32,
+      "unit": "bytes",
+      "scope": "UTF-8 label in enroll_identity",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-identity-record"
+    },
+    {
+      "name": "otp_code_max_bytes",
+      "value": 16,
+      "unit": "bytes",
+      "scope": "UTF-8 OTP code in an OTP event",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "otp_merchant_max_bytes",
+      "value": 64,
+      "unit": "bytes",
+      "scope": "UTF-8 merchant in an OTP event",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "otp_amount_scale_max",
+      "value": 8,
+      "unit": "decimal places",
+      "scope": "per OTP event",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "bridge_message_max_bytes",
+      "value": 65536,
+      "unit": "bytes",
+      "scope": "one Native Messaging JSON message, both directions (stricter than Chrome's 1 MiB host-to-extension limit)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-framing"
+    },
+    {
+      "name": "bridge_record_max_bytes",
+      "value": 5120,
+      "unit": "bytes",
+      "scope": "record_base64 decoded bytes, per bridge send/message",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_outstanding_requests_max",
+      "value": 64,
+      "unit": "requests",
+      "scope": "bridge process, concurrent outstanding",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_open_scans_max",
+      "value": 2,
+      "unit": "scans",
+      "scope": "bridge process",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_open_connections_max",
+      "value": 32,
+      "unit": "connections",
+      "scope": "bridge process",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_request_timeout_seconds",
+      "value": 30,
+      "unit": "seconds",
+      "scope": "per bridge request (scans exempt)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_scan_max_seconds",
+      "value": 300,
+      "unit": "seconds",
+      "scope": "per scan",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_device_found_rate_max",
+      "value": 64,
+      "unit": "events/second",
+      "scope": "per scan, rolling second",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_device_found_per_scan_max",
+      "value": 1024,
+      "unit": "events",
+      "scope": "per scan",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_discovered_devices_max",
+      "value": 1024,
+      "unit": "entries",
+      "scope": "per process, currently discovered device handles retained in the bounded discovery cache (FIFO eviction of the oldest entry not currently connected; independent of the per-scan event cap)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_output_queue_messages_max",
+      "value": 128,
+      "unit": "messages",
+      "scope": "bridge pending outbound JSON",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_output_queue_bytes_max",
+      "value": 262144,
+      "unit": "bytes",
+      "scope": "bridge pending outbound bytes",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_platform_hint_max_bytes",
+      "value": 256,
+      "unit": "utf8_bytes",
+      "scope": "platform_hint strings (byte length, OTP2-BRD-002a; not code points or UTF-16 units)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-framing"
+    },
+    {
+      "name": "bridge_advertisement_max_bytes",
+      "value": 256,
+      "unit": "bytes",
+      "scope": "decoded advertisement metadata per device_found",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-messages"
+    },
+    {
+      "name": "bridge_error_stage_max_bytes",
+      "value": 32,
+      "unit": "utf8_bytes",
+      "scope": "error stage string (ASCII alphabet, byte length = character count here)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-messages"
+    },
+    {
+      "name": "app_error_reason_max_bytes",
+      "value": 64,
+      "unit": "bytes",
+      "scope": "UTF-8 reason in app_error record",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-record-types"
+    },
+    {
+      "name": "pull_outstanding_max",
+      "value": 1,
+      "unit": "requests",
+      "scope": "per session, unanswered pull",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "push_outstanding_max",
+      "value": 1,
+      "unit": "messages",
+      "scope": "per session, un-acked push",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-otp-event"
+    },
+    {
+      "name": "fragment_transaction_id_min",
+      "value": 1,
+      "unit": "identifier",
+      "scope": "valid transaction_id values start at 1 (0 rejects)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-fragmentation"
+    },
+    {
+      "name": "pending_record_max_bytes",
+      "value": 164,
+      "unit": "bytes",
+      "scope": "maximum enroll_identity body size (label_len included)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-identity-record"
+    },
+    {
+      "name": "pending_record_body_max_bytes",
+      "value": 164,
+      "unit": "bytes",
+      "scope": "maximum enroll_identity body size (label included; minimum 132)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-identity-record"
+    }
+  ]
+}

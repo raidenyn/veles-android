@@ -8,6 +8,7 @@ import { validateSboms } from '../verify-sboms.mjs';
 
 const root = {
   'web-extension': '@veles/web-extension@0.1.0',
+  protocol: 'veles-protocol-contract-checks@1.0.0',
   rust: 'veles-crypto@0.1.0',
   'native-bridge': 'veles-native-bridge@0.1.0',
 };
@@ -40,7 +41,7 @@ async function fixture() {
   return directory;
 }
 
-test('accepts exactly the three requested SBOMs with resolvable non-empty graphs', async () => {
+test('accepts exactly the four requested SBOMs with resolvable non-empty graphs', async () => {
   const directory = await fixture();
   await assert.doesNotReject(validateSboms(directory, root));
 });
@@ -65,10 +66,10 @@ test('rejects malformed evidence, a wrong root, unresolved references, and an em
   await assert.rejects(validateSboms(directory, root), /non-empty dependency graph/i);
 });
 
-test('rejects an unrequested fourth SBOM', async () => {
+test('rejects an unrequested fifth SBOM', async () => {
   const directory = await fixture();
   await writeFile(join(directory, 'build', 'sbom', 'unexpected.cdx.json'), '{}');
-  await assert.rejects(validateSboms(directory, root), /exactly three/i);
+  await assert.rejects(validateSboms(directory, root), /exactly 4/i);
 });
 
 test('rejects an SBOM that omits a component declared by its lockfile', async () => {

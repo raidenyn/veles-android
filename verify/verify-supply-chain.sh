@@ -32,6 +32,7 @@ npm_bin="$(dirname "$node_bin")/npm"
 # steps; a failure here is an environment error (exit 2), not a policy mismatch.
 npm ci --ignore-scripts --prefix web-extension || env_fail "web-extension npm ci failed"
 npm ci --ignore-scripts --prefix native-bridge || env_fail "native-bridge npm ci failed"
+npm ci --ignore-scripts --prefix protocol || env_fail "protocol npm ci failed"
 verify/generate-sboms.sh || env_fail "SBOM generation failed (are cargo-cyclonedx/cargo-deny provisioned? see ./gradlew verifyCargoCyclonedx installCargoDeny)"
 
 # The node checkers classify their own exit codes (1 = mismatch, 2 = error) and

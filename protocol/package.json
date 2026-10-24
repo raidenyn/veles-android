@@ -1,0 +1,19 @@
+{
+  "name": "veles-protocol-contract-checks",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Test-only OTP-02 contract checks (fixture schema validation and binary descriptor interpreter). Never imported by product code.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "ajv": "8.18.0"
+  },
+  "scripts": {
+    "test": "node checks/check.mjs"
+  }
+}

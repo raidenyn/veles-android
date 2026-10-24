@@ -1,0 +1,907 @@
+{
+  "version": 1,
+  "schema": "veles.protocol.binary_layouts",
+  "document": "docs/protocol/veles-v1.md",
+  "description": "Test-only descriptor-driven binary layout inventory for protocol v1 (OTP-02 Plan Task 2). Derived from the normative document; a disagreement with veles-v1.md is a defect that fails the checks and is never resolved in the descriptor's favor.",
+  "byte_order": "unsigned big-endian (Veles network order). RFC 9382's little-endian len() quoting (TT, enrollment salt) is not a wire framing here and is exercised by the Task 5 crypto fixtures.",
+  "value_rules": {
+    "hex_bytes": "wire bytes in fixtures are lowercase even-length hex; decoded byte/enum field values in fixture field objects are 0x-prefixed lowercase hex strings",
+    "numbers": "decoded numeric field values in fixture field objects are canonical unsigned decimal strings (u64 maximum 18446744073709551615), never JSON numbers",
+    "text": "utf8 value_type fields decode to JSON strings; comparisons are byte-equality only (no normalization)",
+    "fields_output": "length_prefixed fields emit <name>_len plus <name>; count_prefixed fields emit <name>_count plus <name>; opaque fields (protected-record ciphertext/tag) are omitted from fields",
+    "stages": [
+      "framing",
+      "literal",
+      "length",
+      "trailing",
+      "utf8",
+      "enum",
+      "direction",
+      "point_format",
+      "signature_format",
+      "fragment_header",
+      "fragment_index",
+      "fragment_final",
+      "fragment_total",
+      "fragment_caps"
+    ]
+  },
+  "constants": {
+    "frame": {
+      "header_bytes": 3,
+      "total_max_bytes": 4096,
+      "document_anchor": "veles-v1.md#sec-plain-framing"
+    },
+    "record": {
+      "header_bytes": 23,
+      "tag_bytes": 16,
+      "total_max_bytes": 4096,
+      "ciphertext_max_bytes": 4057,
+      "document_anchor": "veles-v1.md#sec-record-format"
+    },
+    "point": {
+      "size_bytes": 65,
+      "uncompressed_prefix_byte": 4,
+      "document_anchor": "veles-v1.md#sec-spake-suite"
+    },
+    "signature": {
+      "size_bytes": 64,
+      "document_anchor": "veles-v1.md#sec-reconnect-hello"
+    },
+    "caps": {
+      "set_min_entries": 1,
+      "set_max_entries": 16,
+      "known_values": [
+        1,
+        2,
+        3
+      ],
+      "mandatory_value": 1,
+      "sorted_unique": true,
+      "document_anchor": "veles-v1.md#sec-spake-context"
+    },
+    "identity": {
+      "label_min_bytes": 0,
+      "label_max_bytes": 32,
+      "body_min_bytes": 132,
+      "body_max_bytes": 164,
+      "device_types": {
+        "phone": 0,
+        "desktop": 1,
+        "watch": 2
+      },
+      "document_anchor": "veles-v1.md#sec-identity-record"
+    },
+    "otp_event": {
+      "code_min_bytes": 1,
+      "code_max_bytes": 16,
+      "merchant_min_bytes": 0,
+      "merchant_max_bytes": 64,
+      "lifetime_max_seconds": 600,
+      "amount_scale_max": 8,
+      "currency_bytes": 3,
+      "count_min": 0,
+      "count_max": 5,
+      "document_anchor": "veles-v1.md#sec-otp-event"
+    },
+    "app_error": {
+      "reason_min_bytes": 0,
+      "reason_max_bytes": 64,
+      "known_codes": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "document_anchor": "veles-v1.md#sec-record-types"
+    }
+  },
+  "fragmentation": {
+    "header_bytes": 4,
+    "final_flag_bit": 7,
+    "index_bit_width": 7,
+    "index_max": 127,
+    "transaction_id_min": 1,
+    "transaction_id_max": 255,
+    "total_min_bytes": 1,
+    "total_max_bytes": 4096,
+    "att_header_bytes": 3,
+    "mtu_min": 185,
+    "payload_budget_expression": "negotiated_MTU - 3 - 4",
+    "test_mtu": 185,
+    "fragment_payload_bytes_at_test_mtu": 178,
+    "max_fragments_at_test_mtu": 24,
+    "max_fragments_per_transaction": 128,
+    "reassembly": {
+      "incomplete_per_peer_max": 2,
+      "bytes_per_peer_max": 8192,
+      "incomplete_global_max": 16,
+      "bytes_global_max": 65536
+    },
+    "document_anchor": "veles-v1.md#sec-fragmentation"
+  },
+  "record_types": {
+    "reconnect_confirm": {
+      "value": 1,
+      "directions": [
+        1,
+        2
+      ]
+    },
+    "app_heartbeat": {
+      "value": 2,
+      "directions": [
+        1,
+        2
+      ]
+    },
+    "app_error": {
+      "value": 3,
+      "directions": [
+        1,
+        2
+      ]
+    },
+    "enroll_identity": {
+      "value": 256,
+      "directions": [
+        1,
+        2
+      ]
+    },
+    "activation_commit": {
+      "value": 257,
+      "directions": [
+        1
+      ]
+    },
+    "activation_complete": {
+      "value": 258,
+      "directions": [
+        2
+      ]
+    },
+    "activation_ack": {
+      "value": 259,
+      "directions": [
+        1
+      ]
+    },
+    "enrollment_prepare": {
+      "value": 260,
+      "directions": [
+        2
+      ]
+    },
+    "pull_request": {
+      "value": 512,
+      "directions": [
+        1
+      ]
+    },
+    "pull_events": {
+      "value": 514,
+      "directions": [
+        2
+      ]
+    },
+    "push_event": {
+      "value": 515,
+      "directions": [
+        2
+      ]
+    },
+    "event_ack": {
+      "value": 516,
+      "directions": [
+        1
+      ]
+    },
+    "removal_request": {
+      "value": 517,
+      "directions": [
+        1,
+        2
+      ]
+    },
+    "removal_response": {
+      "value": 518,
+      "directions": [
+        1,
+        2
+      ]
+    },
+    "phone_policy_state": {
+      "value": 519,
+      "directions": [
+        2
+      ]
+    }
+  },
+  "layouts": {
+    "pairing_request": {
+      "container": "frame",
+      "frame_type": 1,
+      "anchor": "veles-v1.md#sec-plain-framing",
+      "requirements": [
+        "OTP2-ENC-010a"
+      ],
+      "fields": [
+        {
+          "name": "client_nonce",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "protocol_version",
+          "type": "u16",
+          "const": 1
+        },
+        {
+          "name": "client_caps",
+          "type": "length_prefixed_u16",
+          "value_type": "caps",
+          "min": 1,
+          "max": 16
+        }
+      ]
+    },
+    "pairing_offer": {
+      "container": "frame",
+      "frame_type": 2,
+      "anchor": "veles-v1.md#sec-plain-framing",
+      "requirements": [
+        "OTP2-ENC-010b"
+      ],
+      "fields": [
+        {
+          "name": "pairing_id",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "phone_nonce",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "protocol_version",
+          "type": "u16",
+          "const": 1
+        },
+        {
+          "name": "phone_caps",
+          "type": "length_prefixed_u16",
+          "value_type": "caps",
+          "min": 1,
+          "max": 16
+        },
+        {
+          "name": "pA",
+          "type": "point"
+        }
+      ]
+    },
+    "pairing_client_point": {
+      "container": "frame",
+      "frame_type": 3,
+      "anchor": "veles-v1.md#sec-plain-framing",
+      "requirements": [
+        "OTP2-ENC-010c"
+      ],
+      "fields": [
+        {
+          "name": "pB",
+          "type": "point"
+        }
+      ]
+    },
+    "pairing_confirm_a": {
+      "container": "frame",
+      "frame_type": 4,
+      "anchor": "veles-v1.md#sec-plain-framing",
+      "requirements": [
+        "OTP2-ENC-010d"
+      ],
+      "fields": [
+        {
+          "name": "cA",
+          "type": "bytes",
+          "size": 32
+        }
+      ]
+    },
+    "pairing_confirm_b": {
+      "container": "frame",
+      "frame_type": 5,
+      "anchor": "veles-v1.md#sec-plain-framing",
+      "requirements": [
+        "OTP2-ENC-010d"
+      ],
+      "fields": [
+        {
+          "name": "cB",
+          "type": "bytes",
+          "size": 32
+        }
+      ]
+    },
+    "reconnect_hello": {
+      "container": "frame",
+      "frame_type": 6,
+      "anchor": "veles-v1.md#sec-reconnect-hello",
+      "requirements": [
+        "OTP2-REC-020"
+      ],
+      "fields": [
+        {
+          "name": "installation_id",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "ephemeral_pubkey",
+          "type": "point"
+        },
+        {
+          "name": "nonce",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "role",
+          "type": "u8",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "protocol_version",
+          "type": "u16",
+          "const": 1
+        },
+        {
+          "name": "caps",
+          "type": "length_prefixed_u16",
+          "value_type": "caps",
+          "min": 1,
+          "max": 16
+        }
+      ]
+    },
+    "reconnect_signature": {
+      "container": "frame",
+      "frame_type": 7,
+      "anchor": "veles-v1.md#sec-reconnect-hello",
+      "requirements": [
+        "OTP2-REC-020a"
+      ],
+      "fields": [
+        {
+          "name": "role",
+          "type": "u8",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "signature",
+          "type": "signature"
+        }
+      ]
+    },
+    "preauth_reject": {
+      "container": "frame",
+      "frame_type": 15,
+      "anchor": "veles-v1.md#sec-plain-framing",
+      "requirements": [
+        "OTP2-ENC-010e"
+      ],
+      "fields": []
+    },
+    "protected_record": {
+      "container": "record",
+      "direction_check": true,
+      "anchor": "veles-v1.md#sec-record-format",
+      "requirements": [
+        "OTP2-CRY-016a",
+        "OTP2-CRY-016c"
+      ],
+      "fields": [
+        {
+          "name": "protocol_version",
+          "type": "u8",
+          "const": 1
+        },
+        {
+          "name": "schema_version",
+          "type": "u8",
+          "const": 1
+        },
+        {
+          "name": "direction",
+          "type": "u8",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "record_type",
+          "type": "u16",
+          "enum": [
+            1,
+            2,
+            3,
+            256,
+            257,
+            258,
+            259,
+            260,
+            512,
+            514,
+            515,
+            516,
+            517,
+            518,
+            519
+          ]
+        },
+        {
+          "name": "sequence_number",
+          "type": "u64"
+        },
+        {
+          "name": "ciphertext_length",
+          "type": "u16",
+          "min": 0,
+          "max": 4057
+        },
+        {
+          "name": "session_id_prefix",
+          "type": "bytes",
+          "size": 8
+        },
+        {
+          "name": "ciphertext",
+          "type": "bytes_dynamic",
+          "length_field": "ciphertext_length",
+          "min": 0,
+          "max": 4057,
+          "opaque": true
+        },
+        {
+          "name": "tag",
+          "type": "bytes",
+          "size": 16,
+          "opaque": true
+        }
+      ]
+    },
+    "reconnect_confirm": {
+      "container": "body",
+      "record_type_value": 1,
+      "anchor": "veles-v1.md#sec-reconnect-confirm",
+      "requirements": [
+        "OTP2-SID-001"
+      ],
+      "fields": [
+        {
+          "name": "confirmation",
+          "type": "bytes",
+          "size": 32
+        },
+        {
+          "name": "peer_state",
+          "type": "u8",
+          "enum": [
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    "app_heartbeat": {
+      "container": "body",
+      "record_type_value": 2,
+      "anchor": "veles-v1.md#sec-record-types",
+      "requirements": [
+        "OTP2-ENC-020"
+      ],
+      "fields": []
+    },
+    "app_error": {
+      "container": "body",
+      "record_type_value": 3,
+      "anchor": "veles-v1.md#sec-record-types",
+      "requirements": [
+        "OTP2-ENC-021"
+      ],
+      "fields": [
+        {
+          "name": "error_code",
+          "type": "u8",
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        {
+          "name": "reason",
+          "type": "length_prefixed_u16",
+          "value_type": "utf8",
+          "min": 0,
+          "max": 64
+        }
+      ]
+    },
+    "enroll_identity": {
+      "container": "body",
+      "record_type_value": 256,
+      "anchor": "veles-v1.md#sec-identity-record",
+      "requirements": [
+        "OTP2-REC-010",
+        "OTP2-REC-011a"
+      ],
+      "fields": [
+        {
+          "name": "installation_id",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "label",
+          "type": "length_prefixed_u16",
+          "value_type": "utf8",
+          "min": 0,
+          "max": 32
+        },
+        {
+          "name": "device_type",
+          "type": "u8",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "name": "identity_pubkey",
+          "type": "point"
+        },
+        {
+          "name": "fingerprint",
+          "type": "bytes",
+          "size": 32
+        },
+        {
+          "name": "nonce",
+          "type": "bytes",
+          "size": 16
+        }
+      ]
+    },
+    "activation_commit": {
+      "container": "body",
+      "record_type_value": 257,
+      "anchor": "veles-v1.md#sec-activation",
+      "requirements": [
+        "OTP2-CRY-019a"
+      ],
+      "fields": [
+        {
+          "name": "mac",
+          "type": "bytes",
+          "size": 32
+        }
+      ]
+    },
+    "activation_complete": {
+      "container": "body",
+      "record_type_value": 258,
+      "anchor": "veles-v1.md#sec-activation",
+      "requirements": [
+        "OTP2-CRY-019a"
+      ],
+      "fields": [
+        {
+          "name": "mac",
+          "type": "bytes",
+          "size": 32
+        }
+      ]
+    },
+    "activation_ack": {
+      "container": "body",
+      "record_type_value": 259,
+      "anchor": "veles-v1.md#sec-activation",
+      "requirements": [
+        "OTP2-CRY-019a"
+      ],
+      "fields": [
+        {
+          "name": "mac",
+          "type": "bytes",
+          "size": 32
+        }
+      ]
+    },
+    "enrollment_prepare": {
+      "container": "body",
+      "record_type_value": 260,
+      "anchor": "veles-v1.md#sec-activation",
+      "requirements": [
+        "OTP2-CRY-019a",
+        "OTP2-STA-010a"
+      ],
+      "fields": [
+        {
+          "name": "mac",
+          "type": "bytes",
+          "size": 32
+        }
+      ]
+    },
+    "pull_request": {
+      "container": "body",
+      "record_type_value": 512,
+      "anchor": "veles-v1.md#sec-otp-event",
+      "requirements": [
+        "OTP2-REC-031"
+      ],
+      "fields": []
+    },
+    "phone_policy_state": {
+      "container": "body",
+      "record_type_value": 519,
+      "anchor": "veles-v1.md#sec-otp-event",
+      "requirements": [
+        "OTP2-REC-031"
+      ],
+      "fields": [
+        {
+          "name": "policy",
+          "type": "u8",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "name": "flags",
+          "type": "u8",
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "flags": {
+            "bit0": "interactive",
+            "bit1": "unlocked",
+            "bit2": "currently_eligible",
+            "bit3": "response_to_pull",
+            "bits4_to_7": "reserved-zero (the value enum 0..15 encodes this exactly)"
+          }
+        }
+      ],
+      "semantics": "bit2 (currently eligible) MUST equal the policy evaluation over the observed bits (bit0/bit1); bit3 (response_to_pull) set only for the blocked response to exactly one pull_request, clear for unsolicited policy notices (OTP2-REC-031)"
+    },
+    "pull_events": {
+      "container": "body",
+      "record_type_value": 514,
+      "anchor": "veles-v1.md#sec-otp-event",
+      "requirements": [
+        "OTP2-REC-031"
+      ],
+      "fields": [
+        {
+          "name": "events",
+          "type": "count_prefixed_u8",
+          "count_type": "u8",
+          "min": 0,
+          "max": 5,
+          "item_layout": "otp_event"
+        }
+      ]
+    },
+    "push_event": {
+      "container": "body",
+      "record_type_value": 515,
+      "anchor": "veles-v1.md#sec-otp-event",
+      "requirements": [
+        "OTP2-REC-032"
+      ],
+      "fields": [
+        {
+          "name": "event",
+          "type": "inline_layout",
+          "layout": "otp_event"
+        }
+      ]
+    },
+    "event_ack": {
+      "container": "body",
+      "record_type_value": 516,
+      "anchor": "veles-v1.md#sec-otp-event",
+      "requirements": [
+        "OTP2-REC-030"
+      ],
+      "fields": [
+        {
+          "name": "phone_installation_id",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "event_id",
+          "type": "bytes",
+          "size": 16
+        }
+      ]
+    },
+    "removal_request": {
+      "container": "body",
+      "record_type_value": 517,
+      "anchor": "veles-v1.md#sec-identity-record",
+      "requirements": [
+        "OTP2-REC-013"
+      ],
+      "fields": []
+    },
+    "removal_response": {
+      "container": "body",
+      "record_type_value": 518,
+      "anchor": "veles-v1.md#sec-identity-record",
+      "requirements": [
+        "OTP2-REC-013"
+      ],
+      "fields": []
+    },
+    "otp_event": {
+      "container": "body",
+      "anchor": "veles-v1.md#sec-otp-event",
+      "requirements": [
+        "OTP2-REC-030",
+        "OTP2-REC-030a"
+      ],
+      "fields": [
+        {
+          "name": "phone_installation_id",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "event_id",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "receipt_epoch_seconds",
+          "type": "u64"
+        },
+        {
+          "name": "remaining_lifetime",
+          "type": "u32",
+          "min": 0,
+          "max": 600
+        },
+        {
+          "name": "code",
+          "type": "length_prefixed_u16",
+          "value_type": "utf8",
+          "min": 1,
+          "max": 16
+        },
+        {
+          "name": "merchant",
+          "type": "length_prefixed_u16",
+          "value_type": "utf8",
+          "min": 0,
+          "max": 64
+        },
+        {
+          "name": "amount_magnitude",
+          "type": "u64"
+        },
+        {
+          "name": "amount_scale",
+          "type": "u8",
+          "min": 0,
+          "max": 8
+        },
+        {
+          "name": "currency",
+          "type": "currency"
+        }
+      ]
+    },
+    "spake_context": {
+      "container": "buffer",
+      "total_max_bytes": 4096,
+      "anchor": "veles-v1.md#sec-spake-context",
+      "requirements": [
+        "OTP2-CRY-012",
+        "OTP2-CRY-012a"
+      ],
+      "fields": [
+        {
+          "name": "context_label",
+          "type": "literal",
+          "hex": "56656c6573205350414b4532207075626c696320636f6e74657874207631"
+        },
+        {
+          "name": "protocol_version",
+          "type": "u16",
+          "const": 1
+        },
+        {
+          "name": "schema_version",
+          "type": "u16",
+          "const": 1
+        },
+        {
+          "name": "ciphersuite_id",
+          "type": "u16",
+          "const": 1
+        },
+        {
+          "name": "pairing_id",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "role_markers",
+          "type": "literal",
+          "hex": "0102"
+        },
+        {
+          "name": "phone_nonce",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "client_nonce",
+          "type": "bytes",
+          "size": 16
+        },
+        {
+          "name": "phone_caps",
+          "type": "length_prefixed_u16",
+          "value_type": "caps",
+          "min": 1,
+          "max": 16
+        },
+        {
+          "name": "client_caps",
+          "type": "length_prefixed_u16",
+          "value_type": "caps",
+          "min": 1,
+          "max": 16
+        }
+      ]
+    }
+  },
+  "record_type_notes": {
+    "phone_policy_state": "C2: the tag 0x0201 (513) is retired in v1 and unassigned; pull blocking is answered by phone_policy_state with the flags bit3 response_to_pull canonical flag (OTP2-REC-031)."
+  }
+}

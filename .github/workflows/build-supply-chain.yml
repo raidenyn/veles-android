@@ -37,6 +37,7 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: |
             build/sbom/web-extension.cdx.json
+            build/sbom/protocol.cdx.json
             build/sbom/rust.cdx.json
             build/sbom/native-bridge.cdx.json
             build/verification/supply-chain/npm-licenses.txt

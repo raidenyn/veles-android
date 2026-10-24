@@ -108,6 +108,34 @@ android {
     }
 }
 
+// OTP-02 Plan Task 6 — the JVM protocol fixture consumer reads the SAME
+// `protocol/v1/` fixture files the Node/Rust/TypeScript consumers read. The
+// unit-test source set maps that shared root as an extra test-resource
+// directory instead of checking in a second, copied fixture truth.
+android.sourceSets.getByName("test").resources.srcDir(
+    rootProject.layout.projectDirectory.dir("protocol/v1"),
+)
+android.sourceSets.getByName("testDebug").resources.srcDir(
+    rootProject.layout.projectDirectory.dir("protocol/v1"),
+)
+
+// Focused JVM consumer task for the `protocolCheck` aggregate: runs only
+// me.nagaev.veles.protocol.ProtocolFixturesTest instead of the whole unit-test
+// suite, reusing the full testDebugUnitTest classpath (incl. resources).
+afterEvaluate {
+    val unitTest = tasks.getByName<Test>("testDebugUnitTest")
+    tasks.register<Test>("protocolJvmTest") {
+        group = "verification"
+        description = "Runs the focused OTP-02 protocol fixture consumer on the JVM."
+        dependsOn(unitTest.taskDependencies.getDependencies(unitTest))
+        classpath = unitTest.classpath
+        testClassesDirs = unitTest.testClassesDirs
+        filter {
+            includeTestsMatching("me.nagaev.veles.protocol.ProtocolFixturesTest")
+        }
+    }
+}
+
 tasks.matching { it.name.matches(Regex("merge.*JniLibFolders")) }.configureEach {
     dependsOn(rootProject.tasks.named("rustJni"))
 }
