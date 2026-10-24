@@ -212,7 +212,9 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         expect(() =>
             execFileSync('node', [PACKAGE_SCRIPT], { cwd: BRIDGE_DIR, encoding: 'utf8', env }),
         ).not.toThrow();
-        const entries = readTar(readFileSync(join(bOut, 'macos', 'veles-native-bridge-0.1.0.tar.gz')));
+        const entries = readTar(
+            readFileSync(join(bOut, 'macos', 'veles-native-bridge-0.1.0.tar.gz')),
+        );
         expect(entries.some((entry) => entry.name.endsWith('.icns'))).toBe(false);
         rmSync(base, { recursive: true, force: true });
     });
@@ -588,20 +590,25 @@ describe('package.mjs macOS tar.gz (extraction-tested)', () => {
         while (off + 512 <= tar.length) {
             const header = tar.subarray(off, off + 512);
             if (header.every((b) => b === 0)) break;
-            const uid = parseInt(header.subarray(108, 116).toString('latin1').replace(/\0/g, ''), 8) || 0;
-            const gid = parseInt(header.subarray(116, 124).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const uid =
+                parseInt(header.subarray(108, 116).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const gid =
+                parseInt(header.subarray(116, 124).toString('latin1').replace(/\0/g, ''), 8) || 0;
             const uname = header.subarray(265, 297).every((b) => b === 0);
             const gname = header.subarray(297, 329).every((b) => b === 0);
             const devmajor = header.subarray(329, 337).every((b) => b === 0);
             const devminor = header.subarray(337, 345).every((b) => b === 0);
-            const name = header.subarray(0, header.indexOf(0) < 0 ? 100 : header.indexOf(0)).toString('utf8');
+            const name = header
+                .subarray(0, header.indexOf(0) < 0 ? 100 : header.indexOf(0))
+                .toString('utf8');
             expect(uid, `tar entry ${name} uid must be 0`).toBe(0);
             expect(gid, `tar entry ${name} gid must be 0`).toBe(0);
             expect(uname, `tar entry ${name} uname must be empty`).toBe(true);
             expect(gname, `tar entry ${name} gname must be empty`).toBe(true);
             expect(devmajor, `tar entry ${name} devmajor must be 0`).toBe(true);
             expect(devminor, `tar entry ${name} devminor must be 0`).toBe(true);
-            const size = parseInt(header.subarray(124, 136).toString('latin1').replace(/\0/g, ''), 8) || 0;
+            const size =
+                parseInt(header.subarray(124, 136).toString('latin1').replace(/\0/g, ''), 8) || 0;
             const blocks = Math.ceil(size / 512);
             off += 512 + blocks * 512;
         }

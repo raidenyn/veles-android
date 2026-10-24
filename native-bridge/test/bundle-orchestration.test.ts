@@ -104,10 +104,14 @@ describe('native-bridge bundle build orchestration', () => {
     });
 
     it('bridgeBundle runs the local Tauri bundle script (npm run bundle)', () => {
-        const bundle = extractExecTask(readBuildGradle(), 'bridgeBundle');
+        const gradle = readBuildGradle();
+        const bundle = extractExecTask(gradle, 'bridgeBundle');
         // The task must invoke the local CLI through the pinned npm script,
         // not a system `tauri` binary and not npx.
-        expect(bundle).toMatch(/["']npm["'],\s*["']run["'],\s*["']bundle["']/);
+        expect(gradle).toMatch(
+            /val npmCommand = if \(windowsExecutableSuffix\.isNotEmpty\(\)\) "npm\.cmd" else "npm"/,
+        );
+        expect(bundle).toMatch(/commandLine\(\s*npmCommand,\s*["']run["'],\s*["']bundle["']/);
         expect(bundle).not.toMatch(/npx/);
     });
 
