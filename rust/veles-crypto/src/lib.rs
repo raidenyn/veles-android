@@ -87,6 +87,42 @@ mod android {
         })
         .resolve::<ThrowGenericRuntimeException>()
     }
+
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_me_nagaev_veles_crypto_VelesCrypto_pairingCommand<'local>(
+        mut env: EnvUnowned<'local>,
+        _class: JClass<'local>,
+        input: JByteArray<'local>,
+    ) -> jbyteArray {
+        env.with_env(|env| -> JniResult<jbyteArray> {
+            let result = if input.len(env)? > 4105 {
+                let mut prefix = zeroize::Zeroizing::new([0i8; 10]);
+                input.get_region(env, 0, prefix.as_mut())?;
+                let mut bounded = zeroize::Zeroizing::new(vec![0u8; 4106]);
+                for (out, byte) in bounded.iter_mut().zip(prefix.iter()) {
+                    *out = *byte as u8;
+                }
+                super::api::pairing_command(&bounded)
+            } else {
+                let input = zeroize::Zeroizing::new(env.convert_byte_array(&input)?);
+                super::api::pairing_command(input.as_slice())
+            };
+            Ok(env.byte_array_from_slice(&result)?.into_raw())
+        })
+        .resolve::<ThrowGenericRuntimeException>()
+    }
+
+    #[cfg(feature = "conformance")]
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_me_nagaev_veles_crypto_VelesCryptoConformance_pairingCommand<
+        'local,
+    >(
+        env: EnvUnowned<'local>,
+        class: JClass<'local>,
+        input: JByteArray<'local>,
+    ) -> jbyteArray {
+        Java_me_nagaev_veles_crypto_VelesCrypto_pairingCommand(env, class, input)
+    }
 }
 
 #[cfg(test)]
@@ -112,3 +148,29 @@ mod tests {
         assert_eq!(reverse_bytes(&reverse_bytes(&input)), input);
     }
 }
+pub mod api;
+
+/// Check JS-owned input before copying; JS owns output after the Rust copy is
+/// cleared. Neither an unbounded ingress copy nor an unwiped Vec crosses FFI.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn pairing_command(input: js_sys::Uint8Array) -> js_sys::Uint8Array {
+    let length = input.length();
+    let mut bounded =
+        zeroize::Zeroizing::new(vec![
+            0u8;
+            if length > 4105 { 4106 } else { length as usize }
+        ]);
+    if length > 4105 {
+        input.subarray(0, 10).copy_to(&mut bounded[..10]);
+    } else {
+        input.copy_to(&mut bounded);
+    }
+    let result = api::pairing_command(&bounded);
+    js_sys::Uint8Array::from(result.as_slice())
+}
+#[cfg(test)]
+mod api_tests;
+mod spake2;
+#[cfg(test)]
+mod spake2_tests;

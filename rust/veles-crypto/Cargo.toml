@@ -7,8 +7,21 @@ publish = false
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+# Never enabled by rustJni/rustWasm or packaging. Separate conformance artifacts
+# allow RFC fixed-scalar anchors through the actual runtime boundaries.
+[features]
+conformance = []
+
 [lints]
 workspace = true
+
+[dependencies]
+p256 = { version = "=0.13.2", default-features = false, features = ["arithmetic", "std"] }
+sha2 = "=0.10.9"
+hkdf = "=0.12.4"
+hmac = "=0.12.1"
+zeroize = { version = "=1.8.2", features = ["derive"] }
+getrandom = { version = "=0.2.17", features = ["js"] }
 
 # Test-only dependency of the OTP-02 shared-fixture consumer
 # (tests/protocol_fixtures.rs), exact-pinned for the supply-chain policy.
@@ -20,3 +33,4 @@ jni = "=0.22.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.127"
+js-sys = "=0.3.104"

@@ -471,10 +471,72 @@ val rustWasmSmoke = tasks.register<Exec>("rustWasmSmoke") {
 val rustTest = tasks.register("rustTest") {
     group = "rust"
     description = "Runs native Rust and generated web-target WASM tests."
-    dependsOn(rustNativeTest, rustWasmSmoke)
+    dependsOn(rustNativeTest, rustWasmSmoke, "rustWasmPairingTest")
+}
+
+tasks.register<Exec>("rustWasmPairingTest") {
+    group = "verification"
+    dependsOn(rustWasm)
+    workingDir(layout.projectDirectory)
+    commandLine("node", "rust/veles-crypto/tests/pairing-wasm.mjs")
+}
+
+for ((suffix, flag) in listOf("Entropy" to "--entropy-failure", "Expiry" to "--clock-tests",
+    "MemoryBound" to "--memory-boundary", "ResponseErasure" to "--response-erasure")) {
+    val test = tasks.register<Exec>("rustWasm${suffix}Test") {
+        group = "verification"
+        dependsOn(rustWasm)
+        workingDir(layout.projectDirectory)
+        commandLine("node", "rust/veles-crypto/tests/pairing-wasm.mjs", "web-extension/rust-wasm/pkg", flag)
+    }
+    rustTest.configure { dependsOn(test) }
 }
 
 val appNdkDirectory = objects.directoryProperty()
+val conformanceWasmDir = layout.buildDirectory.dir("rust/conformance-wasm")
+val rustWasmConformance = tasks.register<Exec>("rustWasmConformance") {
+    group = "verification"
+    description = "Builds a test-only fixed-scalar WASM package outside product outputs."
+    dependsOn(verifyWasmPack, verifyWasmBindgen, rustWasmBindgenConsistency, rustWasmLockCheck)
+    workingDir(rustDir)
+    environment("CARGO_TARGET_DIR", rustTargetDir.get().asFile)
+    environment("CARGO_PROFILE_RELEASE_PANIC", "abort")
+    doFirst {
+        val bin = rustToolsDir.get().file("wasm-pack/bin/wasm-pack$windowsExecutableSuffix").asFile
+        val bindgen = rustToolsDir.get().dir("wasm-bindgen-cli/bin").asFile
+        environment("PATH", bin.parentFile.prependToPath(bindgen.prependToPath(System.getenv("PATH"))))
+        executable(bin)
+        setArgs(listOf("build", "veles-crypto", "--target", "web", "--release", "--mode", "no-install", "--no-opt",
+            "--out-dir", conformanceWasmDir.get().asFile.absolutePath, "--", "--locked", "--features", "conformance"))
+    }
+}
+
+tasks.register<Exec>("rustWasmConformanceTest") {
+    group = "verification"
+    dependsOn(rustWasmConformance)
+    workingDir(layout.projectDirectory)
+    commandLine("node", "rust/veles-crypto/tests/pairing-wasm.mjs", conformanceWasmDir.get().asFile, "--conformance")
+}
+
+// Separate output and target directories keep test-only native exports out of
+// the app's generated/jniLibs directory, release APK and rustPackage.
+tasks.register<Exec>("rustJniConformance") {
+    group = "verification"
+    dependsOn(verifyCargoNdk)
+    workingDir(rustDir)
+    doFirst {
+        val ndk = appNdkDirectory.get().asFile
+        requireNdkVersion(ndk, libs.versions.ndk.get())
+        environment("ANDROID_NDK_HOME", ndk)
+        environment("PATH", rustToolsDir.get().dir("cargo-ndk/bin").asFile.prependToPath(System.getenv("PATH")))
+        environment("CARGO_TARGET_DIR", layout.buildDirectory.dir("rust/conformance-target").get().asFile)
+        environment("CARGO_PROFILE_RELEASE_PANIC", "unwind")
+    }
+    commandLine("cargo", "ndk", "--platform", "33", "--target", "arm64-v8a", "--target", "x86_64",
+        "--output-dir", layout.buildDirectory.dir("rust/conformance-jni").get().asFile,
+        "build", "--release", "--locked", "--features", "conformance")
+}
+
 project(":app").plugins.withId("com.android.application") {
     val androidComponents = project(":app").extensions
         .getByType(ApplicationAndroidComponentsExtension::class.java)

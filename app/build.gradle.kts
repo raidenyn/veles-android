@@ -118,6 +118,9 @@ android.sourceSets.getByName("test").resources.srcDir(
 android.sourceSets.getByName("testDebug").resources.srcDir(
     rootProject.layout.projectDirectory.dir("protocol/v1"),
 )
+android.sourceSets.getByName("androidTest").assets.srcDir(
+    rootProject.layout.projectDirectory.dir("protocol/v1"),
+)
 
 // Focused JVM consumer task for the `protocolCheck` aggregate: runs only
 // me.nagaev.veles.protocol.ProtocolFixturesTest instead of the whole unit-test
