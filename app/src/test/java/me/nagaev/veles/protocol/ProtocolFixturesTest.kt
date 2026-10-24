@@ -227,19 +227,19 @@ class ProtocolFixturesTest {
             if (fixture.obj("expected").optStr("rejected") == "true") {
                 val base = fixture.obj("input").obj("deviation").str("negates")
                 assertTrue("negative \"$id\" references missing positive \"$base\"", base in positiveIds)
-            } else {
-                for ((name, output) in fixture.obj("expected").obj("outputs")) {
-                    val primitive = checkNotNull(output as? JsonPrimitive) { "$id.$name must be a string" }
-                    assertTrue("crypto output $id.$name must remain a JSON string", primitive.isString)
-                    val value = primitive.content
-                    if (value.startsWith("0x")) {
-                        assertEquals(value, "0x" + encodeHex(decodeHex(value.removePrefix("0x"))))
-                        hexByteOutputs += 1
-                    }
-                    // Other committed outputs are decimal lengths or display
-                    // strings ("94", "2732 08ED 8F9B ...") — they are not byte
-                    // strings and must pass through unchanged.
+                continue
+            }
+            for ((name, output) in fixture.obj("expected").obj("outputs")) {
+                val primitive = checkNotNull(output as? JsonPrimitive) { "$id.$name must be a string" }
+                assertTrue("crypto output $id.$name must remain a JSON string", primitive.isString)
+                val value = primitive.content
+                if (value.startsWith("0x")) {
+                    assertEquals(value, "0x" + encodeHex(decodeHex(value.removePrefix("0x"))))
+                    hexByteOutputs += 1
                 }
+                // Other committed outputs are decimal lengths or display
+                // strings ("94", "2732 08ED 8F9B ...") — they are not byte
+                // strings and must pass through unchanged.
             }
         }
         assertTrue("crypto fixtures must carry 0x-prefixed hex byte outputs", hexByteOutputs > 0)

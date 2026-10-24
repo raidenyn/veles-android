@@ -799,3 +799,14 @@ reviewed document hash above remains the historical review identity. The PR
 document hash is `5c578eb7469aaae547328dd5ba1478c91058adbf0a9b124a6c85050e17811aad`,
 and the brief records this packaging-only update. Technical review verdicts
 apply to the protocol content; user acceptance remains pending on the PR.
+
+## CI detekt fix note
+
+After the technical review approved the consumer inventory, CI-only detekt
+refactoring of the Kotlin consumer test
+`app/src/test/java/me/nagaev/veles/protocol/ProtocolFixturesTest.kt`
+(guard-`continue` replacing an `if/else` block to satisfy `NestedBlockDepth`)
+changed no assertions, test names, or test count, and preserves all protocol
+bytes: normative text, schema, and fixture files are untouched. The brief's
+hash entry for this test file records the post-fix SHA-256
+`f75175179acb77feca64e3550f054710212fc0625bd9afc6f6882c723239314c`.
