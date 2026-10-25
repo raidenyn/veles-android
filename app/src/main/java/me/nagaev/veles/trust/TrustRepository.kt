@@ -106,48 +106,61 @@ class TrustRepository(
         val expected = if (step == ActivationStep.COMMIT) TrustState.PENDING else TrustState.COMMITTED_WAITING_ACK
         val next = if (step == ActivationStep.COMMIT) TrustState.COMMITTED_WAITING_ACK else TrustState.ACTIVE
         checkTrust((peer.state == expected || peer.state == next) && activationVerifier.verify(peer, step, proof.copyOf()))
-        snapshot.copy(peers = snapshot.peers.map {
-            if (it == peer && peer.state != next) it.copy(state = next, stateChangedAtMillis = wallMillis()) else it
-        }) to Unit
+        snapshot.copy(
+            peers = snapshot.peers.map {
+                if (it == peer && peer.state != next) it.copy(state = next, stateChangedAtMillis = wallMillis()) else it
+            },
+        ) to Unit
     }
 
     override suspend fun revoke(peerId: String) = update { snapshot ->
         snapshot.copy(peers = snapshot.peers.filterNot { it.installationId == peerId }) to Unit
     }
 
-    private suspend fun <T> update(block: (TrustSnapshot) -> Pair<TrustSnapshot, T>): T =
-        storage.transaction { stored ->
-            val snapshot = stored ?: run {
-                // A surviving key without its installation metadata is not a fresh installation.
-                checkTrust(keys.publicKey() == null)
-                TrustSnapshot(InstallationIdentity(
-                    TrustEncoding.hex(ByteArray(INSTALLATION_ID_BYTES).also(SecureRandom()::nextBytes)), keys.generate(),
-                ))
-            }
-            checkTrust(snapshot.identity.publicKey == keys.publicKey())
-            if (stored != null) {
-                checkTrust(snapshot.bootMarker.isNotEmpty())
-                TrustEncoding.requireHex(snapshot.continuityToken, HASH_BYTES)
-            }
-            TrustEncoding.requireHex(snapshot.identity.installationId, INSTALLATION_ID_BYTES)
-            TrustEncoding.validatePublicKey(snapshot.identity.publicKey)
-            checkTrust(snapshot.peers.map { it.installationId }.distinct().size == snapshot.peers.size)
-            snapshot.peers.forEach { validatePeer(it, snapshot.identity) }
-            val now = elapsedMillis()
-            val boot = bootToken()
-            checkTrust(now >= 0 && boot.isNotEmpty())
-            val token = if (snapshot.bootMarker == boot) {
-                TrustEncoding.requireHex(snapshot.continuityToken, HASH_BYTES)
-                snapshot.continuityToken
-            } else {
-                TrustEncoding.hex(ByteArray(HASH_BYTES).also(SecureRandom()::nextBytes))
-            }
-            block(snapshot.copy(bootMarker = boot, continuityToken = token, peers = snapshot.peers.filter {
-                it.state == TrustState.ACTIVE ||
-                    (it.bootToken == token && now >= it.createdElapsedMillis &&
-                        now - it.createdElapsedMillis < PENDING_LIFETIME_MILLIS)
-            }))
+    private suspend fun <T> update(block: (TrustSnapshot) -> Pair<TrustSnapshot, T>): T = storage.transaction { stored ->
+        val snapshot = stored ?: run {
+            // A surviving key without its installation metadata is not a fresh installation.
+            checkTrust(keys.publicKey() == null)
+            TrustSnapshot(
+                InstallationIdentity(
+                    TrustEncoding.hex(ByteArray(INSTALLATION_ID_BYTES).also(SecureRandom()::nextBytes)),
+                    keys.generate(),
+                ),
+            )
         }
+        checkTrust(snapshot.identity.publicKey == keys.publicKey())
+        if (stored != null) {
+            checkTrust(snapshot.bootMarker.isNotEmpty())
+            TrustEncoding.requireHex(snapshot.continuityToken, HASH_BYTES)
+        }
+        TrustEncoding.requireHex(snapshot.identity.installationId, INSTALLATION_ID_BYTES)
+        TrustEncoding.validatePublicKey(snapshot.identity.publicKey)
+        checkTrust(snapshot.peers.map { it.installationId }.distinct().size == snapshot.peers.size)
+        snapshot.peers.forEach { validatePeer(it, snapshot.identity) }
+        val now = elapsedMillis()
+        val boot = bootToken()
+        checkTrust(now >= 0 && boot.isNotEmpty())
+        val token = if (snapshot.bootMarker == boot) {
+            TrustEncoding.requireHex(snapshot.continuityToken, HASH_BYTES)
+            snapshot.continuityToken
+        } else {
+            TrustEncoding.hex(ByteArray(HASH_BYTES).also(SecureRandom()::nextBytes))
+        }
+        block(
+            snapshot.copy(
+                bootMarker = boot,
+                continuityToken = token,
+                peers = snapshot.peers.filter {
+                    it.state == TrustState.ACTIVE ||
+                        (
+                            it.bootToken == token &&
+                                now >= it.createdElapsedMillis &&
+                                now - it.createdElapsedMillis < PENDING_LIFETIME_MILLIS
+                            )
+                },
+            ),
+        )
+    }
 
     private fun validatePeer(peer: TrustedPeer, identity: InstallationIdentity) {
         TrustEncoding.requireHex(peer.installationId, INSTALLATION_ID_BYTES)
@@ -169,4 +182,6 @@ class TrustRepository(
     )
 }
 
-internal fun checkTrust(value: Boolean) { if (!value) throw TrustException() }
+internal fun checkTrust(value: Boolean) {
+    if (!value) throw TrustException()
+}

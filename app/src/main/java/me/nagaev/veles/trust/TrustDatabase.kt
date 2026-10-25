@@ -34,7 +34,8 @@ abstract class TrustDatabase : RoomDatabase() {
     companion object {
         const val FILE_NAME = "installation-trust.db"
         fun open(context: Context): TrustDatabase = Room.databaseBuilder(
-            context.applicationContext, TrustDatabase::class.java,
+            context.applicationContext,
+            TrustDatabase::class.java,
             File(context.noBackupFilesDir, FILE_NAME).absolutePath,
         ).build()
     }
@@ -44,7 +45,10 @@ abstract class TrustDatabase : RoomDatabase() {
  * No destructive migration or corruption recovery: unreadable trust must remain unusable.
  */
 class RoomTrustStorage(private val database: TrustDatabase) : TrustStorage {
-    private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true }
+    private val json = Json {
+        ignoreUnknownKeys = false
+        encodeDefaults = true
+    }
 
     override suspend fun <T> transaction(block: (TrustSnapshot?) -> Pair<TrustSnapshot, T>): T {
         try {

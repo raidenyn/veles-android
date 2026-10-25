@@ -1,7 +1,10 @@
 package me.nagaev.veles.trust
 
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.security.KeyPairGenerator
 
@@ -15,15 +18,25 @@ class TrustRepositoryTest {
     private var wall = 1000L
     private val identity = object : IdentityKeyStore {
         override fun publicKey(): String? = if (keyPresent) local.publicKey else null
-        override fun generate(): String { keyPresent = true; return local.publicKey }
+        override fun generate(): String {
+            keyPresent = true
+            return local.publicKey
+        }
         override fun sign(message: ByteArray): ByteArray = byteArrayOf()
     }
     private fun repository(confirmed: Boolean = true) = TrustRepository(
-        storage, identity, { elapsed }, { boot }, { wall },
+        storage,
+        identity,
+        { elapsed },
+        { boot },
+        { wall },
         ActivationVerifier { _, _, _ -> confirmed },
     )
     private fun peer() = PendingPeer(
-        "02".repeat(16), TrustEncoding.publicKey(keys.generateKeyPair().public), "Desktop", 1,
+        "02".repeat(16),
+        TrustEncoding.publicKey(keys.generateKeyPair().public),
+        "Desktop",
+        1,
         "03".repeat(32),
     )
 
@@ -125,7 +138,10 @@ class TrustRepositoryTest {
     }
 
     private suspend fun assertFails(block: suspend () -> Unit) {
-        try { block(); fail("Expected fail-closed rejection") } catch (_: TrustException) { }
+        try {
+            block()
+            fail("Expected fail-closed rejection")
+        } catch (_: TrustException) { }
     }
 }
 

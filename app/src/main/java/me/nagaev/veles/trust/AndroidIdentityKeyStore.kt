@@ -13,7 +13,9 @@ class AndroidIdentityKeyStore : IdentityKeyStore {
 
     override fun publicKey(): String? = guarded {
         val store = store()
-        if (!store.containsAlias(ALIAS)) null else {
+        if (!store.containsAlias(ALIAS)) {
+            null
+        } else {
             checkTrust(store.isKeyEntry(ALIAS))
             TrustEncoding.publicKey(store.getCertificate(ALIAS).publicKey)
         }
@@ -35,10 +37,18 @@ class AndroidIdentityKeyStore : IdentityKeyStore {
     /** JCA DER signature. Protocol framing/low-S P1363 normalization belongs to the session codec. */
     override fun sign(message: ByteArray): ByteArray = guarded {
         val key = store().getKey(ALIAS, null) as? java.security.PrivateKey ?: throw TrustException()
-        Signature.getInstance("SHA256withECDSA").run { initSign(key); update(message); sign() }
+        Signature.getInstance("SHA256withECDSA").run {
+            initSign(key)
+            update(message)
+            sign()
+        }
     }
 
-    private fun <T> guarded(block: () -> T): T = try { block() } catch (_: Exception) { throw TrustException() }
+    private fun <T> guarded(block: () -> T): T = try {
+        block()
+    } catch (_: Exception) {
+        throw TrustException()
+    }
 
     companion object {
         internal const val ALIAS = "veles.installation.identity.v1"

@@ -1,13 +1,18 @@
 package me.nagaev.veles.trust
 
-import androidx.test.core.app.ApplicationProvider
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.content.Context
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.test.runTest
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,7 +29,11 @@ class AndroidTrustTest {
     private val keys = AndroidIdentityKeyStore()
     private fun keystore() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private fun repo() = TrustRepository(
-        RoomTrustStorage(database), keys, { 10L }, { "boot" }, { 1000L },
+        RoomTrustStorage(database),
+        keys,
+        { 10L },
+        { "boot" },
+        { 1000L },
         ActivationVerifier { _, _, _ -> false },
     )
 
@@ -51,11 +60,13 @@ class AndroidTrustTest {
         assertArrayEquals(arrayOf(KeyProperties.DIGEST_SHA256), info.digests)
         assertFalse(info.isUserAuthenticationRequired)
         val message = "identity self test".toByteArray()
-        assertTrue(Signature.getInstance("SHA256withECDSA").run {
-            initVerify(store.getCertificate(AndroidIdentityKeyStore.ALIAS).publicKey)
-            update(message)
-            verify(keys.sign(message))
-        })
+        assertTrue(
+            Signature.getInstance("SHA256withECDSA").run {
+                initVerify(store.getCertificate(AndroidIdentityKeyStore.ALIAS).publicKey)
+                update(message)
+                verify(keys.sign(message))
+            },
+        )
         assertEquals(identity, repo().identity())
     }
 
@@ -88,7 +99,10 @@ class AndroidTrustTest {
     @Test fun missingKeyDoesNotRegenerateTrust() = runTest {
         repo().identity()
         keystore().deleteEntry(AndroidIdentityKeyStore.ALIAS)
-        try { repo().identity(); fail("Key loss must reject") } catch (_: TrustException) { }
+        try {
+            repo().identity()
+            fail("Key loss must reject")
+        } catch (_: TrustException) { }
         assertNull(keys.publicKey())
     }
 
@@ -97,6 +111,9 @@ class AndroidTrustTest {
         database.close()
         context.deleteDatabase(File(context.noBackupFilesDir, TrustDatabase.FILE_NAME).absolutePath)
         database = TrustDatabase.open(context)
-        try { repo().identity(); fail("Metadata loss must reject") } catch (_: TrustException) { }
+        try {
+            repo().identity()
+            fail("Metadata loss must reject")
+        } catch (_: TrustException) { }
     }
 }

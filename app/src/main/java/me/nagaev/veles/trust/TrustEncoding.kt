@@ -35,7 +35,9 @@ internal object TrustEncoding {
             .getParameterSpec(ECParameterSpec::class.java)
         val p = (parameters.curve.field as java.security.spec.ECFieldFp).p
         checkTrust(x < p && y < p)
-        checkTrust(y.modPow(BigInteger.TWO, p) ==
-            (x * x * x + parameters.curve.a * x + parameters.curve.b).mod(p))
+        checkTrust(
+            y.modPow(BigInteger.TWO, p) ==
+                (x * x * x + parameters.curve.a * x + parameters.curve.b).mod(p),
+        )
     }
 }
