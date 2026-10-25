@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sharing_title">Device sharing transport</string>
+    <string name="sharing_enabled_unavailable">Sharing is enabled, but the transport is not running. Enable transport to retry, or stop sharing.</string>
+    <string name="sharing_notification">Bluetooth sharing is running. Tap to manage.</string>
+    <string name="sharing_start">Enable transport</string>
+    <string name="sharing_stop">Stop sharing</string>
+    <string name="sharing_disabled">Disabled. This transport does not share OTPs yet.</string>
+    <string name="sharing_starting">Starting Bluetooth service…</string>
+    <string name="sharing_advertising">Available over Bluetooth. OTP sharing is not enabled.</string>
+    <string name="sharing_unsupported">Bluetooth LE peripheral advertising is unavailable on this device.</string>
+    <string name="sharing_permission">Nearby devices permission is required. Allow it in app settings if denied.</string>
+    <string name="sharing_bluetooth_off">Turn on Bluetooth, then enable transport again.</string>
+    <string name="sharing_failed">Bluetooth service stopped. Try enabling transport again.</string>
+</resources>

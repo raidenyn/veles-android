@@ -36,6 +36,7 @@ import me.nagaev.veles.permissions.ui.components.AutoCopyOtpCard
 import me.nagaev.veles.permissions.ui.components.SensitiveNotificationsCard
 import me.nagaev.veles.permissions.viewmodal.PermissionsActions
 import me.nagaev.veles.permissions.viewmodal.PermissionsState
+import me.nagaev.veles.sharing.SharingCard
 
 @Composable
 fun PermissionsScreen(
@@ -60,6 +61,7 @@ fun PermissionsScreen(
             )
         }
         item { Spacer(Modifier.height(16.dp)) }
+        item { SharingCard() }
         item {
             ListenerStatusCard(
                 enabled = state.notificationListenerEnabled,
