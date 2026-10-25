@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Mandatory Local Checks Before Creating a PR
+
+Before creating any pull request, run the local lint checks on the exact changes
+being submitted and confirm that every command succeeds:
+
+```bash
+./gradlew spotlessCheck detekt lintDebug
+```
+
+Also run the raw `android.util.Log` guard from the `lint-check` job in
+`.github/workflows/ci.yml`. These are all parts of the CI lint gate;
+`detekt` and `lintDebug` alone are not sufficient because they do not check
+Spotless formatting.
+
+If formatting fails, run `./gradlew spotlessApply`, inspect its changes, and rerun
+the checks. Fix all failures before pushing the initial PR branch and running
+`gh pr create`. Do not rely on CI to discover formatting or lint failures.
+Rerun the checks after subsequent code changes before pushing PR updates.
+If a check cannot run, report the blocker instead of claiming the PR is ready.
+
 ## Build & Test Commands
 
 ```bash
