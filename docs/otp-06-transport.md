@@ -74,6 +74,10 @@ The sharing package has no production OTP-handler dependency.
   confirmed the Home transport card. Full BLE central round trips, two-client
   hardware concurrency, and radio interruption matrices are not claimed by this
   smoke test; native-central integration belongs to OTP-23 and later gates.
+- Initial PR CI exposed four existing permission-screen tests whose lazy-list
+  controls were pushed out of the composed viewport by the new top card. The
+  transport card now follows permission setup, preserving onboarding priority
+  and the existing initial viewport; subsequent local JVM and lint checks passed.
 
 ## Requested final review
 

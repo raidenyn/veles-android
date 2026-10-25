@@ -61,7 +61,6 @@ fun PermissionsScreen(
             )
         }
         item { Spacer(Modifier.height(16.dp)) }
-        item { SharingCard() }
         item {
             ListenerStatusCard(
                 enabled = state.notificationListenerEnabled,
@@ -112,6 +111,7 @@ fun PermissionsScreen(
                 revokePermission = actions.revokePermission,
             )
         }
+        item { SharingCard() }
     }
 }
 
