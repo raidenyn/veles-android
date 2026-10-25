@@ -1,0 +1,22 @@
+run 0: exit=11 after 1.73 s
+     start pid=79792
+     tauri setup: starting host thread
+     tauri RunEvent::Ready
+     host finished code=0; asking the Tauri event loop to exit
+     tauri RunEvent::ExitRequested code=Some(0)
+     tauri did not reach RunEvent::Exit within 1.5s; forcing process exit
+run 1: exit=11 after 1.72 s
+     start pid=84364
+     tauri setup: starting host thread
+     tauri RunEvent::Ready
+     host finished code=0; asking the Tauri event loop to exit
+     tauri RunEvent::ExitRequested code=Some(0)
+     tauri did not reach RunEvent::Exit within 1.5s; forcing process exit
+run 2: exit=11 after 1.73 s
+     start pid=95084
+     tauri setup: starting host thread
+     tauri RunEvent::Ready
+     host finished code=0; asking the Tauri event loop to exit
+     tauri RunEvent::ExitRequested code=Some(0)
+     tauri did not reach RunEvent::Exit within 1.5s; forcing process exit
+3/3 runs needed the forced exit (Tauri never reached RunEvent::Exit)

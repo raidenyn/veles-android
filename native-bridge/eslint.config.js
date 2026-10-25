@@ -10,7 +10,7 @@ export default ts.config(
     ...ts.configs.stylistic,
     prettier,
     {
-        ignores: ['node_modules/**', 'src-tauri/target/**', 'dist/**'],
+        ignores: ['node_modules/**', 'src-tauri/target/**', 'dist/**', 'feasibility/**'],
     },
     {
         files: ['scripts/**/*.mjs'],

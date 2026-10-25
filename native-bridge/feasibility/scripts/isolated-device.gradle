@@ -1,0 +1,9 @@
+// Opt-in validation APK that preserves existing developer installs and data.
+// ./gradlew --init-script native-bridge/feasibility/scripts/isolated-device.gradle assembleDebug
+allprojects {
+    plugins.withId('com.android.application') {
+        androidComponents.finalizeDsl { android ->
+            android.buildTypes.getByName('debug').applicationIdSuffix = '.otp23'
+        }
+    }
+}

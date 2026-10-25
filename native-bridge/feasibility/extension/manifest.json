@@ -1,0 +1,10 @@
+{
+    "manifest_version": 3,
+    "name": "Veles OTP-23 feasibility connector (disposable)",
+    "description": "Synthetic Native Messaging + BLE feasibility connector. Not the product connector; no Veles cryptography or OTP data.",
+    "version": "0.0.1",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA44tVk4/d2VA/VOmcCjd0Cj1sB2ch7RdlLSuhyyVfTiK3iogJTU5fWTz8E7CvNPpzZnFMkAQiGsiBdtGiobGu14zOzomMOgRi5NQHiXoRpeOy9up9f9tO4jB8nVfkgL2ZJlD1DIBAIHbMNACIPI15cqEP7J0k8zaDyG0ijwUgBvQf1tCmfkSBbRsFdbxNUkJeEhRXErK+feIM6h0xhWF6WwCOlEX4nVtaK78mJ3LEGZQvBulM9SHsVjE3kzYxCo9IVFoCAczhNcOZMCZtlh30cefyS3BHWfZ3WJI8Oy/mhN+LXtY/47yCZRGb+WFpz474i7VrQQ3PwidwiL31zcdXAwIDAQAB",
+    "permissions": ["nativeMessaging"],
+    "background": { "service_worker": "background.js" },
+    "action": { "default_title": "Open the OTP-23 feasibility connector" }
+}

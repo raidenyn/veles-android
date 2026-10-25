@@ -1,0 +1,54 @@
+[package]
+name = "veles-otp23-feasibility"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+description = "OTP-23 disposable Native Messaging + BLE feasibility harness (synthetic bytes only)"
+
+[workspace]
+
+[features]
+default = []
+# Dependency-cost twin of the production bridge (native-bridge/src-tauri): the same Tauri pin with
+# an empty feature set. Tauri is compiled and linked as a dependency but the binary never starts it.
+tauri-linked = ["dep:tauri", "dep:tauri-build"]
+# A windowless Tauri app shell (wry runtime, zero windows) that runs the same host on a worker
+# thread and exits through the Tauri event loop.
+tauri-runtime = ["tauri-linked", "tauri/wry", "tauri/common-controls-v6"]
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.140"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Enumeration",
+    "Devices_Radios",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams",
+    "Win32_System_WinRT",
+] }
+windows-future = "=0.3.2"
+
+[dependencies.tauri]
+version = "=2.6.0"
+default-features = false
+optional = true
+
+[build-dependencies.tauri-build]
+version = "=2.3.1"
+optional = true
+
+[[bin]]
+name = "otp23-host"
+path = "src/bin/otp23_host.rs"
+
+[[bin]]
+name = "otp23-host-tauri"
+path = "src/bin/otp23_host_tauri.rs"
+required-features = ["tauri-runtime"]

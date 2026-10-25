@@ -1,0 +1,16 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "Veles OTP-23 feasibility host",
+    "version": "0.1.0",
+    "identifier": "me.nagaev.veles.otp23.feasibility",
+    "build": { "frontendDist": "./tauri/frontend" },
+    "app": {
+        "windows": [],
+        "security": { "csp": null },
+        "withGlobalTauri": false
+    },
+    "bundle": {
+        "active": false,
+        "icon": ["tauri/icons/icon.ico"]
+    }
+}

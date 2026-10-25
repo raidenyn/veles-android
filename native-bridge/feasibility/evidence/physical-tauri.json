@@ -1,0 +1,8 @@
+{
+  "flavour": "tauri",
+  "cases": [],
+  "result": "FAIL",
+  "chrome_version": "Chrome/155.0.8059.85",
+  "host_pid": 25152,
+  "failure": "Traceback (most recent call last):\n  File \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\scripts\\physical_validate.py\", line 64, in run\n    require(len(devices) >= 2, f\"only {len(devices)} physical peripherals found\")\n    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\scripts\\physical_validate.py\", line 27, in require\n    raise AssertionError(detail)\nAssertionError: only 1 physical peripherals found\n"
+}

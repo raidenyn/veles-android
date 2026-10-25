@@ -1,0 +1,73 @@
+[       0ms pid=95668] start pid=95668
+[       0ms pid=95668] in  len=81 type=hello request_id=r1-8k7euo
+[       0ms pid=95668] out len=183 type=ready request_id=r1-8k7euo api_version=1
+[    4381ms pid=95668] in  len=111 type=start_scan request_id=r2-nkhpzn api_version=1
+[    4381ms pid=95668] out len=145 type=error request_id=r2-nkhpzn api_version=1 code=invalid_request recoverability=fatal stage=schema
+[    4382ms pid=95668] in  len=143 type=send request_id=r3-7zjz96 api_version=1 connection_handle=0123456789abcdef record_base64.len=8
+[    4382ms pid=95668] out len=155 type=error request_id=r3-7zjz96 api_version=1 code=unknown_handle recoverability=fatal stage=connection_handle
+[    4383ms pid=95668] in  len=115 type=stop_scan request_id=r4-6yajae api_version=1 scan_handle=0123456789abcdef
+[    4383ms pid=95668] out len=149 type=error request_id=r4-6yajae api_version=1 code=unknown_handle recoverability=fatal stage=scan_handle
+[    4384ms pid=95668] in  len=137 type=start_scan request_id=r5-kvzhds api_version=1
+[    4434ms pid=95668] out len=135 type=scan_state request_id=r5-kvzhds api_version=1 status=started scan_handle=894477e0543aa795
+[    4647ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=894477e0543aa795 device_handle=44acc172d019e906 label.len=17 platform_hint.len=20
+[    4890ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=894477e0543aa795 device_handle=a92eef8b6f4e7b0b label.len=17 platform_hint.len=20
+[    5243ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=894477e0543aa795 device_handle=966dcd68036e1379 label.len=17 platform_hint.len=20
+[    5256ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=894477e0543aa795 device_handle=c3251c52672ccf35 label.len=17 platform_hint.len=20
+[    5348ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=894477e0543aa795 device_handle=1042f616ed4a8d54 label.len=17 platform_hint.len=20
+[    6184ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=894477e0543aa795 device_handle=b6df223136737e87 label.len=17 platform_hint.len=20
+[    6898ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=894477e0543aa795 device_handle=85935a13f4152d78 label.len=17 platform_hint.len=20
+[    8436ms pid=95668] in  len=115 type=stop_scan request_id=r6-ix9wtq api_version=1 scan_handle=894477e0543aa795
+[    8437ms pid=95668] out len=135 type=scan_state request_id=r6-ix9wtq api_version=1 status=stopped scan_handle=894477e0543aa795
+[    8437ms pid=95668] in  len=137 type=start_scan request_id=r7-u3k97r api_version=1
+[    8482ms pid=95668] out len=135 type=scan_state request_id=r7-u3k97r api_version=1 status=started scan_handle=6d609b3ca092cad5
+[    8509ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=17cd21b443ed8ab4 label.len=17 platform_hint.len=20
+[    8850ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=8e86e371cd101ec5 label.len=17 platform_hint.len=20
+[    8856ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=564cc356613e24f3 label.len=17 platform_hint.len=20
+[    8982ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=31186978d7c9e06b label.len=17 platform_hint.len=20
+[    9340ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=828cde77ea609da1 label.len=17 platform_hint.len=20
+[   10778ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=418e8a9a7518f498 label.len=17 platform_hint.len=20
+[   11711ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=fc410f61548e21f6 label.len=17 platform_hint.len=20
+[   11950ms pid=95668] out len=195 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=6aa3f6833c54872e label.len=17 platform_hint.len=20
+[   13741ms pid=95668] out len=184 type=device_found api_version=1 scan_handle=6d609b3ca092cad5 device_handle=dc531db156ffc54d label.len=6 platform_hint.len=20
+[   16484ms pid=95668] in  len=115 type=stop_scan request_id=r8-43zugo api_version=1 scan_handle=6d609b3ca092cad5
+[   16484ms pid=95668] out len=135 type=scan_state request_id=r8-43zugo api_version=1 status=stopped scan_handle=6d609b3ca092cad5
+[   16485ms pid=95668] in  len=119 type=connect request_id=r9-t1y1e4 api_version=1 platform_hint.len=20
+[   16495ms pid=95668] os error at device_lookup: 0x00000000
+[   16495ms pid=95668] conn 3 setup failed: stage=device_lookup retryable=true
+[   16495ms pid=95668] out len=155 type=error request_id=r9-t1y1e4 api_version=1 code=connect_failed recoverability=retryable stage=device_lookup
+[   16496ms pid=95668] in  len=137 type=start_scan request_id=ra-rivokp api_version=1
+[   16541ms pid=95668] out len=135 type=scan_state request_id=ra-rivokp api_version=1 status=started scan_handle=ef07e4a9455c9ac0
+[   16541ms pid=95668] in  len=81 type=shutdown request_id=rb-goy1k5 api_version=1
+[   16541ms pid=95668] out len=110 type=scan_state api_version=1 status=stopped scan_handle=ef07e4a9455c9ac0
+[   16542ms pid=95668] out len=90 type=shutdown_complete request_id=rb-goy1k5 api_version=1
+[   16542ms pid=95668] exit code=0 stdout_drained=true
+[       0ms pid=90616] start pid=90616
+[       0ms pid=90616] in  len=81 type=hello request_id=rc-tjzv09
+[       0ms pid=90616] out len=183 type=ready request_id=rc-tjzv09 api_version=1
+[     897ms pid=90616] in  len=137 type=start_scan request_id=rd-1ol7i0 api_version=1
+[     947ms pid=90616] out len=135 type=scan_state request_id=rd-1ol7i0 api_version=1 status=started scan_handle=c704a3fd2c9591e5
+[     949ms pid=90616] exit code=0 stdout_drained=true
+[       0ms pid=79696] start pid=79696
+[       0ms pid=79696] in  len=81 type=hello request_id=r1-x4tfou
+[       0ms pid=79696] out len=183 type=ready request_id=r1-x4tfou api_version=1
+[     912ms pid=79696] in  len=137 type=start_scan request_id=r2-wqvjxw api_version=1
+[     964ms pid=79696] out len=135 type=scan_state request_id=r2-wqvjxw api_version=1 status=started scan_handle=d4241cc8c913fc3f
+[     970ms pid=79696] exit code=0 stdout_drained=true
+[       0ms pid=85032] start pid=85032
+[       1ms pid=85032] in  len=81 type=hello request_id=r1-gpy0xi
+[       1ms pid=85032] out len=183 type=ready request_id=r1-gpy0xi api_version=1
+[       0ms pid=93528] start pid=93528
+[       0ms pid=93528] in  len=81 type=hello request_id=r1-eyzqp9
+[       0ms pid=93528] out len=183 type=ready request_id=r1-eyzqp9 api_version=1
+[     947ms pid=85032] exit code=0 stdout_drained=true
+[     908ms pid=93528] exit code=0 stdout_drained=true
+[       0ms pid=71868] start pid=71868
+[       0ms pid=71868] in  len=81 type=hello request_id=r1-sm97k7
+[       0ms pid=71868] out len=183 type=ready request_id=r1-sm97k7 api_version=1
+[     310ms pid=71868] in  len=137 type=start_scan request_id=r2-qbmr66 api_version=1
+[     360ms pid=71868] out len=135 type=scan_state request_id=r2-qbmr66 api_version=1 status=started scan_handle=c4286c66a74480b9
+[     691ms pid=71868] out len=195 type=device_found api_version=1 scan_handle=c4286c66a74480b9 device_handle=e1a1c369a6b0bee1 label.len=17 platform_hint.len=20
+[     696ms pid=71868] out len=195 type=device_found api_version=1 scan_handle=c4286c66a74480b9 device_handle=79e7070737f86923 label.len=17 platform_hint.len=20
+[     920ms pid=71868] out len=195 type=device_found api_version=1 scan_handle=c4286c66a74480b9 device_handle=5dc349efd4bf53d8 label.len=17 platform_hint.len=20
+[     926ms pid=71868] out len=195 type=device_found api_version=1 scan_handle=c4286c66a74480b9 device_handle=665078f8120dc791 label.len=17 platform_hint.len=20
+[     988ms pid=71868] exit code=0 stdout_drained=true

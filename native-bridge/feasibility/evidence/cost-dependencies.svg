@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="196" font-family="Segoe UI,Arial" font-size="13">
+<rect width="760" height="196" fill="#ffffff"/>
+<text x="12" y="26" font-size="16" font-weight="600">Unique crates compiled for x86_64-pc-windows-msvc</text>
+<text x="12" y="69">baseline</text>
+<rect x="190" y="50" width="34.7" height="28" fill="#2f6f4f"/>
+<text x="232.7" y="69">22 crates</text>
+<text x="12" y="111">tauri-linked</text>
+<rect x="190" y="92" width="434.2" height="28" fill="#b58a1b"/>
+<text x="632.2" y="111">275 crates</text>
+<text x="12" y="153">tauri-runtime</text>
+<rect x="190" y="134" width="450.0" height="28" fill="#a23b3b"/>
+<text x="648.0" y="153">285 crates</text>
+</svg>
