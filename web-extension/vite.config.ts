@@ -28,11 +28,13 @@ export default defineConfig({
         sourcemap: false,
         minify: false,
         rollupOptions: {
+            preserveEntrySignatures: 'strict',
             input: {
                 background: resolve(__dirname, 'src/background.ts'),
                 content: resolve(__dirname, 'src/content.ts'),
                 options: resolve(__dirname, 'options.html'),
                 popup: resolve(__dirname, 'popup.html'),
+                trust: resolve(__dirname, 'src/trust/repository.ts'),
             },
             output: {
                 entryFileNames: '[name].js',

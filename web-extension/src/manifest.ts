@@ -11,14 +11,15 @@ export const VELES_EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
 export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
     return {
         manifest_version: 3,
+        minimum_chrome_version: '102',
         name: 'Veles OTP',
         version: pkg.version,
         description:
             'Delivers one-time passcodes from the Veles Android app to this browser over an authenticated local channel.',
-        permissions: [],
+        permissions: ['storage'],
         action: { default_popup: 'popup.html' },
         options_ui: { page: 'options.html' },
-        background: { service_worker: 'background.js' },
+        background: { service_worker: 'background.js', type: 'module' },
         content_scripts: [
             {
                 matches: ['https://*/*'],

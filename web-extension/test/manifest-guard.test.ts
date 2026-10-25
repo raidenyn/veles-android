@@ -10,10 +10,10 @@ describe('manifest baseline guard (exact match)', () => {
         expect(buildExtensionManifest().manifest_version).toBe(3);
     });
 
-    it('permissions is present and exactly []', () => {
+    it('requests only the local storage permission', () => {
         const m = buildExtensionManifest();
         expect(m).toHaveProperty('permissions');
-        expect(m.permissions).toEqual([]);
+        expect(m.permissions).toEqual(['storage']);
     });
 
     it('host_permissions is absent', () => {

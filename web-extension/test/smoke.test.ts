@@ -8,7 +8,7 @@ describe('extension manifest', () => {
         expect(m.manifest_version).toBe(3);
         expect(m.name).toBe('Veles OTP');
         expect(m.version).toBe(pkg.version);
-        expect(m.permissions).toEqual([]);
+        expect(m.permissions).toEqual(['storage']);
         expect(m).not.toHaveProperty('host_permissions');
         expect(m.background?.service_worker).toBe('background.js');
         expect(m.content_scripts?.[0]?.js).toEqual(['content.js']);
