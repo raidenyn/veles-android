@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use common::{hex_decode, synthetic};
 use veles_otp23_feasibility::fragment::{
-    DiscardReason, FragmentError, GlobalBudget, MAX_MTU, MIN_MTU, PushOutcome, Reassembler,
-    fragment,
+    ATTRIBUTE_LIMIT, DiscardReason, FragmentError, GlobalBudget, MAX_MTU, MIN_MTU, PushOutcome,
+    Reassembler, fragment,
 };
 
 fn reassembler(mtu: usize) -> (Reassembler, Arc<GlobalBudget>) {
@@ -121,16 +121,18 @@ fn max_record_is_23_full_fragments_plus_two_bytes_at_mtu_185() {
 }
 
 #[test]
-fn larger_mtu_uses_larger_non_final_fragments() {
+fn max_mtu_uses_the_capped_non_final_fragments() {
+    // OTP-23 PoC: the 512-byte attribute cap shrinks the 517-MTU non-final payload to 508.
     let frames = fragment(&synthetic(4096, 9), MAX_MTU, 1).unwrap();
-    assert_eq!(frames.len(), 9); // ceil(4096 / 510)
-    assert!(frames[..8].iter().all(|f| f.len() == 4 + 510));
+    assert_eq!(frames.len(), 9); // ceil(4096 / 508)
+    assert!(frames[..8].iter().all(|f| f.len() == 4 + 508));
+    assert_eq!(frames[8].len(), 4 + 32);
 }
 
 #[test]
 fn round_trip_every_boundary_length_at_floor_and_ceiling_mtu() {
     for mtu in [MIN_MTU, 247, MAX_MTU] {
-        let payload = mtu - 7;
+        let payload = (mtu - 3).min(ATTRIBUTE_LIMIT) - 4;
         let mut lengths = vec![
             1,
             2,
@@ -553,4 +555,99 @@ fn sender_output_matches_the_committed_max_record_vector() {
         .unwrap(),
         wanted
     );
+}
+
+// ---- OTP-23 PoC attribute cap (experimental wire behavior; capped 512 by default) ---------------
+
+#[test]
+fn poc_mtu_517_capped_non_final_payloads_are_exactly_508_bytes() {
+    let record = synthetic(4096, 9);
+    let frames = fragment(&record, MAX_MTU, 1).unwrap();
+    assert_eq!(frames.len(), 9, "ceil(4096 / 508)");
+    assert!(
+        frames[..8].iter().all(|f| f.len() == 4 + 508),
+        "non-final payload is exactly min(MTU-3, 512) - 4 = 508"
+    );
+    assert_eq!(
+        frames[8].len(),
+        4 + 32,
+        "final fragment carries the remainder"
+    );
+    let joined: Vec<u8> = frames.iter().flat_map(|f| f[4..].to_vec()).collect();
+    assert_eq!(joined, record, "payloads concatenate byte-exact");
+}
+
+#[test]
+fn poc_mtu_517_payload_boundary_508_fits_and_509_needs_two_fragments() {
+    let fits = fragment(&synthetic(508, 1), MAX_MTU, 1).unwrap();
+    assert_eq!(fits.len(), 1, "508 payload fits one capped fragment");
+    assert_eq!(fits[0][0], 0x80, "single fragment is final");
+    let split = fragment(&synthetic(509, 1), MAX_MTU, 1).unwrap();
+    assert_eq!(split.len(), 2, "509 payload needs a second fragment");
+    assert_eq!(split[0].len(), 4 + 508);
+    assert_eq!(split[1].len(), 4 + 1);
+    assert!(matches!(
+        feed_all(&split, MAX_MTU),
+        PushOutcome::Complete(b) if b == synthetic(509, 1)
+    ));
+}
+
+#[test]
+fn poc_mtu_517_rejects_inbound_frames_above_the_512_attribute_cap() {
+    let now = Instant::now();
+    // Frame sizes 513..516 (payloads 509..512) all exceed min(MTU-3, 512) = 512.
+    for payload in [509usize, 510, 511, 512] {
+        let (mut r, budget) = reassembler(MAX_MTU);
+        let mut frame = vec![0x00, 7, 0x01, 0xFE];
+        frame.extend(synthetic(payload, 1));
+        assert_eq!(
+            r.push(&frame, now),
+            PushOutcome::Discarded(DiscardReason::FrameSize),
+            "frame of {} bytes exceeds the 512 attribute cap",
+            4 + payload
+        );
+        assert_eq!(budget.usage(), (0, 0), "payload {payload}");
+        assert_eq!(r.incomplete(), 0, "payload {payload}");
+    }
+    // Exactly 512 bytes (508 payload) is still accepted at MTU 517.
+    let (mut r, budget) = reassembler(MAX_MTU);
+    let mut frame = vec![0x00, 7, 0x03, 0xFA];
+    frame.extend(synthetic(508, 1));
+    assert_eq!(r.push(&frame, now), PushOutcome::Incomplete);
+    assert_eq!(budget.usage(), (1, 1018));
+}
+
+#[test]
+fn poc_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries() {
+    let chunk = 508usize; // min(517 - 3, 512) - 4
+    for len in [
+        1,
+        chunk - 1,
+        chunk,
+        chunk + 1,
+        2 * chunk,
+        2 * chunk + 1,
+        4095,
+        4096,
+    ] {
+        let record = synthetic(len, len as u8);
+        let frames = fragment(&record, MAX_MTU, 200).unwrap();
+        match feed_all(&frames, MAX_MTU) {
+            PushOutcome::Complete(bytes) => assert_eq!(bytes, record, "len {len}"),
+            other => panic!("len {len}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn poc_cap_preserves_frozen_mtu_185_vectors() {
+    let record = synthetic(4096, 9);
+    let frames = fragment(&record, MIN_MTU, 24).unwrap();
+    assert_eq!(frames.len(), 24);
+    assert!(frames[..23].iter().all(|f| f.len() == 182));
+    assert_eq!(frames[23].len(), 4 + 2);
+    match feed_all(&frames, MIN_MTU) {
+        PushOutcome::Complete(bytes) => assert_eq!(bytes, record),
+        other => panic!("{other:?}"),
+    }
 }

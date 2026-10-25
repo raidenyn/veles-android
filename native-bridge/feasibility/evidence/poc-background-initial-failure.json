@@ -1,0 +1,128 @@
+{
+  "poc_result": "FAIL",
+  "formal_otp23_acceptance": false,
+  "reason": "BG-3: AssertionError: two sent replies required; 49d86a9e: {'type': 'error', 'code': 'send_failed'} -- working PoC evidence only: browser-level CDP connection remains and native-messaging liveness exemption not comprehensively excluded (not formal acceptance)",
+  "meta": {
+    "flavour": "plain",
+    "started_utc": "2026-10-25T14:54:28Z",
+    "browser_version": {
+      "product": "Chrome/155.0.8059.85",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+    },
+    "chrome_browser_pid": 82724,
+    "owned_host_pid": 61008,
+    "cmd_wrapper_pid": 86008,
+    "schedule_utc": "2026-10-25T14:54:36Z",
+    "timer_due_utc": "2026-10-25T15:04:46Z",
+    "detached_utc": "2026-10-25T14:54:36Z",
+    "reattached_utc": "2026-10-25T15:05:06Z",
+    "finished_utc": "2026-10-25T15:05:07Z",
+    "planned_wait_s": 630,
+    "detach_period_s": 630,
+    "timer_clamped": null,
+    "hidden_probes": {
+      "pre_detach": "hidden",
+      "at_send_per_handle": {
+        "49d86a9ed313f535": "hidden",
+        "8213b4df4c29c2c6": "hidden"
+      },
+      "after_reattach": "hidden"
+    },
+    "hashes": {
+      "expected_response_sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+      "record_bytes": 4096
+    },
+    "owned_host_pid_gone_s": null,
+    "surviving_host_processes_after_run": []
+  },
+  "cases": [
+    {
+      "id": "ENV-1",
+      "title": "Stable Chrome + fixed-id unpacked extension + connector page",
+      "result": "PASS",
+      "detail": {
+        "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+        "connector_target": "21C9E7393EB7E9BFBE7B45E9C833BBA0"
+      },
+      "seconds": 0.82
+    },
+    {
+      "id": "NMH-1",
+      "title": "hello over registered plain host behind external cmd wrapper",
+      "result": "PASS",
+      "detail": {
+        "host_pid": 61008,
+        "wrapper_pid": 86008,
+        "ancestry": [
+          {
+            "ProcessId": 86008,
+            "Name": "cmd.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\cmd.exe /d /s /c \"\"%USERPROFILE%\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe\" chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/ --parent-window=3802958\" < \\\\.\\pipe\\chrome.nativeMessaging.in.535b8b501896e678 > \\\\.\\pipe\\chrome.nativeMessaging.out.535b8b501896e678"
+          },
+          {
+            "ProcessId": 82724,
+            "Name": "chrome.exe",
+            "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --user-data-dir=%USERPROFILE%\\AppData\\Local\\Temp\\veles-otp23-profile-jp52c0xw --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+          },
+          {
+            "ProcessId": 92276,
+            "Name": "python.exe",
+            "CommandLine": "\"%USERPROFILE%\\AppData\\Local\\Python\\bin\\python.exe\" scripts\\poc_background.py --flavour plain --out %USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\evidence\\poc-background.json"
+          },
+          {
+            "ProcessId": 44288,
+            "Name": "powershell.exe",
+            "CommandLine": "\"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\scripts\\invoke-poc.ps1\" -Script poc_background.py -OutPath \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\evidence\\poc-background.json\" -TaskName background"
+          },
+          {
+            "ProcessId": 3540,
+            "Name": "svchost.exe",
+            "CommandLine": ""
+          }
+        ]
+      },
+      "seconds": 2.79
+    },
+    {
+      "id": "PH-2",
+      "title": "Two physical phones: scan, connect, stop scan, clear events",
+      "result": "PASS",
+      "detail": {
+        "phones": 2,
+        "scan_stopped": true,
+        "events_cleared": true
+      },
+      "seconds": 4.37
+    },
+    {
+      "id": "BG-1",
+      "title": "Schedule 610000 ms dual-send timer; about:blank; connector hidden",
+      "result": "PASS",
+      "detail": {
+        "scheduled_at_ms": 7311.5,
+        "timer_ms": 610000,
+        "connector_hidden_pre_detach": "hidden"
+      },
+      "seconds": 0.02
+    },
+    {
+      "id": "BG-2",
+      "title": "Detach connector session; 630 s browser-level-only wait",
+      "result": "PASS",
+      "detail": {
+        "connector_session_detached": true,
+        "browser_connection": "open",
+        "wait_s": 630,
+        "no_connector_cdp_traffic_during_wait": true
+      },
+      "seconds": 630.0
+    },
+    {
+      "id": "BG-3",
+      "title": "Reattach: two sent replies, byte-exact records, hidden, >=600000 ms",
+      "result": "FAIL",
+      "detail": "AssertionError: two sent replies required; 49d86a9e: {'type': 'error', 'code': 'send_failed'}",
+      "seconds": 0.0
+    }
+  ]
+}

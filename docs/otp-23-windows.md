@@ -1,5 +1,9 @@
 # OTP-23 Windows feasibility
 
+**Historical investigation:** the later opt-in [working Windows PoC](windows-ble-poc.md)
+demonstrates capped fragmentation with the plain Rust runtime. It preserves this
+original no-go evidence and does not revise the frozen production profile.
+
 ## Decision: NO-GO for OTP-24
 
 Windows-first investigation is implemented as a disposable harness under

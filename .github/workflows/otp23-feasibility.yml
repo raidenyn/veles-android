@@ -23,7 +23,9 @@ jobs:
       - run: cargo fmt --check
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: node --test scripts/connector-api.test.mjs
+      - run: node --test scripts/connector-api.test.mjs scripts/isolated-device.test.mjs
+      - run: python scripts/trace-parser.test.py
+      - run: python scripts/test_poc_background.py
       - run: python scripts/verify-identity.py
         if: runner.os == 'Windows'
       - run: cargo build --locked --release --features tauri-runtime --bins

@@ -9,6 +9,12 @@ pub const MIN_MTU: usize = 185;
 pub const MAX_MTU: usize = 517;
 pub const MAX_RECORD: usize = 4096;
 
+/// OTP-23 PoC (opt-in experimental wire behavior): cap attribute values at 512 bytes so the
+/// non-final payload is `min(mtu - 3, ATTRIBUTE_LIMIT) - HEADER` in both directions and inbound
+/// frames above `min(mtu - 3, ATTRIBUTE_LIMIT)` are rejected. At the frozen MTU floor of 185 the
+/// cap never binds and the committed MTU-185 vectors are unchanged.
+pub const ATTRIBUTE_LIMIT: usize = 512;
+
 const HEADER: usize = 4;
 const INACTIVITY: Duration = Duration::from_secs(5);
 const CONFLICT_WINDOW: Duration = Duration::from_secs(60);
@@ -53,7 +59,7 @@ pub fn fragment(
     if transaction_id == 0 {
         return Err(FragmentError::BadTransactionId);
     }
-    let chunk = mtu - 3 - HEADER;
+    let chunk = (mtu - 3).min(ATTRIBUTE_LIMIT) - HEADER;
     let count = record.len().div_ceil(chunk);
     let frames = record
         .chunks(chunk)
@@ -153,7 +159,7 @@ impl Reassembler {
     }
 
     pub fn push(&mut self, frame: &[u8], now: Instant) -> PushOutcome {
-        if frame.len() < HEADER || frame.len() > self.mtu - 3 {
+        if frame.len() < HEADER || frame.len() > (self.mtu - 3).min(ATTRIBUTE_LIMIT) {
             return self.discard(DiscardReason::FrameSize);
         }
         let index = frame[0] & 0x7f;
@@ -188,11 +194,12 @@ impl Reassembler {
         let payload = frame.len() - HEADER;
         let partial = &self.partials[position];
         let remaining = partial.total - partial.bytes.len();
+        let chunk = (self.mtu - 3).min(ATTRIBUTE_LIMIT) - HEADER;
         let ordered = partial.next_index == index && (index == 0 || length == 0);
         let valid_size = if last {
             payload == remaining
         } else {
-            payload == self.mtu - 3 - HEADER && index < 127 && payload <= remaining
+            payload == chunk && index < 127 && payload <= remaining
         };
         if !ordered {
             return self.discard(DiscardReason::Order);

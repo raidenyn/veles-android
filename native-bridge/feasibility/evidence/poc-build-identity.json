@@ -1,0 +1,32 @@
+{
+  "date_utc": "2026-10-25",
+  "source_parent_commit": "1a34191",
+  "source_state": "PoC working-tree changes on poc/windows-ble-working; content hashes identify the tested transport sources independently of the later evidence commit",
+  "host": {
+    "target": "x86_64-pc-windows-msvc",
+    "toolchain": "1.98.0",
+    "features": [],
+    "runtime": "plain Rust, no Tauri event loop",
+    "sha256": "a3f92ec2e776ce67ae6ece98e4e2c4bf471504c50b87d5f493145cfa66b56f9c"
+  },
+  "android": {
+    "package": "me.nagaev.veles.otp23",
+    "debug": true,
+    "OTP23_POC": true,
+    "apk_sha256": "299a05de50fe32a88c292c15b48536552bf9d1abd540609cc952004a640f19b9",
+    "installed_apk_hash_verified_on_both_phones": true,
+    "instrumentation_apk_sha256": "830c240ba535a2adde27a8cb218a680621b8bcf1817c838546c74744699b4a83",
+    "normal_release_OTP23_POC": false,
+    "phones": [
+      {"model": "NE2215", "sdk": 35, "build": "NE2215_15.0.0.1302(EX01)"},
+      {"model": "ONEPLUS_A6013", "sdk": 35, "build": "lineage_fajita-userdebug 15 BP1A.250505.005 ca25a465d6"}
+    ]
+  },
+  "source_sha256": {
+    "native-bridge/feasibility/src/fragment.rs": "4edca0be61c88e949b332cafe763ab36b54b3119d0ff278350ac9ee5d20bf7ff",
+    "native-bridge/feasibility/src/winrt.rs": "e0c1b8218736934db80d0e60a3b2e297b16d04e6eb79a6c13bec4ccbc5a1a0d9",
+    "app/src/main/java/me/nagaev/veles/sharing/GattTransport.kt": "392c258ff48a7279d4557ff47661dfa2e09f0062faa5b977537dbf4132e91131",
+    "app/src/main/java/me/nagaev/veles/sharing/SharingGattServer.kt": "f1688208dae41f2c8f9a54ef072cbb5128d3d958098099708163834d51184461"
+  },
+  "physical_matrix": "poc-physical-final.json"
+}

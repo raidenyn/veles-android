@@ -2,8 +2,17 @@
 
 package me.nagaev.veles.sharing
 
-/** Byte transport only. No OTP, identity, authentication or application acknowledgement semantics. */
-internal class GattTransport(private val clock: () -> Long) {
+/**
+ * Byte transport only. No OTP, identity, authentication or application acknowledgement semantics.
+ *
+ * [attributeLimit] caps the attribute value size of inbound frames and non-final outbound chunks at
+ * `min(mtu - 3, attributeLimit) - 4` payload bytes. The default keeps the frozen wire behavior; the
+ * OTP-23 PoC injects 512.
+ */
+internal class GattTransport(
+    private val attributeLimit: Int = 514,
+    private val clock: () -> Long,
+) {
     data class Received(val record: ByteArray? = null, val disconnect: Boolean = false)
     private class Partial(val id: Int, val total: Int, var touched: Long) {
         val bytes = ByteArray(total)
@@ -69,7 +78,7 @@ internal class GattTransport(private val clock: () -> Long) {
     fun receive(id: String, frame: ByteArray): Received {
         val peer = peers[id] ?: return Received()
         if (peer.mtu == 0) return Received()
-        if (frame.size !in 4..(peer.mtu - 3)) return reject(peer)
+        if (frame.size !in 4..minOf(peer.mtu - 3, attributeLimit)) return reject(peer)
         val index = frame[0].toInt() and 127
         val final = frame[0].toInt() and 128 != 0
         val transaction = frame[1].toInt() and 255
@@ -86,7 +95,7 @@ internal class GattTransport(private val clock: () -> Long) {
         val size = frame.size - 4
         val ordered = partial.id == transaction && partial.index == index && (index == 0 || length == 0)
         val remaining = partial.total - partial.used
-        val validSize = validPayload(final, size, remaining, peer.mtu, index)
+        val validSize = validPayload(final, size, remaining, minOf(peer.mtu - 3, attributeLimit) - 4, index)
         if (!ordered || !validSize) {
             return reject(peer)
         }
@@ -103,9 +112,9 @@ internal class GattTransport(private val clock: () -> Long) {
         final: Boolean,
         size: Int,
         remaining: Int,
-        mtu: Int,
+        budget: Int,
         index: Int,
-    ): Boolean = if (final) size == remaining else size == mtu - 7 && index < 127 && size <= remaining
+    ): Boolean = if (final) size == remaining else size == budget && index < 127 && size <= remaining
 
     private fun canAllocate(peer: Peer, length: Int): Boolean = peer.partials.size < 2 &&
         peer.partials.values.sumOf { it.total } + length <= 8192 &&
@@ -146,7 +155,7 @@ internal class GattTransport(private val clock: () -> Long) {
         val peer = peers[id] ?: return null
         val record = peer.queue.firstOrNull() ?: return null
         if (peer.awaiting) return null
-        val count = minOf(peer.mtu - 7, record.size - peer.offset)
+        val count = minOf(minOf(peer.mtu - 3, attributeLimit) - 4, record.size - peer.offset)
         val final = peer.offset + count == record.size
         val total = if (peer.index == 0) record.size else 0
         val header = byteArrayOf(

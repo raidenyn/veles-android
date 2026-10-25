@@ -1,5 +1,10 @@
 # OTP-23 feasibility harness (disposable)
 
+**Working Windows PoC:** see [`docs/windows-ble-poc.md`](../../../docs/windows-ble-poc.md)
+for the opt-in capped-fragment Android build, plain-Rust host, tested physical
+matrix and handoff. Historical no-go results below describe the original frozen
+profile; they remain valid for normal builds, not for the opt-in PoC rule.
+
 Synthetic Native Messaging + BLE harness that answers one question for OTP-23: can **stable Chrome**
 drive the required OS BLE behaviour through **one on-demand native host**? Evidence and decisions
 live in [`docs/otp-23-windows.md`](../../../docs/otp-23-windows.md).
