@@ -2,3 +2,5 @@ node_modules/
 src-tauri/target/
 src-tauri/gen/
 dist/
+# Disposable OTP-23 experiment has its own Rust/connector checks and raw evidence.
+feasibility/

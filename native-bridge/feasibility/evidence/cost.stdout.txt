@@ -1,0 +1,69 @@
+== baseline
+{
+ "features": [],
+ "binary": "otp23-host",
+ "sbom": {
+  "file": "sbom/baseline.cdx.json",
+  "components": 22,
+  "sbom_bytes": 26852
+ },
+ "clean_release_build_seconds": 9.1,
+ "binary_bytes": 717824,
+ "binary_sha256": "769f91c0ac74d1a71331a7005d25e6a7ac5021f45bcb9eb664b0fd133f7957ef",
+ "imported_dlls": [
+  "api-ms-win-core-synch-l1-2-0.dll",
+  "api-ms-win-core-winrt-l1-1-0.dll",
+  "api-ms-win-crt-heap-l1-1-0.dll",
+  "api-ms-win-crt-locale-l1-1-0.dll",
+  "api-ms-win-crt-math-l1-1-0.dll",
+  "api-ms-win-crt-runtime-l1-1-0.dll",
+  "api-ms-win-crt-stdio-l1-1-0.dll",
+  "bcryptprimitives.dll",
+  "comb
+== tauri-linked
+{
+ "features": [
+  "tauri-linked"
+ ],
+ "binary": "otp23-host",
+ "sbom": {
+  "file": "sbom/tauri-linked.cdx.json",
+  "components": 275,
+  "sbom_bytes": 323666
+ },
+ "clean_release_build_seconds": 29.0,
+ "binary_bytes": 755712,
+ "binary_sha256": "44e6778a39f0c8cab97f8b9d2aab59c141b6e00ae0106322863c677f04714125",
+ "imported_dlls": [
+  "api-ms-win-core-synch-l1-2-0.dll",
+  "api-ms-win-core-winrt-l1-1-0.dll",
+  "api-ms-win-crt-heap-l1-1-0.dll",
+  "api-ms-win-crt-locale-l1-1-0.dll",
+  "api-ms-win-crt-math-l1-1-0.dll",
+  "api-ms-win-crt-runtime-l1-1-0.dll",
+  "api-ms-win-crt-stdio-l1-1-0.dll",
+  "bcry
+== tauri-runtime
+{
+ "features": [
+  "tauri-runtime"
+ ],
+ "binary": "otp23-host-tauri",
+ "sbom": {
+  "file": "sbom/tauri-runtime.cdx.json",
+  "components": 285,
+  "sbom_bytes": 338458
+ },
+ "clean_release_build_seconds": 53.9,
+ "binary_bytes": 7862784,
+ "binary_sha256": "9e7948884524f65ccb1060f9716dbac6270daf64ead907bfaca54231baae56f7",
+ "imported_dlls": [
+  "advapi32.dll",
+  "ADVAPI32.dll",
+  "api-ms-win-core-synch-l1-2-0.dll",
+  "api-ms-win-core-winrt-l1-1-0.dll",
+  "api-ms-win-crt-convert-l1-1-0.dll",
+  "api-ms-win-crt-heap-l1-1-0.dll",
+  "api-ms-win-crt-locale-l1-1-0.dll",
+  "api-ms-win-crt-math-l1-1-0.dll",
+wrote C:\Users\yuriy\repos\veles-otp23-windows\native-bridge\feasibility\evidence\cost.json

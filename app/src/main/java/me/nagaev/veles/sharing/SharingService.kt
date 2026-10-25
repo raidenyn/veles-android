@@ -73,11 +73,7 @@ internal class SharingService : Service() {
                     if (state == SharingAvailability.Advertising) SharingState.update(state) else fail(state)
                 }, { _, record ->
                     // Fixed debug fixture only; no production message handler or OTP data dependency.
-                    if (BuildConfig.DEBUG && record.contentEquals(byteArrayOf(0x56, 0x45, 0x4c, 0x01))) {
-                        byteArrayOf(0x56, 0x45, 0x4c, 0x02)
-                    } else {
-                        null
-                    }
+                    if (BuildConfig.DEBUG) SyntheticTransportFixture.reply(record) else null
                 })
                 gatt?.start()
             }

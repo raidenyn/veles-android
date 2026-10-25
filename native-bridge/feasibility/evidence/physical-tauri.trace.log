@@ -1,0 +1,13 @@
+[       0ms pid=25152] start pid=25152
+[       6ms pid=25152] tauri setup: starting host thread
+[       6ms pid=25152] tauri RunEvent::Ready
+[       7ms pid=25152] start pid=25152
+[       7ms pid=25152] in  len=81 type=hello request_id=r1-23bd85
+[       8ms pid=25152] out len=183 type=ready request_id=r1-23bd85 api_version=1
+[     402ms pid=25152] in  len=137 type=start_scan request_id=r2-fu4ari api_version=1
+[     454ms pid=25152] out len=135 type=scan_state request_id=r2-fu4ari api_version=1 status=started scan_handle=d363cc2b0af7f091
+[     908ms pid=25152] out len=195 type=device_found api_version=1 scan_handle=d363cc2b0af7f091 device_handle=d462b59990e199f5 label.len=17 platform_hint.len=20
+[   30558ms pid=25152] exit code=0 stdout_drained=true
+[   30558ms pid=25152] host finished code=0; asking the Tauri event loop to exit
+[   30559ms pid=25152] tauri RunEvent::ExitRequested code=Some(0)
+[   30560ms pid=25152] tauri RunEvent::Exit

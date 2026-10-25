@@ -1,0 +1,15 @@
+ANNOTATION AFTER REVIEW: historical diagnostic stdout; the original PASS label below is superseded by result=DIAGNOSTIC in the JSON. Debugger attached; no phone record or exemption acceptance.
+connector hidden; host pid 67804
+snapshot 60 hidden port True host True
+snapshot 121 hidden port True host True
+snapshot 181 hidden port True host True
+snapshot 242 hidden port True host True
+snapshot 300 hidden port True host True
+scan started at 320s
+snapshot 361 hidden port True host True
+snapshot 421 hidden port True host True
+snapshot 481 hidden port True host True
+snapshot 542 hidden port True host True
+snapshot 602 hidden port True host True
+cap event received {'at': 622894, 'type': 'scan_state', 'status': 'stopped', 'scan_handle': '72ae9fb33e473301', 'orphan_correlated': False, 'received_after_hidden_s': 622.2, 'page_visibility_at_receipt': 'hidden'}
+PASS -> evidence/background-10min-plain.json
