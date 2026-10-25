@@ -24,12 +24,14 @@ describe('dist/ contents (post-build artifact)', () => {
         expect(files).toEqual([
             'background.js',
             'chunks/modulepreload-polyfill-DaKOjhqt.js',
+            'chunks/storage-DOMCF8BZ.js',
             'content.js',
             'manifest.json',
             'options.html',
             'options.js',
             'popup.html',
             'popup.js',
+            'trust.js',
         ]);
     });
 

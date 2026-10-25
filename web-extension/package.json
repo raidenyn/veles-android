@@ -12,7 +12,8 @@
         "format:check": "prettier --check .",
         "lint": "eslint .",
         "typecheck": "tsc --noEmit",
-        "test": "vitest run test/smoke.test.ts test/manifest-guard.test.ts test/package-output.test.ts test/protocol-fixtures.test.ts",
+        "test": "vitest run test/smoke.test.ts test/manifest-guard.test.ts test/package-output.test.ts test/protocol-fixtures.test.ts test/trust.test.ts",
+        "test:browser": "node scripts/test-browser.mjs",
         "test:bundle": "vitest run test/bundle.test.ts",
         "build": "vite build",
         "package": "vite build && node scripts/package.mjs"
@@ -23,6 +24,8 @@
         "@types/node": "24.10.13",
         "eslint": "9.39.2",
         "eslint-config-prettier": "10.1.8",
+        "fake-indexeddb": "6.2.4",
+        "playwright-core": "1.58.2",
         "prettier": "3.8.0",
         "typescript": "5.7.3",
         "typescript-eslint": "8.57.0",

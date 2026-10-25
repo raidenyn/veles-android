@@ -1,4 +1,17 @@
-// MV3 service worker entry — skeleton for OTP-01 1a.
+import { ChromeLocalStore } from './trust/storage';
+
+// Restrict on every worker load, not only installation/update. Repository
+// operations independently await restriction before reading or writing trust.
+// A denied restriction never exposes a repository; callers fail closed.
+export const trustStorageReady =
+    typeof chrome !== 'undefined' && chrome.storage?.local
+        ? new ChromeLocalStore().restrict().then(
+              () => true,
+              () => false,
+          )
+        : Promise.resolve(false);
+
+// MV3 service worker entry.
 // Real connector/offscreen lifecycle lands in later OTP tasks.
 //
 // The chrome-global guard exists so vitest (Node environment) can import this

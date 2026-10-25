@@ -148,6 +148,10 @@ jobs:
         working-directory: web-extension
       - run: npm run build && npm run test:bundle
         working-directory: web-extension
+      - run: npx playwright-core install --with-deps chromium
+        working-directory: web-extension
+      - run: npm run test:browser
+        working-directory: web-extension
       - run: npm run package
         working-directory: web-extension
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
