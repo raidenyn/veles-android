@@ -66,6 +66,8 @@ requireVersion(process.execPath, [22, 0], 'Node');
 requireVersion('python3', [3, 8], 'python3');
 validateManifestEvidence();
 if (buildEvidenceInventory(join(root, 'protocol', 'v1')).entries.length !== 156) throw new Error('evidence inventory must cover 156 requirements');
+run(process.execPath, ['protocol/tools/sync-manifest-evidence.mjs', '--check']);
+run(process.execPath, ['protocol/tools/generate-fragmentation-vectors.mjs', '--check']);
 rmSync(build, { recursive: true, force: true });
 run(process.execPath, ['protocol/tools/generate-vectors.mjs']);
 run('python3', ['protocol/tools/crosscheck-vectors/oracle.py', crypto]);

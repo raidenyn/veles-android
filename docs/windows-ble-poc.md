@@ -12,6 +12,16 @@ Chrome Native Messaging. It does not start the Tauri event loop. Tauri's earlier
 helper-window and exit findings are therefore avoided in this PoC, not claimed
 fixed in Tauri.
 
+> **Superseded (2026-10-26).** The attribute budget below is now the canonical
+> fragmentation profile (OTP2-GAT-010 revision 2) in the protocol document, the vectors,
+> Android's normal builds and the host; it is no longer a PoC-only opt-in and
+> `BuildConfig.OTP23_POC` no longer exists. Statements below that the normal app keeps the
+> frozen rule describe the tree at `d5b6f2d` and are historical. See
+> [`otp-23-contract-alignment.md`](otp-23-contract-alignment.md) for the compatibility reasoning
+> and [`otp-23-requirements-matrix.md`](otp-23-requirements-matrix.md) for what a fresh run must
+> still prove. The PoC measurements below stay as recorded: administrator account, browser-level
+> DevTools client attached, warmed links — not formal acceptance.
+
 ## Experimental fragment rule
 
 The PoC caps the characteristic value at 512 bytes:
@@ -134,6 +144,8 @@ the historical OTP-23 investigation overstated its Rust test count; this handoff
 uses the freshly measured Windows total.
 
 ## What the later production session must decide
+
+*(2026-10-26: the first two bullets are resolved by the contract alignment; the rest stay open.)*
 
 - Incorporate/review the capped attribute rule in the real protocol, vectors and
   compatibility/version strategy; the normal app still uses the frozen rule.

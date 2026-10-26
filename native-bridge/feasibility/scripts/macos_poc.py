@@ -47,7 +47,8 @@ SIZES = [4, 178, 179, 180] + list(range(505, 512)) + [1015, 1016, 1017] + [4095,
 SEED_BASE = [17, 137]  # per-handle distinct seed bases: handle 0 uses 17+i, handle 1 uses 137+i
 DENIAL_HINTS = ("denied", "consent", "permission", "unauthor", "not_authorized")
 MTU_NEGOTIATED = "negotiated"
-MTU_INFERRED_MAX_WRITE = "inferred_from_max_write"  # macOS: derived from max_write, not measured
+MTU_INFERRED_MAX_WRITE = "inferred_from_max_write"  # legacy host traces (<= fb224e8): MTU derived from max_write
+BUDGET_MEASURED_MAX_WRITE = "measured_max_write_without_response"  # macOS: attribute budget = min(write, 512)
 TCC_MESSAGE = (
     "Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth and "
     "allow 'Google Chrome' (and/or the VelesOtp23PoC app), then re-run this command. This "
@@ -341,12 +342,14 @@ def parse_trace(path):
 
       WinRT (negotiated measurement):
         [    1242ms pid=87052] conn 2 mtu=517 at 1242ms
-      macOS corebluetooth (no negotiated MTU observation exists; the effective ATT MTU is
-      DERIVED from max_write_without_response = max write + 3, capped 517 -- recorded as
-      inferred, not as a negotiated measurement):
+      macOS corebluetooth (no ATT MTU observation exists and none is invented; the measured
+      maximum write-without-response length W is a backend limit; a budget exists only for W >= 512):
+        [    1242ms pid=87052] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508
+      Historical macOS traces (host <= fb224e8) carried a derived MTU instead; they still parse,
+      recorded as inferred, never as a negotiated measurement:
         [    1242ms pid=87052] conn 2 max_write_without_response=512 inferred effective att mtu=515 (max write + 3, capped 517)
     """
-    mtu_by_conn, source_by_conn, sends, replies = {}, {}, [], []
+    mtu_by_conn, source_by_conn, budget_by_conn, sends, replies = {}, {}, {}, [], []
     path = pathlib.Path(path)
     if path.exists():
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -356,6 +359,15 @@ def parse_trace(path):
             if mtu:
                 mtu_by_conn[int(mtu.group(1))] = int(mtu.group(2))
                 source_by_conn[int(mtu.group(1))] = MTU_NEGOTIATED
+            measured = re.search(
+                r"\] conn (\d+) max_write_without_response=(\d+) attribute_budget=(\d+) payload_budget=(\d+)", line)
+            if measured:
+                budget_by_conn[int(measured.group(1))] = {
+                    "max_write_without_response": int(measured.group(2)),
+                    "attribute_budget": int(measured.group(3)),
+                    "payload_budget": int(measured.group(4)),
+                }
+                source_by_conn[int(measured.group(1))] = BUDGET_MEASURED_MAX_WRITE
             inferred = re.search(
                 r"\] conn (\d+) max_write_without_response=(\d+) .*inferred effective att mtu=(\d+)", line)
             if inferred:
@@ -370,7 +382,7 @@ def parse_trace(path):
             if reply:
                 replies.append({"at_ms": at_ms, "record_base64_len": int(reply.group(1))})
     return {"mtu_by_conn": mtu_by_conn, "mtu_source_by_conn": source_by_conn,
-            "sends": sends, "replies": replies}
+            "budget_by_conn": budget_by_conn, "sends": sends, "replies": replies}
 
 
 def deny_or_raise(reply, context):
@@ -593,23 +605,30 @@ def run_driver(args, out):
             require(wait_gone(pid2, 8) is not None, "owned host survived Chrome port closure")
             note("port-close", {"pid": pid2})
             parsed = parse_trace(trace)
-            require(len(parsed["mtu_by_conn"]) == 2,
-                    f"expected exactly 2 connection-MTU observations, saw {parsed['mtu_by_conn']}")
+            observed = set(parsed["mtu_by_conn"]) | set(parsed["budget_by_conn"])
+            require(len(observed) == 2,
+                    f"expected exactly 2 connection observations, saw {sorted(observed)}")
             require(all(185 <= mtu <= 517 for mtu in parsed["mtu_by_conn"].values()), "implausible MTUs")
+            require(all(182 <= b["attribute_budget"] <= 512 and b["payload_budget"] == b["attribute_budget"] - 4
+                        for b in parsed["budget_by_conn"].values()), "implausible attribute budgets")
             result["negotiation"] = {
                 "source": "host trace (VELES_OTP23_TRACE); keyed by the host connection token only; "
                           "no per-handle association is inferred",
-                "per_conn": {str(token): {"mtu": mtu,
+                "per_conn": {str(token): {**({"mtu": parsed["mtu_by_conn"][token]}
+                                              if token in parsed["mtu_by_conn"] else {}),
+                                          **parsed["budget_by_conn"].get(token, {}),
                                           "source": parsed["mtu_source_by_conn"].get(token, "unknown")}
-                             for token, mtu in parsed["mtu_by_conn"].items()},
+                             for token in sorted(observed)},
                 "mtu_source_legend": {
                     MTU_NEGOTIATED: "WinRT trace line reports the negotiated MTU measurement",
-                    MTU_INFERRED_MAX_WRITE: "macOS corebluetooth: no negotiated MTU observation; the "
-                                            "effective ATT MTU is derived from max_write_without_response "
-                                            "(max write + 3, capped 517), NOT a negotiated measurement",
+                    BUDGET_MEASURED_MAX_WRITE: "macOS corebluetooth: no ATT MTU is observed or invented; the "
+                                               "measured max write-without-response length W is a backend limit; a "
+                                               "budget exists only for W >= 512 (smaller W is refused)",
+                    MTU_INFERRED_MAX_WRITE: "legacy host trace only: MTU derived as max write + 3, NOT a "
+                                            "negotiated measurement",
                 },
-                "poc_fragment_payload_rule": "min(mtu - 3, 512) - 4",
-                "frozen_fragment_payload_rule": "mtu - 7",
+                "fragment_attribute_rule": "min(ATT MTU - 3, 512)  (macOS: 512 when max write >= 512, else the link is refused)",
+                "fragment_payload_rule": "attribute - 4",
                 "trace_sends": len(parsed["sends"]),
                 "trace_replies": len(parsed["replies"])}
         result["result"] = FINISHED

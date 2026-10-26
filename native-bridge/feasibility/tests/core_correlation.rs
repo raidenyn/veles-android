@@ -10,7 +10,7 @@ use rig::{Call, Rig, failure, is_handle, types};
 use serde_json::json;
 use veles_otp23_feasibility::backend::{BackendEvent, Target};
 use veles_otp23_feasibility::core::{EXIT_INCOMPATIBLE, EXIT_REJECTED};
-use veles_otp23_feasibility::fragment::fragment;
+use veles_otp23_feasibility::fragment::{LinkCapacity, fragment};
 
 const HINT_A: &str = "winrt:a00000000001:1";
 const HINT_B: &str = "winrt:b00000000002:1";
@@ -399,7 +399,7 @@ fn connect_by_device_handle_resolves_the_hint_and_completes_after_setup() {
     );
     rig.backend(BackendEvent::Connected {
         conn: token,
-        mtu: 247,
+        capacity: LinkCapacity::AttMtu(247),
         platform_hint: Some("refreshed".into()),
     });
     let events = rig.events();
@@ -438,7 +438,7 @@ fn a_device_already_connected_or_connecting_is_busy_and_retryable() {
     let token = rig.connect_token();
     rig.backend(BackendEvent::Connected {
         conn: token,
-        mtu: 185,
+        capacity: LinkCapacity::AttMtu(185),
         platform_hint: None,
     });
     rig.events();
@@ -476,7 +476,7 @@ fn a_negotiated_mtu_below_185_or_above_517_is_refused() {
         let token = rig.connect_token();
         rig.backend(BackendEvent::Connected {
             conn: token,
-            mtu,
+            capacity: LinkCapacity::AttMtu(mtu),
             platform_hint: None,
         });
         let events = rig.events();
@@ -568,7 +568,7 @@ fn send_fragments_the_whole_record_and_reports_sent_after_the_writes_complete() 
     assert_eq!(frames.len(), 3);
     assert_eq!(
         frames,
-        fragment(&record, 185, frames[0][1]).unwrap(),
+        fragment(&record, common::budget(185), frames[0][1]).unwrap(),
         "uniform GATT framing"
     );
     assert_ne!(frames[0][1], 0, "transaction id 0 is invalid");
@@ -750,12 +750,12 @@ fn two_connects_complete_independently_and_out_of_order() {
     assert_ne!(token_a, token_b);
     rig.backend(BackendEvent::Connected {
         conn: token_b,
-        mtu: 185,
+        capacity: LinkCapacity::AttMtu(185),
         platform_hint: None,
     });
     rig.backend(BackendEvent::Connected {
         conn: token_a,
-        mtu: 247,
+        capacity: LinkCapacity::AttMtu(247),
         platform_hint: None,
     });
     let events = rig.events();
@@ -779,8 +779,8 @@ fn inbound_records_never_cross_connections_even_when_fragments_interleave() {
     let (handle_b, conn_b) = rig.connect_hint("cb", HINT_B, 247);
     let record_a = common::synthetic(900, 0xa0);
     let record_b = common::synthetic(1500, 0xb0);
-    let frames_a = fragment(&record_a, 185, 9).unwrap();
-    let frames_b = fragment(&record_b, 247, 9).unwrap(); // same transaction id on a different link
+    let frames_a = fragment(&record_a, common::budget(185), 9).unwrap();
+    let frames_b = fragment(&record_b, common::budget(247), 9).unwrap(); // same transaction id on a different link
     let (mut ia, mut ib) = (0, 0);
     while ia < frames_a.len() || ib < frames_b.len() {
         if ia < frames_a.len() {
@@ -919,7 +919,7 @@ fn unknown_backend_tokens_and_late_events_are_ignored() {
     rig.backend(BackendEvent::LinkLost { conn: 999 });
     rig.backend(BackendEvent::Connected {
         conn: 999,
-        mtu: 185,
+        capacity: LinkCapacity::AttMtu(185),
         platform_hint: None,
     });
     rig.backend(BackendEvent::ScanStarted { scan: 999 });

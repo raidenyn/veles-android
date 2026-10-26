@@ -25,8 +25,13 @@ characteristic's CCCD before sending records. Setup must complete within five
 seconds. The ninth client is refused; reads, prepared writes, execute writes,
 write-with-response, invalid offsets and invalid CCCD values are rejected.
 
-Records are 1..4096 bytes with uniform four-byte fragment headers. Non-final
-payloads are exactly MTU-7 bytes. Reassembly supports two incomplete transactions
+Records are 1..4096 bytes with uniform four-byte fragment headers. A frame never
+exceeds `min(MTU − 3, 512)` bytes (the ATT attribute maximum; fragmentation profile
+revision 2, OTP2-GAT-010), so non-final payloads are exactly `min(MTU − 3, 512) − 4`
+bytes (`MTU − 7` up to MTU 515, 508 above) and the final fragment carries exactly the
+remainder; this holds in both directions. Revision 1 required 513/514-byte frames at MTU
+516/517, which Android cannot send; see
+[`otp-23-contract-alignment.md`](otp-23-contract-alignment.md). Reassembly supports two incomplete transactions
 and 8 KiB per peer, 16 and 64 KiB globally, matching the frozen fixtures. Senders
 serialize one transaction per characteristic. Partial records expire after five
 seconds of inactivity; repeated conflicting transaction starts disconnect only
@@ -64,7 +69,7 @@ The sharing package has no production OTP-handler dependency.
   feature; non-exported service with connected-device type (`0x10`). No Bluetooth
   scan or location permissions. Existing dependency-contributed WorkManager
   permissions remain present.
-- Physical OnePlus 10 Pro, Android 15: installed debug and test APKs;
+- (Historical, at OTP-06.) Physical OnePlus 10 Pro, Android 15: installed debug and test APKs;
   `SharingManifestTest` and `SharingLifecycleTest` passed. The latter launches a
   visible activity, starts the real service, waits for the real advertising
   callback, then stops and waits for disabled state. Raw instrumentation status
@@ -104,3 +109,19 @@ callbacks could cancel an existing link; CCCD-before-MTU is intentionally reject
 defensive advertising-stop on a late start callback; hardware two-client
 notification concurrency; stronger exact-permission and source-dependency guard
 tests. These do not add real OTP exposure at this synthetic-only stage.
+
+## OTP-23 follow-up (2026-10-26)
+
+The physical desktop runs found one transport defect (the 514-byte notification crash at MTU
+517) and exercised two #120 items. Outcomes, all with tests:
+
+- Fragment frames are capped at `min(MTU − 3, 512)` bytes in both directions; the cap is the
+  normal behavior now, not an opt-in debug flag.
+- **#120 M3 fixed:** a repeated `STATE_CONNECTED` for an admitted client no longer cancels its
+  healthy link; capacity refusals still cancel only the refused client.
+- **#120 M4:** MTU-before-CCCD was observed on Windows and macOS and is kept; CCCD before MTU
+  is still rejected and covered by a test.
+- Still deferred: M1, M2, M5, M6 (two *centrals* on one phone — two phones on one central does
+  not discharge it), M7, M8.
+- Debug-only synthetic fixtures gained an opt-in unsolicited push for background-delivery
+  validation; it is unreachable in release builds (inspection in the alignment document).

@@ -5,14 +5,12 @@ package me.nagaev.veles.sharing
 /**
  * Byte transport only. No OTP, identity, authentication or application acknowledgement semantics.
  *
- * [attributeLimit] caps the attribute value size of inbound frames and non-final outbound chunks at
- * `min(mtu - 3, attributeLimit) - 4` payload bytes. The default keeps the frozen wire behavior; the
- * OTP-23 PoC injects 512.
+ * Fragment budget (OTP2-GAT-010, profile revision 2), identical in both directions: a frame is a
+ * 4-byte header plus payload and may never exceed `min(mtu - 3, 512)` bytes, the ATT maximum attribute
+ * value. Every non-final fragment carries exactly `attributeBudget - 4` payload bytes, the final one
+ * exactly what remains. [attributeBudget] is the only place that formula is written.
  */
-internal class GattTransport(
-    private val attributeLimit: Int = 514,
-    private val clock: () -> Long,
-) {
+internal class GattTransport(private val clock: () -> Long) {
     data class Received(val record: ByteArray? = null, val disconnect: Boolean = false)
     private class Partial(val id: Int, val total: Int, var touched: Long) {
         val bytes = ByteArray(total)
@@ -33,6 +31,20 @@ internal class GattTransport(
     }
     private val peers = mutableMapOf<String, Peer>()
 
+    companion object {
+        const val MIN_MTU = 185
+        const val MAX_MTU = 517
+        const val ATT_OVERHEAD = 3
+        const val ATTRIBUTE_VALUE_MAX = 512
+        const val HEADER = 4
+
+        /** Largest fragment frame (header + payload) allowed on a link negotiating [mtu]. */
+        fun attributeBudget(mtu: Int): Int = minOf(mtu - ATT_OVERHEAD, ATTRIBUTE_VALUE_MAX)
+
+        /** Payload carried by every non-final fragment on a link negotiating [mtu]. */
+        fun payloadBudget(mtu: Int): Int = attributeBudget(mtu) - HEADER
+    }
+
     @Synchronized fun connect(id: String): Boolean {
         if (id in peers) return false
         if (peers.size >= 8) return false
@@ -41,7 +53,7 @@ internal class GattTransport(
     }
 
     @Synchronized fun setMtu(id: String, mtu: Int): Boolean {
-        if (mtu !in 185..517) {
+        if (mtu !in MIN_MTU..MAX_MTU) {
             disconnect(id)
             return false
         }
@@ -78,7 +90,7 @@ internal class GattTransport(
     fun receive(id: String, frame: ByteArray): Received {
         val peer = peers[id] ?: return Received()
         if (peer.mtu == 0) return Received()
-        if (frame.size !in 4..minOf(peer.mtu - 3, attributeLimit)) return reject(peer)
+        if (frame.size !in HEADER..attributeBudget(peer.mtu)) return reject(peer)
         val index = frame[0].toInt() and 127
         val final = frame[0].toInt() and 128 != 0
         val transaction = frame[1].toInt() and 255
@@ -92,14 +104,14 @@ internal class GattTransport(
             peer.partials[transaction] = Partial(transaction, length, clock())
         }
         val partial = peer.partials[transaction] ?: return Received()
-        val size = frame.size - 4
+        val size = frame.size - HEADER
         val ordered = partial.id == transaction && partial.index == index && (index == 0 || length == 0)
         val remaining = partial.total - partial.used
-        val validSize = validPayload(final, size, remaining, minOf(peer.mtu - 3, attributeLimit) - 4, index)
+        val validSize = validPayload(final, size, remaining, payloadBudget(peer.mtu), index)
         if (!ordered || !validSize) {
             return reject(peer)
         }
-        frame.copyInto(partial.bytes, partial.used, 4)
+        frame.copyInto(partial.bytes, partial.used, HEADER)
         partial.used += size
         partial.index++
         partial.touched = clock()
@@ -155,7 +167,7 @@ internal class GattTransport(
         val peer = peers[id] ?: return null
         val record = peer.queue.firstOrNull() ?: return null
         if (peer.awaiting) return null
-        val count = minOf(minOf(peer.mtu - 3, attributeLimit) - 4, record.size - peer.offset)
+        val count = minOf(payloadBudget(peer.mtu), record.size - peer.offset)
         val final = peer.offset + count == record.size
         val total = if (peer.index == 0) record.size else 0
         val header = byteArrayOf(

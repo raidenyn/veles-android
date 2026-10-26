@@ -5,24 +5,34 @@
 A standalone experimental baseline for a later production session: stable Chrome
 launches one plain-Rust Native Messaging host, which exchanges deterministic
 synthetic records with two nearby Android peripherals. Windows uses WinRT;
-macOS uses CoreBluetooth through pinned `bluest` 0.6.9. The Tauri runtime is not
-started, so its helper-window and zero-window exit issues are avoided.
+macOS uses CoreBluetooth through pinned `bluest` 0.6.9. The runtime is plain Rust:
+the Tauri event loop is not used, so its helper-window and exit-fallback findings
+(historical, `1a34191`) do not apply to this host. Whether Tauri is kept for packaging
+only is an open question: [`otp-23-tauri-packaging-evaluation.md`](otp-23-tauri-packaging-evaluation.md).
 
 The branch includes the prerequisite harness from #121; that PR need not be
 merged first. Windows checkpoint: **`d5b6f2d`**, with the detailed build and test
 instructions in [windows-ble-poc.md](windows-ble-poc.md).
 
-## Experimental wire rule
+## Wire rule
 
-Both ends use `min(ATT_MTU - 3, 512) - 4` record-payload bytes per full fragment.
-Android enables it only through the isolated `.otp23` debug build with
-`BuildConfig.OTP23_POC=true`. Normal debug/release builds retain the frozen wire
-behavior; the generated release flag was checked false.
+> **Superseded (2026-10-26).** What this branch first called the "experimental wire rule" is
+> now the canonical fragmentation profile revision 2 (OTP2-GAT-010) — see
+> [`otp-23-contract-alignment.md`](otp-23-contract-alignment.md). The PoC-only `OTP23_POC`
+> gating, the "unconditional cap" Rust crate and the claim that normal builds keep the frozen
+> behavior describe `fb224e8` and are historical.
 
-The experimental Rust crate uses the cap unconditionally. To reproduce the
-original uncapped no-go experiment, use commit `1a34191`. Mixing the new host
-with a normal Android APK at a high MTU is not a supported configuration. A
-production wire-contract revision/version strategy remains future work.
+Both ends use `attribute = min(ATT_MTU − 3, 512)` and `payload = attribute − 4` per full
+fragment, with exact non-final/final rules. Windows reports the ATT MTU; macOS reports only
+the CoreBluetooth maximum write-without-response length `W` (512 on both measured Macs),
+a backend write limit (at most `MTU − 3`, possibly platform-capped — equality is **not**
+assumed). The host establishes the common budget only when `W ≥ 512` (attribute 512, payload
+508) and otherwise refuses the link as `budget_undetermined` rather than guess; it **never
+derives an MTU**.
+The earlier host log line "inferred effective att mtu=515" came from `W + 3`; it produced
+the same 508-byte payload but presented an inference as an observation. To reproduce the
+original uncapped no-go experiment, use commit `1a34191`. Mixing hosts and Android builds of
+different profile revisions fails closed at MTU 516/517 (see the alignment document).
 
 ## Reproduce on macOS
 
@@ -43,26 +53,42 @@ python3 scripts/poc_background.py --flavour plain --out evidence/macos-poc-backg
 bash scripts/macos-unregister.sh
 ```
 
-### Signing and permissions
+### macOS identity and permissions
 
-- Packaging creates `target/macos-poc/VelesOtp23PoC.app`, bundle identifier
-  `me.nagaev.veles.otp23.poc`, with Bluetooth usage descriptions and `LSUIElement`.
-  Use the existing **Apple Development** identity so permission identity survives
-  rebuilds. No installer, ad-hoc signing or key export was used in the tested run.
-- Sign from the GUI/Aqua user context. SSH could enumerate the certificate but
-  `codesign` returned `errSecInternalComponent`; the same script signed and
-  strict-verified successfully from the Aqua session without changing keychain
-  ACLs or credentials.
-- The first tested scan returned CoreBluetooth authorization `denied`. The driver
-  now classifies this as `access_denied`, rather than blaming a powered-on radio.
-  The user enabled access in System Settings → Privacy & Security → Bluetooth.
-  The **same signed binary** subsequently reported `allowed_always` and passed.
-  Which Settings entry owned that grant (Chrome versus the host) was not observed,
-  so this is not a formal TCC-attribution result. No TCC reset or bypass was used.
-- A disposable Chrome `--user-data-dir` looks for user-level manifests inside
-  that profile. The driver copies the validated exact-origin manifest into its
-  owned profile **before** launching Chrome. It never writes the personal profile.
-  Earlier "native host not found" was a profile-discovery error, not host failure.
+**What is required.** The host runs as a **stable, signed app bundle** with Bluetooth usage
+descriptions (`NSBluetoothAlwaysUsageDescription`) and `LSUIElement`; TCC identity attaches to
+a stable signature and bundle identifier, so an ad-hoc or per-build identity makes grants
+unreproducible.
+
+**What was actually tested.**
+
+- `scripts/macos-package.sh` creates `target/macos-poc/VelesOtp23PoC.app`, bundle identifier
+  `me.nagaev.veles.otp23.poc`, signed with the machine's existing **Apple Development**
+  identity. That identity and bundle id are **PoC-only and are not evidence for the production
+  identity** (the RFC's final bundle identifier is `me.nagaev.veles.bridge`, signed with CI
+  credentials; no such signing was done). No installer, ad-hoc signing or key export was used.
+- **Aqua versus SSH.** Signing works from the logged-in GUI/Aqua session and strict-verifies.
+  Over SSH the certificate could be enumerated but `codesign` failed with
+  `errSecInternalComponent` (no private-key access); keychain ACLs and credentials were not
+  changed to work around it.
+- **Disposable Chrome profile.** A `--user-data-dir` profile looks for user-level Native
+  Messaging manifests inside that profile. The driver copies the validated exact-origin
+  manifest into its **own** profile before launching Chrome and never writes the personal
+  profile. The earlier "native host not found" was profile discovery, not a host failure.
+- **TCC.** The first scan returned CoreBluetooth authorization `denied` (classified
+  `access_denied`). A **person** then enabled access in System Settings → Privacy & Security →
+  Bluetooth and the **same signed binary** reported `allowed_always`. Which Settings entry
+  owned the grant (Chrome or the host) was **not observed**: this is not a TCC attribution
+  result. No TCC reset or bypass was used.
+
+**Not claimed anywhere in this repository:** a fresh standard (non-admin) account run, a
+fresh-account TCC prompt owner, the unsigned-versus-signed-production-shaped comparison, the
+deny/allow/recovery sequence with unchanged extension state, or any distribution
+(Developer ID, notarization, stapling, installer) behavior. The new-account tests (matrix M-01, M-02, and W-01 on Windows) are **user-approved as
+non-blocking and stay `NOT RUN`** — waived, not passed. Signing provenance with the final
+identifier (M-03; the Mac has Apple Development only) and allow/deny/recovery with unchanged
+extension state (M-04…M-06) remain required and `BLOCKED` until a person runs them on the
+existing account, recording truthfully whether it is administrator or standard.
 
 Register/unregister only handles this PoC's native-host name and refuses unrelated
 registrations. Re-registering an owned manifest can create a backup; unregister
@@ -129,6 +155,9 @@ binary claim is made.
   [the Windows review](protocol/reviews/windows-ble-poc-opus.md).
 
 ## Boundaries for the production session
+
+The pass/fail bookkeeping for OTP-23 is now [`otp-23-requirements-matrix.md`](otp-23-requirements-matrix.md); every fresh row is `NOT RUN` or `BLOCKED` and the decision is **NO-GO**.
+
 
 This PoC carries no real OTPs, trust state or cryptography, and enables no Android
 notification-listener access. `sent` acknowledges GATT write completion, not an

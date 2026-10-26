@@ -13,10 +13,24 @@ const state = {
     completions: [], // every correlated reply, in arrival order
     disconnect: null, // { at, message } once the port closed
     opened: null,
+    received: 0, // unsolicited message events seen
 };
 
 function now() {
     return Math.round(performance.now());
+}
+
+// Receipt context of one unsolicited host event: page clock, wall clock and the page's own
+// visibility/focus at the instant the event was delivered (a frozen page would deliver late and
+// show a late wall time). Used by the strict background validation; carries no record contents.
+function receipt(message) {
+    return {
+        at: now(),
+        wall: Date.now(),
+        visibility: document.visibilityState,
+        focused: document.hasFocus(),
+        message,
+    };
 }
 
 function setStatus(text) {
@@ -54,9 +68,14 @@ function onMessage(message) {
         resolve(message);
     } else if (typeof message.request_id === "string") {
         // Correlated message nobody is waiting for: a duplicate terminal event is a defect.
-        state.events.push({ at: now(), message, orphan_correlated: true });
+        state.events.push({ ...receipt(message), orphan_correlated: true });
     } else {
-        state.events.push(entry);
+        state.events.push(receipt(message));
+        if (message.type === "message") {
+            // Readable through the DevTools HTTP target list without attaching any CDP session.
+            state.received += 1;
+            document.title = `otp23 messages=${state.received} last=${Date.now()}`;
+        }
     }
 }
 

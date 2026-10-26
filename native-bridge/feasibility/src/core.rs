@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::backend::{Backend, BackendEvent, Discovered, Failure, Target as BackendTarget, Token};
 use crate::fragment::{
-    GlobalBudget, MAX_MTU, MAX_RECORD, MIN_MTU, PushOutcome, Reassembler, fragment, wipe,
+    GlobalBudget, LinkBudget, LinkCapacity, MAX_RECORD, PushOutcome, Reassembler, fragment, wipe,
 };
 use crate::outqueue::OutQueue;
 use crate::protocol::{
@@ -115,7 +115,7 @@ struct Conn {
     hint: String,
     open: bool,
     connect_request: Option<String>,
-    mtu: usize,
+    link: Option<LinkBudget>,
     reassembler: Option<Reassembler>,
     next_transaction: u8,
     pending: VecDeque<PendingSend>,
@@ -688,7 +688,7 @@ impl<B: Backend> Core<B> {
                 hint: hint.clone(),
                 open: false,
                 connect_request: Some(id.clone()),
-                mtu: 0,
+                link: None,
                 reassembler: None,
                 next_transaction: 1,
                 pending: VecDeque::new(),
@@ -704,19 +704,24 @@ impl<B: Backend> Core<B> {
         self.backend.connect(token, &BackendTarget::Hint(hint));
     }
 
-    fn on_connected(&mut self, token: Token, mtu: usize, refreshed_hint: Option<String>) {
+    fn on_connected(
+        &mut self,
+        token: Token,
+        capacity: LinkCapacity,
+        refreshed_hint: Option<String>,
+    ) {
         let Some(conn) = self.conns.get_mut(&token).filter(|c| !c.open) else {
             return;
         };
-        if !(MIN_MTU..=MAX_MTU).contains(&mtu) {
+        let Ok(link) = LinkBudget::from_capacity(capacity) else {
             return self.drop_conn(
                 token,
                 Teardown::SetupFailed(Failure::new("mtu_range", false)),
             );
-        }
+        };
         conn.open = true;
-        conn.mtu = mtu;
-        conn.reassembler = Some(Reassembler::new(mtu, self.budget.clone()));
+        conn.link = Some(link);
+        conn.reassembler = Some(Reassembler::new(link, self.budget.clone()));
         let handle = conn.handle.clone();
         let request = conn.connect_request.take();
         self.conn_by_handle.insert(handle.clone(), token);
@@ -886,7 +891,10 @@ impl<B: Backend> Core<B> {
         };
         let transaction = conn.next_transaction;
         conn.next_transaction = conn.next_transaction % 255 + 1;
-        let frames = fragment(&pending.record, conn.mtu, transaction);
+        let frames = match conn.link {
+            Some(link) => fragment(&pending.record, link, transaction),
+            None => Err(crate::fragment::FragmentError::OversizeRecord),
+        };
         wipe(&mut pending.record);
         match frames {
             Ok(frames) => {
@@ -980,9 +988,9 @@ impl<B: Backend> Core<B> {
             BackendEvent::Advertisement { scan, device } => self.on_advertisement(scan, device),
             BackendEvent::Connected {
                 conn,
-                mtu,
+                capacity,
                 platform_hint,
-            } => self.on_connected(conn, mtu, platform_hint),
+            } => self.on_connected(conn, capacity, platform_hint),
             BackendEvent::ConnectFailed { conn, failure } => {
                 if self.conns.get(&conn).is_some_and(|c| !c.open) {
                     self.drop_conn(conn, Teardown::SetupFailed(failure));

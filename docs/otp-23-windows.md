@@ -1,8 +1,12 @@
 # OTP-23 Windows feasibility
 
-**Historical investigation:** the later opt-in [working Windows PoC](windows-ble-poc.md)
-demonstrates capped fragmentation with the plain Rust runtime. It preserves this
-original no-go evidence and does not revise the frozen production profile.
+**Historical investigation.** The later opt-in [working Windows PoC](windows-ble-poc.md)
+demonstrated capped fragmentation with the plain Rust runtime. The
+[contract alignment of 2026-10-26](otp-23-contract-alignment.md) has since revised the
+canonical profile (OTP2-GAT-010, revision 2: `min(MTU − 3, 512)`), moved the runtime
+decision to plain Rust, and replaced the acceptance bookkeeping with a requirements
+matrix that starts `NOT RUN`. This document preserves the original no-go evidence; the
+findings below describe the tree at `1a34191` and are not current results.
 
 ## Decision: NO-GO for OTP-24
 

@@ -1,0 +1,307 @@
+"""Strict OTP-23 background-delivery validation (fresh evidence; does not replace poc_background.py).
+
+Sequence: Chrome + connector -> hello -> two phones connected -> [prewarm only: one byte-verified 4096-byte
+exchange per phone] -> open and focus an ordinary about:blank tab (connector hidden) -> CLOSE EVERY DevTools
+client (the connector session dies with the browser-level websocket; this process then holds no CDP object at
+all) -> sleep with no browser, host or phone traffic until each phone's preconfigured unsolicited push is due
+-> read the DevTools HTTP target list (no session) -> re-attach -> read the page's own receipt timestamps ->
+shutdown. The phones must already run SharingFeasibilityTest with ``-e otp23 true -e
+otp23_unsolicited_after_s 690`` (see docs/otp-23-requirements-matrix.md for the exact commands). The verdict
+logic lives in strict_background_core.py; ``formal_otp23_acceptance`` is always false here.
+
+Scenarios are separate runs: ``--scenario cold`` never sends anything desktop->phone; ``--scenario prewarm``
+performs the byte-verified exchange first. Do not merge their evidence.
+
+Phone evidence: ``--adb SERIAL`` (repeatable; the PC the phones are USB-attached to) pulls
+files/otp23-unsolicited.json AFTER the idle interval; on a machine without adb pass ``--phone-evidence
+PATH`` files fetched later, else the phone check stays BLOCKED rather than guessed.
+
+Usage: python scripts/strict_background.py --scenario cold --out evidence/strict-cold.json [--adb SERIAL ...]
+"""
+
+import argparse
+import base64
+import hashlib
+import json
+import pathlib
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime, timezone
+
+import strict_background_core as core
+
+if sys.platform == "darwin":
+    import macos_background_support as cv
+    from macos_cdp import Cdp, WebSocket
+    PLATFORM = cv.PLATFORM
+else:
+    import chrome_validate as cv
+    from chrome_validate import Cdp, WebSocket
+    PLATFORM = "windows"
+
+FIXED_ID = "gmekhgkipjkikmaadaajljinkgfielei"
+EXT_DIR = pathlib.Path(__file__).resolve().parent.parent / "extension"
+PACKAGE = "me.nagaev.veles.otp23"
+WARMUP_SEEDS = (41, 53)
+WARMUP_TIMEOUT_S = 12
+EVIDENCE_FILE = "files/otp23-unsolicited.json"
+
+
+def utc():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def pull_phone_evidence(serial, adb="adb", runner=subprocess.run):
+    """Read the hash-only evidence file the instrumentation wrote; None when it cannot be read."""
+    result = runner([adb, "-s", serial, "shell", "run-as", PACKAGE, "cat", EVIDENCE_FILE],
+                    capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return None
+
+
+def warmup_record(seed):
+    data = bytearray((i + seed) & 255 for i in range(4096))
+    data[:4] = b"VEL\x01"
+    return bytes(data)
+
+
+def run(args):
+    exe = cv.EXE_NAME["plain"]
+    trace_path = pathlib.Path(args.out).resolve().with_suffix(".trace.log")
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.unlink(missing_ok=True)
+    result = {"platform": PLATFORM, "scenario": args.scenario, "formal_otp23_acceptance": False,
+              "meta": {"started_utc": utc(), "host_trace_log": str(trace_path),
+                       "phone_delay_s": args.phone_delay_s, "min_background_s": args.min_background_s},
+              "cases": []}
+    st = {"hosts_before": {p["ProcessId"] for p in cv.host_processes(exe)}, "connected_mono": {}}
+    evidence = {"scenario": args.scenario, "min_background_s": args.min_background_s, "timeline": {},
+                "handles": [], "events": [], "warmup": None}
+    chrome = None
+
+    def step(case_id, title, fn):
+        started, record = time.time(), {"id": case_id, "title": title, "result": "FAIL", "detail": None}
+        try:
+            record.update({"result": "PASS", "detail": fn() or {}})
+        except Exception as error:
+            record["detail"] = f"{type(error).__name__}: {error}"
+        record["seconds"] = round(time.time() - started, 2)
+        print(f"[{record['result']:5}] {case_id} {title}")
+        result["cases"].append(record)
+        return record["result"] == "PASS"
+
+    def ph_env():
+        nonlocal chrome
+        chrome = cv.ChromeRun({"VELES_OTP23_TRACE": str(trace_path)}, medium=True)
+        ext = chrome.load_extension()
+        cv.expect(ext["id"] == FIXED_ID, f"extension id {ext['id']} != fixed {FIXED_ID}")
+        port, path = (chrome.profile / "DevToolsActivePort").read_text().splitlines()[:2]
+        st["port"], st["path"] = int(port), path
+        st["target"], st["session"] = chrome.open_page(f"chrome-extension://{FIXED_ID}/connector.html")
+        for _ in range(50):
+            if chrome.js(st["session"], "typeof window.otp23 === 'object'"):
+                break
+            time.sleep(0.1)
+        result["meta"]["browser_version"] = chrome.version.get("product")
+        files = {p.name: p.read_text(encoding="utf-8") for p in sorted(EXT_DIR.iterdir())
+                 if p.suffix in (".js", ".html", ".json")}
+        evidence["exemption_scan"] = {"files": sorted(files), "findings": core.scan_extension_for_exemptions(files)}
+        return {"extension_id": ext["id"], "exemption_findings": evidence["exemption_scan"]["findings"]}
+
+    def ph_hello():
+        before = {p["ProcessId"] for p in cv.host_processes(exe)}
+        chrome.js(st["session"], f"otp23.connect({json.dumps(cv.HOSTS['plain'])}); 1")
+        st["hello_wall"] = time.time()
+        cv.expect(chrome.js(st["session"], "otp23.hello()").get("type") == "ready", "hello did not return ready")
+        fresh = [p for p in cv.host_processes(exe) if p["ProcessId"] not in before]
+        cv.expect(len(fresh) == 1, f"expected one new host process, saw {fresh}")
+        st["owned_pid"] = fresh[0]["ProcessId"]
+        return {"host_pid": st["owned_pid"]}
+
+    def ph_phones():
+        scan = chrome.js(st["session"], f"otp23.startScan({json.dumps(cv.VELES_SERVICE)})")
+        cv.expect(scan.get("status") == "started", f"startScan {scan}")
+        deadline, devices = time.time() + 40, set()
+        while time.time() < deadline and len(devices) < 2:
+            devices.update(e["message"].get("device_handle") for e in chrome.js(st["session"], "otp23.drainEvents()")
+                           if e["message"].get("type") == "device_found")
+            time.sleep(0.5)
+        cv.expect(len(devices) >= 2, f"two physical phones required; found {len(devices)}")
+        st["handles"] = {}
+        for device in sorted(devices)[:2]:
+            connected = chrome.js(st["session"], f"otp23.connectDevice({{device_handle: {json.dumps(device)}}})", timeout=70)
+            cv.expect(connected.get("type") == "connected", f"connect {device[:8]}: {connected.get('code')}")
+            handle = connected["connection_handle"]
+            st["handles"][device] = handle
+            st["connected_mono"][handle] = time.monotonic()  # the phones' delay starts at their CCCD write, just before
+        stopped = chrome.js(st["session"], f"otp23.stopScan({json.dumps(scan['scan_handle'])})")
+        cv.expect(stopped.get("type") == "scan_state", f"stopScan {stopped}")
+        chrome.js(st["session"], "otp23.drainEvents(); 1")
+        evidence["handles"] = [h[:8] for h in st["handles"].values()]
+        return {"phones": 2}
+
+    def ph_warmup():
+        warmed = {}
+        for (device, handle), seed in zip(sorted(st["handles"].items()), WARMUP_SEEDS):
+            record = warmup_record(seed)
+            expected = base64.b64encode(record[:3] + b"\x02" + record[4:]).decode()
+            call = (f"otp23.send({json.dumps(handle)}, Uint8Array.from(atob({json.dumps(base64.b64encode(record).decode())}), "
+                    f"c => c.charCodeAt(0)))")
+            cv.expect(chrome.js(st["session"], call).get("type") == "sent", f"warmup send to {handle[:8]} failed")
+            end, got = time.time() + WARMUP_TIMEOUT_S, None
+            while time.time() < end and got is None:
+                for event in chrome.js(st["session"], "otp23.drainEvents()"):
+                    message = event["message"]
+                    if message.get("type") == "message" and message.get("connection_handle") == handle:
+                        got = message
+                time.sleep(0.5)
+            cv.expect(got is not None, f"no warmup reply from {handle[:8]} within {WARMUP_TIMEOUT_S} s")
+            cv.expect(got["record_base64"] == expected, f"warmup reply from {handle[:8]} is not byte-exact")
+            warmed[handle[:8]] = {"seed": seed, "sha256": hashlib.sha256(base64.b64decode(expected)).hexdigest()}
+        evidence["warmup"] = warmed
+        return warmed
+
+    def ph_background():
+        """Focus an ordinary tab, prove the connector is hidden, then close EVERY DevTools client."""
+        other = chrome.cdp.call("Target.createTarget", {"url": "about:blank"})["targetId"]
+        chrome.cdp.call("Target.activateTarget", {"targetId": other})
+        other_session = chrome.cdp.call("Target.attachToTarget", {"targetId": other, "flatten": True})["sessionId"]
+        chrome.cdp.call("Runtime.enable", session=other_session)
+        for _ in range(40):
+            hidden = chrome.js(st["session"], "document.visibilityState")
+            visible = chrome.js(other_session, "document.visibilityState")
+            if hidden == "hidden" and visible == "visible":
+                break
+            time.sleep(0.25)
+        evidence["pre_close_probe"] = {
+            "connector_visibility": hidden, "ordinary_tab_visibility": visible,
+            "ordinary_tab_focused": bool(chrome.js(other_session, "document.hasFocus()"))}
+        cv.expect(evidence["pre_close_probe"]["connector_visibility"] == "hidden", f"connector not hidden: {hidden}")
+        timeline = evidence["timeline"]
+        timeline["background_started_wall"] = time.time()
+        # From here on this process owns no DevTools object. Any later use would raise AttributeError.
+        timeline["cdp_closed_wall"], timeline["cdp_closed_mono"] = time.time(), time.monotonic()
+        chrome.cdp.ws.close()
+        chrome.cdp = None
+        evidence["browser_level_connection_closed"] = True
+        evidence["connector_session_detached_by_close"] = True  # sessions are bound to the closed connection
+        result["meta"]["cdp_closed_utc"] = utc()
+        return evidence["pre_close_probe"]
+
+    def ph_idle():
+        deadline = core.idle_deadline_monotonic(st["connected_mono"], args.phone_delay_s, args.grace_s)
+        result["meta"]["planned_idle_until_utc_offset_s"] = round(deadline - time.monotonic(), 1)
+        while time.monotonic() < deadline:
+            time.sleep(min(5.0, max(0.1, deadline - time.monotonic())))
+        evidence["cdp_calls_during_idle"] = 0  # structurally: the DevTools object is None for the whole loop above
+        return {"slept_s": round(time.monotonic() - evidence["timeline"]["cdp_closed_mono"], 1)}
+
+    def ph_reattach():
+        url = f"http://127.0.0.1:{st['port']}/json/list"
+        with urllib.request.urlopen(url, timeout=10) as response:  # HTTP target list: no CDP session
+            targets = json.loads(response.read().decode())
+        mine = [t for t in targets if t.get("id") == st["target"]]
+        evidence["title_probe"] = {"title_before_attach": mine[0].get("title") if mine else None}
+        timeline = evidence["timeline"]
+        timeline["cdp_reopened_wall"], timeline["cdp_reopened_mono"] = time.time(), time.monotonic()
+        chrome.cdp = Cdp(WebSocket("127.0.0.1", st["port"], st["path"]))
+        session = chrome.cdp.call("Target.attachToTarget", {"targetId": st["target"], "flatten": True})["sessionId"]
+        chrome.cdp.call("Runtime.enable", session=session)
+        st["reattach_session"] = session
+        events = [e for e in chrome.js(session, "otp23.drainEvents()", timeout=120)]
+        by_handle = {h[:8]: h for h in st["handles"].values()}
+        for entry in events:
+            message = entry["message"]
+            if message.get("type") != "message":
+                continue
+            raw = base64.b64decode(message["record_base64"])
+            evidence["events"].append({
+                "handle": message["connection_handle"][:8], "at": entry.get("at"), "wall": entry.get("wall"),
+                "visibility": entry.get("visibility"), "focused": entry.get("focused"),
+                "record_sha256": hashlib.sha256(raw).hexdigest(), "len": len(raw)})
+        cv.expect(set(e["handle"] for e in evidence["events"]) <= set(by_handle), "message from an unknown handle")
+        return {"messages": len(evidence["events"]), "title": evidence["title_probe"]["title_before_attach"]}
+
+    def ph_shutdown():
+        reply = chrome.js(st["reattach_session"], "otp23.shutdown()", timeout=45)
+        cv.expect(reply.get("type") == "shutdown_complete", f"shutdown reply {reply}")
+        cv.expect(cv.wait_gone(st["owned_pid"], 15) is not None, "owned host survived shutdown")
+        st["shutdown_done"] = True
+        return {"shutdown": "complete"}
+
+    phases = [("ST-ENV", "Chrome, fixed-id extension, connector page, exemption scan", ph_env),
+              ("ST-HELLO", "hello over the registered plain host", ph_hello),
+              ("ST-PHONES", "two physical phones scanned and connected", ph_phones)]
+    if args.scenario == "prewarm":
+        phases.append(("ST-WARM", "pre-idle byte-verified 4096-byte exchange per phone", ph_warmup))
+    phases += [("ST-BG", "ordinary tab focused, connector hidden, every DevTools client closed", ph_background),
+               ("ST-IDLE", "idle with no DevTools client until each phone's unsolicited push is due", ph_idle),
+               ("ST-REATTACH", "HTTP target list, re-attach, read page receipts", ph_reattach),
+               ("ST-SHUTDOWN", "shutdown; host gone", ph_shutdown)]
+    try:
+        for case_id, title, fn in phases:
+            if not step(case_id, title, fn):
+                break
+    finally:
+        try:
+            if chrome and chrome.cdp is not None and st.get("reattach_session") and not st.get("shutdown_done"):
+                chrome.js(st["reattach_session"], "otp23.shutdown()", timeout=45)
+        except Exception:
+            pass
+        evidence["cleanup"] = {
+            "shutdown_complete": bool(st.get("shutdown_done")),
+            "surviving_hosts": sorted({p["ProcessId"] for p in cv.host_processes(exe)} - st["hosts_before"])}
+        if chrome:
+            try:
+                if chrome.cdp is None and chrome.proc is not None:
+                    chrome.cdp = Cdp(WebSocket("127.0.0.1", st["port"], st["path"]))
+                chrome.close()
+            except Exception:
+                pass
+
+    text = trace_path.read_text(encoding="utf-8", errors="replace") if trace_path.exists() else ""
+    trace = core.parse_host_trace(text)
+    anchor = st.get("hello_wall")
+    evidence["host_trace"] = {
+        "message_count": len(trace["messages"]), "sends_in_trace": len(trace["sends"]),
+        "message_wall_estimates": [] if anchor is None or trace["hello_ms"] is None else [
+            round(anchor + (m["at_ms"] - trace["hello_ms"]) / 1000, 3) for m in trace["messages"]],
+        "method": "driver wall time at hello + host trace ms offset since its hello line (approximate)"}
+    phone = [json.loads(pathlib.Path(p).read_text()) for p in args.phone_evidence]
+    phone += [d for d in (pull_phone_evidence(s, args.adb_path) for s in args.adb) if d]
+    evidence["phone_evidence"] = phone or None
+    verdict = core.evaluate(evidence)
+    result.update({"strict_result": verdict["strict_result"], "checks": verdict["checks"], "evidence": evidence})
+    result["meta"]["finished_utc"] = utc()
+    out = pathlib.Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(cv.scrub(json.dumps(result, indent=2)), encoding="utf-8")
+    print(f"strict_result={verdict['strict_result']} scenario={args.scenario} formal_otp23_acceptance=false -> {out}")
+    return 0 if verdict["strict_result"] == "PASS" else 1
+
+
+def positive_int(text):
+    value = int(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scenario", choices=["cold", "prewarm"], required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--phone-delay-s", type=positive_int, default=core.PHONE_DELAY_S,
+                        help="must equal the phones' -e otp23_unsolicited_after_s")
+    parser.add_argument("--min-background-s", type=positive_int, default=core.MIN_BACKGROUND_S)
+    parser.add_argument("--grace-s", type=positive_int, default=core.GRACE_S)
+    parser.add_argument("--adb", action="append", default=[], help="phone serial to pull evidence from (repeatable)")
+    parser.add_argument("--adb-path", default="adb")
+    parser.add_argument("--phone-evidence", action="append", default=[], help="previously pulled evidence JSON file")
+    sys.exit(run(parser.parse_args()))

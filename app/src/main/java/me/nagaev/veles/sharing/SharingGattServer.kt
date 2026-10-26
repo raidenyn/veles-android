@@ -31,10 +31,7 @@ internal class SharingGattServer(
     private val onRecord: (String, ByteArray) -> ByteArray?,
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    private val transport = GattTransport(
-        if (BuildConfig.OTP23_POC) 512 else 514,
-        SystemClock::elapsedRealtime,
-    )
+    private val transport = GattTransport(SystemClock::elapsedRealtime)
     private val ingress = IngressBudget()
     private val admitted = ConcurrentHashMap.newKeySet<String>()
     private val devices = mutableMapOf<String, BluetoothDevice>()
@@ -76,6 +73,11 @@ internal class SharingGattServer(
             if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
                 remove(id)
             } else if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if (id in admitted) {
+                    // Repeated STATE_CONNECTED for a healthy admitted link: not a capacity refusal, so
+                    // it must neither cancel the link nor reset its setup state (#120 M3).
+                    return@post
+                }
                 if (!transport.connect(id)) {
                     server?.cancelConnection(device)
                 } else {
@@ -102,7 +104,7 @@ internal class SharingGattServer(
             value: ByteArray,
         ) {
             // Reject oversized values before copying or posting untrusted data to the main queue.
-            if (value.size > 514) return
+            if (value.size > GattTransport.ATTRIBUTE_VALUE_MAX) return
             postValue(device, value) { copy ->
                 val id = device.address
                 val validOperation = characteristic.uuid == WRITE_UUID && !preparedWrite && !responseNeeded && offset == 0
@@ -174,7 +176,7 @@ internal class SharingGattServer(
                         )
                 if (valid) {
                     if (copy.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                        subscribed.add(device.address)
+                        if (subscribed.add(device.address) && BuildConfig.DEBUG) scheduleSyntheticPush(device.address)
                     } else {
                         disconnect(device.address)
                     }
@@ -244,6 +246,33 @@ internal class SharingGattServer(
                 this.advertising,
             )
         }
+    }
+
+    /**
+     * Debug fixture only (opt-in through [SyntheticTransportFixture.unsolicitedAfterMillis]): one deterministic,
+     * unsolicited record per subscription, for background-delivery validation. Evidence keeps hashes only.
+     */
+    private fun scheduleSyntheticPush(id: String) {
+        val delay = SyntheticTransportFixture.unsolicitedAfterMillis ?: return
+        val subscribedAt = System.currentTimeMillis()
+        handler.postDelayed({
+            if (id !in subscribed) return@postDelayed
+            val record = SyntheticTransportFixture.unsolicited()
+            val queued = transport.enqueue(id, record)
+            SyntheticTransportFixture.unsolicitedEvidence.add(
+                SyntheticTransportFixture.Unsolicited(
+                    peer = SyntheticTransportFixture.sha256Hex(id.toByteArray()).take(PEER_HASH_CHARS),
+                    subscribedAtMillis = subscribedAt,
+                    firedAtMillis = System.currentTimeMillis(),
+                    delayMillis = delay,
+                    queued = queued,
+                    bytes = record.size,
+                    sha256 = SyntheticTransportFixture.sha256Hex(record),
+                ),
+            )
+            record.fill(0)
+            if (queued) post { pump(id) }
+        }, delay)
     }
 
     private fun pump(id: String) {
@@ -323,5 +352,6 @@ internal class SharingGattServer(
         val WRITE_UUID: UUID = UUID.fromString("8e400001-8f3c-4d1a-b64a-8e3c9b0d2a51")
         val NOTIFY_UUID: UUID = UUID.fromString("8e400002-8f3c-4d1a-b64a-8e3c9b0d2a51")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        private const val PEER_HASH_CHARS = 8
     }
 }

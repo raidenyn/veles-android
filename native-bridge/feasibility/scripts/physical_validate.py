@@ -281,12 +281,12 @@ def run(args):
                       "no MTU field exists on the wire; per-handle association not inferred",
             "per_conn": {
                 str(token): {"mtu": mtu,
-                             "poc_fragment_payload_bytes": min(mtu - 3, 512) - 4,
-                             "frozen_fragment_payload_bytes": mtu - 7}
+                             "attribute_budget_bytes": min(mtu - 3, 512),
+                             "fragment_payload_bytes": min(mtu - 3, 512) - 4}
                 for token, mtu in parsed["mtu_by_conn"].items()
             },
-            "poc_fragment_payload_rule": "min(mtu - 3, 512) - 4",
-            "frozen_fragment_payload_rule": "mtu - 7",
+            "fragment_attribute_rule": "min(mtu - 3, 512)",
+            "fragment_payload_rule": "attribute - 4",
             "trace_sends": len(parsed["sends"]),
             "trace_replies": len(parsed["replies"]),
         }

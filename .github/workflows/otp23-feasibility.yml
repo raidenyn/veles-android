@@ -36,6 +36,9 @@ jobs:
       - run: node --test scripts/connector-api.test.mjs scripts/isolated-device.test.mjs
       - run: python scripts/trace-parser.test.py
       - run: python scripts/test_poc_background.py
+      - run: python scripts/test_strict_background.py
+      - run: python scripts/test_matrix.py
+      - run: python scripts/matrix.py check
       - run: python3 scripts/test_macos_poc.py
         if: runner.os != 'Windows'
       - run: python3 scripts/test_macos_background_support.py

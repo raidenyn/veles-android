@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use veles_otp23_feasibility::backend::{Backend, BackendEvent, Discovered, Failure, Target, Token};
 use veles_otp23_feasibility::core::{Config, Core, Input};
-use veles_otp23_feasibility::fragment::fragment;
+use veles_otp23_feasibility::fragment::{LinkCapacity, fragment};
 use veles_otp23_feasibility::outqueue::{MAX_QUEUED_BYTES, MAX_QUEUED_MESSAGES, OutQueue, Pop};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,7 +219,7 @@ impl Rig {
         let token = self.connect_token();
         self.backend(BackendEvent::Connected {
             conn: token,
-            mtu,
+            capacity: LinkCapacity::AttMtu(mtu),
             platform_hint: None,
         });
         let events = self.events();
@@ -248,7 +248,7 @@ impl Rig {
     }
 
     pub fn inbound(&mut self, conn: Token, record: &[u8], mtu: usize, transaction: u8) {
-        for frame in fragment(record, mtu, transaction).unwrap() {
+        for frame in fragment(record, crate::common::budget(mtu), transaction).unwrap() {
             self.backend(BackendEvent::Fragment { conn, bytes: frame });
         }
     }

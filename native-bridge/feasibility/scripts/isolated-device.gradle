@@ -1,15 +1,15 @@
 // Opt-in validation APK that preserves existing developer installs and data.
 // ./gradlew --init-script native-bridge/feasibility/scripts/isolated-device.gradle assembleDebug
 //
-// OTP-23 PoC: the isolated debug APK also gets BuildConfig.OTP23_POC=true. The main build
-// ships the same field as false (default defined by app/build.gradle.kts); PoC-only device
-// code gates on this flag so it never leaks into normal builds.
+// The only effect is the `.otp23` application-id suffix on the DEBUG build type, so the
+// validation package installs beside a developer's own copy. The 512-byte attribute budget is
+// the normal wire contract now (OTP2-GAT-010 r2) and no longer depends on this script; the
+// synthetic echo fixture stays gated on BuildConfig.DEBUG in the app, so release builds can
+// never carry it whatever init script is used.
 allprojects {
     plugins.withId('com.android.application') {
         androidComponents.finalizeDsl { android ->
-            def debug = android.buildTypes.getByName('debug')
-            debug.applicationIdSuffix = '.otp23'
-            debug.buildConfigField('boolean', 'OTP23_POC', 'true')
+            android.buildTypes.getByName('debug').applicationIdSuffix = '.otp23'
         }
     }
 }

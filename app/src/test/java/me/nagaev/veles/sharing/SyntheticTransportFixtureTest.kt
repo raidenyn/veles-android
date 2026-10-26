@@ -1,6 +1,7 @@
 package me.nagaev.veles.sharing
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -27,5 +28,20 @@ class SyntheticTransportFixtureTest {
         assertNull(SyntheticTransportFixture.reply(byteArrayOf(0x56, 0x45, 0x4c, 2)))
         assertNull(SyntheticTransportFixture.reply("OTP 123456".toByteArray()))
         assertNull(SyntheticTransportFixture.reply(byteArrayOf(0x56, 0x45, 0x4c, 1, 4, 9)))
+    }
+
+    @Test fun unsolicitedRecordIsDeterministicTypeThreeAndNeverAnEchoRequest() {
+        val record = SyntheticTransportFixture.unsolicited()
+        assertEquals(4096, record.size)
+        assertArrayEquals(byteArrayOf(0x56, 0x45, 0x4c, 3), record.copyOfRange(0, 4))
+        for (i in 4 until record.size) assertEquals(((i + 61) and 0xff).toByte(), record[i])
+        assertArrayEquals(record, SyntheticTransportFixture.unsolicited())
+        // a type-3 record is not a type-1 request, so a central echoing it back is ignored
+        assertNull(SyntheticTransportFixture.reply(record))
+        assertEquals(508, SyntheticTransportFixture.unsolicited(508).size)
+    }
+
+    @Test fun unsolicitedPushIsOffByDefault() {
+        assertNull(SyntheticTransportFixture.unsolicitedAfterMillis)
     }
 }

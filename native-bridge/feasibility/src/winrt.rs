@@ -35,7 +35,7 @@ use windows::core::{GUID, Interface, RuntimeType};
 use windows_future::{AsyncStatus, IAsyncOperation};
 
 use crate::backend::{Backend, BackendEvent, Discovered, Failure, Target, Token};
-use crate::fragment::{MAX_MTU, MIN_MTU};
+use crate::fragment::{LinkCapacity, MAX_MTU, MIN_MTU};
 use crate::runtime::BackendEvents;
 use crate::trace;
 use crate::winrt_map::{
@@ -553,7 +553,7 @@ fn connection_main(
     }
     events.emit(BackendEvent::Connected {
         conn,
-        mtu,
+        capacity: LinkCapacity::AttMtu(mtu),
         platform_hint: Some(hint.clone()),
     });
     if link

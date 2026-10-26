@@ -304,9 +304,23 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(parsed["mtu_source_by_conn"],
                          {2: macos_poc.MTU_INFERRED_MAX_WRITE, 3: macos_poc.MTU_INFERRED_MAX_WRITE},
                          "macOS MTU is derived, never reported as a negotiated measurement")
-        self.assertEqual(set(parsed), {"mtu_by_conn", "mtu_source_by_conn", "sends", "replies"},
+        self.assertEqual(set(parsed), {"mtu_by_conn", "mtu_source_by_conn", "budget_by_conn", "sends", "replies"},
                          "no per-handle or per-address mapping fields exist")
         self.assertEqual(parsed["sends"], [])
+
+    def test_parse_trace_accepts_attribute_budget_line_without_inventing_an_mtu(self):
+        trace = pathlib.Path(tempfile.mkdtemp()) / "t.log"
+        trace.write_text(
+            "[    1242ms pid=87052] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508\n"
+            "[    1300ms pid=87052] conn 3 max_write_without_response=244 attribute_budget=244 payload_budget=240\n")
+        parsed = macos_poc.parse_trace(trace)
+        self.assertEqual(parsed["mtu_by_conn"], {}, "CoreBluetooth reports no MTU and none is derived")
+        self.assertEqual(parsed["budget_by_conn"], {
+            2: {"max_write_without_response": 512, "attribute_budget": 512, "payload_budget": 508},
+            3: {"max_write_without_response": 244, "attribute_budget": 244, "payload_budget": 240},
+        })
+        self.assertEqual(parsed["mtu_source_by_conn"],
+                         {2: macos_poc.BUDGET_MEASURED_MAX_WRITE, 3: macos_poc.BUDGET_MEASURED_MAX_WRITE})
 
     def test_parse_trace_accepts_windows_form(self):
         trace = pathlib.Path(tempfile.mkdtemp()) / "t.log"

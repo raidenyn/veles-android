@@ -251,7 +251,7 @@ fn connect_times_out_after_30_seconds_and_releases_the_link() {
     // A late success never completes the request.
     rig.backend(BackendEvent::Connected {
         conn: token,
-        mtu: 185,
+        capacity: veles_otp23_feasibility::fragment::LinkCapacity::AttMtu(185),
         platform_hint: None,
     });
     assert!(rig.events().is_empty());
@@ -288,8 +288,12 @@ fn send_times_out_after_30_seconds_and_the_half_written_link_is_dropped() {
 fn inbound_partial_records_expire_after_five_seconds_of_inactivity() {
     let mut rig = Rig::ready();
     let (_, conn) = rig.connect_hint("c1", HINT_A, 185);
-    let frames =
-        veles_otp23_feasibility::fragment::fragment(&common::synthetic(400, 1), 185, 8).unwrap();
+    let frames = veles_otp23_feasibility::fragment::fragment(
+        &common::synthetic(400, 1),
+        common::budget(185),
+        8,
+    )
+    .unwrap();
     rig.backend(BackendEvent::Fragment {
         conn,
         bytes: frames[0].clone(),
@@ -327,7 +331,7 @@ fn next_deadline_tracks_the_earliest_pending_work() {
     let token = rig.connect_token();
     rig.backend(BackendEvent::Connected {
         conn: token,
-        mtu: 185,
+        capacity: veles_otp23_feasibility::fragment::LinkCapacity::AttMtu(185),
         platform_hint: None,
     });
     rig.events();

@@ -1,0 +1,212 @@
+{
+  "kind": "current-dependency-graph",
+  "measured_utc": "2026-10-26T02:51:27Z",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+  "metric": "cargo metadata --locked --filter-platform TARGET; normal+build edges reachable from the root, dev excluded",
+  "not_measured": [
+    "binary size",
+    "build time",
+    "runtime behavior",
+    "SBOM component licensing"
+  ],
+  "variants": {
+    "feasibility-plain": {
+      "manifest_dir": "native-bridge/feasibility",
+      "features": [],
+      "targets": {
+        "x86_64-pc-windows-msvc": {
+          "direct_dependencies": 4,
+          "unique_crates_transitive": 22,
+          "unique_crate_names": 22,
+          "proc_macro_crates": 3,
+          "build_script_crates": 5,
+          "native_link_crates": 0,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": []
+        },
+        "aarch64-apple-darwin": {
+          "direct_dependencies": 6,
+          "unique_crates_transitive": 46,
+          "unique_crate_names": 45,
+          "proc_macro_crates": 3,
+          "build_script_crates": 9,
+          "native_link_crates": 0,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": []
+        }
+      }
+    },
+    "feasibility-tauri-linked": {
+      "manifest_dir": "native-bridge/feasibility",
+      "features": [
+        "tauri-linked"
+      ],
+      "targets": {
+        "x86_64-pc-windows-msvc": {
+          "direct_dependencies": 6,
+          "unique_crates_transitive": 276,
+          "unique_crate_names": 228,
+          "proc_macro_crates": 24,
+          "build_script_crates": 36,
+          "native_link_crates": 1,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tauri 2.6.0",
+            "tauri-build 2.3.1",
+            "tauri-codegen 2.3.1",
+            "tauri-macros 2.3.2",
+            "tauri-runtime 2.7.0",
+            "tauri-utils 2.10.2",
+            "tauri-winres 0.3.7"
+          ]
+        },
+        "aarch64-apple-darwin": {
+          "direct_dependencies": 8,
+          "unique_crates_transitive": 275,
+          "unique_crate_names": 235,
+          "proc_macro_crates": 23,
+          "build_script_crates": 36,
+          "native_link_crates": 1,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tauri 2.6.0",
+            "tauri-build 2.3.1",
+            "tauri-codegen 2.3.1",
+            "tauri-macros 2.3.2",
+            "tauri-runtime 2.7.0",
+            "tauri-utils 2.10.2",
+            "tauri-winres 0.3.7"
+          ]
+        }
+      }
+    },
+    "feasibility-tauri-runtime": {
+      "manifest_dir": "native-bridge/feasibility",
+      "features": [
+        "tauri-runtime"
+      ],
+      "targets": {
+        "x86_64-pc-windows-msvc": {
+          "direct_dependencies": 6,
+          "unique_crates_transitive": 286,
+          "unique_crate_names": 238,
+          "proc_macro_crates": 25,
+          "build_script_crates": 39,
+          "native_link_crates": 1,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tao 0.34.8",
+            "tauri 2.6.0",
+            "tauri-build 2.3.1",
+            "tauri-codegen 2.3.1",
+            "tauri-macros 2.3.2",
+            "tauri-runtime 2.7.0",
+            "tauri-runtime-wry 2.7.0",
+            "tauri-utils 2.10.2",
+            "tauri-winres 0.3.7",
+            "wry 0.52.1"
+          ]
+        },
+        "aarch64-apple-darwin": {
+          "direct_dependencies": 8,
+          "unique_crates_transitive": 295,
+          "unique_crate_names": 255,
+          "proc_macro_crates": 24,
+          "build_script_crates": 39,
+          "native_link_crates": 2,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tao 0.34.8",
+            "tauri 2.6.0",
+            "tauri-build 2.3.1",
+            "tauri-codegen 2.3.1",
+            "tauri-macros 2.3.2",
+            "tauri-runtime 2.7.0",
+            "tauri-runtime-wry 2.7.0",
+            "tauri-utils 2.10.2",
+            "tauri-winres 0.3.7",
+            "wry 0.52.1"
+          ]
+        }
+      }
+    },
+    "production-bridge-without-runtime": {
+      "manifest_dir": "native-bridge/src-tauri",
+      "features": [],
+      "targets": {
+        "x86_64-pc-windows-msvc": {
+          "direct_dependencies": 3,
+          "unique_crates_transitive": 211,
+          "unique_crate_names": 179,
+          "proc_macro_crates": 20,
+          "build_script_crates": 28,
+          "native_link_crates": 0,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tauri-build 2.3.1",
+            "tauri-utils 2.9.3",
+            "tauri-winres 0.3.6"
+          ]
+        },
+        "aarch64-apple-darwin": {
+          "direct_dependencies": 3,
+          "unique_crates_transitive": 206,
+          "unique_crate_names": 174,
+          "proc_macro_crates": 20,
+          "build_script_crates": 27,
+          "native_link_crates": 0,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tauri-build 2.3.1",
+            "tauri-utils 2.9.3",
+            "tauri-winres 0.3.6"
+          ]
+        }
+      }
+    },
+    "production-bridge-tauri-runtime": {
+      "manifest_dir": "native-bridge/src-tauri",
+      "features": [
+        "tauri-runtime"
+      ],
+      "targets": {
+        "x86_64-pc-windows-msvc": {
+          "direct_dependencies": 4,
+          "unique_crates_transitive": 283,
+          "unique_crate_names": 238,
+          "proc_macro_crates": 27,
+          "build_script_crates": 38,
+          "native_link_crates": 1,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tauri 2.6.0",
+            "tauri-build 2.3.1",
+            "tauri-codegen 2.6.3",
+            "tauri-macros 2.6.3",
+            "tauri-runtime 2.11.3",
+            "tauri-utils 2.9.3",
+            "tauri-winres 0.3.6"
+          ]
+        },
+        "aarch64-apple-darwin": {
+          "direct_dependencies": 4,
+          "unique_crates_transitive": 271,
+          "unique_crate_names": 227,
+          "proc_macro_crates": 24,
+          "build_script_crates": 37,
+          "native_link_crates": 1,
+          "crates_without_license_field": 0,
+          "tauri_family_crates": [
+            "tauri 2.6.0",
+            "tauri-build 2.3.1",
+            "tauri-codegen 2.6.3",
+            "tauri-macros 2.6.3",
+            "tauri-runtime 2.11.3",
+            "tauri-utils 2.9.3",
+            "tauri-winres 0.3.6"
+          ]
+        }
+      }
+    }
+  }
+}

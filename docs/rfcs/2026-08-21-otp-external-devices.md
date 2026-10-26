@@ -13,6 +13,29 @@ logged (no separate npm floor), and (d) record that the extension (1a)
 toolchain entry points are npm scripts, not Gradle tasks; all amendments
 are consolidated into this body.
 
+Amended on 2026-10-26 by the OTP-23 contract-alignment review
+([`docs/otp-23-contract-alignment.md`](../otp-23-contract-alignment.md)):
+(a) the desktop native host is a **plain Rust executable**; the Tauri 2.6 event
+loop is not the runtime (it showed a visible helper window on an interactive
+Windows desktop and needed a forced-exit fallback), so those Tauri findings are
+historical; Tauri survives only as an open **packaging-only** question that
+OTP-23 must re-justify with current evidence before OTP-25 may use it;
+(b) the GATT fragmentation profile is revision 2 (`min(ATT_MTU − 3, 512) − 4`
+payload bytes, exact non-final/final rules in both directions; OTP2-GAT-010),
+because revision 1 required 513/514-byte attribute values at MTU 516/517 that
+Android cannot send; (c) the OTP-23 background acceptance is run strictly (no
+DevTools client of any kind during the idle interval, unsolicited phone
+delivery) and adjudicated by the committed requirements matrix, which starts
+every row at `NOT RUN`; and (d) a **user-approved acceptance scope revision**: tests that
+require NEW accounts (a standard non-admin Windows account, fresh standard macOS
+accounts and fresh-account TCC attribution) are skipped and non-blocking for the OTP-23
+gate. Those rows stay `NOT RUN`, are never recorded as `PASS`, and no fresh- or
+standard-account evidence is claimed. Runs on the existing account must identify it
+truthfully as administrator or standard. Every other OTP-23 requirement is retained
+unchanged (signing provenance, the final bundle identifier, allow/deny/recovery with
+unchanged extension state, the architecture, strict background delivery). OTP-25's
+standard-account installer matrices are not touched by this waiver.
+
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
 a Veles Chrome extension today, and a LILYGO T-WATCH-S3 family (ESP32-S3)
@@ -30,7 +53,7 @@ background.
 PR #78 recorded an incomplete physical validation matrix and described
 tab-owned Web Bluetooth as conditionally promising. That evidence remains
 useful history, but the approved amendments to this RFC replace that production
-transport on Windows and macOS with an on-demand Rust and Tauri Native Messaging
+transport on Windows and macOS with an on-demand plain-Rust Native Messaging
 BLE bridge with no durable state, replace OPAQUE enrollment with balanced
 SPAKE2, and add the watch client protocol surface. Chrome continues to own all
 Veles cryptography on the desktop; the watch reuses the same SPAKE2 core and
@@ -48,7 +71,7 @@ below.
 - The extension action opens or focuses one dedicated connector tab. The tab
   owns search, pairing, connection, recovery, and OTP presentation UI.
 - The connector tab owns one Chrome Native Messaging port to an on-demand,
-  headless Rust and Tauri bridge. The bridge owns only OS BLE discovery and
+  headless plain-Rust bridge. The bridge owns only OS BLE discovery and
   plain-GATT connections; it is not a persistent daemon and stores no durable
   state or payload.
 - Android exposes a plain-GATT BLE peripheral through a user-enabled
@@ -478,7 +501,7 @@ five-second or similarly short throttled JavaScript interval.
 
 #### Native bridge
 
-Chrome starts the headless Rust and Tauri bridge only through
+Chrome starts the headless plain-Rust bridge only through
 `runtime.connectNative`. The bridge uses WinRT Bluetooth APIs on Windows and
 CoreBluetooth on macOS. It owns scanning, OS BLE identifiers, GATT discovery,
 subscriptions, bounded byte transport, and disconnect cleanup. It has no
@@ -487,15 +510,22 @@ database, product trust decision, cryptographic protocol implementation, or OTP
 interpretation. Closing the Native Messaging port or receiving `shutdown`
 stops scans, disconnects all handles, clears process memory, and exits.
 
-**Tauri rationale:** Every stated bridge property is satisfiable by plain Rust
-(`windows-rs` for WinRT, `objc2`/CoreBluetooth or `btleplug` on macOS). Tauri
-is selected solely for its bundler, signing, and notarization tooling for the
-OTP-25 per-user installers — Windows code signing and macOS signing/
-notarization/stapling with a managed dependency tree. This trade adds review
-surface (Gate D must assess "Tauri headless lifecycle") but avoids a standalone
-packaging pipeline. OTP-23 explicitly validates this decision by recording the
-Tauri dependency cost and confirming the headless process meets all stated
-properties.
+**Runtime decision (amended 2026-10-26):** The bridge is a plain Rust executable
+(`windows-rs` for WinRT, `bluest`/CoreBluetooth on macOS). It does not run the
+Tauri event loop. The original selection of Tauri was solely for its bundler,
+signing, and notarization tooling for the OTP-25 installers, and OTP-23 was
+required to validate it. Physical Windows testing at `1a34191` (Tauri 2.6.0)
+found a visible `Tao Thread Event Target` helper window on the interactive
+desktop and a needed forced-exit fallback after `AppHandle::exit`; that evidence
+is preserved as **historical** and is not re-attributed to the current tree. The
+later plain-Rust successes (Windows `d5b6f2d`, macOS `fb224e8`) are likewise
+historical PoC evidence, recorded separately. Whether Tauri is worth retaining
+**for packaging only** is an open question that must be answered with *current*
+dependency-graph, SBOM, binary-size and packaging-proof evidence (matrix row D-01
+in [`docs/otp-23-requirements-matrix.md`](../otp-23-requirements-matrix.md));
+nothing in this RFC asserts that choice is justified. If it is retained, the
+bundler wraps the unmodified plain-Rust binary and the Tauri runtime is never
+started.
 
 The bridge may hold only bounded ephemeral scan, request, handle, connection,
 queue, fragment, and reassembly state plus in-flight opaque record bytes. It
@@ -1059,7 +1089,8 @@ Before public release:
   identity storage, key schedule, nonce construction, replay policy,
   revocation, JNI, WASM, Native Messaging envelope/parser/state machine,
   request correlation and handle routing, bounds/queues/framing,
-  WinRT/CoreBluetooth adapters, Tauri headless lifecycle, exact-origin host
+  WinRT/CoreBluetooth adapters, plain-Rust host lifecycle (and the Tauri
+  bundler/signing tooling if it is retained for packaging), exact-origin host
   registration, installer install/repair/upgrade/rollback/uninstall behavior,
   and packaged artifacts.
 - All findings are fixed, and affected release-candidate components are
@@ -1209,7 +1240,9 @@ bridge release inputs through documented Gradle entry points.
 
 **Scope:** Add the MV3 TypeScript npm project under `src/typescript`; add the
 pinned Rust toolchain and wrapper build; produce Android JNI and local browser
-WASM outputs; establish byte-reproducible unsigned Rust and Tauri native-host,
+WASM outputs; establish byte-reproducible unsigned native-host (delivered with a Tauri-based
+packaging toolchain; the 2026-10-26 amendment makes the runtime plain Rust and
+reopens the packaging choice at OTP-23/OTP-25),
 bundle/package payload, manifest, and per-user installer-input build entry
 points for Windows and macOS; keep signing/notarization as a separate release
 step; lock npm, Rust, NDK, WASM, and packaging dependencies; add format, lint,
@@ -1304,6 +1337,13 @@ bounds, handles, errors, and the single `record_base64` JSON field. Prohibit
 serializing, inspecting, or remapping authenticated Veles record fields as JSON;
 base64 is only byte-preserving envelope transport. Record the threat model and
 downgrade policy.
+
+**Amendment (2026-10-26):** the GATT fragmentation profile is revision 2 —
+`attribute_budget = min(ATT_MTU − 3, 512)`, `payload = attribute_budget − 4`, exact
+non-final/final rules in both directions, MTU floor 185 and record maximum 4096
+unchanged (OTP2-GAT-010; vectors `frag-r2-*`). See
+[`docs/otp-23-contract-alignment.md`](../otp-23-contract-alignment.md) for the
+compatibility and rollout reasoning.
 
 **Exclusions:** Production implementation and UI.
 
@@ -1439,7 +1479,8 @@ product UI.
 
 **Acceptance criteria:** Release manifests request only required permissions;
 the service starts from visible action; stop/disable closes sessions and
-advertising; bounds match OTP-02; one failed client cannot block another;
+advertising; bounds match OTP-02 (fragment frames never exceed
+`min(ATT_MTU − 3, 512)` bytes, profile revision 2); one failed client cannot block another;
 unsupported or denied states are explicit; synthetic-only tests cannot access
 production OTP data.
 
@@ -1457,18 +1498,20 @@ Backlog.
 Chrome can drive the required OS BLE behavior through one on-demand native host
 before the production bridge is built.
 
-**Scope:** Build a Rust and Tauri windowless synthetic host and launch it from
+**Scope:** Build a plain-Rust windowless synthetic host and launch it from
 stable Chrome through `runtime.connectNative` and exact-origin development
 manifests; exercise the Native Messaging stdin/stdout framing and port
 lifecycle, WinRT and CoreBluetooth scanning, connect, GATT discovery,
 subscription, whole-record writes and reads, disconnect, shutdown, background
 delivery, concurrent request IDs, and at least two independent phone handles
-against OTP-06. Build both the dev-registered unsigned host and a directly
-signed production-shaped host fixture from OTP-01's unsigned payload, using the
+against OTP-06 under GATT fragmentation profile revision 2 (OTP2-GAT-010).
+Build both the dev-registered unsigned host and a directly signed
+production-shaped host fixture from OTP-01's unsigned payload, using the
 final macOS bundle identifier but no installer, for TCC attribution tests.
-Record Tauri's direct and transitive dependency count, SBOM, binary-size cost,
-runtime components, and security-review surface relative to the plain-Rust host
-baseline.
+Record, from **current** builds, the dependency count, SBOM, binary-size cost,
+runtime components, and security-review surface of retaining Tauri **for
+packaging only** relative to the plain-Rust host; historical Tauri-runtime
+measurements are retained separately and never relabelled as current.
 
 **Exclusions:** Production bridge reuse, installers, Veles cryptography, trust
 activation, and real OTP data.
@@ -1476,17 +1519,27 @@ activation, and real OTP data.
 **Dependencies:** OTP-01, OTP-02, and OTP-06.
 
 **Acceptance criteria:** On physical Windows and macOS systems, stable Chrome
-launches the Rust and Tauri process on demand from a standard non-admin account;
-the process creates no window and communicates only through Chrome-owned stdin
+launches the plain-Rust process on demand (the account is recorded truthfully as
+administrator or standard; the standard-non-admin-account case is waived, see the
+scope revision below); the process creates no window and communicates only through Chrome-owned stdin
 and stdout; extension-owned search receives bounded device events; two phones
-independently exchange synthetic complete records; an event arrives after the
-connector has been backgrounded for ten continuous minutes with another
-ordinary tab focused and no audio, WebRTC, or any other timer-throttling
-exemption active; disconnect affects only its handle; Chrome port closure,
-stdin EOF, and `shutdown` each stop scans, disconnect links, close stdout, and
-leave no process; unsupported or denied
-states are classified. **On fresh standard non-admin macOS accounts, the
-acceptance matrix explicitly records TCC Bluetooth attribution:** which process
+independently exchange synthetic complete records (including the attribute-budget
+boundaries at ATT MTU 517); an event arrives after the connector has been
+backgrounded for ten continuous minutes with another ordinary tab focused and
+no audio, WebRTC, or any other timer-throttling exemption active — validated
+**strictly**: no DevTools client of any kind (connector session or browser-level)
+exists during the interval, the event is an unsolicited phone notification
+produced by preconfigured instrumentation (not a desktop timer or request), a
+cold idle and a prewarmed link are separate runs, and the receipt is
+timestamped by the page itself with phone-side hash evidence collected
+afterwards; if the architecture cannot satisfy this without a Native Messaging
+exemption, that is reported with evidence and an explicit proposed acceptance
+revision, never absorbed by weakening this criterion; disconnect affects only
+its handle; Chrome port closure, stdin EOF, and `shutdown` each stop scans,
+disconnect links, close stdout, and leave no process; unsupported or denied
+states are classified. **The acceptance matrix explicitly records TCC Bluetooth
+attribution (on fresh standard non-admin macOS accounts originally; see the scope
+revision below):** which process
 (Chrome or the bridge binary) the TCC prompt/grant attaches to for the
 Chrome-launched headless child, whether a prompt fires at all for the headless
 process, and the allow and deny results from the connector, on both the
@@ -1495,19 +1548,34 @@ The signed fixture is signed directly with CI-provided credentials and the final
 bundle identifier; it does not depend on OTP-24, OTP-25, or an installer. After
 the deny case, the connector presents exact System Settings and retry guidance;
 following that guidance and granting access lets search recover without
-reinstalling or losing extension state. The recorded dependency-cost comparison
-must justify retaining Tauri solely for OTP-25 packaging. Any failure blocks
-OTP-24 or causes this RFC to be revisited.
+reinstalling or losing extension state. The recorded current dependency-cost
+comparison must justify retaining Tauri solely for OTP-25 packaging, or OTP-25
+selects another packaging pipeline. Any failure blocks OTP-24 or causes this RFC
+to be revisited. The decision is **NO-GO** until every row of the committed
+requirements matrix is `PASS`, except rows carrying the approved account waiver; a row
+never passes on historical evidence.
+
+**Scope revision (user-approved, 2026-10-26):** tests requiring new accounts — the
+standard non-admin Windows account launch, the fresh standard macOS account launch and
+fresh-account TCC prompt attribution — are skipped and **non-blocking for OTP-23**. They
+are recorded `NOT RUN` with the waiver text, not `PASS`. Not waived: the signed
+production-shaped fixture with the final identifier and signing provenance, allow, deny
+and recovery (same extension state) on the existing account, the prompt owner as observed
+there, the architecture, and strict background delivery on both platforms.
 
 **Verification evidence:** Committed harness and physical Windows/macOS matrix
-with exact commit, Chrome and OS versions, hardware and adapters, Rust and Tauri
-build identity, host manifests, commands, framed stdin/stdout traces, proof that
-no window appears, process launch/EOF/port-close/shutdown observations,
-repetitions, timings, focused-tab identity, confirmation that no audio, WebRTC,
-or other timer-throttling exemption was active, safe logs, fresh-account TCC
-prompt/grant ownership and allow/deny/recovery results, signed-fixture provenance,
-Tauri dependency cost and transitive SBOM comparison, per-case expected/actual
-results, and an explicit feasibility decision.
+with exact commit, Chrome and OS versions, hardware and adapters, Rust and (for
+the packaging evaluation) Tauri build identity, source and binary/APK manifests
+with hashes, tool and signing identities, host manifests, commands, framed
+stdin/stdout traces, proof that no window appears, process
+launch/EOF/port-close/shutdown observations, repetitions, timings, focused-tab
+identity, DevTools-client absence during the interval, confirmation that no
+audio, WebRTC, or other timer-throttling exemption was active, safe logs,
+TCC prompt/grant ownership (fresh-account attribution waived) and allow/deny/recovery results
+with the executing account's admin/standard status,
+signed-fixture provenance, current Tauri dependency cost and transitive SBOM
+comparison, per-case expected/actual results with `PASS`/`FAIL`/`BLOCKED`/
+`NOT RUN` status, and an explicit feasibility decision.
 
 **Project fields:** Implementation order 7; Phase Transport; Area Native bridge;
 Release scope Stable release; Gate Blocks protected transport; initial Status
@@ -1515,7 +1583,7 @@ Backlog.
 
 ### OTP-24: Build the production on-demand Native Messaging BLE bridge
 
-**Outcome:** Chrome can use one bounded, headless, on-demand Rust and Tauri host
+**Outcome:** Chrome can use one bounded, headless, on-demand plain-Rust host
 for independent BLE byte transport to multiple phones on Windows and macOS.
 
 **Scope:** Implement `hello`, `start_scan`, `stop_scan`, `connect`, `disconnect`,
@@ -1530,7 +1598,7 @@ safe errors, cancellation, cleanup, and deterministic test seams.
 **Exclusions:** Installer registration, native UI or persistence, Chrome trust
 or cryptography, Veles record parsing, OTP data, and a persistent daemon.
 
-**Dependencies:** OTP-23.
+**Dependencies:** OTP-23 (a GO decision from its requirements matrix).
 
 **Acceptance criteria:** Every request and event is bounded and schema-tested;
 unknown versions, types, handles, malformed input, and capacity excess fail
@@ -1614,6 +1682,13 @@ development registration and removal. **(Inherits the two OTP-01 RFC clauses
 transferred here by the 2026-08-26 amendment: platform signing consuming
 CI-provided credentials without embedding secrets, and signed↔unsigned
 content-correspondence verification.)**
+
+**Packaging-tool decision (2026-10-26 amendment):** the installer pipeline is chosen
+from the OTP-23 matrix row D-01. If Tauri's bundler is retained it only wraps the
+unmodified plain-Rust host binary (the Tauri runtime and its event loop are never
+started); otherwise OTP-25 selects a standalone signing/packaging pipeline. Either
+way the signed payload must correspond to the reproducible plain-Rust unsigned
+inputs.
 
 **Exclusions:** Machine-wide installation, auto-update daemons, broad or
 wildcard origins, bundling extension trust or OTP state, and Linux packaging.
@@ -2111,7 +2186,7 @@ processes.
 
 **Scope:** Commission external security review covering the Native Messaging
 envelope/parser/state machine, request correlation and handle routing,
-bounds/queues/framing, WinRT/CoreBluetooth adapters, Tauri headless lifecycle,
+bounds/queues/framing, WinRT/CoreBluetooth adapters, plain-Rust host lifecycle,
 exact-origin host registration, and installer install/repair/upgrade/rollback/
 uninstall behavior in addition to the protected protocol and cryptography;
 remediate and re-review findings; benchmark SPAKE2;
@@ -2198,7 +2273,7 @@ on the wrist. The protocol fits without divergence:
   opaque, encrypted Veles records. Nothing in the record model, session crypto,
   enrollment, delivery policies, or retention caps assumes a desktop, a tab, or
   the Native Messaging bearer. The desktop-specific layer is strictly the
-  client-side bearer (Native Messaging + the Rust/Tauri bridge); a watch speaks
+  client-side bearer (Native Messaging + the plain-Rust bridge); a watch speaks
   GATT directly and needs none of it.
 - SPAKE2 uses no memory-hard preprocessing, so the watch runs the very profile
   the Chrome connector runs — the same pinned Rust core, the same six-digit

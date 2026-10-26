@@ -232,3 +232,11 @@ still supplies the required independent reviews and user acceptance.
 - Approved design: `docs/superpowers/specs/2026-10-23-otp-02-protocol-contract-design.md`
 - Plan: `docs/superpowers/plans/2026-10-23-otp-02-protocol-contract.md`
 - Authoritative RFC: `docs/rfcs/2026-08-21-otp-external-devices.md` (includes the approved revocation clarification)
+
+## Fragmentation vectors and manifest evidence (OTP-23, profile revision 2)
+
+`v1/fixtures/fragmentation.json` is no longer hand-maintained: `tools/generate-fragmentation-vectors.mjs`
+owns the `frag-r2-*` family and two amended revision-1 vectors (`--check` fails on drift, `--write`
+updates the committed file after review). Manifest evidence ids are derived, so
+`tools/sync-manifest-evidence.mjs` rewrites them (`--check` is part of `checks/check.mjs`). The
+descriptor expression is `min(negotiated_MTU - 3, 512) - 4`; see `docs/protocol/veles-v1.md` OTP2-GAT-010.

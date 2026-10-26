@@ -51,10 +51,11 @@ pub enum BackendEvent {
         scan: Token,
         device: Discovered,
     },
-    /// GATT discovery, MTU (>= 185) and CCCD subscription completed, in that order.
+    /// GATT discovery, link capacity (>= the 185-byte MTU floor) and CCCD subscription completed,
+    /// in that order. The core derives the one [`crate::fragment::LinkBudget`] from `capacity`.
     Connected {
         conn: Token,
-        mtu: usize,
+        capacity: crate::fragment::LinkCapacity,
         platform_hint: Option<String>,
     },
     ConnectFailed {

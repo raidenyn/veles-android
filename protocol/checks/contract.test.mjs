@@ -22,6 +22,12 @@ import { fileURLToPath } from "node:url";
 import { loadFixtures, decodeHex } from "./fixture.mjs";
 import { validateBinary, validateFragmented } from "./binary.mjs";
 import { buildEvidenceInventory } from "./evidence.mjs";
+import {
+  fragmentRecord,
+  mergeFixtures,
+  payloadBudget,
+  sampleRecord,
+} from "../tools/generate-fragmentation-vectors.mjs";
 
 const checksDir = dirname(fileURLToPath(import.meta.url));
 const v1Root = join(checksDir, "..", "v1");
@@ -811,7 +817,14 @@ test("binary-layouts constants match limits.json inventory", () => {
   assert.equal(fr.att_header_bytes, 3);
   assert.equal(fr.mtu_min, L.gatt_mtu_min);
   assert.equal(fr.test_mtu, L.gatt_mtu_min);
-  assert.equal(fr.payload_budget_expression, "negotiated_MTU - 3 - 4");
+  assert.equal(fr.payload_budget_expression, "min(negotiated_MTU - 3, 512) - 4");
+  assert.equal(fr.attribute_budget_expression, "min(negotiated_MTU - 3, 512)");
+  assert.equal(fr.profile_revision, 2);
+  assert.equal(fr.attribute_value_max_bytes, L.gatt_attribute_value_max_bytes);
+  assert.equal(fr.mtu_max, L.gatt_mtu_max);
+  assert.equal(fr.max_mtu_payload_bytes, L.fragment_payload_bytes_at_attribute_max);
+  assert.equal(L.fragment_payload_bytes_at_attribute_max, 512 - 4);
+  assert.equal(fr.max_fragments_at_max_mtu, Math.ceil(L.record_max_bytes / fr.max_mtu_payload_bytes));
   // M1: the tested conservative chunk at the MTU floor and the fragment bound it implies
   assert.equal(fr.fragment_payload_bytes_at_test_mtu, L.fragment_payload_bytes_at_min_mtu);
   assert.equal(L.fragment_payload_bytes_at_min_mtu, 185 - 3 - 4);
@@ -1009,4 +1022,111 @@ test("mutating one expected byte in a canonical fixture is detected by the compa
     res.accepted !== f.expected.accepted ||
     JSON.stringify(res.fields) !== JSON.stringify(f.expected.fields);
   assert.ok(detected, "comparator failed to detect a deliberate expected-bytes mutation");
+});
+
+// ---------- OTP-23 fragmentation profile revision 2 (OTP2-GAT-010 / OTP2-GAT-011) ----------
+
+// Literal, independent statement of the budget: unclamped up to ATT MTU 515, 508 above.
+const literalPayloadBudget = (mtu) => (mtu <= 515 ? mtu - 7 : 508);
+
+test("OTP2-GAT-010 committed fragmentation fixtures are exactly what the reviewed generator produces", () => {
+  const text = readFileSync(join(v1Root, "fixtures", "fragmentation.json"), "utf8");
+  assert.equal(JSON.stringify(mergeFixtures(JSON.parse(text)), null, 2) + "\n", text);
+});
+
+test("OTP2-GAT-010 payload budget is min(MTU-3,512)-4 for every MTU 185..517 and never exceeds a 512-byte attribute", () => {
+  for (let mtu = 185; mtu <= 517; mtu++) {
+    assert.equal(payloadBudget(mtu), literalPayloadBudget(mtu), `mtu ${mtu}`);
+    assert.ok(payloadBudget(mtu) + 4 <= 512, `mtu ${mtu}`);
+  }
+  assert.equal(payloadBudget(185), 178);
+  assert.equal(payloadBudget(515), 508);
+  assert.equal(payloadBudget(517), 508);
+});
+
+test("OTP2-GAT-010 canonical sender and strict receiver agree byte-exactly at every boundary of every MTU", () => {
+  const L = layouts();
+  for (let mtu = 185; mtu <= 517; mtu++) {
+    const p = literalPayloadBudget(mtu);
+    const lengths = new Set([1, 2, p - 1, p, p + 1, 2 * p - 1, 2 * p, 2 * p + 1, 4095, 4096]);
+    for (const len of lengths) {
+      if (len < 1 || len > 4096) continue;
+      const record = sampleRecord(len, mtu);
+      for (const emptyFinal of [false, true]) {
+        const frames = fragmentRecord(record, mtu, 77, { emptyFinal });
+        const full = Math.floor(len / p);
+        const canonicalCount = Math.ceil(len / p);
+        const expectCount = emptyFinal ? Math.floor(len / p) + 1 : canonicalCount;
+        // emptyFinal is only a distinct form for exact multiples; otherwise the tail is non-empty anyway
+        if (emptyFinal && len % p !== 0) continue;
+        assert.equal(frames.length, expectCount, `mtu ${mtu} len ${len}`);
+        frames.forEach((f, i) => {
+          const bytes = decodeHex(f);
+          assert.ok(bytes.length <= Math.min(mtu - 3, 512), `mtu ${mtu} len ${len} frame ${i}`);
+          const final = (bytes[0] & 0x80) !== 0;
+          assert.equal(final, i === frames.length - 1);
+          if (!final) assert.equal(bytes.length - 4, p, `non-final payload mtu ${mtu} len ${len}`);
+        });
+        if (!emptyFinal && len % p === 0) {
+          assert.equal(decodeHex(frames.at(-1)).length - 4, p, "exact multiple ends in a full final fragment");
+          assert.equal(frames.length, full);
+        }
+        const res = validateFragmented([{ transaction_id: 77, fragments: frames }], mtu, L);
+        assert.equal(res.accepted, true, `mtu ${mtu} len ${len} empty=${emptyFinal}: ${res.error}`);
+        assert.equal(toHex(res.transactions[0].reassembled), toHex(record), `mtu ${mtu} len ${len}`);
+      }
+    }
+  }
+});
+
+test("OTP2-GAT-010 revision-1 frames at MTU 516 and 517 fail closed in the revision-2 receiver, and vice versa", () => {
+  const L = layouts();
+  for (const mtu of [516, 517]) {
+    const legacyPayload = mtu - 7; // revision 1: 509 / 510
+    const record = sampleRecord(4096, 5);
+    const frames = [];
+    for (let off = 0, i = 0; off < record.length; i++) {
+      const chunk = record.subarray(off, Math.min(off + legacyPayload, record.length));
+      off += chunk.length;
+      const head = Uint8Array.of((off === record.length ? 0x80 : 0) | i, 9, i === 0 ? 0x10 : 0, 0);
+      frames.push(toHex(Uint8Array.from([...head, ...chunk])));
+    }
+    const res = validateFragmented([{ transaction_id: 9, fragments: frames }], mtu, L);
+    assert.equal(res.accepted, false, `mtu ${mtu}`);
+    assert.equal(res.transactions[0].completed, false);
+    assert.equal(res.transactions[0].stage, "fragment_total");
+    // revision-2 frames judged by a revision-1 rule (non-final payload must be mtu-7) differ: proof the
+    // two profiles are genuinely incompatible at these MTUs and never silently interchangeable
+    assert.notEqual(literalPayloadBudget(mtu), legacyPayload);
+  }
+  for (const mtu of [185, 247, 514, 515]) {
+    assert.equal(literalPayloadBudget(mtu), mtu - 7, `unchanged below the clamp: mtu ${mtu}`);
+  }
+});
+
+test("OTP2-GAT-003 negotiated MTU outside 185..517 is refused before any fragment is read", () => {
+  const frames = fragmentRecord(sampleRecord(10, 1), 185, 3);
+  for (const mtu of [0, 23, 184, 518, 1000]) {
+    const res = validateFragmented([{ transaction_id: 3, fragments: frames }], mtu, layouts());
+    assert.equal(res.accepted, false, `mtu ${mtu}`);
+    assert.equal(res.transactions[0].completed, false);
+  }
+});
+
+test("OTP2-GAT-010 exact final handling: empty final only closes a fully received record", () => {
+  const L = layouts();
+  const p = 508;
+  const record = sampleRecord(2 * p, 6);
+  const ok = fragmentRecord(record, 517, 5, { emptyFinal: true });
+  assert.equal(ok.length, 3);
+  assert.equal(validateFragmented([{ transaction_id: 5, fragments: ok }], 517, L).accepted, true);
+  // the same empty final after a record that is not fully received is a length mismatch
+  const short = fragmentRecord(sampleRecord(2 * p + 1, 6), 517, 5).slice(0, 2);
+  short.push(ok[2]);
+  assert.equal(validateFragmented([{ transaction_id: 5, fragments: short }], 517, L).accepted, false);
+  // nothing may follow a final fragment
+  const trailing = [...fragmentRecord(sampleRecord(p, 7), 517, 5), ok[2]];
+  const res = validateFragmented([{ transaction_id: 5, fragments: trailing }], 517, L);
+  assert.equal(res.accepted, false);
+  assert.equal(res.transactions[0].stage, "fragment_final");
 });

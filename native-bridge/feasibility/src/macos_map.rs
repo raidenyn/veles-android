@@ -1,15 +1,15 @@
-//! Platform-neutral helpers for the CoreBluetooth (macOS) backend: hint format, the inferred
-//! effective-MTU policy and the bounded scan bookkeeping. Kept free of `bluest` types so every
+//! Platform-neutral helpers for the CoreBluetooth (macOS) backend: hint format, the link-budget
+//! policy and the bounded scan bookkeeping. Kept free of `bluest` types so every
 //! mapping is unit-tested on any host (mirrors `winrt_map.rs` for the WinRT backend).
 //!
 //! CoreBluetooth never exposes the negotiated ATT MTU. It only reports the maximum
-//! write-without-response payload of a connected characteristic, which (per the ATT Write
-//! Command overhead) is exactly `mtu - 3`. The effective ATT MTU is therefore **inferred**, not
-//! reported: `min(max_write_without_response + 3, MAX_MTU)`, floored by `MIN_MTU`. Keeping the
-//! derivation out of the backend lets pure tests prove the fragment rule
-//! `min(mtu - 3, ATTRIBUTE_LIMIT) - HEADER` always fits a single OS write packet.
+//! write-without-response value length `W` of a connected characteristic. `W` is a backend limit:
+//! at most `MTU - 3`, but the platform may cap it, so equality is never assumed and no MTU is
+//! invented (the old "512 -> 515" inference). A shared budget is established only for `W >= 512`
+//! (then `MTU - 3 >= 512` and both ends use 512); a smaller `W` is refused (fail closed) because the
+//! peer's exact non-final size `min(MTU - 3, 512) - 4` cannot be determined without guessing.
 
-use crate::fragment::{MAX_MTU, MIN_MTU};
+use crate::fragment::{BudgetError, LinkBudget};
 use std::collections::HashSet;
 
 /// `macos:<36-char canonical lowercase UUID>` of the CoreBluetooth peripheral identifier
@@ -19,8 +19,9 @@ const UUID_LEN: usize = 36;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MtuError {
-    /// Inferred effective MTU is below the negotiated-connection floor.
-    TooSmall,
+    /// The measured write length is below 512: it may be a platform cap rather than `MTU - 3`, so
+    /// no common fragment budget with the peer can be established.
+    Undetermined,
 }
 
 /// Canonical 36-char lowercase UUID: `8-4-4-4-12` hex digits with hyphens at 8/13/18/23.
@@ -56,18 +57,18 @@ pub fn fallback_label(device_id: &str) -> String {
     format!("BLE device ..{}", &device_id[start..])
 }
 
-/// Effective ATT MTU inferred from the measured CoreBluetooth `maxWriteValueLength(WithoutResponse)`.
+/// Link budget from the measured CoreBluetooth `maximumWriteValueLength(WithoutResponse)`.
 ///
-/// - `max_write == mtu - 3` (ATT Write Command overhead), so `mtu == max_write + 3` is an
-///   *inferred* value, never a measured one.
-/// - The inferred value is capped at [`MAX_MTU`] (517); above the cap the capped fragment rule of
-///   the core (`min(mtu - 3, 512) - 4` payload bytes) matches an Android phone negotiating 517.
-/// - Values implying a negotiated MTU below [`MIN_MTU`] (185) are refused before use.
-pub fn effective_mtu(max_write_without_response: usize) -> Result<usize, MtuError> {
-    let inferred = max_write_without_response.saturating_add(3).min(MAX_MTU);
-    (inferred >= MIN_MTU)
-        .then_some(inferred)
-        .ok_or(MtuError::TooSmall)
+/// - `W >= 512` gives attribute 512 / payload 508, the same link as an Android phone at MTU 515..517.
+/// - `W < 512` is `Undetermined` and the link is refused; it is neither rounded nor extrapolated.
+pub fn link_budget(max_write_without_response: usize) -> Result<LinkBudget, MtuError> {
+    LinkBudget::from_max_write_without_response(max_write_without_response).map_err(|error| {
+        match error {
+            BudgetError::TooSmall | BudgetError::TooLarge | BudgetError::Undetermined => {
+                MtuError::Undetermined
+            }
+        }
+    })
 }
 
 /// `CBManagerAuthorization` as raw `NSInteger` (0..=3), kept numeric so classification is portable.

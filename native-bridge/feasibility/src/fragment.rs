@@ -1,21 +1,104 @@
 //! Whole-record GATT fragmentation and reassembly mirroring the Android peripheral
-//! (`GattTransport.kt`, OTP2-GAT-010..012). Transport only: records are opaque bytes.
+//! (`GattTransport.kt`, OTP2-GAT-010..012, fragmentation profile revision 2). Transport only:
+//! records are opaque bytes.
+//!
+//! One formula, written once ([`LinkBudget`]): a fragment frame (4-byte header + payload) may not
+//! exceed `min(ATT_MTU - 3, 512)` bytes in either direction, so every non-final payload is exactly
+//! `attribute - 4` bytes and the final payload exactly what remains. No backend hardcodes an MTU
+//! or a chunk size; each reports what its OS can observe ([`LinkCapacity`]).
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Smallest negotiated ATT MTU a link may report (OTP2-GAT-003).
 pub const MIN_MTU: usize = 185;
+/// Largest negotiated ATT MTU accepted (the Android `requestMtu` ceiling).
 pub const MAX_MTU: usize = 517;
+/// Largest record (OTP2-REC: header + ciphertext + tag).
 pub const MAX_RECORD: usize = 4096;
+/// ATT Handle Value Notification / Write Command header (opcode + handle).
+pub const ATT_OVERHEAD: usize = 3;
+/// Bluetooth ATT maximum attribute value length.
+pub const ATTRIBUTE_VALUE_MAX: usize = 512;
+/// Uniform fragment header.
+pub const HEADER: usize = 4;
+/// What a backend can observe about the link's size limit. Windows reports the ATT MTU
+/// (`GattSession::MaxPduSize`); CoreBluetooth never exposes the MTU, only the maximum
+/// write-without-response value length, which already equals `MTU - 3`.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LinkCapacity {
+    AttMtu(usize),
+    MaxWriteWithoutResponse(usize),
+}
 
-/// OTP-23 PoC (opt-in experimental wire behavior): cap attribute values at 512 bytes so the
-/// non-final payload is `min(mtu - 3, ATTRIBUTE_LIMIT) - HEADER` in both directions and inbound
-/// frames above `min(mtu - 3, ATTRIBUTE_LIMIT)` are rejected. At the frozen MTU floor of 185 the
-/// cap never binds and the committed MTU-185 vectors are unchanged.
-pub const ATTRIBUTE_LIMIT: usize = 512;
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BudgetError {
+    /// The link reports less than the 185-byte MTU floor (or the equivalent 182-byte write).
+    TooSmall,
+    /// An ATT MTU above the 517-byte ceiling.
+    TooLarge,
+    /// Only a backend write limit is known and it is below the 512 clamp: that limit may be capped by
+    /// the platform, so it cannot be equated with `MTU - 3` and no common budget can be established.
+    Undetermined,
+}
 
-const HEADER: usize = 4;
+/// The attribute/payload budget of one link, derived once from its [`LinkCapacity`].
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct LinkBudget {
+    attribute: usize,
+}
+
+impl LinkBudget {
+    /// `attribute = min(mtu - 3, 512)`; MTUs outside `185..=517` are refused.
+    pub fn from_att_mtu(mtu: usize) -> Result<Self, BudgetError> {
+        if mtu < MIN_MTU {
+            return Err(BudgetError::TooSmall);
+        }
+        if mtu > MAX_MTU {
+            return Err(BudgetError::TooLarge);
+        }
+        Ok(Self {
+            attribute: (mtu - ATT_OVERHEAD).min(ATTRIBUTE_VALUE_MAX),
+        })
+    }
+
+    /// A measured maximum write-without-response length `W` (CoreBluetooth) is a *backend* limit: it
+    /// is at most `MTU - 3` but the platform may cap it, so `W == MTU - 3` cannot be assumed. The
+    /// peer's non-final fragments are exactly `min(MTU - 3, 512) - 4` bytes, so a budget is only
+    /// established when `W >= 512`: then `MTU - 3 >= W >= 512` and the shared budget is 512 whatever
+    /// the MTU is. Below 512 the common budget is unknown and the link is refused (fail closed);
+    /// no value is guessed. 512 is the ATT attribute maximum, not a tuning constant.
+    pub fn from_max_write_without_response(write: usize) -> Result<Self, BudgetError> {
+        if write >= ATTRIBUTE_VALUE_MAX {
+            Ok(Self {
+                attribute: ATTRIBUTE_VALUE_MAX,
+            })
+        } else {
+            Err(BudgetError::Undetermined)
+        }
+    }
+
+    pub fn from_capacity(capacity: LinkCapacity) -> Result<Self, BudgetError> {
+        match capacity {
+            LinkCapacity::AttMtu(mtu) => Self::from_att_mtu(mtu),
+            LinkCapacity::MaxWriteWithoutResponse(write) => {
+                Self::from_max_write_without_response(write)
+            }
+        }
+    }
+
+    /// Largest fragment frame (header + payload) on this link.
+    pub fn attribute(self) -> usize {
+        self.attribute
+    }
+
+    /// Payload of every non-final fragment on this link.
+    pub fn payload(self) -> usize {
+        self.attribute - HEADER
+    }
+}
+
 const INACTIVITY: Duration = Duration::from_secs(5);
 const CONFLICT_WINDOW: Duration = Duration::from_secs(60);
 const PEER_INCOMPLETE: usize = 2;
@@ -36,15 +119,15 @@ pub fn wipe(bytes: &mut [u8]) {
 pub enum FragmentError {
     EmptyRecord,
     OversizeRecord,
-    BadMtu,
     BadTransactionId,
 }
 
 /// Splits one record into uniform-header fragments. Every non-final payload is exactly
-/// `mtu - 7` bytes; the last chunk is flagged final (no trailing zero-length fragment).
+/// `budget.payload()` bytes; the last chunk (`1..=payload`) is flagged final, so an exact multiple
+/// ends in a full final fragment and a sender never emits a trailing zero-length fragment.
 pub fn fragment(
     record: &[u8],
-    mtu: usize,
+    budget: LinkBudget,
     transaction_id: u8,
 ) -> Result<Vec<Vec<u8>>, FragmentError> {
     if record.is_empty() {
@@ -53,13 +136,10 @@ pub fn fragment(
     if record.len() > MAX_RECORD {
         return Err(FragmentError::OversizeRecord);
     }
-    if !(MIN_MTU..=MAX_MTU).contains(&mtu) {
-        return Err(FragmentError::BadMtu);
-    }
     if transaction_id == 0 {
         return Err(FragmentError::BadTransactionId);
     }
-    let chunk = (mtu - 3).min(ATTRIBUTE_LIMIT) - HEADER;
+    let chunk = budget.payload();
     let count = record.len().div_ceil(chunk);
     let frames = record
         .chunks(chunk)
@@ -142,16 +222,16 @@ struct Partial {
 
 /// Per-connection reassembler: 2 incomplete transactions and 8 KiB, 5 s inactivity timeout.
 pub struct Reassembler {
-    mtu: usize,
+    link: LinkBudget,
     budget: Arc<GlobalBudget>,
     partials: Vec<Partial>,
     conflicts: VecDeque<Instant>,
 }
 
 impl Reassembler {
-    pub fn new(mtu: usize, budget: Arc<GlobalBudget>) -> Self {
+    pub fn new(link: LinkBudget, budget: Arc<GlobalBudget>) -> Self {
         Self {
-            mtu,
+            link,
             budget,
             partials: Vec::new(),
             conflicts: VecDeque::new(),
@@ -159,7 +239,7 @@ impl Reassembler {
     }
 
     pub fn push(&mut self, frame: &[u8], now: Instant) -> PushOutcome {
-        if frame.len() < HEADER || frame.len() > (self.mtu - 3).min(ATTRIBUTE_LIMIT) {
+        if frame.len() < HEADER || frame.len() > self.link.attribute() {
             return self.discard(DiscardReason::FrameSize);
         }
         let index = frame[0] & 0x7f;
@@ -194,7 +274,7 @@ impl Reassembler {
         let payload = frame.len() - HEADER;
         let partial = &self.partials[position];
         let remaining = partial.total - partial.bytes.len();
-        let chunk = (self.mtu - 3).min(ATTRIBUTE_LIMIT) - HEADER;
+        let chunk = self.link.payload();
         let ordered = partial.next_index == index && (index == 0 || length == 0);
         let valid_size = if last {
             payload == remaining
