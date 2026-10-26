@@ -1,0 +1,241 @@
+{
+  "platform": "macos",
+  "poc_result": "PASS",
+  "formal_otp23_acceptance": false,
+  "reason": "working PoC evidence only: browser-level CDP connection remains and native-messaging liveness exemption not comprehensively excluded (not formal acceptance)",
+  "meta": {
+    "platform": "macos",
+    "flavour": "plain",
+    "started_utc": "2026-10-26T01:02:41Z",
+    "browser_version": {
+      "product": "Chrome/155.0.8059.86",
+      "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+    },
+    "chrome_browser_pid": 62881,
+    "owned_host_pid": 62905,
+    "cmd_wrapper_pid": null,
+    "schedule_utc": "2026-10-26T01:02:48Z",
+    "timer_due_utc": "2026-10-26T01:12:58Z",
+    "detached_utc": "2026-10-26T01:02:48Z",
+    "reattached_utc": "2026-10-26T01:13:18Z",
+    "finished_utc": "2026-10-26T01:13:19Z",
+    "timer_ms": 610000,
+    "min_elapsed_ms": 600000,
+    "detach_period_s": 630,
+    "timer_clamped": {
+      "handle": "d41898e3",
+      "extra_ms": 219,
+      "note": "state read after connector CDP re-attachment"
+    },
+    "hidden_probes": {
+      "pre_detach": "hidden",
+      "at_send_per_handle": {
+        "1f5b2a8c572ab67c": "hidden",
+        "d41898e3ed905e6e": "hidden"
+      },
+      "after_reattach": "hidden"
+    },
+    "hashes": {
+      "expected_response_sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+      "record_bytes": 4096,
+      "actual_response_sha256_per_handle": {
+        "1f5b2a8c": {
+          "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+          "byte_exact": true
+        },
+        "d41898e3": {
+          "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+          "byte_exact": true
+        }
+      }
+    },
+    "warmup": {
+      "1f5b2a8c": {
+        "seed": 41,
+        "polls": 2,
+        "notify_wait_s": 0.506,
+        "sha256": "1cef2c355bfed99b4f4edfcf5f41021ca6d45672b07e2e38743cefa284c9c853",
+        "byte_exact": true
+      },
+      "d41898e3": {
+        "seed": 53,
+        "polls": 2,
+        "notify_wait_s": 0.507,
+        "sha256": "bf32170537fcd1c7453d22941ddf6c7f627bbb3e5b1537932d3245b4eb6eea67",
+        "byte_exact": true
+      }
+    },
+    "send_replies": {
+      "1f5b2a8c572ab67c": {
+        "type": "sent",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      },
+      "d41898e3ed905e6e": {
+        "type": "sent",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      }
+    },
+    "message_events": [
+      {
+        "type": "message",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      },
+      {
+        "type": "message",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      }
+    ],
+    "result_at_first_read": true,
+    "reattachment_may_have_woken_page": false,
+    "bound_poll_reads": 1,
+    "owned_host_pid_gone_s": 0.01,
+    "surviving_host_processes_after_run": [],
+    "planned_wait_s": 630,
+    "diagnostic_short_run": false,
+    "host_trace_log": "evidence/macos-poc-background.trace.log"
+  },
+  "cases": [
+    {
+      "id": "ENV-1",
+      "title": "Stable Chrome + fixed-id unpacked extension + connector page + host trace log",
+      "result": "PASS",
+      "detail": {
+        "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+        "connector_target": "2D34542C91308C893A1552CDC9FA71CA"
+      },
+      "seconds": 0.74
+    },
+    {
+      "id": "NMH-1",
+      "title": "hello over registered plain host behind external cmd wrapper",
+      "result": "PASS",
+      "detail": {
+        "host_pid": 62905,
+        "wrapper_pid": null,
+        "ancestry": [
+          {
+            "ProcessId": 62881,
+            "Name": "Google",
+            "CommandLine": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-wpmv5lw6 --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+          },
+          {
+            "ProcessId": 62876,
+            "Name": "Python",
+            "CommandLine": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python scripts/poc_background.py --flavour plain --out evidence/macos-poc-background.json"
+          },
+          {
+            "ProcessId": 62870,
+            "Name": "zsh",
+            "CommandLine": "/bin/zsh -c source %HOME%/.claude/shell-snapshots/snapshot-zsh-1792976560203-qyvuyz.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd %HOME%/homepc/work/veles-ble-poc/native-bridge/feasibility || exit 1\\012python3 -m unittest discover -s sc"
+          },
+          {
+            "ProcessId": 60415,
+            "Name": "claude",
+            "CommandLine": "claude bg-spare --bg-spare /tmp/cc-daemon-501/7d1ee9f1/spare/8639075e.claim.sock"
+          },
+          {
+            "ProcessId": 60408,
+            "Name": "claude",
+            "CommandLine": "claude bg-pty-host --bg-pty-host /tmp/cc-daemon-501/7d1ee9f1/spare/8639075e.pty.sock 200 50 -- %HOME%/.local/share/claude/versions/2.1.310 --bg-spare /tmp/cc-daemon-501/7d1ee9f1/spare/8639075e.claim.sock"
+          },
+          {
+            "ProcessId": 50259,
+            "Name": "claude",
+            "CommandLine": "%HOME%/.local/bin/claude daemon run"
+          }
+        ]
+      },
+      "seconds": 0.26
+    },
+    {
+      "id": "PH-2",
+      "title": "Two physical phones: scan, connect, stop scan, clear events",
+      "result": "PASS",
+      "detail": {
+        "phones": 2,
+        "scan_stopped": true,
+        "events_cleared": true
+      },
+      "seconds": 5.45
+    },
+    {
+      "id": "PH-3",
+      "title": "Pre-idle warmup: 4096-byte record both handles, distinct seeds, byte-verified",
+      "result": "PASS",
+      "detail": {
+        "warmup_sends": 2,
+        "seeds": [
+          41,
+          53
+        ],
+        "timeout_s": 12,
+        "note": "foreground pre-idle; async notify collected across bounded polls; scheduled record keeps seed 17"
+      },
+      "seconds": 1.02
+    },
+    {
+      "id": "BG-1",
+      "title": "Schedule dual-send timer; about:blank; connector hidden",
+      "result": "PASS",
+      "detail": {
+        "scheduled_at_ms": 6915.800000011921,
+        "timer_ms": 610000,
+        "connector_hidden_pre_detach": "hidden"
+      },
+      "seconds": 0.06
+    },
+    {
+      "id": "BG-2",
+      "title": "Detach connector session; detached wait without connector CDP traffic",
+      "result": "PASS",
+      "detail": {
+        "connector_session_detached": true,
+        "browser_connection": "open",
+        "wait_s": 630,
+        "no_connector_cdp_traffic_during_wait": true
+      },
+      "seconds": 630.01
+    },
+    {
+      "id": "BG-3",
+      "title": "Reattach: two sent replies, byte-exact records, hidden, >= min elapsed",
+      "result": "PASS",
+      "detail": {
+        "elapsed_ms_from_schedule": {
+          "1f5b2a8c572ab67c": 610206,
+          "d41898e3ed905e6e": 610219
+        },
+        "records": {
+          "1f5b2a8c": {
+            "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+            "byte_exact": true
+          },
+          "d41898e3": {
+            "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+            "byte_exact": true
+          }
+        },
+        "message_events_seen": 2
+      },
+      "seconds": 0.02
+    },
+    {
+      "id": "NMH-2",
+      "title": "shutdown; owned host pid gone",
+      "result": "PASS",
+      "detail": {
+        "shutdown_reply": "shutdown_complete",
+        "owned_pid_gone_s": 0.01
+      },
+      "seconds": 0.01
+    }
+  ]
+}

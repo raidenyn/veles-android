@@ -35,6 +35,22 @@ windows = { version = "=0.62.2", features = [
 ] }
 windows-future = "=0.3.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# CoreBluetooth transport for the macOS backend (`src/macos.rs`). `Characteristic::max_write_len()`
+# on macOS is `maximumWriteValueLengthForType(WithoutResponse)` — the only negotiated-size signal
+# CoreBluetooth exposes; it feeds the inferred effective-MTU policy in `macos_map.rs`. The
+# `serde` feature is required because `DeviceId` is opaque and only round-trips through its
+# uuid-string serde form.
+bluest = { version = "=0.6.9", features = ["serde"] }
+# Read-only `CBManager::authorization_class()` for trace/classification (bluest exposes no public
+# authorization API). Same version bluest 0.6.9 resolves, so one crate instance is linked.
+objc2-core-bluetooth = { version = "=0.3.2" }
+# Same `futures-lite` requirement line as bluest 0.6.9 so both depend on one crate instance.
+futures-lite = "=1.13.0"
+# Worker/actor runtime for scan/link tasks; timers bound every OS wait (no I/O driver).
+# `macros` is required by `tokio::select!` in `src/macos.rs`.
+tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "time", "sync", "macros"] }
+
 [dependencies.tauri]
 version = "=2.6.0"
 default-features = false

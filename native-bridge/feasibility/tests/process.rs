@@ -177,7 +177,15 @@ fn hello_returns_ready_and_stdin_eof_exits_zero_closing_stdout() {
     let ready = host.hello();
     assert_eq!(ready["type"], "ready");
     assert_eq!(ready["api_version"], 1);
-    assert_eq!(ready["platform"], "windows");
+    assert_eq!(
+        ready["platform"],
+        if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "windows"
+        },
+        "the sim-host reports the platform it was compiled for"
+    );
     assert_eq!(ready["capabilities"], json!(["veles_record_v1"]));
     assert!(
         ready["bridge_version"]

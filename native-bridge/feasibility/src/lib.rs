@@ -10,6 +10,9 @@ pub mod core;
 pub mod fragment;
 pub mod framing;
 pub mod identity;
+#[cfg(target_os = "macos")]
+pub mod macos;
+pub mod macos_map;
 pub mod outqueue;
 pub mod protocol;
 pub mod runtime;

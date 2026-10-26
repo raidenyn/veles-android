@@ -1,0 +1,93 @@
+{
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "%HOME%/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+  "host_binary": "%HOME%/homepc/work/veles-ble-poc/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "host_binary_sha256": "a42900abd1006e693ee2af64ac23b13b749c03ba6bf35395adc3491699edca1e",
+  "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "sizes": [
+    4,
+    178,
+    179,
+    180,
+    505,
+    506,
+    507,
+    508,
+    509,
+    510,
+    511,
+    1015,
+    1016,
+    1017,
+    4095,
+    4096
+  ],
+  "repeat_4096": 3,
+  "diag_scan_only": true,
+  "started_utc": "2026-10-26T00:56:21+00:00",
+  "source_revision": null,
+  "macos_version": "26.5.2",
+  "python_version": "3.9.6",
+  "results": [
+    {
+      "case": "host-launched-headless",
+      "pid": 60991,
+      "ancestor_chain": [
+        {
+          "pid": 60935,
+          "comm": "Google",
+          "args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-rv9o2vqp --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+        },
+        {
+          "pid": 60925,
+          "comm": "Python",
+          "args": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python scripts/macos_poc.py --diag-scan-only --out evidence/macos-poc-authorized-scan.json"
+        },
+        {
+          "pid": 60924,
+          "comm": "zsh",
+          "args": "/bin/zsh -c source %HOME%/.claude/shell-snapshots/snapshot-zsh-1792976180384-q7sdud.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd %HOME%/homepc/work/veles-ble-poc/native-bridge/feasibility || exit 1\\012python3 scripts/macos_poc.py --dia"
+        },
+        {
+          "pid": 82424,
+          "comm": "claude",
+          "args": "claude bg-spare --bg-spare /tmp/cc-daemon-501/7d1ee9f1/spare/4c6be8cc.claim.sock"
+        },
+        {
+          "pid": 82416,
+          "comm": "claude",
+          "args": "claude bg-pty-host --bg-pty-host /tmp/cc-daemon-501/7d1ee9f1/spare/4c6be8cc.pty.sock 200 50 -- %HOME%/.local/share/claude/versions/2.1.310 --bg-spare /tmp/cc-daemon-501/7d1ee9f1/spare/4c6be8cc.claim.sock"
+        },
+        {
+          "pid": 50259,
+          "comm": "claude",
+          "args": "%HOME%/.local/bin/claude daemon run"
+        }
+      ],
+      "on_screen_windows": []
+    },
+    {
+      "case": "diagnostic-scan",
+      "devices_found": 2,
+      "label_lengths": [
+        17
+      ]
+    },
+    {
+      "case": "shutdown",
+      "mode": "diag"
+    }
+  ],
+  "result": "PASS",
+  "pre_existing_host_processes_untouched": [],
+  "chrome_version": "Chrome/155.0.8059.86",
+  "chrome_pid": 60935,
+  "ready": {
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "platform": "macos",
+    "api_version": 1
+  },
+  "host_pid": 60991,
+  "scan_handle_seen": "b163fe473bea1bbb",
+  "finished_utc": "2026-10-26T00:56:28+00:00"
+}

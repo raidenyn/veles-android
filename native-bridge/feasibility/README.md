@@ -1,5 +1,7 @@
 # OTP-23 feasibility harness (disposable)
 
+**Desktop handoff:** [Windows and macOS working PoC](../../../docs/desktop-ble-poc.md).
+
 **Working Windows PoC:** see [`docs/windows-ble-poc.md`](../../../docs/windows-ble-poc.md)
 for the opt-in capped-fragment Android build, plain-Rust host, tested physical
 matrix and handoff. Historical no-go results below describe the original frozen
@@ -58,3 +60,30 @@ check. The separate feasibility CI checks Rust on Linux and Windows; production
 native-bridge Prettier/ESLint exclude this disposable subtree and raw evidence.
 Use `scripts/isolated-device.gradle` and the opt-in Android instrumentation fixture
 as described in the evidence document to preserve existing phone installations.
+
+## macOS PoC
+
+The plain host selects a real CoreBluetooth backend on macOS. Build with Rust
+1.98.0, then run from this directory:
+
+```sh
+cargo build --locked --release --bin otp23-host
+bash scripts/macos-package.sh       # GUI/Aqua context; existing Apple Development identity
+bash scripts/macos-register.sh
+python3 scripts/macos_poc.py --diag-scan-only --out evidence/macos-poc-scan.json
+python3 scripts/macos_poc.py --out evidence/macos-poc-physical.json
+python3 scripts/poc_background.py --flavour plain --out evidence/macos-poc-background.json
+bash scripts/macos-unregister.sh
+```
+
+Enable Bluetooth access in macOS Privacy & Security when required, then retry;
+the scripts never reset or bypass TCC. Do not use ad-hoc signing for the tested
+bundle identity. SSH signing may lack keychain access; the same packaging script
+works in the GUI user session. The phones can remain connected to the PC by USB;
+only their nearby BLE advertising is needed by the Mac.
+
+CoreBluetooth reports maximum write length, not negotiated ATT MTU. The host's
+effective MTU is explicitly inferred from that length; 512-byte writes yield an
+effective 515 and the shared 508-byte capped record payload. Exact-origin host
+manifests are copied only into the owned disposable Chrome profile for testing.
+See the desktop handoff for evidence, provenance and remaining production limits.

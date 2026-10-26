@@ -75,7 +75,11 @@ pub fn run_process(args: &[String], flavour: Flavour) -> i32 {
     {
         runtime::run(crate::winrt::WinrtBackend::new, io, config)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        runtime::run(crate::macos::MacosBackend::new, io, config)
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         runtime::run(crate::unsupported::UnsupportedBackend::new, io, config)
     }

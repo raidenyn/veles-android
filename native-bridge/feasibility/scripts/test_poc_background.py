@@ -175,6 +175,31 @@ class BoundedPollHelper(unittest.TestCase):
         self.assertLessEqual(sum(box["sleeps"]), POLL_BOUND_MS / 1000 + 30)  # bounded even with a stalled page clock
 
 
+class TracePathAbsolute(unittest.TestCase):
+    def test_relative_out_in_missing_nested_dir(self):
+        import os
+        namespace = {"pathlib": pathlib}
+        exec(compile(fn("prepare_trace_path"), "<prepare_trace_path>", "exec"), namespace)
+        prepare = namespace["prepare_trace_path"]
+        old = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp).resolve()
+            os.chdir(tmp)
+            try:
+                trace = prepare("a/b/poc.json")
+                self.assertTrue(trace.is_absolute())
+                self.assertEqual(trace, tmp / "a" / "b" / "poc.trace.log")
+                self.assertTrue(trace.parent.is_dir())
+                trace.write_text("old")
+                neighbor = trace.parent / "other.trace.log"
+                neighbor.write_text("keep")
+                self.assertEqual(prepare("a/b/poc.json"), trace)
+                self.assertFalse(trace.exists())
+                self.assertEqual(neighbor.read_text(), "keep")
+            finally:
+                os.chdir(old)
+
+
 class UntouchedContract(unittest.TestCase):
     def test_constants_and_630s_detached_wait(self):
         assigns = {}
@@ -208,8 +233,9 @@ class UntouchedContract(unittest.TestCase):
 class DiagnosticsForensicsWarmup(unittest.TestCase):
     def test_host_trace_log_wired_into_chrome_run(self):
         run_src = fn("run")
-        self.assertIn(".trace.log", run_src)
-        self.assertIn("unlink(missing_ok=True)", run_src)
+        self.assertIn("prepare_trace_path(args.out)", run_src)
+        self.assertIn(".trace.log", fn("prepare_trace_path"))
+        self.assertIn("unlink(missing_ok=True)", fn("prepare_trace_path"))
         self.assertIn("VELES_OTP23_TRACE", fn("ph_env"))
 
     def test_send_replies_keep_safe_fields_never_payload(self):

@@ -4,6 +4,7 @@ If window.pocBackground is absent at the first read (the hidden timer may fire a
 Forensics: VELES_OTP23_TRACE is set to <out>.trace.log (initialized, unlinked before launch, recorded in meta.host_trace_log), the stored send replies keep the safe fields type/code/stage/recoverability (never payload bytes) and are dumped into meta on failure, and a pre-idle warmup sends a 4096-byte synthetic record to BOTH handles with distinct seeds, then polls otp23.drainEvents() for up to 12 s for the asynchronous response (empty drains are NOT failures -- the host notifies after the GATT write completes; timeout/disconnect/error/duplicates/wrong bytes are) and verifies the actual message bytes per handle before anything is scheduled.
 Optional --diagnostic-delay-seconds N (positive integer, default None) shrinks the timer to N*1000 ms, the detached wait to N+5 s and the minimum elapsed to N*1000 ms, recording diagnostic_short_run=true -- a diagnostic run NEVER implies ten-minute acceptance. Defaults stay 610000/630/600000.
 Usage: python scripts/poc_background.py --flavour plain --out evidence/poc-background.json [--diagnostic-delay-seconds N]
+macOS (sys.platform == darwin) uses macos_background_support.py; the cmd.exe wrapper requirement is Windows-only.
 """
 
 import argparse
@@ -15,7 +16,12 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-import chrome_validate as cv
+if sys.platform == "darwin":
+    import macos_background_support as cv
+    PLATFORM, WRAPPER = cv.PLATFORM, None
+else:
+    import chrome_validate as cv
+    PLATFORM, WRAPPER = "windows", "cmd.exe"
 
 FIXED_ID = "gmekhgkipjkikmaadaajljinkgfielei"
 TIMER_MS, WAIT_S, MIN_MS, CLAMP_EXTRA_MS = 610_000, 630, 600_000, 60_000
@@ -114,19 +120,26 @@ def positive_int(text):
     return value
 
 
+def prepare_trace_path(out):
+    """Absolute trace path (native Chrome child has another cwd); parent created, stale own trace removed."""
+    trace_path = pathlib.Path(out).resolve().with_suffix(".trace.log")
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.unlink(missing_ok=True)
+    return trace_path
+
+
 def run(args):
     exe = cv.EXE_NAME["plain"]
     diag = getattr(args, "diagnostic_delay_seconds", None)
-    trace_path = pathlib.Path(args.out).with_suffix(".trace.log")
-    trace_path.unlink(missing_ok=True)
-    meta = {"flavour": "plain", "started_utc": utc(), "browser_version": None, "chrome_browser_pid": None,
+    trace_path = prepare_trace_path(args.out)
+    meta = {"platform": PLATFORM, "flavour": "plain", "started_utc": utc(), "browser_version": None, "chrome_browser_pid": None,
             "owned_host_pid": None, "cmd_wrapper_pid": None, "schedule_utc": None, "timer_due_utc": None,
             "detached_utc": None, "reattached_utc": None, "finished_utc": None,
             "timer_ms": None, "min_elapsed_ms": None, "detach_period_s": None, "timer_clamped": None,
             "hidden_probes": {}, "hashes": {}, "warmup": None, "send_replies": None, "message_events": None,
             "result_at_first_read": None, "reattachment_may_have_woken_page": None, "bound_poll_reads": None,
             "owned_host_pid_gone_s": None, "surviving_host_processes_after_run": None}
-    result = {"poc_result": "FAIL", "formal_otp23_acceptance": False, "reason": None, "meta": meta, "cases": []}
+    result = {"platform": PLATFORM, "poc_result": "FAIL", "formal_otp23_acceptance": False, "reason": None, "meta": meta, "cases": []}
     chrome, st = None, {"hosts_before": {p["ProcessId"] for p in cv.host_processes(exe)},
                         "timer_ms": diag * 1000 if diag else TIMER_MS, "wait_s": diag + 5 if diag else WAIT_S,
                         "min_ms": diag * 1000 if diag else MIN_MS, "trace_path": str(trace_path)}
@@ -169,9 +182,9 @@ def run(args):
         fresh = [p for p in cv.host_processes(exe) if p["ProcessId"] not in before]
         cv.expect(len(fresh) == 1, f"expected exactly one new host process, saw {fresh}")
         chain = cv.ancestry(fresh[0]["ProcessId"])
-        wrapper = chain[0] if chain and chain[0]["Name"].lower() == "cmd.exe" else None
-        cv.expect(wrapper and chrome.proc.pid in [p["ProcessId"] for p in chain], f"host ancestry: {chain}")
-        meta.update({"owned_host_pid": fresh[0]["ProcessId"], "cmd_wrapper_pid": wrapper["ProcessId"]}); st["owned_pid"] = meta["owned_host_pid"]
+        wrapper = chain[0] if WRAPPER and chain and chain[0]["Name"].lower() == WRAPPER else None
+        cv.expect((wrapper or not WRAPPER) and chrome.proc.pid in [p["ProcessId"] for p in chain], f"host ancestry: {chain}")
+        meta.update({"owned_host_pid": fresh[0]["ProcessId"], "cmd_wrapper_pid": wrapper["ProcessId"] if wrapper else None}); st["owned_pid"] = meta["owned_host_pid"]
         return {"host_pid": st["owned_pid"], "wrapper_pid": meta["cmd_wrapper_pid"], "ancestry": chain}
 
     def ph_phones():
