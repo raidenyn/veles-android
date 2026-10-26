@@ -14,7 +14,33 @@ const state = {
     disconnect: null, // { at, message } once the port closed
     opened: null,
     received: 0, // unsolicited message events seen
+    eventSeq: 0, // receipt sequence number (strict background validation)
 };
+
+// Visibility/focus history of THIS page, preconfigured at load so it needs no DevTools client while
+// the strict background measurement runs (listeners only: no timers, intervals, audio or sockets).
+// Bounded: once full it stops recording and says so (truncated), it never drops silently.
+const HISTORY_LIMIT = 2000;
+const history = {
+    token: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    installed_wall: Date.now(),
+    initial: null,
+    events: [],
+    truncated: false,
+};
+
+function historyState() {
+    const focused = typeof document.hasFocus === "function" ? document.hasFocus() : null;
+    return { wall: Date.now(), visibility: document.visibilityState ?? null, focused };
+}
+
+function recordHistory(kind) {
+    if (history.events.length >= HISTORY_LIMIT) {
+        history.truncated = true;
+        return;
+    }
+    history.events.push({ seq: history.events.length, kind, ...historyState() });
+}
 
 function now() {
     return Math.round(performance.now());
@@ -29,6 +55,7 @@ function receipt(message) {
         wall: Date.now(),
         visibility: document.visibilityState,
         focused: document.hasFocus(),
+        seq: state.eventSeq++,
         message,
     };
 }
@@ -175,4 +202,20 @@ window.otp23 = {
             orphan_correlated: !!orphan_correlated,
         })),
 };
+history.initial = historyState();
+if (typeof document.addEventListener === "function" && typeof window.addEventListener === "function") {
+    document.addEventListener("visibilitychange", () => recordHistory("visibilitychange"));
+    window.addEventListener("focus", () => recordHistory("focus"));
+    window.addEventListener("blur", () => recordHistory("blur"));
+    document.addEventListener("freeze", () => recordHistory("freeze"));
+    document.addEventListener("resume", () => recordHistory("resume"));
+}
+window.otp23.visibilityHistory = () => ({
+    token: history.token,
+    installed_wall: history.installed_wall,
+    initial: history.initial,
+    events: history.events.map((e) => ({ ...e })),
+    truncated: history.truncated,
+    limit: HISTORY_LIMIT,
+});
 setStatus("ready");

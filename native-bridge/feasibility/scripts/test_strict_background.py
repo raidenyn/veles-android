@@ -47,7 +47,23 @@ def good_evidence(scenario="cold"):
                            {"pushes": [{"queued": True, "sha256": WANT, "bytes": 4096,
                                         "subscribed_at_epoch_ms": 5, "fired_at_epoch_ms": 690_300,
                                         "configured_delay_ms": 690_000}]}],
-        "cleanup": {"shutdown_complete": True, "surviving_hosts": []},
+        "cleanup": {"shutdown_complete": True, "chrome_closed": True, "surviving_hosts": [], "errors": []},
+        "diagnostic_short": False,
+        "chrome": {"args": ["/chrome", "--user-data-dir=/tmp/p", "--remote-debugging-port=0", "--no-first-run"],
+                   "args_source": "proc.args"},
+        "history_tokens": {"connector": "tok-c", "ordinary_tab": "tok-o"},
+        "history": {
+            "connector": {"token": "tok-c", "truncated": False,
+                          "initial": {"wall": (closed_wall - 100) * 1000, "visibility": "hidden", "focused": False},
+                          "events": [{"seq": 0, "kind": "visibilitychange", "wall": (closed_wall - 50) * 1000,
+                                      "visibility": "hidden", "focused": False}]},
+            "ordinary_tab": {"token": "tok-o", "truncated": False,
+                             "initial": {"wall": (closed_wall - 60) * 1000, "visibility": "hidden", "focused": False},
+                             "events": [{"seq": 0, "kind": "visibilitychange", "wall": (closed_wall - 30) * 1000,
+                                         "visibility": "visible", "focused": False},
+                                        {"seq": 1, "kind": "focus", "wall": (closed_wall - 29) * 1000,
+                                         "visibility": "visible", "focused": True}]},
+        },
     }
 
 
@@ -186,6 +202,165 @@ class Verdict(unittest.TestCase):
         self.assertEqual(status(e, "ST-10"), "FAIL")
 
 
+def bad_event(wall_offset_s, kind, visibility, focused, seq):
+    return {"seq": seq, "kind": kind, "wall": (1_000_000.0 + wall_offset_s) * 1000,
+            "visibility": visibility, "focused": focused}
+
+
+class History(unittest.TestCase):
+    def test_interrupted_ordinary_focus_fails(self):
+        e = good_evidence()
+        e["history"]["ordinary_tab"]["events"] += [bad_event(200, "blur", "visible", False, 2),
+                                                   bad_event(201, "focus", "visible", True, 3)]
+        v = verdict(e)["checks"]["ST-12"]
+        self.assertEqual(v["status"], "FAIL")
+        self.assertEqual(len(v["actual"]["interruptions"]), 1, "a blur that is later undone is still an interruption")
+
+    def test_connector_becoming_visible_mid_interval_fails(self):
+        e = good_evidence()
+        e["history"]["connector"]["events"] += [bad_event(300, "visibilitychange", "visible", False, 1),
+                                                bad_event(310, "visibilitychange", "hidden", False, 2)]
+        self.assertEqual(status(e, "ST-11"), "FAIL")
+
+    def test_connector_focus_mid_interval_fails(self):
+        e = good_evidence()
+        e["history"]["connector"]["events"].append(bad_event(100, "focus", "hidden", True, 1))
+        self.assertEqual(status(e, "ST-11"), "FAIL")
+
+    def test_missing_absent_or_truncated_history_fails(self):
+        for key, check in (("connector", "ST-11"), ("ordinary_tab", "ST-12")):
+            e = good_evidence()
+            del e["history"][key]
+            self.assertEqual(status(e, check), "FAIL", key)
+            e = good_evidence()
+            e["history"][key]["truncated"] = True
+            self.assertEqual(status(e, check), "FAIL", key)
+        e = good_evidence()
+        del e["history"]
+        self.assertEqual((status(e, "ST-11"), status(e, "ST-12")), ("FAIL", "FAIL"))
+
+    def test_sequence_gap_is_truncation(self):
+        e = good_evidence()
+        e["history"]["ordinary_tab"]["events"][1]["seq"] = 5
+        self.assertEqual(status(e, "ST-12"), "FAIL")
+
+    def test_missing_initial_focus_or_visibility_fails(self):
+        for field in ("focused", "visibility"):
+            e = good_evidence()
+            e["history"]["ordinary_tab"]["initial"].pop(field)
+            self.assertEqual(status(e, "ST-12"), "FAIL", field)
+        e = good_evidence()
+        e["history"]["connector"]["initial"]["focused"] = None
+        self.assertEqual(status(e, "ST-11"), "FAIL")
+
+    def test_false_ordinary_focus_at_interval_start_fails(self):
+        e = good_evidence()
+        e["history"]["ordinary_tab"]["events"].pop()
+        self.assertEqual(status(e, "ST-12"), "FAIL")
+
+    def test_events_after_the_pre_attach_cut_are_ignored_but_counted(self):
+        e = good_evidence()
+        cut = e["timeline"]["cdp_reopened_wall"]
+        e["history"]["ordinary_tab"]["events"] += [
+            {"seq": 2, "kind": "blur", "wall": (cut + 0.5) * 1000, "visibility": "visible", "focused": False}]
+        v = verdict(e)["checks"]["ST-12"]
+        self.assertEqual(v["status"], "PASS")
+        self.assertEqual(v["actual"]["events_after_cut_ignored"], 1)
+
+    def test_event_before_the_cut_is_not_ignored(self):
+        e = good_evidence()
+        cut = e["timeline"]["cdp_reopened_wall"]
+        e["history"]["ordinary_tab"]["events"].append(
+            {"seq": 2, "kind": "blur", "wall": (cut - 0.5) * 1000, "visibility": "visible", "focused": False})
+        self.assertEqual(status(e, "ST-12"), "FAIL")
+
+    def test_replaced_page_token_or_late_install_fails(self):
+        e = good_evidence()
+        e["history_tokens"]["ordinary_tab"] = "other"
+        self.assertEqual(status(e, "ST-12"), "FAIL")
+        e = good_evidence()
+        e["history"]["connector"]["initial"]["wall"] = (e["timeline"]["cdp_closed_wall"] + 1) * 1000
+        self.assertEqual(status(e, "ST-11"), "FAIL")
+
+    def test_history_interval_must_be_ten_minutes(self):
+        e = good_evidence()
+        e["timeline"]["cdp_reopened_wall"] = e["timeline"]["cdp_closed_wall"] + 599
+        self.assertEqual(status(e, "ST-11"), "FAIL")
+
+    def test_ordinary_install_script_has_no_timer_or_keepalive(self):
+        for pattern in ("setInterval", "setTimeout", "requestAnimationFrame", "Audio", "WebSocket", "RTC", "locks"):
+            self.assertNotIn(pattern, core.ORDINARY_HISTORY_JS)
+        self.assertEqual(core.scan_extension_for_exemptions({"ordinary.js": core.ORDINARY_HISTORY_JS}), [])
+
+
+class ChromeFlags(unittest.TestCase):
+    def test_clean_command_line_passes(self):
+        self.assertEqual(status(good_evidence(), "ST-13"), "PASS")
+
+    def test_exemption_flags_fail(self):
+        for flag in ("--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+                     "--disable-backgrounding-occluded-windows", "--disable-features=IntensiveWakeUpThrottling",
+                     "--disable-features=CalculateNativeWinOcclusion,TimerThrottlingForBackgroundTabs",
+                     "--enable-features=AllowFreezingBackgroundTabs", "--disable-ipc-flooding-protection"):
+            e = good_evidence()
+            e["chrome"]["args"].append(flag)
+            self.assertEqual(status(e, "ST-13"), "FAIL", flag)
+
+    def test_unrecorded_command_line_fails(self):
+        for chrome in ({}, {"args": []}, {"args": None}):
+            e = good_evidence()
+            e["chrome"] = chrome
+            self.assertEqual(status(e, "ST-13"), "FAIL")
+
+    def test_unrelated_feature_flags_do_not_trip(self):
+        e = good_evidence()
+        e["chrome"]["args"].append("--disable-features=Translate")
+        self.assertEqual(status(e, "ST-13"), "PASS")
+
+    def test_native_messaging_exemption_is_disclosed_not_claimed_excluded(self):
+        v = verdict(good_evidence())
+        self.assertTrue(v["checks"]["ST-13"]["actual"]["native_messaging_exemption_not_excluded"])
+        self.assertFalse(v["formal_otp23_acceptance"])
+
+
+class ShortRunGuard(unittest.TestCase):
+    def test_short_minimum_never_passes(self):
+        e = good_evidence()
+        e["min_background_s"] = 300
+        self.assertEqual(status(e, "ST-14"), "FAIL")
+        self.assertNotEqual(verdict(e)["strict_result"], "PASS")
+
+    def test_labelled_diagnostic_is_reported_as_diagnostic_only(self):
+        e = good_evidence()
+        e["min_background_s"] = 300
+        e["diagnostic_short"] = True
+        v = verdict(e)
+        self.assertEqual(v["strict_result"], "DIAGNOSTIC_ONLY")
+        self.assertEqual(status(e, "ST-14"), "FAIL")
+
+    def test_diagnostic_label_with_real_length_still_cannot_be_formal(self):
+        e = good_evidence()
+        e["diagnostic_short"] = True
+        self.assertNotEqual(verdict(e)["strict_result"], "PASS")
+
+    def test_cleanup_requires_chrome_closed_and_no_orphans(self):
+        e = good_evidence()
+        e["cleanup"]["chrome_closed"] = False
+        self.assertEqual(status(e, "ST-10"), "FAIL")
+
+
+class RecordAndReceipt(unittest.TestCase):
+    def test_record_hash_and_receipt_before_attach_both_required(self):
+        e = good_evidence()
+        e["events"][0]["record_sha256"] = "11" * 32
+        self.assertEqual(status(e, "ST-04"), "FAIL")
+        e = good_evidence()
+        e["events"][0]["wall"] = (e["timeline"]["cdp_reopened_wall"] + 2) * 1000
+        self.assertEqual(status(e, "ST-05"), "FAIL")
+        self.assertEqual(status(good_evidence(), "ST-04"), "PASS")
+        self.assertEqual(status(good_evidence(), "ST-05"), "PASS")
+
+
 class Helpers(unittest.TestCase):
     def test_idle_deadline_waits_for_the_last_phone_plus_grace(self):
         self.assertEqual(core.idle_deadline_monotonic({"a": 10.0, "b": 25.0}, 690, 30), 745.0)
@@ -253,9 +428,82 @@ class DriverStructure(unittest.TestCase):
         reattach = self.fn("ph_reattach")
         self.assertLess(reattach.index("/json/list"), reattach.index("Cdp(WebSocket"))
 
+    def test_histories_are_installed_before_close_and_read_after_attach(self):
+        bg, reattach = self.fn("ph_background"), self.fn("ph_reattach")
+        self.assertLess(bg.index("ORDINARY_HISTORY_JS"), bg.index("chrome.cdp.ws.close()"))
+        self.assertLess(bg.index("ORDINARY_HISTORY_JS"), bg.index("Target.activateTarget"))
+        self.assertLess(reattach.index("Cdp(WebSocket"), reattach.index("visibilityHistory"))
+        self.assertNotIn("visibilityHistory", self.fn("ph_idle"))
+        self.assertNotIn("visibilityHistory", bg, "history is collected only after the measurement")
+
+    def test_cut_time_is_taken_before_attach(self):
+        reattach = self.fn("ph_reattach")
+        self.assertLess(reattach.index('"cdp_reopened_wall"'), reattach.index("Cdp(WebSocket"))
+
+    def test_chrome_command_line_is_recorded_in_env_phase(self):
+        self.assertIn("chrome_command_line(chrome)", self.fn("ph_env"))
+
+    def test_cleanup_counts_hosts_after_chrome_close(self):
+        run = self.fn("run")
+        self.assertLess(run.index("chrome.close()"), run.index('"surviving_hosts"] = sorted'))
+
+    def test_short_runs_require_the_diagnostic_label(self):
+        self.assertIn("requires --diagnostic-short", SRC)
+
+    def test_no_process_killing_outside_the_owned_chrome(self):
+        for forbidden in ("taskkill", "pkill", "killall", "os.kill", "Stop-Process"):
+            self.assertNotIn(forbidden, SRC)
+
+    def test_phone_evidence_collection_never_raises(self):
+        def boom(*a, **k):
+            raise OSError("adb missing")
+        import json, pathlib, subprocess  # noqa: E401 - the driver imports platform CDP modules, so exec the functions alone
+        namespace = {"json": json, "pathlib": pathlib, "subprocess": subprocess, "PACKAGE": "p", "EVIDENCE_FILE": "f"}
+        for name in ("pull_phone_evidence", "collect_phone_evidence"):
+            exec(self.fn(name), namespace)
+        phone, errors = namespace["collect_phone_evidence"](["/nonexistent/file.json"], ["SER1"], "adb", boom)
+        self.assertEqual(phone, [])
+        self.assertEqual(len(errors), 2)
+        self.assertNotIn("SER1", " ".join(errors), "serials are not published")
+
     def test_driver_never_claims_acceptance(self):
         self.assertIn('"formal_otp23_acceptance": False', self.fn("run"))
         self.assertNotIn('"formal_otp23_acceptance": True', SRC)
+
+
+class InvokeWrapper(unittest.TestCase):
+    """Source guards for scripts/invoke-poc.ps1 (PowerShell is not run here)."""
+
+    PS1 = (HERE / "invoke-poc.ps1").read_text(encoding="utf-8")
+
+    def test_strict_is_allowlisted_and_existing_modes_are_kept(self):
+        self.assertIn("'physical_validate.py', 'poc_background.py', 'strict_background.py'", self.PS1)
+        self.assertIn("'--flavour', 'plain', '--out', $outAbs", self.PS1)
+        self.assertIn("--diagnostic-delay-seconds", self.PS1)
+
+    def test_strict_branch_passes_scenario_and_never_flavour(self):
+        branch = self.PS1[self.PS1.index("if ($strict) {\n            # strict_background.py has no --flavour"):]
+        branch = branch[:branch.index("} else {")]
+        self.assertIn("'--scenario', $Scenario", branch)
+        self.assertNotIn("--flavour", branch.replace("no --flavour option", ""))
+        self.assertIn("'--adb-path', $AdbPath", branch)
+        self.assertIn("'--adb', $serial", branch)
+
+    def test_scheduled_mode_keeps_limited_interactive_token_and_owned_cleanup(self):
+        self.assertIn("-LogonType Interactive -RunLevel Limited", self.PS1)
+        self.assertIn("unregister-host.ps1') -Flavour plain", self.PS1)
+        self.assertIn("poc-run-status.json", self.PS1)
+        self.assertNotIn("Stop-Process", self.PS1)
+        self.assertNotIn("taskkill", self.PS1)
+
+    def test_serials_are_validated_and_not_written_to_the_status_file(self):
+        self.assertIn("^[A-Za-z0-9._:-]{1,64}$", self.PS1)
+        self.assertIn("phone_serial_count", self.PS1)
+        self.assertIn("--adb <redacted>", self.PS1)
+
+    def test_scenario_is_required_for_strict_and_rejected_otherwise(self):
+        self.assertIn("-Scenario cold|prewarm is required", self.PS1)
+        self.assertIn("only valid with -Script strict_background.py", self.PS1)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,48 @@ def pull_phone_evidence(serial, adb="adb", runner=subprocess.run):
         return None
 
 
+def chrome_command_line(chrome):
+    """The command line Chrome was actually launched with: proc.args (Popen), else an OS query by pid."""
+    args = getattr(getattr(chrome, "proc", None), "args", None)
+    if args:
+        return [str(a) for a in args], "proc.args"
+    pid = getattr(getattr(chrome, "proc", None), "pid", None)
+    if pid is None:
+        return None, "unavailable"
+    try:
+        if PLATFORM == "windows":
+            rows = cv.powershell_json(f"Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}' | "
+                                      "Select-Object CommandLine")
+            line = rows[0].get("CommandLine") if rows else None
+            return ([line], "Win32_Process.CommandLine (single string)") if line else (None, "unavailable")
+        out = subprocess.run(["ps", "-p", str(int(pid)), "-o", "args="], capture_output=True, text=True,
+                             timeout=30).stdout.strip()
+        return ([out], "ps args (single string)") if out else (None, "unavailable")
+    except Exception:
+        return None, "unavailable"
+
+
+def collect_phone_evidence(paths, serials, adb_path, runner=subprocess.run):
+    """Never raises: every unreadable source is recorded as an error and the run keeps its evidence."""
+    phone, errors = [], []
+    for path in paths:
+        try:
+            phone.append(json.loads(pathlib.Path(path).read_text(encoding="utf-8")))
+        except Exception as error:
+            errors.append(f"phone evidence file #{len(errors) + len(phone) + 1}: {type(error).__name__}")
+    for index, serial in enumerate(serials, 1):
+        try:
+            data = pull_phone_evidence(serial, adb_path, runner)
+        except Exception as error:
+            data = None
+            errors.append(f"adb pull #{index}: {type(error).__name__}")
+        if data:
+            phone.append(data)
+        elif not errors or not errors[-1].startswith(f"adb pull #{index}"):
+            errors.append(f"adb pull #{index}: no readable evidence file")
+    return phone, errors
+
+
 def warmup_record(seed):
     data = bytearray((i + seed) & 255 for i in range(4096))
     data[:4] = b"VEL\x01"
@@ -78,11 +120,13 @@ def run(args):
     trace_path.unlink(missing_ok=True)
     result = {"platform": PLATFORM, "scenario": args.scenario, "formal_otp23_acceptance": False,
               "meta": {"started_utc": utc(), "host_trace_log": str(trace_path),
-                       "phone_delay_s": args.phone_delay_s, "min_background_s": args.min_background_s},
+                       "phone_delay_s": args.phone_delay_s, "min_background_s": args.min_background_s,
+                       "diagnostic_short": bool(args.diagnostic_short)},
               "cases": []}
     st = {"hosts_before": {p["ProcessId"] for p in cv.host_processes(exe)}, "connected_mono": {}}
     evidence = {"scenario": args.scenario, "min_background_s": args.min_background_s, "timeline": {},
-                "handles": [], "events": [], "warmup": None}
+                "handles": [], "events": [], "warmup": None, "diagnostic_short": bool(args.diagnostic_short),
+                "history": {}, "history_tokens": {}, "chrome": {}}
     chrome = None
 
     def step(case_id, title, fn):
@@ -109,6 +153,9 @@ def run(args):
                 break
             time.sleep(0.1)
         result["meta"]["browser_version"] = chrome.version.get("product")
+        argv, source = chrome_command_line(chrome)
+        evidence["chrome"] = {"args": argv, "args_source": source}
+        evidence["history_tokens"]["connector"] = chrome.js(st["session"], "otp23.visibilityHistory().token")
         files = {p.name: p.read_text(encoding="utf-8") for p in sorted(EXT_DIR.iterdir())
                  if p.suffix in (".js", ".html", ".json")}
         evidence["exemption_scan"] = {"files": sorted(files), "findings": core.scan_extension_for_exemptions(files)}
@@ -170,9 +217,15 @@ def run(args):
     def ph_background():
         """Focus an ordinary tab, prove the connector is hidden, then close EVERY DevTools client."""
         other = chrome.cdp.call("Target.createTarget", {"url": "about:blank"})["targetId"]
-        chrome.cdp.call("Target.activateTarget", {"targetId": other})
         other_session = chrome.cdp.call("Target.attachToTarget", {"targetId": other, "flatten": True})["sessionId"]
         chrome.cdp.call("Runtime.enable", session=other_session)
+        # Preconfigure the ordinary tab's visibility/focus history (listeners only) BEFORE activating it
+        # and before any DevTools client closes; it is read back only after the measurement.
+        installed = chrome.js(other_session, core.ORDINARY_HISTORY_JS)
+        cv.expect(isinstance(installed, dict) and installed.get("token"), "ordinary-tab history not installed")
+        evidence["history_tokens"]["ordinary_tab"] = installed["token"]
+        st["other_target"] = other
+        chrome.cdp.call("Target.activateTarget", {"targetId": other})
         for _ in range(40):
             hidden = chrome.js(st["session"], "document.visibilityState")
             visible = chrome.js(other_session, "document.visibilityState")
@@ -215,6 +268,11 @@ def run(args):
         chrome.cdp.call("Runtime.enable", session=session)
         st["reattach_session"] = session
         events = [e for e in chrome.js(session, "otp23.drainEvents()", timeout=120)]
+        evidence["history"]["connector"] = chrome.js(session, "otp23.visibilityHistory()")
+        other_session = chrome.cdp.call("Target.attachToTarget", {"targetId": st["other_target"],
+                                                                  "flatten": True})["sessionId"]
+        chrome.cdp.call("Runtime.enable", session=other_session)
+        evidence["history"]["ordinary_tab"] = chrome.js(other_session, core.ORDINARY_READ_JS)
         by_handle = {h[:8]: h for h in st["handles"].values()}
         for entry in events:
             message = entry["message"]
@@ -249,21 +307,31 @@ def run(args):
             if not step(case_id, title, fn):
                 break
     finally:
+        cleanup = {"shutdown_complete": bool(st.get("shutdown_done")), "chrome_closed": chrome is None,
+                   "surviving_hosts": [], "errors": []}
         try:
             if chrome and chrome.cdp is not None and st.get("reattach_session") and not st.get("shutdown_done"):
                 chrome.js(st["reattach_session"], "otp23.shutdown()", timeout=45)
-        except Exception:
-            pass
-        evidence["cleanup"] = {
-            "shutdown_complete": bool(st.get("shutdown_done")),
-            "surviving_hosts": sorted({p["ProcessId"] for p in cv.host_processes(exe)} - st["hosts_before"])}
+        except Exception as error:
+            cleanup["errors"].append(f"late shutdown: {type(error).__name__}")
         if chrome:
             try:
                 if chrome.cdp is None and chrome.proc is not None:
                     chrome.cdp = Cdp(WebSocket("127.0.0.1", st["port"], st["path"]))
-                chrome.close()
-            except Exception:
-                pass
+                chrome.close()  # kills only the Chrome process this run launched, then removes its profile
+                cleanup["chrome_closed"] = True
+            except Exception as error:
+                cleanup["errors"].append(f"chrome close: {type(error).__name__}")
+        try:
+            # Counted AFTER Chrome closed so a host that was still draining is not reported as an orphan.
+            owned = st.get("owned_pid")
+            if owned is not None:
+                cv.wait_gone(owned, 15)
+            cleanup["surviving_hosts"] = sorted({p["ProcessId"] for p in cv.host_processes(exe)} - st["hosts_before"])
+        except Exception as error:
+            cleanup["errors"].append(f"host scan: {type(error).__name__}")
+            cleanup["surviving_hosts"] = ["unknown"]
+        evidence["cleanup"] = cleanup
 
     text = trace_path.read_text(encoding="utf-8", errors="replace") if trace_path.exists() else ""
     trace = core.parse_host_trace(text)
@@ -273,10 +341,14 @@ def run(args):
         "message_wall_estimates": [] if anchor is None or trace["hello_ms"] is None else [
             round(anchor + (m["at_ms"] - trace["hello_ms"]) / 1000, 3) for m in trace["messages"]],
         "method": "driver wall time at hello + host trace ms offset since its hello line (approximate)"}
-    phone = [json.loads(pathlib.Path(p).read_text()) for p in args.phone_evidence]
-    phone += [d for d in (pull_phone_evidence(s, args.adb_path) for s in args.adb) if d]
+    phone, phone_errors = collect_phone_evidence(args.phone_evidence, args.adb, args.adb_path)
     evidence["phone_evidence"] = phone or None
-    verdict = core.evaluate(evidence)
+    evidence["phone_evidence_errors"] = phone_errors
+    try:
+        verdict = core.evaluate(evidence)
+    except Exception as error:  # keep the raw evidence even if the verdict logic itself breaks
+        verdict = {"strict_result": "FAIL", "checks": {"EVALUATE": {"status": "FAIL", "expected": "evaluate()",
+                                                                      "actual": f"{type(error).__name__}: {error}"}}}
     result.update({"strict_result": verdict["strict_result"], "checks": verdict["checks"], "evidence": evidence})
     result["meta"]["finished_utc"] = utc()
     out = pathlib.Path(args.out)
@@ -299,9 +371,15 @@ if __name__ == "__main__":
     parser.add_argument("--out", required=True)
     parser.add_argument("--phone-delay-s", type=positive_int, default=core.PHONE_DELAY_S,
                         help="must equal the phones' -e otp23_unsolicited_after_s")
-    parser.add_argument("--min-background-s", type=positive_int, default=core.MIN_BACKGROUND_S)
+    parser.add_argument("--min-background-s", type=positive_int, default=core.MIN_BACKGROUND_S,
+                        help="below 600 requires --diagnostic-short; such a run can never be a strict PASS")
+    parser.add_argument("--diagnostic-short", action="store_true",
+                        help="label the run as a short diagnostic (result DIAGNOSTIC_ONLY at best)")
     parser.add_argument("--grace-s", type=positive_int, default=core.GRACE_S)
     parser.add_argument("--adb", action="append", default=[], help="phone serial to pull evidence from (repeatable)")
     parser.add_argument("--adb-path", default="adb")
     parser.add_argument("--phone-evidence", action="append", default=[], help="previously pulled evidence JSON file")
-    sys.exit(run(parser.parse_args()))
+    parsed = parser.parse_args()
+    if parsed.min_background_s < core.MIN_BACKGROUND_S and not parsed.diagnostic_short:
+        parser.error(f"--min-background-s below {core.MIN_BACKGROUND_S} requires --diagnostic-short")
+    sys.exit(run(parsed))

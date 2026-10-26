@@ -23,7 +23,23 @@
     Register and start the temporary scheduled task instead of running directly.
 
 .PARAMETER Script
-    Python driver filename under scripts\ (allowlist: physical_validate.py, poc_background.py).
+    Python driver filename under scripts\ (allowlist: physical_validate.py, poc_background.py,
+    strict_background.py). strict_background.py has its own CLI: it takes --scenario (never --flavour),
+    so the wrapper passes `--scenario <Scenario> --out <OutPath>` plus the optional adb arguments below and
+    nothing else. The other two drivers keep their exact previous command lines.
+
+.PARAMETER Scenario
+    cold | prewarm. Required with -Script strict_background.py and rejected otherwise. The two scenarios are
+    separate runs; run them one after the other, never combined.
+
+.PARAMETER AdbPath
+    Optional adb executable for strict_background.py (--adb-path). Quoted as one argument; must not contain
+    a double quote.
+
+.PARAMETER PhoneSerials
+    Optional comma-separated adb serials (one --adb each) the phones are attached to on THIS machine; the
+    status file records only the count, never the serials. Safe characters only (A-Z a-z 0-9 . _ : -).
+    Passed as one string because PowerShell -File does not bind comma lists to string arrays.
 
 .PARAMETER OutPath
     Evidence output path handed to the driver's --out (default evidence\poc-physical.json;
@@ -41,15 +57,32 @@
 [CmdletBinding()]
 param(
     [switch]$Schedule,
-    [ValidateSet('physical_validate.py', 'poc_background.py')][string]$Script = 'physical_validate.py',
+    [ValidateSet('physical_validate.py', 'poc_background.py', 'strict_background.py')][string]$Script = 'physical_validate.py',
     [ValidateNotNullOrEmpty()][string]$OutPath = 'evidence/poc-physical.json',
     [string]$TaskName = '',
-    [ValidateRange(0, 3600)][int]$DiagnosticDelaySeconds = 0
+    [ValidateRange(0, 3600)][int]$DiagnosticDelaySeconds = 0,
+    [ValidateSet('', 'cold', 'prewarm')][string]$Scenario = '',
+    [string]$AdbPath = '',
+    [string]$PhoneSerials = ''
 )
 
 $ErrorActionPreference = 'Stop'
 if ($DiagnosticDelaySeconds -and $Script -ne 'poc_background.py') {
     throw '-DiagnosticDelaySeconds is only valid when -Script poc_background.py'
+}
+$strict = $Script -eq 'strict_background.py'
+if ($strict -and -not $Scenario) { throw '-Scenario cold|prewarm is required with -Script strict_background.py' }
+if (-not $strict -and ($Scenario -or $AdbPath -or $PhoneSerials)) {
+    throw '-Scenario, -AdbPath and -PhoneSerials are only valid with -Script strict_background.py'
+}
+if ($strict -and $DiagnosticDelaySeconds) { throw '-DiagnosticDelaySeconds is not valid with strict_background.py' }
+if ($AdbPath -and $AdbPath -match '["\r\n]') { throw '-AdbPath must not contain quotes or line breaks' }
+$serialList = @()
+if ($PhoneSerials) {
+    $serialList = @($PhoneSerials -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($serial in $serialList) {
+        if ($serial -notmatch '^[A-Za-z0-9._:-]{1,64}$') { throw 'a phone serial contains characters outside A-Za-z0-9._:-' }
+    }
 }
 $root = Split-Path -Parent $PSScriptRoot
 if ($TaskName -and $TaskName -notmatch '^[A-Za-z0-9_-]{0,64}$') {
@@ -58,6 +91,7 @@ if ($TaskName -and $TaskName -notmatch '^[A-Za-z0-9_-]{0,64}$') {
 $taskFullName = 'Veles-OTP23-PoC' + $TaskName
 $evidencePath = Join-Path $root 'evidence'
 New-Item -ItemType Directory -Force -Path $evidencePath | Out-Null
+if ($strict -and -not $PSBoundParameters.ContainsKey('OutPath')) { $OutPath = "evidence/strict-$Scenario.json" }
 $outAbs = if ([System.IO.Path]::IsPathRooted($OutPath)) { $OutPath } else { Join-Path $root $OutPath }
 $statusPath = Join-Path $evidencePath 'poc-run-status.json'
 $transcriptPath = Join-Path $evidencePath 'tmp-poc-transcript.txt'
@@ -66,6 +100,11 @@ if ($Schedule) {
     $inner = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Script {1} -OutPath "{2}"' -f $PSCommandPath, $Script, $outAbs
     if ($TaskName) { $inner += " -TaskName $TaskName" }
     if ($DiagnosticDelaySeconds) { $inner += " -DiagnosticDelaySeconds $DiagnosticDelaySeconds" }
+    if ($strict) {
+        $inner += " -Scenario $Scenario"
+        if ($AdbPath) { $inner += ' -AdbPath "{0}"' -f $AdbPath }
+        if ($serialList.Count) { $inner += ' -PhoneSerials "{0}"' -f ($serialList -join ',') }
+    }
     try {
         $action = New-ScheduledTaskAction -Execute (Join-Path $env:windir 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument $inner -WorkingDirectory $root
         $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
@@ -96,7 +135,14 @@ try {
     & (Join-Path $PSScriptRoot 'register-host.ps1') -Flavour plain -ExePath (Join-Path $root 'target\release\otp23-host.exe')
     Push-Location -LiteralPath $root
     try {
-        $pyArgs = @((Join-Path 'scripts' $Script), '--flavour', 'plain', '--out', $outAbs)
+        if ($strict) {
+            # strict_background.py has no --flavour option; it always uses the registered plain host.
+            $pyArgs = @((Join-Path 'scripts' $Script), '--scenario', $Scenario, '--out', $outAbs)
+            if ($AdbPath) { $pyArgs += @('--adb-path', $AdbPath) }
+            foreach ($serial in $serialList) { $pyArgs += @('--adb', $serial) }
+        } else {
+            $pyArgs = @((Join-Path 'scripts' $Script), '--flavour', 'plain', '--out', $outAbs)
+        }
         if ($DiagnosticDelaySeconds) { $pyArgs += @('--diagnostic-delay-seconds', $DiagnosticDelaySeconds) }
         & python @pyArgs
         $code = $LASTEXITCODE
@@ -110,10 +156,17 @@ try {
 } finally {
     try { & (Join-Path $PSScriptRoot 'unregister-host.ps1') -Flavour plain } catch { Write-Warning "teardown: $($_.Exception.Message)" }
     $command = "python scripts/$Script --flavour plain --out $outAbs"
+    if ($strict) {
+        $command = "python scripts/$Script --scenario $Scenario --out $outAbs"
+        if ($AdbPath) { $command += ' --adb-path <set>' }
+        if ($serialList.Count) { $command += ' --adb <redacted> x' + $serialList.Count }
+    }
     if ($DiagnosticDelaySeconds) { $command += " --diagnostic-delay-seconds $DiagnosticDelaySeconds" }
     $status = [ordered]@{
         script                    = $Script
-        flavour                   = 'plain'
+        flavour                   = if ($strict) { $null } else { 'plain' }
+        scenario                  = if ($strict) { $Scenario } else { $null }
+        phone_serial_count        = $serialList.Count
         diagnostic_delay_seconds  = $DiagnosticDelaySeconds
         task_name                 = $taskFullName
         command                   = $command

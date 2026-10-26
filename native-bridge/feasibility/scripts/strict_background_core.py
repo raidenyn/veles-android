@@ -11,7 +11,19 @@ other timer-throttling exemption active":
   after the central subscribed, so no desktop-side timer, request or keepalive produces the event;
 * the page itself timestamps the receipt (wall clock, visibility, focus), the host trace independently
   places the emission before the driver re-attached, and the phone records hashes of what it pushed;
-* the extension carries no audio / WebRTC / socket / interval / lock / keepalive API.
+* the extension carries no audio / WebRTC / socket / interval / lock / keepalive API;
+* visibility/focus HISTORIES of both the connector and the ordinary tab are preconfigured (listeners
+  installed before the last DevTools client closes, no timers) and collected only after the measurement:
+  initial state plus timestamped visibilitychange/focus/blur events must show the connector hidden and the
+  ordinary tab visible AND focused for the whole interval, with an explicit cut time taken BEFORE the
+  re-attach (events caused by attaching are never counted);
+* the Chrome command line actually launched is recorded and must carry no throttling/backgrounding/freezing
+  exemption flag. LIMITATION (not hidden, not relaxed): this scan only proves those *flags* are absent; it
+  does not prove that no Chrome-internal exemption applies. In particular an open Native Messaging port may
+  itself be an intrinsic Chrome exemption from timer throttling/freezing. The RFC wording ("no ... other
+  timer-throttling exemption active") can therefore conflict literally with the Native Messaging transport;
+  that is surfaced here as ``native_messaging_exemption_not_excluded`` and adjudicated by the requirements
+  matrix, never quietly assumed away.
 
 The existing ``poc_background.py`` evidence (browser-level CDP attached, desktop-scheduled timers, warmed
 links) is preserved untouched and is NOT this validation. ``evaluate`` never reports acceptance itself:
@@ -27,6 +39,8 @@ UNSOLICITED_SEED = 61
 RECORD_LEN = 4096
 RECORD_TYPE_UNSOLICITED = 3
 GRACE_S = 30
+CLOCK_SKEW_S = 120
+HISTORY_KINDS = ("visibilitychange", "focus", "blur", "freeze", "resume")
 HOST_BEFORE_REATTACH_MARGIN_S = 5
 
 # APIs that are, or can act as, background-throttling exemptions or keepalives. The scan is a belt and
@@ -42,6 +56,150 @@ EXEMPTION_PATTERNS = {
     "keepalive_ping": r"\bkeepalive\b|\bkeep-alive\b|\bwakeLock\b",
     "notifications_permission": r"\bNotification\s*\.\s*requestPermission\b|chrome\s*\.\s*notifications",
 }
+
+
+# Flag names (lower case, without value) that disable or weaken background throttling / freezing /
+# occlusion handling. ``--disable-features`` / ``--enable-features`` values are scanned separately.
+BANNED_CHROME_FLAGS = (
+    "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows", "--disable-background-media-suspend",
+    "--disable-ipc-flooding-protection", "--disable-throttle-non-visible-cross-origin-iframes",
+    "--run-all-compositor-stages-before-draw",
+)
+BANNED_FEATURE_WORDS = ("throttl", "freez", "backgrounding", "occlusion", "intensivewakeup", "wakeup", "suspend",
+                        "autodiscard", "discard", "backgroundtab", "backgroundrenderer")
+
+# Installed into the ordinary tab BEFORE the last DevTools client closes. Listeners only: no timers,
+# intervals, requestAnimationFrame, audio or sockets. Returns the page token + install time.
+ORDINARY_HISTORY_JS = """(() => {
+  const state = () => ({wall: Date.now(), visibility: document.visibilityState, focused: document.hasFocus()});
+  const h = {token: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
+             installed_wall: Date.now(), initial: state(), events: [], truncated: false, limit: 2000};
+  const rec = (kind) => {
+    if (h.events.length >= h.limit) { h.truncated = true; return; }
+    h.events.push(Object.assign({seq: h.events.length, kind: kind}, state()));
+  };
+  document.addEventListener('visibilitychange', () => rec('visibilitychange'));
+  window.addEventListener('focus', () => rec('focus'));
+  window.addEventListener('blur', () => rec('blur'));
+  document.addEventListener('freeze', () => rec('freeze'));
+  document.addEventListener('resume', () => rec('resume'));
+  window.__otp23History = h;
+  return {token: h.token, installed_wall: h.installed_wall};
+})()"""
+ORDINARY_READ_JS = "(() => { const h = window.__otp23History; return h ? JSON.parse(JSON.stringify(h)) : null; })()"
+
+
+def scan_chrome_args(args):
+    """args: list of the launched Chrome argv. Returns findings for exemption flags ([] = none found).
+    None/empty args are reported as unrecorded, which the caller treats as a failure."""
+    if not args:
+        return [{"flag": None, "kind": "command_line_not_recorded"}]
+    findings = []
+    for raw in args[1:]:
+        text = str(raw)
+        if not text.startswith("--"):
+            continue
+        name, _, value = text.partition("=")
+        name = name.lower()
+        if name in BANNED_CHROME_FLAGS:
+            findings.append({"flag": text, "kind": "throttling_exemption_flag"})
+        elif name in ("--disable-features", "--enable-features", "--force-fieldtrials", "--js-flags"):
+            hit = [w for w in BANNED_FEATURE_WORDS if w in value.lower()]
+            if hit:
+                findings.append({"flag": text, "kind": "feature_override_touches_throttling", "words": hit})
+    return findings
+
+
+def _num(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def evaluate_history(history, closed_wall_s, cut_wall_s, min_s, want_visibility, want_focused,
+                     expected_token=None):
+    """Replay one page's preconfigured history over [closed_wall_s, cut_wall_s] (cut taken BEFORE attach).
+
+    Returns (status, detail). Missing/truncated/inconsistent history, a missing initial visibility or focus,
+    any state change that leaves the required state inside the interval, or a short interval FAILS."""
+    if not isinstance(history, dict):
+        return "FAIL", {"problems": ["history absent"]}
+    problems = []
+    initial, events = history.get("initial"), history.get("events")
+    if history.get("truncated"):
+        problems.append("history truncated")
+    if expected_token is not None and history.get("token") != expected_token:
+        problems.append("history token differs from the one installed before DevTools closed (page replaced)")
+    if not isinstance(initial, dict) or not _num(initial.get("wall")) \
+            or initial.get("visibility") not in ("visible", "hidden") or not isinstance(initial.get("focused"), bool):
+        problems.append("initial state missing visibility/focus/wall")
+        initial = None
+    if not isinstance(events, list):
+        problems.append("events missing")
+        events = []
+    if closed_wall_s is None or cut_wall_s is None:
+        problems.append("interval boundaries missing")
+        return "FAIL", {"problems": problems}
+    closed_ms, cut_ms = closed_wall_s * 1000.0, cut_wall_s * 1000.0
+    last_wall = initial["wall"] if initial else None
+    for index, event in enumerate(events):
+        if not isinstance(event, dict) or event.get("seq") != index:
+            problems.append(f"event {index}: sequence gap or malformed")
+            break
+        if event.get("kind") not in HISTORY_KINDS or not _num(event.get("wall")):
+            problems.append(f"event {index}: unknown kind or missing wall")
+            break
+        if event["kind"] not in ("freeze", "resume") and (
+                event.get("visibility") not in ("visible", "hidden") or not isinstance(event.get("focused"), bool)):
+            problems.append(f"event {index}: missing visibility/focus")
+            break
+        if event["kind"] == "focus" and event.get("focused") is not True \
+                or event["kind"] == "blur" and event.get("focused") is not False:
+            problems.append(f"event {index}: {event['kind']} contradicts its own focus state")
+            break
+        if last_wall is not None and event["wall"] < last_wall:
+            problems.append(f"event {index}: wall clock went backwards")
+            break
+        last_wall = event["wall"]
+    if initial and initial["wall"] > closed_ms:
+        problems.append("history installed after the last DevTools client closed")
+    if problems:
+        return "FAIL", {"problems": problems}
+
+    def ok(visibility, focused):
+        return visibility == want_visibility and focused is want_focused
+
+    state = (initial["visibility"], initial["focused"])
+    for event in events:
+        if event["wall"] > closed_ms:
+            break
+        if event["kind"] not in ("freeze", "resume"):
+            state = (event["visibility"], event["focused"])
+    in_window, interruptions, post_cut, notes = [], [], 0, []
+    if not ok(*state):
+        interruptions.append({"at": "interval start", "visibility": state[0], "focused": state[1]})
+    for event in events:
+        if event["wall"] <= closed_ms:
+            continue
+        if event["wall"] > cut_ms:
+            post_cut += 1  # caused by (or racing) the re-attach: explicitly outside the measured interval
+            continue
+        in_window.append(event["kind"])
+        if event["kind"] in ("freeze", "resume"):
+            notes.append(event["kind"])
+            continue
+        state = (event["visibility"], event["focused"])
+        if not ok(*state):
+            interruptions.append({"at_wall_ms": event["wall"], "kind": event["kind"],
+                                  "visibility": state[0], "focused": state[1]})
+    seconds = round((cut_ms - closed_ms) / 1000.0, 3)
+    if seconds < min_s:
+        problems.append(f"interval {seconds} s < {min_s} s")
+    if interruptions:
+        problems.append("interrupted interval")
+    detail = {"problems": problems, "interval_seconds": seconds, "interruptions": interruptions,
+              "events_in_interval": in_window, "events_after_cut_ignored": post_cut,
+              "lifecycle_notes": notes, "initial": initial, "token": history.get("token")}
+    return ("FAIL" if problems else "PASS"), detail
 
 
 def expected_unsolicited(length=RECORD_LEN, seed=UNSOLICITED_SEED):
@@ -194,7 +352,12 @@ def evaluate(evidence):  # noqa: C901 - one flat list of independent requirement
         {"title": title})
 
     phones = evidence.get("phone_evidence")
-    if not phones:
+    validation = evidence.get("phone_validation")
+    if validation and validation.get("status") != "PASS":
+        checks["ST-08"] = _check(validation.get("status", "FAIL"),
+                                 "two distinct current-run phone evidence files, validated after the idle interval",
+                                 {"problems": validation.get("problems", [])})
+    elif not phones:
         checks["ST-08"] = _check("BLOCKED", "phone-side hash evidence for every push", "not collected")
     else:
         pushes = [p for item in phones for p in item.get("pushes", [])]
@@ -223,8 +386,41 @@ def evaluate(evidence):  # noqa: C901 - one flat list of independent requirement
 
     cleanup = evidence.get("cleanup") or {}
     checks["ST-10"] = _check(
-        "PASS" if cleanup.get("shutdown_complete") is True and cleanup.get("surviving_hosts") == [] else "FAIL",
-        "shutdown_complete and no surviving host process", cleanup)
+        "PASS" if cleanup.get("shutdown_complete") is True and cleanup.get("surviving_hosts") == []
+        and cleanup.get("chrome_closed") is True else "FAIL",
+        "shutdown_complete, Chrome closed, and no surviving host process counted AFTER Chrome closed", cleanup)
 
-    return {"strict_result": _all_pass(checks), "formal_otp23_acceptance": False, "checks": checks,
-            "scenario": scenario}
+    cut = timeline.get("cdp_reopened_wall")
+    history = evidence.get("history") or {}
+    tokens = evidence.get("history_tokens") or {}
+    for check_id, key, visibility, focused, label in (
+            ("ST-11", "connector", "hidden", False, "connector page hidden and unfocused"),
+            ("ST-12", "ordinary_tab", "visible", True, "ordinary tab visible and focused")):
+        status, detail = evaluate_history(history.get(key), closed_wall, cut, min_background, visibility, focused,
+                                          tokens.get(key))
+        checks[check_id] = _check(
+            status, f"preconfigured history shows the {label} for >= {min_background} s with no interruption "
+            "(events after the pre-attach cut ignored)", detail)
+
+    chrome = evidence.get("chrome") or {}
+    flag_findings = scan_chrome_args(chrome.get("args"))
+    checks["ST-13"] = _check(
+        "PASS" if not flag_findings else "FAIL",
+        "recorded Chrome command line carries no throttling/backgrounding/freezing exemption flag",
+        {"findings": flag_findings, "arg_count": len(chrome.get("args") or []),
+         "args_source": chrome.get("args_source"),
+         "native_messaging_exemption_not_excluded": True,
+         "scope": "flags only; Chrome-internal exemptions (e.g. Native Messaging) are NOT claimed excluded"})
+
+    diagnostic = bool(evidence.get("diagnostic_short"))
+    checks["ST-14"] = _check(
+        "PASS" if not diagnostic and min_background >= MIN_BACKGROUND_S else "FAIL",
+        f"formal strict run: min_background_s >= {MIN_BACKGROUND_S} and not a diagnostic short run",
+        {"min_background_s": min_background, "diagnostic_short": diagnostic})
+
+    result = _all_pass(checks)
+    failing = [k for k, c in checks.items() if c["status"] == "FAIL"]
+    if diagnostic and failing == ["ST-14"]:
+        result = "DIAGNOSTIC_ONLY"  # everything else held, but a short run can never be a formal strict PASS
+    return {"strict_result": result, "formal_otp23_acceptance": False, "checks": checks,
+            "scenario": scenario, "diagnostic_short": diagnostic}

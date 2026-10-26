@@ -43,7 +43,7 @@ from chrome_validate import (
     wrapper_of,
 )
 
-SIZES = [4, 178, 179, 180] + list(range(505, 512)) + [1015, 1016, 1017] + [4095, 4096]
+SIZES = [4, 177, 178, 179, 180] + list(range(505, 512)) + [1015, 1016, 1017] + [4095, 4096]
 
 
 def fixture(size, seed):
