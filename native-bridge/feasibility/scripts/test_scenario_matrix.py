@@ -172,99 +172,183 @@ def exchange(index, start, end, seed=None, status="PASS", size=4096):
             "status": status}
 
 
-def central(role, start=10_000, count=20, step=300, run="RUN1", label="OnePlus 6T", seed_shift=0, **extra):
+CLOCK = dict(clock_offset_ms=0, clock_uncertainty_ms=50, clock_provenance="parent: 7-sample midpoint, half-RTT")
+
+
+def central(role, start=10_000, count=20, step=300, run="RUN1", label="OnePlus 6T", seed_shift=0, nonce="n1",
+            mode="nonce-file", **extra):
     result = {"scenario": "m6-multi-central", "role": role, "pair_run_id": run, "phone_label": label,
               "links_on_this_central": 1, "status": "PARTIAL", "target_label_sha256": "aa11",
-              "released_at_wall_ms": start - 5, "system_errors": [], "unexpected_disconnects": [],
+              "system_errors": [], "unexpected_disconnects": [],
+              "barrier": {"mode": mode, "nonce_sha256": core.nonce_hash(nonce) if mode == "nonce-file" else None,
+                          "plan_sha256": "p" * 64, "stage_wall_ms": start - 500, "released_at_wall_ms": start - 5},
               "exchanges": [exchange(i, start + i * step, start + i * step + 200, seed=i + seed_shift)
                             for i in range(count)]}
     result.update(extra)
     return result
 
 
+def adjudicate(first, second, **over):
+    options = dict(CLOCK)
+    options.update(over)
+    return core.adjudicate_m6(first, second, **options)
+
+
+def failing(verdict):
+    return [c["name"] for c in verdict["checks"] if c["status"] == "FAIL"]
+
+
+def blocked(verdict):
+    return [c["name"] for c in verdict["checks"] if c["status"] == "BLOCKED"]
+
+
 class Adjudicator(unittest.TestCase):
-    def test_clean_overlap_is_partial_because_notify_codes_unobservable(self):
-        verdict = core.adjudicate_m6(central("windows"), central("mac", seed_shift=100))
-        self.assertEqual(verdict["verdict"], "PARTIAL")
+    def pair(self, **over):
+        return adjudicate(central("windows"), central("mac", seed_shift=100), **over)
+
+    def test_clean_overlap_is_partial_and_never_discharges_m6(self):
+        verdict = self.pair()
+        self.assertEqual((verdict["verdict"], verdict["desktop_concurrency"]), ("PARTIAL", "PASS"))
         self.assertFalse(verdict["m6_discharged"])
         self.assertEqual(verdict["requirements"][0]["status"], "BLOCKED")
-        self.assertEqual([c["status"] for c in verdict["checks"]].count("FAIL"), 0)
+        self.assertEqual(failing(verdict) + blocked(verdict), [])
 
-    def test_pass_only_with_recorded_notify_evidence(self):
-        verdict = core.adjudicate_m6(central("windows"), central("mac", seed_shift=100),
-                                     notify_codes_evidence="operator-recorded return codes")
-        self.assertEqual(verdict["verdict"], "PASS")
+    def test_no_escape_hatch_for_notify_codes(self):  # IMPORTANT 7: any "evidence" string used to give PASS
+        with self.assertRaises(TypeError):
+            adjudicate(central("windows"), central("mac", seed_shift=100), notify_codes_evidence="anything")
+        self.assertNotEqual(self.pair()["verdict"], "PASS")
+
+    def test_clock_never_defaults_to_zero(self):  # IMPORTANT 4
+        win, mac = central("windows"), central("mac", seed_shift=100)
+        for kwargs in ({}, dict(clock_offset_ms=0), dict(clock_offset_ms=0, clock_uncertainty_ms=50),
+                       dict(clock_offset_ms=0, clock_uncertainty_ms=50, clock_provenance="")):
+            verdict = core.adjudicate_m6(win, mac, **kwargs)
+            self.assertEqual(verdict["verdict"], "BLOCKED", kwargs)
+            self.assertIn("clock_measured", blocked(verdict))
+
+    def test_uncertainty_tightens_overlap_requirements(self):
+        win, mac = central("windows", start=10_000), central("mac", start=13_000, seed_shift=100)
+        # windows 10_000..15_900, mac 13_000..18_900: overlap 2900 ms
+        self.assertEqual(adjudicate(win, mac, min_overlap_ms=2800, barrier_tolerance_ms=10_000)["verdict"], "PARTIAL")
+        wide = adjudicate(win, mac, min_overlap_ms=2800, clock_uncertainty_ms=150, barrier_tolerance_ms=10_000)  # needs 2800 + 300 = 3100
+        self.assertIn("real_io_intervals_overlap", failing(wide))
+        # pairs overlapping by less than 2*uncertainty do not count
+        def retimed(role, offset, seed_shift):
+            result = central(role, seed_shift=seed_shift)
+            for e in result["exchanges"]:
+                e["start_wall_ms"] = 10_000 + e["index"] * 1000 + offset
+                e["end_wall_ms"] = e["start_wall_ms"] + 600
+            result["barrier"]["released_at_wall_ms"] = 9_995
+            return result
+
+        pairs_win, pairs_mac = retimed("windows", 0, 0), retimed("mac", 350, 100)  # every pair overlaps by 250 ms
+        self.assertNotIn("real_io_intervals_overlap", failing(adjudicate(pairs_win, pairs_mac, min_overlap_ms=500)))
+        tight = adjudicate(pairs_win, pairs_mac, min_overlap_ms=500, clock_uncertainty_ms=200)  # needs > 2x200 = 400 per pair
+        self.assertIn("real_io_intervals_overlap", failing(tight))
+
+    def test_barrier_needs_shared_nonce_and_staging(self):  # IMPORTANT 5
+        diag = adjudicate(central("windows", mode="epoch"), central("mac", mode="epoch", seed_shift=100))
+        self.assertEqual(diag["verdict"], "BLOCKED")
+        self.assertIn("windows_barrier_staged_and_released", blocked(diag))
+        other = adjudicate(central("windows"), central("mac", nonce="n2", seed_shift=100))
+        self.assertIn("same_barrier_nonce", failing(other))
+        late_stage = central("windows")
+        late_stage["barrier"]["stage_wall_ms"] = late_stage["barrier"]["released_at_wall_ms"]
+        self.assertIn("windows_barrier_staged_and_released", failing(adjudicate(late_stage, central("mac", seed_shift=100))))
+        missing = central("mac", seed_shift=100)
+        del missing["barrier"]
+        self.assertNotEqual(adjudicate(central("windows"), missing)["verdict"], "PARTIAL")
+
+    def test_release_times_must_agree_within_uncertainty_plus_tolerance(self):
+        win, mac = central("windows"), central("mac", seed_shift=100)
+        mac["barrier"]["released_at_wall_ms"] += 5000
+        verdict = adjudicate(win, mac)
+        self.assertIn("barrier_release_simultaneous", failing(verdict))
+        self.assertEqual(adjudicate(win, mac, barrier_tolerance_ms=6000)["verdict"], "PARTIAL")
+        # a measured offset realigns genuinely offset clocks
+        shifted = central("mac", seed_shift=100)
+        shifted["barrier"]["released_at_wall_ms"] += 90_000
+        shifted["exchanges"] = [dict(e, start_wall_ms=e["start_wall_ms"] + 90_000, end_wall_ms=e["end_wall_ms"] + 90_000)
+                                for e in shifted["exchanges"]]
+        self.assertEqual(adjudicate(central("windows"), shifted, clock_offset_ms=-90_000)["verdict"], "PARTIAL")
+        self.assertEqual(adjudicate(central("windows"), shifted)["verdict"], "FAIL")
+
+    def test_label_alone_cannot_prove_same_phone(self):  # IMPORTANT 6
+        for win_hash, mac_hash in ((None, None), ("aa11", None), ("", "aa11")):
+            win, mac = central("windows", target_label_sha256=win_hash), central("mac", seed_shift=100,
+                                                                                 target_label_sha256=mac_hash)
+            verdict = adjudicate(win, mac)
+            self.assertEqual(verdict["verdict"], "BLOCKED", (win_hash, mac_hash))
+            self.assertIn("same_phone_identity", blocked(verdict))
+        differ = adjudicate(central("windows"), central("mac", seed_shift=100, target_label_sha256="bb22"))
+        self.assertIn("same_phone_identity", failing(differ))
 
     def test_single_central_is_blocked_not_pass(self):
         for first, second in ((central("windows"), None), (central("windows"), central("windows"))):
-            verdict = core.adjudicate_m6(first, second)
+            verdict = adjudicate(first, second)
             self.assertEqual(verdict["verdict"], "BLOCKED")
             self.assertFalse(verdict["m6_discharged"])
 
     def test_two_phones_on_one_central_is_not_m6(self):
         double = central("windows", links_on_this_central=2)
-        verdict = core.adjudicate_m6(double, central("mac", seed_shift=100))
-        self.assertEqual(verdict["verdict"], "FAIL")
+        self.assertEqual(adjudicate(double, central("mac", seed_shift=100))["verdict"], "FAIL")
         lifecycle = {"scenario": "lc-two-phones", "role": "windows", "links_on_this_central": 2, "status": "PASS"}
-        self.assertEqual(core.adjudicate_m6(lifecycle, central("mac"))["verdict"], "FAIL")
+        self.assertEqual(adjudicate(lifecycle, central("mac"))["verdict"], "FAIL")
 
-    def test_wrong_phone_and_pair_id_fail(self):
-        wrong = core.adjudicate_m6(central("windows"), central("mac", label="Pixel 8", seed_shift=100))
-        self.assertEqual(wrong["verdict"], "FAIL")
-        self.assertIn("same_phone_identity", [c["name"] for c in wrong["checks"] if c["status"] == "FAIL"])
-        hashed = core.adjudicate_m6(central("windows"), central("mac", seed_shift=100, target_label_sha256="bb22"))
-        self.assertEqual(hashed["verdict"], "FAIL")
-        pair = core.adjudicate_m6(central("windows"), central("mac", run="OTHER", seed_shift=100))
-        self.assertIn("same_pair_run_id", [c["name"] for c in pair["checks"] if c["status"] == "FAIL"])
+    def test_wrong_phone_label_and_pair_id_fail(self):
+        wrong = adjudicate(central("windows"), central("mac", label="Pixel 8", seed_shift=100))
+        self.assertIn("same_phone_identity", failing(wrong))
+        pair = adjudicate(central("windows"), central("mac", run="OTHER", seed_shift=100))
+        self.assertIn("same_pair_run_id", failing(pair))
 
-    def test_non_overlapping_intervals_fail(self):
-        verdict = core.adjudicate_m6(central("windows", start=10_000), central("mac", start=100_000, seed_shift=100))
-        names = [c["name"] for c in verdict["checks"] if c["status"] == "FAIL"]
-        self.assertEqual(verdict["verdict"], "FAIL")
-        self.assertIn("real_io_intervals_overlap", names)
-
-    def test_adjacent_but_not_interleaved_fails_pair_requirement(self):
-        # windows runs 10_000..16_000, mac 15_000..21_000: only a window overlap, one exchange pair at most
-        verdict = core.adjudicate_m6(central("windows", count=20, step=300),
-                                     central("mac", start=15_850, step=300, seed_shift=100),
-                                     min_overlap_ms=100, min_overlapping_pairs=3)
-        self.assertEqual(verdict["verdict"], "FAIL")
-
-    def test_clock_offset_realigns_non_overlap(self):
-        win, mac = central("windows", start=100_000), central("mac", start=10_000, seed_shift=100)
-        self.assertEqual(core.adjudicate_m6(win, mac)["verdict"], "FAIL")
-        self.assertEqual(core.adjudicate_m6(win, mac, clock_offset_ms=90_000)["verdict"], "PARTIAL")
+    def test_non_overlapping_and_adjacent_intervals_fail(self):
+        far = adjudicate(central("windows", start=10_000), central("mac", start=100_000, seed_shift=100))
+        self.assertEqual(far["verdict"], "FAIL")
+        self.assertIn("real_io_intervals_overlap", failing(far))
+        adjacent = adjudicate(central("windows", count=20, step=300), central("mac", start=15_850, seed_shift=100),
+                              min_overlap_ms=100, barrier_tolerance_ms=10_000)
+        self.assertIn("real_io_intervals_overlap", failing(adjacent))
 
     def test_one_sided_failure_fails(self):
         bad = central("mac", seed_shift=100)
         bad["exchanges"][7]["status"] = "FAIL"
-        self.assertEqual(core.adjudicate_m6(central("windows"), bad)["verdict"], "FAIL")
+        self.assertEqual(adjudicate(central("windows"), bad)["verdict"], "FAIL")
         short = central("mac", count=19, seed_shift=100)
-        self.assertEqual(core.adjudicate_m6(central("windows"), short)["verdict"], "FAIL")
+        self.assertEqual(adjudicate(central("windows"), short)["verdict"], "FAIL")
         errors = central("windows", system_errors=[{"problem": "x"}])
-        self.assertEqual(core.adjudicate_m6(errors, central("mac", seed_shift=100))["verdict"], "FAIL")
+        self.assertEqual(adjudicate(errors, central("mac", seed_shift=100))["verdict"], "FAIL")
         dropped = central("windows", unexpected_disconnects=[{"type": "disconnected"}])
-        self.assertEqual(core.adjudicate_m6(dropped, central("mac", seed_shift=100))["verdict"], "FAIL")
+        self.assertEqual(adjudicate(dropped, central("mac", seed_shift=100))["verdict"], "FAIL")
 
     def test_digest_mismatch_and_duplicate_seed_fail(self):
         bad = central("windows")
         bad["exchanges"][3]["received_sha256"] = "0" * 64
-        self.assertEqual(core.adjudicate_m6(bad, central("mac", seed_shift=100))["verdict"], "FAIL")
+        self.assertEqual(adjudicate(bad, central("mac", seed_shift=100))["verdict"], "FAIL")
         dup = central("windows")
         dup["exchanges"][4]["seed"] = dup["exchanges"][3]["seed"]
-        self.assertEqual(core.adjudicate_m6(dup, central("mac", seed_shift=100))["verdict"], "FAIL")
+        self.assertEqual(adjudicate(dup, central("mac", seed_shift=100))["verdict"], "FAIL")
 
     def test_blocked_central_blocks_pair(self):
-        blocked = central("mac", status="BLOCKED", exchanges=[])
-        verdict = core.adjudicate_m6(central("windows"), blocked)
+        verdict = adjudicate(central("windows"), central("mac", status="BLOCKED", exchanges=[]))
         self.assertNotEqual(verdict["verdict"], "PARTIAL")
 
     def test_peer_survives_deliberate_disconnect(self):
         win = central("windows", deliberate_disconnect={"at_wall_ms": 12_000})
         mac = central("mac", count=30, seed_shift=100)
-        self.assertEqual(core.adjudicate_m6(win, mac)["verdict"], "PARTIAL")
+        self.assertEqual(adjudicate(win, mac)["verdict"], "PARTIAL")
         mac_short = central("mac", count=20, step=50, seed_shift=100)  # finishes before the disconnect
-        self.assertEqual(core.adjudicate_m6(win, mac_short)["verdict"], "FAIL")
+        self.assertEqual(adjudicate(win, mac_short)["verdict"], "FAIL")
+
+    def test_disconnect_without_time_cannot_count_everything_as_surviving(self):  # minor: at_wall_ms defaulted to 0
+        win = central("windows", deliberate_disconnect={"reply": {"type": "disconnected"}})
+        verdict = adjudicate(win, central("mac", count=30, seed_shift=100))
+        self.assertIn("mac_survives_windows_disconnect", failing(verdict))
+
+    def test_barrier_file_parsing(self):
+        self.assertEqual(core.parse_barrier_file('{"nonce": "x", "epoch_ms": 5}')[1], None)
+        self.assertIsNotNone(core.parse_barrier_file("go")[1])
+        self.assertIsNotNone(core.parse_barrier_file('{"epoch_ms": 5}')[1])
+        self.assertIsNotNone(core.parse_barrier_file('{"nonce": ""}')[1])
 
 
 # ---- fake host script (real framing over real pipes) ------------------------------------------------
@@ -322,6 +406,9 @@ while True:
 class FakeAdapter(sm.Adapter):
     platform = role = "windows"
     direct_spawn_flags = 0
+
+    def integrity(self, pid):
+        return {"integrity": "medium", "pid": pid}
 
     def tcc_note(self):
         return "fake direct launch"
@@ -408,8 +495,12 @@ class FakeSession:
     def owned_pids(self):
         return [self.host_pid]
 
-    def discover(self, window_s, want=2):
+    def discover(self, window_s, want=2, keep_scan=False):
+        self.log.append(("discover", keep_scan))
         return [{"label": label, "device_handle": f"d{i}"} for i, label in enumerate(self.labels)]
+
+    def stop_scan(self):
+        self.log.append("stop_scan")
 
     def connect(self, devices):
         self.log.append(("connect", len(devices), devices[0]["label"]))
@@ -449,7 +540,8 @@ class M6Run(unittest.TestCase):
         values = dict(role="windows", pair_run_id="RUN1", phone_label="OnePlus 6T", target_label="OnePlus 6T",
                       sole_advertiser=False, barrier_file=str(self.barrier), start_at_epoch=None,
                       barrier_timeout_s=5.0, exchanges=20, seed_base=None, run_until_epoch=None,
-                      disconnect_at_epoch=None, discover_s=0.1, stage_file=None, out=str(self.out))
+                      disconnect_at_epoch=None, discover_s=0.1, stage_file=None, out=str(self.out),
+                      connect_order="scan-active", isolation_action="parent isolated one phone", overwrite=False)
         values.update(over)
         return argparse.Namespace(**values)
 
@@ -464,7 +556,7 @@ class M6Run(unittest.TestCase):
                 except (OSError, ValueError):
                     threading.Event().wait(0.01)
                     continue
-                self.barrier.write_text("go")
+                self.barrier.write_text(json.dumps({"nonce": "parent-nonce", "epoch_ms": 123}))
                 return
 
         thread = threading.Thread(target=release)
@@ -487,6 +579,12 @@ class M6Run(unittest.TestCase):
         self.assertEqual(seen["stage"]["stage"], "READY")
         self.assertEqual(seen["stage"]["links_connected"], 1)
         self.assertLessEqual(seen["stage"]["at_wall_ms"], result["released_at_wall_ms"])
+        barrier = result["barrier"]
+        self.assertEqual((barrier["mode"], barrier["nonce_sha256"]), ("nonce-file", core.nonce_hash("parent-nonce")))
+        self.assertEqual(barrier["plan_sha256"], seen["stage"]["plan_sha256"])
+        self.assertLess(barrier["stage_wall_ms"], barrier["released_at_wall_ms"])
+        self.assertEqual(result["isolation_action"], "parent isolated one phone")
+        self.assertNotIn("parent-nonce", json.dumps(result))
         self.assertIsNotNone(result["target_label_sha256"])
         self.assertNotIn("OnePlus", json.dumps(result["exchanges"]))
 
@@ -513,7 +611,7 @@ class M6Run(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_m6(self.args(role="mac"))
 
-    def test_start_epoch_barrier(self):
+    def test_start_epoch_barrier_is_diagnostic_mode_without_nonce(self):
         clock = {"now": 100.0}
         args = argparse.Namespace(barrier_file=None, start_at_epoch=100.5, barrier_timeout_s=10.0)
 
@@ -521,7 +619,29 @@ class M6Run(unittest.TestCase):
             clock["now"] += max(seconds, 0.1)
 
         released = sm.wait_for_barrier(args, clock=lambda: clock["now"], sleep=sleep)
-        self.assertGreaterEqual(released, 100_500)
+        self.assertGreaterEqual(released["released_at_wall_ms"], 100_500)
+        self.assertEqual((released["mode"], released["nonce_sha256"]), ("epoch", None))
+
+    def test_barrier_file_without_nonce_never_releases(self):
+        clock = {"now": 0.0}
+        self.barrier.write_text('{"epoch_ms": 5}')  # JSON but no nonce (the old plain-text "go" is not JSON either)
+        args = argparse.Namespace(barrier_file=str(self.barrier), start_at_epoch=None, barrier_timeout_s=1.0)
+        with self.assertRaises(sm.Blocked) as caught:
+            sm.wait_for_barrier(args, clock=lambda: clock["now"],
+                                sleep=lambda s: clock.__setitem__("now", clock["now"] + 0.5))
+        self.assertIn("nonce", caught.exception.reason)
+
+    def test_half_written_barrier_is_retried_then_released(self):
+        clock = {"now": 0.0}
+        self.barrier.write_text('{"nonce": "ab')
+        args = argparse.Namespace(barrier_file=str(self.barrier), start_at_epoch=None, barrier_timeout_s=5.0)
+
+        def sleep(seconds):
+            clock["now"] += 0.5
+            self.barrier.write_text('{"nonce": "abc"}')
+
+        released = sm.wait_for_barrier(args, clock=lambda: clock["now"], sleep=sleep)
+        self.assertEqual(released["nonce_sha256"], core.nonce_hash("abc"))
 
     def test_barrier_timeout_is_blocked(self):
         clock = {"now": 0.0}
@@ -530,18 +650,51 @@ class M6Run(unittest.TestCase):
             sm.wait_for_barrier(args, clock=lambda: clock["now"],
                                 sleep=lambda s: clock.__setitem__("now", clock["now"] + 0.5))
 
-    def test_adjudicate_cli_merges_two_result_files(self):
+    def test_selected_advertisement_without_label_cannot_prove_identity(self):
+        code = self.run_m6(self.args(target_label=None, sole_advertiser=True), labels=(None,))
+        result = json.loads(self.out.read_text())
+        self.assertEqual((code, result["status"], result["error_class"]), (1, "BLOCKED", "ambiguous_target"))
+        self.assertEqual(result["links_on_this_central"], 0)
+
+    def test_connect_order_controls_scan_state_during_connect(self):
+        logs = []
+        factory = lambda a, t, i: logs.append(FakeSession(a, t, i, labels=("only",))) or logs[-1]  # noqa: E731
+        for order, flag in (("scan-active", True), ("scan-stopped", False)):
+            out = self.tmp / f"{order}.json"
+            sm.run_m6(self.args(out=str(out), connect_order=order, target_label=None, sole_advertiser=True,
+                                barrier_timeout_s=0.05), adapter=FakeAdapter(), identity=IDENTITY, session_factory=factory)
+            self.assertIn(("discover", flag), logs[-1].log)
+            self.assertIn("stop_scan", logs[-1].log)
+
+    def test_existing_result_is_never_overwritten(self):
+        self.out.write_text('{"first": "failure"}')
+        with self.assertRaises(SystemExit):
+            self.run_m6(self.args())
+        self.assertEqual(self.out.read_text(), '{"first": "failure"}')
+        self.release_later()
+        self.run_m6(self.args(overwrite=True))
+        self.assertNotIn("first", self.out.read_text())
+
+    def test_adjudicate_cli_merges_two_result_files_and_requires_clock(self):
         win, mac = self.tmp / "w.json", self.tmp / "m.json"
         win.write_text(json.dumps(central("windows")))
         mac.write_text(json.dumps(central("mac", seed_shift=100)))
-        out = self.tmp / "adj.json"
-        code = sm.run_adjudicate(argparse.Namespace(windows=str(win), mac=str(mac), out=str(out), min_exchanges=20,
-                                                    min_overlap_ms=1000, min_overlapping_pairs=3, clock_offset_ms=0))
-        self.assertEqual((code, json.loads(out.read_text())["verdict"]), (0, "PARTIAL"))
+
+        def adjudicate_cli(name, **over):
+            values = dict(windows=str(win), mac=str(mac), out=str(self.tmp / name), min_exchanges=20,
+                          min_overlap_ms=1000, min_overlapping_pairs=3, clock_offset_ms=0.0, clock_uncertainty_ms=50.0,
+                          clock_provenance="midpoint", barrier_tolerance_ms=2000.0, overwrite=False)
+            values.update(over)
+            code = sm.run_adjudicate(argparse.Namespace(**values))
+            return code, json.loads((self.tmp / name).read_text())
+
+        self.assertEqual(adjudicate_cli("a.json")[0], 0)
+        code, verdict = adjudicate_cli("b.json", clock_offset_ms=None)
+        self.assertEqual((code, verdict["verdict"]), (1, "BLOCKED"))
         win.write_text(json.dumps(central("windows", links_on_this_central=2)))
-        self.assertEqual(sm.run_adjudicate(argparse.Namespace(windows=str(win), mac=str(mac), out=str(out), min_exchanges=20,
-                                                              min_overlap_ms=1000, min_overlapping_pairs=3,
-                                                              clock_offset_ms=0)), 1)
+        self.assertEqual(adjudicate_cli("c.json")[0], 1)
+        with self.assertRaises(SystemExit):  # an existing adjudication is not silently replaced
+            adjudicate_cli("c.json")
 
 
 class Cli(unittest.TestCase):
@@ -609,6 +762,91 @@ class LifecycleBlocked(unittest.TestCase):
             result = sm.scenario_chrome(Adapter(), "shutdown", argparse.Namespace(discover_s=0.1), IDENTITY, tmp)
         self.assertEqual((result["status"], result["error_class"]), ("BLOCKED", "insufficient_phones"))
         self.assertEqual(closed, [True])
+
+    def test_link_proofs_are_distinct_16_byte_records_with_a_scan_kept_active(self):
+        calls = []
+
+        class TwoPhones(FakeSession):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.sent = []
+
+            def connect(self, devices):
+                calls.append("connect")
+                return ["h1", "h2"]
+
+            def exchange(self, handle, item, timeout=12.0):
+                self.sent.append((handle, len(item["request"]), item["request_sha256"]))
+                return dict(super().exchange(handle, item), size=item["size"])
+
+            def start_scan(self):
+                calls.append("rescan")
+
+        session = TwoPhones(FakeAdapter(), None, IDENTITY)
+        handles, proofs = sm.link_pair(session, argparse.Namespace(discover_s=0.1, connect_order="scan-active"))
+        self.assertEqual(handles, ["h1", "h2"])
+        self.assertTrue(all(length >= 16 for _, length, _ in session.sent))
+        self.assertEqual(len({digest for _, _, digest in session.sent}), 2)
+        self.assertEqual(calls, ["connect", "rescan"])
+        self.assertLess(session.log.index(("discover", True)), session.log.index("stop_scan"))
+
+    def test_hygiene_reports_host_and_wrapper_separately(self):
+        calls = []
+
+        class Wrapped(FakeSession):
+            def __init__(self, *a, **k):
+                super().__init__(*a, labels=("only",), **k)
+                self.wrappers = [77]
+
+        class Adapter(FakeAdapter):
+            host_name = "x"
+
+            def hygiene(self, pids):
+                calls.append(list(pids))
+                return {"visible_windows": 0, "top_level_windows": 1 if pids == [77] else 0, "network_endpoints": 0}
+
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        with unittest.mock.patch.object(sm, "Session", Wrapped):
+            result = sm.scenario_chrome(Adapter(), "shutdown", argparse.Namespace(discover_s=0.1), IDENTITY, tmp)
+        self.assertEqual(calls[:2], [[55], [77]])
+        self.assertEqual(result["detail"]["hygiene_before"]["top_level_windows"], 0)
+        self.assertEqual(result["detail"]["wrapper_hygiene_before"]["top_level_windows"], 1)
+        self.assertEqual(result["detail"]["integrity"]["host"], {"integrity": "medium", "pid": 55})
+
+    def _wrapper_case(self, wrapper_hygiene):
+        class Wrapped(FakeSession):
+            def __init__(self, *a, **k):
+                super().__init__(*a, labels=("only",), **k)
+                self.wrappers = [77]
+
+        class Adapter(FakeAdapter):
+            host_name = "x"
+
+            def hygiene(self, pids):
+                if pids == [77]:
+                    return wrapper_hygiene
+                return {"visible_windows": 0, "top_level_windows": 0, "network_endpoints": 0}
+
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        with unittest.mock.patch.object(sm, "Session", Wrapped):
+            return sm.scenario_chrome(Adapter(), "shutdown", argparse.Namespace(discover_s=0.1), IDENTITY, tmp)
+
+    def test_wrapper_visible_window_or_network_endpoint_fails(self):  # was silently dropped
+        for bad in ({"visible_windows": 1, "top_level_windows": 1, "network_endpoints": 0},
+                    {"visible_windows": 0, "top_level_windows": 1, "network_endpoints": 2}):
+            result = self._wrapper_case(bad)
+            self.assertEqual(result["status"], "FAIL", bad)
+            self.assertIn("wrapper", result["actual"])
+
+    def test_hidden_wrapper_console_is_allowed_and_unavailable_is_not_asserted(self):
+        for ok in ({"visible_windows": 0, "top_level_windows": 1, "network_endpoints": 0},
+                   {"visible_windows": "unavailable", "top_level_windows": "unavailable",
+                    "network_endpoints": "unavailable"}):
+            result = self._wrapper_case(ok)
+            self.assertEqual((result["status"], result["error_class"]), ("BLOCKED", "insufficient_phones"))  # got past hygiene
+            self.assertEqual(result["detail"]["wrapper_hygiene_before"], ok)
 
     def test_adapter_toggle_is_operator_gated_not_fabricated(self):
         result = sm.scenario_adapter_toggle()

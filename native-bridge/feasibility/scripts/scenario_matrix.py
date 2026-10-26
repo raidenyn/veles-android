@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 
 import scenario_matrix_core as core
 
+LINK_PROOF_BYTES = 16  # distinct per-handle records, long enough that routing mix-ups cannot hide
 VELES_SERVICE = "8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51"
 ABSENT_HINT = {"windows": "winrt:020000000001:1", "mac": "macos:00000000-0000-0000-0000-00000000dead"}
 LIFECYCLE = ("shutdown", "port-disconnect", "tab-close", "stdin-eof", "stdin-eof-truncated",
@@ -84,6 +85,9 @@ class Adapter:
     def wrapper_pids(self, pid):
         return []
 
+    def integrity(self, pid):
+        return None  # Windows token integrity only
+
     def tcc_note(self):
         return None
 
@@ -127,6 +131,9 @@ class WindowsAdapter(Adapter):
     def wrapper_pids(self, pid):
         wrapper = self.cv.wrapper_of(pid)
         return [wrapper] if wrapper else []
+
+    def integrity(self, pid):
+        return self.cv.integrity_of(pid)
 
     def hygiene(self, pids):
         windows = {str(p): self.cv.top_level_windows_of(p) for p in pids}
@@ -221,6 +228,7 @@ class Session:
         self.events = []  # every unsolicited event seen (never contains anything we log verbatim)
         self.unexpected = []
         self.request_ids = []
+        self.scan_handle = None
 
     def js(self, expression, timeout=70):
         return self.chrome.js(self.page, expression, timeout=timeout)
@@ -259,10 +267,13 @@ class Session:
         self.events.extend(batch)
         return [e["message"] for e in batch]
 
-    def discover(self, window_s, want=2):
+    def discover(self, window_s, want=2, keep_scan=False):
+        """Scan for the Veles service. `keep_scan=True` leaves the scan running (as physical_validate does while
+        it connects); call stop_scan() afterwards."""
         started = self.js(f"otp23.startScan({json.dumps(VELES_SERVICE)})")
         if started.get("status") != "started":
             raise Blocked(core.classify_failure(started), f"startScan: {core.safe_reply(started)}")
+        self.scan_handle = started["scan_handle"]
         devices, deadline = {}, time.monotonic() + window_s
         while time.monotonic() < deadline and (want is None or len(devices) < want):
             for message in self.pump():
@@ -270,9 +281,15 @@ class Session:
                     devices[message["device_handle"]] = {"label": message.get("label"),
                                                          "device_handle": message["device_handle"]}
             time.sleep(0.25)
-        stopped = self.js(f"otp23.stopScan({json.dumps(started['scan_handle'])})")
-        require(stopped.get("status") == "stopped", f"stopScan {core.safe_reply(stopped)}")
+        if not keep_scan:
+            self.stop_scan()
         return list(devices.values())
+
+    def stop_scan(self):
+        handle, self.scan_handle = self.scan_handle, None
+        if handle is not None:
+            stopped = self.js(f"otp23.stopScan({json.dumps(handle)})")
+            require(stopped.get("status") == "stopped", f"stopScan {core.safe_reply(stopped)}")
 
     def connect(self, devices):
         targets = json.dumps([{"device_handle": d["device_handle"]} for d in devices])
@@ -351,13 +368,20 @@ class Session:
 
 def link_pair(session, args):
     """Discover two phones, connect both, and PROVE both links carry bytes (never assumed active)."""
-    devices = session.discover(args.discover_s, want=2)
+    keep = getattr(args, "connect_order", "scan-active") == "scan-active"
+    devices = session.discover(args.discover_s, want=2, keep_scan=keep)
     pair, status, error_class, reason = core.pick_two(devices)
     if pair is None:
+        session.stop_scan()
         raise Blocked(error_class, reason)
-    handles = session.connect(pair)
+    try:
+        handles = session.connect(pair)
+    finally:
+        session.stop_scan()  # no-op when the scan was already stopped before connecting
+    plan = core.plan_exchanges(session.adapter.role, 2, size=LINK_PROOF_BYTES)
+    require(plan[0]["request_sha256"] != plan[1]["request_sha256"], "link proofs must differ per handle")
     proofs = []
-    for handle, item in zip(handles, core.plan_exchanges(session.adapter.role, 2, size=4)):
+    for handle, item in zip(handles, plan):
         proofs.append(session.exchange(handle, item))
     require(all(p["status"] == "PASS" for p in proofs), f"link proof failed: {[p.get('problem') for p in proofs]}")
     session.start_scan()  # active scan alongside the two active links
@@ -400,12 +424,23 @@ def scenario_chrome(adapter, name, args, identity, out_dir):
     detail, status, error_class, actual = {}, "FAIL", "assertion", ""
     try:
         detail["ready"] = session.start()
-        detail["hygiene_before"] = adapter.hygiene(session.owned_pids())
-        hygiene = detail["hygiene_before"]
-        if isinstance(hygiene["visible_windows"], int):
-            require(hygiene["visible_windows"] == 0, f"host shows windows: {hygiene}")
-        if isinstance(hygiene["network_endpoints"], int):
-            require(hygiene["network_endpoints"] == 0, f"host owns network endpoints: {hygiene}")
+        detail["hygiene_before"] = adapter.hygiene([session.host_pid])
+        if session.wrappers:  # Chrome's cmd.exe wrapper owns a hidden console window; reported apart from the host
+            detail["wrapper_hygiene_before"] = adapter.hygiene(session.wrappers)
+        detail["integrity"] = {"chrome": adapter.integrity(session.chrome.proc.pid),
+                               "host": adapter.integrity(session.host_pid),
+                               "wrapper": [adapter.integrity(w) for w in session.wrappers]}
+        detail["connect_order"] = getattr(args, "connect_order", "scan-active")
+        # Host and Chrome's wrapper are both enforced: no visible window and no network endpoint (integer
+        # measurements only; "unavailable" is recorded, not asserted). A hidden wrapper console is allowed.
+        for label, key in (("host", "hygiene_before"), ("wrapper", "wrapper_hygiene_before")):
+            hygiene = detail.get(key)
+            if not hygiene:
+                continue
+            if isinstance(hygiene["visible_windows"], int):
+                require(hygiene["visible_windows"] == 0, f"{label} shows windows: {hygiene}")
+            if isinstance(hygiene["network_endpoints"], int):
+                require(hygiene["network_endpoints"] == 0, f"{label} owns network endpoints: {hygiene}")
         handles, detail["link_proof"] = link_pair(session, args)
         if name == "shutdown":
             session.js("window.__pending = null; otp23.connectDevice({platform_hint: "
@@ -548,6 +583,7 @@ def scenario_stdin(adapter, name, args, identity, out_dir, binary=None):
         env = dict(os.environ, VELES_OTP23_TRACE=str(trace))
         host = DirectHost([binary, identity["origin"]], env, adapter.direct_spawn_flags)
         detail["host_pid_recorded"] = True
+        detail["integrity"] = {"host": adapter.integrity(host.proc.pid), "driver": adapter.integrity(os.getpid())}
         if truncated:
             host.proc.stdin.write(b"\x10\x00")  # two of the four header bytes, then EOF
             host.proc.stdin.close()
@@ -571,7 +607,9 @@ def scenario_stdin(adapter, name, args, identity, out_dir, binary=None):
                 raise Blocked(core.classify_failure(bad), f"connect {[core.safe_reply(b) for b in bad]}")
             handles = [c["connection_handle"] for c in connected]
             proofs = []
-            for handle, item in zip(handles, core.plan_exchanges(adapter.role, 2, size=4)):
+            plan = core.plan_exchanges(adapter.role, 2, size=LINK_PROOF_BYTES)
+            require(plan[0]["request_sha256"] != plan[1]["request_sha256"], "link proofs must differ per handle")
+            for handle, item in zip(handles, plan):
                 sent = host.reply(host.request("send", connection_handle=handle, record_base64=core.request_b64(item)), 20)
                 require(sent and sent.get("type") == "sent", f"send {core.safe_reply(sent)}")
                 got = host.events_of("message", 12, count=len(proofs) + 1)
@@ -641,6 +679,12 @@ def meta_for(adapter, identity):
     return info
 
 
+def guard_overwrite(path, args):
+    """Never erase an earlier result (a first failure is evidence); an explicit --overwrite is required."""
+    if pathlib.Path(path).exists() and not getattr(args, "overwrite", False):
+        raise SystemExit(f"{path} already exists; choose a new path or pass --overwrite (earlier results are evidence)")
+
+
 def run_lifecycle(args, adapter=None, identity=None):
     adapter = adapter or make_adapter()
     if identity is None:
@@ -649,6 +693,8 @@ def run_lifecycle(args, adapter=None, identity=None):
     out_dir = pathlib.Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     names = list(LIFECYCLE) if args.scenario == "all" else [args.scenario]
+    for name in names + ["lifecycle"]:
+        guard_overwrite(out_dir / f"{name}.json", args)
     meta, results = meta_for(adapter, identity), []
     for name in names:
         if name == "adapter-toggle":
@@ -674,20 +720,36 @@ def run_lifecycle(args, adapter=None, identity=None):
 
 
 def wait_for_barrier(args, clock=time.time, sleep=time.sleep):
-    """Block until the parent's release (file appears or epoch reached); returns release wall ms."""
+    """Block until the parent's release. Returns {mode, released_at_wall_ms, nonce_sha256, barrier_epoch_ms}.
+
+    `--barrier-file` is the real shared barrier: the parent writes JSON {"nonce": ..., "epoch_ms": ...} to the same
+    configured path on both machines after both READY stages exist; the nonce (stored hashed) ties both
+    centrals to one release. `--start-at-epoch` is DIAGNOSTIC only (mode "epoch", no nonce) and cannot support an
+    M6 pass."""
     deadline = clock() + args.barrier_timeout_s
     if args.barrier_file:
         path = pathlib.Path(args.barrier_file)
-        while not path.exists():
+        problem = "barrier file never appeared"
+        while True:
+            if path.exists():
+                try:
+                    document, problem = core.parse_barrier_file(path.read_text(encoding="utf-8"))
+                except OSError:
+                    document, problem = None, "barrier file unreadable"
+                if document is not None:
+                    epoch = document.get("epoch_ms")
+                    return {"mode": "nonce-file", "released_at_wall_ms": int(clock() * 1000),
+                            "nonce_sha256": core.nonce_hash(document["nonce"]),
+                            "barrier_epoch_ms": epoch if isinstance(epoch, (int, float)) else None}
             if clock() > deadline:
-                raise Blocked("timeout", "barrier file never appeared")
+                raise Blocked("timeout", problem)
             sleep(0.01)
-    else:
-        if args.start_at_epoch - clock() > args.barrier_timeout_s:
-            raise Blocked("timeout", "start epoch is beyond the barrier timeout")
-        while clock() < args.start_at_epoch:
-            sleep(min(0.01, max(0.0, args.start_at_epoch - clock())))
-    return int(clock() * 1000)
+    if args.start_at_epoch - clock() > args.barrier_timeout_s:
+        raise Blocked("timeout", "start epoch is beyond the barrier timeout")
+    while clock() < args.start_at_epoch:
+        sleep(min(0.01, max(0.0, args.start_at_epoch - clock())))
+    return {"mode": "epoch", "released_at_wall_ms": int(clock() * 1000), "nonce_sha256": None,
+            "barrier_epoch_ms": int(args.start_at_epoch * 1000)}
 
 
 def run_m6(args, adapter=None, identity=None, session_factory=Session):
@@ -700,9 +762,11 @@ def run_m6(args, adapter=None, identity=None, session_factory=Session):
     out = pathlib.Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     stage_path = pathlib.Path(args.stage_file) if args.stage_file else out.with_suffix(".stage.json")
+    guard_overwrite(out, args)
     plan = core.plan_exchanges(args.role, args.exchanges, args.seed_base)
     result = {"scenario": "m6-multi-central", "role": args.role, "pair_run_id": args.pair_run_id,
-              "phone_label": args.phone_label, "links_on_this_central": 0, "exchanges": [],
+              "phone_label": args.phone_label, "isolation_action": args.isolation_action,
+              "links_on_this_central": 0, "exchanges": [],
               "system_errors": [], "unexpected_disconnects": [], "status": "FAIL", "error_class": "assertion",
               "expected": f"one central, one explicitly selected phone, {args.exchanges} exact 4096-byte echoes after "
                           "the shared barrier; needs the peer central and m6-adjudicate",
@@ -710,20 +774,31 @@ def run_m6(args, adapter=None, identity=None, session_factory=Session):
     session = session_factory(adapter, out.with_suffix(".host-trace.log"), identity)
     try:
         session.start()
-        devices = session.discover(args.discover_s, want=None)
+        keep = args.connect_order == "scan-active"
+        devices = session.discover(args.discover_s, want=None, keep_scan=keep)
         result["discovered_phones"] = len(devices)
         index, status, error_class, reason = core.select_target(devices, args.target_label, args.sole_advertiser)
         if index is None:
+            session.stop_scan()
             raise Blocked(error_class, reason)
         result["target_label_sha256"] = core.label_hash(devices[index].get("label"))
-        handles = session.connect([devices[index]])
+        if not result["target_label_sha256"]:
+            session.stop_scan()
+            raise Blocked("ambiguous_target", "the selected advertisement carries no label: same-phone identity "
+                                              "cannot be proven (an operator label alone is not proof)")
+        try:
+            handles = session.connect([devices[index]])
+        finally:
+            session.stop_scan()
         result["links_on_this_central"] = len(handles)
         handle = handles[0]
         stage = core.stage_document(args.pair_run_id, args.role, args.phone_label, result["seeds"],
                                     result["target_label_sha256"], now_ms())
         stage_path.write_text(json.dumps(stage, indent=2), encoding="utf-8")
         print(f"READY {stage['plan_sha256']}", flush=True)
-        result["released_at_wall_ms"] = wait_for_barrier(args)
+        released = wait_for_barrier(args)
+        result["barrier"] = dict(released, plan_sha256=stage["plan_sha256"], stage_wall_ms=stage["at_wall_ms"])
+        result["released_at_wall_ms"] = released["released_at_wall_ms"]
         index_i = 0
         while index_i < len(plan) or (args.run_until_epoch and time.time() < args.run_until_epoch):
             item = plan[index_i] if index_i < len(plan) else core.plan_exchanges(args.role, index_i + 1, args.seed_base)[index_i]
@@ -769,13 +844,16 @@ def run_m6(args, adapter=None, identity=None, session_factory=Session):
 
 
 def run_adjudicate(args):
+    guard_overwrite(args.out, args)
     first = json.loads(pathlib.Path(args.windows).read_text(encoding="utf-8"))
     second = json.loads(pathlib.Path(args.mac).read_text(encoding="utf-8"))
     verdict = core.adjudicate_m6(first, second, min_exchanges=args.min_exchanges, min_overlap_ms=args.min_overlap_ms,
-                                 min_overlapping_pairs=args.min_overlapping_pairs, clock_offset_ms=args.clock_offset_ms)
+                                 min_overlapping_pairs=args.min_overlapping_pairs, clock_offset_ms=args.clock_offset_ms,
+                                 clock_uncertainty_ms=args.clock_uncertainty_ms,
+                                 clock_provenance=args.clock_provenance, barrier_tolerance_ms=args.barrier_tolerance_ms)
     pathlib.Path(args.out).write_text(json.dumps(verdict, indent=2), encoding="utf-8")
     print(f"m6 adjudication: {verdict['verdict']} -> {args.out}")
-    return 0 if verdict["verdict"] in ("PASS", "PARTIAL") else 1
+    return 0 if verdict["verdict"] == "PARTIAL" else 1
 
 
 # ---- CLI ------------------------------------------------------------------------------------------------
@@ -788,6 +866,9 @@ def build_parser():
     life.add_argument("--scenario", choices=list(LIFECYCLE) + ["adapter-toggle", "all"], default="all")
     life.add_argument("--out-dir", required=True)
     life.add_argument("--discover-s", type=float, default=30.0)
+    life.add_argument("--connect-order", choices=["scan-active", "scan-stopped"], default="scan-active",
+                      help="connect while the scan runs (as physical_validate.py does) or after stopping it")
+    life.add_argument("--overwrite", action="store_true", help="allow replacing earlier result files")
     life.add_argument("--host-binary", help="override the registered host binary for the direct stdin cases")
     m6 = sub.add_parser("m6")
     m6.add_argument("--role", choices=["windows", "mac"], required=True)
@@ -803,6 +884,10 @@ def build_parser():
     m6.add_argument("--run-until-epoch", type=float, help="keep exchanging beyond --exchanges until this time")
     m6.add_argument("--disconnect-at-epoch", type=float, help="after the exchanges, disconnect this link at this time")
     m6.add_argument("--discover-s", type=float, default=15.0)
+    m6.add_argument("--connect-order", choices=["scan-active", "scan-stopped"], default="scan-active")
+    m6.add_argument("--isolation-action", default=None,
+                    help="what the parent did to isolate the phone (recorded as an operator assertion)")
+    m6.add_argument("--overwrite", action="store_true")
     m6.add_argument("--stage-file")
     m6.add_argument("--out", required=True)
     adj = sub.add_parser("m6-adjudicate")
@@ -812,7 +897,11 @@ def build_parser():
     adj.add_argument("--min-exchanges", type=int, default=core.MIN_EXCHANGES)
     adj.add_argument("--min-overlap-ms", type=int, default=1000)
     adj.add_argument("--min-overlapping-pairs", type=int, default=3)
-    adj.add_argument("--clock-offset-ms", type=int, default=0, help="windows wall clock minus mac wall clock")
+    adj.add_argument("--clock-offset-ms", type=float, default=None, help="windows wall clock minus mac wall clock (required)")
+    adj.add_argument("--clock-uncertainty-ms", type=float, default=None, help="measured +/- bound on the offset (required)")
+    adj.add_argument("--clock-provenance", default=None, help="how the parent measured offset and uncertainty (required)")
+    adj.add_argument("--barrier-tolerance-ms", type=float, default=2000.0)
+    adj.add_argument("--overwrite", action="store_true")
     return parser
 
 
@@ -823,6 +912,9 @@ def validate_m6_args(parser, args):
         parser.error("exactly one of --barrier-file / --start-at-epoch is required")
     if bool(args.target_label) == bool(args.sole_advertiser):
         parser.error("exactly one of --target-label / --sole-advertiser is required (the phone is never guessed)")
+    if args.start_at_epoch is not None:
+        print("note: --start-at-epoch is DIAGNOSTIC only; M6 adjudication requires a --barrier-file nonce release",
+              file=sys.stderr)
     if args.seed_base is not None and not 0 <= args.seed_base <= 255:
         parser.error("--seed-base must be 0..255")
 

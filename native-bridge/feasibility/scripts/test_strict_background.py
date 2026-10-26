@@ -494,10 +494,41 @@ class DriverStructure(unittest.TestCase):
     def test_histories_are_installed_before_close_and_read_after_attach(self):
         bg, reattach = self.fn("ph_background"), self.fn("ph_reattach")
         self.assertLess(bg.index("ORDINARY_HISTORY_JS"), bg.index("chrome.cdp.ws.close()"))
-        self.assertLess(bg.index("ORDINARY_HISTORY_JS"), bg.index("Target.activateTarget"))
+        self.assertLess(bg.index("ORDINARY_HISTORY_JS"), bg.index("pre_close_probe"))
         self.assertLess(reattach.index("Cdp(WebSocket"), reattach.index("visibilityHistory"))
         self.assertNotIn("visibilityHistory", self.fn("ph_idle"))
         self.assertNotIn("visibilityHistory", bg, "history is collected only after the measurement")
+
+    def test_ordinary_tab_is_created_in_the_connector_window_via_chrome_apis(self):
+        """Regression: Target.createTarget+activateTarget left the connector visible (separate window)."""
+        bg = self.fn("ph_background")
+        self.assertNotIn("Target.createTarget", bg)
+        self.assertNotIn("Target.activateTarget", bg)
+        js = SRC[SRC.index("ORDINARY_TAB_JS = "):SRC.index("def utc")]
+        for needle in ("chrome.tabs.getCurrent()", "chrome.tabs.create({windowId: here.windowId", "active: true",
+                       "chrome.windows.update(here.windowId, {focused: true})"):
+            self.assertIn(needle, js)
+        self.assertIn("about:blank#otp23-ordinary-", bg)
+        self.assertIn("Browser.getWindowForTarget", bg)
+        self.assertLess(bg.index("ORDINARY_TAB_JS") if "ORDINARY_TAB_JS" in bg else bg.index("core_js(url)"),
+                        bg.index("Target.getTargets"))
+        self.assertLess(bg.index("Target.getTargets"), bg.index("ORDINARY_HISTORY_JS"))
+        self.assertLess(bg.index("ORDINARY_HISTORY_JS"), bg.index("chrome.cdp.ws.close()"))
+        self.assertIn("same_window_binding", bg)
+
+    def test_setup_fails_closed_unless_hidden_visible_and_focused(self):
+        bg = self.fn("ph_background")
+        self.assertIn('probe["connector_visibility"] == "hidden"', bg)
+        self.assertIn('probe["ordinary_tab_visibility"] == "visible"', bg)
+        self.assertIn('probe["ordinary_tab_focused"] is True', bg)
+        self.assertLess(bg.index('probe["ordinary_tab_focused"] is True'), bg.index("chrome.cdp.ws.close()"))
+
+    def test_no_visibility_override_minimise_or_keepalive_workaround(self):
+        for forbidden in ("Emulation.", "setFocusEmulationEnabled", "minimized", "Page.bringToFront",
+                          "setInterval", "Browser.setWindowBounds", "windowState"):
+            self.assertNotIn(forbidden, SRC)
+        manifest = (HERE.parent / "extension" / "manifest.json").read_text(encoding="utf-8")
+        self.assertNotIn('"tabs"', manifest, "no new manifest permission for tab/window control")
 
     def test_cut_time_is_taken_before_attach(self):
         reattach = self.fn("ph_reattach")

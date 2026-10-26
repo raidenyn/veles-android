@@ -32,8 +32,8 @@ MAX_FRAME_BYTES = 65536
 SEED_BASE = {"windows": 41, "mac": 173}  # per-platform default; any value is overridable
 SEED_STEP = 13  # odd, so seeds are distinct modulo 256 for 256 consecutive exchanges
 NOTIFY_CODES_REASON = (
-    "the existing OTP-06 fixture does not expose Android notify return codes to the desktop "
-    "centrals; no debug endpoint or Android change was added, so this requirement is not observed"
+    "phone transport evidence (otp23-transport-evidence.json) is collected separately and is not adjudicated "
+    "here; this requirement stays BLOCKED in this adjudicator"
 )
 
 
@@ -358,6 +358,22 @@ def stage_document(pair_run_id, role, phone_label, seeds, target_label_hash, now
 # ---- M6 adjudicator ---------------------------------------------------------------------------
 
 
+def nonce_hash(nonce):
+    return sha256_hex(nonce.encode("utf-8")) if isinstance(nonce, str) and nonce else None
+
+
+def parse_barrier_file(text):
+    """Parent barrier file: JSON {"nonce": non-empty str, "epoch_ms": optional number}. Returns
+    (document, problem); a half-written file is a problem the caller may retry."""
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return None, "barrier file is not valid JSON yet"
+    if not isinstance(document, dict) or not isinstance(document.get("nonce"), str) or not document["nonce"]:
+        return None, "barrier file carries no nonce"
+    return document, None
+
+
 def _interval(result):
     exchanges = [e for e in result.get("exchanges", []) if e.get("start_wall_ms") is not None]
     if not exchanges:
@@ -398,21 +414,48 @@ def role_problems(result, minimum):
         problems.append("system errors observed")
     if result.get("unexpected_disconnects"):
         problems.append("unexpected disconnect")
-    if not result.get("released_at_wall_ms"):
-        problems.append("no barrier release recorded")
+    return problems
+
+
+def barrier_problems(barrier):
+    """One central's barrier record: a real nonce release, staged strictly before it happened."""
+    barrier = barrier or {}
+    problems = []
+    if barrier.get("mode") != "nonce-file":
+        problems.append(f"barrier mode {barrier.get('mode')!r} is diagnostic only (needs a parent nonce file)")
+    if not barrier.get("nonce_sha256"):
+        problems.append("no barrier nonce hash")
+    if not barrier.get("plan_sha256"):
+        problems.append("no stage plan hash")
+    stage, release = barrier.get("stage_wall_ms"), barrier.get("released_at_wall_ms")
+    if not isinstance(stage, (int, float)) or not isinstance(release, (int, float)):
+        problems.append("stage/release times missing")
+    elif stage >= release:
+        problems.append("READY stage was not written before the release")
     return problems
 
 
 def adjudicate_m6(first, second, min_exchanges=MIN_EXCHANGES, min_overlap_ms=1000,
-                  min_overlapping_pairs=3, clock_offset_ms=0, notify_codes_evidence=None):
+                  min_overlapping_pairs=3, clock_offset_ms=None, clock_uncertainty_ms=None,
+                  clock_provenance=None, barrier_tolerance_ms=2000):
     """Merge two central results. Returns the adjudication; never touches the matrix.
 
-    verdict: PASS only when every desktop-observable check passes AND no required requirement is
-    BLOCKED. Because the Android notify return codes are not observable with the existing
-    fixture, a clean desktop result is PARTIAL; BLOCKED when a central is missing/blocked; FAIL on
-    any contradiction. `clock_offset_ms` is (windows wall clock - mac wall clock) as measured by
-    the parent, 0 meaning the clocks are assumed synchronised (recorded, not verified here)."""
-    checks, reasons = [], []
+    Clock: `clock_offset_ms` (windows wall clock minus mac wall clock), `clock_uncertainty_ms` and a
+    non-empty `clock_provenance` (how the parent measured them) are all REQUIRED; without them the
+    overlap and barrier checks are BLOCKED, never assumed. Overlap must be >= min + 2*uncertainty and only
+    exchange pairs overlapping by more than 2*uncertainty count.
+
+    Barrier: both centrals must have released from the same parent nonce file (equal nonce hashes), staged
+    before release, with release times agreeing within uncertainty + tolerance. `--start-at-epoch` runs are
+    diagnostic only.
+
+    Phone identity: both centrals must report a non-empty, equal `target_label_sha256` from the actual
+    advertisements; the parent-typed `phone_label` is an operator assertion that must agree but never proves
+    identity alone.
+
+    The Android notify return codes are not observable with the existing fixture, so M6 is never discharged
+    here: verdict is PARTIAL at best (desktop concurrency clean), `m6_discharged` is always False."""
+    checks = []
 
     def check(name, expected, actual, ok, blocked=False):
         checks.append({"name": name, "expected": expected, "actual": actual,
@@ -428,72 +471,99 @@ def adjudicate_m6(first, second, min_exchanges=MIN_EXCHANGES, min_overlap_ms=100
     check("both_centrals_present", "one windows and one mac result", sorted(roles), both, blocked=True)
     if not both:
         return _verdict("BLOCKED", checks, ["a central result is missing: one central alone is never M6"],
-                        None, clock_offset_ms, notify_codes_evidence)
+                        clock_offset_ms, clock_uncertainty_ms, clock_provenance)
     win, mac = roles["windows"], roles["mac"]
     pair = (win.get("pair_run_id"), mac.get("pair_run_id"))
     check("same_pair_run_id", "identical non-empty id", "match" if pair[0] == pair[1] and pair[0] else "mismatch",
           bool(pair[0]) and pair[0] == pair[1])
     labels = (win.get("phone_label"), mac.get("phone_label"))
-    same_phone = bool(labels[0]) and labels[0] == labels[1]
     hashes = (win.get("target_label_sha256"), mac.get("target_label_sha256"))
-    if hashes[0] and hashes[1]:
-        same_phone = same_phone and hashes[0] == hashes[1]
-    check("same_phone_identity", "identical parent-provided physical model label (and advertised-label hash when both have one)",
-          {"labels_equal": labels[0] == labels[1], "label_hashes_equal": hashes[0] == hashes[1]}, same_phone)
+    labels_ok = bool(labels[0]) and labels[0] == labels[1]
+    both_hashed = bool(hashes[0]) and bool(hashes[1])
+    check("same_phone_identity",
+          "equal operator phone label AND equal non-empty advertised-label hashes from both centrals "
+          "(a label alone is an operator claim, never proof)",
+          {"labels_equal": labels[0] == labels[1], "both_hashes_present": both_hashed,
+           "hashes_equal": both_hashed and hashes[0] == hashes[1]},
+          labels_ok and both_hashed and hashes[0] == hashes[1],
+          blocked=labels_ok and not both_hashed)
     for role, result in roles.items():
         problems = role_problems(result, min_exchanges)
         check(f"{role}_central_clean", "20+ exact 4096-byte exchanges, no errors, one link", problems or "ok", not problems,
               blocked=result.get("status") == "BLOCKED")
+    clock_ok = (isinstance(clock_offset_ms, (int, float)) and isinstance(clock_uncertainty_ms, (int, float))
+                and clock_uncertainty_ms >= 0 and bool(clock_provenance))
+    check("clock_measured", "offset, non-negative uncertainty and measurement provenance supplied by the parent",
+          {"offset": clock_offset_ms is not None, "uncertainty": clock_uncertainty_ms is not None,
+           "provenance": bool(clock_provenance)}, clock_ok, blocked=True)
+    barrier_checked = {}
+    for role, result in roles.items():
+        problems = barrier_problems(result.get("barrier"))
+        barrier_checked[role] = problems
+        check(f"{role}_barrier_staged_and_released", "nonce-file release after its READY stage", problems or "ok",
+              not problems, blocked=any("diagnostic" in p for p in problems))
+    wb, mb = win.get("barrier") or {}, mac.get("barrier") or {}
+    nonce_equal = bool(wb.get("nonce_sha256")) and wb.get("nonce_sha256") == mb.get("nonce_sha256")
+    check("same_barrier_nonce", "identical non-empty nonce hash on both centrals", nonce_equal, nonce_equal,
+          blocked=not (wb.get("nonce_sha256") and mb.get("nonce_sha256")))
+    if clock_ok and isinstance(wb.get("released_at_wall_ms"), (int, float)) \
+            and isinstance(mb.get("released_at_wall_ms"), (int, float)):
+        skew = abs((wb["released_at_wall_ms"] - clock_offset_ms) - mb["released_at_wall_ms"])
+        bound = clock_uncertainty_ms + barrier_tolerance_ms
+        check("barrier_release_simultaneous", f"|win - offset - mac| <= uncertainty + tolerance ({bound} ms)",
+              {"skew_ms": round(skew, 1)}, skew <= bound)
+    else:
+        check("barrier_release_simultaneous", "comparable release times and a measured clock", "unavailable", False,
+              blocked=True)
     a, b = _interval(win), _interval(mac)
-    if a and b:
-        shift = clock_offset_ms
-        a = (a[0] - shift, a[1] - shift)
+    if clock_ok and a and b:
+        u2 = 2 * clock_uncertainty_ms
+        a = (a[0] - clock_offset_ms, a[1] - clock_offset_ms)
         window = _overlap(a, b)
         pairs = sum(1 for x in win.get("exchanges", []) for y in mac.get("exchanges", [])
                     if x.get("start_wall_ms") is not None and y.get("start_wall_ms") is not None
-                    and _overlap((x["start_wall_ms"] - shift, x["end_wall_ms"] - shift),
-                                 (y["start_wall_ms"], y["end_wall_ms"])) > 0)
-        check("real_io_intervals_overlap", f">= {min_overlap_ms} ms and >= {min_overlapping_pairs} overlapping exchange pairs",
+                    and _overlap((x["start_wall_ms"] - clock_offset_ms, x["end_wall_ms"] - clock_offset_ms),
+                                 (y["start_wall_ms"], y["end_wall_ms"])) > u2)
+        check("real_io_intervals_overlap",
+              f">= {min_overlap_ms} + 2x{clock_uncertainty_ms} ms and >= {min_overlapping_pairs} exchange pairs overlapping by > 2x uncertainty",
               {"overlap_ms": window, "overlapping_exchange_pairs": pairs},
-              window >= min_overlap_ms and pairs >= min_overlapping_pairs)
+              window >= min_overlap_ms + u2 and pairs >= min_overlapping_pairs)
     else:
-        check("real_io_intervals_overlap", "both centrals recorded real I/O intervals", "missing", False)
+        check("real_io_intervals_overlap", "both centrals recorded real I/O intervals and the clock is measured",
+              "missing", False, blocked=not clock_ok)
     # Isolation: a deliberate disconnect on one central must not disturb the other.
     for role, other in (("windows", "mac"), ("mac", "windows")):
         gone = roles[role].get("deliberate_disconnect")
-        if gone:
-            # offset = windows clock - mac clock: express the cut in the surviving central's clock
-            cut = gone.get("at_wall_ms", 0) + (clock_offset_ms if role == "mac" else -clock_offset_ms)
-            survived = [e for e in roles[other].get("exchanges", [])
-                        if e.get("start_wall_ms", 0) >= cut and e.get("status") == "PASS"]
-            check(f"{other}_survives_{role}_disconnect", "successful exchange after the peer central disconnected",
-                  len(survived), bool(survived))
-    requirements = [{"name": "android_notify_return_codes", "expected": "per-notification return codes from the phone",
-                     "actual": notify_codes_evidence or NOTIFY_CODES_REASON,
-                     "status": "PASS" if notify_codes_evidence else "BLOCKED"}]
+        if gone is None:
+            continue
+        at = gone.get("at_wall_ms")
+        if not isinstance(at, (int, float)) or not clock_ok:
+            check(f"{other}_survives_{role}_disconnect", "recorded disconnect time and a measured clock",
+                  "missing", False, blocked=not clock_ok and isinstance(at, (int, float)))
+            continue
+        # offset = windows clock - mac clock: express the cut in the surviving central's clock
+        cut = at + (clock_offset_ms if role == "mac" else -clock_offset_ms)
+        survived = [e for e in roles[other].get("exchanges", [])
+                    if e.get("start_wall_ms", 0) >= cut + clock_uncertainty_ms and e.get("status") == "PASS"]
+        check(f"{other}_survives_{role}_disconnect", "successful exchange after the peer central disconnected",
+              len(survived), bool(survived))
     failed = [c for c in checks if c["status"] == "FAIL"]
     blocked = [c for c in checks if c["status"] == "BLOCKED"]
-    if failed:
-        verdict = "FAIL"
-    elif blocked:
-        verdict = "BLOCKED"
-    elif any(r["status"] == "BLOCKED" for r in requirements):
-        verdict = "PARTIAL"
-    else:
-        verdict = "PASS"
-    return _verdict(verdict, checks, reasons, requirements, clock_offset_ms, notify_codes_evidence)
+    desktop = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
+    return _verdict("PARTIAL" if desktop == "PASS" else desktop, checks, [], clock_offset_ms,
+                    clock_uncertainty_ms, clock_provenance, desktop)
 
 
-def _verdict(verdict, checks, reasons, requirements, clock_offset_ms, notify_codes_evidence):
-    if requirements is None:
-        requirements = [{"name": "android_notify_return_codes", "status": "BLOCKED",
-                         "expected": "per-notification return codes from the phone",
-                         "actual": notify_codes_evidence or NOTIFY_CODES_REASON}]
-    return {"scenario": "m6-adjudication", "verdict": verdict, "checks": checks, "requirements": requirements,
-            "notes": reasons, "clock_offset_ms_assumed": clock_offset_ms,
-            "m6_discharged": verdict == "PASS",
-            "disclaimer": "driver adjudication only; the parent records matrix rows. PARTIAL means desktop "
-                          "evidence is clean but a required requirement is not observable."}
+def _verdict(verdict, checks, reasons, offset, uncertainty, provenance, desktop=None):
+    return {"scenario": "m6-adjudication", "verdict": verdict,
+            "desktop_concurrency": desktop or verdict, "checks": checks,
+            "requirements": [{"name": "android_notify_return_codes", "status": "BLOCKED",
+                              "expected": "per-notification return codes from the phone",
+                              "actual": NOTIFY_CODES_REASON}],
+            "notes": reasons, "clock": {"offset_ms": offset, "uncertainty_ms": uncertainty, "provenance": provenance},
+            "m6_discharged": False,
+            "disclaimer": "driver adjudication only; the parent records matrix rows. PARTIAL = desktop concurrency "
+                          "clean while the Android notify return codes stay BLOCKED (no override exists)."}
 
 
 def check_truncated_eof(parsed, returncode, eof_state):

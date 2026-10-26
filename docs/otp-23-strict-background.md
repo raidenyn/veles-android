@@ -32,6 +32,17 @@ unfocused, ordinary tab visible + focused), even if a later event restores it. T
 `cdp_reopened_wall`, taken **before** the re-attach; events after it (caused by attaching) are counted but
 never used.
 
+### Ordinary tab setup (same window)
+
+`Target.createTarget` + `activateTarget` can open the tab in a different window, leaving the connector
+visible (first Windows cold run stopped early at ST-BG for that reason). The driver now runs, inside the
+connector page, `chrome.tabs.getCurrent()`, `chrome.tabs.create({windowId: <connector window>, url:
+about:blank#otp23-ordinary-<uuid>, active: true})` and `chrome.windows.update(<window>, {focused: true})`
+(no manifest permission needed), finds the CDP target by that unique URL, asserts both targets report the same
+`Browser.getWindowForTarget` window, installs the history, and requires connector hidden / ordinary tab
+visible AND focused before any DevTools client closes (the run stops with ST-BG otherwise). The binding is
+recorded as `evidence.same_window_binding`. No visibility/focus emulation, minimisation or keepalive is used.
+
 ### Chrome flags (ST-13) and the Native Messaging caveat
 
 The launched argv (`proc.args`, also set by `MediumProcess` on Windows; a single-string OS command line is tokenised, never skipped) is stored in

@@ -42,7 +42,8 @@ internal class SharingGattServer(
     private val connectedAt = mutableMapOf<String, Long>()
     private val ready = mutableSetOf<String>()
     private var server: BluetoothGattServer? = null
-    private var closed = false
+
+    @Volatile private var closed = false
     private val manager = context.getSystemService(BluetoothManager::class.java)
     private val notify = BluetoothGattCharacteristic(
         NOTIFY_UUID,
@@ -87,11 +88,13 @@ internal class SharingGattServer(
                 } else {
                     devices[id] = device
                     admitted.add(id)
+                    if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.connected(id)
                     connectedAt[id] = SystemClock.elapsedRealtime()
                 }
             }
         }
         override fun onMtuChanged(device: BluetoothDevice, mtu: Int) = post {
+            if (BuildConfig.DEBUG && device.address in admitted) SyntheticTransportFixture.telemetry?.mtu(device.address, mtu)
             if (!transport.setMtu(device.address, mtu)) {
                 disconnect(device.address)
             } else {
@@ -186,7 +189,10 @@ internal class SharingGattServer(
                         )
                 if (valid) {
                     if (copy.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                        if (subscribed.add(device.address) && BuildConfig.DEBUG) scheduleSyntheticPush(device.address)
+                        if (subscribed.add(device.address) && BuildConfig.DEBUG) {
+                            SyntheticTransportFixture.telemetry?.subscribed(device.address)
+                            scheduleSyntheticPush(device.address)
+                        }
                     } else {
                         disconnect(device.address)
                     }
@@ -206,7 +212,13 @@ internal class SharingGattServer(
             server?.sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null)
             Unit
         }
-        override fun onNotificationSent(device: BluetoothDevice, status: Int) = post {
+        override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+            // Raw arrival is recorded before the looper hop: close() flushes queued work and drops late callbacks.
+            if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callbackSeen(device.address, status, closed)
+            onNotificationSentOnMain(device, status)
+        }
+        private fun onNotificationSentOnMain(device: BluetoothDevice, status: Int) = post {
+            if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callback(device.address, status)
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 disconnect(device.address)
             } else {
@@ -289,7 +301,9 @@ internal class SharingGattServer(
         if (id !in subscribed) return
         val device = devices[id] ?: return
         val bytes = transport.nextFragment(id) ?: return
-        if (server?.notifyCharacteristicChanged(device, notify, false, bytes) != BluetoothStatusCodes.SUCCESS) disconnect(id)
+        val code = server?.notifyCharacteristicChanged(device, notify, false, bytes)
+        if (BuildConfig.DEBUG && code != null) SyntheticTransportFixture.telemetry?.notifyResult(id, bytes.size, code)
+        if (code != BluetoothStatusCodes.SUCCESS) disconnect(id)
     }
 
     private fun post(block: () -> Unit) {
@@ -371,6 +385,7 @@ internal class SharingGattServer(
     }
 
     private fun remove(id: String) {
+        if (BuildConfig.DEBUG && id in admitted) SyntheticTransportFixture.telemetry?.disconnected(id)
         admitted.remove(id)
         overflowed.remove(id)
         transport.disconnect(id)

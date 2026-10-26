@@ -28,6 +28,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 
 import strict_background_core as core
@@ -48,6 +49,18 @@ PACKAGE = "me.nagaev.veles.otp23"
 WARMUP_SEEDS = core.WARMUP_SEEDS
 WARMUP_TIMEOUT_S = 12
 EVIDENCE_FILE = "files/otp23-unsolicited.json"
+
+
+# Run INSIDE the connector page (an extension page: chrome.tabs.getCurrent/create and chrome.windows.update
+# need no manifest permission). The ordinary tab is created in the connector's own window and focused there;
+# no visibility override, minimisation or keepalive is involved.
+ORDINARY_TAB_JS = """(async (url) => {
+  const here = await chrome.tabs.getCurrent();
+  const created = await chrome.tabs.create({windowId: here.windowId, url: url, active: true});
+  await chrome.windows.update(here.windowId, {focused: true});
+  return {connector_tab_id: here.id, connector_window_id: here.windowId,
+          ordinary_tab_id: created.id, ordinary_window_id: created.windowId};
+})(%s)"""
 
 
 def utc():
@@ -213,28 +226,53 @@ def run(args):
         evidence["warmup"] = warmed
         return warmed
 
+    def core_js(url):
+        return ORDINARY_TAB_JS % json.dumps(url)
+
     def ph_background():
         """Focus an ordinary tab, prove the connector is hidden, then close EVERY DevTools client."""
-        other = chrome.cdp.call("Target.createTarget", {"url": "about:blank"})["targetId"]
+        url = "about:blank#otp23-ordinary-" + uuid.uuid4().hex
+        binding = chrome.js(st["session"], core_js(url), timeout=30)
+        cv.expect(binding.get("ordinary_window_id") == binding.get("connector_window_id"),
+                  f"ordinary tab opened in another window: {binding}")
+        other = None
+        for _ in range(60):
+            found = [t for t in chrome.cdp.call("Target.getTargets")["targetInfos"]
+                     if t.get("type") == "page" and t.get("url") == url]
+            if found:
+                other = found[0]["targetId"]
+                break
+            time.sleep(0.25)
+        cv.expect(other is not None, "ordinary tab CDP target not found by its unique URL")
+        windows = {name: chrome.cdp.call("Browser.getWindowForTarget", {"targetId": target})["windowId"]
+                   for name, target in (("connector", st["target"]), ("ordinary_tab", other))}
+        cv.expect(windows["connector"] == windows["ordinary_tab"], f"targets are in different windows: {windows}")
         other_session = chrome.cdp.call("Target.attachToTarget", {"targetId": other, "flatten": True})["sessionId"]
         chrome.cdp.call("Runtime.enable", session=other_session)
-        # Preconfigure the ordinary tab's visibility/focus history (listeners only) BEFORE activating it
-        # and before any DevTools client closes; it is read back only after the measurement.
+        # Preconfigure the ordinary tab's visibility/focus history (listeners only) before any DevTools
+        # client closes; it is read back only after the measurement.
         installed = chrome.js(other_session, core.ORDINARY_HISTORY_JS)
         cv.expect(isinstance(installed, dict) and installed.get("token"), "ordinary-tab history not installed")
         evidence["history_tokens"]["ordinary_tab"] = installed["token"]
         st["other_target"] = other
-        chrome.cdp.call("Target.activateTarget", {"targetId": other})
+        chrome.js(st["session"], "chrome.tabs.getCurrent().then(t => chrome.windows.update(t.windowId, "
+                                 "{focused: true})).then(() => 1)", timeout=30)
+        hidden = visible = None
         for _ in range(40):
             hidden = chrome.js(st["session"], "document.visibilityState")
             visible = chrome.js(other_session, "document.visibilityState")
-            if hidden == "hidden" and visible == "visible":
+            if hidden == "hidden" and visible == "visible" and chrome.js(other_session, "document.hasFocus()"):
                 break
             time.sleep(0.25)
+        evidence["same_window_binding"] = {"chrome_tabs": binding, "cdp_window_ids_equal": True,
+                                           "created_by": "chrome.tabs.create(windowId=connector window, active)"}
         evidence["pre_close_probe"] = {
             "connector_visibility": hidden, "ordinary_tab_visibility": visible,
             "ordinary_tab_focused": bool(chrome.js(other_session, "document.hasFocus()"))}
-        cv.expect(evidence["pre_close_probe"]["connector_visibility"] == "hidden", f"connector not hidden: {hidden}")
+        probe = evidence["pre_close_probe"]
+        cv.expect(probe["connector_visibility"] == "hidden" and probe["ordinary_tab_visibility"] == "visible"
+                  and probe["ordinary_tab_focused"] is True,
+                  f"background setup not reached (connector hidden / ordinary visible+focused): {probe}")
         timeline = evidence["timeline"]
         timeline["background_started_wall"] = time.time()
         # From here on this process owns no DevTools object. Any later use would raise AttributeError.
