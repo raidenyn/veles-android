@@ -60,6 +60,14 @@ descriptions (`NSBluetoothAlwaysUsageDescription`) and `LSUIElement`; TCC identi
 a stable signature and bundle identifier, so an ad-hoc or per-build identity makes grants
 unreproducible.
 
+**Keep the identity stable.** Every later macOS build of the host app or fixture must reuse the
+exact approved signing identity/team and bundle identifier. Do not substitute ad-hoc signing,
+export keys, or reset TCC to get a prompt back; that churns the permission identity and
+invalidates earlier grants. Sign from the Aqua (logged-in GUI) session when keychain access
+requires it. This is stable per macOS app identity, separate from the Android fixture key. A
+different production identity (`me.nagaev.veles.bridge`, CI credentials) needs a separately
+planned migration and revalidation, not reuse of the PoC's Apple Development credentials.
+
 **What was actually tested.**
 
 - `scripts/macos-package.sh` creates `target/macos-poc/VelesOtp23PoC.app`, bundle identifier

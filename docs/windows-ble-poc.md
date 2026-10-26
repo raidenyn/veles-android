@@ -72,6 +72,26 @@ The fixture lasts up to 30 minutes; finish by creating `files/otp23-stop` with
 If network-forwarded adb installs are slow, transfer the Linux-built APKs to the
 PC once and install with its existing adb client/server; never restart adb.
 
+### Android fixture signing identity (keep it stable)
+
+Every build of the isolated fixture APK and its androidTest APK must be signed with the
+**same, already-approved debug fixture keystore**. A differently signed APK cannot update an
+installed one (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) and would tempt a destructive workaround.
+This rule is per app identity on Android; it is not one key shared with macOS.
+
+- Retain and back up the approved fixture keystore securely (outside the repository) so it
+  survives container and workspace recreation. Never commit the keystore, its passwords, or
+  any private key material.
+- Before `adb install -r`, compare signing certificate SHA-256 fingerprints using
+  `apksigner verify --print-certs` on both the new APK and a pulled copy of the installed
+  APK (locate it with `adb -s SERIAL shell pm path me.nagaev.veles.otp23`). Repeat for the
+  androidTest package. Do not mistake `dumpsys`' short signature/hash display for a
+  certificate SHA-256 fingerprint. Record fingerprints only from actual output.
+- Do not regenerate the keystore, uninstall the app, or clear app data as a routine
+  workaround for a signature mismatch. If the original key is unavailable, stop and ask.
+- A different (for example production release) signing identity is a separately planned
+  migration with its own revalidation. Do not borrow the debug fixture credentials for it.
+
 From `native-bridge/feasibility` on Windows:
 
 ```powershell

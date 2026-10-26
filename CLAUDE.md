@@ -22,6 +22,24 @@ the checks. Fix all failures before pushing the initial PR branch and running
 Rerun the checks after subsequent code changes before pushing PR updates.
 If a check cannot run, report the blocker instead of claiming the PR is ready.
 
+## Stable Signing Identities (Android and macOS builds)
+
+Always reuse the **same existing signing identity within each platform/app identity** for
+subsequent app and fixture builds. This is one stable key per app identity, not one
+cross-platform key: Android and macOS identities are separate.
+
+- **Android debug fixture:** keep the approved fixture keystore backed up securely across
+  containers (never in git; never commit keys or passwords). Compare the signing certificate
+  fingerprints of the new APK and the installed one before `adb install -r`. Do not
+  regenerate the key, uninstall the app, or clear data as a routine workaround; if the
+  original key is unavailable, stop and ask.
+- **macOS:** reuse the exact approved signing identity/team and bundle ID. No ad-hoc
+  substitution, key export, or TCC reset; use the Aqua keychain context when required.
+- Different production signing is a separately planned migration with revalidation. Do not
+  borrow debug credentials. Never record fingerprints that were not read from real output.
+
+Details: `docs/windows-ble-poc.md` (Android) and `docs/desktop-ble-poc.md` (macOS).
+
 ## Build & Test Commands
 
 ```bash
