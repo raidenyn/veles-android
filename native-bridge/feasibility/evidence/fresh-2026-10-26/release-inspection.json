@@ -1,0 +1,30 @@
+{
+  "artifact": "app/build/outputs/apk/release/app-release-unsigned.apk",
+  "sha256": "75babec253cf47ff3a71eb9435c66e0b5fec48190ae0a37e39b3709b36e048dd",
+  "signed": false,
+  "built_from": "4e9c685 working tree plus the reviewed-in-progress malformed-ingress fix; dirty git-derived version retained accurately",
+  "version_name": "0.0.3-26-4e9c685-contract_otp23-desktop-alignment-dirty",
+  "package": "me.nagaev.veles",
+  "min_sdk": 33,
+  "target_sdk": 35,
+  "inspection_tool": "Android build-tools 36.0.0 aapt2 dump badging; ZIP DEX bytes plus R8 mapping inspection",
+  "debuggable": false,
+  "scan_or_location_permissions_present": false,
+  "sharing_permissions": [
+    "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.BLUETOOTH_ADVERTISE",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
+  ],
+  "forbidden_symbols_checked_in_all_dex_and_r8_mapping": [
+    "SyntheticTransportFixture",
+    "scheduleSyntheticPush",
+    "OTP23_POC"
+  ],
+  "forbidden_symbols_found": [],
+  "sharing_server_source_sha256": "d07156f5f1fd84203cebbc461a4e048f989d56f7ed91305aadb993cb62ed8fae",
+  "jvm_tests": {"tests": 313, "failures": 0, "errors": 0, "skipped": 0},
+  "required_gates_log": "linux-final-required-gates.log",
+  "both_raw_android_util_Log_guards": {"source": ".github/workflows/ci.yml lint-check", "exit_code": 0, "matches": 0},
+  "physical_transfer_verification": "BLOCKED; this release inspection is not physical acceptance evidence"
+}

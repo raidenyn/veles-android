@@ -30,11 +30,53 @@ class CommittedMatrix(unittest.TestCase):
     def test_unrun_hardware_rows_default_to_not_run_and_the_decision_is_no_go(self):
         verdict, open_rows = m.decision(BASE)
         self.assertEqual(verdict == "GO", all(r["status"] == "PASS" for r in BASE["rows"]))
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        # no hardware row is PASS from fresh scan-only or historical evidence
         for row in BASE["rows"]:
-            if row["group"] in ("windows",):
-                self.assertEqual(row["status"], "NOT RUN", row["id"])
-                self.assertEqual((row["actual"], row["evidence"]), ("", []), row["id"])
+            if row["group"] in ("windows", "macos", "android") and row["id"] != "W-13":
+                self.assertNotEqual(row["status"], "PASS", row["id"])
+        # phone-dependent rows are BLOCKED on the permission prerequisite, with logs as evidence
+        for rid in ("W-04", "W-05", "W-06", "W-11", "W-12", "M-07", "M-09", "M-10", "A-03"):
+            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
+            self.assertTrue(by_id[rid]["blocker"], rid)
+        # scan-only fresh Windows evidence does not promote link-active cleanup rows
+        for rid in ("W-02", "W-07", "W-08", "W-09"):
+            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
+        self.assertIn("HIDDEN", by_id["W-02"]["actual"])
         self.assertIn("W-11", open_rows)
+
+    def test_existing_account_windows_launch_is_a_narrow_non_waived_pass(self):
+        row = {r["id"]: r for r in BASE["rows"]}["W-13"]
+        self.assertEqual((row["status"], row["account"], row["waiver"]), ("PASS", "admin", ""))
+        self.assertIn("fresh-windows-chrome.json", " ".join(row["evidence"]))
+        self.assertIn("Proves nothing about phones, transfer or link cleanup", row["actual"])
+        self.assertIn("W-01", m.waived(BASE))
+
+    def test_prerequisite_rows_are_blocked_not_bare_not_run(self):
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        for rid in ("A-01", "A-02", "M-11"):
+            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
+            self.assertTrue(by_id[rid]["blocker"], rid)
+
+    def test_existing_account_unsigned_host_row_is_blocking_and_was_not_run(self):
+        row = {r["id"]: r for r in BASE["rows"]}["M-11"]
+        self.assertEqual((row["status"], row["waiver"], row["actual"], row["evidence"]), ("BLOCKED", "", "", []))
+        self.assertTrue(row["blocker"])
+        self.assertIn("M-11", m.decision(BASE)[1])
+
+    def test_tauri_packaging_stays_unjustified_and_review_is_a_placeholder(self):
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        d = by_id["D-01"]
+        self.assertEqual(d["status"], "PASS")
+        self.assertIn("NOT APPROVED", d["actual"])
+        self.assertIn("NOT JUSTIFIED", d["actual"])
+        self.assertIn("not approval of Tauri", d["actual"])
+        # the evaluation is not circular: it never requires OTP-25 installer work inside OTP-23
+        self.assertNotIn("installer proof", d["blocker"] + d["expected"].replace("no bundler/installer is implemented or required", ""))
+        self.assertIn("OTP-24 GO", d["actual"])
+        self.assertEqual(by_id["R-01"]["status"], "NOT RUN")
+        self.assertIn("claude-opus-5-5", by_id["R-01"]["expected"])
+        self.assertIn("R-01", m.decision(BASE)[1])
 
     def test_account_waiver_covers_exactly_the_new_account_rows_and_is_never_a_pass(self):
         self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
@@ -51,9 +93,9 @@ class CommittedMatrix(unittest.TestCase):
 
     def test_waiver_rules(self):
         waiver = "User-approved acceptance scope revision: x"
-        self.assertTrue(m.validate(with_row("W-02", waiver=waiver, status="BLOCKED", blocker="b")))
-        self.assertTrue(m.validate(with_row("W-02", waiver="skip it")))
-        self.assertEqual(m.validate(with_row("W-02", waiver=waiver)), [])
+        self.assertTrue(m.validate(with_row("D-02", waiver=waiver, status="BLOCKED", blocker="b")))
+        self.assertTrue(m.validate(with_row("D-02", waiver="skip it")))
+        self.assertEqual(m.validate(with_row("D-02", waiver=waiver)), [])
         all_done = copy.deepcopy(BASE)
         for row in all_done["rows"]:
             if not row["waiver"]:
@@ -63,7 +105,7 @@ class CommittedMatrix(unittest.TestCase):
 
     def test_pass_must_identify_the_account_truthfully(self):
         changes = dict(status="PASS", actual="ok", evidence=["e"])
-        self.assertTrue(m.validate(with_row("W-02", **changes)))
+        self.assertTrue(m.validate(with_row("W-02", account="", **changes)))
         self.assertTrue(m.validate(with_row("W-02", account="root", **changes)))
         self.assertEqual(m.validate(with_row("W-02", account="standard", **changes)), [])
 
@@ -92,9 +134,9 @@ class CommittedMatrix(unittest.TestCase):
 
 class Rules(unittest.TestCase):
     def test_pass_requires_actual_and_evidence(self):
-        self.assertTrue(m.validate(with_row("W-02", status="PASS", account="admin")))
-        self.assertTrue(m.validate(with_row("W-02", status="PASS", actual="zero windows", account="admin")))
-        self.assertEqual(m.validate(with_row("W-02", status="PASS", actual="zero windows", evidence=["evidence/x.json"], account="admin")), [])
+        self.assertTrue(m.validate(with_row("D-02", status="PASS", account="admin")))
+        self.assertTrue(m.validate(with_row("D-02", status="PASS", actual="zero windows", account="admin")))
+        self.assertEqual(m.validate(with_row("D-02", status="PASS", actual="zero windows", evidence=["evidence/x.json"], account="admin")), [])
 
     def test_human_gated_pass_needs_a_named_operator(self):
         changes = dict(status="PASS", actual="ok", evidence=["e"], blocker="", account="admin")
@@ -102,14 +144,14 @@ class Rules(unittest.TestCase):
         self.assertEqual(m.validate(with_row("M-04", operator="a named person", **changes)), [])
 
     def test_not_run_rows_carry_no_result(self):
-        self.assertTrue(m.validate(with_row("W-02", actual="looks fine")))
-        self.assertTrue(m.validate(with_row("W-02", evidence=["x"])))
+        self.assertTrue(m.validate(with_row("D-02", actual="looks fine")))
+        self.assertTrue(m.validate(with_row("D-02", evidence=["x"])))
 
     def test_blocked_and_fail_need_a_reason_and_statuses_are_closed(self):
-        self.assertTrue(m.validate(with_row("W-02", status="BLOCKED")))
-        self.assertTrue(m.validate(with_row("W-02", status="FAIL")))
-        self.assertTrue(m.validate(with_row("W-02", status="PARTIAL")))
-        self.assertTrue(m.validate(with_row("W-02", status="pass")))
+        self.assertTrue(m.validate(with_row("D-02", status="BLOCKED")))
+        self.assertTrue(m.validate(with_row("D-02", status="FAIL")))
+        self.assertTrue(m.validate(with_row("D-02", status="PARTIAL")))
+        self.assertTrue(m.validate(with_row("D-02", status="pass")))
 
     def test_default_status_and_duplicates_are_enforced(self):
         changed = copy.deepcopy(BASE)

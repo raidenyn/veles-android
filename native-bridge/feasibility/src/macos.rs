@@ -7,11 +7,12 @@
 //! per scan and per link; every OS wait is bounded; a setup that got the connection up always
 //! releases it again, including on cancel.
 //!
-//! The negotiated ATT MTU is **inferred** on macOS: CoreBluetooth only reports
-//! `maxWriteValueLengthForType(WithoutResponse)` (`max_write = mtu - 3`), so
-//! `macos_map::link_budget` feeds it to the shared `min(write, 512)` budget and refuses anything below
-//! than the 185 floor; nothing is hardcoded. A reported 512 yields an effective MTU of 515 and a
-//! capped fragment payload of 508, byte-identical to an Android phone that negotiated 517.
+//! The negotiated ATT MTU is **never observed or derived** on macOS: CoreBluetooth only reports
+//! `maxWriteValueLengthForType(WithoutResponse)` (`W`), a backend write limit that is at most
+//! `MTU - 3` and may be platform-capped. The host reports it as
+//! `LinkCapacity::MaxWriteWithoutResponse(W)`; a common fragment budget exists only for `W >= 512`
+//! (attribute 512, payload 508, identical to an Android phone that negotiated 515..517) and a
+//! smaller `W` is refused as `budget_undetermined` (fail closed). Nothing is guessed or hardcoded.
 //!
 //! Two bluest/CoreBluetooth facts shape the link loop: `Adapter::device_connection_events` emits
 //! nothing on macOS (iOS only), so link loss is detected through the notify stream's

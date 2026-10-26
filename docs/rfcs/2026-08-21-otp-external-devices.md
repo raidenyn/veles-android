@@ -520,12 +520,15 @@ desktop and a needed forced-exit fallback after `AppHandle::exit`; that evidence
 is preserved as **historical** and is not re-attributed to the current tree. The
 later plain-Rust successes (Windows `d5b6f2d`, macOS `fb224e8`) are likewise
 historical PoC evidence, recorded separately. Whether Tauri is worth retaining
-**for packaging only** is an open question that must be answered with *current*
-dependency-graph, SBOM, binary-size and packaging-proof evidence (matrix row D-01
-in [`docs/otp-23-requirements-matrix.md`](../otp-23-requirements-matrix.md));
-nothing in this RFC asserts that choice is justified. If it is retained, the
-bundler wraps the unmodified plain-Rust binary and the Tauri runtime is never
-started.
+**for packaging only** was evaluated with *current* dependency-graph, SBOM and
+binary-size evidence (matrix row D-01 in
+[`docs/otp-23-requirements-matrix.md`](../otp-23-requirements-matrix.md),
+[`docs/otp-23-tauri-packaging-evaluation.md`](../otp-23-tauri-packaging-evaluation.md)).
+Decision: retaining Tauri solely for packaging is **not approved and not justified**
+by that cost proxy; OTP-25 chooses another packaging pipeline or brings a separately
+reviewed justification (including a bundler proof) to revisit it. No installer is
+implemented in OTP-23. If retention is ever approved, the bundler wraps the unmodified
+plain-Rust binary and the Tauri runtime is never started.
 
 The bridge may hold only bounded ephemeral scan, request, handle, connection,
 queue, fragment, and reassembly state plus in-flight opaque record bytes. It
@@ -1684,10 +1687,11 @@ CI-provided credentials without embedding secrets, and signed↔unsigned
 content-correspondence verification.)**
 
 **Packaging-tool decision (2026-10-26 amendment):** the installer pipeline is chosen
-from the OTP-23 matrix row D-01. If Tauri's bundler is retained it only wraps the
-unmodified plain-Rust host binary (the Tauri runtime and its event loop are never
-started); otherwise OTP-25 selects a standalone signing/packaging pipeline. Either
-way the signed payload must correspond to the reproducible plain-Rust unsigned
+from the OTP-23 matrix row D-01, whose decision is that retaining Tauri solely for
+packaging is not approved: OTP-25 selects a standalone signing/packaging pipeline,
+unless it brings a separately reviewed justification with a bundler proof (then the
+bundler only wraps the unmodified plain-Rust host binary and the Tauri runtime is never
+started). Either way the signed payload must correspond to the reproducible plain-Rust unsigned
 inputs.
 
 **Exclusions:** Machine-wide installation, auto-update daemons, broad or

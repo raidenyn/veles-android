@@ -1,0 +1,8 @@
+# mutation: restore pre-I1 silent drop when ingress is saturated; expected FAIL
+SharingGattServerTest > overflowDisconnectIsQueuedAtMostOncePerPeerAndClearedOnReconnect FAILED
+SharingGattServerTest > malformedFramesAreOrderedAndBoundedPerPeer FAILED
+SharingGattServerTest > saturatedIngressFailsTheMalformedPeerClosedInsteadOfDroppingTheDiscard FAILED
+17 tests completed, 3 failed
+> Task :app:testDebugUnitTest FAILED
+BUILD FAILED in 25s
+failing tests: ['overflowDisconnectIsQueuedAtMostOncePerPeerAndClearedOnReconnect', 'malformedFramesAreOrderedAndBoundedPerPeer', 'saturatedIngressFailsTheMalformedPeerClosedInsteadOfDroppingTheDiscard']

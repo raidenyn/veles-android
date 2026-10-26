@@ -69,7 +69,10 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 # Build web-target WASM into web-extension/rust-wasm/pkg/
 ./gradlew rustWasm
 
-# Native-bridge (OTP-01 sub-project 1c) — Tauri 2.x headless Native Messaging host
+# Native-bridge (OTP-01 sub-project 1c) — Tauri 2.x packaging/build scaffold for the Native Messaging host.
+# NOTE: these are existing TOOLING commands, not the approved production architecture. Per the RFC
+# amendment of 2026-10-26 the production host is a plain Rust executable that never starts the Tauri
+# event loop; whether Tauri bundling is kept for packaging is open (docs/otp-23-requirements-matrix.md D-01).
 # Install npm deps, check format/lint/typecheck, run npm+cargo tests
 ./gradlew bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeTest
 

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="112" font-family="Segoe UI,Arial" font-size="13">
+<rect width="760" height="112" fill="#ffffff"/>
+<text x="12" y="26" font-size="16" font-weight="600">Release binary size (default profile)</text>
+<text x="12" y="69">baseline</text>
+<rect x="190" y="50" width="450.0" height="28" fill="#2f6f4f"/>
+<text x="648.0" y="69">700 KiB</text>
+</svg>

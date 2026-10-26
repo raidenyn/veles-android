@@ -1,0 +1,41 @@
+
+me.nagaev.veles.sharing.SharingFeasibilityTest:
+Error in holdSyntheticPeripheralForWindowsCentral(me.nagaev.veles.sharing.SharingFeasibilityTest):
+java.lang.AssertionError: Requires Bluetooth advertising and nearby-device grants expected null, but was:<PermissionRequired>
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failNotNull(Assert.java:756)
+	at org.junit.Assert.assertNull(Assert.java:738)
+	at me.nagaev.veles.sharing.SharingFeasibilityTest$holdSyntheticPeripheralForWindowsCentral$1.invokeSuspend(SharingFeasibilityTest.kt:43)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:95)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:69)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:47)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at me.nagaev.veles.sharing.SharingFeasibilityTest.holdSyntheticPeripheralForWindowsCentral(SharingFeasibilityTest.kt:30)
+
+
+Time: 0.028
+There was 1 failure:
+1) holdSyntheticPeripheralForWindowsCentral(me.nagaev.veles.sharing.SharingFeasibilityTest)
+java.lang.AssertionError: Requires Bluetooth advertising and nearby-device grants expected null, but was:<PermissionRequired>
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failNotNull(Assert.java:756)
+	at org.junit.Assert.assertNull(Assert.java:738)
+	at me.nagaev.veles.sharing.SharingFeasibilityTest$holdSyntheticPeripheralForWindowsCentral$1.invokeSuspend(SharingFeasibilityTest.kt:43)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:95)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:69)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:47)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at me.nagaev.veles.sharing.SharingFeasibilityTest.holdSyntheticPeripheralForWindowsCentral(SharingFeasibilityTest.kt:30)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+

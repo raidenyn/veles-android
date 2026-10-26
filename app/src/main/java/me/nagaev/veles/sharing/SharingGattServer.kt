@@ -34,6 +34,9 @@ internal class SharingGattServer(
     private val transport = GattTransport(SystemClock::elapsedRealtime)
     private val ingress = IngressBudget()
     private val admitted = ConcurrentHashMap.newKeySet<String>()
+
+    /** Peers whose malformed frame could not be queued (ingress saturated); one queued disconnect each. */
+    private val overflowed = ConcurrentHashMap.newKeySet<String>()
     private val devices = mutableMapOf<String, BluetoothDevice>()
     private val subscribed = mutableSetOf<String>()
     private val connectedAt = mutableMapOf<String, Long>()
@@ -78,6 +81,7 @@ internal class SharingGattServer(
                     // it must neither cancel the link nor reset its setup state (#120 M3).
                     return@post
                 }
+                overflowed.remove(id) // a stale entry must never outlive the link it was raised for
                 if (!transport.connect(id)) {
                     server?.cancelConnection(device)
                 } else {
@@ -103,8 +107,14 @@ internal class SharingGattServer(
             offset: Int,
             value: ByteArray,
         ) {
-            // Reject oversized values before copying or posting untrusted data to the main queue.
-            if (value.size > GattTransport.ATTRIBUTE_VALUE_MAX) return
+            // Never copy an oversized value. On the write characteristic it is a malformed frame
+            // (OTP2-GAT-010) and must discard the peer's partial transactions in arrival order; any other
+            // operation is rejected exactly like a normal invalid operation, without touching the transport.
+            if (value.size > GattTransport.ATTRIBUTE_VALUE_MAX) {
+                val valid = characteristic.uuid == WRITE_UUID && !preparedWrite && !responseNeeded && offset == 0
+                if (valid) postMalformed(device) else postUnsupported(device, requestId, responseNeeded)
+                return
+            }
             postValue(device, value) { copy ->
                 val id = device.address
                 val validOperation = characteristic.uuid == WRITE_UUID && !preparedWrite && !responseNeeded && offset == 0
@@ -298,7 +308,7 @@ internal class SharingGattServer(
 
     private fun postValue(device: BluetoothDevice, value: ByteArray, block: (ByteArray) -> Unit) {
         val id = device.address
-        if (id !in admitted) return
+        if (id !in admitted || id in overflowed) return
         if (!ingress.acquire(id)) return
         val copy = value.copyOf()
         post {
@@ -311,8 +321,46 @@ internal class SharingGattServer(
         }
     }
 
+    /**
+     * Carries no data: one bounded ingress slot per pending discard. If the peer already has the maximum
+     * number of callbacks pending the discard cannot be queued, and dropping it would let an old partial
+     * complete across the malformed frame; so the peer fails closed with at most ONE queued disconnect,
+     * queued ahead of every later frame (later frames from an overflowed peer are refused at arrival).
+     */
+    private fun postMalformed(device: BluetoothDevice) {
+        val id = device.address
+        if (id !in admitted || id in overflowed) return
+        if (!ingress.acquire(id)) {
+            if (overflowed.add(id)) post { disconnect(id) }
+            return
+        }
+        post {
+            try {
+                // An empty frame is below the 4-byte header, i.e. malformed: receive() discards this peer's
+                // partial transactions (OTP2-GAT-011) and delivers nothing.
+                transport.receive(id, ByteArray(0))
+            } finally {
+                ingress.release(id)
+            }
+        }
+    }
+
+    /** Oversized value on an invalid operation: answer like any invalid operation, never copy the value. */
+    private fun postUnsupported(device: BluetoothDevice, requestId: Int, responseNeeded: Boolean) {
+        val id = device.address
+        if (!responseNeeded || id !in admitted || id in overflowed || !ingress.acquire(id)) return
+        post {
+            try {
+                server?.sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null)
+            } finally {
+                ingress.release(id)
+            }
+        }
+    }
+
     private fun remove(id: String) {
         admitted.remove(id)
+        overflowed.remove(id)
         transport.disconnect(id)
         devices.remove(id)
         subscribed.remove(id)
@@ -328,6 +376,7 @@ internal class SharingGattServer(
         closed = true
         ingress.close()
         admitted.clear()
+        overflowed.clear()
         handler.removeCallbacksAndMessages(null)
         try {
             advertiser?.stopAdvertising(advertising)

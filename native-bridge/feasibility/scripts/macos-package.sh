@@ -118,6 +118,10 @@ if ! reject_adhoc_identity "$IDENTITY"; then
 fi
 codesign --force --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
+if ! verify_apple_anchor "$APP"; then
+    echo "error: signature does not satisfy 'anchor apple generic' (not chained to the Apple root)" >&2
+    exit 1
+fi
 if ! check_signature_authority "$(codesign -dvv "$APP" 2>&1)" "$BUNDLE_ID"; then
     echo "error: $APP is signed but its effective authority is not acceptable; not usable for TCC evidence" >&2
     exit 1

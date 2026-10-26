@@ -104,7 +104,7 @@ See the desktop handoff for evidence, provenance and remaining production limits
 before the idle interval, sends nothing during it, and relies on an unsolicited phone
 notification (instrumentation arg `-e otp23_unsolicited_after_s 690`). Verdict logic and its
 27 regression tests are in `strict_background_core.py` / `test_strict_background.py`; commands
-and evidence rules are in `docs/otp-23-contract-alignment.md`, section 8. The older
+and evidence rules are in `docs/otp-23-contract-alignment.md`, section 8 ("Hardware harness commands"). The older
 `poc_background.py` evidence is not this test.
 
 ```sh

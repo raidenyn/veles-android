@@ -3,8 +3,9 @@
 **Conclusion: not established.** The runtime question is settled for this branch
 (plain Rust; see [`otp-23-contract-alignment.md`](otp-23-contract-alignment.md)). Whether
 Tauri is worth keeping **only for OTP-25 packaging** needs current build and packaging
-evidence that this Linux session cannot produce. Nothing below claims the choice is
-justified, and no installer was implemented. Matrix row D-01 therefore stays `BLOCKED`.
+evidence. Current native dependency-linked builds and SBOMs now exist (section "Current native
+comparison"), but they are a cost proxy only: no bundler or installer proof exists, packaging
+retention is not approved, and no installer was implemented. Matrix row D-01 records completion of this evaluation and the decision below.
 
 ## Kept strictly separate: three bodies of evidence
 
@@ -12,7 +13,7 @@ justified, and no installer was implemented. Matrix row D-01 therefore stays `BL
 |---|---|---|---|
 | **Historical no-go**, commit `1a34191` | `native-bridge/feasibility/evidence/cost.json`, `sbom/*.cdx.json`, charts, `tauri-exit-probe.txt`, `chrome-tauri*.json` | Windows x64 builds of the old tree: baseline 717,824 B and 22 crates; Tauri linked-but-unstarted 755,712 B and 275 crates; Tauri runtime 7,862,784 B, 285 crates, 1.5 s exit after shutdown; visible helper window; forced exit | Current. Costs were measured on those binaries and are not relabelled |
 | **Historical later successes**, `d5b6f2d` (Windows), `fb224e8` (macOS) | `poc-*.json`, `macos-poc-*.json`, traces | Plain-Rust host liveness/transfer, administrator account, CDP attached | Production acceptance |
-| **Current** (this document) | `native-bridge/feasibility/evidence/current-dependency-cost.json` (`scripts/dependency_cost.py`) | Dependency graphs from today's manifests and `Cargo.lock` with Rust 1.98.0 | Size, build time, behavior, installer proof |
+| **Current** (this document) | `evidence/current-dependency-cost.json` (`scripts/dependency_cost.py`) and `evidence/fresh-2026-10-26/cost/` | Dependency graphs from today's manifests and `Cargo.lock` (Rust 1.98.0); clean native plain-vs-Tauri-linked builds with executable sizes, Windows clean-build seconds (plain 9.6 s, linked 42.6 s) and target SBOMs | Tauri runtime behavior (the event loop was not started), a bundler/installer proof (OTP-25 scope) |
 
 ## Current dependency graphs
 
@@ -44,9 +45,29 @@ Reading it (graph facts only):
 * Tauri-family crates remain in the review surface for any variant that uses them (3 for the
   build-only stub, 7–10 otherwise).
 
+## Current native comparison (2026-10-26, source snapshot `4e9c685`, clean archive)
+
+From `native-bridge/feasibility/evidence/fresh-2026-10-26/cost/` (its `README.md` explains the method): plain versus Tauri **linked but never started**, clean
+release builds on the real targets, plus CycloneDX SBOMs.
+
+| Platform / variant | Executable bytes | Target SBOM components |
+|---|---:|---:|
+| Windows plain | 717,312 | 22 |
+| Windows dependency-linked Tauri | 758,272 | 276 |
+| macOS plain | 1,721,088 | 46 |
+| macOS dependency-linked Tauri | 1,744,368 | 275 |
+
+Caveats: the Windows cost-run executables have their own hashes (not the Chrome-installed binary
+`09713016…`) and no byte-reproducibility is claimed; the macOS-target SBOMs were generated on Linux with
+pinned `cargo-cyclonedx 0.5.9` against the same `Cargo.lock` (hash unchanged after the runs), while the
+macOS builds themselves ran natively on the Mac; the Tauri event-loop variant was not run. Linking Tauri
+is a **cost proxy** (+40,960 B / +254 SBOM components on Windows, +23,280 B / +229 on macOS), **not** proof that Tauri's
+bundler can package the plain-Rust executable. These numbers neither approve nor reject retention; the
+open evidence is a bundler/installer proof (OTP-25 scope) and the cost of the alternative pipeline.
+
 ## What would justify, or reject, retaining Tauri for packaging
 
-Not measured and required (coordinating agent, on the Windows and macOS builders):
+Of what a justification would need, items 1 and 2 now have the proxy above; items 3 and 4 are not measured:
 
 1. **Binary size and build time** of the unmodified plain-Rust host versus the artifact the
    Tauri bundler produces around it, from clean builds with pinned toolchains (the `1a34191`
@@ -60,6 +81,15 @@ Not measured and required (coordinating agent, on the Windows and macOS builders
    clauses).
 4. The **alternatives' cost**: a standalone signing/notarization pipeline (for example
    `signtool`/`makensis`/WiX and `codesign`/`notarytool`) written and maintained in-repo.
+
+## Decision (user-authorized autonomous evaluation; plain-Rust architecture)
+
+**Retaining Tauri solely for OTP-25 packaging is NOT APPROVED and NOT JUSTIFIED** by the current cost proxy (about 12× the dependency components for the same host, a build-time and size increase, an enlarged review surface, and no demonstrated benefit). OTP-25 must choose another packaging pipeline, or bring a separately reviewed justification — including a bundler proof — to revisit retention. This is an evaluation and a negative decision: no bundler or installer is implemented or required inside OTP-23 (installers are forbidden here), and matrix row D-01 therefore records completion of the *evaluation*. It is not approval of Tauri, of packaging readiness, or of OTP-24; OTP-24 stays NO-GO on the unmet transport, permission and signing rows.
+
+Status after the 2026-10-26 fresh runs: items 1 and 2 now have a **proxy** (previous section). Item 3
+(a bundler/installer proof) and item 4 have none, so retaining Tauri is **not justified**. A future bundler/installer proof belongs to OTP-25, whose installers were **not**
+implemented here and are not an OTP-23 acceptance requirement. Historical `1a34191` sizes above are not
+substituted.
 
 Until those exist, the RFC records Tauri only as an open packaging choice. A packaging result
 cannot repair a failed runtime requirement, and a packaging-only retention must never

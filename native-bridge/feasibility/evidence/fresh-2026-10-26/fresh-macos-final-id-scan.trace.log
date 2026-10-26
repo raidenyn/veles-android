@@ -1,0 +1,9 @@
+[       0ms pid=11126] start pid=11126
+[       0ms pid=11126] in  len=81 type=hello request_id=r1-9lw3rf
+[       0ms pid=11126] out len=181 type=ready request_id=r1-9lw3rf api_version=1
+[      98ms pid=11126] in  len=137 type=start_scan request_id=r2-lnlbu5 api_version=1
+[     104ms pid=11126] bluetooth authorization before adapter init: not_determined
+[     105ms pid=11126] adapter init: created=true authorization=not_determined
+[   10113ms pid=11126] adapter wait timed out: authorization=denied -> access_denied
+[   10113ms pid=11126] out len=152 type=error request_id=r2-lnlbu5 api_version=1 code=scan_failed recoverability=retryable stage=access_denied
+[   10126ms pid=11126] exit code=0 stdout_drained=true

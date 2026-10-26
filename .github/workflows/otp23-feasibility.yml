@@ -39,6 +39,8 @@ jobs:
       - run: python scripts/test_strict_background.py
       - run: python scripts/test_matrix.py
       - run: python scripts/matrix.py check
+      - run: bash scripts/test_macos_package_lib.sh
+        if: runner.os != 'Windows'
       - run: python3 scripts/test_macos_poc.py
         if: runner.os != 'Windows'
       - run: python3 scripts/test_macos_background_support.py

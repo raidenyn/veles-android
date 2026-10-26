@@ -1,0 +1,37 @@
+{
+  "implementation": {
+    "tool": "local Claude Code 2.1.310",
+    "session_id": "7fda8a4e-f413-455a-9895-698edf5ce7a9",
+    "requested_model": "claude-sonnet-5-5",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "observed_canonicalModel": "claude-sonnet-5-5",
+    "observed_provider": "firstParty",
+    "source": "Claude Code JSON result metadata, not a self-reported alias",
+    "subagents_spawned": 0,
+    "fix_wave_model": "claude-sonnet-5-5"
+  },
+  "final_review": {
+    "requested_model": "claude-opus-5-5",
+    "status": "NOT RUN (final re-review PENDING; the initial review above is real but is not a pass of the fixed tree)",
+    "observed_canonicalModel": null,
+    "blocker": "Availability probe returned session quota limit resetting 2026-10-26 05:50 UTC; this is not a completed review",
+    "initial_review": {
+      "requested_model": "claude-opus-5-5",
+      "observed_canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "session_id": "1b23a799-1730-4b2d-905a-bd912cde7ef3",
+      "subagents": 0,
+      "repository_edits_by_reviewer": 0,
+      "raw_result": "opus-initial-review.json",
+      "verdict": "OTP-24 NO-GO; mergeable as NO-GO contract/harness/evidence once 4 IMPORTANT findings (I-1..I-4) fixed; no CRITICAL",
+      "findings_important": [
+        "I-1 oversize write discard dropped when ingress saturated",
+        "I-2 G-01 evidence stale / section 7 stale",
+        "I-3 waiver absorbed Windows existing-account on-demand launch (no row)",
+        "I-4 D-01 circular (required OTP-25 installer proof)"
+      ],
+      "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md",
+      "fixed_in_working_tree": "uncommitted; verification in evidence/fresh-2026-10-26/post-review/"
+    }
+  }
+}

@@ -295,4 +295,113 @@ class SharingGattServerTest {
             subject.close()
         }
     }
+
+    private fun frame(index: Int, final: Boolean, total: Int, payload: Int) = byteArrayOf(
+        (index or if (final) 0x80 else 0).toByte(),
+        1,
+        (total shr 8).toByte(),
+        total.toByte(),
+    ) + ByteArray(payload) { 9 }
+
+    private fun write(device: BluetoothDevice, value: ByteArray) {
+        val characteristic = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+        callback.captured.onCharacteristicWriteRequest(device, 0, characteristic, false, false, 0, value)
+    }
+
+    @Test fun controlPartialRecordCompletesWithoutAMalformedFrame() {
+        val a = device("a")
+        subscribe(a, 517)
+        write(a, frame(0, false, 509, 508))
+        write(a, frame(1, true, 0, 1))
+        flush()
+        assertEquals("the control sequence must deliver, or the next test proves nothing", 1, records)
+        subject.close()
+    }
+
+    @Test fun overBudgetFrameDiscardsTheEarlierPartialSoItCanNeverCompleteAcrossIt() {
+        val a = device("a")
+        subscribe(a, 517)
+        write(a, frame(0, false, 509, 508))
+        write(a, ByteArray(513) { 7 }) // 513 > 512: dropped before copying, but still malformed
+        write(a, frame(1, true, 0, 1))
+        flush()
+        assertEquals("old partial must not be delivered", 0, records)
+        // the peer is not punished beyond the discard: a fresh transaction completes normally
+        write(a, byteArrayOf(0x80.toByte(), 2, 0, 1, 5))
+        flush()
+        assertEquals(1, records)
+        subject.close()
+    }
+
+    @Test fun malformedFramesAreOrderedAndBoundedPerPeer() {
+        val a = device("a")
+        val b = device("b")
+        subscribe(a, 517)
+        subscribe(b, 517)
+        write(b, frame(0, false, 509, 508))
+        // a flood of oversize values from `a` is bounded by its ingress budget (and fails `a` closed); it never touches `b`
+        repeat(500) { write(a, ByteArray(600)) }
+        write(b, frame(1, true, 0, 1))
+        flush()
+        assertEquals("another peer's partial is unaffected", 1, records)
+        // the flood saturated a's ingress, so a was failed closed (bounded, not queued forever); it reconnects
+        verify(exactly = 1) { platform.cancelConnection(a) }
+        subscribe(a, 517)
+        // valid frames queued BEFORE the oversize one still count; only later fragments are cut off
+        write(a, frame(0, false, 509, 508))
+        write(a, frame(1, true, 0, 1))
+        write(a, ByteArray(513))
+        flush()
+        assertEquals(2, records)
+        subject.close()
+    }
+
+    @Test fun saturatedIngressFailsTheMalformedPeerClosedInsteadOfDroppingTheDiscard() {
+        val a = device("a")
+        val b = device("b")
+        subscribe(a, 517)
+        subscribe(b, 517)
+        // No flush between writes: all of a's callbacks stay pending, so its 16-slot ingress budget fills.
+        write(a, frame(0, false, 509, 508)) // 1: the partial that must never complete
+        repeat(15) { write(a, frame(1, true, 0, 0).also { it[1] = 9 }) } // 15 valid stray frames, ignored
+        write(a, ByteArray(513)) // cannot acquire a slot: the discard cannot be queued
+        flush() // drain everything
+        write(a, frame(1, true, 0, 1)) // otherwise-valid final for the old partial
+        flush()
+        assertEquals("the old partial must never be delivered", 0, records)
+        verify { platform.cancelConnection(a) }
+        verify(exactly = 0) { platform.cancelConnection(b) }
+        write(b, byteArrayOf(0x80.toByte(), 3, 0, 1, 5))
+        flush()
+        assertEquals("the unaffected peer still works", 1, records)
+        subject.close()
+    }
+
+    @Test fun overflowDisconnectIsQueuedAtMostOncePerPeerAndClearedOnReconnect() {
+        val a = device("a")
+        subscribe(a, 517)
+        repeat(16) { write(a, frame(1, true, 0, 0).also { it[1] = 9 }) }
+        repeat(50) { write(a, ByteArray(600)) }
+        flush()
+        verify(exactly = 1) { platform.cancelConnection(a) }
+        // a reconnect starts clean: nothing stale from the overflow remains
+        subscribe(a, 517)
+        write(a, byteArrayOf(0x80.toByte(), 4, 0, 1, 5))
+        flush()
+        assertEquals(1, records)
+        subject.close()
+    }
+
+    @Test fun oversizedValueOnAnInvalidOperationIsRejectedWithoutTouchingThePartial() {
+        val a = device("a")
+        subscribe(a, 517)
+        val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+        write(a, frame(0, false, 509, 508))
+        callback.captured.onCharacteristicWriteRequest(a, 77, write, false, true, 0, ByteArray(513))
+        write(a, frame(1, true, 0, 1))
+        flush()
+        verify { platform.sendResponse(a, 77, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null) }
+        assertEquals("an invalid operation is not a malformed frame: the partial is untouched", 1, records)
+        subject.close()
+    }
 }

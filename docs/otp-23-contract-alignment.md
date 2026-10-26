@@ -7,8 +7,14 @@ and what it deliberately did **not** change. Nothing here approves OTP-24.
 
 **Decision: NO-GO for OTP-24** until every row of the
 [requirements matrix](otp-23-requirements-matrix.md) is `PASS` or carries the account
-waiver below. The matrix starts fresh: every hardware row is `NOT RUN`; the signing
-identity and allow/deny/recovery rows are `BLOCKED` on credentials and a human.
+waiver below. Fresh evidence was collected on 2026-10-26 (section 10) and it moved the
+matrix from all-`NOT RUN` to mostly `BLOCKED`: nothing that needs a phone, a Bluetooth
+permission or a signing identity could run. No physical transfer, background or permission row
+is `PASS`.
+
+Related work: PR #122 (open prerequisite for this branch), issues #86 (native-central BLE
+feasibility) and #87 (bridge), and #120 (OTP-06 hardening follow-ups). None of them is closed or
+may be closed on the strength of this document.
 
 **User-approved account waiver (2026-10-26).** Tests that require NEW accounts are skipped
 and non-blocking for OTP-23: W-01 (standard non-admin Windows account), M-01 (fresh
@@ -163,7 +169,7 @@ A deliberate mutation (drop the 512 clamp in Kotlin) fails 9 tests.
   touches release or defines build-config fields).
 * Synthetic fixtures stay debug-only: the echo reply and the new unsolicited-push
   hook are reachable only under `BuildConfig.DEBUG`, so R8 removes them from release.
-  Release inspection is recorded in section 7.
+  Release inspection: section 7 (historical) and section 11 (current).
 * New, debug-only and opt-in (`-e otp23_unsolicited_after_s N` on
   `SharingFeasibilityTest`): N seconds after a central subscribes, push one
   deterministic type-3 4096-byte record to it; hash-only evidence goes to
@@ -194,9 +200,13 @@ runtime**. Kept strictly apart:
 * **Historical later successes, `d5b6f2d` (Windows) and `fb224e8` (macOS):** plain Rust,
   capped fragments, PoC liveness. Preserved unmodified.
 * **Current evidence** (new): [`otp-23-tauri-packaging-evaluation.md`](otp-23-tauri-packaging-evaluation.md).
-  It reports dependency graphs measured today and explicitly **does not** assert that
-  retaining Tauri for packaging is justified; binary size, SBOM and a packaging proof are
-  open (matrix row D-01 is `BLOCKED`). No installer was implemented.
+  It reports dependency graphs plus current native plain-versus-dependency-linked builds and
+  SBOMs (Windows 717,312 vs 758,272 B, 22 vs 276 components; macOS 1,721,088 vs 1,744,368 B, 46 vs
+  275), a cost proxy only. It does **not** assert that retaining Tauri for packaging is justified:
+  no bundler/installer proof exists (that belongs to OTP-25, whose installers were not implemented)
+  and matrix row D-01 records completion of the evaluation with the decision that retaining Tauri
+  solely for packaging is **not approved and not justified** (OTP-25 picks another pipeline or brings a
+  reviewed justification).
 
 ## 5. macOS documentation
 
@@ -234,7 +244,11 @@ no TCC reset was used. No standard-account, fresh-account or distribution result
   identities) uses the existing `verify-identity.py`/`macos-poc-build-identity.json`
   pattern; each run must record a new identity file rather than reuse a historical one.
 
-## 7. Verification performed on this branch
+## 7. Verification performed on this branch — SUPERSEDED (historical local run)
+
+> **Superseded.** This is the first local run (310 unit tests, `SharingGattServerTest` 11, `test_matrix` 14,
+> release hash `20b1ca56…`). It is kept as history and is not current. The current counts, full logs and
+> guard output are in section 11 and `native-bridge/feasibility/evidence/fresh-2026-10-26/post-review/`.
 
 Run on this Linux host (JDK 21, Rust 1.98.0, Node 26.12.1, Python 3.14); the numbers are from the
 actual command output of the final tree. **Windows and macOS code was not executed here**, and no
@@ -294,7 +308,138 @@ and keep `python3 scripts/matrix.py decision` as the only go/no-go.
   host for both targets but **not executed or physically verified** here.
 * macOS signing identity (Developer ID / final-identifier fixture) and the allow/deny/recovery
   rows need credentials and a human on the existing account. The new-account rows are waived.
-* Current binary size/SBOM/packaging proof for the Tauri question (D-01).
+* Any future Tauri bundler proof is OTP-25 scope (retention is not approved; nothing implemented here).
 * #120 M1, M2, M5, M6, M7, M8.
 * The protocol document's status stays "specified, awaiting review": this revision has not had
   the independent protocol review that OTP-02 requires for acceptance.
+
+## 10. Fresh findings and final integration (2026-10-26)
+
+All files are under `native-bridge/feasibility/evidence/fresh-2026-10-26/` (see its `README.md`);
+the artifacts are unmodified outputs of the runs, and every earlier evidence file is untouched.
+
+**Provenance.** Source snapshot `4e9c685855d68c0c97eacc21108b7565c49bc186`, archive
+`git archive` sha256 `79f86123…05a6ae8` verified on both desktops (the archive has no `.git`, so
+the drivers' explicit git-unavailable result is kept). Implementation model: Claude Code 2.1.310,
+session `7fda8a4e-f413-455a-9895-698edf5ce7a9`, `claude-sonnet-5-5` per CLI result metadata, no
+subagents (`model-provenance.json`). **Final Opus 5.5 review: NOT RUN** — an availability probe hit a
+session quota; that probe is not a review, and matrix row R-01 stays `NOT RUN` until a real one
+completes.
+
+**Source changed after the physical attempt.** The Android APKs the phones received (sha256
+`46982666…3c128`, test APK `09280790…e0d2`) were built from a **dirty working tree on top of
+`fb224e8`** (installed version `0.0.3-25-fb224e8-contract_otp23-desktop-alignment-dirty`, version
+code 3) *before* the same edits were committed as `4e9c685`. They are therefore **not** a clean
+`4e9c685` Android build; the native desktop archive hashes are the clean exact ones. The disclosure
+is in `identity.json` and the evidence README. Two source changes came
+after that attempt: the `SharingGattServer` malformed-attribute fix and the packaging-helper fix
+below (plus comments/docs). **No fresh Android transfer PASS exists for either version**, and
+every physical transfer criterion stays `BLOCKED`.
+
+| Finding | Status | Evidence | What it does *not* show |
+|---|---|---|---|
+| Windows stable Chrome, plain host, 12 scan-only cases (CH-01 to CH-05, CH-07 to CH-13) | cases PASS at their stated scope | `fresh-windows-chrome.json`, `identity.json` | zero phones advertised: no link cleanup, no two-phone exchange. Account is the existing **administrator** at medium integrity, not a standard user. CH-03 measured the host with 0 top-level windows and no endpoints; the Chrome-created `cmd` wrapper had 0 visible and **1 hidden** window, so no claim that the wrapper has no hidden windows is made |
+| Windows host binary identity | installed sha256 `09713016…ff430` (717,312 B) is what Chrome ran; an earlier build hash differed | `identity.json` | no reproducible-binary claim |
+| Native `cargo test`/`clippy -D warnings`/`build --release` on both real targets | exit 0 | logs in the directory | ignored radio tests are not passes |
+| macOS final-identifier fixture (`me.nagaev.veles.bridge`) signed in Aqua | signed, strict-verified | `identity.json`, `fresh-macos-final-id-scan.*` | **Apple Development**, not Developer ID, notarization or CI provenance. Chrome launched it, `ready` was negotiated, no on-screen host window was observed, then the scan returned `access_denied` / CoreBluetooth `denied`. No prompt owner, allow or recovery |
+| Phone fixtures | blocked | `phone-*-prerequisite.log` | both failed `PermissionRequired` before advertising; adb grant refused (`GRANT_RUNTIME_PERMISSIONS`); the user cannot approve Bluetooth permissions now. Only the disposable `.otp23`/`.otp23.test` packages were reinstalled (user-approved); the normal Veles app and data were not touched |
+| Required gates (normal build) | PASS | `linux-required-gates.log` | — |
+
+Scope bookkeeping: the new-account waiver covers only W-01, M-01 and M-02. The original RFC also
+requires the **unsigned dev-registered host** to be tested; only its fresh-account variant is
+waived, so a separate blocking existing-account row, **M-11**, was added. **No test was run for
+it.** Signing provenance (M-03), allow/deny/recovery (M-04…M-06) and the phone prerequisite (A-03)
+stay separate blocking rows. D-01 is `PASS` only as completion of the evaluation and its negative retention decision:
+current dependency graphs, native sizes and SBOMs (a proxy) do not justify retaining Tauri, so it is
+**not approved**. It is not approval of Tauri, packaging readiness or OTP-24. No OTP-25 installer work is
+an OTP-23 requirement.
+
+### Fixes made in this integration
+
+1. **`macos-package-lib.sh`**: `check_signature_authority` matched `Identifier=…` with a regex, so
+   dots were wildcards and `meXnagaevXvelesXbridge` passed for `me.nagaev.veles.bridge`. It now uses a
+   literal whole-line match. `test_macos_package_lib.sh` (33 checks: bundle-id validation, ad-hoc,
+   missing/self-signed authority, no Apple root, wrong/lookalike/prefix/suffix ids, correct chains)
+   fails 2 checks against the old matcher. This validates packaging after signing; it changes no
+   host binary or transport.
+2. **`SharingGattServer.onCharacteristicWriteRequest` (a real contract defect).** A value above 512
+   bytes returned before `GattTransport.receive`, so — unlike the direct receiver tests — it left the
+   peer's partial transaction alive and a later final fragment could complete a record across a
+   malformed frame, contradicting OTP2-GAT-011 (malformed input discards the partials). The value is
+   still never copied; it now posts a data-less, per-peer-bounded discard (the existing 16-callback
+   ingress budget; flood excess is dropped like any flooded callback) that runs in arrival order.
+   Regression tests: partial → over-budget → final delivers nothing; the control without the
+   malformed frame delivers; ordering and per-peer isolation under a 500-frame flood. Removing the
+   call fails the regression. This does not expand into #120 M2.
+3. **Docs/comments:** the production scaffold entry `native-bridge/src-tauri/src/main.rs` no longer
+   promises Tauri runtime wiring; `CLAUDE.md` and `reproducible-builds.md` label the Tauri
+   build/packaging commands as existing tooling, not the approved production architecture.
+
+### Remaining harness limitations (not implemented; physical runs are blocked)
+
+* The strict driver does not yet instrument **visibility/focus continuity** (no
+  `visibilitychange`/`focus`/`blur` history for the connector and ordinary tab); it proves the state
+  only before the DevTools clients close and from the page's receipt record.
+* macOS needs **offline adjudication**: phone evidence is pulled on the PC after the run, but there is
+  no tool yet that recomputes the verdict from the raw result plus phone files without Chrome.
+* `invoke-poc.ps1`'s script allowlist still excludes `strict_background.py`; run it directly.
+* `macos-package.sh --bundle-id` and its authority check exist and are tested by shell helpers;
+  no real signing is performed by tests.
+
+### Verification after the final integration (this tree, after snapshot `4e9c685`)
+
+Run on Linux after the three fixes above: `./gradlew spotlessCheck detekt lintDebug testDebugUnitTest
+protocolCheck` PASS (313 unit tests, 0 failures; `SharingGattServerTest` now 14), both raw Log guards
+from `ci.yml` exit 0, `bash scripts/test_macos_package_lib.sh` 33 checks PASS (and 2 fail against the
+old regex matcher), `bash -n` on the packaging scripts, `matrix.py check` (NO-GO), `test_matrix` 16,
+`test_strict_background` 27, `test_poc_background` 26, `test_macos_poc` 36,
+`test_macos_background_support` 9, Node connector/isolated tests 4, `node protocol/checks/check.mjs`
+165, `cargo fmt --check` for the production bridge scaffold. No Rust sources changed in this step, so
+the native Windows/macOS results in `fresh-2026-10-26/` still describe the Rust code; the Android
+change after `4e9c685` has had no physical run. The parent's earlier `rustFormat rustLint rustTest` and
+extension npm checks (see the evidence README) predate nothing that changed here.
+
+## 11. Review fixes and current verification (after the initial Opus 5.5 review)
+
+The first actual review (`claude-opus-5-5`, session `1b23a799-1730-4b2d-905a-bd912cde7ef3`, raw copy
+`evidence/fresh-2026-10-26/opus-initial-review.json`) found no CRITICAL issue and four IMPORTANT ones;
+the disposition is [`protocol/reviews/otp-23-contract-alignment-opus.md`](protocol/reviews/otp-23-contract-alignment-opus.md).
+Implementation model for the fixes: `claude-sonnet-5-5`. **The review is not passed**: a fresh read-only
+re-review of this tree is pending.
+
+* **I1 (Android):** if the peer's 16-slot ingress is saturated, an over-budget write can no longer be
+  silently dropped. The peer fails closed with at most one queued disconnect (a per-peer `overflowed`
+  set, cleared on removal, reconnect and close), queued ahead of every later accepted frame, which
+  are refused at arrival. No payload is copied and there is no unbounded metadata queue. The earlier
+  prose "dropped like any flooded callback" no longer applies to malformed frames. An over-budget
+  value on an *invalid* operation (wrong characteristic, prepared write, response requested, non-zero
+  offset) is answered `GATT_REQUEST_NOT_SUPPORTED` through the same bounded ingress and does not touch
+  the partial, consistent with normal invalid operations.
+* **I2:** `G-01` now cites the post-review logs under `evidence/fresh-2026-10-26/post-review/`
+  (full Gradle output, the verbatim `ci.yml` Log-guard step with its exit, JDK, unit counts, harness,
+  cargo and protocol logs, and the mutation run). Section 7 is marked superseded.
+* **I3:** `W-13` (existing administrator account, filtered medium integrity, stable Chrome launches the
+  plain host on demand, `hello → ready`, CH-02) is a narrow non-waived `PASS`; it proves nothing about
+  phones, transfer or link cleanup. `W-01` (standard account) stays waived and `NOT RUN`.
+* **I4:** `D-01` no longer demands OTP-25 installer work. It records the evaluation and its decision
+  (retaining Tauri solely for packaging is not approved or justified; OTP-25 picks another pipeline or
+  brings a separately reviewed justification). It is not approval of Tauri, packaging or OTP-24.
+* **Minor:** stale `macos.rs` header rewritten (code unchanged); Tauri evaluation arithmetic and
+  references corrected; `macos-package.sh` now also runs `codesign --verify --strict -R='anchor apple
+  generic'` (a text helper cannot establish trust, a self-signed Apple-named chain passes the text
+  checks and must fail this cryptographic anchor; the helper test uses a mock `codesign`); A-01, A-02
+  and M-11 are `BLOCKED` with their prerequisites.
+
+Current results (Linux, Zulu JDK 21; full outputs in `post-review/`): required Gradle gates PASS;
+**316** unit tests, 0 failures (`SharingGattServerTest` 17); Log guards exit 0; protocol Node check 165;
+cargo 165 passed (Linux; macOS/Windows targets clippy-clean, not executed); harness tests: matrix 18,
+strict driver 27, background 26, mac support 9, mac poc OK, shell package helper 39 checks, Node 4.
+Restoring the pre-I1 silent drop fails 3 `SharingGattServerTest` tests (`mutation-pre-i1.log`).
+The release APK was **not** rebuilt here; `release-inspection.json` describes an older tree and is not
+relabelled. The later Android changes have had no physical run: every phone criterion stays `BLOCKED`.
+
+Strict-driver follow-ups (not implemented, physical runs blocked, no formal PASS is possible from the
+driver): visibility/focus continuity history is not instrumented; Chrome's launch flags are not recorded
+and rejected if they carry throttling exemptions (current flags are clean); the remote-debugging port stays
+listening, without a client, during the idle interval; macOS offline adjudication and the `invoke-poc.ps1`
+allowlist remain as listed in section 10.
