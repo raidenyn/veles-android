@@ -3,6 +3,9 @@
 
 # Reverse-DNS bundle identifier: at least two dot-separated labels, [A-Za-z0-9-] only.
 validate_bundle_id() {
+    # Bracket ranges follow the caller's locale collation (on macOS [A-Z] can match accented letters), so
+    # pin the ASCII/C locale for this function only. Function-local, Bash 3.2 compatible, validation unchanged.
+    local LC_ALL=C
     case "$1" in
         ''|*[!A-Za-z0-9.-]*|.*|*.|*..*|-*|*-.*|*.-*) return 1 ;;
     esac

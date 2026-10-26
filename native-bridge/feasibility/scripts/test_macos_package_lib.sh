@@ -14,6 +14,14 @@ for id in me.nagaev.veles.bridge me.nagaev.veles.otp23.poc a.b A1.b-2; do expect
 for id in "" nodots .a a. a..b -a.b a.-b "a-.b" "me nagaev.bridge" 'a.b;c' 'a.b$x' 'a.b/c' "a.b\"c" 'ünï.code'; do
     expect_fail "invalid id '$id'" validate_bundle_id "$id"; done
 
+# locale independence: ASCII-only validation under every available caller locale (incl. UTF-8 collation)
+for loc in C POSIX en_US.UTF-8 C.UTF-8 de_DE.UTF-8 fr_FR.UTF-8; do
+    for id in 'ünï.code' 'me.nagaev.vèles.bridge' 'é.é' 'a.bç'; do
+        ( export LC_ALL="$loc" LANG="$loc"; validate_bundle_id "$id" ) 2>/dev/null && bad "non-ASCII id '$id' accepted under $loc" || ok
+    done
+    ( export LC_ALL="$loc" LANG="$loc"; validate_bundle_id me.nagaev.veles.bridge ) 2>/dev/null && ok || bad "valid id rejected under $loc"
+done
+
 # identities
 expect_fail "ad-hoc identity" reject_adhoc_identity "-"
 expect_fail "empty identity" reject_adhoc_identity ""

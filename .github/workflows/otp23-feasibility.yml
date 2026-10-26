@@ -14,6 +14,7 @@ permissions:
 jobs:
   harness:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2025, macos-26]
     runs-on: ${{ matrix.os }}

@@ -73,3 +73,19 @@ remaining CRITICAL or IMPORTANT** findings; the review may be recorded as succes
 
 **Decision: NO-GO for OTP-24** (matrix D-02 records it). OTP-23 is not claimed satisfied, OTP-24 GO is not claimed, and no issue is
 closed. See alignment section 14.
+
+## Portability follow-up after the final review (CI run 40291094274)
+
+PR #123's `macos-26` job failed `bash scripts/test_macos_package_lib.sh` with `FAIL: invalid id ünï.code` (1 of 39 checks); Linux passed all 39.
+macOS Bash's locale collation lets the `[A-Za-z0-9]` bracket ranges in `validate_bundle_id` match accented letters. The Windows job was
+**cancelled** by the Mac failure (matrix fail-fast), not an actual Windows failure. Fix (packaging helper and workflow only; application
+code remains frozen at `e19c8ca`): `validate_bundle_id` now declares a function-local `LC_ALL=C` (Bash 3.2 compatible), validation rules
+unchanged and not weakened; the shell test adds a locale regression (non-ASCII ids rejected and the valid id accepted under C, POSIX and the
+available UTF-8 locales; 69 checks now) and the feasibility workflow sets `fail-fast: false` so each OS reports independently (every matrix job
+must still pass). Locally only the C, C.UTF-8 and POSIX locales exist, none with accented collation, so the macOS failure itself was **not**
+reproduced here; the real confirmation is the `macos-26` job. No evidence is relabelled.
+
+Focused read-only verification completed in the same actual `claude-opus-5-5` / firstParty session
+`f3746c7a-184d-4343-933a-12093f203b6a` (raw `opus-ci-portability-review.json`): **no CRITICAL or IMPORTANT findings**,
+ASCII rules unchanged, Bash 3.2 compatible, no acceptance criterion weakened. Mergeability is conditional on the real Mac and Windows
+CI jobs passing. The mandatory local Gradle gates were rerun successfully after this helper-only change. The NO-GO decision is unchanged.
