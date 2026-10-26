@@ -1,0 +1,9 @@
+[       0ms pid=25241] start pid=25241
+[       0ms pid=25241] in  len=81 type=hello request_id=r1-nmg8qa
+[       0ms pid=25241] out len=181 type=ready request_id=r1-nmg8qa api_version=1
+[     111ms pid=25241] in  len=137 type=start_scan request_id=r2-s9h5na api_version=1
+[     118ms pid=25241] bluetooth authorization before adapter init: denied
+[     118ms pid=25241] adapter init: created=true authorization=denied
+[   10127ms pid=25241] adapter wait timed out: authorization=denied -> access_denied
+[   10128ms pid=25241] out len=152 type=error request_id=r2-s9h5na api_version=1 code=scan_failed recoverability=retryable stage=access_denied
+[   10173ms pid=25241] exit code=0 stdout_drained=true

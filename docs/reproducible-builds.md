@@ -443,8 +443,9 @@ is a floor; the exact Node 26.8.1 reference pin lives in `verify/Dockerfile.web`
 > **Scope note (2026-10-26).** The Tauri-based native-bridge described here is OTP-01 build/packaging
 > scaffolding kept as tooling. It is not the approved production runtime: the RFC amendment makes
 > the host a plain Rust executable that never starts the Tauri event loop, and retaining Tauri for
-> packaging only is an open, unjustified question (`docs/otp-23-tauri-packaging-evaluation.md`,
-> matrix row D-01). The commands and reproducibility checks below remain valid for the scaffold.
+> packaging only is not approved and not justified by the current cost evaluation
+> (`docs/otp-23-tauri-packaging-evaluation.md`, matrix row D-01); OTP-25 chooses another pipeline or
+> brings a separately reviewed justification. The commands and reproducibility checks below remain valid for the scaffold.
 
 The native-bridge (`native-bridge/`) is a Tauri 2.x headless Native Messaging
 host. Its npm dependencies (Tauri CLI, ESLint, Prettier, TypeScript, vitest)

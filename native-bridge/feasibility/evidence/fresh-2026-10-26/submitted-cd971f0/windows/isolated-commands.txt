@@ -1,0 +1,4 @@
+﻿# executed 2026-10-26T13:58:50.4890846+07:00
+powershell: .\scripts\register-host.ps1 -Flavour plain -ExePath target\release\otp23-host.exe     (cwd=%USERPROFILE%\repos\otp23-cd971f0\native-bridge\feasibility)
+python -B <throwaway>\isolated_diag.py %USERPROFILE%\repos\otp23-cd971f0\native-bridge\feasibility evidence\submitted-cd971f0\isolated-plain-single-phone   (cwd=%USERPROFILE%\repos\otp23-cd971f0\native-bridge\feasibility)
+powershell: .\scripts\unregister-host.ps1 -Flavour plain    (in finally)

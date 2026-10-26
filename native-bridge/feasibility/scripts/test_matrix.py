@@ -33,7 +33,7 @@ class CommittedMatrix(unittest.TestCase):
         by_id = {r["id"]: r for r in BASE["rows"]}
         # no hardware row is PASS from fresh scan-only or historical evidence
         for row in BASE["rows"]:
-            if row["group"] in ("windows", "macos", "android") and row["id"] != "W-13":
+            if row["group"] in ("windows", "macos", "android") and row["id"] not in ("W-13", "W-03"):
                 self.assertNotEqual(row["status"], "PASS", row["id"])
         # phone-dependent rows are BLOCKED on the permission prerequisite, with logs as evidence
         for rid in ("W-04", "W-05", "W-06", "W-11", "W-12", "M-07", "M-09", "M-10", "A-03"):
@@ -51,6 +51,27 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("fresh-windows-chrome.json", " ".join(row["evidence"]))
         self.assertIn("Proves nothing about phones, transfer or link cleanup", row["actual"])
         self.assertIn("W-01", m.waived(BASE))
+
+    def test_w03_is_a_narrow_pass_and_single_phone_data_never_promotes_two_phone_rows(self):
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        self.assertEqual(by_id["W-03"]["status"], "PASS")
+        self.assertIn("one device", by_id["W-03"]["actual"])
+        for rid in ("W-04", "W-05", "W-06"):
+            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
+            self.assertIn("SUPPORTING single-phone evidence only", by_id[rid]["actual"], rid)
+            self.assertIn("UNPROVEN", by_id[rid]["actual"], rid)
+        self.assertIn("10 Pro", by_id["A-03"]["actual"])
+        self.assertNotIn("both phones", by_id["A-03"]["blocker"])
+        self.assertEqual(by_id["R-01"]["status"], "NOT RUN")
+        self.assertIn("PENDING", by_id["R-01"]["expected"])
+
+    def test_g01_cites_the_audited_verbatim_logs_not_the_header_only_ones(self):
+        g = {r["id"]: r for r in BASE["rows"]}["G-01"]
+        joined = " ".join(g["evidence"])
+        for needle in ("linux-audited-gates.log", "ci-log-guards-verbatim.log", "ci-log-guards.sh", "gradle-version.txt"):
+            self.assertIn(needle, joined)
+        self.assertNotIn("post-review/log-guards.log", joined)
+        self.assertNotIn("post-review/jdk.txt", joined)
 
     def test_prerequisite_rows_are_blocked_not_bare_not_run(self):
         by_id = {r["id"]: r for r in BASE["rows"]}

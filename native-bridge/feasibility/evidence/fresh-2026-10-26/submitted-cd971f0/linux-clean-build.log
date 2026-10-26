@@ -1,0 +1,419 @@
+> Task :spotlessInternalRegisterDependencies UP-TO-DATE
+> Task :spotlessKotlin UP-TO-DATE
+> Task :spotlessKotlinCheck UP-TO-DATE
+> Task :spotlessCheck UP-TO-DATE
+> Task :app:detekt UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig
+> Task :app:protobufDummy UP-TO-DATE
+> Task :app:extractDebugProto UP-TO-DATE
+> Task :app:extractIncludeDebugProto UP-TO-DATE
+> Task :app:extractProto UP-TO-DATE
+> Task :app:generateDebugProto UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:generateDebugRFile UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:preDebugAndroidTestBuild SKIPPED
+> Task :app:extractProguardFiles UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:mergeDebugUnitTestManifest
+> Task :app:processDebugUnitTestManifest UP-TO-DATE
+> Task :app:extractTestProto UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :bridgeNodeCheck
+> Task :bridgeInstall UP-TO-DATE
+
+> Task :protocolBridgeTest
+
+ RUN  v3.2.4 /home/dev/repos/veles-android/native-bridge
+
+ ✓ test/protocol-fixtures.test.ts (4 tests) 27ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  06:31:24
+   Duration  973ms (transform 175ms, setup 0ms, collect 157ms, tests 27ms, environment 0ms, prepare 247ms)
+
+
+> Task :protocolNodeCheck
+> Task :protocolInstall UP-TO-DATE
+> Task :app:processDebugManifestForPackage
+> Task :app:processDebugResources
+
+> Task :protocolContractCheck
+fragmentation-vectors: committed file matches the generator
+[1/4] reproducing RFC 9382 Appendix B published anchors verbatim...
+      ok: rfc9382-p256-sha256-hkdf-hmac-server-client
+      ok: rfc9382-p256-sha256-hkdf-hmac-nil-identities
+[2/4] deriving Veles-specific vectors from fixed synthetic inputs...
+      ok: spake2 pairing (code 000000, code 123456)
+      ok: enrollment schedule, ET, fingerprints
+      ok: reconnect rbase/ECDH/signatures/HKDF/recovery keys
+      ok: protected records (reconnect_confirm at seq 0, push_event at seq 5)
+[3/4] deriving negative deviation vectors...
+[4/4] writing candidate to /home/dev/repos/veles-android/build/protocol/crypto-candidate.json
+      24 fixtures: 8 positive (incl. 2 published anchors), 16 negative
+done
+
+> Task :app:kspDebugKotlin
+
+> Task :protocolContractCheck
+oracle: 18 verified, 6 delegated to openssl-check, 0 failed (anchor self-check: ok)
+openssl-check: 13 verified, 0 failed
+oracle: 18 verified, 6 delegated to openssl-check, 0 failed (anchor self-check: ok)
+openssl-check: 13 verified, 0 failed
+✔ decodeHostFrame accepts framing exactly within 1..65536 bytes and rejects outside (9.133675ms)
+✔ decodeHostFrame rejects invalid UTF-8 bytes and never produces partial text (0.40089ms)
+✔ decodeHostFrame enforces the message-length limit at the byte level with stage length (0.279248ms)
+✔ duplicate JSON keys in a hello are rejected from raw text before parsing (0.911097ms)
+✔ nested duplicate keys are also rejected (raw text scan covers the whole document) (1.011459ms)
+✔ hello with api_versions is valid pre-ready (220.051234ms)
+✔ hello with api_version_range is valid pre-ready (0.859075ms)
+✔ post-ready requests carry envelope 1 and the selected api_version (1.507204ms)
+✔ pre-ready accepts only hello; other request types reject at phase (1.42207ms)
+✔ unusable pre-ready input fails closed at validation level (1.755525ms)
+✔ hello offers: bounds and exclusivity (5.846177ms)
+✔ base64 codec: canonical strings accepted, zero pad bits enforced (1.546981ms)
+✔ record_base64 accepts decoded sizes below, at and above nothing beyond 5120 (13.073575ms)
+✔ exact base64 round trips preserve bytes that are neither JSON nor valid UTF-8 (2.936547ms)
+✔ ready events validate; unknown capabilities reject at negotiation; api_version rules hold (0.751656ms)
+✔ events carry api_version 1 when ready is selected; mismatch rejects (1.048601ms)
+✔ unsolicited events must not carry request_id; correlated events must (0.648827ms)
+✔ label, platform_hint, advertisement and error-stage bounds hold at the schema level (4.39265ms)
+✔ handles and request ids carry their declared formats (0.761782ms)
+✔ selectApi picks the highest mutually supported version (0.676796ms)
+✔ pre-ready hello carrying api_version is rejected by phase, never negotiated (1.496967ms)
+✔ pre-ready: hello negotiates ready with the highest overlap and moves the host post-ready (0.755716ms)
+✔ pre-ready: a recognizable non-hello request gets one correlated error, flushes, exits 2 (0.570399ms)
+✔ pre-ready: unusable inputs produce no unsolicited JSON and exit 2 silently (7.360696ms)
+✔ pre-ready: no host event is ever emitted before a hello (no unsolicited events) (1.449942ms)
+✔ no overlap flushes incompatible_api then exits 3 (0.747265ms)
+✔ duplicate hello after ready gets a correlated invalid_request and the host keeps running (0.507516ms)
+✔ a live send request id reused by hello or invalid post-ready input fails closed without a second terminal (3.300813ms)
+✔ post-ready unusable input fails closed silently with exit 2 (0.538677ms)
+✔ every request ends in exactly its terminal success event type (3.322067ms)
+✔ hello request terminates in ready with the selected api version (0.512072ms)
+✔ unknown, duplicate and post-release handles get correlated failures, never success (0.968867ms)
+✔ post-release handle use fails; a second disconnect is not a second lifecycle event (1.075442ms)
+✔ connect on an already-connected device fails correlated busy (1.013441ms)
+✔ open scans cap at 2 and connections at 32; excess gets cap_exceeded (13.61096ms)
+✔ frozen stdout pressure fails closed at the queue ceiling; synthesis covers queued completions; sustained 10k pressure stays closed and bounded (38.548969ms)
+✔ fail close during frozen output synthesizes queued terminals, still-pending requests and the overflowing request, all bounded (62.297333ms)
+✔ uncorrelatable post-ready input exits after the full orderly release and synthesizes its outstanding requests (4.93956ms)
+✔ a reuse of a live request id fails closed without a second correlated error (0.817048ms)
+✔ request id reuse after its terminal was delivered is accepted; reuse before delivery fails closed (4.548444ms)
+✔ discovery cache is bounded at 1024 current handles across scans with FIFO eviction (28.426ms)
+✔ host counters mirror the limits inventory (incl. the discovery cache) (0.800506ms)
+✔ outstanding requests cap at 64 while writes are pending; 65th gets cap_exceeded (27.373853ms)
+✔ sent is emitted only after all GATT writes complete; disconnect before writes never misreports (5.01074ms)
+✔ per-request timeout fires at 30s for non-scan requests with a correlated timeout error (2.36053ms)
+✔ device_found rate: at most 64 per rolling second; excess is dropped, not queued (3.60849ms)
+✔ device_found per-scan cap: 1024 then drop (6.63325ms)
+✔ committed bridge fixtures load through the shared loader (367.844441ms)
+✔ committed envelope fixtures: valid texts accept, invalid reject at declared stage (130.11385ms)
+✔ committed negotiation fixtures: highest-overlap selection is recomputed, not trusted (109.168231ms)
+✔ committed trace fixtures: positive ones are driven end-to-end and independently validated (79.368704ms)
+✔ evidence inventory covers all requirements and rejects dangling anchors and false acceptance (46.363642ms)
+✔ decodeHex accepts lowercase even-length hex, including empty (1.493192ms)
+✔ decodeHex rejects uppercase hex (0.32ms)
+✔ decodeHex rejects odd-length hex (0.303368ms)
+✔ decodeHex rejects non-hex characters (0.719395ms)
+✔ decodeHex rejects whitespace, separators, and 0x prefixes (0.351386ms)
+✔ validateBinary rejects an unknown layout id (1.698501ms)
+✔ validateBinary rejects non-byte input (1.344041ms)
+✔ canonical pairing_request decodes to exact fields (DataView/BigInt, network order) (2.330395ms)
+✔ validateBinary accepts a plain Uint8Array (not only Buffer) (1.254359ms)
+✔ bytes after the declared payload length reject with stage trailing (0.895585ms)
+✔ payload shorter than declared payload_len rejects with stage length (0.456399ms)
+✔ oversized frame rejects at framing before allocation (0.558887ms)
+✔ unknown frame type rejects with stage framing (0.28083ms)
+✔ little-endian caps_len prefix rejects with stage length (wrong endian lengths) (0.61876ms)
+✔ little-endian label_len prefix rejects with stage length (0.353131ms)
+✔ caps: largest valid set accepted exactly; zero/unknown/unsorted/duplicate rejected (1.225332ms)
+✔ minimal heartbeat record decodes to exact header fields (ciphertext/tag opaque) (0.837782ms)
+✔ wire u64 sequence "18446744073709551615" is preserved as a canonical decimal string (0.515082ms)
+✔ record type 0x0200 (client→phone only) with direction 0x02 rejects (direction) (0.378706ms)
+✔ enroll_identity body minimum decodes exactly with device_type 0x00 (0.520821ms)
+✔ loadFixtures loads the committed tree (all categories, schema-validated) (440.962145ms)
+✔ fixture field value 18446744073709551616 is rejected (u64 overflow) (9.185639ms)
+✔ fixture fields preserve the canonical u64 max value 18446744073709551615 (8.129829ms)
+✔ non-canonical or non-decimal strings in numeric field classes are rejected (101.434974ms)
+✔ duplicate fixture ids in one file are rejected (12.566893ms)
+✔ duplicate fixture ids across files are rejected (8.405494ms)
+✔ unknown requirement ids are rejected (8.319396ms)
+✔ fixtures with an empty requirement_ids list are rejected (schema) (23.598468ms)
+✔ fixtures missing required fields are rejected (schema) (28.475638ms)
+✔ fixtures with unknown or extra properties are rejected (schema) (28.223727ms)
+✔ fixtures with a wrong fixture_version are rejected (19.011118ms)
+✔ malformed hex in fixture bytes is rejected (uppercase, odd length, non-hex) (35.434479ms)
+✔ fixtures referencing unknown layouts are rejected (13.524548ms)
+✔ duplicate JSON keys in a fixture file are rejected (raw text inspected before parsing) (11.741756ms)
+✔ layout key-map cache is scoped to each root's layouts object, not layoutId alone (39.771017ms)
+✔ every committed encoding fixture: positives decode exactly, negatives reject at stage (103.072424ms)
+✔ every committed rejected fixture names absence of state mutation (75.873631ms)
+✔ every committed fragmentation fixture: outcomes, reassembly bytes, chained layouts (52.062194ms)
+✔ required coverage fixture ids all exist (50.333279ms)
+✔ every binary layout id is exercised by at least one committed encoding fixture (49.154779ms)
+✔ binary-layouts constants match limits.json inventory (1.04804ms)
+✔ protected_record descriptor matches the normative record type table (1.020583ms)
+✔ descriptor fixed sums match the normative payload/body formulas (1.000984ms)
+✔ mutating one expected byte in a canonical fixture is detected by the comparator (38.366601ms)
+✔ OTP2-GAT-010 committed fragmentation fixtures are exactly what the reviewed generator produces (7.118051ms)
+✔ OTP2-GAT-010 payload budget is min(MTU-3,512)-4 for every MTU 185..517 and never exceeds a 512-byte attribute (0.468466ms)
+✔ OTP2-GAT-010 canonical sender and strict receiver agree byte-exactly at every boundary of every MTU (1416.424484ms)
+✔ OTP2-GAT-010 revision-1 frames at MTU 516 and 517 fail closed in the revision-2 receiver, and vice versa (3.210882ms)
+✔ OTP2-GAT-003 negotiated MTU outside 185..517 is refused before any fragment is read (0.354301ms)
+✔ OTP2-GAT-010 exact final handling: empty final only closes a fully received record (0.364066ms)
+✔ every normative label is quoted byte-exactly and has its contract byte length (3.875096ms)
+✔ RFC 9382 P-256 generator points are quoted verbatim from the RFC (0.355003ms)
+✔ committed crypto fixture set is present with positives and negatives (476.19116ms)
+✔ committed RFC 9382 anchors quote the published vectors verbatim (174.552934ms)
+✔ stdlib affine P-256 oracle independently verifies the committed expected bytes (2814.52791ms)
+✔ Node/OpenSSL cross-check independently verifies the committed expected bytes (0.794165ms)
+✔ cross-check reports are bound to the canonical content digest of every current fixture (113.018045ms)
+✔ verifyCryptoFixtures recomputes every committed fixture and reports full independent coverage (684.868932ms)
+✔ engine recomputation matches committed outputs for every positive crypto fixture (281.98917ms)
+✔ generated candidate is byte-equal to the committed fixtures (deterministic, never auto-overwritten) (2806.223514ms)
+✔ mutating a fixture input (the x secret) makes verification fail (117.170792ms)
+✔ mutating an identity label byte makes verification fail (85.941791ms)
+✔ mutating a committed transcript byte makes verification fail (83.091665ms)
+✔ mutating a committed expected output (c_a) makes verification fail (84.514554ms)
+✔ negatives are not vacuous: wrong_code with the CORRECT code fails the distinguishing check (120.90944ms)
+✔ committed-level mutation: a flipped expected byte fails the independent oracle (3116.040556ms)
+✔ strict point validation rejects off-curve, identity and compressed encodings (69.922787ms)
+✔ strict P1363 low-S validation rejects high-S, DER and truncated encodings (41.273898ms)
+✔ AEAD boundary: the committed record verifies and its mutated forms do not (44.01501ms)
+✔ every negative crypto fixture references a positive base and names its rejection stage (58.482134ms)
+✔ committed output sets are exactly the per-kind required set: missing keys fail (56.107947ms)
+✔ committed output sets are exactly the per-kind required set: unknown keys fail (44.734901ms)
+✔ stale or tampered independent reports cannot approve fixtures (4352.207619ms)
+✔ declared rejection stage must match the derived actual stage (169.306996ms)
+✔ zero-scalar edge policy preserves RFC sampling and distinguishes generated from peer-derived degeneracy (67.38896ms)
+✔ enrollment vectors bind the phone pending-record prepare confirmation before commit (33.83071ms)
+✔ a shared group element collapsing to the identity aborts generically before any KDF output or confirmation (OTP2-CRY-003a) (161.010034ms)
+✔ K-identity mutation regression: an honest peer point must NOT trip the abort (OTP2-CRY-003a) (36.074284ms)
+✔ states.json loads and validates against the normative machines of veles-v1.md section 11 (37.132965ms)
+✔ session classes match the OTP2-REC-035 / 11.4 authorization allowlists exactly (1.625772ms)
+✔ record type directions match the OTP2-ENC-020 direction column (0.530785ms)
+✔ C1: client upgrade rows fix the class from the phone-active proof; recovery catch-all excludes the mirror (0.676662ms)
+✔ I1: the client's commit send requires the session's verified prepare; prepare rows exist (2.451544ms)
+✔ R1 residual: connection_lost and inactivity_timeout split identically on record existence (0.759689ms)
+✔ R1 persistence boundary: ET derives before persist; release follows durable success; failures publish nothing (0.688546ms)
+✔ I2: the code is consumed at the verified cB; post-code connection loss is record-conditional (R1) (0.923157ms)
+✔ every transition's source, target and event are well-formed; no transition lacks effects (2.806329ms)
+✔ descriptor guard limits reference names defined in limits.json (4.912006ms)
+✔ counter integrity is descriptor-encoded: accept transitions advance, violation transitions never do (0.491185ms)
+✔ session class setters reach all four classes; recovery/full_pending_peer never authorize OTP (1.52586ms)
+✔ checkProtocolTrace rejects a malformed trace input at stage=trace (1.415813ms)
+✔ checkProtocolTrace enforces monotonic trace times at stage=time (2.164088ms)
+✔ checkProtocolTrace rejects secrets in persisted state at stage=persisted_state (OTP2-CRY-019g) (18.970618ms)
+✔ declared timeouts before their monotonic bound fail at stage=time (1.007853ms)
+✔ simulated record bodies beyond their bound fail at stage=bounds (pull events 0..5) (3.174728ms)
+✔ non-canonical or overflowing sequence numbers fail at stage=bounds (0.989147ms)
+✔ failures are explicit no-mutation results: no final state and no effects leak (0.262521ms)
+✔ committed state fixtures load through the shared loader (454.726287ms)
+✔ positive state fixtures are independently recomputed: final state and effects must match (81.34988ms)
+✔ fixture-invalid state fixtures are rejected at their declared stage (163.269031ms)
+✔ mutating one declared effect of a state fixture is detected (declaration independence) (29.56188ms)
+✔ mutating one declared final state of a state fixture is detected (14.929215ms)
+✔ 8 clients reach the GATT cap; the 9th is refused before allocation; disconnect releases and the 9th then fits (2.451872ms)
+✔ per-peer reassembly caps are enforced before allocation (2 transactions, 8 KiB) (0.798508ms)
+✔ global reassembly caps accept the exact 16 tx / 64 KiB bound and refuse anything beyond (1.703369ms)
+✔ per-peer delivery queues respect both the message and byte ceiling with bounds before allocation (1.073407ms)
+✔ global delivery queues accept exactly 8 x 16 KiB (128 msgs / 128 KiB) and refuse a 129th message (2.450765ms)
+✔ peer isolation: a saturated or torn-down peer never consumes another peer's capacity (0.99442ms)
+✔ release accounting: disconnect frees reassembly and queue allocations back to the global pools (1.163184ms)
+✔ resource traces reject structurally impossible steps at stage=resource (0.83924ms)
+✔ I5: no continuity/expiry deletion may touch the durable active-mirror record (0.540047ms)
+✔ fixtures cover the brief's required behavioral families (78.099571ms)
+✔ heartbeat-threshold literals in the descriptor are pinned to the normative sentence (OTP2-REC-034) (0.558903ms)
+ℹ tests 165
+ℹ suites 0
+ℹ pass 165
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16546.103486
+check-contract-text: PASS (25 label claims, 4 layout blocks, 41 anchors, 133 requirement IDs, 156 manifest entries, 64 limits)
+
+> Task :app:packageDebugUnitTestForUnitTest
+> Task :app:generateDebugUnitTestConfig
+> Task :rustToolchainCheck
+
+> Task :protocolRustTest
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running tests/protocol_fixtures.rs (/home/dev/repos/veles-android/build/rust/target/debug/deps/protocol_fixtures-364870cb7434f9bb)
+
+running 8 tests
+test malformed_hex_byte_strings_fail_to_decode ... ok
+test crypto_fixture_outputs_decode_byte_for_byte_and_negatives_bind_to_existing_positives ... ok
+test accepted_hex_fixtures_decode_byte_for_byte_and_re_encode_canonically ... ok
+test canonical_base64_records_decode_byte_for_byte ... ok
+test encoding_and_crypto_fixture_ids_load_from_the_shared_protocol_root ... ok
+test malformed_base64_records_taken_from_the_shared_fixtures_fail_to_decode ... ok
+test missing_fixture_ids_fail_for_every_consumer_file ... ok
+test u64_decimal_strings_are_preserved_exactly_by_the_fixture_json ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+> Task :app:compileDebugKotlin
+
+> Task :protocolWebInstall
+npm warn deprecated eslint@9.39.2: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+
+added 167 packages, and audited 168 packages in 4s
+
+54 packages are looking for funding
+  run `npm fund` for details
+
+7 vulnerabilities (1 moderate, 4 high, 2 critical)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues, run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+> Task :app:compileDebugJavaWithJavac
+> Task :app:hiltCollectClassesDebug
+> Task :app:hiltAggregateDepsDebug UP-TO-DATE
+> Task :app:hiltJavaCompileDebug UP-TO-DATE
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:generateDebugLintReportModel
+> Task :app:generateDebugAndroidTestLintModel
+> Task :app:generateDebugUnitTestLintModel
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:transformDebugClassesWithAsm
+> Task :app:extractIncludeDebugUnitTestProto
+> Task :app:generateDebugUnitTestProto NO-SOURCE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestKotlin
+
+> Task :protocolWebTest
+
+ RUN  v3.2.4 /home/dev/repos/veles-android/web-extension
+
+ ✓ test/protocol-fixtures.test.ts (8 tests) 107ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  06:32:00
+   Duration  1.05s (transform 160ms, setup 78ms, collect 84ms, tests 107ms, environment 1ms, prepare 316ms)
+
+
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:hiltCollectClassesDebugUnitTest
+> Task :app:hiltAggregateDepsDebugUnitTest UP-TO-DATE
+> Task :app:hiltJavaCompileDebugUnitTest NO-SOURCE
+> Task :installCargoNdk UP-TO-DATE
+> Task :verifyCargoNdk
+> Task :rustJni UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :app:mergeReleaseNativeLibs UP-TO-DATE
+> Task :app:stripReleaseDebugSymbols UP-TO-DATE
+> Task :app:extractReleaseNativeSymbolTables UP-TO-DATE
+> Task :app:mergeReleaseNativeDebugMetadata UP-TO-DATE
+> Task :app:transformDebugUnitTestClassesWithAsm
+> Task :app:checkReleaseDuplicateClasses UP-TO-DATE
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :app:lintAnalyzeDebugAndroidTest
+> Task :app:lintAnalyzeDebug
+> Task :app:lintAnalyzeDebugUnitTest
+> Task :app:testDebugUnitTest
+
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+
+> Task :app:protocolJvmTest
+> Task :protocolCheck
+> Task :app:mergeReleaseArtProfile UP-TO-DATE
+> Task :app:generateReleaseBuildConfig
+> Task :app:extractIncludeReleaseProto UP-TO-DATE
+> Task :app:extractReleaseProto UP-TO-DATE
+> Task :app:generateReleaseProto UP-TO-DATE
+> Task :app:generateReleaseResources UP-TO-DATE
+> Task :app:packageReleaseResources UP-TO-DATE
+> Task :app:processReleaseNavigationResources UP-TO-DATE
+> Task :app:parseReleaseLocalResources UP-TO-DATE
+> Task :app:generateReleaseRFile UP-TO-DATE
+> Task :app:javaPreCompileRelease UP-TO-DATE
+> Task :app:checkReleaseAarMetadata UP-TO-DATE
+> Task :app:mapReleaseSourceSetPaths UP-TO-DATE
+> Task :app:compileReleaseNavigationResources UP-TO-DATE
+> Task :app:mergeReleaseResources UP-TO-DATE
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease UP-TO-DATE
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:mergeReleaseStartupProfile UP-TO-DATE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets UP-TO-DATE
+> Task :app:compressReleaseAssets UP-TO-DATE
+> Task :app:extractReleaseVersionControlInfo
+> Task :app:writeReleaseAppMetadata UP-TO-DATE
+> Task :app:writeReleaseSigningConfigVersions UP-TO-DATE
+> Task :app:processReleaseManifestForPackage
+> Task :app:processReleaseResources
+
+> Task :app:lintReportDebug
+Wrote HTML report to file:///home/dev/repos/veles-android/app/build/reports/lint-results-debug.html
+Wrote SARIF report to file:///home/dev/repos/veles-android/app/build/reports/lint-results-debug.sarif
+Lint found 47 warnings (and 9 warnings filtered by baseline lint-baseline.xml)
+
+70 errors/warnings were listed in the baseline file (/home/dev/repos/veles-android/app/lint-baseline.xml) but not found in the project; perhaps they have been fixed?
+
+> Task :app:lintDebug
+> Task :app:kspReleaseKotlin
+> Task :app:compileReleaseKotlin
+> Task :app:compileReleaseJavaWithJavac
+> Task :app:hiltCollectClassesRelease
+> Task :app:hiltAggregateDepsRelease UP-TO-DATE
+> Task :app:hiltJavaCompileRelease UP-TO-DATE
+> Task :app:processReleaseJavaRes UP-TO-DATE
+> Task :app:mergeReleaseJavaResource UP-TO-DATE
+> Task :app:transformReleaseClassesWithAsm
+> Task :app:generateReleaseLintVitalReportModel
+> Task :app:mergeReleaseGeneratedProguardFiles UP-TO-DATE
+> Task :app:expandReleaseArtProfileWildcards
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease UP-TO-DATE
+> Task :app:lintVitalRelease
+> Task :app:minifyReleaseWithR8
+> Task :app:convertShrunkResourcesToBinaryRelease
+> Task :app:optimizeReleaseResources
+> Task :app:compileReleaseArtProfile
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect
+> Task :app:assembleRelease
+
+[Incubating] Problems report is available at: file:///home/dev/repos/veles-android/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.5.0/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 4m 8s
+124 actionable tasks: 59 executed, 65 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.0/userguide/configuration_cache_enabling.html

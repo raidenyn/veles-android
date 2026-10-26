@@ -85,3 +85,10 @@ the normal Veles application's data, and existing TCC grants were preserved.
 `ci.yml` Log-guard step and exit, JDK, unit counts (316/0), harness/cargo/protocol logs and the mutation
 run. `linux-required-gates.log` and `linux-final-required-gates.log` and `release-inspection.json` describe
 earlier trees and are unchanged history.
+
+## Submitted-source refresh and second review
+
+`submitted-cd971f0/` (see its own `README.md`) holds the clean-source refresh. The second actual Opus 5.5
+review is `opus-review-cd971f0.json`. `post-review/log-guards.log` has only a header and exit marker and
+`post-review/jdk.txt` is PATH's Ubuntu Java; both are preserved but are not proof of the verbatim guard step or
+of the Gradle runtime (use `submitted-cd971f0/ci-log-guards-verbatim.log` and `linux-audited-gates.log`).

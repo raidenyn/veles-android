@@ -1,0 +1,215 @@
+{
+  "flavour": "plain",
+  "scope": "single-phone isolated diagnostic; SUPPORTING only, no two-phone/background/production claim",
+  "started_utc": "2026-10-26T06:58:50+00:00",
+  "stages": [
+    {
+      "stage": "extension_loaded",
+      "t_s": 0.58,
+      "extension_id": "gmekhgkipjkikmaadaajljinkgfielei"
+    },
+    {
+      "stage": "host_ready",
+      "t_s": 4.11,
+      "host_pid": 98928,
+      "only_host": true
+    },
+    {
+      "stage": "scan_started",
+      "t_s": 4.16,
+      "scan_handle_len": 16
+    },
+    {
+      "stage": "scan_result",
+      "t_s": 5.67,
+      "devices_found": 1,
+      "waited_s": 1.5
+    },
+    {
+      "stage": "connected",
+      "t_s": 8.21,
+      "connect_ms": 2541
+    },
+    {
+      "stage": "scan_stopped",
+      "t_s": 8.21
+    },
+    {
+      "stage": "size_done",
+      "t_s": 8.32,
+      "size": 4,
+      "result": "PASS"
+    },
+    {
+      "stage": "size_done",
+      "t_s": 8.57,
+      "size": 4096,
+      "result": "PASS"
+    },
+    {
+      "stage": "size_done",
+      "t_s": 8.68,
+      "size": 508,
+      "result": "PASS"
+    },
+    {
+      "stage": "size_done",
+      "t_s": 8.8,
+      "size": 509,
+      "result": "PASS"
+    },
+    {
+      "stage": "size_done",
+      "t_s": 8.92,
+      "size": 1016,
+      "result": "PASS"
+    },
+    {
+      "stage": "size_done",
+      "t_s": 9.06,
+      "size": 1017,
+      "result": "PASS"
+    },
+    {
+      "stage": "size_done",
+      "t_s": 9.3,
+      "size": 4095,
+      "result": "PASS"
+    },
+    {
+      "stage": "disconnected",
+      "t_s": 9.31,
+      "reply": "disconnected"
+    },
+    {
+      "stage": "shutdown",
+      "t_s": 9.91,
+      "process_gone_s": 0.6
+    }
+  ],
+  "cases": [
+    {
+      "size": 4,
+      "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+      "expected_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+      "sent_type": "sent",
+      "roundtrip_ms": 113,
+      "received_len": 4,
+      "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+      "byte_exact": true,
+      "result": "PASS"
+    },
+    {
+      "size": 4096,
+      "request_sha256": "77bc8105e6d62ae62d60e33fc8f7fed74c27d70860871bc9747355fa44b36f69",
+      "expected_sha256": "d97f9cbd22f1ae760decbd83e9984ba46f047ea4300b9ae498a680c623420cb3",
+      "sent_type": "sent",
+      "roundtrip_ms": 245,
+      "received_len": 4096,
+      "received_sha256": "d97f9cbd22f1ae760decbd83e9984ba46f047ea4300b9ae498a680c623420cb3",
+      "byte_exact": true,
+      "result": "PASS"
+    },
+    {
+      "size": 508,
+      "request_sha256": "582cdfac5f5911b2282ba88d6202552e6eef72e3089add7df428f7bff1b11b61",
+      "expected_sha256": "a61fe2c08d651ca2251f55df37cb503063838cfef3185c8415e46673dcefd58c",
+      "sent_type": "sent",
+      "roundtrip_ms": 112,
+      "received_len": 508,
+      "received_sha256": "a61fe2c08d651ca2251f55df37cb503063838cfef3185c8415e46673dcefd58c",
+      "byte_exact": true,
+      "result": "PASS"
+    },
+    {
+      "size": 509,
+      "request_sha256": "fae5bdb924543f301f0c713e96133f2f779656a9d30edc7e6dce3c7df8df80ea",
+      "expected_sha256": "ba5467b3e562a40a96c390291e5ab300b0ac2b49e979355fb917dfd1f686edad",
+      "sent_type": "sent",
+      "roundtrip_ms": 122,
+      "received_len": 509,
+      "received_sha256": "ba5467b3e562a40a96c390291e5ab300b0ac2b49e979355fb917dfd1f686edad",
+      "byte_exact": true,
+      "result": "PASS"
+    },
+    {
+      "size": 1016,
+      "request_sha256": "dbace1fdd05aa9998e3c4703c5029236fe550d8f5d83bf5ec0fee9ebd3550db6",
+      "expected_sha256": "6b208c5d126aa31eb5566091b8cb515aa4cdbd52367b93b467c02e5eb79b4cbe",
+      "sent_type": "sent",
+      "roundtrip_ms": 122,
+      "received_len": 1016,
+      "received_sha256": "6b208c5d126aa31eb5566091b8cb515aa4cdbd52367b93b467c02e5eb79b4cbe",
+      "byte_exact": true,
+      "result": "PASS"
+    },
+    {
+      "size": 1017,
+      "request_sha256": "80524ec6018ee749a0d21fba29fcde05e6bd33a5b1ff71471a857765e41ef85d",
+      "expected_sha256": "c84aff6cc4fe68296fc54d87f0b618e1b3cdc91fb9d0ff5b8fe949b1609e92fa",
+      "sent_type": "sent",
+      "roundtrip_ms": 133,
+      "received_len": 1017,
+      "received_sha256": "c84aff6cc4fe68296fc54d87f0b618e1b3cdc91fb9d0ff5b8fe949b1609e92fa",
+      "byte_exact": true,
+      "result": "PASS"
+    },
+    {
+      "size": 4095,
+      "request_sha256": "7ba3b25b2fcd36a2cd5f5dc8ab78d49926aa998066d03ddac95e55c3ba740598",
+      "expected_sha256": "aa2918fc26bdad0f36ef90ebf2c4738523f881846fd36588192ad06121761d0c",
+      "sent_type": "sent",
+      "roundtrip_ms": 245,
+      "received_len": 4095,
+      "received_sha256": "aa2918fc26bdad0f36ef90ebf2c4738523f881846fd36588192ad06121761d0c",
+      "byte_exact": true,
+      "result": "PASS"
+    }
+  ],
+  "result": "PASS",
+  "pre_existing_plain_host_pids": [],
+  "chrome_version": "Chrome/155.0.8059.85",
+  "chrome_integrity": {
+    "integrity": "medium",
+    "rid": "0x2000",
+    "token_is_elevated": false
+  },
+  "driver_integrity": {
+    "integrity": "medium",
+    "rid": "0x2000",
+    "token_is_elevated": false
+  },
+  "host": {
+    "pid": 98928,
+    "wrapper_pid": 80712,
+    "executable": "%USERPROFILE%\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe",
+    "sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda",
+    "chrome_browser_pid_is_ancestor": true,
+    "command_line_origin_ok": true,
+    "integrity": {
+      "integrity": "medium",
+      "rid": "0x2000",
+      "token_is_elevated": false
+    },
+    "ready": {
+      "bridge_version": "otp23-feasibility/0.1.0 plain",
+      "platform": "windows",
+      "api_version": 1
+    }
+  },
+  "connect_reply": {
+    "type": "connected",
+    "code": null,
+    "stage": null,
+    "recoverability": null
+  },
+  "connect_ms": 2541,
+  "measured_mtu_by_conn": {
+    "2": 517
+  },
+  "trace_sends": 7,
+  "trace_replies": 7,
+  "plain_host_processes_after_run": [],
+  "finished_utc": "2026-10-26T06:59:01+00:00",
+  "duration_s": 10.6
+}

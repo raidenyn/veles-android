@@ -367,7 +367,8 @@ an OTP-23 requirement.
    peer's partial transaction alive and a later final fragment could complete a record across a
    malformed frame, contradicting OTP2-GAT-011 (malformed input discards the partials). The value is
    still never copied; it now posts a data-less, per-peer-bounded discard (the existing 16-callback
-   ingress budget; flood excess is dropped like any flooded callback) that runs in arrival order.
+   ingress budget) that runs in arrival order. *(Superseded by section 11/I1: when the budget is saturated the
+   peer now fails closed instead of the discard being dropped.)*
    Regression tests: partial → over-budget → final delivers nothing; the control without the
    malformed frame delivers; ordering and per-peer isolation under a 500-frame flood. Removing the
    call fails the regression. This does not expand into #120 M2.
@@ -386,7 +387,10 @@ an OTP-23 requirement.
 * `macos-package.sh --bundle-id` and its authority check exist and are tested by shell helpers;
   no real signing is performed by tests.
 
-### Verification after the final integration (this tree, after snapshot `4e9c685`)
+### Verification after the final integration (this tree, after snapshot `4e9c685`) — SUPERSEDED
+
+> Superseded history: the 313-test / `SharingGattServerTest` 14 run below predates the I1 fix. Current
+> results are in section 12.
 
 Run on Linux after the three fixes above: `./gradlew spotlessCheck detekt lintDebug testDebugUnitTest
 protocolCheck` PASS (313 unit tests, 0 failures; `SharingGattServerTest` now 14), both raw Log guards
@@ -415,9 +419,15 @@ re-review of this tree is pending.
   value on an *invalid* operation (wrong characteristic, prepared write, response requested, non-zero
   offset) is answered `GATT_REQUEST_NOT_SUPPORTED` through the same bounded ingress and does not touch
   the partial, consistent with normal invalid operations.
-* **I2:** `G-01` now cites the post-review logs under `evidence/fresh-2026-10-26/post-review/`
-  (full Gradle output, the verbatim `ci.yml` Log-guard step with its exit, JDK, unit counts, harness,
-  cargo and protocol logs, and the mutation run). Section 7 is marked superseded.
+* **I2 (corrected by the second review):** the first fix wave cited `evidence/fresh-2026-10-26/post-review/`
+  and described its Log-guard file as the verbatim `ci.yml` step and `jdk.txt` as a Zulu JDK. Both claims were
+  wrong: `post-review/log-guards.log` contains only a header line and an exit marker, and `post-review/jdk.txt`
+  is Ubuntu's PATH `java`, not the Gradle runtime. Those files are **preserved as history and no longer cited as
+  proof**. `G-01` now cites `evidence/fresh-2026-10-26/submitted-cd971f0/`: `ci-log-guards.sh` (text-equal to
+  the `ci.yml` block), `ci-log-guards-verbatim.log` (`bash -v` run: both greps shown, no matches, exit 0),
+  `gradle-version.txt` and `linux-audited-gates.log` (exported `JAVA_HOME=/home/dev/.jdk/zulu21`, Gradle
+  launcher Azul 21.0.12.1, daemon JVM `/home/dev/.jdk/zulu21`, gates exit 0). Section 7 is superseded
+  history.
 * **I3:** `W-13` (existing administrator account, filtered medium integrity, stable Chrome launches the
   plain host on demand, `hello → ready`, CH-02) is a narrow non-waived `PASS`; it proves nothing about
   phones, transfer or link cleanup. `W-01` (standard account) stays waived and `NOT RUN`.
@@ -430,7 +440,7 @@ re-review of this tree is pending.
   checks and must fail this cryptographic anchor; the helper test uses a mock `codesign`); A-01, A-02
   and M-11 are `BLOCKED` with their prerequisites.
 
-Current results (Linux, Zulu JDK 21; full outputs in `post-review/`): required Gradle gates PASS;
+Results of the first fix wave (superseded by section 12 for Linux gates and Log guards; the Zulu and verbatim wording originally used here was inaccurate, see I2 above): required Gradle gates PASS;
 **316** unit tests, 0 failures (`SharingGattServerTest` 17); Log guards exit 0; protocol Node check 165;
 cargo 165 passed (Linux; macOS/Windows targets clippy-clean, not executed); harness tests: matrix 18,
 strict driver 27, background 26, mac support 9, mac poc OK, shell package helper 39 checks, Node 4.
@@ -443,3 +453,34 @@ driver): visibility/focus continuity history is not instrumented; Chrome's launc
 and rejected if they carry throttling exemptions (current flags are clean); the remote-debugging port stays
 listening, without a client, during the idle interval; macOS offline adjudication and the `invoke-poc.ps1`
 allowlist remain as listed in section 10.
+
+## 12. Clean submitted-source refresh (`cd971f0`) and the second Opus review
+
+Functional code is frozen at commit `cd971f0aaba9f3e49e669d63b06405a02f6cd088`; the desktop source archive
+(sha256 `e34d279b…c667cb`, verified on both systems) comes from it. All artifacts are under
+`native-bridge/feasibility/evidence/fresh-2026-10-26/submitted-cd971f0/` (read its `README.md` and
+`identity.json`). Earlier dirty-Android and `4e9c685` results stay untouched and are not relabelled.
+
+**Second review.** `claude-opus-5-5`, firstParty, session `f3746c7a-184d-4343-933a-12093f203b6a`, no
+subagents (raw: `opus-review-cd971f0.json`): no CRITICAL; independently verified I1, I3 and I4; only the I2
+record-keeping (section 11) remained IMPORTANT, now corrected above. **The matrix row R-01 stays `NOT RUN`
+until the parent's focused Opus verification of these last records; nothing here marks it `PASS`, and
+OTP-23 is not claimed done.**
+
+| Area | Current fact | Not shown |
+|---|---|---|
+| Linux gates | exit 0; 316 tests, 0 failures/errors/skipped; Log-guard script run verbatim, exit 0; Gradle launcher Azul 21.0.12.1, daemon `/home/dev/.jdk/zulu21` | — |
+| Native builds | `cargo test`/`clippy -D warnings`/`build --release` exit 0 on real Windows and macOS; Windows host `6cf72ed0…` (717,312 B), macOS raw host `c36894dc…` | no reproducibility claim |
+| Windows Chrome | 12 scan-only cases PASS (existing **administrator**, filtered medium token); CH-03 wrapper still 0 visible and 1 hidden window | not a standard account; no link cleanup |
+| Windows mixed `--phone` run | CH-05 saw one device; **PH-01 FAIL** (no phone in a later 30 s scan). Retained; cause **unproven** | — |
+| Windows isolated single phone | one host, one scan, one phone (OnePlus 6T), byte-exact 4, 508, 509, 1016, 1017, 4095, 4096 at measured ATT MTU 517, 7 sends/7 replies, disconnect + shutdown, no surviving host | **supporting only**: not two-phone concurrency, repeated maxima, M6 or background |
+| macOS | final-identifier fixture re-signed in Aqua; `codesign --verify --strict` and the `anchor apple generic` check passed; signed `e7c716c5…`; Chrome launch, `ready`, then `access_denied` | Apple Development, not CI/distribution provenance; prompt owner unknown; no allow/recovery; no TCC reset/bypass |
+| Android | clean `cd971f0` debug APK `6382bf28…` (0.0.3-27-cd971f0-contract_otp23-desktop-alignment, code 3) installed as an update on both phones (readback matches; no `-g`, no data clearing); test APK `09280790…` unchanged | 10 Pro: Nearby Devices denied, `PermissionRequired`. 6T: granted at observation (mechanism unobserved), fixture held and ended `OK (1 test)` |
+| Clean release APK | `a424caf7…`, unsigned; all DEX and the R8 mapping lack `SyntheticTransportFixture`, `scheduleSyntheticPush`, `OTP23_POC`; no scan/location permission; not debug | the older `release-inspection.json` (`75babe…`) is a different tree, retained |
+
+Matrix consequences: `G-01`/`G-02` re-point to the clean evidence; `W-13` re-run; `W-03` is a narrow
+`PASS` (one device event and stop); `W-04`/`W-05`/`W-06` stay `BLOCKED` with the single-phone run recorded
+as supporting only; `A-03` now says the **10 Pro** is denied while the **6T** is granted (never that both
+are denied); `A-01` records the Windows ordering observation but macOS is unobserved; `M-03` records the new
+anchor-checked fixture hashes; everything else stays as before. Account waiver unchanged: only `W-01`,
+`M-01`, `M-02` are `NOT RUN` and non-blocking. The decision remains **NO-GO**.

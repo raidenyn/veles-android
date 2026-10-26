@@ -37,7 +37,28 @@ provenance, prompt owner, allow or recovery); the unsigned existing-account host
 final review is pending. The installed Android APKs came from a dirty `fb224e8` tree, and later Android
 changes have never had a physical run.
 
+## Second review (clean `cd971f0`)
+
+`claude-opus-5-5`, firstParty, session `f3746c7a-184d-4343-933a-12093f203b6a`, no subagents, no
+repository edits (raw: `native-bridge/feasibility/evidence/fresh-2026-10-26/opus-review-cd971f0.json`,
+unchanged). Verdict: no CRITICAL; **I-1, I-3 and I-4 independently verified as fixed**; I-2 only partly
+fixed. Minor: D-01 still described as open in `CLAUDE.md`/`reproducible-builds.md`/`src-tauri/main.rs`;
+stale "flood excess dropped" wording and an unmarked 313-test section in the alignment document; stale
+`fixed_in_working_tree` provenance line.
+
+| Item | Finding | Disposition |
+|---|---|---|
+| I-2a | the saved "verbatim" Log-guard file has only a header and exit marker | Withdrawn as proof and **preserved** (`post-review/log-guards.log`). Replaced by `submitted-cd971f0/ci-log-guards.sh` (text-equal to `ci.yml`) and `ci-log-guards-verbatim.log` (`bash -v`, both greps shown, no matches, exit 0) |
+| I-2b | "Zulu JDK 21" cited `jdk.txt`, which is Ubuntu's PATH Java | `post-review/jdk.txt` preserved but no longer cited. `linux-audited-gates.log` + `gradle-version.txt`: exported `JAVA_HOME=/home/dev/.jdk/zulu21`, launcher Azul 21.0.12.1, daemon JVM `/home/dev/.jdk/zulu21`, exit 0, 316 tests |
+| Minor 1 | D-01 "open" wording | `CLAUDE.md` and `docs/reproducible-builds.md` now state the negative retention decision. The `native-bridge/src-tauri/src/main.rs` header comment is left untouched on purpose (a comment-only edit would change a code file after the freeze) |
+| Minor 2 | stale paragraphs | the "flood excess dropped" paragraph and the 313-test section are marked SUPERSEDED; section 11's claims are corrected, not silently relabelled |
+| Minor 3 | stale provenance line | `model-provenance.json` records the second review and drops the "uncommitted" wording |
+
+Also recorded from the same refresh: the earlier mixed Chrome+phone run failed `PH-01` (cause unproven; an
+isolated one-host run passed and is supporting single-phone evidence only); the 10 Pro remains permission
+denied while the 6T is granted; the clean release APK `a424caf7…` was rebuilt and inspected.
+
 ## Final verification: PENDING
 
-A fresh read-only Opus 5.5 re-review of the fixed tree has **not** run (matrix row R-01 `NOT RUN`). No
-issue is closed and OTP-23 is not claimed complete.
+The parent's focused Opus verification of these last record corrections has **not** run. Matrix row R-01 is
+`NOT RUN`. No issue is closed, OTP-23 is not claimed complete, and OTP-24 remains NO-GO.

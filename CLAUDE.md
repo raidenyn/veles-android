@@ -72,7 +72,8 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 # Native-bridge (OTP-01 sub-project 1c) — Tauri 2.x packaging/build scaffold for the Native Messaging host.
 # NOTE: these are existing TOOLING commands, not the approved production architecture. Per the RFC
 # amendment of 2026-10-26 the production host is a plain Rust executable that never starts the Tauri
-# event loop; whether Tauri bundling is kept for packaging is open (docs/otp-23-requirements-matrix.md D-01).
+# event loop; retaining Tauri solely for packaging is NOT approved/NOT justified (docs/otp-23-requirements-matrix.md D-01);
+# OTP-25 picks another packaging pipeline or brings a separately reviewed justification.
 # Install npm deps, check format/lint/typecheck, run npm+cargo tests
 ./gradlew bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeTest
 

@@ -12,9 +12,8 @@
   },
   "final_review": {
     "requested_model": "claude-opus-5-5",
-    "status": "NOT RUN (final re-review PENDING; the initial review above is real but is not a pass of the fixed tree)",
+    "status": "NOT RUN as a final PASS: the parent's focused Opus verification of the last record corrections is PENDING; two earlier actual reviews are recorded above",
     "observed_canonicalModel": null,
-    "blocker": "Availability probe returned session quota limit resetting 2026-10-26 05:50 UTC; this is not a completed review",
     "initial_review": {
       "requested_model": "claude-opus-5-5",
       "observed_canonicalModel": "claude-opus-5-5",
@@ -31,7 +30,21 @@
         "I-4 D-01 circular (required OTP-25 installer proof)"
       ],
       "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md",
-      "fixed_in_working_tree": "uncommitted; verification in evidence/fresh-2026-10-26/post-review/"
-    }
+      "fixed_in_working_tree": "fixed and submitted in commit cd971f0 (later record corrections uncommitted); see second_review"
+    },
+    "second_review": {
+      "requested_model": "claude-opus-5-5",
+      "observed_canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "session_id": "f3746c7a-184d-4343-933a-12093f203b6a",
+      "subagents": 0,
+      "repository_edits_by_reviewer": 0,
+      "reviewed_commit": "cd971f0aaba9f3e49e669d63b06405a02f6cd088",
+      "raw_result": "opus-review-cd971f0.json",
+      "verdict": "no CRITICAL; I-1, I-3, I-4 verified fixed; I-2 record-keeping only partly fixed (non-verbatim guard file, JDK file not Gradle runtime)",
+      "fix": "corrected in docs/matrix using submitted-cd971f0/ evidence; old files preserved",
+      "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md"
+    },
+    "earlier_quota_probe": "an earlier availability probe hit a session quota; it was not a review"
   }
 }
