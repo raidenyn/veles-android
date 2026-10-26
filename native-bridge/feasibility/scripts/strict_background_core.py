@@ -40,6 +40,7 @@ RECORD_LEN = 4096
 RECORD_TYPE_UNSOLICITED = 3
 GRACE_S = 30
 CLOCK_SKEW_S = 120
+WARMUP_SEEDS = (41, 53)
 HISTORY_KINDS = ("visibilitychange", "focus", "blur", "freeze", "resume")
 HOST_BEFORE_REATTACH_MARGIN_S = 5
 
@@ -96,8 +97,14 @@ def scan_chrome_args(args):
     if not args:
         return [{"flag": None, "kind": "command_line_not_recorded"}]
     findings = []
-    for raw in args[1:]:
-        text = str(raw)
+    if len(args) == 1:
+        # A single string is a whole command line (OS query fallback), not just the executable: tokenise
+        # every flag in it rather than skipping "argv[0]".
+        tokens = re.findall(r'--[^\s"=]+(?:=(?:"[^"]*"|\S+))?', str(args[0]))
+    else:
+        tokens = [str(a) for a in args[1:]]
+    for text in tokens:
+        text = text.replace('"', "")
         if not text.startswith("--"):
             continue
         name, _, value = text.partition("=")
@@ -207,6 +214,13 @@ def expected_unsolicited(length=RECORD_LEN, seed=UNSOLICITED_SEED):
     record = bytearray((i + seed) & 0xFF for i in range(length))
     record[:4] = b"VEL" + bytes([RECORD_TYPE_UNSOLICITED])
     return bytes(record)
+
+
+def warmup_reply_sha256(seed):
+    """sha256 of the host/phone echo of the warm-up record of this seed (type byte 1 -> 2)."""
+    data = bytearray((i + seed) & 0xFF for i in range(RECORD_LEN))
+    data[:4] = b"VEL\x02"
+    return hashlib.sha256(bytes(data)).hexdigest()
 
 
 def expected_sha256():
@@ -353,21 +367,20 @@ def evaluate(evidence):  # noqa: C901 - one flat list of independent requirement
 
     phones = evidence.get("phone_evidence")
     validation = evidence.get("phone_validation")
-    if validation and validation.get("status") != "PASS":
+    if not validation:
+        checks["ST-08"] = _check("BLOCKED", "phone evidence validated by strict_phone_validation (sources, "
+                                 "freshness, clock-matched receipts)", "no validation recorded")
+    elif validation.get("status") != "PASS":
         checks["ST-08"] = _check(validation.get("status", "FAIL"),
                                  "two distinct current-run phone evidence files, validated after the idle interval",
                                  {"problems": validation.get("problems", [])})
-    elif not phones:
-        checks["ST-08"] = _check("BLOCKED", "phone-side hash evidence for every push", "not collected")
     else:
-        pushes = [p for item in phones for p in item.get("pushes", [])]
-        good = len(pushes) >= len(handles) and all(
-            p.get("queued") is True and p.get("sha256") == want and p.get("bytes") == RECORD_LEN
-            and p.get("fired_at_epoch_ms", 0) - p.get("subscribed_at_epoch_ms", 0)
-            >= p.get("configured_delay_ms", 1 << 62) for p in pushes)
+        pushes = [p for item in (phones or []) for p in item.get("pushes", [])]
+        good = len(pushes) == len(handles) >= 2 and all(
+            p.get("queued") is True and p.get("sha256") == want and p.get("bytes") == RECORD_LEN for p in pushes)
         checks["ST-08"] = _check("PASS" if good else "FAIL",
                                  "each phone pushed the expected hash once, queued, after its configured delay",
-                                 {"pushes": len(pushes)})
+                                 {"pushes": len(pushes), "validation": "PASS"})
 
     scenario = evidence.get("scenario")
     trace_sends = trace.get("sends_in_trace")
@@ -377,9 +390,14 @@ def evaluate(evidence):  # noqa: C901 - one flat list of independent requirement
                                  "cold idle: no desktop->phone record was ever sent in this run",
                                  {"sends_in_host_trace": trace_sends, "warmup": bool(evidence.get("warmup"))})
     elif scenario == "prewarm":
-        ok = bool(evidence.get("warmup")) and (trace_sends or 0) >= len(handles)
+        warm = evidence.get("warmup") or {}
+        valid = {warmup_reply_sha256(seed) for seed in WARMUP_SEEDS}
+        hashes = [(v or {}).get("sha256") for v in warm.values()]
+        proof = bool(handles) and set(warm) == set(handles) and all(h in valid for h in hashes) \
+            and len(set(hashes)) == len(hashes)
+        ok = proof and trace_sends == len(handles)
         checks["ST-09"] = _check("PASS" if ok else "FAIL",
-                                 "prewarm: a byte-verified exchange per phone happened before the idle interval",
+                                 "prewarm: exactly one byte-verified exchange per phone (exact warm-up reply hashes, sends == phones)",
                                  {"sends_in_host_trace": trace_sends, "warmup": evidence.get("warmup")})
     else:
         checks["ST-09"] = _check("FAIL", "scenario must be 'cold' or 'prewarm'", scenario)

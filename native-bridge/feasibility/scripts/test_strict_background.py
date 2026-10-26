@@ -40,7 +40,10 @@ def good_evidence(scenario="cold"):
         "host_trace": {"message_count": 2, "sends_in_trace": 0 if scenario == "cold" else 2,
                        "message_wall_estimates": [closed_wall + 655.5, closed_wall + 656.5]},
         "title_probe": {"title_before_attach": "otp23 messages=2 last=1"},
-        "warmup": None if scenario == "cold" else {"aaaa1111": {}, "bbbb2222": {}},
+        "warmup": None if scenario == "cold" else {
+            "aaaa1111": {"seed": 41, "sha256": core.warmup_reply_sha256(41)},
+            "bbbb2222": {"seed": 53, "sha256": core.warmup_reply_sha256(53)}},
+        "phone_validation": {"status": "PASS", "problems": []},
         "phone_evidence": [{"pushes": [{"queued": True, "sha256": WANT, "bytes": 4096,
                                         "subscribed_at_epoch_ms": 1, "fired_at_epoch_ms": 690_100,
                                         "configured_delay_ms": 690_000}]},
@@ -173,16 +176,30 @@ class Verdict(unittest.TestCase):
     def test_missing_phone_evidence_is_blocked_never_pass(self):
         e = good_evidence()
         e["phone_evidence"] = None
+        e["phone_validation"] = {"status": "BLOCKED", "problems": ["missing"]}
         v = verdict(e)
         self.assertEqual(v["checks"]["ST-08"]["status"], "BLOCKED")
         self.assertEqual(v["strict_result"], "BLOCKED")
 
-    def test_phone_evidence_with_wrong_hash_or_early_fire_fails(self):
+    def test_without_validation_the_weak_pushes_alone_are_blocked_not_pass(self):
+        """False PASS before the fix: the driver's --adb/--phone-evidence path skipped freshness checks."""
+        e = good_evidence()
+        del e["phone_validation"]
+        self.assertEqual(status(e, "ST-08"), "BLOCKED")
+        self.assertNotEqual(verdict(e)["strict_result"], "PASS")
+
+    def test_failed_or_blocked_validation_propagates(self):
+        for state in ("FAIL", "BLOCKED"):
+            e = good_evidence()
+            e["phone_validation"] = {"status": state, "problems": ["x"]}
+            self.assertEqual(status(e, "ST-08"), state)
+
+    def test_validation_pass_still_requires_matching_pushes(self):
         e = good_evidence()
         e["phone_evidence"][0]["pushes"][0]["sha256"] = "00" * 32
         self.assertEqual(status(e, "ST-08"), "FAIL")
         e = good_evidence()
-        e["phone_evidence"][1]["pushes"][0]["fired_at_epoch_ms"] = 100
+        e["phone_evidence"][1]["pushes"].append(copy.deepcopy(e["phone_evidence"][1]["pushes"][0]))
         self.assertEqual(status(e, "ST-08"), "FAIL")
 
     def test_cold_and_prewarm_are_kept_apart(self):
@@ -323,6 +340,52 @@ class ChromeFlags(unittest.TestCase):
         self.assertFalse(v["formal_otp23_acceptance"])
 
 
+class OneStringCommandLine(unittest.TestCase):
+    """Windows' OS-query fallback yields the WHOLE command line as args[0]; it used to be skipped (false PASS)."""
+
+    def test_dangerous_flags_inside_one_string_fail(self):
+        line = ('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir=C:\\p '
+                '--remote-debugging-port=0 --disable-background-timer-throttling --no-first-run')
+        e = good_evidence()
+        e["chrome"] = {"args": [line], "args_source": "Win32_Process.CommandLine (single string)"}
+        self.assertEqual(status(e, "ST-13"), "FAIL")
+        for flag in ("--disable-renderer-backgrounding", "--disable-features=IntensiveWakeUpThrottling",
+                     '--disable-features="TimerThrottlingForBackgroundTabs"'):
+            self.assertTrue(core.scan_chrome_args(["chrome.exe " + flag + " --x=1"]), flag)
+
+    def test_legitimate_one_string_and_argv_pass(self):
+        line = '"C:\\Chrome\\chrome.exe" --user-data-dir=C:\\p --remote-debugging-port=0 --no-first-run about:blank'
+        self.assertEqual(core.scan_chrome_args([line]), [])
+        self.assertEqual(core.scan_chrome_args(["chrome", "--no-first-run", "about:blank"]), [])
+
+    def test_medium_process_keeps_its_argv(self):
+        source = (HERE / "chrome_validate.py").read_text(encoding="utf-8")
+        init = source[source.index("class MediumProcess"):]
+        self.assertIn("self.args = list(args)", init[:init.index("OpenProcessToken")])
+
+
+class Prewarm(unittest.TestCase):
+    def test_sends_must_equal_the_number_of_phones(self):
+        for sends in (3, 1):
+            e = good_evidence("prewarm")
+            e["host_trace"]["sends_in_trace"] = sends
+            self.assertEqual(status(e, "ST-09"), "FAIL", sends)
+
+    def test_warmup_proof_must_be_exact(self):
+        e = good_evidence("prewarm")
+        e["warmup"]["aaaa1111"] = {}
+        self.assertEqual(status(e, "ST-09"), "FAIL")
+        e = good_evidence("prewarm")
+        e["warmup"]["bbbb2222"]["sha256"] = e["warmup"]["aaaa1111"]["sha256"]
+        self.assertEqual(status(e, "ST-09"), "FAIL", "the same proof twice")
+        e = good_evidence("prewarm")
+        e["warmup"] = {"aaaa1111": e["warmup"]["aaaa1111"]}
+        self.assertEqual(status(e, "ST-09"), "FAIL", "missing second phone")
+        e = good_evidence("prewarm")
+        e["warmup"]["zzzz9999"] = e["warmup"].pop("bbbb2222")
+        self.assertEqual(status(e, "ST-09"), "FAIL", "proof for an unknown handle")
+
+
 class ShortRunGuard(unittest.TestCase):
     def test_short_minimum_never_passes(self):
         e = good_evidence()
@@ -454,17 +517,29 @@ class DriverStructure(unittest.TestCase):
         for forbidden in ("taskkill", "pkill", "killall", "os.kill", "Stop-Process"):
             self.assertNotIn(forbidden, SRC)
 
-    def test_phone_evidence_collection_never_raises(self):
+    def test_phone_evidence_collection_never_raises_and_attributes_sources(self):
+        import json, pathlib, subprocess, time  # noqa: E401 - the driver imports platform CDP modules, so exec alone
+        import strict_phone_validation as spv
+
         def boom(*a, **k):
             raise OSError("adb missing")
-        import json, pathlib, subprocess  # noqa: E401 - the driver imports platform CDP modules, so exec the functions alone
-        namespace = {"json": json, "pathlib": pathlib, "subprocess": subprocess, "PACKAGE": "p", "EVIDENCE_FILE": "f"}
+        namespace = {"json": json, "pathlib": pathlib, "subprocess": subprocess, "time": time, "spv": spv,
+                     "PACKAGE": "p", "EVIDENCE_FILE": "f"}
         for name in ("pull_phone_evidence", "collect_phone_evidence"):
             exec(self.fn(name), namespace)
-        phone, errors = namespace["collect_phone_evidence"](["/nonexistent/file.json"], ["SER1"], "adb", boom)
-        self.assertEqual(phone, [])
-        self.assertEqual(len(errors), 2)
+        records, errors = namespace["collect_phone_evidence"](["SER0=/nonexistent/file.json"], ["SER1"], "adb", boom)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["source_hash"], spv.source_hash("SER0"))
+        self.assertEqual(len(errors), 3)
         self.assertNotIn("SER1", " ".join(errors), "serials are not published")
+
+    def test_validation_runs_before_evaluate_for_every_acquisition_path(self):
+        run = self.fn("run")
+        self.assertLess(run.index("spv.validate_phone_files"), run.index("core.evaluate(evidence)"))
+        self.assertNotIn("phone.append", run)
+
+    def test_duplicate_serials_are_rejected_at_the_cli(self):
+        self.assertIn("duplicate phone serial", SRC)
 
     def test_driver_never_claims_acceptance(self):
         self.assertIn('"formal_otp23_acceptance": False', self.fn("run"))
@@ -500,6 +575,10 @@ class InvokeWrapper(unittest.TestCase):
         self.assertIn("^[A-Za-z0-9._:-]{1,64}$", self.PS1)
         self.assertIn("phone_serial_count", self.PS1)
         self.assertIn("--adb <redacted>", self.PS1)
+
+    def test_clock_parameters_are_passed_to_the_driver(self):
+        for flag in ("'--phone-clock-offset-ms'", "'--phone-clock-uncertainty-ms'", "'--phone-clock-source'"):
+            self.assertIn(flag, self.PS1)
 
     def test_scenario_is_required_for_strict_and_rejected_otherwise(self):
         self.assertIn("-Scenario cold|prewarm is required", self.PS1)

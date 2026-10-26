@@ -58,7 +58,7 @@ changes PASS/FAIL, and the popup owner (Chrome vs the app) is not inferred.
 
 ## Evidence notes and limitations
 
-- Human Settings observation, recorded as reported and not as TCC database attribution: "I enabled
+- Human Settings observation is recorded only when passed via `--human-note "<exact statement>"` (source `user report`, never a TCC attribution); otherwise `{text: null, source: not_supplied}`. The parent passes the user statement: "I enabled
   VelesOtp23PoC Bluetooth permission. Chrome permission was enabled before that."
 - An already-granted account cannot prove a fresh first prompt: recorded as not observed, waived
   non-blocking for new accounts; this existing-account test remains required.

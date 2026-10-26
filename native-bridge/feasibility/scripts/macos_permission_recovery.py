@@ -124,9 +124,7 @@ class Run:
                        "commands": [" ".join(sys.argv)], "result": "FAIL",
                        "macos_version": platform.mac_ver()[0] or platform.platform(),
                        "python_version": sys.version.split()[0], "abort": None,
-                       "human_settings_observation": {
-                           "text": args.human_note, "source": "user report",
-                           "kind": "Settings entry observation; not a TCC database attribution"},
+                       "human_settings_observation": core.human_observation(args.human_note),
                        "waivers": ["fresh new-account first prompt: not observed (already granted "
                                    "account); non-blocking"],
                        "unsigned_dev_matrix": "unmet unless the parent supplies a separate explicit "
@@ -309,7 +307,9 @@ def main(argv=None):
     parser.add_argument("--wait-seconds", type=int, default=DEFAULT_WAIT_SECONDS,
                         help="bound for each controller wait")
     parser.add_argument("--expect-binary-sha-prefix", default=None)
-    parser.add_argument("--human-note", default=core.DEFAULT_HUMAN_NOTE)
+    parser.add_argument("--human-note", default=None,
+                        help="exact human statement about Settings; recorded as a user report, "
+                             "absent means not_supplied")
     args = parser.parse_args(argv)
     if args.max_seconds <= 0 or args.wait_seconds <= 0:
         parser.error("bounds must be positive")

@@ -22,8 +22,17 @@ PROMPT_VALUES = ("shown", "not_shown", "unknown")
 DENIAL_HINTS = ("denied", "consent", "permission", "unauthor", "not_authorized")
 STATE_KEYS = ("sentinel_sha256", "extension_id", "chrome_pid", "profile", "binary_sha256", "signature")
 LABEL_MAX = 200
-DEFAULT_HUMAN_NOTE = ("I enabled VelesOtp23PoC Bluetooth permission. "
-                      "Chrome permission was enabled before that.")
+NOTE_MAX = 1000
+
+
+def human_observation(note):
+    """Human Settings statement exactly as supplied on the command line, else not_supplied.
+
+    Nothing is ever attributed to a run without an explicit --human-note; it is a user report,
+    never a TCC database attribution."""
+    text = note.strip()[:NOTE_MAX] if isinstance(note, str) and note.strip() else None
+    return {"text": text, "source": "user report" if text else "not_supplied",
+            "kind": "Settings entry observation; not a TCC database attribution"}
 
 
 def sha256_text(text):

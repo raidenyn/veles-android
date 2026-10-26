@@ -11,8 +11,8 @@ macOS rows) adjudicates. The older `poc_background.py` evidence is untouched and
 |---|---|
 | ST-01..ST-03 | connector hidden and an ordinary tab visible+focused before the last DevTools client closes; no DevTools client (target or browser level) and zero CDP calls for >= 600 s; the loaded extension files contain no audio/WebRTC/socket/interval/lock/keepalive API |
 | ST-04..ST-07 | each of two phones delivers exactly one byte-exact 4096-byte unsolicited record, received hidden/unfocused, >= 600 s after DevTools closed and before re-attach; host trace and the HTTP target-list title agree |
-| ST-08 | phone-side hash evidence for every push (see "Offline finalization") |
-| ST-09 | cold: no desktop->phone send in the whole run; prewarm: a byte-verified exchange per phone first |
+| ST-08 | phone evidence validated by `strict_phone_validation.py` for EVERY acquisition path (driver `--adb`, `--phone-evidence SERIAL=PATH`, offline finalizer): source provenance, distinct sources/files, freshness, queued/hash/delay, and each phone's `fired_at` matched to its own distinct page receipt within an explicit clock allowance. Missing validation, a bare path or missing clock evidence is BLOCKED; nothing falls back to a weaker check |
+| ST-09 | cold: no desktop->phone send in the whole run; prewarm: exact warm-up reply hashes per phone and host-trace sends == number of phones |
 | ST-10 | shutdown complete, Chrome closed, no surviving host process counted **after** Chrome closed |
 | ST-11 / ST-12 | **preconfigured visibility/focus histories** (below) of the connector and the ordinary tab |
 | ST-13 | recorded Chrome command line has no throttling/backgrounding/freezing exemption flag |
@@ -34,7 +34,7 @@ never used.
 
 ### Chrome flags (ST-13) and the Native Messaging caveat
 
-The launched argv (`proc.args`; on Windows' limited-token process, the OS command line) is stored in
+The launched argv (`proc.args`, also set by `MediumProcess` on Windows; a single-string OS command line is tokenised, never skipped) is stored in
 `evidence.chrome`. Flags such as `--disable-background-timer-throttling`, `--disable-renderer-backgrounding`,
 `--disable-backgrounding-occluded-windows`, `--disable-ipc-flooding-protection` or a
 `--disable-features`/`--enable-features` value touching throttling/freezing/occlusion/wake-up/backgrounding
@@ -98,19 +98,26 @@ adb -s SERIAL_A shell run-as me.nagaev.veles.otp23 cat files/otp23-unsolicited.j
 adb -s SERIAL_B shell run-as me.nagaev.veles.otp23 cat files/otp23-unsolicited.json > phone-b-cold.json
 ```
 
-Copy the two files to the Mac (one per physical phone; the filenames are free) and run:
+Copy the two files to the Mac (one per physical phone) and run. Each file is passed as `SERIAL=PATH`: the
+serial is the explicit per-file source identity and is published only as a salted hash. A bare path has no
+provenance and can never PASS. `peer_sha256_prefix` hashes the *central's* address, so two real phones may
+share it; it is recorded as information and is never used to claim or deny distinct phones. Phone->desktop
+clock evidence is required (`--phone-clock-offset-ms` = desktop minus phone, `--phone-clock-uncertainty-ms`,
+`--phone-clock-source` describing how it was measured, e.g. midpoint of N samples); without it ST-08 is
+BLOCKED. Each phone's `fired_at` (+offset) must match a distinct page receipt within uncertainty + 30 s.
+On Windows the same three values are `-PhoneClockOffsetMs`, `-PhoneClockUncertaintyMs`, `-PhoneClockSource`.
 
 ```bash
 python3 scripts/strict_background_finalize.py --raw evidence/strict-mac-cold.json \
-    --phone-evidence phone-a-cold.json --phone-evidence phone-b-cold.json \
+    --phone-evidence SERIAL_A=phone-a-cold.json --phone-evidence SERIAL_B=phone-b-cold.json \
+    --phone-clock-offset-ms OFFSET --phone-clock-uncertainty-ms UNC --phone-clock-source "midpoint of 7 samples" \
     --out evidence/strict-mac-cold.adjudicated.json
 ```
 
 The raw artifact is only read (sha256, size recorded); `--out` must not exist and is created exclusively.
 Missing files are `BLOCKED`; duplicate files (path, bytes or peer), extra/stale pushes, a push outside the
-raw run's window (+-120 s clock skew), a failed (unqueued) push, a wrong hash, length or delay, a missing peer
-identity, or a file older than the end of the idle interval are `FAIL`. Phone serials are not needed or
-recorded. Exit 0 = PASS, 1 = adjudicated not PASS, 2 = usage/overwrite refusal. The output also re-evaluates
+raw run's window (+-120 s + uncertainty), a failed (unqueued) push, a wrong hash, length or delay, a phone whose
+fired_at matches no distinct receipt, or a file older than the end of the idle interval are `FAIL`. Serials appear only as hashes. Exit 0 = PASS, 1 = adjudicated not PASS, 2 = usage/overwrite refusal. The output also re-evaluates
 the raw checks and flags any raw check that disagrees with recomputation.
 
 ## Tests

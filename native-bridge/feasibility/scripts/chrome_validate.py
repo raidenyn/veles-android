@@ -325,6 +325,7 @@ class MediumProcess:
     an unelevated process of that account; it is NOT a separate standard (non-administrator) account."""
 
     def __init__(self, args, env):
+        self.args = list(args)  # the argv actually handed to CreateProcessWithTokenW (strict flag scan)
         own, dup, restricted = wintypes.HANDLE(), wintypes.HANDLE(), wintypes.HANDLE()
         if not _adv.OpenProcessToken(_k32.GetCurrentProcess(), 0x2 | 0x8, ctypes.byref(own)):
             raise OSError(ctypes.get_last_error(), "OpenProcessToken(self)")

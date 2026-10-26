@@ -248,7 +248,7 @@ class RunTests(unittest.TestCase):
         chrome.close = close
         args = argparse.Namespace(app=app, manifest_dir=tmp, chrome="c", max_seconds=600, wait_seconds=5,
                                   state_dir=tmp / "state", expect_binary_sha_prefix=None,
-                                  human_note=core.DEFAULT_HUMAN_NOTE)
+                                  human_note=None)
         run = driver.Run(args, tmp / "out.json", chrome_factory=lambda **kw: chrome)
         phases = iter([(core.READY_DISABLE, ack_denied), (core.READY_ENABLE, "on")])
 
@@ -266,6 +266,32 @@ class RunTests(unittest.TestCase):
                 mock.patch.object(driver.time, "sleep", lambda s: None):
             code = run.run()
         return code, run.result
+
+    def test_missing_note_is_not_supplied(self):
+        started = {"status": "started", "scan_handle": "h"}
+        denied = {"type": "error", "code": "scan_failed", "stage": "access_denied"}
+        _, result = self.run_mock([started, denied, started])
+        self.assertEqual(result["human_settings_observation"]["text"], None)
+        self.assertEqual(result["human_settings_observation"]["source"], "not_supplied")
+        self.assertNotIn("I enabled", json.dumps(result))
+
+    def test_explicit_note_recorded_as_user_report(self):
+        note = "I enabled VelesOtp23PoC Bluetooth permission. Chrome permission was enabled before that."
+        obs = core.human_observation(note)
+        self.assertEqual((obs["text"], obs["source"]), (note, "user report"))
+        self.assertEqual(core.human_observation("  ")["source"], "not_supplied")
+
+    def test_cli_default_is_none_and_no_canned_claim(self):
+        import io
+        from unittest import mock
+        captured = {}
+        with mock.patch.object(driver, "Run", lambda args, out: captured.update(a=args) or
+                               type("R", (), {"run": lambda self: 0})()), \
+                mock.patch.object(driver.sys, "platform", "darwin"):
+            driver.main(["--out", "o.json", "--state-dir", "s"])
+        self.assertIsNone(captured["a"].human_note)
+        self.assertNotIn("I enabled", (HERE / "macos_permission_recovery_core.py").read_text())
+        self.assertNotIn("I enabled", (HERE / "macos_permission_recovery.py").read_text())
 
     def test_full_mock_pass(self):
         started = {"status": "started", "scan_handle": "h"}

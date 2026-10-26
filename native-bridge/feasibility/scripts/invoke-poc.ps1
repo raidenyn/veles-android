@@ -36,6 +36,10 @@
     Optional adb executable for strict_background.py (--adb-path). Quoted as one argument; must not contain
     a double quote.
 
+.PARAMETER PhoneClockOffsetMs
+    Measured desktop-minus-phone clock offset, with -PhoneClockUncertaintyMs and -PhoneClockSource (free text,
+    no quotes). Without all three the phone-evidence check stays BLOCKED (perfect clocks are never assumed).
+
 .PARAMETER PhoneSerials
     Optional comma-separated adb serials (one --adb each) the phones are attached to on THIS machine; the
     status file records only the count, never the serials. Safe characters only (A-Z a-z 0-9 . _ : -).
@@ -63,7 +67,10 @@ param(
     [ValidateRange(0, 3600)][int]$DiagnosticDelaySeconds = 0,
     [ValidateSet('', 'cold', 'prewarm')][string]$Scenario = '',
     [string]$AdbPath = '',
-    [string]$PhoneSerials = ''
+    [string]$PhoneSerials = '',
+    [Nullable[double]]$PhoneClockOffsetMs = $null,
+    [Nullable[double]]$PhoneClockUncertaintyMs = $null,
+    [string]$PhoneClockSource = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -76,6 +83,10 @@ if (-not $strict -and ($Scenario -or $AdbPath -or $PhoneSerials)) {
     throw '-Scenario, -AdbPath and -PhoneSerials are only valid with -Script strict_background.py'
 }
 if ($strict -and $DiagnosticDelaySeconds) { throw '-DiagnosticDelaySeconds is not valid with strict_background.py' }
+if ($PhoneClockSource -and $PhoneClockSource -notmatch '^[A-Za-z0-9 ._:,+/=-]{1,200}$') { throw '-PhoneClockSource has unsupported characters' }
+if (-not $strict -and ($null -ne $PhoneClockOffsetMs -or $null -ne $PhoneClockUncertaintyMs -or $PhoneClockSource)) {
+    throw '-PhoneClock* parameters are only valid with -Script strict_background.py'
+}
 if ($AdbPath -and $AdbPath -match '["\r\n]') { throw '-AdbPath must not contain quotes or line breaks' }
 $serialList = @()
 if ($PhoneSerials) {
@@ -104,6 +115,9 @@ if ($Schedule) {
         $inner += " -Scenario $Scenario"
         if ($AdbPath) { $inner += ' -AdbPath "{0}"' -f $AdbPath }
         if ($serialList.Count) { $inner += ' -PhoneSerials "{0}"' -f ($serialList -join ',') }
+        if ($null -ne $PhoneClockOffsetMs) { $inner += " -PhoneClockOffsetMs $PhoneClockOffsetMs" }
+        if ($null -ne $PhoneClockUncertaintyMs) { $inner += " -PhoneClockUncertaintyMs $PhoneClockUncertaintyMs" }
+        if ($PhoneClockSource) { $inner += ' -PhoneClockSource "{0}"' -f $PhoneClockSource }
     }
     try {
         $action = New-ScheduledTaskAction -Execute (Join-Path $env:windir 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument $inner -WorkingDirectory $root
@@ -140,6 +154,9 @@ try {
             $pyArgs = @((Join-Path 'scripts' $Script), '--scenario', $Scenario, '--out', $outAbs)
             if ($AdbPath) { $pyArgs += @('--adb-path', $AdbPath) }
             foreach ($serial in $serialList) { $pyArgs += @('--adb', $serial) }
+            if ($null -ne $PhoneClockOffsetMs) { $pyArgs += @('--phone-clock-offset-ms', [string]$PhoneClockOffsetMs) }
+            if ($null -ne $PhoneClockUncertaintyMs) { $pyArgs += @('--phone-clock-uncertainty-ms', [string]$PhoneClockUncertaintyMs) }
+            if ($PhoneClockSource) { $pyArgs += @('--phone-clock-source', $PhoneClockSource) }
         } else {
             $pyArgs = @((Join-Path 'scripts' $Script), '--flavour', 'plain', '--out', $outAbs)
         }

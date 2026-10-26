@@ -31,6 +31,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 import strict_background_core as core
+import strict_phone_validation as spv
 
 if sys.platform == "darwin":
     import macos_background_support as cv
@@ -44,7 +45,7 @@ else:
 FIXED_ID = "gmekhgkipjkikmaadaajljinkgfielei"
 EXT_DIR = pathlib.Path(__file__).resolve().parent.parent / "extension"
 PACKAGE = "me.nagaev.veles.otp23"
-WARMUP_SEEDS = (41, 53)
+WARMUP_SEEDS = core.WARMUP_SEEDS
 WARMUP_TIMEOUT_S = 12
 EVIDENCE_FILE = "files/otp23-unsolicited.json"
 
@@ -54,15 +55,10 @@ def utc():
 
 
 def pull_phone_evidence(serial, adb="adb", runner=subprocess.run):
-    """Read the hash-only evidence file the instrumentation wrote; None when it cannot be read."""
+    """Raw text of the hash-only evidence file the instrumentation wrote; None when it cannot be read."""
     result = runner([adb, "-s", serial, "shell", "run-as", PACKAGE, "cat", EVIDENCE_FILE],
                     capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        return None
-    try:
-        return json.loads(result.stdout)
-    except ValueError:
-        return None
+    return result.stdout if result.returncode == 0 else None
 
 
 def chrome_command_line(chrome):
@@ -87,24 +83,27 @@ def chrome_command_line(chrome):
 
 
 def collect_phone_evidence(paths, serials, adb_path, runner=subprocess.run):
-    """Never raises: every unreadable source is recorded as an error and the run keeps its evidence."""
-    phone, errors = [], []
-    for path in paths:
-        try:
-            phone.append(json.loads(pathlib.Path(path).read_text(encoding="utf-8")))
-        except Exception as error:
-            errors.append(f"phone evidence file #{len(errors) + len(phone) + 1}: {type(error).__name__}")
+    """Source-attributed phone records; never raises (failures are recorded as error strings).
+    paths: 'SERIAL=PATH' (a bare PATH has no provenance and can never PASS); serials: adb pulls."""
+    records, errors = [], []
+    for text in paths:
+        source, path = spv.parse_phone_arg(text)
+        record = spv.read_input(path, source)
+        if record["error"]:
+            errors.append(f"phone evidence file #{len(records) + 1}: {record['error']}")
+        records.append(record)
     for index, serial in enumerate(serials, 1):
+        source = spv.source_hash(serial)
         try:
-            data = pull_phone_evidence(serial, adb_path, runner)
+            text = pull_phone_evidence(serial, adb_path, runner)
         except Exception as error:
-            data = None
+            text = None
             errors.append(f"adb pull #{index}: {type(error).__name__}")
-        if data:
-            phone.append(data)
-        elif not errors or not errors[-1].startswith(f"adb pull #{index}"):
+        if text is None:
             errors.append(f"adb pull #{index}: no readable evidence file")
-    return phone, errors
+            continue
+        records.append(spv.record_from_text(text, source, time.time(), f"adb:{source[:16]}"))
+    return records, errors
 
 
 def warmup_record(seed):
@@ -341,9 +340,20 @@ def run(args):
         "message_wall_estimates": [] if anchor is None or trace["hello_ms"] is None else [
             round(anchor + (m["at_ms"] - trace["hello_ms"]) / 1000, 3) for m in trace["messages"]],
         "method": "driver wall time at hello + host trace ms offset since its hello line (approximate)"}
-    phone, phone_errors = collect_phone_evidence(args.phone_evidence, args.adb, args.adb_path)
-    evidence["phone_evidence"] = phone or None
+    phone_records, phone_errors = collect_phone_evidence(args.phone_evidence, args.adb, args.adb_path)
+    clock = None
+    if args.phone_clock_offset_ms is not None and args.phone_clock_uncertainty_ms is not None \
+            and args.phone_clock_source:
+        clock = {"offset_ms": args.phone_clock_offset_ms, "uncertainty_ms": args.phone_clock_uncertainty_ms,
+                 "source": args.phone_clock_source}
+    evidence["phone_evidence"] = [r["json"] for r in phone_records if isinstance(r["json"], dict)] or None
     evidence["phone_evidence_errors"] = phone_errors
+    try:
+        evidence["phone_validation"] = spv.validate_phone_files(
+            {"evidence": evidence, "meta": result["meta"]}, phone_records, clock)
+    except Exception as error:  # keep the run's evidence; ST-08 stays BLOCKED
+        evidence["phone_validation"] = {"status": "BLOCKED", "problems": [f"validation error {type(error).__name__}"]}
+    evidence["phone_clock"] = clock
     try:
         verdict = core.evaluate(evidence)
     except Exception as error:  # keep the raw evidence even if the verdict logic itself breaks
@@ -378,8 +388,16 @@ if __name__ == "__main__":
     parser.add_argument("--grace-s", type=positive_int, default=core.GRACE_S)
     parser.add_argument("--adb", action="append", default=[], help="phone serial to pull evidence from (repeatable)")
     parser.add_argument("--adb-path", default="adb")
-    parser.add_argument("--phone-evidence", action="append", default=[], help="previously pulled evidence JSON file")
+    parser.add_argument("--phone-evidence", action="append", default=[],
+                        help="SERIAL=PATH of a previously pulled evidence file (a bare PATH has no source "
+                             "provenance and can never PASS)")
+    parser.add_argument("--phone-clock-offset-ms", type=float, help="desktop clock minus phone clock, measured")
+    parser.add_argument("--phone-clock-uncertainty-ms", type=float, help="uncertainty of that offset (>= 0)")
+    parser.add_argument("--phone-clock-source", help="how the offset was measured (recorded)")
     parsed = parser.parse_args()
+    labels = list(parsed.adb) + [p.partition("=")[0] for p in parsed.phone_evidence if "=" in p]
+    if len(set(parsed.adb)) != len(parsed.adb) or len(set(labels)) != len(labels):
+        parser.error("duplicate phone serial (each physical phone may be supplied once)")
     if parsed.min_background_s < core.MIN_BACKGROUND_S and not parsed.diagnostic_short:
         parser.error(f"--min-background-s below {core.MIN_BACKGROUND_S} requires --diagnostic-short")
     sys.exit(run(parsed))
