@@ -408,8 +408,7 @@ extension npm checks (see the evidence README) predate nothing that changed here
 The first actual review (`claude-opus-5-5`, session `1b23a799-1730-4b2d-905a-bd912cde7ef3`, raw copy
 `evidence/fresh-2026-10-26/opus-initial-review.json`) found no CRITICAL issue and four IMPORTANT ones;
 the disposition is [`protocol/reviews/otp-23-contract-alignment-opus.md`](protocol/reviews/otp-23-contract-alignment-opus.md).
-Implementation model for the fixes: `claude-sonnet-5-5`. **The review is not passed**: a fresh read-only
-re-review of this tree is pending.
+Implementation model for the fixes: `claude-sonnet-5-5`. *(Historical status at that phase: the review was not yet passed; the later outcome is in section 14.)*
 
 * **I1 (Android) — CORRECTED by section 13:** the text below covered only writes above 512 bytes; the
   same silent-drop gap existed for malformed frames of 512 bytes or less and is closed in section 13.
@@ -497,7 +496,7 @@ bytes at any MTU — could be dropped while the peer's valid partial later compl
 dropping a frame before parsing when the drop changes the outcome (the OTP2-ENC-004 allowance covers only
 drops whose effect is to forfeit a record).
 
-**Change (code, uncommitted at the time of writing; after the `cd971f0` snapshot):** any `ingress.acquire`
+**Change (historical wording: uncommitted when written, after the `cd971f0` snapshot; committed as `e19c8ca`):** any `ingress.acquire`
 failure in `postValue` now calls the same bounded `failClosed` used for over-512 writes: at most one queued
 disconnect per peer (`overflowed`), queued ahead of every later frame, later frames refused at arrival, flag
 cleared on removal/reconnect/close. Queue sizes (16 per peer, 8 peers) are unchanged, no payload is copied for
@@ -520,6 +519,42 @@ guard body run with `bash -v`, both greps shown, no matches, exit 0.
 **What this does not change.** The `cd971f0` evidence (316 tests, clean APKs `6382bf28…` and release `a424caf7…`,
 native Windows/macOS results, the single-phone diagnostic) keeps its own source identity: it was valid for that
 code and is **not** physical proof of the overflow behavior. The APKs must be rebuilt and the release
-re-inspected after this fix is committed; no device work was done here. `R-01` stays `NOT RUN` pending a
-focused Opus re-review. NO-GO is unchanged; the account waiver still covers only W-01, M-01, M-02; every
+re-inspected after this fix is committed (done at `e19c8ca`, section 14); no device work was done here. At that
+phase `R-01` was `NOT RUN` pending a focused re-review (completed, section 14). NO-GO is unchanged; the account waiver still covers only W-01, M-01, M-02; every
 two-phone, background and macOS permission criterion remains blocked.
+
+## 14. FINAL record (committed `e19c8ca`): review passed as NO-GO work; decision NO-GO
+
+**Frozen source.** Application code: `e19c8ca555b3275313cd325a12e15791a2cf894d` (sharing server sha256
+`9850629b…61517`, debug APK version `0.0.3-29-e19c8ca-contract_otp23-desktop-alignment`, no dirty suffix). Verified
+record-fix commit before it: `b1f3d7c3b2d5ecff9fab973055a2eb8a27e3c2f9`. Artifacts: `evidence/fresh-2026-10-26/final-e19c8ca/`
+(`README.md`, `identity.json`, `linux-clean-gates.log`, `ci-log-guards-verbatim.log`, `isolated-build.log`, `windows/`).
+
+**Review.** Actual CLI metadata: `claude-opus-5-5`, firstParty, session `f3746c7a-184d-4343-933a-12093f203b6a`, 0 subagents,
+0 repository edits (raw `opus-final-ingress-verification.json`). It verified `e19c8ca`: the ingress gap is **fully resolved**,
+**no remaining CRITICAL or IMPORTANT** finding, and the review may be recorded as successful NO-GO work. Matrix row `R-01` is
+therefore `PASS` — as a review of NO-GO contract/docs/harness work only. The earlier reviews (`opus-initial-review.json`,
+`opus-review-cd971f0.json`, the withdrawn "I-1 fully resolved" and the IMPORTANT `opus-ingress-followup.json`) are unmodified
+history, and any "pending" or "uncommitted" wording in the sections above is historical for that phase.
+
+**Current verification.** Clean rebuild after the commit, same shell: exported `JAVA_HOME=/home/dev/.jdk/zulu21`, Gradle launcher
+Azul 21.0.12.1, daemon `/home/dev/.jdk/zulu21`; `spotlessCheck detekt lintDebug testDebugUnitTest protocolCheck` and `assembleRelease`
+exit 0; **321** JVM tests, 0 failures/errors/skipped (`SharingGattServerTest` 22); the source-equal `ci.yml` guard body run with
+`bash -v`, exit 0. Unsigned release APK `810aef8d…` inspected across all DEX and the R8 mapping (no `SyntheticTransportFixture`,
+`scheduleSyntheticPush`, `OTP23_POC`; no scan/location permission; not debuggable). Debug APK `1e0ae023…` (instrumentation APK
+`09280790…` unchanged) was installed as an update on both phones (readback matches, no `-g`, no data clearing). The unchanged
+native Windows host (`6cf72ed0…`) ran the existing one-host diagnostic against it: 4, 508, 509, 1016, 1017, 4095 and 4096 bytes
+byte-exact at measured MTU 517, own host gone, registration and task removed. That is **supporting single-phone healthy-path
+evidence only**; no malformed-overload injection was run on hardware (covered by the independent regressions and the mutation
+log), and it is not two-phone, survivor, M6 or background proof. The 10 Pro still denies Nearby Devices; the 6T is granted.
+
+**Decision.** `D-02` records **NO-GO for OTP-24** from the per-row dispositions; its PASS means the decision was recorded, not that
+OTP-24 is eligible. GO eligibility requires every row `PASS` except the three account-waived non-blocking rows (W-01, M-01, M-02).
+Still blocking: two-phone concurrency and failure isolation, link-active cleanup modes, M6, both strict background scenarios,
+macOS permission/signing provenance/allow/deny/recovery, the unsigned-host row M-11, the 10 Pro permission prerequisite, and the other
+`BLOCKED` rows. OTP-23 is **not** claimed satisfied and no issue is closed.
+
+**Remaining strict-driver limitations (unchanged, honest):** no visibility/focus continuity history, Chrome launch flags not recorded
+or rejected, the remote-debugging port stays listening during the idle interval, no macOS offline adjudication tool, and the
+`invoke-poc.ps1` allowlist excludes the strict driver. The `native-bridge/src-tauri/src/main.rs` header comment minor remains
+dispositioned as before (not edited to avoid a code-file change after freeze).

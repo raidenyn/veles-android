@@ -99,3 +99,9 @@ After the second Opus review's follow-up (`opus-ingress-followup.json`), `postVa
 ingress admission failure. `ingress-final/` holds the same-shell Gradle version + required gates log, the
 source-equal CI guard script and its `bash -v` execution, JUnit-derived counts (321/0) and the mutation log. Earlier
 directories keep their own source identities (`cd971f0` and older) and are not proof of this behavior.
+
+## Final checkpoint (`final-e19c8ca/`)
+
+Committed `e19c8ca` is the frozen application source; `final-e19c8ca/` holds its clean gates, the verbatim guard run, the
+isolated APK build, identity and the single-phone refresh. `opus-final-ingress-verification.json` is the actual final review
+(`claude-opus-5-5`, no remaining CRITICAL/IMPORTANT). Earlier reviews and directories are unmodified history. Decision: NO-GO.

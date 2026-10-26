@@ -1,0 +1,50 @@
+{
+  "application_source_commit": "e19c8ca555b3275313cd325a12e15791a2cf894d",
+  "application_source_build_state": "clean committed source; evidence files added after the build",
+  "sharing_server_sha256": "9850629b1d47dc58bc9f032404ea150e5cdd91dbde5bf0d9cb7c0f6a12b61517",
+  "android": {
+    "build_host": "Linux, JAVA_HOME=/home/dev/.jdk/zulu21",
+    "version_code": 3,
+    "version_name": "0.0.3-29-e19c8ca-contract_otp23-desktop-alignment",
+    "isolated_apk_sha256": "1e0ae0237d045feaeda34181ea8271b3e77e4f34ea7837ec652a87a3c4150841",
+    "instrumentation_apk_sha256": "09280790eea40242722bd0fb902e4402f2c5359c810636effa7b209b3f74e0d2",
+    "installed_readback_hash_matches_on_both_phones": true,
+    "installation": "update -r, no -g, no data clearing, no permission bypass",
+    "oneplus_6t_fixture": "granted; advertised; completed gracefully OK (1 test)",
+    "oneplus_10_pro": "Nearby Devices denied; no two-phone test",
+    "physical_overload_injection_tested": false
+  },
+  "software_gates": {
+    "source_commit": "e19c8ca555b3275313cd325a12e15791a2cf894d",
+    "gradle_launcher": "Azul 21.0.12.1",
+    "gradle_daemon_java_home": "/home/dev/.jdk/zulu21",
+    "spotless_detekt_lint_unit_protocol_and_release_exit_code": 0,
+    "jvm_tests": {"tests": 321, "failures": 0, "errors": 0, "skipped": 0},
+    "server_tests": 22,
+    "verbatim_raw_log_guard_evidence": "ci-log-guards-verbatim.log",
+    "raw_log_guards_exit_code": 0,
+    "mutation_evidence": "../ingress-final/mutation-silent-postvalue.log"
+  },
+  "release_inspection": {
+    "unsigned_apk_sha256": "810aef8d43ed55cd0de28c8e413f75fe901a747761493b8f758278b16fd22eef",
+    "inspection": "all DEX files plus R8 mapping; aapt2 dump badging",
+    "forbidden_symbols": ["SyntheticTransportFixture", "scheduleSyntheticPush", "OTP23_POC"],
+    "forbidden_symbols_found": [],
+    "scan_or_location_permissions_present": false,
+    "debuggable": false,
+    "real_otp_sharing_delivery_implemented": false
+  },
+  "windows_single_phone_refresh": {
+    "native_source_commit": "cd971f0aaba9f3e49e669d63b06405a02f6cd088",
+    "native_component_files_unchanged_in_application_commit": true,
+    "native_host_sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda",
+    "android_consumer_source_commit": "e19c8ca555b3275313cd325a12e15791a2cf894d",
+    "driver": "unchanged previously recorded one-host diagnostic snippet, new output prefix",
+    "result": "PASS, supporting single-phone foreground evidence only",
+    "byte_exact_sizes": [4, 508, 509, 1016, 1017, 4095, 4096],
+    "measured_att_mtu": 517,
+    "surviving_owned_hosts": [],
+    "registration_and_task_removed": true
+  },
+  "acceptance_decision": "NO-GO for OTP-24; no two-phone, M6, background or macOS permission/signing PASS is implied"
+}

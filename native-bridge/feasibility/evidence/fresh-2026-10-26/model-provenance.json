@@ -12,8 +12,8 @@
   },
   "final_review": {
     "requested_model": "claude-opus-5-5",
-    "status": "NOT RUN as a final PASS: a focused Opus re-review after the ingress-admission fix is PENDING",
-    "observed_canonicalModel": null,
+    "status": "PASS recorded as NO-GO contract/docs/harness review work (not OTP-23 acceptance, not OTP-24 GO)",
+    "observed_canonicalModel": "claude-opus-5-5",
     "initial_review": {
       "requested_model": "claude-opus-5-5",
       "observed_canonicalModel": "claude-opus-5-5",
@@ -30,7 +30,7 @@
         "I-4 D-01 circular (required OTP-25 installer proof)"
       ],
       "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md",
-      "fixed_in_working_tree": "fixed and submitted in commit cd971f0 (later record corrections uncommitted); see second_review"
+      "fixed_in_working_tree": "HISTORICAL wording: fixed in cd971f0; the later ingress gap was fixed in e19c8ca"
     },
     "second_review": {
       "requested_model": "claude-opus-5-5",
@@ -48,10 +48,25 @@
         "raw_result": "opus-ingress-followup.json",
         "same_session": "f3746c7a-184d-4343-933a-12093f203b6a",
         "finding": "IMPORTANT: postValue still silently dropped on ingress.acquire failure, so malformed <=512-byte frames (e.g. 183 B at MTU 185, <4 B) could be lost while a valid partial later completes; earlier 'I1 fully resolved' withdrawn",
-        "fix": "working tree: postValue failClosed on acquire failure (same bounded mechanism); tests + mutation log in ingress-final/",
-        "final_re_review": "PENDING; R-01 not PASS"
+        "fix": "committed in e19c8ca (was a working-tree change when this follow-up was recorded); tests + mutation log in ingress-final/",
+        "final_re_review": "DONE: see final_verification (committed e19c8ca)"
       }
     },
-    "earlier_quota_probe": "an earlier availability probe hit a session quota; it was not a review"
+    "earlier_quota_probe": "an earlier availability probe hit a session quota; it was not a review",
+    "provider": "firstParty",
+    "session_id": "f3746c7a-184d-4343-933a-12093f203b6a",
+    "subagents": 0,
+    "repository_edits_by_reviewer": 0,
+    "verified_commit": "e19c8ca555b3275313cd325a12e15791a2cf894d",
+    "verified_record_fix_commit": "b1f3d7c3b2d5ecff9fab973055a2eb8a27e3c2f9",
+    "raw_result": "opus-final-ingress-verification.json",
+    "final_verification": "ingress gap FULLY resolved in e19c8ca; no remaining CRITICAL or IMPORTANT; R-01 may record success as NO-GO work",
+    "acceptance_decision": "NO-GO for OTP-24",
+    "earlier_reviews_preserved_as_history": [
+      "opus-initial-review.json",
+      "opus-review-cd971f0.json",
+      "opus-ingress-followup.json",
+      "opus-record-verification.json"
+    ]
   }
 }

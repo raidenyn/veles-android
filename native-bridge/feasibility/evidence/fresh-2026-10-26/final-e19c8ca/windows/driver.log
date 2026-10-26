@@ -1,0 +1,16 @@
+stage extension_loaded {'extension_id': 'gmekhgkipjkikmaadaajljinkgfielei'}
+stage host_ready {'host_pid': 88928, 'only_host': True}
+stage scan_started {'scan_handle_len': 16}
+stage scan_result {'devices_found': 1, 'waited_s': 2.0}
+stage connected {'connect_ms': 2669}
+stage scan_stopped {}
+stage size_done {'size': 4, 'result': 'PASS'}
+stage size_done {'size': 4096, 'result': 'PASS'}
+stage size_done {'size': 508, 'result': 'PASS'}
+stage size_done {'size': 509, 'result': 'PASS'}
+stage size_done {'size': 1016, 'result': 'PASS'}
+stage size_done {'size': 1017, 'result': 'PASS'}
+stage size_done {'size': 4095, 'result': 'PASS'}
+stage disconnected {'reply': 'disconnected'}
+stage shutdown {'process_gone_s': 0.596}
+RESULT PASS
