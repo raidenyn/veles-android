@@ -404,4 +404,60 @@ class SharingGattServerTest {
         assertEquals("an invalid operation is not a malformed frame: the partial is untouched", 1, records)
         subject.close()
     }
+
+    private fun stray() = frame(1, true, 0, 0).also { it[1] = 9 } // valid, ignored: no such transaction
+
+    private fun saturatedMalformedScenario(mtu: Int, partialTotal: Int, partialPayload: Int, malformed: ByteArray?): Int {
+        val a = device("a")
+        val b = device("b")
+        subscribe(a, mtu)
+        subscribe(b, mtu)
+        write(a, frame(0, false, partialTotal, partialPayload)) // 1 pending: the partial
+        repeat(15) { write(a, stray()) } // 15 ignored stray continuations: 16 slots full
+        if (malformed != null) write(a, malformed) // cannot acquire a slot, must not be silently lost
+        flush() // drain
+        write(a, frame(1, true, 0, partialTotal - partialPayload)) // otherwise-valid final
+        flush()
+        if (malformed != null) {
+            verify(exactly = 1) { platform.cancelConnection(a) }
+        } else {
+            verify(exactly = 0) { platform.cancelConnection(a) }
+        }
+        verify(exactly = 0) { platform.cancelConnection(b) }
+        write(b, byteArrayOf(0x80.toByte(), 3, 0, 1, 5))
+        flush()
+        subject.close()
+        return records
+    }
+
+    @Test fun controlAtMtu185PartialCompletesWithoutTheMalformedFrame() {
+        assertEquals(2, saturatedMalformedScenario(185, 179, 178, null)) // a's record + b's record
+    }
+
+    @Test fun oversizeForMtu185FrameOf183BytesUnderSaturationNeverLetsTheOldPartialComplete() {
+        // 183 > attribute budget 182 at MTU 185 but < 512, so it takes the normal admission path
+        assertEquals("only b's record", 1, saturatedMalformedScenario(185, 179, 178, ByteArray(183)))
+    }
+
+    @Test fun controlAtMtu517PartialCompletesWithoutTheMalformedFrame() {
+        assertEquals(2, saturatedMalformedScenario(517, 509, 508, null))
+    }
+
+    @Test fun headerlessFrameUnderSaturationNeverLetsTheOldPartialCompleteAtMtu517() {
+        assertEquals("only b's record", 1, saturatedMalformedScenario(517, 509, 508, ByteArray(3)))
+    }
+
+    @Test fun manyRefusedAdmissionsQueueOneDisconnectAndReconnectIsClean() {
+        val a = device("a")
+        subscribe(a, 185)
+        repeat(16) { write(a, stray()) }
+        repeat(50) { write(a, ByteArray(183)) } // all refused: still ONE disconnect
+        flush()
+        verify(exactly = 1) { platform.cancelConnection(a) }
+        subscribe(a, 185)
+        write(a, byteArrayOf(0x80.toByte(), 4, 0, 1, 5))
+        flush()
+        assertEquals(1, records)
+        subject.close()
+    }
 }

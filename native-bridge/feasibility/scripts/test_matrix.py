@@ -68,8 +68,9 @@ class CommittedMatrix(unittest.TestCase):
     def test_g01_cites_the_audited_verbatim_logs_not_the_header_only_ones(self):
         g = {r["id"]: r for r in BASE["rows"]}["G-01"]
         joined = " ".join(g["evidence"])
-        for needle in ("linux-audited-gates.log", "ci-log-guards-verbatim.log", "ci-log-guards.sh", "gradle-version.txt"):
+        for needle in ("ingress-final/linux-gates-with-gradle-version.log", "ingress-final/ci-log-guards-verbatim.log", "ingress-final/ci-log-guards.sh", "mutation-silent-postvalue.log", "linux-audited-gates.log"):
             self.assertIn(needle, joined)
+        self.assertIn("321 unit tests", g["actual"])
         self.assertNotIn("post-review/log-guards.log", joined)
         self.assertNotIn("post-review/jdk.txt", joined)
 

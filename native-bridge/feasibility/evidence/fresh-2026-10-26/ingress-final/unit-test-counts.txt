@@ -1,0 +1,3 @@
+source: actual JUnit XML reports
+total 321 skipped 0 failures 0 errors 0
+SharingGattServerTest 22

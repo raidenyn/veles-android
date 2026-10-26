@@ -58,7 +58,11 @@ Also recorded from the same refresh: the earlier mixed Chrome+phone run failed `
 isolated one-host run passed and is supporting single-phone evidence only); the 10 Pro remains permission
 denied while the 6T is granted; the clean release APK `a424caf7…` was rebuilt and inspected.
 
+## Follow-up from the same session: ingress admission (IMPORTANT, fixed in the working tree)
+
+Raw: `evidence/fresh-2026-10-26/opus-ingress-followup.json` (session `f3746c7a-184d-4343-933a-12093f203b6a`, `claude-opus-5-5`, no edits/builds/devices). The reviewer withdrew "I-1 fully resolved": `postValue` dropped silently on `ingress.acquire` failure, so a malformed frame of 512 bytes or less (183 B at MTU 185, or under 4 B) could be lost while a valid partial later completed. Fix: any admission failure uses the same bounded `failClosed` (one queued disconnect per peer; later frames refused; no queue-size change; no payload copy). Tests: MTU 185 and MTU 517 saturation + control, peer isolation, one-disconnect/reconnect; restoring the silent drop fails 3 (`ingress-final/mutation-silent-postvalue.log`). Gates: `ingress-final/` (321 tests, same-shell Gradle/JDK identity, verbatim guard). The earlier review chain is preserved: both previous reviews had judged I-1 fixed and were wrong about its completeness. See alignment section 13.
+
 ## Final verification: PENDING
 
-The parent's focused Opus verification of these last record corrections has **not** run. Matrix row R-01 is
+A focused Opus re-review after the ingress-admission fix has **not** run. Matrix row R-01 is
 `NOT RUN`. No issue is closed, OTP-23 is not claimed complete, and OTP-24 remains NO-GO.

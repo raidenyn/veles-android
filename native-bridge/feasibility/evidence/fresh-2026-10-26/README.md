@@ -92,3 +92,10 @@ earlier trees and are unchanged history.
 review is `opus-review-cd971f0.json`. `post-review/log-guards.log` has only a header and exit marker and
 `post-review/jdk.txt` is PATH's Ubuntu Java; both are preserved but are not proof of the verbatim guard step or
 of the Gradle runtime (use `submitted-cd971f0/ci-log-guards-verbatim.log` and `linux-audited-gates.log`).
+
+## Ingress-admission fix (`ingress-final/`)
+
+After the second Opus review's follow-up (`opus-ingress-followup.json`), `postValue` fails the peer closed on any
+ingress admission failure. `ingress-final/` holds the same-shell Gradle version + required gates log, the
+source-equal CI guard script and its `bash -v` execution, JUnit-derived counts (321/0) and the mutation log. Earlier
+directories keep their own source identities (`cd971f0` and older) and are not proof of this behavior.

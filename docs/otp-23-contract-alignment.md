@@ -411,7 +411,9 @@ the disposition is [`protocol/reviews/otp-23-contract-alignment-opus.md`](protoc
 Implementation model for the fixes: `claude-sonnet-5-5`. **The review is not passed**: a fresh read-only
 re-review of this tree is pending.
 
-* **I1 (Android):** if the peer's 16-slot ingress is saturated, an over-budget write can no longer be
+* **I1 (Android) — CORRECTED by section 13:** the text below covered only writes above 512 bytes; the
+  same silent-drop gap existed for malformed frames of 512 bytes or less and is closed in section 13.
+  Original text: if the peer's 16-slot ingress is saturated, an over-budget write can no longer be
   silently dropped. The peer fails closed with at most one queued disconnect (a per-peer `overflowed`
   set, cleared on removal, reconnect and close), queued ahead of every later accepted frame, which
   are refused at arrival. No payload is copied and there is no unbounded metadata queue. The earlier
@@ -484,3 +486,40 @@ as supporting only; `A-03` now says the **10 Pro** is denied while the **6T** is
 are denied); `A-01` records the Windows ordering observation but macOS is unobserved; `M-03` records the new
 anchor-checked fixture hashes; everything else stays as before. Account waiver unchanged: only `W-01`,
 `M-01`, `M-02` are `NOT RUN` and non-blocking. The decision remains **NO-GO**.
+
+## 13. Ingress-admission fix for malformed frames of 512 bytes or less
+
+The second Opus 5.5 session (`f3746c7a-184d-4343-933a-12093f203b6a`, raw follow-up:
+`evidence/fresh-2026-10-26/opus-ingress-followup.json`) confirmed one more IMPORTANT gap and withdrew its
+earlier statement that I1 was fully resolved. `postValue` still returned silently when `ingress.acquire`
+failed, so a malformed frame that is not over 512 bytes — 183 bytes at MTU 185 (budget 182), or fewer than 4
+bytes at any MTU — could be dropped while the peer's valid partial later completed. No normative rule permits
+dropping a frame before parsing when the drop changes the outcome (the OTP2-ENC-004 allowance covers only
+drops whose effect is to forfeit a record).
+
+**Change (code, uncommitted at the time of writing; after the `cd971f0` snapshot):** any `ingress.acquire`
+failure in `postValue` now calls the same bounded `failClosed` used for over-512 writes: at most one queued
+disconnect per peer (`overflowed`), queued ahead of every later frame, later frames refused at arrival, flag
+cleared on removal/reconnect/close. Queue sizes (16 per peer, 8 peers) are unchanged, no payload is copied for
+a refused admission, and `postUnsupported` stays a lost-response-only path. **Behavior change:** overflow of
+*valid* frames is now a disconnect instead of silent loss; that loss already forfeited the record and the
+session (OTP2-ENC-004), so only the silence is removed. This is not #120 M2 cleanup or OTP-20 hardening.
+
+**Tests (independent, `SharingGattServerTest`, now 22):** MTU 185 partial (total 179, payload 178) + 15 ignored
+stray continuations fill the 16 slots, a 183-byte frame is refused, drain, an otherwise-valid final must not
+deliver (its control without the malformed frame delivers); MTU 517 partial (509/508) + 15 strays + a 3-byte
+frame, same assertions; peer `b` stays healthy and only `a` is cancelled; many refused admissions queue exactly
+one disconnect and a reconnect is clean. Restoring the silent drop fails 3 of them
+(`ingress-final/mutation-silent-postvalue.log`).
+
+**Current verification (Linux, same-shell `JAVA_HOME=/home/dev/.jdk/zulu21`, launcher Azul 21.0.12.1, daemon
+`/home/dev/.jdk/zulu21`; `ingress-final/`):** `spotlessCheck detekt lintDebug testDebugUnitTest protocolCheck`
+BUILD SUCCESSFUL, exit 0; **321** unit tests, 0 failures/errors/skipped (JUnit XML); the source-equal `ci.yml`
+guard body run with `bash -v`, both greps shown, no matches, exit 0.
+
+**What this does not change.** The `cd971f0` evidence (316 tests, clean APKs `6382bf28…` and release `a424caf7…`,
+native Windows/macOS results, the single-phone diagnostic) keeps its own source identity: it was valid for that
+code and is **not** physical proof of the overflow behavior. The APKs must be rebuilt and the release
+re-inspected after this fix is committed; no device work was done here. `R-01` stays `NOT RUN` pending a
+focused Opus re-review. NO-GO is unchanged; the account waiver still covers only W-01, M-01, M-02; every
+two-phone, background and macOS permission criterion remains blocked.

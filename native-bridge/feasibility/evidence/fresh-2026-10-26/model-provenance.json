@@ -12,7 +12,7 @@
   },
   "final_review": {
     "requested_model": "claude-opus-5-5",
-    "status": "NOT RUN as a final PASS: the parent's focused Opus verification of the last record corrections is PENDING; two earlier actual reviews are recorded above",
+    "status": "NOT RUN as a final PASS: a focused Opus re-review after the ingress-admission fix is PENDING",
     "observed_canonicalModel": null,
     "initial_review": {
       "requested_model": "claude-opus-5-5",
@@ -43,7 +43,14 @@
       "raw_result": "opus-review-cd971f0.json",
       "verdict": "no CRITICAL; I-1, I-3, I-4 verified fixed; I-2 record-keeping only partly fixed (non-verbatim guard file, JDK file not Gradle runtime)",
       "fix": "corrected in docs/matrix using submitted-cd971f0/ evidence; old files preserved",
-      "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md"
+      "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md",
+      "follow_up": {
+        "raw_result": "opus-ingress-followup.json",
+        "same_session": "f3746c7a-184d-4343-933a-12093f203b6a",
+        "finding": "IMPORTANT: postValue still silently dropped on ingress.acquire failure, so malformed <=512-byte frames (e.g. 183 B at MTU 185, <4 B) could be lost while a valid partial later completes; earlier 'I1 fully resolved' withdrawn",
+        "fix": "working tree: postValue failClosed on acquire failure (same bounded mechanism); tests + mutation log in ingress-final/",
+        "final_re_review": "PENDING; R-01 not PASS"
+      }
     },
     "earlier_quota_probe": "an earlier availability probe hit a session quota; it was not a review"
   }

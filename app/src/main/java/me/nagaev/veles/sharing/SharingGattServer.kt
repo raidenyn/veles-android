@@ -309,7 +309,14 @@ internal class SharingGattServer(
     private fun postValue(device: BluetoothDevice, value: ByteArray, block: (ByteArray) -> Unit) {
         val id = device.address
         if (id !in admitted || id in overflowed) return
-        if (!ingress.acquire(id)) return
+        if (!ingress.acquire(id)) {
+            // The refused frame might be malformed (e.g. 183 bytes at MTU 185, or under 4 bytes); dropping it
+            // silently would let an old partial complete across it. Fail the peer closed instead. A dropped
+            // VALID frame loses its record and the session anyway (OTP2-ENC-004), so this only turns that
+            // silent loss into a bounded disconnect. No payload is copied for a refused admission.
+            failClosed(id)
+            return
+        }
         val copy = value.copyOf()
         post {
             try {
@@ -331,7 +338,7 @@ internal class SharingGattServer(
         val id = device.address
         if (id !in admitted || id in overflowed) return
         if (!ingress.acquire(id)) {
-            if (overflowed.add(id)) post { disconnect(id) }
+            failClosed(id)
             return
         }
         post {
@@ -343,6 +350,11 @@ internal class SharingGattServer(
                 ingress.release(id)
             }
         }
+    }
+
+    /** At most ONE queued disconnect per peer (`overflowed`), ahead of every later frame; later frames are refused at arrival. */
+    private fun failClosed(id: String) {
+        if (overflowed.add(id)) post { disconnect(id) }
     }
 
     /** Oversized value on an invalid operation: answer like any invalid operation, never copy the value. */

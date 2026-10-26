@@ -1,0 +1,8 @@
+# mutation: postValue silently returns on ingress.acquire failure (pre-fix); the new tests must FAIL
+SharingGattServerTest > headerlessFrameUnderSaturationNeverLetsTheOldPartialCompleteAtMtu517 FAILED
+SharingGattServerTest > manyRefusedAdmissionsQueueOneDisconnectAndReconnectIsClean FAILED
+SharingGattServerTest > oversizeForMtu185FrameOf183BytesUnderSaturationNeverLetsTheOldPartialComplete FAILED
+22 tests completed, 3 failed
+> Task :app:testDebugUnitTest FAILED
+BUILD FAILED in 18s
+failing tests: ['headerlessFrameUnderSaturationNeverLetsTheOldPartialCompleteAtMtu517', 'manyRefusedAdmissionsQueueOneDisconnectAndReconnectIsClean', 'oversizeForMtu185FrameOf183BytesUnderSaturationNeverLetsTheOldPartialComplete']
