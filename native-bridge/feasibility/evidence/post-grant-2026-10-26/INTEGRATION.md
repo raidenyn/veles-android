@@ -1,5 +1,8 @@
 # Post-grant evidence integration report (2026-10-26/27)
 
+> **Current status (attestation):** R-01 is now PASS for the reviewed NO-GO work, bound to byte-preserved commit `d72c17798f3e665adec2f2ede1442e36634e1a3a` (see `reviews-and-provenance/otp23-postgrant-r01-attestation.md`). Matrix: 16 PASS / 13 BLOCKED / 3 NOT RUN (waived). Decision: **NO-GO**.
+> Statements below that call R-01 "PENDING", or say the final review has not happened, are preserved history of their time and are superseded by this attestation.
+
 Authority: the generated `docs/otp-23-requirements-matrix.md` (from `acceptance/otp23-matrix.json`).
 This file is the index and honest summary; it adjudicates nothing. **Decision: NO-GO for OTP-24.**
 No functional code, device, subagent, commit or push was used to produce this integration.
@@ -134,3 +137,9 @@ Deferred as nonblocking, with no new functional code in this pass:
 | D | `m6_phone_clock_adjudication.py` does not itself assert `clean`/`final`/not-truncated/all-success codes and raises `KeyError` on a missing bound callback; no impact on the committed result | future harness maintainer |
 
 `R-01` stays BLOCKED: final review and fix verification are done; the concrete byte-preserved commit attestation is pending.
+
+## Attestation record
+
+Parent clean-export check: `sha256sum -c SHA256SUMS` inside a clean `git archive` of `d72c17798f3e665adec2f2ede1442e36634e1a3a`, 186 entries all OK, exit 0 (log copied unchanged to `signing-and-gates/otp23-clean-export-d72c177-checksums.log`; it proves byte preservation, not a review or CI).
+The Sonnet byte-preservation result is `reviews-and-provenance/sonnet-byte-preservation-result.json` (session `43ad5518-8e02-497d-beda-9d091f82265e`, `claude-sonnet-5-5`; the same session id as the review-fix raw, read from the file).
+MINOR-B, C and D remain deferred as recorded above.

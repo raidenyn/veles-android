@@ -128,3 +128,10 @@ The earlier integration pass was `claude-sonnet-5-5`, session `fe9d1222-792e-449
 | MINOR-3..9 | A-02 algorithm committed with output; DEX and JUnit outputs saved and tested; fragment bounds marked derived; Windows run-to-phone mapping and unpreserved files stated; proof residuals listed; separate gate logs copied; AppleDouble reworded (git-ignored, not committed) |
 
 **`R-01` stays `BLOCKED`/PENDING.** These corrections are not yet independently verified by the parent, and the integration is uncommitted. The review PASS row may be written only after verification and a commit, citing this review bound to that commit.
+
+## Post-grant R-01 attestation (current; supersedes the earlier PENDING statements above, which are preserved as history)
+
+R-01 is PASS for reviewed NO-GO work, bound to byte-preserved commit `d72c17798f3e665adec2f2ede1442e36634e1a3a`. Reviewer metadata from the raw CLI results: session `ceb6e424-1e26-4ea7-972b-efa4ba2dc633`, `claude-opus-5-5`, `firstParty`, 0 subagents, `is_error` false
+(final review raw sha256 `8990eb9b…`, fix verification raw sha256 `1599974b…`, both unchanged under `native-bridge/feasibility/evidence/post-grant-2026-10-26/reviews-and-provenance/`). No CRITICAL or IMPORTANT finding remains; MINOR-A fixed; MINOR-B/C/D deferred as nonblocking.
+Opus reviewed the tree that became `5f3de250192a4f8b6d8f800531444a6b59d2143e` and did not itself re-open `d72c17798f3e665adec2f2ede1442e36634e1a3a`; the parent verified an empty `app/`, feasibility-scripts and workflow diff `5f3de250192a4f8b6d8f800531444a6b59d2143e..d72c17798f3e665adec2f2ede1442e36634e1a3a` and a clean `git archive` SHA256SUMS pass (186/186).
+Matrix: 16 PASS / 13 BLOCKED / 3 NOT RUN (waived). The decision stays **NO-GO for OTP-24**; this is not an OTP-23 acceptance and no CI result is claimed.

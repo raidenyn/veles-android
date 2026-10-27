@@ -1,6 +1,6 @@
 {
   "phase": "post-grant integration (2026-10-26/27), NEW phase after the e19c8ca-scoped final review",
-  "r01_status": "BLOCKED: final review and fix verification are done (0 CRITICAL, 0 IMPORTANT remaining); the concrete byte-preserved commit attestation is pending the parent's commit. Nothing here is a PASS.",
+  "r01_status": "PASS: attested for reviewed NO-GO work, bound to byte-preserved commit d72c17798f3e665adec2f2ede1442e36634e1a3a; decision remains NO-GO. Earlier PENDING statements are historical.",
   "source_commits": {
     "0d75bb2": "initial strict/scenario harness (0d75bb2d...)",
     "15f57a4": "strong strict phone validation",
@@ -63,7 +63,7 @@
     "scope": "pre-measurement code reviews and one evidence adjudication; NOT the final review of the committed post-grant tree"
   },
   "final_review": {
-    "status": "PENDING",
+    "status": "PASS (attested for reviewed NO-GO work; decision NO-GO)",
     "review_result_recorded": true,
     "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
     "observed_modelUsage_key": "claude-opus-5-5",
@@ -77,7 +77,7 @@
       "minor": 7
     },
     "disposition": "IMPORTANT-1 corrected by option (b) with evaluator provenance and tests; IMPORTANT-2 corrected; MINOR items dispositioned in INTEGRATION.md; corrections made by actual claude-sonnet-5-5 (review-fix pass; its own raw result is not copied here)",
-    "required": "concrete byte-preserved commit attestation: the parent commits the raw-byte-preserved evidence and binds the review and fix verification to that actual commit hash; until then R-01 stays BLOCKED/PENDING",
+    "required": "satisfied by the attestation (superseded: the earlier PENDING requirement text is historical)",
     "earlier_pass_preserved": "R-01's e19c8ca-scoped PASS (session f3746c7a-184d-4343-933a-12093f203b6a) is preserved and explicitly scoped to the source before the new harness/telemetry code",
     "fix_verification": {
       "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
@@ -87,7 +87,24 @@
       "raw": "reviews-and-provenance/otp23-postgrant-opus-fix-verification-result.json",
       "report": "reviews-and-provenance/otp23-postgrant-opus-fix-verification.md",
       "outcome": "IMPORTANT-1/2 resolved; no CRITICAL/IMPORTANT; MINOR-A fixed, MINOR-B/C/D deferred nonblocking"
-    }
+    },
+    "verified_commit": "d72c17798f3e665adec2f2ede1442e36634e1a3a",
+    "reviewed_snapshot_commit": "5f3de250192a4f8b6d8f800531444a6b59d2143e",
+    "provider": "firstParty",
+    "observed_canonicalModel": "claude-opus-5-5",
+    "raw_result": "reviews-and-provenance/otp23-postgrant-final-opus-result.json",
+    "raw_result_sha256": "8990eb9baac558c200fa38f326a8c9e74ec16df4ddef3ffd67af5201d02caa8d",
+    "fix_verification_raw_sha256": "1599974ba149b3546d1906b2a05fdaca151c1b3e85b3e2cc6aac6c7d20ce3250",
+    "attestation": "reviews-and-provenance/otp23-postgrant-r01-attestation.json",
+    "binding": "Opus reviewed the tree that became 5f3de250192a4f8b6d8f800531444a6b59d2143e; the parent verified an empty functional/test diff to d72c17798f3e665adec2f2ede1442e36634e1a3a and a clean-archive SHA256SUMS pass (186/186); Opus did not itself re-open d72c17798f3e665adec2f2ede1442e36634e1a3a",
+    "remaining_minor_disposition": {
+      "MINOR-A": "fixed",
+      "MINOR-B": "deferred nonblocking (foreign enclosing git revision)",
+      "MINOR-C": "deferred nonblocking (re-evaluation hash drift guard)",
+      "MINOR-D": "deferred nonblocking (standalone M6 helper input strictness)"
+    },
+    "acceptance_decision": "NO-GO for OTP-24",
+    "status_history": "PENDING (before the review), then PENDING attestation (after fix verification); superseded by this PASS attestation"
   },
   "integration_session": {
     "role": "post-grant integration pass (before the final review)",

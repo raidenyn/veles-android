@@ -1,6 +1,7 @@
 """Tests for the OTP-23 requirements matrix rules (validation, decision, rendering)."""
 
 import copy
+import hashlib
 import json
 import pathlib
 import re
@@ -228,6 +229,50 @@ class CommittedMatrix(unittest.TestCase):
             # the older review evidence is still present
             self.assertTrue((REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26/opus-final-ingress-verification.json").exists())
             return
+        base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
+        post = json.loads((base / "post-grant-model-provenance.json").read_text(encoding="utf-8"))["final_review"]
+        if post["status"].startswith("PASS"):
+            # CURRENT attestation: the PASS must rest on the NEW post-grant review, not on the preserved e19c8ca one
+            commit = post["verified_commit"]
+            self.assertRegex(commit, r"^[0-9a-f]{40}$")
+            self.assertRegex(post["reviewed_snapshot_commit"], r"^[0-9a-f]{40}$")
+            self.assertIn(commit, row["actual"])
+            self.assertIn(commit, (base / "reviews-and-provenance/otp23-postgrant-r01-attestation.md").read_text())
+            self.assertEqual((row["status"], row["blocker"], row["waiver"]), ("PASS", "", ""))
+            self.assertEqual(post["provider"], "firstParty")
+            self.assertEqual(post["observed_canonicalModel"], "claude-opus-5-5")
+            self.assertEqual(post["acceptance_decision"], "NO-GO for OTP-24")
+            self.assertEqual(sorted(post["remaining_minor_disposition"]), ["MINOR-A", "MINOR-B", "MINOR-C", "MINOR-D"])
+            for key, name in (("raw_result", None), ("fix_verification", "reviews-and-provenance/otp23-postgrant-opus-fix-verification-result.json")):
+                rel = post["raw_result"] if name is None else name
+                data = (base / rel).read_bytes()
+                raw = json.loads(data)
+                digest = post["raw_result_sha256"] if name is None else post["fix_verification_raw_sha256"]
+                self.assertEqual(hashlib.sha256(data).hexdigest(), digest, key)
+                self.assertEqual(list(raw["modelUsage"]), ["claude-opus-5-5"], key)
+                self.assertEqual(raw["modelUsage"]["claude-opus-5-5"]["canonicalModel"], "claude-opus-5-5", key)
+                self.assertEqual(raw["modelUsage"]["claude-opus-5-5"]["provider"], "firstParty", key)
+                self.assertEqual(raw["session_id"], post["session_id"], key)
+                self.assertEqual(raw["subagent_stats"]["spawned"], 0, key)
+                self.assertFalse(raw["is_error"], key)
+                self.assertIn("native-bridge/feasibility/evidence/post-grant-2026-10-26/" + rel, row["evidence"], key)
+                self.assertIn(digest, row["actual"], key)
+            self.assertIn(post["session_id"], row["actual"])
+            attestation = json.loads((base / post["attestation"]).read_text())
+            self.assertEqual((attestation["byte_preserved_commit"], attestation["decision"]), (commit, "NO-GO for OTP-24"))
+            self.assertEqual(attestation["reviewed_snapshot_commit"], post["reviewed_snapshot_commit"])
+            self.assertIn("did NOT itself re-open", attestation["binding"])  # Opus never reviewed the commit object itself
+            self.assertIn("native-bridge/feasibility/evidence/post-grant-2026-10-26/" + post["attestation"], row["evidence"])
+            # the e19c8ca review stays as preserved history and is not the sole proof for the new source
+            self.assertIn("f3746c7a-184d-4343-933a-12093f203b6a", row["actual"])
+            self.assertIn("preserved history", row["actual"])
+            self.assertNotEqual(post["session_id"], "f3746c7a-184d-4343-933a-12093f203b6a")
+            self.assertTrue((REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26/opus-final-ingress-verification.json").exists())
+            verdict, open_rows = m.decision(BASE)
+            self.assertNotIn("R-01", open_rows)
+            self.assertEqual(verdict, "NO-GO")
+            self.assertTrue(open_rows)  # a review PASS never makes the decision GO
+            return
         provenance = json.loads((EVIDENCE / "model-provenance.json").read_text(encoding="utf-8"))["final_review"]
         raw_names = [e for e in row["evidence"] if pathlib.Path(e).name.startswith("opus-") and e.endswith(".json")]
         self.assertIn("native-bridge/feasibility/evidence/fresh-2026-10-26/" + provenance["raw_result"], row["evidence"])
@@ -266,7 +311,9 @@ class CommittedMatrix(unittest.TestCase):
         blocking = [r["id"] for r in BASE["rows"] if r["status"] in ("BLOCKED", "FAIL", "NOT RUN") and not r["waiver"]]
         self.assertEqual(sorted(open_rows), sorted(blocking))
         self.assertEqual(verdict, "NO-GO" if blocking else "GO")
-        self.assertTrue({"M-03", "W-11", "M-09", "R-01", "M-11"} <= set(open_rows))
+        self.assertTrue({"M-03", "W-11", "M-09", "M-11"} <= set(open_rows))
+        # R-01 blocks exactly while its row is not PASS (the generic pending/false-PASS rules are tested separately)
+        self.assertEqual("R-01" in open_rows, by_id["R-01"]["status"] != "PASS")
 
     def test_g01_is_backed_by_verbatim_same_shell_logs_on_a_committed_clean_source(self):
         g = {r["id"]: r for r in BASE["rows"]}["G-01"]
