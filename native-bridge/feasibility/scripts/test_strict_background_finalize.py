@@ -25,12 +25,21 @@ CLOSED = 1_000_000.0
 
 
 def raw_result():
-    """A raw driver result as a Mac run leaves it: everything but the phone evidence is present."""
+    """A raw driver result as a Mac run leaves it: everything but the phone evidence is present. A macOS
+    run records the trusted platform plus the native session dictionaries and the page-state guard at
+    both sample points, and its recorded ST-15 verdict is computed by the driver with that platform
+    (Opus F-1: the finalizer trusts the raw's top-level platform)."""
     evidence = good_evidence("cold")
     evidence["phone_evidence"] = None
     evidence.pop("phone_validation")
     evidence["timeline"]["background_started_wall"] = CLOSED - 1
-    verdict = core.evaluate(evidence)
+    fg = evidence["os_foreground"]
+    fg["platform"] = "macos"
+    fg["gate"]["last"]["session"] = {"verified": True, "on_console": True, "screen_locked": False}
+    fg["gate"]["last"]["page_state"] = {"ok": True, "visibility_state": "visible", "has_focus": True}
+    fg["after_switch"]["session"] = {"verified": True, "on_console": True, "screen_locked": False}
+    fg["after_switch"]["page_state"] = {"ok": True, "visibility_state": "visible", "has_focus": True}
+    verdict = core.evaluate(evidence, platform="macos")
     started = fin.datetime.fromtimestamp(STARTED, fin.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"platform": "macos", "scenario": "cold", "strict_result": verdict["strict_result"],
             "meta": {"started_utc": started, "phone_delay_s": 690, "min_background_s": 600},
@@ -215,7 +224,7 @@ class Adjudicate(unittest.TestCase):
     def test_other_failing_checks_survive_good_phone_files(self):
         raw = raw_result()
         raw["evidence"]["chrome"]["args"].append("--disable-renderer-backgrounding")
-        raw["checks"] = core.evaluate(raw["evidence"])["checks"]
+        raw["checks"] = core.evaluate(raw["evidence"], platform=raw["platform"])["checks"]
         doc = fin.adjudicate(raw, {"path": "r", "sha256": "ab", "size": 1}, two_good(), clock=CLOCK)
         self.assertEqual(doc["strict_result"], "FAIL")
 

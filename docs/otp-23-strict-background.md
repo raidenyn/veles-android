@@ -17,7 +17,7 @@ macOS rows) adjudicates. The older `poc_background.py` evidence is untouched and
 | ST-11 / ST-12 | **preconfigured visibility/focus histories** (below) of the connector and the ordinary tab |
 | ST-13 | recorded Chrome command line has no throttling/backgrounding/freezing exemption flag |
 | ST-14 | `min_background_s >= 600` and not a diagnostic short run |
-| ST-15 | Windows: the real OS foreground window belongs to this run's own Chrome PID (or a window whose parent chain contains it) before any BLE work and again after the ordinary-tab switch; macOS: not required. Unverifiable foreground (locked desktop, no foreground window) or a gate nobody confirmed is BLOCKED, a mismatch after the switch or BLE work not provably after the confirmation is FAIL |
+| ST-15 | Every platform: the real OS foreground owner (Windows: frontmost console window; macOS: the frontmost application of the user's login session) belongs to this run's own Chrome PID (directly or through its ancestry) before any BLE work and again after the ordinary-tab switch. On macOS each sample carries two pieces of locked-screen counter-evidence: the REQUIRED page-state guard (the sampled page's own `document.visibilityState` must be `visible`, `hasFocus` recorded — connector at the gate, ordinary tab after the switch — read over CDP at sample time; a locked console hides Chrome pages, so an owned pid during a lock cannot confirm) and the session's `CGSessionCopyCurrentDictionary` lock/console state (native ctypes query; on console `kCGSSessionOnConsoleKey` and unlocked `CGSSessionScreenIsLocked` absent/false; locked/off-console/NULL/unreadable leaves the sample unverifiable). A gate nobody confirmed, a missing page-state guard (macOS) or unverifiable foreground is BLOCKED; a mismatch after the switch, BLE work not provably after the confirmation, or a hidden page at the after-switch sample (macOS) is FAIL. Legacy raws that recorded `{"required": false}` and no gate (macOS before this gate existed) stay BLOCKED; the macOS gate is not waived |
 
 ### Histories (ST-11, ST-12)
 
@@ -33,21 +33,55 @@ unfocused, ordinary tab visible + focused), even if a later event restores it. T
 `cdp_reopened_wall`, taken **before** the re-attach; events after it (caused by attaching) are counted but
 never used.
 
-### Windows OS-foreground gate (ST-FG, before hello and any BLE work)
+### OS-foreground gate (ST-FG, before hello and any BLE work)
 
 `chrome.windows.update` cannot take the OS foreground from another application, and the driver uses no
-synthetic input, `SetForegroundWindow`, `AttachThreadInput` or credential bypass. After Chrome and the
-connector are up (and before the native hello and before any scan or connect, so the phones' 690 s timer keeps
-its full >= 600 s margin) the controller writes `<--out stem>.foreground-ready.json` with
-`state: "awaiting_physical_click"` (outside the browser), prints the same, and polls Win32
-`GetForegroundWindow` every 0.5 s for at most `--foreground-wait-s` (default 180; `-ForegroundWaitSeconds` in
-`invoke-poc.ps1`) until the foreground owner is the launched Chrome PID. A human must physically click that
-Chrome window. The ready file then becomes `confirmed`, `timeout` or `unverifiable`; anything but `confirmed`
-stops the run before any BLE work and leaves ST-15 BLOCKED. The poll lives only in the controller; no page-side
-timer or keepalive is added. After the ordinary tab is created and focused, and **before every DevTools client
-closes**, the foreground owner is sampled again; a different owner stops the run (ST-BG) and ST-15 FAILs.
-Evidence: `evidence.os_foreground` (`gate`, `gate_confirmed_mono`, `ble_start_mono`, `after_switch`).
-macOS has no new gate (focus and histories already worked there).
+synthetic input, `SetForegroundWindow`, `AttachThreadInput`, screen recording, key events or accessibility
+control. After Chrome and the connector are up (and before the native hello and before any scan or connect,
+so the phones' 690 s timer keeps its full >= 600 s margin) the controller writes
+`<--out stem>.foreground-ready.json` with `state: "awaiting_physical_click"` (outside the browser), prints
+the same, and polls the REAL OS foreground owner every 0.5 s for at most `--foreground-wait-s` (default 180;
+`-ForegroundWaitSeconds` in `invoke-poc.ps1`) until it is the launched Chrome PID. A human must physically
+click that Chrome window. The reader is platform-specific and never faked: Windows polls Win32
+`GetForegroundWindow`; macOS queries `AppKit.NSWorkspace.sharedWorkspace.frontmostApplication` via an
+`osascript -l JavaScript` one-liner (returned as `pid|name|bundleIdentifier`), which reads LaunchServices
+state with no AppleEvent to another app (no Automation permission, therefore no prompt). That the reader
+sees the console's frontmost application from the exact execution context the macOS runs use is required,
+not assumed: a pre-measurement calibration in that context (raw `pid|name|bundle` outputs against human
+clicks of the test Chrome, other applications including Finder — and, when open, the owner's personal
+Chrome — and back to the test Chrome) is recorded and checked before any measured run; if the reader
+cannot distinguish there, ST-15 stays BLOCKED and the gate is never relaxed. The ready file then becomes
+`confirmed`, `timeout` or `unverifiable`; anything but `confirmed` stops the run before any BLE work and
+leaves ST-15 BLOCKED. The poll lives only in the controller; no page-side timer or keepalive is added.
+After the ordinary tab is created and focused, and **before every DevTools client closes**, the foreground
+owner is sampled again; a different owner stops the run (ST-BG) and ST-15 FAILs. On macOS every sample
+additionally carries two pieces of locked-screen counter-evidence:
+
+* **Page-state guard (REQUIRED at both sample points).** The controller reads the page's own
+  `document.visibilityState` + `document.hasFocus()` over CDP at sample time (connector page at the gate,
+  ordinary tab after the switch — the connector is hidden there by design). A locked console makes Chrome
+  pages hidden, so an `owned` pid read during a lock cannot look unlocked: confirmation additionally
+  requires `ok` and ST-15 FAILs (or stays BLOCKED when the guard was not recorded) on macOS runs whose
+  page state contradicts an unlocked, visibly-front console. This is the preflight-approved equivalent
+  guard, recorded and required at both sample points; it is lock counter-evidence (a locked console hides
+  Chrome pages), not a proof of foreground by itself — foreground ownership remains the pid/session checks.
+* **Native session dictionary (recorded; verified when readable).** The session's lock/console state is
+  read with `CGSessionCopyCurrentDictionary` called natively through ctypes (`CFPropertyListCreateXMLData`
+  + plistlib) and recorded as `session`; a locked screen, an off-console session or an unreadable/NULL
+  dictionary (including a non-GUI execution context) leaves the sample unverifiable, so a locked screen
+  can never read as owned. The previous osascript-JXA route is retired: live macOS 26 calibration
+  (2026-10-27) proved the ObjC bridge cannot call this C function there at all (the symbol reference and
+  even a parenthesised call yield the bridge function object; every NULL wrapper is truthy; deepUnwrap
+  prints nothing), so JXA is used only for the foreground reader, never for the session query.
+
+Evidence: `evidence.os_foreground` (`gate`, `gate_confirmed_mono`, `ble_start_mono`, `after_switch`,
+`reader`, `platform`, `page_state_guard`, `session_guard` on macOS). macOS has the same gate now;
+`{"required": false}` legacy macOS evidence is BLOCKED, not waived.
+
+Sample audit content (macOS): each sample in `gate.last` and `after_switch` keeps the foreground
+application's `name` and `bundle` plus the foreground pid's `ps` command line (`ps_args`), so an
+`owned` verdict is auditable (the pid is the dedicated-profile Chrome, not a recycled pid). Windows samples
+keep their unchanged GetForegroundWindow semantics; Windows audit enrichment is not needed there.
 
 ### Ordinary tab setup (same window)
 
@@ -60,7 +94,7 @@ about:blank#otp23-ordinary-<uuid>, active: true})` and `chrome.windows.update(<w
 visible AND focused before any DevTools client closes (the run stops with ST-BG otherwise). The binding is
 recorded as `evidence.same_window_binding`. No visibility/focus emulation, minimisation or keepalive is used.
 
-### Chrome flags (ST-13) and the Native Messaging caveat
+### Chrome flags (ST-13) and the (clarified) Native Messaging caveat
 
 The launched argv (`proc.args`, also set by `MediumProcess` on Windows; a single-string OS command line is tokenised, never skipped) is stored in
 `evidence.chrome`. Flags such as `--disable-background-timer-throttling`, `--disable-renderer-backgrounding`,
@@ -68,11 +102,17 @@ The launched argv (`proc.args`, also set by `MediumProcess` on Windows; a single
 `--disable-features`/`--enable-features` value touching throttling/freezing/occlusion/wake-up/backgrounding
 FAIL the run; an unrecorded command line FAILs too. The static extension API scan is only supporting evidence.
 
-**Known literal conflict, not relaxed:** ST-13 proves absent *flags*, not that Chrome has no *internal*
-exemptions. An open Native Messaging port may itself exempt the page from timer throttling/freezing. The RFC
-sentence ("no ... other timer-throttling exemption active") can therefore be literally unsatisfiable for any
-Native Messaging transport. The result carries `native_messaging_exemption_not_excluded: true`; whether that
-is an exemption the RFC means is for the matrix/owner to decide.
+**Clarified, not relaxed:** ST-13 proves absent *flags*, not Chrome-internal behaviour. The previously
+recorded open conflict ("an open Native Messaging port may itself be an exemption, interpretation
+`native_messaging_exemption_not_excluded`") is superseded by the owner-approved RFC clarification of
+2026-10-27 (OTP-23 only): event delivery through the architecture's Native Messaging port is not a
+timer-throttling exemption; ordinary timers and the port itself are permitted, and the criterion keeps
+forbidding opt-outs, artificial keepalive, audio, WebRTC, exemption flags and DevTools clients during idle.
+Its unsatisfied-report condition (a same-build comparison in which a port tab escapes intensive timer
+throttling while a port-less control tab does not) belongs to the separate same-build probe evidence, which
+on Chrome 156.0.8078.48 on Windows and macOS found port tab and port-less control both intensively
+throttled. The ST-13 detail records `native_messaging_port` with this clarified reading; the requirements
+matrix still adjudicates and `formal_otp23_acceptance` stays false.
 
 ### Short diagnostic runs
 
@@ -97,7 +137,14 @@ python3 scripts/strict_background.py --scenario prewarm --out evidence/strict-ma
 ./scripts/macos-unregister.sh
 ```
 
-The phones are on the PC, so these end `BLOCKED` on ST-08 only. Never overwrite them; finalize below.
+The OS-foreground gate (ST-FG) now runs here too: after the connector page opens, a human must click the
+test Chrome window (physical click, up to `--foreground-wait-s`, default 180 s) so the frontmost
+application is the run's own Chrome; the run stops before any BLE work otherwise. Each macOS sample also
+records the page-state guard (required: the sampled page's `document.visibilityState` must be `visible`)
+plus the session's `CGSessionCopyCurrentDictionary` lock/console state (native ctypes query; unverified
+when the screen is locked, the session is off-console or the state is unreadable) plus, for audit, the
+foreground application's name/bundle and its `ps` command line. The phones are on the PC, so these end `BLOCKED` on
+ST-08 only. Never overwrite them; finalize below.
 
 ### Windows (interactive desktop session; scheduled, limited token, owned cleanup)
 

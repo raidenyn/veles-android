@@ -1,0 +1,36 @@
+[       0ms pid=90406] start pid=90406
+[       0ms pid=90406] in  len=81 type=hello request_id=r1-gpr60i
+[       0ms pid=90406] out len=181 type=ready request_id=r1-gpr60i api_version=1
+[      90ms pid=90406] in  len=137 type=start_scan request_id=r2-ar6h5v api_version=1
+[     100ms pid=90406] bluetooth authorization before adapter init: allowed_always
+[     101ms pid=90406] adapter init: created=true authorization=allowed_always
+[     110ms pid=90406] out len=135 type=scan_state request_id=r2-ar6h5v api_version=1 status=started scan_handle=3572cddff012f583
+[     246ms pid=90406] out len=217 type=device_found api_version=1 scan_handle=3572cddff012f583 device_handle=38956d61b934fbd9 label.len=17 platform_hint.len=42
+[     428ms pid=90406] out len=217 type=device_found api_version=1 scan_handle=3572cddff012f583 device_handle=cd4bcada15ad7b63 label.len=17 platform_hint.len=42
+[    1121ms pid=90406] in  len=115 type=connect request_id=r3-wau2j0 api_version=1 device_handle=38956d61b934fbd9
+[    1122ms pid=90406] conn 2 device at 0ms
+[    1557ms pid=90406] conn 2 connected at 435ms
+[    2038ms pid=90406] conn 2 service at 916ms
+[    2157ms pid=90406] conn 2 characteristics at 1035ms
+[    2157ms pid=90406] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    2337ms pid=90406] conn 2 subscribed; hint=macos:..866a
+[    2337ms pid=90406] out len=182 type=connected request_id=r3-wau2j0 api_version=1 connection_handle=c186d6c968513d4e platform_hint.len=42
+[    2338ms pid=90406] in  len=115 type=connect request_id=r4-o0ls1u api_version=1 device_handle=cd4bcada15ad7b63
+[    2338ms pid=90406] conn 3 device at 0ms
+[    3442ms pid=90406] conn 3 connected at 1104ms
+[    4097ms pid=90406] conn 3 service at 1759ms
+[    4217ms pid=90406] conn 3 characteristics at 1879ms
+[    4217ms pid=90406] conn 3 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    4399ms pid=90406] conn 3 subscribed; hint=macos:..7a56
+[    4399ms pid=90406] out len=182 type=connected request_id=r4-o0ls1u api_version=1 connection_handle=1164de013d959947 platform_hint.len=42
+[    4400ms pid=90406] in  len=115 type=stop_scan request_id=r5-nwtkev api_version=1 scan_handle=3572cddff012f583
+[    4400ms pid=90406] out len=135 type=scan_state request_id=r5-nwtkev api_version=1 status=stopped scan_handle=3572cddff012f583
+[  692562ms pid=90406] out len=5577 type=message api_version=1 connection_handle=c186d6c968513d4e record_base64.len=5464
+[  694582ms pid=90406] out len=5577 type=message api_version=1 connection_handle=1164de013d959947 record_base64.len=5464
+[  724426ms pid=90406] in  len=81 type=shutdown request_id=r6-66tvpz api_version=1
+[  724426ms pid=90406] out len=99 type=disconnected api_version=1 connection_handle=c186d6c968513d4e
+[  724426ms pid=90406] out len=99 type=disconnected api_version=1 connection_handle=1164de013d959947
+[  724427ms pid=90406] out len=90 type=shutdown_complete request_id=r6-66tvpz api_version=1
+[  724427ms pid=90406] conn 3 command channel closed
+[  724427ms pid=90406] conn 2 command channel closed
+[  724427ms pid=90406] exit code=0 stdout_drained=true

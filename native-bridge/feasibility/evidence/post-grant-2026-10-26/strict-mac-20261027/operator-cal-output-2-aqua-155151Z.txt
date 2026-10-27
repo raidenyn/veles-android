@@ -1,0 +1,8 @@
+raiden@Sirius homepc % work/otp23-glm-dc5d127-cal/cal-run.sh
+AQUA_DIAG: sym:function | dtype:function | wtype:function | result:none
+stopping stale recorder pid 77775 (started 15:38:40Z with the pre-fix reader code)
+RECORDER UP pid 82261 file cal-aqua-20261027T155151Z.jsonl (25 min, 1 Hz)
+{"kind": "context", "utc_start": "2026-10-27T15:51:51.122575+00:00", "host_date_u": "2026-10-27T15:51:51Z", "uid": 501, "pid": 82261, "tty": null, "ssh_connection": null, "python": "3.9.6 (default, May 22 2026, 11:13:45) \n[Clang 21.0.0 (clang-2100.1.1.101)]", "launchctl_managername": "Aqua", "gui_domain_reachable": true, "who": "tanushka         console      Oct 20 16:43 \nraiden           console      Oct 25 19:10 \nraiden           ttys001      Oct 27 22:35", "sw_vers": "ProductName:\t\tmacOS\nProductVersion:\t\t26.5.2\nBuildVersion:\t\t25F84"}
+{"kind": "sample", "index": 0, "utc": "2026-10-27T15:51:51.261841+00:00", "mono": 0.195683041, "reader": {"pid": 76617, "name": "Terminal", "bundle": "com.apple.Terminal"}, "raw_reader": "76617|Terminal|com.apple.Terminal", "reader_rc": 0, "reader_err": null, "session": {"verified": false}, "raw_session": "", "session_rc": 0, "session_err": null, "ps_args": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"}
+launcher: /bin/sh work/otp23-glm-dc5d127-cal/cal-run.sh   parent: -zsh
+managername: Aqua

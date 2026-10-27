@@ -19,11 +19,15 @@ other timer-throttling exemption active":
   re-attach (events caused by attaching are never counted);
 * the Chrome command line actually launched is recorded and must carry no throttling/backgrounding/freezing
   exemption flag. LIMITATION (not hidden, not relaxed): this scan only proves those *flags* are absent; it
-  does not prove that no Chrome-internal exemption applies. In particular an open Native Messaging port may
-  itself be an intrinsic Chrome exemption from timer throttling/freezing. The RFC wording ("no ... other
-  timer-throttling exemption active") can therefore conflict literally with the Native Messaging transport;
-  that is surfaced here as ``native_messaging_exemption_not_excluded`` and adjudicated by the requirements
-  matrix, never quietly assumed away.
+  does not measure Chrome-internal behaviour. The RFC wording ("no ... other timer-throttling exemption
+  active") was clarified by the owner-approved 2026-10-27 amendment (OTP-23 only): event delivery through the
+  architecture's Native Messaging port is NOT a timer-throttling exemption; ordinary timers and the port
+  itself are permitted, and the criterion keeps forbidding opt-outs, artificial keepalive, audio, WebRTC,
+  exemption flags and DevTools clients during idle. Its unsatisfied-report condition (a same-build comparison
+  in which a port tab escapes intensive timer throttling while a port-less control tab does not) belongs to
+  separate same-build probe evidence, not to this per-run evaluation; the 156.0.8078.48 probes on Windows and
+  macOS found port tab and port-less control both intensively throttled. This is recorded in the ST-13
+  detail; ``formal_otp23_acceptance`` is always false and the requirements matrix adjudicates.
 
 The existing ``poc_background.py`` evidence (browser-level CDP attached, desktop-scheduled timers, warmed
 links) is preserved untouched and is NOT this validation. ``evaluate`` never reports acceptance itself:
@@ -265,25 +269,74 @@ def parse_host_trace(text):
     return {"messages": messages, "sends": sends, "hello_ms": hello_ms}
 
 
-def sample_foreground(read_pid, owns):
+def sample_foreground(read_pid, owns, session_ok=None, ps_args=None, page_ok=None):
     """One OS foreground sample. verified=False when the foreground owner cannot be read (locked desktop, no
-    foreground window, API error); owned only counts when verified."""
+    foreground window, API error) or, when `session_ok` is supplied (macOS), the session's lock/console state
+    is not provably on-console AND unlocked: a locked screen or off-console session, or an unreadable state,
+    leaves the sample unverifiable (fail closed - the frontmost app cannot be trusted then). `owned` only
+    counts when verified. `read_pid` returns an int pid or a {'pid', 'name', 'bundle'} detail dict (macOS):
+    name/bundle are audit-only. `ps_args`, when supplied, records the foreground pid's command line; its
+    failure is recorded as None and never changes verified/owned. `page_ok`, when supplied, is the locked-
+    screen counter-evidence read at sample time (macOS preflight P-2: the frontmost reader keeps reporting
+    the previous app while the screen is locked, so the unlocked consistency comes from the page itself); the
+    payload is recorded as `page_state` and, when it is present, it must say ok=True for a sample to confirm
+    the foreground gate - hidden/locked/unreadable page state never confirms. macOS runs treat the page-state
+    guard as REQUIRED evidence (ST-15); other platforms record it, and their gate keeps confirming on the
+    pid/session result alone. Calibration raw: evidence/post-grant-2026-10-26/strict-mac-20261027/
+    calibration-cal-ssh-20261027T155808Z.jsonl (preflight-2 reviewed snapshot sha256 a517e5e6…; it shows
+    (a)-(d) click distinguishing and the locked interval). It is lock counter-evidence, not a foreground
+    proof by itself."""
+    session = None
+    if session_ok is not None:
+        try:
+            session = session_ok()
+        except Exception:
+            session = {"verified": False}
+        if not isinstance(session, dict):
+            session = {"verified": False}
+        if not session.get("verified") or session.get("on_console") is not True \
+                or session.get("screen_locked") is not False:
+            return {"verified": False, "pid": None, "owned": False, "session": session}
     try:
-        pid = read_pid()
+        read = read_pid()
     except Exception:
-        return {"verified": False, "pid": None, "owned": False}
+        read = None
+    detail = {}
+    pid = read
+    if isinstance(read, dict):
+        pid = read.get("pid")
+        detail = {"name": read.get("name"), "bundle": read.get("bundle")}
+    extra = {}
+    if session_ok is not None:
+        extra["session"] = session
+    if ps_args is not None:
+        try:
+            extra["ps_args"] = ps_args(pid) if pid else None
+        except Exception:
+            extra["ps_args"] = None
+    if page_ok is not None:
+        try:
+            page = page_ok()
+        except Exception as exc:
+            page = {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+        if not isinstance(page, dict):
+            page = {"ok": False, "error": "junk page state"}
+        extra["page_state"] = page
     if not pid:
-        return {"verified": False, "pid": None, "owned": False}
+        return dict({"verified": False, "pid": None, "owned": False}, **detail, **extra)
     try:
         owned = bool(owns(pid))
     except Exception:
-        return {"verified": False, "pid": pid, "owned": False}
-    return {"verified": True, "pid": pid, "owned": owned}
+        return dict({"verified": False, "pid": pid, "owned": False}, **detail, **extra)
+    return dict({"verified": True, "pid": pid, "owned": owned}, **detail, **extra)
 
 
 def wait_for_foreground(sample, timeout_s, poll_s, clock, sleep, on_poll=None):
     """Bounded pre-test controller poll (no page-side timer): wait for a human to put the owned browser in the
-    OS foreground. state: confirmed | timeout (readable but never owned) | unverifiable (never readable)."""
+    OS foreground. state: confirmed | timeout (readable but never owned) | unverifiable (never readable).
+    When a sample carries a page_state payload, confirmation additionally requires it to be consistent with
+    an unlocked console (ok True): samples without that key (e.g. Windows) confirm on the pid/session result
+    alone."""
     started = clock()
     deadline = started + timeout_s
     polls, seen_verified, last = 0, False, None
@@ -291,7 +344,8 @@ def wait_for_foreground(sample, timeout_s, poll_s, clock, sleep, on_poll=None):
         last = sample()
         polls += 1
         seen_verified = seen_verified or last["verified"]
-        if last["verified"] and last["owned"]:
+        page_ok = (last.get("page_state") or {}).get("ok", True)
+        if last["verified"] and last["owned"] and page_ok:
             return {"state": "confirmed", "polls": polls, "waited_s": round(clock() - started, 3), "last": last}
         if on_poll:
             on_poll(last, polls)
@@ -301,27 +355,60 @@ def wait_for_foreground(sample, timeout_s, poll_s, clock, sleep, on_poll=None):
         sleep(min(poll_s, max(0.0, deadline - clock())))
 
 
-def _foreground_check(fg):
-    """ST-15 over evidence['os_foreground']. Not required (macOS, no new gate) -> PASS; Windows requires the
-    real OS foreground owned by this run's Chrome before any BLE and again after the tab switch."""
-    expected = ("Windows: OS foreground window owned by the run's own Chrome PID before any BLE work and again "
-                "after the ordinary-tab switch, before every DevTools client closes")
-    if not isinstance(fg, dict):
+def _foreground_check(fg, platform=None):
+    """ST-15 over evidence['os_foreground']. Every strict run (Windows and macOS) must show the real OS
+    foreground owned by this run's Chrome before any BLE work and again after the tab switch, before every
+    DevTools client closes. Legacy mac raws (which recorded {"required": False} and no gate) and any run
+    that recorded no gate at all stay BLOCKED; the macOS gate is not waived. The platform comes from a
+    TRUSTED source - the caller passes the result's top-level platform; a new-schema os_foreground
+    (self-recorded platform or page_state_guard key) whose trustworthy platform is missing or unknown (e.g.
+    "darwin") is BLOCKED, never adjudicated by a guessed platform. Explicit legacy detection keeps the
+    pre-page-guard Windows raws (gate, no platform key, no page_state_guard) audit-only as they always
+    were. macOS additionally requires the recorded session dictionaries (verified, on-console, unlocked)
+    and the page-state guard at both sample points (preflight P-2 / preflight-2 Q-1)."""
+    expected = ("OS foreground owned by the run's own Chrome PID (directly or through its ancestry) before "
+                "any BLE work and again after the ordinary-tab switch, before every DevTools client closes")
+    if not isinstance(fg, dict) or fg.get("required") is not True:
         return _check("BLOCKED", expected, "no foreground evidence recorded")
-    if fg.get("required") is False:
-        return _check("PASS", "not required on this platform (no new gate)", {"required": False})
+    legacy = "platform" not in fg and "page_state_guard" not in fg
+    trusted = platform or fg.get("platform")
+    if not legacy and trusted not in ("macos", "windows"):
+        return _check("BLOCKED", expected, "%s platform is missing or unknown" % (trusted,))
+    self_recorded = fg.get("platform")
+    if trusted and self_recorded and trusted != self_recorded:
+        return _check("BLOCKED", expected, "trusted result platform %s contradicts the foreground's "
+                      "self-recorded platform %s; the sample cannot be adjudicated" % (trusted, self_recorded))
+    page_required = trusted == "macos"
     gate, after = fg.get("gate") or {}, fg.get("after_switch") or {}
     detail = {"gate_state": gate.get("state"), "gate_pid": (gate.get("last") or {}).get("pid"),
-              "chrome_pid": fg.get("chrome_pid"), "after_switch": after,
+              "chrome_pid": fg.get("chrome_pid"), "after_switch": after, "reader": fg.get("reader"),
+              "platform": trusted, "page_required": page_required,
+              "session_guard": fg.get("session_guard"),
               "gate_confirmed_mono": fg.get("gate_confirmed_mono"), "ble_start_mono": fg.get("ble_start_mono")}
     if gate.get("state") != "confirmed":
         return _check("BLOCKED", expected, detail)  # nobody confirmed the foreground: nothing was measured
+    if page_required:
+        gate_page = (gate.get("last") or {}).get("page_state")
+        if not isinstance(gate_page, dict) or not gate_page.get("ok"):
+            return _check("BLOCKED", expected, detail)  # gate confirmed without unlocked-consistent page state
+        gate_session = (gate.get("last") or {}).get("session")
+        if gate_session != {"verified": True, "on_console": True, "screen_locked": False}:
+            return _check("BLOCKED", expected, detail)  # gate sample not provably on-console + unlocked
     ordered = core_num(fg.get("gate_confirmed_mono")) and core_num(fg.get("ble_start_mono")) \
         and fg["gate_confirmed_mono"] < fg["ble_start_mono"]
     if not ordered:
         return _check("FAIL", expected, detail)  # BLE work not provably after the confirmed foreground
     if not after.get("verified"):
         return _check("BLOCKED", expected, detail)
+    if page_required:
+        after_page = after.get("page_state")
+        if not isinstance(after_page, dict):
+            return _check("BLOCKED", expected, detail)  # page-state guard not recorded at the after-switch sample
+        if not after_page.get("ok"):
+            return _check("FAIL", expected, detail)  # screen locked or Chrome not visibly front at that point
+        after_session = after.get("session")
+        if after_session != {"verified": True, "on_console": True, "screen_locked": False}:
+            return _check("BLOCKED", expected, detail)  # after-switch sample not provably on-console + unlocked
     return _check("PASS" if after.get("owned") is True else "FAIL", expected, detail)
 
 
@@ -340,8 +427,11 @@ def _all_pass(checks):
     return "PASS" if all(v == "PASS" for v in values) else "BLOCKED"
 
 
-def evaluate(evidence):  # noqa: C901 - one flat list of independent requirement checks
-    """Independent checks over a run's evidence dict; see the module docstring for the contract."""
+def evaluate(evidence, platform=None):  # noqa: C901 - one flat list of independent requirement checks
+    """Independent checks over a run's evidence dict; see the module docstring for the contract. `platform`
+    is the TRUSTED top-level platform of the result the evidence came from (callers pass it; ST-15 also
+    accepts the os_foreground's self-recorded platform, and a new-schema foreground with neither is
+    BLOCKED)."""
     checks = {}
     handles = list(evidence.get("handles", []))
     events = evidence.get("events", [])
@@ -491,10 +581,13 @@ def evaluate(evidence):  # noqa: C901 - one flat list of independent requirement
         "recorded Chrome command line carries no throttling/backgrounding/freezing exemption flag",
         {"findings": flag_findings, "arg_count": len(chrome.get("args") or []),
          "args_source": chrome.get("args_source"),
-         "native_messaging_exemption_not_excluded": True,
-         "scope": "flags only; Chrome-internal exemptions (e.g. Native Messaging) are NOT claimed excluded"})
+         "native_messaging_port": "not a timer-throttling exemption (owner-approved RFC clarification, "
+                                  "2026-10-27): event delivery through the Native Messaging port is not an "
+                                  "exemption; ordinary timers and the port itself are permitted",
+         "scope": "flags only; this check does not measure Chrome-internal behaviour, and the same-build "
+                  "port-escape comparison lives in separate probe evidence"})
 
-    checks["ST-15"] = _foreground_check(evidence.get("os_foreground"))
+    checks["ST-15"] = _foreground_check(evidence.get("os_foreground"), platform)
 
     diagnostic = bool(evidence.get("diagnostic_short"))
     checks["ST-14"] = _check(

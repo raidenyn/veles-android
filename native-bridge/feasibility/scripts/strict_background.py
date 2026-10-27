@@ -87,6 +87,132 @@ def win_foreground_pid():
     return pid.value or None
 
 
+MAC_FOREGROUND_READER = "osascript -l JavaScript: AppKit.NSWorkspace.sharedWorkspace.frontmostApplication"
+SESSION_GUARD_READER = "ctypes CGSessionCopyCurrentDictionary via CFPropertyListCreateXMLData " \
+    "(kCGSSessionOnConsoleKey true, CGSSessionScreenIsLocked absent/false); the JXA ObjC bridge cannot call " \
+    "this C function on macOS 26 (it returns the bridge function object itself and wraps NULL truthy - " \
+    "recorded in the 2026-10-27 pre-measurement calibration), so the query is native or nothing"
+PAGE_STATE_GUARD = ("controller CDP read of the connector page at sample time: "
+                    "document.visibilityState must be 'visible' (hasFocus recorded) - a locked console makes "
+                    "Chrome pages hidden, so an owned pid read during a lock cannot look unlocked")
+
+
+def mac_foreground_app(runner=subprocess.run):
+    """pid/name/bundle of the frontmost application of the user's login session, or None when it cannot be
+    read. NSWorkspace is read with an osascript JavaScript one-liner: it queries LaunchServices state (no
+    AppleEvent to another app, so no Automation permission is needed). That this reaches the console's
+    frontmost application from the exact execution context the driver runs in is not assumed: it is recorded
+    by the pre-measurement calibration (raw reader outputs against human clicks). Any error here means
+    unverifiable, never a guess."""
+    script = ('ObjC.import("AppKit"); var app = $.NSWorkspace.sharedWorkspace.frontmostApplication; '
+              'app ? app.processIdentifier + "|" + (app.localizedName.js || "") + "|" + '
+              '(app.bundleIdentifier.js || "") : "none"')
+    try:
+        proc = runner(["/usr/bin/osascript", "-l", "JavaScript", "-e", script],
+                      capture_output=True, text=True, timeout=15)
+    except Exception:
+        return None
+    out = (getattr(proc, "stdout", None) or "").strip()
+    if getattr(proc, "returncode", 1) != 0 or not out or out == "none":
+        return None
+    parts = out.split("|", 2)
+    if len(parts) != 3:
+        return None
+    pid_text, name, bundle = parts
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return None
+    if pid <= 0:
+        return None
+    return {"pid": pid, "name": name, "bundle": bundle}
+
+
+def read_cg_session_dict():
+    """CGSessionCopyCurrentDictionary called natively through ctypes (the JXA ObjC bridge on macOS 26 cannot
+    call this C function: referencing or calling `$.CGSessionCopyCurrentDictionary` yields the function
+    object itself, every NULL comes back as a truthy wrapper, and ObjC.deepUnwrap prints nothing - see the
+    recorded 2026-10-27 calibration). The dictionary is converted with CFPropertyListCreateXMLData and read
+    with plistlib. :returns: the plain session dictionary, or None when the API yields nothing or anything
+    is unreadable - fail closed. The API queries the CALLER's login session: live SSH-context calibration on
+    macOS 26 showed that context still receives the console session dictionary of uid 501
+    (cal-ssh-20261027T155808Z.jsonl, session verified/on-console/unlocked), which is what the lock check
+    relies on. Data references are released."""
+    try:
+        import ctypes
+        import plistlib
+        cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg.CGSessionCopyCurrentDictionary.restype = ctypes.c_void_p
+        cg.CGSessionCopyCurrentDictionary.argtypes = []
+        dict_ref = cg.CGSessionCopyCurrentDictionary()
+        if not dict_ref:
+            return None
+        try:
+            data_ref = None
+            cf.CFPropertyListCreateXMLData.restype = ctypes.c_void_p
+            cf.CFPropertyListCreateXMLData.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            data_ref = cf.CFPropertyListCreateXMLData(None, dict_ref)
+            if not data_ref:
+                return None
+            cf.CFDataGetBytePtr.restype = ctypes.c_void_p
+            cf.CFDataGetBytePtr.argtypes = [ctypes.c_void_p]
+            cf.CFDataGetLength.restype = ctypes.c_long  # CFIndex is a signed long
+            cf.CFDataGetLength.argtypes = [ctypes.c_void_p]
+            buf = ctypes.string_at(cf.CFDataGetBytePtr(data_ref), cf.CFDataGetLength(data_ref))
+            cf.CFRelease.argtypes = [ctypes.c_void_p]
+            return plistlib.loads(buf)
+        finally:
+            if data_ref:
+                cf.CFRelease(data_ref)
+            cf.CFRelease(dict_ref)
+    except Exception:
+        return None
+
+
+def mac_session_state(probe=None):
+    """The login session's own lock/console state from the driver's execution context (same audit session as
+    the Chrome it spawns): {'verified': True, 'on_console': bool, 'screen_locked': bool} only when
+    CGSessionCopyCurrentDictionary (native ctypes call) yields the dictionary; NULL (a non-GUI context) or
+    anything unreadable is {'verified': False}. Callers treat a locked screen, an off-console session OR an
+    unreadable state as an unverifiable foreground sample: fail closed, the frontmost app cannot be trusted
+    from a locked screen. `probe` is injectable for tests; production uses read_cg_session_dict."""
+    try:
+        data = (probe or read_cg_session_dict)()
+    except Exception:
+        return {"verified": False}
+    if not isinstance(data, dict):
+        return {"verified": False}
+    on_console = data.get("kCGSSessionOnConsoleKey")
+    locked = data.get("CGSSessionScreenIsLocked")
+    unlocked = locked in (0, "0", None, False, "")  # absent (None) or false = not locked; anything else is
+    return {"verified": True, "on_console": on_console in (1, "1", True), "screen_locked": not unlocked}
+
+
+def query_pid_args(pid, runner=subprocess.run):
+    """`ps` command line of a pid (macOS audit evidence for the foreground sample); None when unreadable."""
+    try:
+        out = runner(["/bin/ps", "-p", str(int(pid)), "-o", "args="], capture_output=True, text=True,
+                     timeout=10).stdout.strip()
+    except Exception:
+        return None
+    return out or None
+
+
+def foreground_reader_for(platform):
+    """The real OS foreground reader for `platform`; a caller must not substitute or fake it."""
+    return win_foreground_pid if platform == "windows" else mac_foreground_app
+
+
+def foreground_extras_for(platform):
+    """:returns: (session_ok, ps_args) inputs beyond the pid reader. Windows keeps its unchanged
+    GetForegroundWindow semantics (NULL covers a locked desktop); on macOS every sample additionally reads
+    the session's lock/console state (locked / off-console / unreadable -> unverifiable, see
+    mac_session_state) and records the foreground pid's command line for audit. Neither extra ever
+    relaxes: a sample can only be verified when both the foreground pid and the session state check out."""
+    return (None, None) if platform == "windows" else (mac_session_state, query_pid_args)
+
+
 def write_ready_file(path, payload):
     """Stage/ready JSON outside the browser (atomic replace); failures never stop the run."""
     try:
@@ -200,19 +326,39 @@ def run(args):
         chrome_pid = chrome.proc.pid
         return pid == chrome_pid or any(link.get("ProcessId") == chrome_pid for link in cv.ancestry(pid))
 
+    def read_page_ok_for(session):
+        """Locked-screen counter-evidence at sample time for ONE page (controller CDP read; no page-side
+        timer): a locked console makes the page hidden, so an owned pid read during a lock cannot look
+        unlocked. Gate samples read the connector page; after-switch samples read the ordinary tab (the
+        connector is hidden there BY DESIGN)."""
+        def read():
+            state = chrome.js(session, "document.visibilityState+'|'+document.hasFocus()")
+            vis, _, foc = str(state).partition("|")
+            return {"ok": vis == "visible", "visibility_state": vis, "has_focus": foc == "true",
+                    "page": session}
+        return read
+
     def sample_fg():
-        return core.sample_foreground(foreground_reader, owns_foreground)
+        return core.sample_foreground(foreground_reader, owns_foreground, session_ok=session_ok,
+                                      ps_args=ps_args, page_ok=read_page_ok_for(st["fg_page"]))
 
     def ph_foreground():
-        """Windows only, before hello / any BLE work: a human must click the test Chrome window (no synthetic
-        input, no focus stealing). Polls GetForegroundWindow from the controller; nothing runs in the page."""
-        evidence["os_foreground"] = {"required": True, "chrome_pid": chrome.proc.pid}
+        """Before hello / any BLE work: a human must click the test Chrome window so it is the OS foreground
+        (Windows: frontmost console window; macOS: frontmost application of the user's login session, only
+        while the login session is unlocked, on console and the connector page visibly in front). No
+        synthetic input, no focus stealing. The controller poll runs outside the page."""
+        evidence["os_foreground"] = {"required": True, "chrome_pid": chrome.proc.pid,
+                                     "reader": foreground_reader_name, "platform": PLATFORM,
+                                     "page_state_guard": PAGE_STATE_GUARD}
+        if session_guard_name:
+            evidence["os_foreground"]["session_guard"] = session_guard_name
         ready = pathlib.Path(args.out).resolve().with_suffix(".foreground-ready.json")
         base = {"chrome_pid": chrome.proc.pid, "wait_s": args.foreground_wait_s, "written_utc": utc(),
                 "instruction": "click the Chrome window opened by this test (physical click)"}
         write_ready_file(ready, dict(base, state="awaiting_physical_click"))
         print(f"awaiting_physical_click: click the test Chrome window (pid {chrome.proc.pid}); "
               f"waiting up to {args.foreground_wait_s} s -> {ready}")
+        st["fg_page"] = st["session"]  # gate samples: the connector page is the tab expected visibly in front
         gate = core.wait_for_foreground(sample_fg, args.foreground_wait_s, 0.5, time.monotonic, time.sleep)
         evidence["os_foreground"]["gate"] = gate
         write_ready_file(ready, dict(base, state=gate["state"], written_utc=utc(), polls=gate["polls"]))
@@ -232,8 +378,7 @@ def run(args):
         return {"host_pid": st["owned_pid"]}
 
     def ph_phones():
-        if PLATFORM == "windows":
-            evidence["os_foreground"]["ble_start_mono"] = time.monotonic()  # no BLE work happened before this
+        evidence["os_foreground"]["ble_start_mono"] = time.monotonic()  # no BLE work happened before this
         scan = chrome.js(st["session"], f"otp23.startScan({json.dumps(cv.VELES_SERVICE)})")
         cv.expect(scan.get("status") == "started", f"startScan {scan}")
         deadline, devices = time.time() + 40, set()
@@ -314,10 +459,13 @@ def run(args):
             if hidden == "hidden" and visible == "visible" and chrome.js(other_session, "document.hasFocus()"):
                 break
             time.sleep(0.25)
-        if PLATFORM == "windows":
-            after = sample_fg()
-            evidence["os_foreground"]["after_switch"] = after
-            cv.expect(after["verified"] and after["owned"], f"OS foreground left the owned Chrome after the tab switch: {after}")
+        st["fg_page"] = other_session  # after-switch samples: the ordinary tab is visibly front, connector hidden
+        after = sample_fg()
+        st["fg_page"] = st["session"]
+        evidence["os_foreground"]["after_switch"] = after
+        cv.expect(after["verified"] and after["owned"]
+                  and (after.get("page_state") or {}).get("ok") is True,
+                  f"OS foreground left the owned Chrome (or page not visibly front) after the tab switch: {after}")
         evidence["same_window_binding"] = {"chrome_tabs": binding, "cdp_window_ids_equal": True,
                                            "created_by": "chrome.tabs.create(windowId=connector window, active)"}
         evidence["pre_close_probe"] = {
@@ -384,13 +532,13 @@ def run(args):
         st["shutdown_done"] = True
         return {"shutdown": "complete"}
 
-    foreground_reader = win_foreground_pid
-    phases = [("ST-ENV", "Chrome, fixed-id extension, connector page, exemption scan", ph_env)]
-    if PLATFORM == "windows":
-        phases.append(("ST-FG", "human click: owned Chrome is the OS foreground before any BLE work", ph_foreground))
-    else:
-        evidence["os_foreground"] = {"required": False}
-    phases += [("ST-HELLO", "hello over the registered plain host", ph_hello),
+    foreground_reader = foreground_reader_for(PLATFORM)  # real OS foreground on BOTH platforms
+    foreground_reader_name = ("Win32 GetForegroundWindow" if PLATFORM == "windows" else MAC_FOREGROUND_READER)
+    session_guard_name = None if PLATFORM == "windows" else SESSION_GUARD_READER
+    session_ok, ps_args = foreground_extras_for(PLATFORM)
+    phases = [("ST-ENV", "Chrome, fixed-id extension, connector page, exemption scan", ph_env),
+              ("ST-FG", "human click: owned Chrome is the OS foreground before any BLE work", ph_foreground),
+              ("ST-HELLO", "hello over the registered plain host", ph_hello),
               ("ST-PHONES", "two physical phones scanned and connected", ph_phones)]
     if args.scenario == "prewarm":
         phases.append(("ST-WARM", "pre-idle byte-verified 4096-byte exchange per phone", ph_warmup))
@@ -452,7 +600,7 @@ def run(args):
         evidence["phone_validation"] = {"status": "BLOCKED", "problems": [f"validation error {type(error).__name__}"]}
     evidence["phone_clock"] = clock
     try:
-        verdict = core.evaluate(evidence)
+        verdict = core.evaluate(evidence, platform=PLATFORM)
     except Exception as error:  # keep the raw evidence even if the verdict logic itself breaks
         verdict = {"strict_result": "FAIL", "checks": {"EVALUATE": {"status": "FAIL", "expected": "evaluate()",
                                                                       "actual": f"{type(error).__name__}: {error}"}}}
@@ -481,8 +629,8 @@ if __name__ == "__main__":
     parser.add_argument("--min-background-s", type=positive_int, default=core.MIN_BACKGROUND_S,
                         help="below 600 requires --diagnostic-short; such a run can never be a strict PASS")
     parser.add_argument("--foreground-wait-s", type=positive_int, default=180,
-                        help="Windows only: bounded wait for a physical click to put the test Chrome in the OS "
-                             "foreground before any BLE work")
+                        help="bounded wait for a physical click to put the test Chrome in the OS foreground "
+                             "before any BLE work (Windows: frontmost window; macOS: frontmost application)")
     parser.add_argument("--diagnostic-short", action="store_true",
                         help="label the run as a short diagnostic (result DIAGNOSTIC_ONLY at best)")
     parser.add_argument("--grace-s", type=positive_int, default=core.GRACE_S)

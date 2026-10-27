@@ -52,7 +52,12 @@ def good_evidence(scenario="cold"):
                                         "configured_delay_ms": 690_000}]}],
         "cleanup": {"shutdown_complete": True, "chrome_closed": True, "surviving_hosts": [], "errors": []},
         "diagnostic_short": False,
-        "os_foreground": {"required": False},
+        # OS-foreground gate evidence is required on EVERY platform now; a run without it is BLOCKED
+        "os_foreground": {"required": True, "chrome_pid": 4242,
+                          "gate": {"state": "confirmed", "polls": 3,
+                                   "last": {"verified": True, "pid": 4242, "owned": True}},
+                          "gate_confirmed_mono": 10.0, "ble_start_mono": 12.0,
+                          "after_switch": {"verified": True, "pid": 4242, "owned": True}},
         "chrome": {"args": ["/chrome", "--user-data-dir=/tmp/p", "--remote-debugging-port=0", "--no-first-run"],
                    "args_source": "proc.args"},
         "history_tokens": {"connector": "tok-c", "ordinary_tab": "tok-o"},
@@ -71,12 +76,12 @@ def good_evidence(scenario="cold"):
     }
 
 
-def verdict(evidence):
-    return core.evaluate(evidence)
+def verdict(evidence, **kw):
+    return core.evaluate(evidence, **kw)
 
 
-def status(evidence, check):
-    return verdict(evidence)["checks"][check]["status"]
+def status(evidence, check, **kw):
+    return verdict(evidence, **kw)["checks"][check]["status"]
 
 
 class FixtureAgreement(unittest.TestCase):
@@ -335,17 +340,251 @@ class ChromeFlags(unittest.TestCase):
         e["chrome"]["args"].append("--disable-features=Translate")
         self.assertEqual(status(e, "ST-13"), "PASS")
 
-    def test_native_messaging_exemption_is_disclosed_not_claimed_excluded(self):
+    def test_native_messaging_port_is_clarified_as_not_an_exemption(self):
+        """The owner-approved RFC clarification (2026-10-27) replaces the previous open-conflict annotation."""
         v = verdict(good_evidence())
-        self.assertTrue(v["checks"]["ST-13"]["actual"]["native_messaging_exemption_not_excluded"])
+        detail = v["checks"]["ST-13"]["actual"]
+        self.assertNotIn("native_messaging_exemption_not_excluded", detail)
+        self.assertIn("not a timer-throttling exemption", detail["native_messaging_port"])
+        self.assertIn("ordinary timers and the port itself are permitted", detail["native_messaging_port"])
         self.assertFalse(v["formal_otp23_acceptance"])
 
 
-def windows_fg(**over):
+class FakeResult:
+    """Stand-in for subprocess.CompletedProcess; raises are injected by the caller instead."""
+
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def fn_src(name):
+    """Source segment of the module-level function `name` in strict_background.py (for exec-based tests)."""
+    for node in ast.walk(TREE):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return ast.get_source_segment(SRC, node)
+    raise AssertionError(f"missing {name}")
+
+
+class MacForegroundReaderBehaviour(unittest.TestCase):
+    """The macOS foreground readers are driven through an injected subprocess runner and fail closed on
+    every malformed output, a non-zero exit, an unreadable process or pid <= 0; nothing is ever guessed."""
+
+    @staticmethod
+    def load():
+        import json
+        import subprocess
+        namespace = {"json": json, "subprocess": subprocess}
+        for name in ("win_foreground_pid", "mac_foreground_app", "read_cg_session_dict", "mac_session_state",
+                     "query_pid_args", "foreground_reader_for", "foreground_extras_for"):
+            exec(fn_src(name), namespace)
+        return namespace
+
+    def test_app_reader_parses_pid_name_bundle(self):
+        reader = self.load()["mac_foreground_app"]
+        out = reader(lambda *_a, **_k: FakeResult(0, "123|Google Chrome|com.google.Chrome\n"))
+        self.assertEqual(out, {"pid": 123, "name": "Google Chrome", "bundle": "com.google.Chrome"})
+
+    def test_app_reader_failures(self):
+        reader = self.load()["mac_foreground_app"]
+        for runner, label in ((lambda *_a, **_k: FakeResult(0, "none"), "no frontmost app"),
+                              (lambda *_a, **_k: FakeResult(1, "123|Google Chrome|com.google.Chrome"),
+                               "non-zero exit"),
+                              (lambda *_a, **_k: FakeResult(0, ""), "empty output"),
+                              (lambda *_a, **_k: FakeResult(0, None), "stdout None"),
+                              (lambda *_a, **_k: FakeResult(0, "garbage"), "garbage without separators"),
+                              (lambda *_a, **_k: FakeResult(0, "123|Google Chrome"),
+                               "missing bundle part"),
+                              (lambda *_a, **_k: FakeResult(0, "0|Google Chrome|com.google.Chrome"), "pid 0"),
+                              (lambda *_a, **_k: FakeResult(0, "-5|Google Chrome|com.google.Chrome"),
+                               "negative pid"),
+                              (lambda *_a, **_k: FakeResult(0, "abc|Google Chrome|com.google.Chrome"),
+                               "non-numeric pid"),
+                              (lambda *_a, **_k: (_ for _ in ()).throw(Exception("timeout")), "runner raised")):
+            with self.subTest(label):
+                self.assertIsNone(reader(runner))
+
+    def test_session_state_reads_the_dictionary(self):
+        state = self.load()["mac_session_state"]
+
+        def read(payload, failure=None):
+            def probe():
+                if failure is not None:
+                    raise failure
+                return payload
+            return state(probe)
+
+        self.assertEqual(read({"kCGSSessionOnConsoleKey": 1}),
+                         {"verified": True, "on_console": True, "screen_locked": False})
+        self.assertEqual(read({"kCGSSessionOnConsoleKey": "1", "CGSSessionScreenIsLocked": 0}),
+                         {"verified": True, "on_console": True, "screen_locked": False})
+        self.assertEqual(read({"kCGSSessionOnConsoleKey": 1, "CGSSessionScreenIsLocked": "1"}),
+                         {"verified": True, "on_console": True, "screen_locked": True})
+        self.assertEqual(read({"kCGSSessionOnConsoleKey": 1, "CGSSessionScreenIsLocked": True}),
+                         {"verified": True, "on_console": True, "screen_locked": True})
+        self.assertEqual(read({"kCGSSessionOnConsoleKey": 0}),
+                         {"verified": True, "on_console": False, "screen_locked": False})
+        self.assertEqual(read({}),
+                         {"verified": True, "on_console": False, "screen_locked": False})
+        for payload, label in ((None, "NULL dictionary (non-GUI context)"),
+                               ("garbage", "junk instead of a dict"),
+                               (123, "non-dict value"),
+                               ([], "json-array-like value")):
+            with self.subTest(label):
+                self.assertEqual(read(payload), {"verified": False})
+        self.assertEqual(read(None, failure=OSError("no CoreGraphics")), {"verified": False})
+        self.assertEqual(state(), {"verified": False},
+                         "the real probe fails closed off-macOS (no CoreGraphics CDLL here)")
+
+    def test_session_query_is_native_ctypes_not_the_broken_jxa_bridge(self):
+        """Regression (live macOS 26 diagnosis 2026-10-27): the JXA ObjC bridge cannot call
+        CGSessionCopyCurrentDictionary at all - the symbol reference and even the parenthesised call return
+        the bridge function object, every NULL wrapper is truthy, and ObjC.deepUnwrap prints nothing, so
+        every session sample was silently unverifiable. The query must therefore be the native ctypes path
+        with CFPropertyList conversion, and no JXA remnant may survive."""
+        native = fn_src("read_cg_session_dict")
+        self.assertIn("cg.CGSessionCopyCurrentDictionary()", native)
+        self.assertIn("CFPropertyListCreateXMLData", native)
+        self.assertIn("plistlib.loads(buf)", native)
+        self.assertIn("CFRelease(data_ref)", native)
+        self.assertIn("CFRelease(dict_ref)", native)
+        self.assertIn("c_long  # CFIndex is a signed long", native, "CFDataGetLength restype is CFIndex")
+        self.assertIn("finally:", native, "the dictionary reference is released even on the failure paths")
+        self.assertIn("return None", native)
+        self.assertNotIn("$.CGSessionCopyCurrentDictionary", fn_src("mac_session_state"),
+                         "the JXA bridge route was proven unusable live; native only")
+        self.assertNotIn('ObjC.import("CoreGraphics")', SRC,
+                         "the retired osascript session script must not survive anywhere")
+        self.assertNotIn("deepUnwrap", fn_src("mac_session_state"))
+        self.assertIn("cannot call", SRC, "the recorded evidence name explains why the query is native")
+        self.assertIn("PAGE_STATE_GUARD", SRC)
+
+    def test_query_pid_args_records_the_command_line_or_none(self):
+        args = self.load()["query_pid_args"]
+        self.assertEqual(args(4242, lambda *_a, **_k: FakeResult(0, "Chrome --user-data-dir=...")),
+                         "Chrome --user-data-dir=...")
+        self.assertIsNone(args(4242, lambda *_a, **_k: FakeResult(0, "  ")))
+        self.assertIsNone(args(4242, lambda *_a, **_k: (_ for _ in ()).throw(OSError("ps gone"))))
+
+    def test_reader_and_extras_selection_is_by_platform(self):
+        namespace = self.load()
+        self.assertIs(namespace["foreground_reader_for"]("windows"), namespace["win_foreground_pid"])
+        self.assertIs(namespace["foreground_reader_for"]("macos"), namespace["mac_foreground_app"])
+        self.assertEqual(namespace["foreground_extras_for"]("windows"), (None, None))
+        self.assertEqual(namespace["foreground_extras_for"]("macos"),
+                         (namespace["mac_session_state"], namespace["query_pid_args"]))
+
+
+def mac_reader(pid):
+    """A parameterless macOS-shaped reader (read_pid is called with no args) returning pid plus audit identity."""
+    return lambda: {"pid": pid, "name": "Google Chrome", "bundle": "com.google.Chrome"}
+
+
+class MacSampleSessionGuard(unittest.TestCase):
+    """macOS samples additionally require the session's lock/console state; locked, off-console or unreadable
+    leaves the sample unverifiable even when a foreground pid was read. The Windows path (no extras) keeps
+    its exact previous shape."""
+
+    SESSION = {"verified": True, "on_console": True, "screen_locked": False}
+
+    def sample(self, session, reader_pid=4242, ps_args=lambda p: "chrome args", owns=lambda p: p == 4242):
+        return core.sample_foreground(mac_reader(reader_pid), owns, session_ok=session, ps_args=ps_args)
+
+    def test_unlocked_console_session_samples_normally_with_audit_details(self):
+        sample = self.sample(lambda: dict(self.SESSION))
+        self.assertEqual(sample, {"verified": True, "pid": 4242, "owned": True, "name": "Google Chrome",
+                                  "bundle": "com.google.Chrome", "session": dict(self.SESSION),
+                                  "ps_args": "chrome args"})
+
+    def test_locked_or_off_console_or_unverified_session_fails_closed(self):
+        cases = [
+            (lambda: {"verified": True, "on_console": True, "screen_locked": True}, "screen locked"),
+            (lambda: {"verified": True, "on_console": False, "screen_locked": False}, "off console"),
+            (lambda: {"verified": False}, "unreadable (CGSession NULL etc)"),
+            (lambda: {}, "junk without verified"),
+            (lambda: (_ for _ in ()).throw(OSError("boom")), "session check raised"),
+        ]
+        for session, label in cases:
+            with self.subTest(label):
+                sample = self.sample(session)
+                self.assertEqual(sample["verified"], False)
+                self.assertEqual(sample["pid"], None, "no pid is surfaced while the session state stands in the way")
+                self.assertEqual(sample["owned"], False)
+
+    def test_unreadable_foreground_with_a_verified_session_stays_unverifiable(self):
+        sample = core.sample_foreground(lambda: None, lambda p: True, session_ok=lambda: dict(self.SESSION))
+        self.assertEqual(sample["verified"], False)
+        self.assertEqual(sample["owned"], False)
+        self.assertEqual(sample["session"], self.SESSION)
+
+    def test_ps_args_failure_is_recorded_never_gating(self):
+        sample = self.sample(lambda: dict(self.SESSION), ps_args=lambda p: (_ for _ in ()).throw(OSError()))
+        self.assertEqual(sample["verified"], True)
+        self.assertEqual(sample["owned"], True)
+        self.assertIsNone(sample["ps_args"])
+
+    def test_page_state_payload_is_recorded_beside_the_pid_truth(self):
+        sample = core.sample_foreground(mac_reader(4242), lambda p: p == 4242,
+                                        session_ok=lambda: dict(self.SESSION),
+                                        page_ok=lambda: dict(PAGE_OK))
+        self.assertTrue(sample["verified"] and sample["owned"])
+        self.assertEqual(sample["page_state"], dict(PAGE_OK))
+
+    def test_hidden_raised_or_junk_page_state_records_failure_without_changing_pid_truth(self):
+        for page, label in ((lambda: {"ok": False, "visibility_state": "hidden"},
+                             "locked screen hides the page"),
+                            (lambda: (_ for _ in ()).throw(RuntimeError("CDP dead")), "page read raised"),
+                            (lambda: "junk", "junk payload")):
+            with self.subTest(label):
+                sample = core.sample_foreground(mac_reader(4242), lambda p: p == 4242,
+                                                session_ok=lambda: dict(self.SESSION), page_ok=page)
+                self.assertTrue(sample["verified"], "pid/session truth is unchanged by the page probe")
+                self.assertTrue(sample["owned"])
+                self.assertFalse(sample["page_state"]["ok"])
+
+    def test_session_failure_short_circuits_before_the_page_probe(self):
+        sample = core.sample_foreground(mac_reader(4242), lambda p: p == 4242,
+                                        session_ok=lambda: {"verified": True, "screen_locked": True},
+                                        page_ok=lambda: dict(PAGE_OK))
+        self.assertFalse(sample["verified"])
+        self.assertNotIn("page_state", sample)
+
+    def test_foreign_app_records_audit_details_with_owned_false(self):
+        sample = self.sample(lambda: dict(self.SESSION), reader_pid=7777)
+        self.assertEqual((sample["verified"], sample["owned"]), (True, False))
+        self.assertEqual(sample["pid"], 7777)
+        self.assertEqual(sample["name"], "Google Chrome")
+
+    def test_windows_shape_is_unchanged_without_the_macs_extras(self):
+        sample = core.sample_foreground(lambda: 4242, lambda p: p == 4242)
+        self.assertEqual(sample, {"verified": True, "pid": 4242, "owned": True})
+        self.assertNotIn("session", sample)
+        self.assertNotIn("ps_args", sample)
+        self.assertNotIn("name", sample)
+
+
+PAGE_OK = {"ok": True, "visibility_state": "visible", "has_focus": True}
+SESSION_OK = {"verified": True, "on_console": True, "screen_locked": False}
+
+
+def owned_gate(**over):
     fg = {"required": True, "chrome_pid": 4242,
           "gate": {"state": "confirmed", "polls": 3, "last": {"verified": True, "pid": 4242, "owned": True}},
           "gate_confirmed_mono": 10.0, "ble_start_mono": 12.0,
           "after_switch": {"verified": True, "pid": 4242, "owned": True}}
+    platform = over.pop("platform", None)
+    if platform is not None:
+        fg["platform"] = platform
+        # the macOS driver records the native session dictionaries at both sample points
+        fg["gate"]["last"]["session"] = dict(SESSION_OK)
+        fg["after_switch"]["session"] = dict(SESSION_OK)
+    gate_page = over.pop("gate_page", None)
+    if gate_page is not None:
+        fg["gate"]["last"]["page_state"] = gate_page
+    after_page = over.pop("after_page", None)
+    if after_page is not None:
+        fg["after_switch"]["page_state"] = after_page
     fg.update(over)
     return fg
 
@@ -357,7 +596,7 @@ class Foreground(unittest.TestCase):
         return e
 
     def test_confirmed_before_ble_and_after_switch_passes(self):
-        self.assertEqual(status(self.evidence(windows_fg()), "ST-15"), "PASS")
+        self.assertEqual(status(self.evidence(owned_gate()), "ST-15"), "PASS")
 
     def test_missing_foreground_evidence_is_blocked_never_pass(self):
         e = good_evidence()
@@ -367,27 +606,122 @@ class Foreground(unittest.TestCase):
 
     def test_foreground_never_arrives_is_blocked(self):
         for state in ("timeout", "unverifiable"):
-            fg = windows_fg(gate={"state": state, "polls": 360, "last": {"verified": state == "timeout",
+            fg = owned_gate(gate={"state": state, "polls": 360, "last": {"verified": state == "timeout",
                                                                          "pid": 999, "owned": False}})
             v = verdict(self.evidence(fg))
             self.assertEqual(v["checks"]["ST-15"]["status"], "BLOCKED", state)
             self.assertNotEqual(v["strict_result"], "PASS")
 
+    def test_macos_requires_the_page_state_guard_at_both_sample_points(self):
+        """Preflight P-2 equivalent: a macOS run's ST-15 evidence must carry the recorded locked-screen
+        counter-evidence (page visibly front at the gate and after the switch); without it the gate is
+        unmeasurable, with a contradiction it FAILs."""
+        no_page = owned_gate(platform="macos")
+        self.assertEqual(status(self.evidence(no_page), "ST-15"), "BLOCKED")
+        self.assertEqual(status(self.evidence(owned_gate(platform="macos", gate_page=dict(PAGE_OK))),
+                                "ST-15"), "BLOCKED", "after-switch page state is missing")
+        full = owned_gate(platform="macos", gate_page=dict(PAGE_OK), after_page=dict(PAGE_OK))
+        self.assertEqual(status(self.evidence(full), "ST-15"), "PASS")
+        locked = owned_gate(platform="macos", gate_page=dict(PAGE_OK),
+                            after_page={"ok": False, "visibility_state": "hidden", "has_focus": False})
+        self.assertEqual(status(self.evidence(locked), "ST-15"), "FAIL",
+                         "an owned pid with a hidden page at the after-switch point means locked/covered screen")
+
+    def test_other_platforms_keep_the_page_guard_audit_only(self):
+        """Windows records the page payload but ST-15 keeps judging the pid/session result; the old shape
+        (no platform key) stays PASS so nothing that was passing weakens."""
+        self.assertEqual(status(self.evidence(owned_gate(platform="windows", gate_page=dict(PAGE_OK),
+                                                         after_page=dict(PAGE_OK))), "ST-15"), "PASS")
+        self.assertEqual(status(self.evidence(owned_gate(platform="windows")), "ST-15"), "PASS")
+        self.assertEqual(status(self.evidence(owned_gate()), "ST-15"), "PASS")
+
+    def test_macos_requires_a_verified_unlocked_on_console_session_at_both_points(self):
+        locked_gate = owned_gate(platform="macos", gate_page=dict(PAGE_OK), after_page=dict(PAGE_OK))
+        locked_gate["gate"]["last"]["session"] = {"verified": True, "on_console": True, "screen_locked": True}
+        self.assertEqual(status(self.evidence(locked_gate), "ST-15"), "BLOCKED")
+        missing_session = owned_gate(platform="macos", gate_page=dict(PAGE_OK), after_page=dict(PAGE_OK))
+        del missing_session["after_switch"]["session"]
+        self.assertEqual(status(self.evidence(missing_session), "ST-15"), "BLOCKED")
+
+    def test_new_schema_platform_must_be_trusted_and_known(self):
+        """Preflight-2 Q-1: the evaluator must not fail open on a missing/unknown platform. A new-schema
+        foreground (self-recorded platform or page_state_guard) whose trustworthy platform is absent or
+        unknown ("darwin") is BLOCKED; passing a trusted platform from the result explicitly adjudicates."""
+        darwin = owned_gate()
+        darwin["platform"] = "darwin"
+        self.assertEqual(status(self.evidence(darwin), "ST-15"), "BLOCKED")
+        guard_only = owned_gate(gate_page=dict(PAGE_OK))  # new-schema via page_state_guard? not yet: base key
+        guard_only["page_state_guard"] = "recorded by the new driver"
+        self.assertEqual(status(self.evidence(guard_only), "ST-15"), "BLOCKED",
+                         "new-schema key with no platform anywhere is BLOCKED")
+        trusted = owned_gate(platform="macos", gate_page=dict(PAGE_OK), after_page=dict(PAGE_OK))
+        trusted["page_state_guard"] = "recorded by the new driver"
+        del trusted["platform"]
+        self.assertEqual(status(self.evidence(trusted), "ST-15", platform="macos"), "PASS",
+                         "the result's trusted platform adjudicates a new-schema foreground")
+        e = self.evidence(trusted)
+        v = verdict(e)
+        self.assertEqual(v["checks"]["ST-15"]["status"], "BLOCKED",
+                         "without the trusted platform the same evidence stays BLOCKED")
+        self.assertNotEqual(v["strict_result"], "PASS")
+
+    def test_trusted_platform_contradicting_the_self_recorded_platform_is_blocked(self):
+        """Opus F-1: the trusted result platform is authoritative. When it contradicts the foreground's
+        self-recorded platform, the sample cannot be adjudicated: a windows label must never pass a
+        macOS sample without the macOS guards, and a macos label must never pass a windows sample."""
+        mac = self.evidence(owned_gate(platform="macos", gate_page=dict(PAGE_OK), after_page=dict(PAGE_OK)))
+        self.assertEqual(status(mac, "ST-15", platform="windows"), "BLOCKED",
+                         "trusted windows over a self-recorded macos sample would skip the macOS guards")
+        win = self.evidence(owned_gate(platform="windows"))
+        self.assertEqual(status(win, "ST-15", platform="macos"), "BLOCKED",
+                         "trusted macos over a self-recorded windows sample is a contradiction")
+        v = verdict(win, platform="macos")
+        self.assertNotEqual(v["strict_result"], "PASS")
+        # the mismatch must not regress the matching-platform case
+        self.assertEqual(status(self.evidence(owned_gate(platform="macos", gate_page=dict(PAGE_OK),
+                                                             after_page=dict(PAGE_OK))),
+                                "ST-15", platform="macos"), "PASS")
+
     def test_ble_must_start_after_the_confirmed_foreground(self):
-        for fg in (windows_fg(ble_start_mono=9.0), windows_fg(ble_start_mono=None), windows_fg(gate_confirmed_mono=None)):
+        for fg in (owned_gate(ble_start_mono=9.0), owned_gate(ble_start_mono=None), owned_gate(gate_confirmed_mono=None)):
             self.assertEqual(status(self.evidence(fg), "ST-15"), "FAIL")
 
     def test_owned_pid_mismatch_after_the_switch_fails(self):
-        fg = windows_fg(after_switch={"verified": True, "pid": 7777, "owned": False})
+        fg = owned_gate(after_switch={"verified": True, "pid": 7777, "owned": False})
         self.assertEqual(status(self.evidence(fg), "ST-15"), "FAIL")
 
     def test_unverifiable_after_the_switch_is_blocked(self):
-        fg = windows_fg(after_switch={"verified": False, "pid": None, "owned": False})
+        fg = owned_gate(after_switch={"verified": False, "pid": None, "owned": False})
         self.assertEqual(status(self.evidence(fg), "ST-15"), "BLOCKED")
-        self.assertEqual(status(self.evidence(windows_fg(after_switch={})), "ST-15"), "BLOCKED")
+        self.assertEqual(status(self.evidence(owned_gate(after_switch={})), "ST-15"), "BLOCKED")
 
-    def test_macos_has_no_new_gate(self):
-        self.assertEqual(status(good_evidence(), "ST-15"), "PASS")
+    def test_legacy_macos_evidence_without_a_gate_is_blocked_never_pass(self):
+        """Legacy macOS raws recorded {"required": False} and no gate; the macOS ST-15 gate is not waived."""
+        e = good_evidence()
+        e["os_foreground"] = {"required": False}
+        v = verdict(e)
+        self.assertEqual(v["checks"]["ST-15"]["status"], "BLOCKED")
+        self.assertEqual(v["checks"]["ST-15"]["actual"], "no foreground evidence recorded")
+        self.assertNotEqual(v["strict_result"], "PASS")
+
+    def test_missing_gate_confirmed_or_wrong_after_switch_is_not_pass(self):
+        fg = owned_gate(after_switch={"verified": True, "pid": 4242, "owned": False})
+        self.assertEqual(status(self.evidence(fg), "ST-15"), "FAIL")
+
+    def test_enriched_mac_samples_do_not_break_the_verdict_and_are_kept_in_detail(self):
+        full = {"verified": True, "pid": 4242, "owned": True, "name": "Google Chrome",
+                "bundle": "com.google.Chrome", "ps_args": "chrome args",
+                "session": {"verified": True, "on_console": True, "screen_locked": False}}
+        fg = owned_gate(gate={"state": "confirmed", "polls": 3, "last": dict(full)})
+        fg["after_switch"] = dict(full)
+        fg["reader"] = "osascript -l JavaScript: AppKit.NSWorkspace.sharedWorkspace.frontmostApplication"
+        fg["session_guard"] = "osascript reader + CGSessionCopyCurrentDictionary lock/console state"
+        v = verdict(self.evidence(fg))
+        self.assertEqual(v["checks"]["ST-15"]["status"], "PASS")
+        detail = v["checks"]["ST-15"]["actual"]
+        self.assertEqual(detail["reader"], fg["reader"])
+        self.assertEqual(detail["session_guard"], fg["session_guard"])
+        self.assertEqual((detail["after_switch"] or {}).get("session"), full["session"])
 
     def test_sampling_distinguishes_owned_foreign_and_unreadable(self):
         own = lambda pid: pid == 4242  # noqa: E731
@@ -417,6 +751,32 @@ class Foreground(unittest.TestCase):
             lambda: clock["t"], lambda s: clock.__setitem__("t", clock["t"] + s))
         self.assertEqual(gate["state"], "unverifiable")
 
+    def test_wait_never_confirms_while_the_page_contradicts_an_unlocked_console(self):
+        """A locked screen can keep the previous app frontmost in the OS reader; the hidden page veto keeps
+        such a gate unconfirmed (fail closed) and keeps sampling until the deadline."""
+        clock = {"t": 0.0}
+        gate = core.wait_for_foreground(
+            lambda: {"verified": True, "pid": 4242, "owned": True,
+                     "page_state": {"ok": False, "visibility_state": "hidden", "has_focus": True}},
+            3, 1.0, lambda: clock["t"], lambda s: clock.__setitem__("t", clock["t"] + s))
+        self.assertEqual(gate["state"], "timeout")
+        self.assertFalse(gate["last"]["page_state"]["ok"])
+
+    def test_wait_confirms_when_the_page_becomes_consistent_and_without_any_page_key(self):
+        clock = {"t": 0.0}
+        pages = iter([False, False, True])
+
+        def sample():
+            return {"verified": True, "pid": 4242, "owned": True, "page_state": {"ok": next(pages)}}
+
+        gate = core.wait_for_foreground(sample, 10, 0.5, lambda: clock["t"],
+                                        lambda s: clock.__setitem__("t", clock["t"] + s))
+        self.assertEqual(gate["state"], "confirmed")
+        clock = {"t": 0.0}
+        gate = core.wait_for_foreground(lambda: {"verified": True, "pid": 4242, "owned": True}, 5, 0.5,
+                                        lambda: clock["t"], lambda s: clock.__setitem__("t", clock["t"] + s))
+        self.assertEqual(gate["state"], "confirmed", "no page_state key (Windows shape) confirms as before")
+
 
 class ForegroundDriverStructure(unittest.TestCase):
     def fn(self, name):
@@ -427,8 +787,52 @@ class ForegroundDriverStructure(unittest.TestCase):
         self.assertLess(run.index('"ST-ENV"'), run.index('"ST-FG"'))
         self.assertLess(run.index('"ST-FG"'), run.index('"ST-HELLO"'))
         self.assertLess(run.index('"ST-HELLO"'), run.index('"ST-PHONES"'))
-        self.assertIn('PLATFORM == "windows"', run)
-        self.assertIn('{"required": False}', run)
+        self.assertIn('PLATFORM == "windows"', run)  # the reader selection line
+        self.assertNotIn('{"required": False}', run, "the macOS gate is required now, never waived")
+
+    def test_mac_reader_is_a_real_os_query_without_app_automation(self):
+        reader = self.fn("mac_foreground_app")
+        self.assertIn("frontmostApplication", reader)
+        self.assertIn("osascript", reader)
+        self.assertNotIn("System Events", reader, "no AppleEvent to another app: no Automation prompt")
+        self.assertIn("/usr/bin/osascript", reader)
+        self.assertIn("bundleIdentifier", reader)
+        self.assertIn("MAC_FOREGROUND_READER", SRC)
+        self.assertIn("foreground_reader_for(PLATFORM)", self.fn("run"))
+        self.assertIn("foreground_extras_for(PLATFORM)", self.fn("run"))
+        self.assertIn("def foreground_reader_for", SRC)
+        self.assertIn("def foreground_extras_for", SRC)
+        self.assertIn("mac_foreground_app", SRC)
+
+    def test_mac_samples_are_gated_by_the_session_lock_console_state(self):
+        """Preflight P-2: a locked screen must never read as owned. Every macOS sample reads the session's
+        CGSession lock/console state and fails closed when it is locked, off-console or unreadable."""
+        guard = self.fn("mac_session_state")
+        self.assertIn("CGSessionCopyCurrentDictionary", guard)
+        self.assertIn("CGSSessionScreenIsLocked", guard)
+        self.assertIn("kCGSSessionOnConsoleKey", guard)
+        self.assertIn('{"verified": False}', guard)
+        extras = self.fn("foreground_extras_for")
+        self.assertIn("mac_session_state", extras)
+        self.assertIn("mac_session_state, query_pid_args", extras)
+        sample = self.fn("sample_fg")
+        self.assertIn("session_ok=session_ok", sample)
+        self.assertIn("ps_args=ps_args", sample)
+        self.assertIn("session_guard", self.fn("ph_foreground"))
+        self.assertIn("SESSION_GUARD_READER", SRC)
+
+    def test_page_state_guard_samples_target_the_right_page_at_each_point(self):
+        """Gate samples read the connector (visibly front after the click); after-switch samples read the
+        ordinary tab (the connector is hidden there BY DESIGN); both are recorded driver-side."""
+        self.assertIn('st["fg_page"] = st["session"]', self.fn("run"))
+        self.assertIn('st["fg_page"] = other_session', self.fn("run"))
+        self.assertIn('page_ok=read_page_ok_for(st["fg_page"])', self.fn("sample_fg"))
+        self.assertIn("document.visibilityState", self.fn("read_page_ok_for"))
+        self.assertIn("PAGE_STATE_GUARD", SRC)
+        self.assertIn('"page_state_guard"', self.fn("ph_foreground"))
+        self.assertIn('"platform": PLATFORM', self.fn("ph_foreground"))
+        self.assertIn('.get("ok") is True', self.fn("run"),
+                      "the after-switch expectation includes the page-state verdict")
 
     def test_no_ble_call_inside_the_gate_and_ready_file_is_outside_the_browser(self):
         gate = self.fn("ph_foreground")
@@ -682,7 +1086,8 @@ class DriverStructure(unittest.TestCase):
 
     def test_validation_runs_before_evaluate_for_every_acquisition_path(self):
         run = self.fn("run")
-        self.assertLess(run.index("spv.validate_phone_files"), run.index("core.evaluate(evidence)"))
+        self.assertLess(run.index("spv.validate_phone_files"),
+                        run.index("core.evaluate(evidence, platform=PLATFORM)"))
         self.assertNotIn("phone.append", run)
 
     def test_duplicate_serials_are_rejected_at_the_cli(self):

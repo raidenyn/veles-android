@@ -6,7 +6,8 @@ hash-only evidence. After the idle interval the phone files are collected on the
 here, together with the immutable RAW strict result, to produce a NEW adjudication JSON. The raw artifact is
 only read (its sha256 is recorded); the output path must not exist and is created exclusively, so a raw
 artifact or an earlier adjudication can never be overwritten. Verdicts come from the pure
-``strict_background_core.evaluate``. ``formal_otp23_acceptance`` stays false: the requirements matrix decides.
+``strict_background_core.evaluate``, called with the raw's trusted top-level ``platform`` (Opus F-1: the
+trusted platform is authoritative; a contradiction with the foreground's self-recorded platform is BLOCKED). ``formal_otp23_acceptance`` stays false: the requirements matrix decides.
 
 Usage: python scripts/strict_background_finalize.py --raw evidence/strict-cold.json \\
            --phone-evidence phone-a.json --phone-evidence phone-b.json --out evidence/strict-cold.adjudicated.json
@@ -70,10 +71,10 @@ def adjudicate(raw, raw_record, phone_records, now=None, clock=None, provenance=
     evidence["phone_evidence"] = parsed or None
     evidence["phone_validation"] = validation
     evidence["phone_clock"] = validation.get("clock")
-    recomputed_raw = core.evaluate(raw.get("evidence") or {})["checks"]
+    recomputed_raw = core.evaluate(raw.get("evidence") or {}, platform=raw.get("platform"))["checks"]
     mismatches = [k for k, c in (raw.get("checks") or {}).items()
                   if k in recomputed_raw and recomputed_raw[k]["status"] != c.get("status")]
-    verdict = core.evaluate(evidence)
+    verdict = core.evaluate(evidence, platform=raw.get("platform"))
     result = verdict["strict_result"]
     if mismatches:
         result = "FAIL"
