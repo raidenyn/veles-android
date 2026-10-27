@@ -590,7 +590,7 @@ docs and the feasibility workflow. No new signing-CI provenance is claimed.
 **Still unmet (all keep NO-GO):** M-03 CI/distribution signing provenance; M-11 unsigned dev-host matrix; W-10 radio-off/adapter-absent; W-07/W-08 Chrome-provenance port-disconnect/stdin-EOF with links; W-02/M-08 connected-phase window
 measurement; M-04; A-01; the Native Messaging exemption wording; `R-01` for this phase.
 
-**Proposed, NOT approved - for owner review.** Amend the strict-background criterion to allow the architecture-required Native Messaging port while still forbidding artificial keepalive, audio, WebRTC, any other exemption and any CDP client,
+**Proposed, NOT approved - for owner review** [history of its time; SUPERSEDED in part by section 16: on 2026-10-27 the owner approved a narrower, differently worded clarification]. Amend the strict-background criterion to allow the architecture-required Native Messaging port while still forbidding artificial keepalive, audio, WebRTC, any other exemption and any CDP client,
 and to require actual unsolicited delivery to a hidden connector with an ordinary tab focused for >= 600 s. Until the owner decides, nothing is rewritten and the rows stay BLOCKED.
 
 **Review state.** `R-01` for this phase is **PENDING** until the parent's final fresh `claude-opus-5-5` review of the committed post-grant source and verification of the data fixes. Interim actual Opus sessions (`97410d6b-…`: preflight,
@@ -611,3 +611,15 @@ Review and fix verification: actual `claude-opus-5-5` (`canonicalModel` `claude-
 The matrix is now 16 PASS / 13 BLOCKED / 3 NOT RUN (waived). **The decision stays NO-GO for OTP-24**; no other row changed and no CI result is claimed here.
 
 **Decision: NO-GO for OTP-24.** OTP-23 is not claimed satisfied, OTP-24 is not implemented and no issue is closed. The account waiver still covers only W-01, M-01, M-02.
+
+## 16. Signing-provenance amendment and investigations (2026-10-27)
+
+**Supersedes** the statements above and in `INTEGRATION.md` that list "M-03 CI/distribution signing provenance" as unmet; those stay as history of their time.
+The owner approved, for OTP-23 only and recorded as an **operator-captured approval** (not a GitHub approval; see
+`native-bridge/feasibility/evidence/investigations-2026-10-27/owner-approvals/2026-10-27-otp23-signing-provenance.md`), that the existing approved Apple
+Development-signed final-identifier fixture is the minimum signing provenance, with CI-provided and distribution signing (Developer ID, notarization, stapling)
+deferred to OTP-25. The RFC (Status, 2026-10-27) and the matrix (M-03 source/expected/blocker) carry the exact wording. M-03 stays **BLOCKED** on the retained
+prompt-owner observation; M-04, M-11 and every background gate are unchanged; OTP-24 is not approved and the decision stays **NO-GO**. Findings from the same
+day (Chrome Native Messaging timers and discard, the Windows `access_denied` controls, the macOS signing readbacks) are in `docs/otp-23-investigations.md`.
+
+**Background criterion (same day, operator-captured, in order):** first the owner answered "REQUIRE MORE EVIDENCE FIRST" and approved no wording (`evidence/investigations-2026-10-27/owner-approvals/2026-10-27-otp23-background-wording-decision.md`); after the both-platform Chrome 156.0.8078.48 probe evidence (`docs/otp-23-investigations.md` sections 1.2, 1.6, 2.6) the owner then **approved a narrow clarification** (`.../2026-10-27-otp23-background-clarification-approval.md`): the Native Messaging port itself is not a timer-throttling exemption, the criterion otherwise keeps forbidding opt-outs, keepalive, audio, WebRTC, exemption flags and DevTools clients during idle, and a same-build comparison in which the port tab escapes throttling while the port-less control does not leaves it unsatisfied. The exact text is in the RFC (Status and OTP-23 section). Chrome 155 was inspected in source only. Cold/prewarm runs, foreground evidence (macOS ST-15 not waived), freeze/discard requirements and NO-GO remain; W-11, W-12, M-09 and M-10 are not promoted; OTP-24 is not approved.

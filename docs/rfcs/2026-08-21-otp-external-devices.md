@@ -36,6 +36,33 @@ unchanged (signing provenance, the final bundle identifier, allow/deny/recovery 
 unchanged extension state, the architecture, strict background delivery). OTP-25's
 standard-account installer matrices are not touched by this waiver.
 
+Amended on 2026-10-27 (owner-approved for OTP-23 only; **operator-captured**, relayed to
+the working session by the operator, not a GitHub approval and not recorded on any issue
+or pull request): the **minimum signing provenance** of OTP-23's signed
+production-shaped macOS fixture is the existing, already-approved **Apple
+Development-signed fixture with the final bundle identifier
+`me.nagaev.veles.bridge`** and a recorded stable signing identity, in place of
+"CI-provided credentials". The accepted instance is pinned: Team `7T39M26Z99`, executable sha256
+`e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c`, CDHash
+`25bc7fc25e48c4470d4c3765b6a5f9b719ff381d`; a rebuild or re-signing is a new instance and needs its own decision. CI-provided credentials, distribution signing (Developer ID),
+notarization and stapling are **deferred to OTP-25**, which owns them. The local identity
+is preserved (no new signing identity is created and nothing is exported or re-signed for
+this). Everything else in OTP-23 is retained unchanged: the observed TCC prompt owner,
+allow/deny/recovery with unchanged extension state, the exact System Settings and retry
+guidance, the existing-account unsigned dev-registered host comparison (M-11), the
+architecture and strict background delivery on both platforms. This amendment does not
+approve OTP-24, does not waive any background gate, and the NO-GO decision stands until
+every matrix row is `PASS` or carries the 2026-10-26 account waiver.
+
+Amended on 2026-10-27 (second owner decision of the day, later than the owner's "require more
+evidence first" answer; owner-approved for OTP-23 only; **operator-captured**, not a GitHub
+approval): the OTP-23 background criterion is **clarified** by the sentence recorded in the
+"Background-criterion clarification" paragraph of the OTP-23 section. It states that the
+Native Messaging port itself is not a timer-throttling exemption; it removes no prohibition
+and promotes no matrix row. Cold and prewarm runs, foreground evidence (including the macOS
+OS-foreground gate), freeze/discard requirements and the NO-GO rule are retained; OTP-24 is
+not approved.
+
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
 a Veles Chrome extension today, and a LILYGO T-WATCH-S3 family (ESP32-S3)
@@ -1529,7 +1556,8 @@ and stdout; extension-owned search receives bounded device events; two phones
 independently exchange synthetic complete records (including the attribute-budget
 boundaries at ATT MTU 517); an event arrives after the connector has been
 backgrounded for ten continuous minutes with another ordinary tab focused and
-no audio, WebRTC, or any other timer-throttling exemption active — validated
+no audio, WebRTC, or any other timer-throttling exemption active (as clarified
+by the 2026-10-27 background-criterion revision below) — validated
 **strictly**: no DevTools client of any kind (connector session or browser-level)
 exists during the interval, the event is an unsolicited phone notification
 produced by preconfigured instrumentation (not a desktop timer or request), a
@@ -1547,8 +1575,10 @@ revision below):** which process
 Chrome-launched headless child, whether a prompt fires at all for the headless
 process, and the allow and deny results from the connector, on both the
 dev-registered unsigned binary and the signed production-shaped host fixture.
-The signed fixture is signed directly with CI-provided credentials and the final
-bundle identifier; it does not depend on OTP-24, OTP-25, or an installer. After
+The signed fixture is signed directly and carries the final bundle identifier; it does
+not depend on OTP-24, OTP-25, or an installer. Its minimum signing provenance for
+OTP-23 is the existing approved Apple Development-signed final-identifier fixture
+(2026-10-27 amendment); CI-provided and distribution signing are OTP-25. After
 the deny case, the connector presents exact System Settings and retry guidance;
 following that guidance and granting access lets search recover without
 reinstalling or losing extension state. The recorded current dependency-cost
@@ -1565,6 +1595,32 @@ are recorded `NOT RUN` with the waiver text, not `PASS`. Not waived: the signed
 production-shaped fixture with the final identifier and signing provenance, allow, deny
 and recovery (same extension state) on the existing account, the prompt owner as observed
 there, the architecture, and strict background delivery on both platforms.
+
+**Signing-provenance revision (owner-approved, 2026-10-27, operator-captured; OTP-23
+only):** the signing-provenance requirement above is met by the existing approved Apple
+Development-signed fixture with the final identifier `me.nagaev.veles.bridge` and a
+stable recorded identity (certificate, team, executable hash, designated requirement),
+verified from real output. CI-provided credentials, Developer ID, notarization and
+stapling move to OTP-25. Not changed by this revision: the prompt owner as observed on the
+existing account, allow, deny and same-state recovery, exact Settings/retry guidance, the
+unsigned dev-registered host comparison on the existing account, every background gate,
+and the NO-GO rule. A matrix row therefore stays `BLOCKED` while any retained requirement
+(for example the observed prompt owner) is unmet.
+
+**Background-criterion clarification (owner-approved, 2026-10-27, operator-captured; OTP-23
+only; later than, and not overriding the record of, the owner's earlier "require more evidence
+first" answer):** "Event delivery through the architecture’s Native Messaging port is not a timer-throttling exemption. The criterion continues to forbid timer-throttling opt-outs, artificial keepalive, audio, WebRTC, exemption flags and DevTools clients during idle; ordinary timers and the port itself are permitted. If a same-build comparison shows the port tab escapes intensive timer throttling while the port-less control does not, report the criterion unsatisfied."
+
+The determination rests on source inspection of Chromium 155.0.8059.85 and 156.0.8078.48 and on
+same-build timer probes (a port tab against a port-less control tab, no DevTools client during the
+idle interval) run on Chrome 156.0.8078.48 on Windows and on macOS; **Chrome 155 was inspected in
+source only and no fresh 155 probe was run.** Retained unchanged: separate cold-idle and
+prewarmed runs of at least ten minutes on both platforms, the strict-run requirements (unsolicited
+phone delivery, no DevTools client, clean launch flags, hidden connector with an ordinary tab visible
+and focused), the foreground evidence (macOS ST-15 is not waived), the freeze/discard requirements
+(no exemption is claimed; OTP-08 owns them), the evaluator-provenance and `formal_otp23_acceptance`
+rules, and the NO-GO rule. This revision does not promote any matrix row, approves nothing
+about OTP-24 and waives nothing.
 
 **Verification evidence:** Committed harness and physical Windows/macOS matrix
 with exact commit, Chrome and OS versions, hardware and adapters, Rust and (for
@@ -1685,6 +1741,12 @@ development registration and removal. **(Inherits the two OTP-01 RFC clauses
 transferred here by the 2026-08-26 amendment: platform signing consuming
 CI-provided credentials without embedding secrets, and signed↔unsigned
 content-correspondence verification.)**
+
+**OTP-23 carry-over (2026-10-27 amendment):** OTP-25 also owns the CI-provided and
+distribution signing provenance (Developer ID, notarization, stapling) that OTP-23 no
+longer requires. Moving to a different signing identity changes the bundle's designated
+requirement and can require a new owner-attended Bluetooth grant, so it needs its own
+revalidation; the approved local identity is never exported or reused for distribution.
 
 **Packaging-tool decision (2026-10-26 amendment):** the installer pipeline is chosen
 from the OTP-23 matrix row D-01, whose decision is that retaining Tauri solely for

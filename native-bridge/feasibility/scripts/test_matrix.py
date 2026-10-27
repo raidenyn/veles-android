@@ -105,7 +105,7 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("TIMED OUT", by_id["M-04"]["actual"])
         self.assertEqual(by_id["M-04"]["status"], "BLOCKED")
 
-    def test_strict_background_stays_blocked_while_the_native_messaging_exemption_is_not_excluded(self):
+    def test_strict_background_rows_stay_blocked_after_the_owner_approved_clarification(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
         by_id = {r["id"]: r for r in BASE["rows"]}
         adjudications = [base / "phone-evidence/mac/otp23-macos-strict-cold-adjudicated.json",
@@ -126,10 +126,16 @@ class CommittedMatrix(unittest.TestCase):
         for kind in ("cold", "prewarm"):
             raw = json.loads((base / f"macos-final/post-grant-2026-10-26/macos-strict-{kind}-raw.json").read_text())
             self.assertEqual(raw["strict_result"], "BLOCKED", kind)
+        # 2026-10-27: the criterion was clarified (owner-approved) but no row is promoted by it
         for rid in ("W-11", "W-12", "M-09", "M-10"):
             self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
-            self.assertIn("Native Messaging", by_id[rid]["blocker"], rid)
-            self.assertIn("not excluded", by_id[rid]["blocker"], rid)
+            blocker = by_id[rid]["blocker"]
+            self.assertIn("clarified on 2026-10-27", blocker, rid)
+            self.assertIn("not promoted", blocker, rid)
+            self.assertIn("formal_otp23_acceptance=false", blocker, rid)
+        for rid in ("M-09", "M-10"):
+            self.assertIn("ST-15", by_id[rid]["blocker"], rid)
+            self.assertIn("not waived", by_id[rid]["blocker"], rid)
 
     def test_m6_machine_fail_is_retained_beside_the_manual_adjudication(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26/m6"
@@ -440,6 +446,65 @@ class CommittedMatrix(unittest.TestCase):
         text = " ".join(rows[r]["requirement"] + rows[r]["expected"] for r in ("M-01", "M-02", "M-03", "M-04", "M-05", "M-06"))
         for needle in ("FRESH STANDARD", "prompt owner", "signed", "final identifier", "DENY", "ALLOW", "SAME extension state"):
             self.assertIn(needle.lower(), text.lower())
+
+    def test_signing_provenance_amendment_is_narrow_and_not_a_waiver_or_a_go(self):
+        rows = {r["id"]: r for r in BASE["rows"]}
+        m03 = rows["M-03"]
+        self.assertEqual(m03["status"], "BLOCKED")
+        self.assertEqual(m03["waiver"], "")
+        self.assertNotIn("M-03", m.waived(BASE))
+        self.assertIn("2026-10-27", m03["source"])
+        self.assertIn("operator-captured", m03["source"])
+        # the blocker is the retained prompt-owner requirement; CI/Developer ID/notarization are OTP-25, not blockers
+        self.assertIn("prompt owner", m03["blocker"])
+        self.assertIn("OTP-25", m03["blocker"])
+        self.assertNotIn("no Developer ID", m03["blocker"])
+        self.assertIn("Apple Development", m03["expected"])
+        for rid in ("M-04", "M-11", "W-11", "W-12", "M-09", "M-10"):
+            self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
+        self.assertEqual(m.decision(BASE)[0], "NO-GO")
+        self.assertTrue(any("owner approval 2026-10-27" in key for key in BASE["sources"]))
+        self.assertIn("Signing-provenance amendment", m.render(BASE))
+        rfc = (m.ROOT.parent.parent / "docs" / "rfcs" / "2026-08-21-otp-external-devices.md").read_text(encoding="utf-8")
+        self.assertIn("Amended on 2026-10-27 (owner-approved for OTP-23 only; **operator-captured**", rfc)
+        self.assertIn("not a GitHub approval", rfc)
+        flat = " ".join(rfc.split())  # robust against line reflow
+        self.assertIn("does not approve OTP-24", flat)
+        self.assertIn("e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c", flat)
+        self.assertIn("25bc7fc25e48c4470d4c3765b6a5f9b719ff381d", flat)
+        # background clarification: the EARLIER "require more evidence first" record is preserved, the LATER approval carries the exact text
+        APPROVED = ("Event delivery through the architecture\u2019s Native Messaging port is not a timer-throttling exemption. "
+                    "The criterion continues to forbid timer-throttling opt-outs, artificial keepalive, audio, WebRTC, exemption flags and DevTools clients during idle; "
+                    "ordinary timers and the port itself are permitted. "
+                    "If a same-build comparison shows the port tab escapes intensive timer throttling while the port-less control does not, report the criterion unsatisfied.")
+        self.assertIn(APPROVED, flat)
+        sources = BASE["sources"]
+        earlier = [k for k in sources if k.startswith("owner decision 2026-10-27")]
+        later = [k for k in sources if k.startswith("owner approval 2026-10-27") and "background clarification" in k]
+        self.assertEqual((len(earlier), len(later)), (1, 1))
+        self.assertIn("require more evidence first", sources[earlier[0]].lower())
+        self.assertIn("EARLIER", sources[earlier[0]])
+        self.assertIn(APPROVED, sources[later[0]])
+        self.assertIn("source only", sources[later[0]])
+        self.assertIn("ST-15 not waived", sources[later[0]])
+        self.assertIn("OTP-24 is not approved", sources[later[0]])
+        for needle in ("source inspection of Chromium 155.0.8059.85 and 156.0.8078.48", "Chrome 155 was inspected in source only", "no fresh 155 probe",
+                       "macOS ST-15 is not waived", "freeze/discard requirements", "cold-idle and prewarmed runs", "does not promote any matrix row"):
+            self.assertIn(needle, flat)
+        self.assertIn("as clarified by the 2026-10-27 background-criterion revision below", flat)
+        self.assertIn("Background-criterion clarification", m.render(BASE))
+
+    def test_windows_port_closure_rows_state_the_non_adopted_identity_and_stay_blocked(self):
+        rows = {r["id"]: r for r in BASE["rows"]}
+        for rid in ("W-07", "W-08"):
+            self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
+            blocker = rows[rid]["blocker"]
+            self.assertIn("e36328d2", blocker, rid)
+            self.assertIn("non-adopted", blocker, rid)
+            self.assertIn("no automatic promotion", blocker, rid)
+            self.assertIn("6cf72ed0", blocker, rid)
+            # the stale "no Chrome-provenance proof" wording must not come back
+            self.assertNotIn("no Chrome-provenance stdin EOF", blocker, rid)
 
     def test_covers_the_rfc_acceptance_criteria_and_the_added_requirements(self):
         text = json.dumps(BASE).lower()

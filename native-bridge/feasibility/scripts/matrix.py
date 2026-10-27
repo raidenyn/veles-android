@@ -99,6 +99,14 @@ def render(matrix):
         "They stay `NOT RUN`, are not PASS, and prove nothing about fresh or standard accounts. The waiver changes no other requirement (signing provenance, final identifier, allow/deny/recovery, architecture, strict background). "
         "Rows that do run record the account truthfully as `admin` or `standard`.",
         "",
+        "**Signing-provenance amendment** (2026-10-27, owner-approved and operator-captured, OTP-23 only; not a GitHub approval): the existing approved Apple Development-signed "
+        "final-identifier fixture is the minimum signing provenance; CI-provided and distribution signing (Developer ID, notarization, stapling) are deferred to OTP-25. "
+        "The prompt owner, allow/deny/recovery, the unsigned dev-host comparison (M-11) and every background gate are unchanged; this approves neither OTP-24 nor any waiver.",
+        "",
+        "**Background-criterion clarification** (2026-10-27, owner-approved and operator-captured, OTP-23 only; later than the owner's \"require more evidence first\" answer): the Native Messaging port itself is not a "
+        "timer-throttling exemption, and the criterion still forbids opt-outs, keepalive, audio, WebRTC, exemption flags and DevTools clients during idle. Cold/prewarm runs, foreground evidence (macOS ST-15 is not waived), "
+        "freeze/discard requirements and the NO-GO rule remain; no row is promoted and OTP-24 is not approved.",
+        "",
         "Fresh rows start `NOT RUN`. Historical PoC results are context in the narrative documents, never a PASS here:",
         "they were taken with different binaries, an administrator account and (for background) a connected browser-level",
         "DevTools client. Human-gated rows stay `BLOCKED` until a person with the account/GUI access records the result.",
