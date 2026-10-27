@@ -1,0 +1,10 @@
+## Verbatim rerun of the ci.yml raw android.util.Log guards (both), 2026-10-27T23:25:07Z, from /home/dev/repos/veles-android
+-- guard 1: qualified refs / wildcard imports --
+guard1_matches=0
+guard1_grep_exit=1 (1=clean)
+-- guard 2: bare Log.d/w/e/i/v calls --
+guard2_matches=0
+guard2_grep_exit=1 (1=clean)
+-- verbatim ci.yml block (script ci-log-guards-verbatim.sh) --
+verbatim_script_exit=0
+fail=0 guard_exit_code=0 (both guards clean; script exited 0)

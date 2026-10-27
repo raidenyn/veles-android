@@ -218,7 +218,7 @@ The known engineering finding to carry into the host is the per-device `access_d
 **What a bounded increment would contain, if the owner opens such a gate** (host code only, behind no release and no protected transport): the production headless host of #87 (protocol, handles, bounded state, cleanup), a distinct retryable classification for the recent-link refusal, measured window/endpoint hygiene (W-02/M-08),
 connected-phase teardown checks (W-07/W-08) retested with the identity that is then chosen. Excluded: installers and signing pipelines, connector UX, background claims, real OTP data, cryptography.
 
-**Release readiness is separate and not claimed:** OTP-23 is not satisfied, M-03/M-04/M-11, W-02/M-08, W-07/W-08, W-10, A-01 and the strict-background re-adjudication remain open, and no protected-transport or real-OTP work is enabled.
+**Release readiness is separate and not claimed:** OTP-23 is not satisfied, M-03/M-04/M-11, W-02/M-08, W-07/W-08, W-10, A-01 and the Windows strict-background re-adjudication (W-11/W-12; macOS M-09/M-10 were adjudicated 2026-10-27, section 5) remain open, and no protected-transport or real-OTP work is enabled.
 
 **Minimum remaining owner action vs deferred owners (no duplicates; owners are those already in the #86 ownership map):**
 
@@ -234,11 +234,57 @@ connected-phase teardown checks (W-07/W-08) retested with the identity that is t
 
 Nothing in this table is a new task or a new owner; the retained-binary-versus-new-identity question is carried by the W-07/W-08 rows in #87, not as a gate here.
 
+## 5. Follow-up integration (2026-10-27, later in the day): Windows awaited-close causal comparison, M-09/M-10 adjudicated PASS, checksum repair
+**Decision unchanged: NO-GO.** 18 PASS / 11 BLOCKED / 3 account-waived (W-01, M-01, M-02). Every record below has an evidence folder and the review
+reports are copied byte-identically in `native-bridge/feasibility/evidence/integration-2026-10-27/` (with exact source/scope/fingerprints in its
+SOURCE-SCOPES.md). Nothing here is a formal final review of the integrated tree: the parent performs that before commit/push, and the R-01 ledger entry
+for THIS phase stays pending until then (older R-01 history is not invalidated).
+
+**Windows awaited-close comparison (evidence `windows-cleanup-2026-10-27/`, FINDING.md §1-§6).** The unawaited-close defect (every WinRT disconnect
+retired its close onto a detached worker against `std::process::exit`; the bounded shutdown join always saw an empty map) was fixed in source and
+physically compared with ONE binary in both arms: first host links both phones and exits; second host reconnects after a gap gated from the common
+`disconnect requested` epoch anchor. Awaited arm 3/3 clean (both phones `connected`), legacy arm 3/3 denied (`GattCommunicationStatus=3
+access_denied`), measured gaps 1500/1501 ms inside tolerance, first-host close cost only 0-2 ms, no retries and no delay claim. **At the tested
+point** (direct launch, this PC, existing administrator account, the two approved phones, 1.5 s anchor-matched gap, n=3) the outcome was decided by
+the host's close discipline. **This narrows, and does not erase, section 2:** section 2's "access_denied cause UNPROVEN" narrative stays as written
+for everything it covered - the comparison does not prove a general cause for all Windows denials, no threshold, no CCCD involvement (S-2/H-3 are
+untouched), the Chrome-launched path is untested on the adopted identity, W-07/W-08 remain BLOCKED pending their own acceptance rerun, and the
+crash/kill-restart window still needs the distinct retryable classification + bounded reconnect policy (#87/#88). The retained first attempt
+`compare-1` (zero links from a driver selection-token defect) is preserved as a failure record; the strengthened protocol rule and its pure tests are
+review fix I-A (`scripts/test_windows_closejoin_compare.py`, 24 tests; exact-2 first-phase connections, both second-phone attempts, measured-gap
+tolerance; offline `--recheck-dir`), and the saved raws were re-evaluated with the stricter rule into the NEW derived artifact
+`VALIDITY-RECHECK-20261027.json` (compare-1 6/6 invalid, compare-2 6/6 valid) with no raw rewritten. The 6T fixture-account story was corrected
+per review I-B (observed: no JUnit result, test process outlived the first force-stop, ended after both force-stops, cause UNPROVEN; the
+"four stale remote instrumentation sessions" text was an operator inference from stale LOCAL adb clients, and the app-data uid wording was retracted;
+the same 6T passed JUnit in the earlier macOS prewarm round).
+
+**macOS M-09 (cold) / M-10 (prewarm) promoted to PASS under the owner-approved 2026-10-27 background-criterion clarification** (evidence
+`post-grant-2026-10-26/strict-mac-20261027/`, adjudications `-v2.json`). Basis: fresh strict runs (cold interval 719.752 s, prewarm 717.76 s, 0 CDP
+calls during idle), trusted-platform finalizer (F-1: contradiction between trusted and recorded platform BLOCKS, regression-tested), after-run
+read-only provenance capture (F-2: run-tree driver/evaluator byte-compared; registered NM manifest pins executable `e7c716c5…eb91c` = the owner-approved
+signed fixture; teardown recorded), wording corrections (F-3: payload identical by design; gate confirmed at poll 1 with no click claimed), an
+independent Opus fix verification of F-1/F-2/F-3, and the same-build port-vs-control timer probe on Chrome **156.0.8078.48**. Residuals recorded in
+the rows: (a) launch context operator-inferred; (b) phone identity operator-bound, payload identical by design, distinctness = serial binding + two
+handles; (c) linear-drift assumption in the ±2.39 s clock bound (margins ≥29 s); (d) the cold 10 Pro JUnit log is partial and nothing is claimed from
+it. `formal_otp23_acceptance=false` is script policy; the matrix adjudicates. The v1/14-check and reevaluation-at-head records stay as history.
+W-11/W-12 were NOT converted by the clarification and still need their own disposition (their raws predate the session/page guards; the latest
+Windows background evidence is from the current 156.0.8078.48-era runs, and the retained-binary-versus-new-identity question is still open).
+
+**Chrome scope note:** all current-phase browser work is on the latest Chrome **156.0.8078.48** (Windows and macOS); Chrome **155** exists on no
+machine and is covered by source inspection only; no old-build rerun is planned. **Check repair:** the strict-mac-20261027 folder's checked manifests
+are fixed cleanly - v1 is preserved as `SHA256SUMS-before-review.original` (the review fingerprint `3487728c…` with the pre-append README bytes),
+`SHA256SUMS-v2` (`66ba8956…`) stays as the review-time snapshot, and the nameless `SHA256SUMS` is regenerated as the active manifest covering every
+current file (`SHA256SUMS-NOTES.md` documents the naming). The windows-cleanup folder manifest was refreshed after the I-A/I-B edits and the derived
+artifact; every raw file is byte-unchanged (`.gitattributes` `* -text -whitespace` guards both folders and the baseline post-grant manifest verifies
+unchanged). **RFC:** no amendment beyond the already-captured recording is needed; the bounded-implementation recommendation (section 4) still needs
+its own explicit owner gate amendment and is not a release GO.
+
 ## Remaining human actions
 1. A person at the Mac to observe the prompt owner (M-03 expected text, M-04) and approve any unsigned-host authorization (M-11); the Mac attendee is not available now.
-2. Re-adjudication of W-11, W-12, M-09 and M-10 under the approved clarification (section 1.5) is a separate step and needs current macOS ST-15 foreground evidence; nothing was promoted.
+2. UPDATED 2026-10-27: the macOS half of this item is done - M-09/M-10 were adjudicated PASS with recorded provenance and an independent verification (section 5). Still pending: the W-11/W-12 strict-background disposition on Windows (same clarification; latest Chrome 156.0.8078.48 background evidence; the retained-binary-versus-new-identity question is open).
 3. Note (not a new gate): the Chrome-launched Windows passes used the non-adopted diagnostic identity `e36328d2…2f4d`; nothing is promoted on them, and a retained-binary `6cf72ed0…fcda` Chrome run in an interactive session has not been made.
 4. Optional: a fresh Chrome 155 probe (not installed anywhere); 155 is covered by source inspection only.
+5. NEW (2026-10-27): the parent's final local gates + final review of the integrated tree, commit and push (R-01 new-phase ledger entry pending until then).
 (Decided on 2026-10-27: signing provenance, section 3; background criterion clarification, section 1.5. Section 4 recommends, and does not authorise, a bounded OTP-24 increment.)
 
 ## Model provenance
@@ -246,3 +292,8 @@ Nothing in this table is a new task or a new owner; the retained-binary-versus-n
 `0631948e-…` (the follow-up continuation, Claude Code 2.1.310 then 2.1.311) show `claude-sonnet-5-5` on every model-produced assistant message
 (the continuation also has one harness-generated `<synthetic>` entry). The independent reviewer `2fe20385-…` shows `claude-opus-5-5`. Counts differ
 from the earlier `session-model-provenance.json` (234 at its capture) only because transcripts grow.
+
+2026-10-27 phase (section 5): the Windows comparison + review-fix work and the Mac finalize work were done by GLM-5.3-flash sessions (implementer
+model set by the owner; opencode-db metadata captures in `native-bridge/feasibility/evidence/integration-2026-10-27/provenance/`, including the
+`ses_e8061b402ffe…` integration session that performed this follow-up integration); the Opus minimum-fix reviews and the final M-09/M-10 fix
+verification are local Claude Code `claude-opus-5-5` sessions (`2fe20385-…`); the coordinating parent session (gpt-6.1-sol) is not the implementation.

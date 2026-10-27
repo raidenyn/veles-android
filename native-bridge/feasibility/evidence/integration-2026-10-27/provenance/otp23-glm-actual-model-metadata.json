@@ -1,0 +1,20 @@
+[
+  {
+    "session_id": "ses_e8203936affeqB8t6zfCFfUxYp",
+    "model": "glm-5.3-flash",
+    "provider": "ollama-cloud",
+    "assistant_messages": 165
+  },
+  {
+    "session_id": "ses_e820c0601ffenUXywl4yx8Sox4",
+    "model": "glm-5.3-flash",
+    "provider": "ollama-cloud",
+    "assistant_messages": 54
+  },
+  {
+    "session_id": "ses_e821c0e76ffeHp496adClX8Iew",
+    "model": "glm-5.3-flash",
+    "provider": "ollama-cloud",
+    "assistant_messages": 74
+  }
+]

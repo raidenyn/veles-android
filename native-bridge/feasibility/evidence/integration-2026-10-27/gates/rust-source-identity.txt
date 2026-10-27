@@ -1,0 +1,7 @@
+# Rust source identity at the 2026-10-27 follow-up gate rerun (no Rust change made in this phase)
+# Recorded 2026-10-27T23:25:32Z; sha256 of the touched Rust module files now vs the approved review values (windows-final Opus review + follow-up final Opus review):
+2ef50ec18fd96907c945136d82dda0796989d5e74fdecdb005d47ee027f61e6a  native-bridge/feasibility/src/winrt.rs
+25e44f6db140941cda514b0e5e798785361ec822c6c7e778e0cd40656cc47b5c  native-bridge/feasibility/src/closejoin.rs
+79bbf21fdd28b28b8f60667be6d3d1f60e060633f8edc29a7fb06828f58b0265  native-bridge/feasibility/src/lib.rs
+# Approved: winrt.rs 2ef50ec18fd96907..., closejoin.rs 25e44f6db140941c..., lib.rs 79bbf21fdd28b28b...
+# The rust gate logs in this folder (rust-fmt.log, rust-host-test.log, rust-windows-clippy.log) were produced on this identical Rust source during the integration pass; no Rust/physical-producer change was made after them (checked by these hashes at the rerun recorded above).

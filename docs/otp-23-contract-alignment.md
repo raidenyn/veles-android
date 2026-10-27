@@ -623,3 +623,47 @@ prompt-owner observation; M-04, M-11 and every background gate are unchanged; OT
 day (Chrome Native Messaging timers and discard, the Windows `access_denied` controls, the macOS signing readbacks) are in `docs/otp-23-investigations.md`.
 
 **Background criterion (same day, operator-captured, in order):** first the owner answered "REQUIRE MORE EVIDENCE FIRST" and approved no wording (`evidence/investigations-2026-10-27/owner-approvals/2026-10-27-otp23-background-wording-decision.md`); after the both-platform Chrome 156.0.8078.48 probe evidence (`docs/otp-23-investigations.md` sections 1.2, 1.6, 2.6) the owner then **approved a narrow clarification** (`.../2026-10-27-otp23-background-clarification-approval.md`): the Native Messaging port itself is not a timer-throttling exemption, the criterion otherwise keeps forbidding opt-outs, keepalive, audio, WebRTC, exemption flags and DevTools clients during idle, and a same-build comparison in which the port tab escapes throttling while the port-less control does not leaves it unsatisfied. The exact text is in the RFC (Status and OTP-23 section). Chrome 155 was inspected in source only. Cold/prewarm runs, foreground evidence (macOS ST-15 not waived), freeze/discard requirements and NO-GO remain; W-11, W-12, M-09 and M-10 are not promoted; OTP-24 is not approved.
+
+## 17. Follow-up integration (2026-10-27, later): Windows causal comparison integrated, M-09/M-10 adjudicated PASS, checksum repair
+
+Supersedes, within the scope below, the parts of section 16 (and of `docs/otp-23-investigations.md` sections 2 and 4) that treated the Windows
+`access_denied` cause as entirely unknown and treated M-09/M-10 as strictly not-adoptable; both stay as history of their time and are narrowed here, not
+erased.
+
+**Windows awaited-close comparison (evidence `native-bridge/feasibility/evidence/windows-cleanup-2026-10-27/`).** The S-1 defect (every WinRT disconnect
+retired the close onto a detached worker against `std::process::exit`, so the bounded shutdown join saw an empty map) was fixed and regression-backed
+(red vs HEAD logic, green on the fix, legacy branch reachable only via `VELES_OTP23_DETACHED_CLOSE=1` in the same binary), then physically compared with
+one binary `8521de4d…ae33` in both arms over six quiescent-preconditioned runs: awaited 3/3 clean (both phones `connected`), legacy 3/3 denied
+(`GattCommunicationStatus=3` `access_denied`), measured gaps 1500/1501 ms from the common `disconnect requested` anchor, first-host close cost 0-2 ms,
+no retries, no delay claim. At the tested point (direct launch, this PC, existing administrator account, the two approved phones, 1.5 s anchor-matched
+gap, n=3) the close discipline decided the outcome. This does NOT claim a general fix: no threshold, no CCCD change, H-2/H-4 not excluded generally, the
+Chrome-launched path untested on the adopted identity, W-07/W-08 stay BLOCKED until their own acceptance rerun on the then-chosen identity, and the
+crash/kill-restart window still needs the distinct retryable classification + bounded reconnect policy (#87/#88). Review fix I-A added
+`scripts/test_windows_closejoin_compare.py` (24 pure tests: selection-token resolution incl. the compare-1 zero-link regression, exact-2 first-phase
+connections, both second-phone attempts, release-after-exit / not-N-over-N / budget-exceeded invalidity, measured-gap tolerance, offline recheck) plus
+the stricter `run_validity` and `--recheck-dir`; the saved raws were re-evaluated into the NEW derived artifact `VALIDITY-RECHECK-20261027.json`
+(compare-1 6/6 invalid, compare-2 6/6 valid; no raw rewritten, nothing re-run). Review fix I-B corrected the 6T fixture-account text (observed: no JUnit
+result, the test process outlived the first force-stop and ended after both force-stops, cause UNPROVEN; "four stale instrumentations" was an operator
+inference from stale LOCAL adb clients only, and the app-data uid wording is retracted; the same 6T had passed JUnit in the earlier macOS prewarm
+round). The as-run driver copy stays byte-preserved (`scripts-used/`, `86781a91…`).
+
+**M-09 (cold) / M-10 (prewarm) PASS.** Adjudicated under the owner-approved background-criterion clarification on the fresh strict-mac-20261027
+evidence: v2 adjudications (ST-01..ST-15 PASS, trusted-platform finalizer, evaluator provenance recorded), F-1/F-2/F-3 fix verification by an
+independent local Opus session, after-run provenance capture pinning the run-tree files and the registered host to the owner-approved signed fixture
+`e7c716c5…eb91c`, and the same-build Chrome 156.0.8078.48 port-vs-control timer probe. Residuals are recorded in the matrix rows (launch context
+operator-inferred; phone identity operator-bound with identical payload bytes by design; linear-drift clock assumption with ≥29 s margins; the cold
+10 Pro partial JUnit log is not claimed from). `formal_otp23_acceptance=false` remains script policy; the matrix adjudicates the promotion; the
+historical 14-check and reevaluation-at-head records stay byte-exact as history.
+
+**Decision and rows.** NO-GO is unchanged: 18 PASS / 11 BLOCKED / 3 account-waived (W-01, M-01, M-02). Open rows: W-02, W-07, W-08, W-10, W-11, W-12,
+M-03, M-04, M-08, A-01, M-11. W-11/W-12 need their own disposition under the clarified criterion on the latest background evidence (Chrome
+156.0.8078.48-era; 155 stays source-inspection-only); W-07/W-08 stay pending an acceptance rerun; W-02/M-08, W-10, A-01, M-03/M-04/M-11 are unchanged.
+The RFC needs no further amendment; the matrix render/check passes (`matrix ok: NO-GO`). The bounded implementation remains a recommendation that
+needs its own explicit owner gate amendment — not a release GO, not OTP-24 authorisation. The integrated tree still awaits the parent's final gates
+and final review (R-01 new-phase ledger entry pending; the older R-01 attestation history is untouched).
+
+**Checksum repair.** `strict-mac-20261027/`: the failing-v1 manifest is preserved as `SHA256SUMS-before-review.original` (hash `3487728c…`, pins the
+pre-append README bytes), `SHA256SUMS-v2` (`66ba8956…`, 34/34) stays as the review-time snapshot, and the regenerated nameless `SHA256SUMS` is the
+active manifest covering every current file (`SHA256SUMS-NOTES.md`). `windows-cleanup-2026-10-27/`: `SHA256SUMS` refreshed after the I-A/I-B edits and
+the derived artifact; all raws byte-unchanged. All raw evidence keeps its `.gitattributes` (`* -text -whitespace`) byte preservation, and the 196-row
+post-grant baseline manifest still verifies unchanged.

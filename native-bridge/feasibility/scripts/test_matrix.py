@@ -51,7 +51,7 @@ class CommittedMatrix(unittest.TestCase):
         for rid in ("W-04", "W-05", "W-06", "W-09", "M-05", "M-06", "M-07", "A-02", "A-03"):
             self.assertEqual(by_id[rid]["status"], "PASS", rid)
         # rows whose literal requirement the new evidence does not meet stay blocked, each with a reason
-        for rid in ("W-02", "W-07", "W-08", "W-10", "W-11", "W-12", "M-03", "M-04", "M-08", "M-09", "M-10", "A-01", "M-11"):
+        for rid in ("W-02", "W-07", "W-08", "W-10", "W-11", "W-12", "M-03", "M-04", "M-08", "A-01", "M-11"):
             self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
             self.assertTrue(by_id[rid]["blocker"], rid)
             self.assertIn(rid, open_rows)
@@ -105,19 +105,29 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("TIMED OUT", by_id["M-04"]["actual"])
         self.assertEqual(by_id["M-04"]["status"], "BLOCKED")
 
-    def test_strict_background_rows_stay_blocked_after_the_owner_approved_clarification(self):
+    def test_strict_background_w_windows_stay_blocked_and_m_mac_rows_pass_under_the_clarification(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
         by_id = {r["id"]: r for r in BASE["rows"]}
         adjudications = [base / "phone-evidence/mac/otp23-macos-strict-cold-adjudicated.json",
                          base / "phone-evidence/mac/otp23-macos-strict-prewarm-adjudicated.json",
                          base / "windows-final/post-grant-2026-10-27/windows-strict-cold-foreground-2.json",
-                         base / "windows-final/post-grant-2026-10-27/windows-strict-prewarm-foreground-2.json"]
+                         base / "windows-final/post-grant-2026-10-27/windows-strict-prewarm-foreground-2.json",
+                         base / "strict-mac-20261027/strict-mac-20261027-cold.adjudicated-v2.json",
+                         base / "strict-mac-20261027/strict-mac-20261027-prewarm.adjudicated-v2.json"]
         for path in adjudications:
             data = json.loads(path.read_text())
             self.assertFalse(data["formal_otp23_acceptance"], path.name)
             self.assertEqual(data["strict_result"], "PASS", path.name)
             self.assertTrue(all(c["status"] == "PASS" for c in data["checks"].values()), path.name)
+        for path in adjudications[:4]:  # legacy-era files record the exclusion flag; the v2 files carry the clarified note
+            data = json.loads(path.read_text())
             self.assertTrue(data["checks"]["ST-13"]["actual"]["native_messaging_exemption_not_excluded"], path.name)
+        # the v2 adjudications carry the trusted-platform finalizer provenance and the clarified-criterion ST-13 note
+        for kind in ("cold", "prewarm"):
+            v2 = json.loads((base / f"strict-mac-20261027/strict-mac-20261027-{kind}.adjudicated-v2.json").read_text())
+            self.assertIn("timer-throttling exemption", v2["checks"]["ST-13"]["actual"]["native_messaging_port"])
+            self.assertTrue(v2["checks"]["ST-15"]["actual"]["after_switch"]["session"]["verified"])
+            self.assertIn("dc5d127", json.dumps(v2["evaluator_provenance"]))
         # the failed earlier Windows attempts are retained next to the passing retries
         history = base / "windows-strict-history"
         for name in ("cold-first", "cold-second", "cold-foreground", "prewarm"):
@@ -126,16 +136,34 @@ class CommittedMatrix(unittest.TestCase):
         for kind in ("cold", "prewarm"):
             raw = json.loads((base / f"macos-final/post-grant-2026-10-26/macos-strict-{kind}-raw.json").read_text())
             self.assertEqual(raw["strict_result"], "BLOCKED", kind)
-        # 2026-10-27: the criterion was clarified (owner-approved) but no row is promoted by it
-        for rid in ("W-11", "W-12", "M-09", "M-10"):
+        # 2026-10-27: the criterion was clarified (owner-approved); W-11/W-12 were NOT converted by it
+        for rid in ("W-11", "W-12"):
             self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
             blocker = by_id[rid]["blocker"]
             self.assertIn("clarified on 2026-10-27", blocker, rid)
             self.assertIn("not promoted", blocker, rid)
             self.assertIn("formal_otp23_acceptance=false", blocker, rid)
+        # the promotion adjudicated the fresh macOS runs (v2) after an independent verification of the fixes
         for rid in ("M-09", "M-10"):
-            self.assertIn("ST-15", by_id[rid]["blocker"], rid)
-            self.assertIn("not waived", by_id[rid]["blocker"], rid)
+            self.assertEqual(by_id[rid]["status"], "PASS", rid)
+            actual = by_id[rid]["actual"]
+            self.assertIn("ST-01..ST-15 ALL PASS", actual, rid)
+            self.assertIn("adjudicated-v2", actual, rid)
+            self.assertIn("formal_otp23_acceptance=false", actual, rid)
+            self.assertIn("timer-throttling exemption", actual, rid)
+            self.assertIn("156.0.8078.48", actual, rid)
+            self.assertIn("operator-bound", actual, rid)
+            self.assertIn("linear drift", actual, rid)
+            self.assertIn("otp23-mac-final-fix-verification-opus.md", actual, rid)
+            for rel in by_id[rid]["evidence"]:
+                self.assertTrue((REPO / rel).exists(), (rid, rel))
+            for rel in by_id[rid]["evidence"]:
+                if "strict-mac-20261027" in rel:
+                    self.assertIn("post-grant-2026-10-26/", rel, rid)
+        # the cold row does not claim the partial JUnit log and stays separate from prewarm
+        self.assertIn("NO PASS is claimed from it", by_id["M-09"]["actual"])
+        self.assertIn("never combined", by_id["M-10"]["actual"])
+        self.assertEqual(m.decision(BASE)[0], "NO-GO")
 
     def test_m6_machine_fail_is_retained_beside_the_manual_adjudication(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26/m6"
@@ -317,7 +345,7 @@ class CommittedMatrix(unittest.TestCase):
         blocking = [r["id"] for r in BASE["rows"] if r["status"] in ("BLOCKED", "FAIL", "NOT RUN") and not r["waiver"]]
         self.assertEqual(sorted(open_rows), sorted(blocking))
         self.assertEqual(verdict, "NO-GO" if blocking else "GO")
-        self.assertTrue({"M-03", "W-11", "M-09", "M-11"} <= set(open_rows))
+        self.assertTrue({"M-03", "W-11", "W-12", "M-11"} <= set(open_rows))
         # R-01 blocks exactly while its row is not PASS (the generic pending/false-PASS rules are tested separately)
         self.assertEqual("R-01" in open_rows, by_id["R-01"]["status"] != "PASS")
 
@@ -378,7 +406,8 @@ class CommittedMatrix(unittest.TestCase):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26/phone-evidence/mac"
         for rid, name in (("M-09", "cold"), ("M-10", "prewarm")):
             row = by_id[rid]
-            self.assertEqual(row["status"], "BLOCKED")
+            # the rows are PASS on the 2026-10-27 v2 adjudications, but the historical evaluator story stays in the text
+            self.assertEqual(row["status"], "PASS")
             for needle in ("HISTORICAL EVALUATOR PROVENANCE", "OPERATOR-INFERRED", "BLOCKED", "ST-15",
                            "NOT reproducible at HEAD", "no legacy bypass"):
                 self.assertIn(needle, row["actual"], (rid, needle))
@@ -411,8 +440,8 @@ class CommittedMatrix(unittest.TestCase):
         open_ids = m.decision(BASE)[1]
         for rid in ("W-01", "M-01", "M-02"):
             self.assertNotIn(rid, open_ids)
-        # nothing else is relaxed: signing/identity, allow/deny/recovery and strict background stay open
-        for rid in ("M-03", "M-04", "W-11", "M-09"):
+        # nothing else is relaxed: signing/identity, allow/deny/recovery and the strict background windows stay open
+        for rid in ("M-03", "M-04", "W-11", "W-12"):
             self.assertIn(rid, open_ids)
 
     def test_waiver_rules(self):
@@ -460,8 +489,11 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("OTP-25", m03["blocker"])
         self.assertNotIn("no Developer ID", m03["blocker"])
         self.assertIn("Apple Development", m03["expected"])
-        for rid in ("M-04", "M-11", "W-11", "W-12", "M-09", "M-10"):
+        for rid in ("M-04", "M-11", "W-11", "W-12"):
             self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
+        # the later strict-mac-20261027 adjudication promoted only M-09/M-10, under the clarified criterion
+        for rid in ("M-09", "M-10"):
+            self.assertEqual(rows[rid]["status"], "PASS", rid)
         self.assertEqual(m.decision(BASE)[0], "NO-GO")
         self.assertTrue(any("owner approval 2026-10-27" in key for key in BASE["sources"]))
         self.assertIn("Signing-provenance amendment", m.render(BASE))
@@ -517,6 +549,26 @@ class CommittedMatrix(unittest.TestCase):
     def test_cold_and_prewarm_background_are_separate_rows_on_each_platform(self):
         ids = {r["id"] for r in BASE["rows"]}
         self.assertTrue({"W-11", "W-12", "M-09", "M-10"} <= ids)
+
+    def test_m09_m10_promotion_scope_is_narrow_and_not_a_go_or_otp24_change(self):
+        """The M-09/M-10 promotion rests on the fresh 2026-10-27 v2 evidence + the independent Opus
+        verification, records the residuals in the rows, changes no other row and keeps NO-GO."""
+        rows = {r["id"]: r for r in BASE["rows"]}
+        # exactly the two rows moved; every previously BLOCKED row is still BLOCKED
+        self.assertEqual(rows["M-09"]["status"], rows["M-10"]["status"], "PASS")
+        self.assertIn("2026-10-27", rows["M-09"]["source"])
+        self.assertIn("verification 2026-10-27", rows["M-09"]["source"])
+        for rid in ("W-02", "W-07", "W-08", "W-10", "W-11", "W-12", "M-03", "M-04", "M-08", "A-01", "M-11"):
+            self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
+        # the accounts are still identified truthfully and no waiver appeared
+        self.assertEqual((rows["M-09"]["account"], rows["M-10"]["account"]), ("admin", "admin"))
+        self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
+        # the promotion source is recorded in the matrix sources and keeps the chronology intact
+        key = [k for k in BASE["sources"] if k.startswith("verification 2026-10-27")]
+        self.assertEqual(len(key), 1)
+        self.assertIn("strict-mac-20261027", BASE["sources"][key[0]])
+        self.assertIn("stays NO-GO", BASE["sources"][key[0]])
+        self.assertEqual(m.decision(BASE)[0], "NO-GO")
 
 
 class Rules(unittest.TestCase):

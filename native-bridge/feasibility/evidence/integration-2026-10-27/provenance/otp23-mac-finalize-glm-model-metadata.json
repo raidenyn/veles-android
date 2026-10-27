@@ -1,0 +1,19 @@
+{
+  "captured_at_utc": "2026-10-27T17:27:24Z",
+  "capture_method": "opencode db query (message table, role=assistant group by session; modelID/providerID from message JSON data; counts from the DB, not self-report)",
+  "session_id": "ses_e81bc7103ffe3F21OMCsqIRppL",
+  "sessions": [
+    {
+      "session_id": "ses_e81bc7103ffe3F21OMCsqIRppL",
+      "modelID": "glm-5.3-flash",
+      "providerID": "ollama-cloud",
+      "assistant_messages": 138,
+      "first_msg_utc": "2026-10-27 16:48:41",
+      "last_msg_utc": "2026-10-27 17:27:11"
+    }
+  ],
+  "distinct_models_in_session": [
+    {"modelID": "glm-5.3-flash", "providerID": "ollama-cloud"}
+  ],
+  "note": "FINAL capture for the finalize session (rounds 1+2 of work; counts grow with the result-message turn): 138 assistant messages at 17:27:11Z; interim captures 33 (17:02:12Z), 72 (17:06:36Z), 77 (17:07:48Z). The clock measurements, finalizer runs (v1+v2), evidence archive and review fixes are in this session only. Other-sessions rows in the opencode db (gpt-6.1-sol, kimi-k3, nemotron-3.5-super-vl-free, and the parallel Windows glm-5.3-flash sessions ses_e81bc70a2ffeBDwzMZHHwc9HF9 / ses_e81eabaf7ffeJ62QG20QRSAN33) are not this session's work."
+}
