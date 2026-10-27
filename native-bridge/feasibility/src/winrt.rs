@@ -35,6 +35,7 @@ use windows::core::{GUID, Interface, RuntimeType};
 use windows_future::{AsyncStatus, IAsyncOperation};
 
 use crate::backend::{Backend, BackendEvent, Discovered, Failure, Target, Token};
+use crate::closejoin::{detached_close_enabled, join_within, reap_finished};
 use crate::fragment::{LinkCapacity, MAX_MTU, MIN_MTU};
 use crate::runtime::BackendEvents;
 use crate::trace;
@@ -286,16 +287,58 @@ struct LinkSlot {
     thread: Option<JoinHandle<()>>,
 }
 
-fn disconnect_link(links: &mut HashMap<Token, LinkSlot>, conn: Token) {
+/// Wall-clock epoch milliseconds on the host machine. Both processes of the OTP-23 comparison run
+/// on one PC, so this is one clock: it lets traces anchor an absolute gap that exists in BOTH
+/// arms (`disconnect requested` is traced before the detach/queue decision, legacy included).
+fn epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or_default()
+}
+
+fn disconnect_link(
+    links: &mut HashMap<Token, LinkSlot>,
+    closing: &mut Vec<JoinHandle<()>>,
+    conn: Token,
+) {
+    disconnect_link_mode(links, closing, conn, detached_close_enabled());
+}
+
+/// The full S-1 disconnect path: remove the slot, signal the worker, and either retire the
+/// handle into `closing` for the shutdown join (default) or reproduce HEAD's detached close
+/// (legacy). Factored with an explicit mode so tests can drive both arms without the env var.
+/// The `disconnect requested` trace is emitted for BOTH arms - it is the common absolute anchor
+/// of the close-begin-matched gap (in the legacy arm `close begin` lines usually never exist
+/// because `Link::close` is truncated by process exit).
+fn disconnect_link_mode(
+    links: &mut HashMap<Token, LinkSlot>,
+    closing: &mut Vec<JoinHandle<()>>,
+    conn: Token,
+    detached: bool,
+) {
     if let Some(mut slot) = links.remove(&conn) {
+        trace!("conn {conn} disconnect requested epoch_ms={}", epoch_ms());
         slot.cancel.store(true, Ordering::SeqCst);
         let _ = slot.commands.send(Command::Close);
         // The worker observes cancellation within its bounded OS wait and closes its Link.
-        // Join already-finished workers; detach active ones rather than blocking the core.
-        if let Some(worker) = slot.thread.take()
-            && worker.is_finished()
-        {
-            let _ = worker.join();
+        // Default (OTP-23 awaited close): the handle is retired into the `closing` sink that
+        // shutdown joins under one bounded budget, so `Link::close()` is finally AWAITED:
+        // on HEAD the handle was detached here and shutdown then iterated an empty map, which is
+        // why 37/42 retained linked traces end without any `conn N released` line. The detached
+        // historical close - and only that - stays reproducible behind
+        // VELES_OTP23_DETACHED_CLOSE=1 (one binary hash covers both arms of the comparison).
+        if let Some(worker) = slot.thread.take() {
+            if detached {
+                if worker.is_finished() {
+                    let _ = worker.join();
+                } else {
+                    trace!("conn {conn} closing worker detached (legacy detached close)");
+                }
+            } else {
+                closing.push(worker);
+                reap_finished(closing);
+            }
         }
     }
 }
@@ -311,15 +354,38 @@ struct Link {
 }
 
 impl Link {
-    fn close(self) {
-        let _ = self.notify.RemoveValueChanged(self.value_changed);
-        let _ = self
+    fn close(self, conn: Token) {
+        // OTP-23 teardown tracing (S-4): the close steps were previously unobservable, so no
+        // retained evidence could say whether close completed; the exit-truncation probe is the
+        // absence of `conn N released` in a trace. Each step carries the owning connection's
+        // identity, its elapsed time and the raw step result (ok or the HRESULT), so a
+        // second-process denial can be correlated with which close step actually succeeded.
+        let started = Instant::now();
+        let step = |name: &str, result: &windows::core::Result<()>| {
+            let ms = started.elapsed().as_millis();
+            match result {
+                Ok(()) => trace!("conn {conn} close step {name} at {ms}ms ok"),
+                Err(error) => trace!(
+                    "conn {conn} close step {name} at {ms}ms err hresult={:#010x}",
+                    error.code().0
+                ),
+            }
+        };
+        trace!("conn {conn} close begin");
+        let step_result = self.notify.RemoveValueChanged(self.value_changed);
+        step("remove_value_changed", &step_result);
+        let step_result = self
             .device
             .RemoveConnectionStatusChanged(self.status_changed);
-        let _ = self.service.Close();
-        let _ = self.session.SetMaintainConnection(false);
-        let _ = self.session.Close();
-        let _ = self.device.Close();
+        step("remove_status_changed", &step_result);
+        let step_result = self.service.Close();
+        step("service_close", &step_result);
+        let step_result = self.session.SetMaintainConnection(false);
+        step("maintain_false", &step_result);
+        let step_result = self.session.Close();
+        step("session_close", &step_result);
+        let step_result = self.device.Close();
+        step("device_close", &step_result);
     }
 }
 
@@ -552,6 +618,13 @@ fn connection_main(
     commands: Receiver<Command>,
     cancel: Arc<AtomicBool>,
 ) {
+    // Absolute connect start on the shared host clock: pairs with the first host's
+    // `disconnect requested epoch_ms` anchor (both arms) to give the close-begin-matched gap.
+    trace!(
+        "conn {conn} connect worker started epoch_ms={} hint={}",
+        epoch_ms(),
+        trace::redact_hint(&hint)
+    );
     init_apartment();
     let lost = Arc::new(AtomicBool::new(false));
     let (link, mtu) = match set_up_link(conn, &hint, &events, &cancel, &lost) {
@@ -568,7 +641,7 @@ fn connection_main(
         }
     };
     if cancel.load(Ordering::SeqCst) {
-        link.close();
+        link.close(conn);
         return;
     }
     events.emit(BackendEvent::Connected {
@@ -608,8 +681,11 @@ fn connection_main(
             break;
         }
     }
-    link.close();
-    trace!("conn {conn} released");
+    link.close(conn);
+    // "released" means the worker's local WinRT objects were closed (all six close steps ran);
+    // the PHYSICAL link-down on the peripheral is unconfirmed by this line (phone-side dumpsys
+    // is the link-down truth).
+    trace!("conn {conn} released (objects closed; link-down unconfirmed)");
 }
 
 fn write_all(link: &Link, frames: &[Vec<u8>], cancel: &AtomicBool) -> Result<(), Failure> {
@@ -635,6 +711,7 @@ pub struct WinrtBackend {
     events: BackendEvents,
     scans: HashMap<Token, ScanSlot>,
     links: HashMap<Token, LinkSlot>,
+    closing: Vec<JoinHandle<()>>,
 }
 
 impl WinrtBackend {
@@ -644,6 +721,7 @@ impl WinrtBackend {
             events,
             scans: HashMap::new(),
             links: HashMap::new(),
+            closing: Vec::new(),
         }
     }
 }
@@ -727,7 +805,7 @@ impl Backend for WinrtBackend {
     }
 
     fn disconnect(&mut self, conn: Token) {
-        disconnect_link(&mut self.links, conn);
+        disconnect_link(&mut self.links, &mut self.closing, conn);
     }
 
     fn shutdown(&mut self) {
@@ -739,20 +817,36 @@ impl Backend for WinrtBackend {
             slot.cancel.store(true, Ordering::SeqCst);
             let _ = slot.commands.send(Command::Close);
         }
-        // Bounded wait so a wedged OS call cannot keep the process alive; exit releases the rest.
-        let deadline = Instant::now() + SHUTDOWN_JOIN_BUDGET;
-        for (_, mut slot) in self.links.drain() {
-            if let Some(thread) = slot.thread.take() {
-                while !thread.is_finished() && Instant::now() < deadline {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                if thread.is_finished() {
-                    let _ = thread.join();
-                } else {
-                    trace!("link worker did not finish within the shutdown budget");
-                }
-            }
-        }
+        // OTP-23 awaited close: both queued link workers and the already-disconnecting workers
+        // retired at `disconnect_link` time are joined under ONE bounded budget, so a wedged OS
+        // call cannot keep the process alive past it while a healthy close is always awaited.
+        shutdown_join(&mut self.links, &mut self.closing);
+    }
+}
+
+/// The S-1 shutdown path, factored out of `Backend::shutdown` so tests drive the real
+/// disconnect → shutdown sequence: every live-worker handle still in the map (disconnect was
+/// never called for it) plus every handle retired by `disconnect_link` is joined under ONE
+/// bounded budget. On HEAD the retired handles did not exist (detached) so this joined an empty
+/// set and the close was truncated by `std::process::exit`.
+fn shutdown_join(links: &mut HashMap<Token, LinkSlot>, closing: &mut Vec<JoinHandle<()>>) {
+    let mut handles: Vec<JoinHandle<()>> = links
+        .drain()
+        .filter_map(|(_, mut slot)| slot.thread.take())
+        .collect();
+    handles.extend(std::mem::take(closing));
+    let started = Instant::now();
+    let (joined, total) = join_within(handles, SHUTDOWN_JOIN_BUDGET);
+    if joined == total {
+        trace!(
+            "shutdown joined {joined}/{total} within {}ms",
+            started.elapsed().as_millis()
+        );
+    } else {
+        trace!(
+            "budget exceeded: shutdown joined {joined}/{total} within {}ms",
+            started.elapsed().as_millis()
+        );
     }
 }
 
@@ -766,6 +860,7 @@ mod tests {
     #[test]
     fn disconnected_link_slots_are_released_during_churn() {
         let mut links = HashMap::new();
+        let mut closing: Vec<JoinHandle<()>> = Vec::new();
         for conn in 1..=128 {
             let (commands, rx) = mpsc::channel();
             let cancel = Arc::new(AtomicBool::new(false));
@@ -777,10 +872,170 @@ mod tests {
                     thread: None,
                 },
             );
-            disconnect_link(&mut links, conn);
+            disconnect_link(&mut links, &mut closing, conn);
             assert!(links.is_empty());
             assert!(cancel.load(Ordering::SeqCst));
             assert!(matches!(rx.try_recv(), Ok(Command::Close)));
         }
+        assert!(
+            closing.is_empty(),
+            "a slot without a worker thread queues nothing"
+        );
+    }
+
+    #[test]
+    fn disconnect_queues_live_workers_for_the_shutdown_join() {
+        // Regression for the S-1 fix: a live worker's handle must be retired into the closing
+        // sink (joined by shutdown) instead of being detached; with the legacy flag set it is
+        // detached again. (Run on Windows; compiles the env-gated branch too.)
+        let mut links = HashMap::new();
+        for conn in [301u64, 302u64] {
+            let (commands, rx) = mpsc::channel::<Command>();
+            let cancel = Arc::new(AtomicBool::new(false));
+            links.insert(
+                conn,
+                LinkSlot {
+                    commands,
+                    cancel: cancel.clone(),
+                    thread: Some(thread::spawn(move || {
+                        std::mem::forget((rx, cancel));
+                        thread::sleep(Duration::from_millis(50));
+                    })),
+                },
+            );
+        }
+        let mut closing: Vec<JoinHandle<()>> = Vec::new();
+        for conn in [301u64, 302u64] {
+            disconnect_link(&mut links, &mut closing, conn);
+        }
+        assert!(links.is_empty());
+        assert_eq!(
+            closing.len(),
+            2,
+            "live workers are queued for shutdown join"
+        );
+        for handle in closing {
+            let _ = handle.join();
+        }
+    }
+
+    #[test]
+    fn shutdown_joins_a_worker_retired_by_disconnect() {
+        // I-1 red/green over the REAL S-1 path (release_all = disconnect each conn, then
+        // shutdown): a live worker sleeps ~200 ms and then finishes. Default arm: the handle is
+        // retired, shutdown awaits the close and the flag is set when shutdown returns. This test
+        // fails against the HEAD logic, where disconnect_link detached the handle and shutdown
+        // therefore joined an empty map (37/42 retained linked traces end without `released`).
+        let mut links = HashMap::new();
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let (commands, rx) = mpsc::channel::<Command>();
+        links.insert(
+            401u64,
+            LinkSlot {
+                commands,
+                cancel: Arc::new(AtomicBool::new(false)),
+                thread: Some(thread::spawn(move || {
+                    std::mem::forget(rx);
+                    thread::sleep(Duration::from_millis(200));
+                    flag.store(true, Ordering::SeqCst);
+                })),
+            },
+        );
+        let mut closing: Vec<JoinHandle<()>> = Vec::new();
+        disconnect_link_mode(&mut links, &mut closing, 401u64, false);
+        disconnect_link_mode(&mut links, &mut closing, 402u64, false); // absent conn: no-op
+        shutdown_join(&mut links, &mut closing);
+        assert!(links.is_empty());
+        assert!(closing.is_empty(), "shutdown drains the closing sink");
+        assert!(
+            done.load(Ordering::SeqCst),
+            "default arm: the close is awaited when shutdown returns"
+        );
+    }
+
+    #[test]
+    fn legacy_detached_close_is_unawaited_across_disconnect_and_shutdown() {
+        // The legacy arm (HEAD logic; VELES_OTP23_DETACHED_CLOSE=1): the same disconnect ->
+        // shutdown sequence detaches the live worker, so shutdown returns empty-handed while the
+        // close is STILL running - the defect the default arm fixes, in the same binary.
+        let mut links = HashMap::new();
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let (commands, rx) = mpsc::channel::<Command>();
+        let started = Instant::now();
+        links.insert(
+            403u64,
+            LinkSlot {
+                commands,
+                cancel: Arc::new(AtomicBool::new(false)),
+                thread: Some(thread::spawn(move || {
+                    std::mem::forget(rx);
+                    thread::sleep(Duration::from_millis(200));
+                    flag.store(true, Ordering::SeqCst);
+                })),
+            },
+        );
+        let mut closing: Vec<JoinHandle<()>> = Vec::new();
+        disconnect_link_mode(&mut links, &mut closing, 403u64, true);
+        assert!(
+            closing.is_empty(),
+            "legacy: nothing is retired for the shutdown join"
+        );
+        shutdown_join(&mut links, &mut closing);
+        // The close only ever sets the flag after 200 ms. shutdown returned well before that, so
+        // the flag check below is deterministic: the close was provably still in flight when
+        // shutdown (and on HEAD, immediately after, the process) would have exited.
+        assert!(
+            started.elapsed() < Duration::from_millis(150),
+            "shutdown must return immediately in the legacy arm: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            !done.load(Ordering::SeqCst),
+            "legacy: the close is still running when shutdown returns"
+        );
+    }
+
+    #[test]
+    fn churn_joins_finished_workers_when_new_ones_are_retired() {
+        // I-2: repeated disconnects during the process lifetime must not accumulate retired
+        // handles - every retire reaps every FINISHED worker, so the sink is bounded by closes
+        // in flight (at most the link limit; serialized here, so at most one).
+        let mut links = HashMap::new();
+        let mut closing: Vec<JoinHandle<()>> = Vec::new();
+        for conn in 1..=128u64 {
+            let (commands, rx) = mpsc::channel::<Command>();
+            let done = Arc::new(AtomicBool::new(false));
+            let flag = done.clone();
+            links.insert(
+                conn,
+                LinkSlot {
+                    commands,
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    thread: Some(thread::spawn(move || {
+                        std::mem::forget(rx);
+                        flag.store(true, Ordering::SeqCst);
+                    })),
+                },
+            );
+            disconnect_link(&mut links, &mut closing, conn);
+            assert!(links.is_empty());
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !done.load(Ordering::SeqCst) && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert!(done.load(Ordering::SeqCst), "worker {conn} finished");
+            assert!(
+                closing.len() <= 1,
+                "sink bounded by in-flight closes: {}",
+                closing.len()
+            );
+        }
+        reap_finished(&mut closing);
+        assert!(
+            closing.is_empty(),
+            "after the last worker finished, the sink is empty"
+        );
     }
 }

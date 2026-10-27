@@ -1,0 +1,11 @@
+[       0ms pid=102464] start pid=102464
+[       0ms pid=102464] in  len=74 type=hello request_id=d1
+[       1ms pid=102464] out len=176 type=ready request_id=d1 api_version=1
+[       1ms pid=102464] in  len=130 type=start_scan request_id=d2 api_version=1
+[      52ms pid=102464] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=46e7d7439e462dd3
+[     385ms pid=102464] out len=195 type=device_found api_version=1 scan_handle=46e7d7439e462dd3 device_handle=d4beb175722ccb69 label.len=17 platform_hint.len=20
+[     615ms pid=102464] out len=195 type=device_found api_version=1 scan_handle=46e7d7439e462dd3 device_handle=9b27a9ecd9920ca9 label.len=17 platform_hint.len=20
+[     616ms pid=102464] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=46e7d7439e462dd3
+[     616ms pid=102464] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=46e7d7439e462dd3
+[     616ms pid=102464] shutdown joined 0/0 within 0ms
+[     616ms pid=102464] exit code=0 stdout_drained=true

@@ -1,0 +1,20 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src\lib.rs (target\debug\deps\veles_otp23_feasibility-fac0a7da97729a59.exe)
+
+running 13 tests
+test closejoin::tests::no_handles_joins_nothing ... ok
+test winrt::tests::legacy_detached_close_is_unawaited_across_disconnect_and_shutdown ... ok
+test winrt::tests::disconnected_link_slots_are_released_during_churn ... ok
+test winrt::tests::disconnect_queues_live_workers_for_the_shutdown_join ... ok
+test closejoin::tests::joins_happen_when_the_worker_observes_its_cancel_or_close_late ... ok
+test winrt::tests::churn_joins_finished_workers_when_new_ones_are_retired ... ok
+test closejoin::tests::churn_between_shutdowns_never_accumulates_retired_handles ... ok
+test closejoin::tests::joins_a_worker_that_finishes_well_inside_the_budget ... ok
+test winrt::tests::shutdown_joins_a_worker_retired_by_disconnect ... ok
+test closejoin::tests::reap_removes_only_finished_handles_between_shutdowns ... ok
+test closejoin::tests::wedged_worker_never_exceeds_the_budget ... ok
+test closejoin::tests::legacy_detached_close_is_unawaited_queued_close_is_joined ... ok
+test closejoin::tests::mixed_workers_count_exactly_and_stay_bounded ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+

@@ -1,0 +1,4 @@
+    Finished `release` profile [optimized] target(s) in 0.10s
+SHA256 hash of target\release\otp23-host.exe:
+8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33
+CertUtil: -hashfile command completed successfully.
