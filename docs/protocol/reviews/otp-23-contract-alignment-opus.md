@@ -148,3 +148,19 @@ Pushed `66519dd0f5d8057941c71ddc8f07b2948502f146` failed two CI jobs. Both are t
 The Windows fix is verified on Linux only. It has not been run on Windows; the next Windows CI run is the evidence.
 
 **`R-01` scope.** The current R-01 PASS covers the reviewed `66519dd` source and the `d72c177` snapshot as attested above. The two test changes in this section are **new, uncommitted and not reviewed by Opus**; they are pending focused Opus verification by the parent, who will attest the new commit hash afterwards. No fresh review of them is claimed. Matrix stays 16 PASS / 13 BLOCKED / 3 NOT RUN; the decision stays **NO-GO for OTP-24**.
+
+## CI follow-up review of `78f1784753ba0274e493ed35a92e27d6311b467a` (appended; supersedes the "uncommitted / not reviewed by Opus" wording of the previous section, per MINOR-1; that text is preserved as history)
+
+The two test changes described above were committed in `78f1784753ba0274e493ed35a92e27d6311b467a` (range `66519dd..78f1784`) and are now reviewed. Reviewer metadata from the raw CLI result `reviews-and-provenance/otp23-ci-opus-review-result.json`: session `ceb6e424-1e26-4ea7-972b-efa4ba2dc633` (the same session as the earlier final review), `modelUsage` `claude-opus-5-5`, `canonicalModel` `claude-opus-5-5`, provider `firstParty`, 0 subagents, `is_error` false, read-only. The fixes were written by `claude-sonnet-5-5` session `de3b52c3-e10c-4e0d-be2c-0e766f9787c2` (`sonnet-ci-fixes-result.json`).
+
+**Verdict: PASS, 0 CRITICAL, 0 IMPORTANT, 2 MINOR, 1 NIT.** The reviewer also ran a Windows-like probe on Linux (non-executable fake host, broken shebang): with the wrapper 3 tests PASS, without it (control) 3 FAIL. That is not a Windows run.
+
+CI at `66519dd` had 2 failed jobs (spotless, Windows harness) and 8 passed. The initial failure logs are retained unchanged as `signing-and-gates/otp23-ci-66519dd-lint.log` and `otp23-ci-66519dd-windows.log`. The CI head after `78f1784753ba0274e493ed35a92e27d6311b467a` is pending; **no Windows CI pass is claimed until it is observed.**
+
+| Finding | Disposition |
+|---|---|
+| MINOR-1: stale "uncommitted / not reviewed" text | fixed by this appended section; nothing rewritten |
+| MINOR-2: no assertion that the wrapper was used | deferred, nonblocking; the unskipped Windows CI job and the existing 3 tests are the regression gate |
+| NIT: process-global `Popen` patch | deferred, nonblocking (pass-through for other argv, undone by `addCleanup`) |
+
+The earlier MINOR-B/C/D residuals stay recorded. **Current R-01 scope:** the `d72c177` attestation (unchanged `verified_commit`) extends to the CI/test-only changes through `78f1784753ba0274e493ed35a92e27d6311b467a`, because Opus reviewed that commit directly. Matrix stays 16 PASS / 13 BLOCKED / 3 NOT RUN; the decision stays **NO-GO for OTP-24**. This is not an OTP-23 acceptance.

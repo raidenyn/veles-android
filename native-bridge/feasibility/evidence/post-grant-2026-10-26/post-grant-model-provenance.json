@@ -104,7 +104,42 @@
       "MINOR-D": "deferred nonblocking (standalone M6 helper input strictness)"
     },
     "acceptance_decision": "NO-GO for OTP-24",
-    "status_history": "PENDING (before the review), then PENDING attestation (after fix verification); superseded by this PASS attestation"
+    "status_history": "PENDING (before the review), then PENDING attestation (after fix verification); superseded by this PASS attestation",
+    "ci_followup_review": {
+      "status": "PASS (attested for reviewed CI/test-only NO-GO work; decision NO-GO; Windows CI result still pending)",
+      "reviewed_commit": "78f1784753ba0274e493ed35a92e27d6311b467a",
+      "range": "66519dd0f5d8057941c71ddc8f07b2948502f146..78f1784753ba0274e493ed35a92e27d6311b467a",
+      "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
+      "observed_modelUsage_key": "claude-opus-5-5",
+      "observed_canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "subagents_spawned": 0,
+      "is_error": false,
+      "raw": "reviews-and-provenance/otp23-ci-opus-review-result.json",
+      "raw_sha256": "f0db7b80ad65052d5a059cb8ab3952da4167797cfd5963fc57b0fb5ce0e279c1",
+      "report": "reviews-and-provenance/otp23-ci-opus-review.md",
+      "report_sha256": "317d18f28fafbca0ad797c7db6291f867e04b233822d3405b265e39de50960b7",
+      "verdict": "PASS; 0 CRITICAL, 0 IMPORTANT, 2 MINOR, 1 NIT (all nonblocking)",
+      "reviewer_probe": "Windows-like probe on Linux (non-executable file, broken shebang): with the wrapper 3 tests PASS, without it (control) 3 FAIL. Not a Windows run.",
+      "fix_author_session": {
+        "session_id": "de3b52c3-e10c-4e0d-be2c-0e766f9787c2",
+        "observed_modelUsage_key": "claude-sonnet-5-5",
+        "raw": "reviews-and-provenance/sonnet-ci-fixes-result.json",
+        "raw_sha256": "4f0426bdd301552cc0db53a43bdea9e306605c587650a9861a1279192a8194ee"
+      },
+      "initial_failure_logs": [
+        "signing-and-gates/otp23-ci-66519dd-lint.log",
+        "signing-and-gates/otp23-ci-66519dd-windows.log"
+      ],
+      "findings_disposition": {
+        "MINOR-1": "stale 'uncommitted/not reviewed' wording: superseded by an appended doc section; earlier text untouched",
+        "MINOR-2": "wrapper-use assertion: deferred nonblocking (the unskipped Windows CI job is the regression gate)",
+        "NIT": "process-global Popen patch: deferred nonblocking (pass-through, undone by addCleanup)"
+      },
+      "windows_ci": "PENDING: the WinError 193 fix is proven on Linux only; no Windows CI pass is claimed until observed",
+      "base_attestation": "unchanged: verified_commit stays d72c17798f3e665adec2f2ede1442e36634e1a3a",
+      "acceptance_decision": "NO-GO for OTP-24"
+    }
   },
   "integration_session": {
     "role": "post-grant integration pass (before the final review)",

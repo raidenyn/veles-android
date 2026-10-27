@@ -1,5 +1,5 @@
 2ee93694420197a5aab0f34c802dd8a55cf437fe15c9eeede80d660ba616caad  ./.gitattributes
-60fcb41704e07a81167e3f90add6ce26190908001fa283e9155ab06ed6e3d175  ./INTEGRATION.md
+d278935faaa1986a6d0753be2ac232b06fc5a5a46f5d7b16cbca9f757999bd76  ./INTEGRATION.md
 e611bef198de832e9a4ac261844b7e836e132e58adb14cd92766ff50494bb763  ./README.md
 577a2c362e2be34fc69aa00014389afdcbf5eb7176a4d8a527b7c41bf0779309  ./m6/otp23-m6-barrier-a.json
 25044dc15799ebc8b025c3640e518726e668a88225e7285e6fa3d72b99b5c5f2  ./m6/otp23-m6-desktop-adjudication.json
@@ -93,7 +93,7 @@ cd955bbea562c4a27617ad09f353a4a5605e7633e9c5a01f1d9d3c0a794d0c3c  ./phone-eviden
 b02f3b3beef240818a76279f2f767a29deae6991ed398190692e928c8f73e64c  ./phone-evidence/windows/otp23-win-prewarm2-transport-10pro.json
 cc154434df0e7825983df20baae9cb0fe07e07ec113512bb8a9ba1804b94d6dd  ./phone-evidence/windows/otp23-win-prewarm2-transport-6t.json
 2c4582d80e8441a73f69d9e0d7a306022f232ad63d16f668d7347e41d37520d6  ./post-grant-identity.json
-62af671f5616b20c126ced0a7e747638e94fe1c5f4d8970d94988a3c1400edce  ./post-grant-model-provenance.json
+dda8b8373508295480397fda1eab590c4cb6b4b2e2ef8b35f08c10c9cac3fc78  ./post-grant-model-provenance.json
 8990eb9baac558c200fa38f326a8c9e74ec16df4ddef3ffd67af5201d02caa8d  ./reviews-and-provenance/otp23-postgrant-final-opus-result.json
 4aec51dcf4466424588e14ba56e3a8244e9efa98eec2d42f160e703da9d6a340  ./reviews-and-provenance/otp23-postgrant-final-opus-review.md
 1599974ba149b3546d1906b2a05fdaca151c1b3e85b3e2cc6aac6c7d20ce3250  ./reviews-and-provenance/otp23-postgrant-opus-fix-verification-result.json
@@ -188,3 +188,9 @@ c50ecdeda053ceb51cab11523d37a30368b514a73233a24da1b8f9f85b1dee05  ./windows-stri
 9537ffb8429cb6747248e8c26770ca365ca52f805b5f71f7d0f627c715f53901  ./windows-strict-history/otp23-windows-strict-cold2.json
 7e669572c6510b5eab8a58c5427b0c9bf5e3f7e5a84525f8be30b98257b26639  ./windows-strict-history/otp23-windows-strict-prewarm.json
 05bbd33f335b1dd05b9f5d32f2b1881af48fe4f78a54dceae87143345184cf62  ./windows-strict-history/otp23-windows-strict-prewarm2.json
+f0db7b80ad65052d5a059cb8ab3952da4167797cfd5963fc57b0fb5ce0e279c1  ./reviews-and-provenance/otp23-ci-opus-review-result.json
+317d18f28fafbca0ad797c7db6291f867e04b233822d3405b265e39de50960b7  ./reviews-and-provenance/otp23-ci-opus-review.md
+9370d520d6cca26a6002cd172cab46470156e78148b736bf7ed73fc3b3c38b26  ./reviews-and-provenance/otp23-ci-followup-attestation.md
+4f0426bdd301552cc0db53a43bdea9e306605c587650a9861a1279192a8194ee  ./reviews-and-provenance/sonnet-ci-fixes-result.json
+d6894b289e04a4aed5290507b9e638ae7d3b9d4acbea6109dde7f806e2567fe5  ./signing-and-gates/otp23-ci-66519dd-lint.log
+394bf3cb46c31fd73dc04b5472ee4367453d1798dfcfde7f0bb2a2a17d108edd  ./signing-and-gates/otp23-ci-66519dd-windows.log

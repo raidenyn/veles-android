@@ -1,0 +1,785 @@
+﻿2026-10-27T05:29:11.3204247Z Current runner version: '2.338.0'
+2026-10-27T05:29:11.3229644Z ##[group]Runner Image Provisioner
+2026-10-27T05:29:11.3230499Z Hosted Compute Agent
+2026-10-27T05:29:11.3231076Z Version: 20261021.618
+2026-10-27T05:29:11.3231666Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T05:29:11.3232358Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T05:29:11.3232994Z Worker ID: {fc6df164-33f7-420a-930c-6437c56775bb}
+2026-10-27T05:29:11.3233642Z Region: centralus
+2026-10-27T05:29:11.3234172Z Cloud: Azure
+2026-10-27T05:29:11.3234668Z ##[endgroup]
+2026-10-27T05:29:11.3235950Z ##[group]Operating System
+2026-10-27T05:29:11.3236621Z Microsoft Windows Server 2025
+2026-10-27T05:29:11.3237187Z 10.0.26100
+2026-10-27T05:29:11.3237692Z Datacenter
+2026-10-27T05:29:11.3238168Z ##[endgroup]
+2026-10-27T05:29:11.3238666Z ##[group]Runner Image
+2026-10-27T05:29:11.3239238Z Image: windows-2025-vs2026
+2026-10-27T05:29:11.3239808Z Version: 20261021.278.1
+2026-10-27T05:29:11.3241576Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20261021.278/images/windows/Windows2025-VS2026-Readme.md
+2026-10-27T05:29:11.3243250Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20261021.278
+2026-10-27T05:29:11.3244216Z ##[endgroup]
+2026-10-27T05:29:11.3245279Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T05:29:11.3248054Z Contents: read
+2026-10-27T05:29:11.3249030Z Metadata: read
+2026-10-27T05:29:11.3250014Z ##[endgroup]
+2026-10-27T05:29:11.3252957Z Secret source: Actions
+2026-10-27T05:29:11.3253937Z Cache mode: write
+2026-10-27T05:29:11.3254726Z Prepare workflow directory
+2026-10-27T05:29:11.3711590Z Prepare all required actions
+2026-10-27T05:29:11.3759987Z Getting action download info
+2026-10-27T05:29:11.6226172Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-27T05:29:11.7536879Z Download action repository 'actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1' (SHA:ece7cb06caefa5fff74198d8649806c4678c61a1)
+2026-10-27T05:29:11.8899665Z Download action repository 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38' (SHA:249970729cb0ef3589644e2896645e5dc5ba9c38)
+2026-10-27T05:29:12.1726440Z Complete job name: harness (windows-2025)
+2026-10-27T05:29:12.3630990Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+2026-10-27T05:29:12.3632191Z with:
+2026-10-27T05:29:12.3632595Z   repository: raidenyn/veles-android
+2026-10-27T05:29:12.3636376Z   token: ***
+2026-10-27T05:29:12.3636760Z   ssh-strict: true
+2026-10-27T05:29:12.3637161Z   ssh-user: git
+2026-10-27T05:29:12.3637560Z   persist-credentials: true
+2026-10-27T05:29:12.3638006Z   clean: true
+2026-10-27T05:29:12.3638397Z   sparse-checkout-cone-mode: true
+2026-10-27T05:29:12.3638874Z   fetch-depth: 1
+2026-10-27T05:29:12.3639252Z   fetch-tags: false
+2026-10-27T05:29:12.3639643Z   show-progress: true
+2026-10-27T05:29:12.3640055Z   lfs: false
+2026-10-27T05:29:12.3640416Z   submodules: false
+2026-10-27T05:29:12.3640848Z   set-safe-directory: true
+2026-10-27T05:29:12.3641732Z   allow-unsafe-pr-checkout: false
+2026-10-27T05:29:12.3642509Z ##[endgroup]
+2026-10-27T05:29:12.5255448Z Syncing repository: raidenyn/veles-android
+2026-10-27T05:29:12.5257217Z ##[group]Getting Git version info
+2026-10-27T05:29:12.5257856Z Working directory is 'D:\a\veles-android\veles-android'
+2026-10-27T05:29:12.6169907Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-27T05:29:12.8986385Z git version 2.56.0.windows.2
+2026-10-27T05:29:12.9033258Z ##[endgroup]
+2026-10-27T05:29:12.9048685Z Temporarily overriding HOME='D:\a\_temp\f8dbf2fa-c028-448e-84b7-93ef0baddea1' before making global git config changes
+2026-10-27T05:29:12.9050893Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T05:29:12.9058683Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\veles-android\veles-android
+2026-10-27T05:29:12.9654000Z Deleting the contents of 'D:\a\veles-android\veles-android'
+2026-10-27T05:29:12.9659466Z ##[group]Determining repository object format
+2026-10-27T05:29:12.9661608Z ##[endgroup]
+2026-10-27T05:29:12.9663158Z ##[group]Initializing the repository
+2026-10-27T05:29:12.9671053Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\veles-android\veles-android
+2026-10-27T05:29:13.0491063Z Initialized empty Git repository in D:/a/veles-android/veles-android/.git/
+2026-10-27T05:29:13.0534369Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/raidenyn/veles-android
+2026-10-27T05:29:13.1180773Z ##[endgroup]
+2026-10-27T05:29:13.1182357Z ##[group]Disabling automatic garbage collection
+2026-10-27T05:29:13.1190649Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+2026-10-27T05:29:13.1639964Z ##[endgroup]
+2026-10-27T05:29:13.1642262Z ##[group]Setting up auth
+2026-10-27T05:29:13.1643912Z Removing SSH command configuration
+2026-10-27T05:29:13.1653783Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T05:29:13.2048821Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-27T05:29:14.4972452Z Removing HTTP extra header
+2026-10-27T05:29:14.4983218Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T05:29:14.5371733Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-27T05:29:15.0863162Z Removing includeIf entries pointing to credentials config files
+2026-10-27T05:29:15.0879088Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T05:29:15.1282106Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-27T05:29:15.6896196Z [command]"C:\Program Files\Git\bin\git.exe" config --file D:\a\_temp\git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+2026-10-27T05:29:15.7362960Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:D:/a/veles-android/veles-android/.git.path D:\a\_temp\git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:29:15.7760958Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:D:/a/veles-android/veles-android/.git/worktrees/*.path D:\a\_temp\git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:29:15.8181974Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:29:15.8559959Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:29:15.8934259Z ##[endgroup]
+2026-10-27T05:29:15.8934886Z ##[group]Fetching the repository
+2026-10-27T05:29:15.8948511Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ac94aafebf74599e0cef6406c93f0b717d5488e0:refs/remotes/pull/123/merge
+2026-10-27T05:29:17.1771267Z From https://github.com/raidenyn/veles-android
+2026-10-27T05:29:17.1772291Z  * [new ref]         ac94aafebf74599e0cef6406c93f0b717d5488e0 -> pull/123/merge
+2026-10-27T05:29:17.1817784Z ##[endgroup]
+2026-10-27T05:29:17.1818807Z ##[group]Determining the checkout info
+2026-10-27T05:29:17.1819990Z ##[endgroup]
+2026-10-27T05:29:17.1833570Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+2026-10-27T05:29:17.2347694Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+2026-10-27T05:29:17.2725290Z ##[group]Checking out the ref
+2026-10-27T05:29:17.2738573Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force refs/remotes/pull/123/merge
+2026-10-27T05:29:17.6158740Z Note: switching to 'refs/remotes/pull/123/merge'.
+2026-10-27T05:29:17.6159078Z 
+2026-10-27T05:29:17.6159290Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-27T05:29:17.6159827Z changes and commit them, and you can discard any commits you make in this
+2026-10-27T05:29:17.6160604Z state without impacting any branches by switching back to a branch.
+2026-10-27T05:29:17.6161141Z 
+2026-10-27T05:29:17.6161470Z If you want to create a new branch to retain commits you create, you may
+2026-10-27T05:29:17.6162153Z do so (now or later) by using -c with the switch command. Example:
+2026-10-27T05:29:17.6162930Z 
+2026-10-27T05:29:17.6163162Z   git switch -c <new-branch-name>
+2026-10-27T05:29:17.6163501Z 
+2026-10-27T05:29:17.6163661Z Or undo this operation with:
+2026-10-27T05:29:17.6163923Z 
+2026-10-27T05:29:17.6163999Z   git switch -
+2026-10-27T05:29:17.6164128Z 
+2026-10-27T05:29:17.6164365Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-27T05:29:17.6164690Z 
+2026-10-27T05:29:17.6165329Z HEAD is now at ac94aaf Merge 66519dd0f5d8057941c71ddc8f07b2948502f146 into 6e083e0ec5cb70d1bc8c5f98abca536e190722e1
+2026-10-27T05:29:17.6241211Z ##[endgroup]
+2026-10-27T05:29:17.6763512Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+2026-10-27T05:29:17.7137592Z ac94aafebf74599e0cef6406c93f0b717d5488e0
+2026-10-27T05:29:17.7614415Z ##[group]Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+2026-10-27T05:29:17.7614871Z with:
+2026-10-27T05:29:17.7615053Z   python-version: 3.12
+2026-10-27T05:29:17.7615268Z   check-latest: false
+2026-10-27T05:29:17.7617805Z   token: ***
+2026-10-27T05:29:17.7617994Z   update-environment: true
+2026-10-27T05:29:17.7618215Z   allow-prereleases: false
+2026-10-27T05:29:17.7618421Z   freethreaded: false
+2026-10-27T05:29:17.7618611Z ##[endgroup]
+2026-10-27T05:29:17.9311429Z ##[group]Installed versions
+2026-10-27T05:29:17.9422581Z Successfully set up CPython (3.12.10)
+2026-10-27T05:29:17.9423339Z ##[endgroup]
+2026-10-27T05:29:17.9788061Z ##[group]Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+2026-10-27T05:29:17.9788510Z with:
+2026-10-27T05:29:17.9788683Z   node-version: 22
+2026-10-27T05:29:17.9788872Z   check-latest: false
+2026-10-27T05:29:17.9791687Z   token: ***
+2026-10-27T05:29:17.9791894Z   package-manager-cache: true
+2026-10-27T05:29:17.9792120Z env:
+2026-10-27T05:29:17.9792374Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:17.9792841Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:29:17.9793310Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:17.9793699Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:17.9794080Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:17.9794383Z ##[endgroup]
+2026-10-27T05:29:18.1627488Z Found in cache @ C:\hostedtoolcache\windows\node\22.23.4\x64
+2026-10-27T05:29:18.1635510Z ##[group]Environment details
+2026-10-27T05:29:22.2884979Z node: v22.23.4
+2026-10-27T05:29:22.2885316Z npm: 10.9.9
+2026-10-27T05:29:22.2885484Z yarn: 1.22.22
+2026-10-27T05:29:22.2885987Z ##[endgroup]
+2026-10-27T05:29:22.3187931Z ##[group]Run rustup show active-toolchain
+2026-10-27T05:29:22.3188370Z [36;1mrustup show active-toolchain[0m
+2026-10-27T05:29:22.3504121Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:29:22.3504502Z env:
+2026-10-27T05:29:22.3504797Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:22.3505316Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:29:22.3506061Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:22.3506490Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:22.3506917Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:22.3507269Z ##[endgroup]
+2026-10-27T05:29:23.2980913Z info: syncing channel updates for 1.98.0-x86_64-pc-windows-msvc
+2026-10-27T05:29:23.7959506Z info: latest update on 2026-08-20 for version 1.98.0 (88d9e12ae 2026-08-18)
+2026-10-27T05:29:23.8012032Z info: downloading 5 components
+2026-10-27T05:29:32.0740290Z warn: the missing active toolchain `1.98.0-x86_64-pc-windows-msvc` has been auto-installed
+2026-10-27T05:29:32.0741304Z warn: auto-installation is deprecated for most `rustup` commands
+2026-10-27T05:29:32.0741912Z warn: scripts relying on this behavior in `rustup` may stop working in the future
+2026-10-27T05:29:32.0745542Z warn: to install the active toolchain, use `rustup install` instead
+2026-10-27T05:29:32.0747373Z warn: see <https://github.com/rust-lang/rustup/issues/4836> for more info
+2026-10-27T05:29:32.0749711Z 1.98.0-x86_64-pc-windows-msvc (overridden by 'D:\a\veles-android\veles-android\native-bridge\feasibility\rust-toolchain.toml')
+2026-10-27T05:29:32.2269316Z ##[group]Run cargo fmt --check
+2026-10-27T05:29:32.2269808Z [36;1mcargo fmt --check[0m
+2026-10-27T05:29:32.2353397Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:29:32.2353744Z env:
+2026-10-27T05:29:32.2354013Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:32.2354464Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:29:32.2354927Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:32.2355323Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:32.2355742Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:32.2356336Z ##[endgroup]
+2026-10-27T05:29:34.0427480Z ##[group]Run cargo test --locked
+2026-10-27T05:29:34.0427816Z [36;1mcargo test --locked[0m
+2026-10-27T05:29:34.0501502Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:29:34.0501837Z env:
+2026-10-27T05:29:34.0502098Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:34.0502544Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:29:34.0502992Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:34.0503407Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:34.0503817Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:29:34.0504129Z ##[endgroup]
+2026-10-27T05:29:34.4632862Z     Updating crates.io index
+2026-10-27T05:29:35.9044055Z  Downloading crates ...
+2026-10-27T05:29:36.0354864Z   Downloaded windows-numerics v0.3.1
+2026-10-27T05:29:36.0492602Z   Downloaded quote v1.0.47
+2026-10-27T05:29:36.0780247Z   Downloaded windows-implement v0.60.2
+2026-10-27T05:29:36.0903874Z   Downloaded itoa v1.0.18
+2026-10-27T05:29:36.1042633Z   Downloaded windows-interface v0.59.3
+2026-10-27T05:29:36.1124259Z   Downloaded windows-strings v0.5.1
+2026-10-27T05:29:36.1282159Z   Downloaded windows-result v0.4.1
+2026-10-27T05:29:36.2703435Z   Downloaded windows-threading v0.2.1
+2026-10-27T05:29:36.2797985Z   Downloaded windows-collections v0.3.2
+2026-10-27T05:29:36.2897616Z   Downloaded windows-link v0.2.1
+2026-10-27T05:29:36.2969877Z   Downloaded windows-future v0.3.2
+2026-10-27T05:29:36.3101813Z   Downloaded serde_core v1.0.228
+2026-10-27T05:29:36.3319330Z   Downloaded windows-core v0.62.2
+2026-10-27T05:29:36.3627024Z   Downloaded ryu v1.0.23
+2026-10-27T05:29:36.3921598Z   Downloaded unicode-ident v1.0.27
+2026-10-27T05:29:36.4154581Z   Downloaded proc-macro2 v1.0.107
+2026-10-27T05:29:36.4410656Z   Downloaded serde_derive v1.0.228
+2026-10-27T05:29:36.4678548Z   Downloaded memchr v2.8.3
+2026-10-27T05:29:36.5107525Z   Downloaded serde v1.0.228
+2026-10-27T05:29:36.5355943Z   Downloaded serde_json v1.0.140
+2026-10-27T05:29:36.5980755Z   Downloaded syn v2.0.119
+2026-10-27T05:29:36.6716216Z   Downloaded windows v0.62.2
+2026-10-27T05:29:38.7780409Z    Compiling proc-macro2 v1.0.107
+2026-10-27T05:29:38.7781365Z    Compiling unicode-ident v1.0.27
+2026-10-27T05:29:38.7783542Z    Compiling quote v1.0.47
+2026-10-27T05:29:38.7784946Z    Compiling windows-link v0.2.1
+2026-10-27T05:29:38.8418389Z    Compiling windows-strings v0.5.1
+2026-10-27T05:29:38.9034281Z    Compiling windows-result v0.4.1
+2026-10-27T05:29:39.2516411Z    Compiling serde_core v1.0.228
+2026-10-27T05:29:39.3222450Z    Compiling serde v1.0.228
+2026-10-27T05:29:41.0577978Z    Compiling windows-threading v0.2.1
+2026-10-27T05:29:41.0623394Z    Compiling serde_json v1.0.140
+2026-10-27T05:29:41.2247527Z    Compiling itoa v1.0.18
+2026-10-27T05:29:41.3717418Z    Compiling veles-otp23-feasibility v0.1.0 (D:\a\veles-android\veles-android\native-bridge\feasibility)
+2026-10-27T05:29:41.5219776Z    Compiling memchr v2.8.3
+2026-10-27T05:29:41.6489489Z    Compiling ryu v1.0.23
+2026-10-27T05:29:42.4805727Z    Compiling syn v2.0.119
+2026-10-27T05:29:45.6473403Z    Compiling windows-interface v0.59.3
+2026-10-27T05:29:45.6475188Z    Compiling windows-implement v0.60.2
+2026-10-27T05:29:45.6475719Z    Compiling serde_derive v1.0.228
+2026-10-27T05:29:46.4955269Z    Compiling windows-core v0.62.2
+2026-10-27T05:29:46.8336881Z    Compiling windows-future v0.3.2
+2026-10-27T05:29:46.8337939Z    Compiling windows-collections v0.3.2
+2026-10-27T05:29:47.1455861Z    Compiling windows-numerics v0.3.1
+2026-10-27T05:29:47.5977776Z    Compiling windows v0.62.2
+2026-10-27T05:30:04.0422024Z     Finished `test` profile [unoptimized + debuginfo] target(s) in 29.64s
+2026-10-27T05:30:04.1068931Z      Running unittests src\lib.rs (target\debug\deps\veles_otp23_feasibility-fac0a7da97729a59.exe)
+2026-10-27T05:30:04.1202233Z 
+2026-10-27T05:30:04.1205778Z running 1 test
+2026-10-27T05:30:04.1210237Z test winrt::tests::disconnected_link_slots_are_released_during_churn ... ok
+2026-10-27T05:30:04.1210838Z 
+2026-10-27T05:30:04.1211661Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T05:30:04.1212254Z 
+2026-10-27T05:30:04.1231846Z      Running unittests src\bin\otp23_host.rs (target\debug\deps\otp23_host-d5d6d8cf0b5e8748.exe)
+2026-10-27T05:30:04.1333874Z 
+2026-10-27T05:30:04.1334168Z running 0 tests
+2026-10-27T05:30:04.1334414Z 
+2026-10-27T05:30:04.1334852Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T05:30:04.1335259Z 
+2026-10-27T05:30:04.1352345Z      Running tests\core_correlation.rs (target\debug\deps\core_correlation-d19d2f3d6ef0802c.exe)
+2026-10-27T05:30:04.1462065Z 
+2026-10-27T05:30:04.1462572Z running 37 tests
+2026-10-27T05:30:04.1490944Z test an_id_may_be_reused_after_its_completion_was_delivered ... ok
+2026-10-27T05:30:04.1492158Z test a_scan_stops_itself_after_300_seconds ... ok
+2026-10-27T05:30:04.1493255Z test a_device_already_connected_or_connecting_is_busy_and_retryable ... ok
+2026-10-27T05:30:04.1497788Z test a_negotiated_mtu_below_185_or_above_517_is_refused ... ok
+2026-10-27T05:30:04.1501535Z test at_most_two_scans_may_be_open ... ok
+2026-10-27T05:30:04.1503768Z test connect_by_device_handle_resolves_the_hint_and_completes_after_setup ... ok
+2026-10-27T05:30:04.1506701Z test connect_failure_is_classified_and_frees_the_device ... ok
+2026-10-27T05:30:04.1508028Z test connect_to_an_unknown_or_malformed_target_fails_closed ... ok
+2026-10-27T05:30:04.1512567Z test device_found_carries_scan_and_device_handles_and_is_deduplicated_per_scan ... ok
+2026-10-27T05:30:04.1514298Z test device_labels_and_hints_are_sanitised_to_envelope_bounds ... ok
+2026-10-27T05:30:04.1517906Z test at_most_32_connections ... ok
+2026-10-27T05:30:04.1679903Z test handles_are_unique_random_looking_and_never_reused ... ok
+2026-10-27T05:30:04.1685445Z test hello_returns_ready_and_performs_no_ble_work ... ok
+2026-10-27T05:30:04.1700551Z test inbound_records_never_cross_connections_even_when_fragments_interleave ... ok
+2026-10-27T05:30:04.1707249Z test malformed_inbound_fragments_are_dropped_silently_and_do_not_affect_the_peer_state ... ok
+2026-10-27T05:30:04.1712966Z test no_overlap_is_a_fatal_correlated_error_then_exit_3 ... ok
+2026-10-27T05:30:04.1720343Z test post_ready_uncorrelatable_input_exits_2_silently_after_full_release ... ok
+2026-10-27T05:30:04.1725202Z test pre_ready_non_hello_is_answered_once_then_exit_2 ... ok
+2026-10-27T05:30:04.1732712Z test repeated_conflicting_transaction_starts_disconnect_only_that_peer ... ok
+2026-10-27T05:30:04.1739067Z test repeated_hello_and_wrong_api_version_are_rejected_without_ending_the_session ... ok
+2026-10-27T05:30:04.1745192Z test reusing_an_id_whose_completion_is_still_queued_fails_closed ... ok
+2026-10-27T05:30:04.1751974Z test reusing_an_outstanding_request_id_fails_closed_without_a_response ... ok
+2026-10-27T05:30:04.1759538Z test scan_start_failure_is_a_correlated_classified_error ... ok
+2026-10-27T05:30:04.1765728Z test global_send_queue_ceiling_is_128_records_or_128_kib ... ok
+2026-10-27T05:30:04.1769596Z test send_fragments_the_whole_record_and_reports_sent_after_the_writes_complete ... ok
+2026-10-27T05:30:04.1809763Z test send_validation_uses_the_specific_error_codes ... ok
+2026-10-27T05:30:04.1816868Z test sends_on_one_connection_are_serialised_and_use_fresh_transaction_ids ... ok
+2026-10-27T05:30:04.1822634Z test send_queue_is_bounded_per_peer_by_records_and_bytes ... ok
+2026-10-27T05:30:04.1823628Z test start_scan_completes_only_when_the_backend_confirms ... ok
+2026-10-27T05:30:04.1830665Z test stop_scan_is_correlated_and_follows_the_last_device_found ... ok
+2026-10-27T05:30:04.1837200Z test two_connects_complete_independently_and_out_of_order ... ok
+2026-10-27T05:30:04.1841684Z test uncorrelatable_pre_ready_input_is_silent_exit_2 ... ok
+2026-10-27T05:30:04.1848070Z test unknown_backend_tokens_and_late_events_are_ignored ... ok
+2026-10-27T05:30:04.1856045Z test unsolicited_scan_end_has_no_request_id_and_releases_the_scan ... ok
+2026-10-27T05:30:04.1873919Z test the_65th_outstanding_request_is_refused_retryably ... ok
+2026-10-27T05:30:04.1913380Z test evicted_device_handles_fail_with_unknown_handle ... ok
+2026-10-27T05:30:04.1928696Z test device_found_is_rate_limited_to_64_per_second_and_1024_per_scan ... ok
+2026-10-27T05:30:04.1929605Z 
+2026-10-27T05:30:04.1930015Z test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+2026-10-27T05:30:04.1930399Z 
+2026-10-27T05:30:04.1951066Z      Running tests\core_lifecycle.rs (target\debug\deps\core_lifecycle-f7b9340faae96301.exe)
+2026-10-27T05:30:04.2058564Z 
+2026-10-27T05:30:04.2058803Z running 20 tests
+2026-10-27T05:30:04.2088201Z test an_overflowing_message_is_not_accepted_and_no_request_resurrects ... ok
+2026-10-27T05:30:04.2090505Z test a_released_handle_is_unknown_and_late_backend_events_for_it_are_ignored ... ok
+2026-10-27T05:30:04.2091488Z test backend_callback_overflow_fails_closed ... ok
+2026-10-27T05:30:04.2092367Z test a_failed_gatt_write_fails_the_send_and_tears_down_only_that_link ... ok
+2026-10-27T05:30:04.2095363Z test connect_is_failed_not_disconnected_when_the_link_drops_during_setup ... ok
+2026-10-27T05:30:04.2096884Z test connect_times_out_after_30_seconds_and_releases_the_link ... ok
+2026-10-27T05:30:04.2100189Z test disconnecting_a_connecting_link_fails_its_connect_then_reports_disconnected ... ok
+2026-10-27T05:30:04.2101182Z test eof_before_hello_also_exits_cleanly ... ok
+2026-10-27T05:30:04.2105111Z test disconnect_releases_only_that_handle_and_fails_its_pending_sends_first ... ok
+2026-10-27T05:30:04.2107116Z test inbound_partial_records_expire_after_five_seconds_of_inactivity ... ok
+2026-10-27T05:30:04.2110850Z test framing_violations_fail_closed_with_exit_2_and_io_errors_with_exit_1 ... ok
+2026-10-27T05:30:04.2112733Z test link_loss_errors_in_flight_requests_then_emits_one_unsolicited_disconnected ... ok
+2026-10-27T05:30:04.2113708Z test nothing_is_accepted_or_emitted_after_shutdown ... ok
+2026-10-27T05:30:04.2114580Z test next_deadline_tracks_the_earliest_pending_work ... ok
+2026-10-27T05:30:04.2119780Z test output_queue_byte_overflow_also_fails_closed ... ok
+2026-10-27T05:30:04.2123231Z test output_queue_message_overflow_fails_closed_without_dropping_or_reordering ... ok
+2026-10-27T05:30:04.2124461Z test send_times_out_after_30_seconds_and_the_half_written_link_is_dropped ... ok
+2026-10-27T05:30:04.2126168Z test shutdown_orders_errors_then_lifecycle_then_shutdown_complete_last ... ok
+2026-10-27T05:30:04.2130417Z test stdin_eof_stops_scans_disconnects_links_and_exits_without_output ... ok
+2026-10-27T05:30:04.2132369Z test stdout_closure_is_treated_as_port_closure ... ok
+2026-10-27T05:30:04.2133075Z 
+2026-10-27T05:30:04.2133622Z test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+2026-10-27T05:30:04.2134011Z 
+2026-10-27T05:30:04.2152286Z      Running tests\fragmentation.rs (target\debug\deps\fragmentation-edf3bced6a55b4c8.exe)
+2026-10-27T05:30:04.2255934Z 
+2026-10-27T05:30:04.2256151Z running 31 tests
+2026-10-27T05:30:04.2262383Z test clear_wipes_everything ... ok
+2026-10-27T05:30:04.2263396Z test conflicts_older_than_sixty_seconds_are_forgotten ... ok
+2026-10-27T05:30:04.2268450Z test final_length_mismatch_with_correct_flag_sequence_is_discarded ... ok
+2026-10-27T05:30:04.2269481Z test duplicate_index_and_stray_fragments_of_unknown_transactions ... ok
+2026-10-27T05:30:04.2272466Z test chunking_at_the_mtu_floor_matches_the_frozen_boundaries ... ok
+2026-10-27T05:30:04.2274113Z test first_fragment_total_must_be_1_to_4096 ... ok
+2026-10-27T05:30:04.2275619Z test fragment_activity_refreshes_the_inactivity_timer ... ok
+2026-10-27T05:30:04.2278980Z test inactivity_timeout_is_five_seconds_per_transaction ... ok
+2026-10-27T05:30:04.2281381Z test global_caps_apply_across_peers_before_allocation ... ok
+2026-10-27T05:30:04.2283321Z test live_duplicate_start_is_ignored_and_a_repeat_within_sixty_seconds_disconnects ... ok
+2026-10-27T05:30:04.2286498Z test malformed_fragments_discard_the_transaction_and_free_its_budget ... ok
+2026-10-27T05:30:04.2287674Z test max_mtu_uses_the_capped_non_final_fragments ... ok
+2026-10-27T05:30:04.2290669Z test max_record_is_23_full_fragments_plus_two_bytes_at_mtu_185 ... ok
+2026-10-27T05:30:04.2291832Z test r2_budget_matches_the_literal_table_for_every_mtu ... ok
+2026-10-27T05:30:04.2292853Z test only_two_incomplete_transactions_per_peer_and_the_third_changes_nothing ... ok
+2026-10-27T05:30:04.2297358Z test r2_mtu_517_payload_boundary_508_fits_and_509_needs_two_fragments ... ok
+2026-10-27T05:30:04.2298930Z test r2_mtu_517_capped_non_final_payloads_are_exactly_508_bytes ... ok
+2026-10-27T05:30:04.2301635Z test r2_exact_size_rules_reject_every_off_by_one_at_mtu_517 ... ok
+2026-10-27T05:30:04.2302995Z test r2_mtu_517_rejects_inbound_frames_above_the_512_attribute_cap ... ok
+2026-10-27T05:30:04.2306595Z test r2_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries ... ok
+2026-10-27T05:30:04.2308119Z test r2_preserves_the_mtu_185_vectors ... ok
+2026-10-27T05:30:04.2310679Z test r2_receiver_accepts_an_empty_final_only_after_an_exact_multiple ... ok
+2026-10-27T05:30:04.2314279Z test r2_revision_1_frames_at_mtu_516_and_517_fail_closed ... ok
+2026-10-27T05:30:04.2320580Z test record_length_zero_and_above_4096_are_refused_at_fragmentation_time ... ok
+2026-10-27T05:30:04.2337111Z test round_trip_every_boundary_length_at_floor_and_ceiling_mtu ... ok
+2026-10-27T05:30:04.2414826Z test sender_output_matches_the_committed_max_record_vector ... ok
+2026-10-27T05:30:04.2418557Z test transaction_id_domain_and_link_capacity_domains_are_enforced ... ok
+2026-10-27T05:30:04.2422146Z test zero_length_final_fragment_is_accepted_when_the_record_is_an_exact_multiple ... ok
+2026-10-27T05:30:04.2470148Z test committed_fragmentation_fixtures_behave_as_specified ... ok
+2026-10-27T05:30:04.2506550Z test r2_sender_reproduces_every_canonical_accepted_fixture_byte_for_byte ... ok
+2026-10-27T05:30:04.3068646Z test r2_sender_and_receiver_agree_at_every_boundary_of_every_mtu ... ok
+2026-10-27T05:30:04.3069139Z 
+2026-10-27T05:30:04.3069496Z test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+2026-10-27T05:30:04.3069867Z 
+2026-10-27T05:30:04.3090931Z      Running tests\framing.rs (target\debug\deps\framing-6fe20834a6eec146.exe)
+2026-10-27T05:30:04.3196310Z 
+2026-10-27T05:30:04.3196540Z running 10 tests
+2026-10-27T05:30:04.3203076Z test reads_consecutive_frames_then_clean_eof ... ok
+2026-10-27T05:30:04.3205653Z test rejects_four_gigabyte_declaration_without_allocating ... ok
+2026-10-27T05:30:04.3207404Z test rejects_one_byte_over_the_maximum_without_reading_the_payload ... ok
+2026-10-27T05:30:04.3209137Z test accepts_exactly_the_maximum_frame ... ok
+2026-10-27T05:30:04.3211011Z test rejects_zero_length_frame ... ok
+2026-10-27T05:30:04.3211631Z test survives_one_byte_reads ... ok
+2026-10-27T05:30:04.3213660Z test truncated_header_is_distinguished_from_clean_eof ... ok
+2026-10-27T05:30:04.3214831Z test truncated_payload_reports_progress ... ok
+2026-10-27T05:30:04.3215611Z test writes_header_and_payload_in_one_write_then_flushes ... ok
+2026-10-27T05:30:04.3218294Z test write_enforces_one_to_maximum_bytes ... ok
+2026-10-27T05:30:04.3218733Z 
+2026-10-27T05:30:04.3219108Z test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T05:30:04.3219456Z 
+2026-10-27T05:30:04.3235332Z      Running tests\hardware_scan.rs (target\debug\deps\hardware_scan-26f14aa10b3d3000.exe)
+2026-10-27T05:30:04.3336340Z 
+2026-10-27T05:30:04.3336530Z running 4 tests
+2026-10-27T05:30:04.3338619Z test connecting_to_an_absent_device_fails_closed_and_classified ... ignored, needs a Bluetooth LE radio
+2026-10-27T05:30:04.3340051Z test real_diagnostic_scan_reports_bounded_device_events ... ignored, needs a Bluetooth LE radio
+2026-10-27T05:30:04.3341639Z test real_scan_is_released_when_stdin_closes ... ignored, needs a Bluetooth LE radio
+2026-10-27T05:30:04.3342960Z test real_scan_starts_stops_and_shutdown_exits_with_idle_stdin ... ignored, needs a Bluetooth LE radio
+2026-10-27T05:30:04.3343686Z 
+2026-10-27T05:30:04.3344266Z test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T05:30:04.3344888Z 
+2026-10-27T05:30:04.3357237Z      Running tests\macos_map.rs (target\debug\deps\macos_map-b01f674aef3712ea.exe)
+2026-10-27T05:30:04.3455731Z 
+2026-10-27T05:30:04.3455999Z running 13 tests
+2026-10-27T05:30:04.3463654Z test authorization_raw_values_map_to_fixed_names ... ok
+2026-10-27T05:30:04.3464879Z test bounded_set_rejects_duplicates_and_capacity ... ok
+2026-10-27T05:30:04.3466360Z test every_accepted_write_length_wraps_every_frame_in_one_os_write ... ok
+2026-10-27T05:30:04.3468645Z test fallback_label_is_short_valid_and_not_the_full_identifier ... ok
+2026-10-27T05:30:04.3469916Z test hint_round_trips_the_peripheral_identifier ... ok
+2026-10-27T05:30:04.3470925Z test malformed_hints_are_refused ... ok
+2026-10-27T05:30:04.3471928Z test reported_512_is_the_clamped_budget_without_inventing_an_mtu ... ok
+2026-10-27T05:30:04.3473597Z test scan_gate_admits_exactly_one_start_and_one_end ... ok
+2026-10-27T05:30:04.3475772Z test scan_gate_natural_end_wins_without_external_stop ... ok
+2026-10-27T05:30:04.3478078Z test unavailable_timeout_only_blames_the_radio_when_authorized ... ok
+2026-10-27T05:30:04.3478980Z test valid_uuid_accepts_only_canonical_lowercase ... ok
+2026-10-27T05:30:04.3479899Z test write_lengths_at_or_above_512_give_the_clamped_budget ... ok
+2026-10-27T05:30:04.3480475Z test write_lengths_below_512_cannot_establish_a_common_budget_and_fail_closed ... ok
+2026-10-27T05:30:04.3480806Z 
+2026-10-27T05:30:04.3481137Z test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T05:30:04.3481741Z 
+2026-10-27T05:30:04.3497376Z      Running tests\outqueue.rs (target\debug\deps\outqueue-cc7c0dd9eb6a566b.exe)
+2026-10-27T05:30:04.3594577Z 
+2026-10-27T05:30:04.3594761Z running 9 tests
+2026-10-27T05:30:04.3601242Z test limits_are_the_frozen_ceilings ... ok
+2026-10-27T05:30:04.3601909Z test byte_ceiling_overflows_at_the_boundary ... ok
+2026-10-27T05:30:04.3602996Z test close_rejects_pushes_but_drains_what_is_queued ... ok
+2026-10-27T05:30:04.3603878Z test a_popped_frame_stays_accounted_until_its_write_finishes ... ok
+2026-10-27T05:30:04.3605933Z test message_ceiling_overflows_without_dropping_or_reordering ... ok
+2026-10-27T05:30:04.3607956Z test preserves_order_and_reports_depth ... ok
+2026-10-27T05:30:04.3609110Z test request_ids_stay_reserved_while_queued_or_being_written ... ok
+2026-10-27T05:30:04.4013114Z test pop_blocks_until_data_arrives ... ok
+2026-10-27T05:30:04.4586588Z test wait_drained_observes_the_writer_and_respects_its_deadline ... ok
+2026-10-27T05:30:04.4587040Z 
+2026-10-27T05:30:04.4587485Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+2026-10-27T05:30:04.4587901Z 
+2026-10-27T05:30:04.4608151Z      Running tests\process.rs (target\debug\deps\process-b9fa62a168b16663.exe)
+2026-10-27T05:30:04.4713273Z 
+2026-10-27T05:30:04.4713591Z running 14 tests
+2026-10-27T05:30:04.4913551Z test disconnect_releases_one_phone_while_the_other_keeps_working ... ok
+2026-10-27T05:30:04.4915028Z test a_frame_delivered_in_single_byte_writes_is_reassembled ... ok
+2026-10-27T05:30:04.4993960Z test hello_returns_ready_and_stdin_eof_exits_zero_closing_stdout ... ok
+2026-10-27T05:30:04.5001004Z test eof_with_active_scan_and_connections_exits_zero_and_leaves_no_process ... ok
+2026-10-27T05:30:04.5051626Z test link_loss_is_reported_for_one_handle_only ... ok
+2026-10-27T05:30:04.5114215Z test incompatible_api_flushes_the_error_then_exits_3 ... ok
+2026-10-27T05:30:04.5238189Z test record_size_boundaries_over_the_pipe ... ok
+2026-10-27T05:30:04.5262301Z test pre_ready_request_gets_one_correlated_error_then_exit_2 ... ok
+2026-10-27T05:30:04.5483143Z test shutdown_completes_and_exits_while_stdin_stays_open_and_idle ... ok
+2026-10-27T05:30:04.5538612Z test shutdown_with_open_links_orders_lifecycle_before_shutdown_complete ... ok
+2026-10-27T05:30:04.5664377Z test two_independent_phones_exchange_complete_records_and_never_cross ... ok
+2026-10-27T05:30:04.5811581Z test malformed_input_before_and_after_ready_exits_2_silently ... ok
+2026-10-27T05:30:04.6017852Z test oversize_zero_and_truncated_frames_fail_closed_with_exit_2_and_no_output ... ok
+2026-10-27T05:30:04.6073220Z test wrong_or_missing_origin_argument_refuses_to_start ... ok
+2026-10-27T05:30:04.6073623Z 
+2026-10-27T05:30:04.6074052Z test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+2026-10-27T05:30:04.6074487Z 
+2026-10-27T05:30:04.6093675Z      Running tests\schema.rs (target\debug\deps\schema-903a43e9ab7fec74.exe)
+2026-10-27T05:30:04.6196594Z 
+2026-10-27T05:30:04.6196832Z running 25 tests
+2026-10-27T05:30:04.6203358Z test base64_rejects_non_canonical_and_malformed_text ... ok
+2026-10-27T05:30:04.6204153Z test base64_round_trips_and_matches_rfc4648_vectors ... ok
+2026-10-27T05:30:04.6207171Z test accepts_every_request_type_with_exact_fields ... ok
+2026-10-27T05:30:04.6208375Z test every_error_code_has_its_wire_name ... ok
+2026-10-27T05:30:04.6211764Z test correlated_events_carry_request_id_and_unsolicited_events_do_not ... ok
+2026-10-27T05:30:04.6213660Z test hello_accepts_version_lists_and_ranges ... ok
+2026-10-27T05:30:04.6216044Z test hello_offer_shape_violations_are_rejected_as_negotiation_errors ... ok
+2026-10-27T05:30:04.6217487Z test offer_selects_highest_mutual_version ... ok
+2026-10-27T05:30:04.6218720Z test base64_enforces_decoded_size_bounds_zero_and_max ... ok
+2026-10-27T05:30:04.6220358Z test optional_fields_are_omitted_never_null ... ok
+2026-10-27T05:30:04.6222499Z test post_ready_requires_the_negotiated_api_version ... ok
+2026-10-27T05:30:04.6227610Z test platform_hint_bounds_are_utf8_byte_lengths ... ok
+2026-10-27T05:30:04.6228599Z test pre_negotiation_error_has_no_api_version ... ok
+2026-10-27T05:30:04.6230414Z test pre_ready_non_hello_with_usable_id_is_correlated_fatal_pre_ready ... ok
+2026-10-27T05:30:04.6231394Z test request_id_accepts_64_chars_of_the_allowed_alphabet ... ok
+2026-10-27T05:30:04.6232219Z test ready_reports_selected_version_and_capabilities ... ok
+2026-10-27T05:30:04.6233131Z test schema_violations_with_a_usable_id_are_correlated_invalid_request ... ok
+2026-10-27T05:30:04.6234044Z test strict_json_accepts_plain_documents_and_unicode ... ok
+2026-10-27T05:30:04.6236920Z test strict_json_rejects_duplicate_keys_at_any_depth ... ok
+2026-10-27T05:30:04.6237750Z test strict_json_rejects_non_integers_and_null ... ok
+2026-10-27T05:30:04.6239736Z test strict_json_rejects_syntax_and_invalid_utf8 ... ok
+2026-10-27T05:30:04.6240835Z test strict_json_rejects_trailing_bytes_including_whitespace ... ok
+2026-10-27T05:30:04.6241745Z test unknown_request_types_are_correlated_unknown_request ... ok
+2026-10-27T05:30:04.6245655Z test unusable_envelopes_are_uncorrelatable_in_both_phases ... ok
+2026-10-27T05:30:04.6249574Z test send_record_validation_maps_to_specific_codes ... ok
+2026-10-27T05:30:04.6250079Z 
+2026-10-27T05:30:04.6250550Z test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+2026-10-27T05:30:04.6250925Z 
+2026-10-27T05:30:04.6266233Z      Running tests\winrt_map.rs (target\debug\deps\winrt_map-3b7d8941b1ae50bd.exe)
+2026-10-27T05:30:04.6365534Z 
+2026-10-27T05:30:04.6365832Z running 6 tests
+2026-10-27T05:30:04.6372329Z test access_and_radio_states_distinguish_denied_from_off ... ok
+2026-10-27T05:30:04.6373825Z test gatt_statuses_map_to_stable_stage_names ... ok
+2026-10-27T05:30:04.6375383Z test fallback_label_is_short_valid_and_not_the_full_address ... ok
+2026-10-27T05:30:04.6376186Z test bluetooth_errors_are_classified_with_retryability ... ok
+2026-10-27T05:30:04.6377452Z test hint_round_trips_and_masks_to_48_bits ... ok
+2026-10-27T05:30:04.6377838Z test malformed_hints_are_refused ... ok
+2026-10-27T05:30:04.6378036Z 
+2026-10-27T05:30:04.6378372Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T05:30:04.6378720Z 
+2026-10-27T05:30:04.6391648Z    Doc-tests veles_otp23_feasibility
+2026-10-27T05:30:04.7403671Z 
+2026-10-27T05:30:04.7404545Z running 0 tests
+2026-10-27T05:30:04.7405030Z 
+2026-10-27T05:30:04.7406113Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T05:30:04.7406755Z 
+2026-10-27T05:30:04.8648319Z ##[group]Run cargo clippy --locked --all-targets -- -D warnings
+2026-10-27T05:30:04.8648847Z [36;1mcargo clippy --locked --all-targets -- -D warnings[0m
+2026-10-27T05:30:04.8722511Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:04.8722946Z env:
+2026-10-27T05:30:04.8723791Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:04.8724351Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:04.8724901Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:04.8725587Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:04.8726073Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:04.8726485Z ##[endgroup]
+2026-10-27T05:30:06.1126309Z     Checking windows-link v0.2.1
+2026-10-27T05:30:06.1132730Z     Checking serde_core v1.0.228
+2026-10-27T05:30:06.1139387Z    Compiling veles-otp23-feasibility v0.1.0 (D:\a\veles-android\veles-android\native-bridge\feasibility)
+2026-10-27T05:30:06.1140385Z     Checking itoa v1.0.18
+2026-10-27T05:30:06.1604217Z     Checking windows-result v0.4.1
+2026-10-27T05:30:06.3009007Z     Checking windows-strings v0.5.1
+2026-10-27T05:30:06.3476650Z     Checking windows-threading v0.2.1
+2026-10-27T05:30:06.3506943Z     Checking ryu v1.0.23
+2026-10-27T05:30:06.4366976Z     Checking memchr v2.8.3
+2026-10-27T05:30:06.5117299Z     Checking windows-core v0.62.2
+2026-10-27T05:30:06.8882253Z     Checking windows-collections v0.3.2
+2026-10-27T05:30:06.8882976Z     Checking windows-future v0.3.2
+2026-10-27T05:30:06.9969855Z     Checking windows-numerics v0.3.1
+2026-10-27T05:30:07.5416736Z     Checking windows v0.62.2
+2026-10-27T05:30:08.5735624Z     Checking serde v1.0.228
+2026-10-27T05:30:09.0365540Z     Checking serde_json v1.0.140
+2026-10-27T05:30:13.8139935Z     Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.00s
+2026-10-27T05:30:13.9899555Z ##[group]Run node --test scripts/connector-api.test.mjs scripts/isolated-device.test.mjs
+2026-10-27T05:30:13.9900274Z [36;1mnode --test scripts/connector-api.test.mjs scripts/isolated-device.test.mjs[0m
+2026-10-27T05:30:13.9972427Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:13.9972795Z env:
+2026-10-27T05:30:13.9973064Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:13.9973982Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:13.9974457Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:13.9974886Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:13.9975284Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:13.9975599Z ##[endgroup]
+2026-10-27T05:30:14.4507117Z TAP version 13
+2026-10-27T05:30:14.5110657Z # Subtest: physical driver only calls methods exported by the real connector
+2026-10-27T05:30:14.5117842Z ok 1 - physical driver only calls methods exported by the real connector
+2026-10-27T05:30:14.5118830Z   ---
+2026-10-27T05:30:14.5119434Z   duration_ms: 2.8933
+2026-10-27T05:30:14.5119963Z   type: 'test'
+2026-10-27T05:30:14.5120421Z   ...
+2026-10-27T05:30:14.5136853Z # Subtest: connector records visibility/focus history through listeners only
+2026-10-27T05:30:14.5140155Z ok 2 - connector records visibility/focus history through listeners only
+2026-10-27T05:30:14.5141909Z   ---
+2026-10-27T05:30:14.5142445Z   duration_ms: 2.2059
+2026-10-27T05:30:14.5142988Z   type: 'test'
+2026-10-27T05:30:14.5143435Z   ...
+2026-10-27T05:30:14.5313610Z # Subtest: isolated init script only adds the .otp23 suffix to the debug build type
+2026-10-27T05:30:14.5316294Z ok 3 - isolated init script only adds the .otp23 suffix to the debug build type
+2026-10-27T05:30:14.5316850Z   ---
+2026-10-27T05:30:14.5317150Z   duration_ms: 2.2992
+2026-10-27T05:30:14.5317490Z   type: 'test'
+2026-10-27T05:30:14.5317758Z   ...
+2026-10-27T05:30:14.5318272Z # Subtest: app no longer defines or reads a cap-only OTP23_POC flag
+2026-10-27T05:30:14.5320248Z ok 4 - app no longer defines or reads a cap-only OTP23_POC flag
+2026-10-27T05:30:14.5320702Z   ---
+2026-10-27T05:30:14.5320879Z   duration_ms: 1.7919
+2026-10-27T05:30:14.5321090Z   type: 'test'
+2026-10-27T05:30:14.5321262Z   ...
+2026-10-27T05:30:14.5322824Z # Subtest: physical driver only calls methods exported by the real connector
+2026-10-27T05:30:14.5324044Z ok 5 - physical driver only calls methods exported by the real connector
+2026-10-27T05:30:14.5324663Z   ---
+2026-10-27T05:30:14.5324890Z   duration_ms: 2.7155
+2026-10-27T05:30:14.5325097Z   type: 'test'
+2026-10-27T05:30:14.5325412Z   ...
+2026-10-27T05:30:14.5325674Z 1..5
+2026-10-27T05:30:14.5327401Z # tests 5
+2026-10-27T05:30:14.5328116Z # suites 0
+2026-10-27T05:30:14.5328422Z # pass 5
+2026-10-27T05:30:14.5329429Z # fail 0
+2026-10-27T05:30:14.5330472Z # cancelled 0
+2026-10-27T05:30:14.5331497Z # skipped 0
+2026-10-27T05:30:14.5332503Z # todo 0
+2026-10-27T05:30:14.5333599Z # duration_ms 138.3948
+2026-10-27T05:30:14.6606899Z ##[group]Run python scripts/trace-parser.test.py
+2026-10-27T05:30:14.6607327Z [36;1mpython scripts/trace-parser.test.py[0m
+2026-10-27T05:30:14.6681039Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:14.6681587Z env:
+2026-10-27T05:30:14.6681851Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:14.6682307Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:14.6682767Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:14.6683165Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:14.6683568Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:14.6683871Z ##[endgroup]
+2026-10-27T05:30:15.7362470Z pass sample-keys
+2026-10-27T05:30:15.7362763Z pass sample-mtu
+2026-10-27T05:30:15.7363003Z pass sample-sends
+2026-10-27T05:30:15.7363223Z pass sample-replies
+2026-10-27T05:30:15.7363545Z pass sample-no-handles
+2026-10-27T05:30:15.7363770Z pass sample-json
+2026-10-27T05:30:15.7363957Z pass empty-file
+2026-10-27T05:30:15.7364150Z pass missing-file
+2026-10-27T05:30:15.8598704Z ##[group]Run python scripts/test_poc_background.py
+2026-10-27T05:30:15.8599149Z [36;1mpython scripts/test_poc_background.py[0m
+2026-10-27T05:30:15.8671994Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:15.8672341Z env:
+2026-10-27T05:30:15.8672607Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:15.8673071Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:15.8673531Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:15.8673941Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:15.8674333Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:15.8674643Z ##[endgroup]
+2026-10-27T05:30:17.0450247Z ..........................
+2026-10-27T05:30:17.0450726Z ----------------------------------------------------------------------
+2026-10-27T05:30:17.0451178Z Ran 26 tests in 0.354s
+2026-10-27T05:30:17.0451357Z 
+2026-10-27T05:30:17.0451438Z OK
+2026-10-27T05:30:17.1888483Z ##[group]Run python scripts/test_strict_background.py
+2026-10-27T05:30:17.1888943Z [36;1mpython scripts/test_strict_background.py[0m
+2026-10-27T05:30:17.1961964Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:17.1962315Z env:
+2026-10-27T05:30:17.1962593Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.1963073Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:17.1963553Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.1963978Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.1964390Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.1964705Z ##[endgroup]
+2026-10-27T05:30:17.6821557Z ..........................................................................................
+2026-10-27T05:30:17.6822492Z ----------------------------------------------------------------------
+2026-10-27T05:30:17.6823038Z Ran 90 tests in 0.093s
+2026-10-27T05:30:17.6823237Z 
+2026-10-27T05:30:17.6823354Z OK
+2026-10-27T05:30:17.8172306Z ##[group]Run python scripts/test_matrix.py
+2026-10-27T05:30:17.8172691Z [36;1mpython scripts/test_matrix.py[0m
+2026-10-27T05:30:17.8245304Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:17.8245649Z env:
+2026-10-27T05:30:17.8245906Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.8246354Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:17.8246799Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.8247221Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.8247636Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:17.8247959Z ##[endgroup]
+2026-10-27T05:30:18.2275861Z .............................
+2026-10-27T05:30:18.2276784Z ----------------------------------------------------------------------
+2026-10-27T05:30:18.2277142Z Ran 29 tests in 0.039s
+2026-10-27T05:30:18.2277465Z 
+2026-10-27T05:30:18.2277552Z OK
+2026-10-27T05:30:18.3505054Z ##[group]Run python scripts/test_strict_background_finalize.py
+2026-10-27T05:30:18.3505572Z [36;1mpython scripts/test_strict_background_finalize.py[0m
+2026-10-27T05:30:18.3576786Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:18.3577687Z env:
+2026-10-27T05:30:18.3577955Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:18.3578413Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:18.3578879Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:18.3579291Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:18.3579699Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:18.3580033Z ##[endgroup]
+2026-10-27T05:30:19.4599411Z .....error: refusing to overwrite existing C:\Users\RUNNER~1\AppData\Local\Temp\tmpw11x1tez\adjudicated.json
+2026-10-27T05:30:19.4609695Z error: refusing to overwrite existing C:\Users\RUNNER~1\AppData\Local\Temp\tmpw11x1tez\raw.json
+2026-10-27T05:30:19.4647366Z .error: --raw is not a strict_background result
+2026-10-27T05:30:19.7239658Z ...warning: in the working copy of 'strict_background_core.py', LF will be replaced by CRLF the next time Git touches it
+2026-10-27T05:30:19.7330055Z warning: in the working copy of 'strict_background_finalize.py', LF will be replaced by CRLF the next time Git touches it
+2026-10-27T05:30:19.7390566Z warning: in the working copy of 'strict_phone_validation.py', LF will be replaced by CRLF the next time Git touches it
+2026-10-27T05:30:20.3544923Z ...................
+2026-10-27T05:30:20.3545567Z ----------------------------------------------------------------------
+2026-10-27T05:30:20.3546064Z Ran 28 tests in 1.632s
+2026-10-27T05:30:20.3546246Z 
+2026-10-27T05:30:20.3546343Z OK
+2026-10-27T05:30:20.3548615Z strict_result=PASS scenario=cold phone_validation=PASS formal_otp23_acceptance=false -> C:\Users\RUNNER~1\AppData\Local\Temp\tmpw11x1tez\adjudicated.json
+2026-10-27T05:30:20.4906421Z ##[group]Run python scripts/test_m6_phone_clock_adjudication.py
+2026-10-27T05:30:20.4906928Z [36;1mpython scripts/test_m6_phone_clock_adjudication.py[0m
+2026-10-27T05:30:20.4979707Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:20.4980038Z env:
+2026-10-27T05:30:20.4980297Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:20.4980753Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:20.4981217Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:20.4981624Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:20.4982041Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:20.4982360Z ##[endgroup]
+2026-10-27T05:30:20.8689809Z .....
+2026-10-27T05:30:20.8690240Z ----------------------------------------------------------------------
+2026-10-27T05:30:20.8690682Z Ran 5 tests in 0.028s
+2026-10-27T05:30:20.8690831Z 
+2026-10-27T05:30:20.8690913Z OK
+2026-10-27T05:30:20.9954138Z ##[group]Run python scripts/test_scenario_matrix.py
+2026-10-27T05:30:20.9954586Z [36;1mpython scripts/test_scenario_matrix.py[0m
+2026-10-27T05:30:21.0027353Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-27T05:30:21.0027685Z env:
+2026-10-27T05:30:21.0027941Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:21.0028411Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+2026-10-27T05:30:21.0028882Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:21.0029294Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:21.0029881Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+2026-10-27T05:30:21.0030193Z ##[endgroup]
+2026-10-27T05:30:21.9074328Z m6 adjudication: PARTIAL -> C:\Users\RUNNER~1\AppData\Local\Temp\tmp88myjih7\a.json
+2026-10-27T05:30:21.9075297Z m6 adjudication: BLOCKED -> C:\Users\RUNNER~1\AppData\Local\Temp\tmp88myjih7\b.json
+2026-10-27T05:30:21.9076174Z m6 adjudication: FAIL -> C:\Users\RUNNER~1\AppData\Local\Temp\tmp88myjih7\c.json
+2026-10-27T05:30:21.9077013Z READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+2026-10-27T05:30:21.9683915Z m6 windows: BLOCKED (timeout) -> C:\Users\runneradmin\AppData\Local\Temp\tmpt0kvipam\scan-active.json
+2026-10-27T05:30:21.9684645Z READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+2026-10-27T05:30:22.0308202Z m6 windows: BLOCKED (timeout) -> C:\Users\runneradmin\AppData\Local\Temp\tmpt0kvipam\scan-stopped.json
+2026-10-27T05:30:22.0309540Z READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+2026-10-27T05:30:22.0548605Z m6 windows: FAIL (assertion) -> C:\Users\runneradmin\AppData\Local\Temp\tmpwpxe9jy6\windows.json
+2026-10-27T05:30:22.0549787Z READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+2026-10-27T05:30:22.0878628Z m6 windows: PARTIAL (none) -> C:\Users\runneradmin\AppData\Local\Temp\tmpb7ftb89_\windows.json
+2026-10-27T05:30:22.0879376Z READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+2026-10-27T05:30:22.1290285Z .....................F.FF..................................
+2026-10-27T05:30:22.1291064Z ======================================================================
+2026-10-27T05:30:22.1292007Z FAIL: test_one_phone_is_blocked_with_safe_class (__main__.DirectStdin.test_one_phone_is_blocked_with_safe_class)
+2026-10-27T05:30:22.1292781Z ----------------------------------------------------------------------
+2026-10-27T05:30:22.1293218Z Traceback (most recent call last):
+2026-10-27T05:30:22.1294169Z   File "D:\a\veles-android\veles-android\native-bridge\feasibility\scripts\test_scenario_matrix.py", line 446, in test_one_phone_is_blocked_with_safe_class
+2026-10-27T05:30:22.1295274Z     self.assertEqual((result["status"], result["error_class"]), ("BLOCKED", "insufficient_phones"))
+2026-10-27T05:30:22.1296135Z AssertionError: Tuples differ: ('FAIL', 'environment') != ('BLOCKED', 'insufficient_phones')
+2026-10-27T05:30:22.1296568Z 
+2026-10-27T05:30:22.1296694Z First differing element 0:
+2026-10-27T05:30:22.1296938Z 'FAIL'
+2026-10-27T05:30:22.1297119Z 'BLOCKED'
+2026-10-27T05:30:22.1297232Z 
+2026-10-27T05:30:22.1297344Z - ('FAIL', 'environment')
+2026-10-27T05:30:22.1297652Z + ('BLOCKED', 'insufficient_phones')
+2026-10-27T05:30:22.1297855Z 
+2026-10-27T05:30:22.1298090Z ======================================================================
+2026-10-27T05:30:22.1299219Z FAIL: test_stdin_eof_with_scan_and_two_links_passes_and_is_not_chrome_provenance (__main__.DirectStdin.test_stdin_eof_with_scan_and_two_links_passes_and_is_not_chrome_provenance)
+2026-10-27T05:30:22.1300225Z ----------------------------------------------------------------------
+2026-10-27T05:30:22.1300581Z Traceback (most recent call last):
+2026-10-27T05:30:22.1303570Z   File "D:\a\veles-android\veles-android\native-bridge\feasibility\scripts\test_scenario_matrix.py", line 433, in test_stdin_eof_with_scan_and_two_links_passes_and_is_not_chrome_provenance
+2026-10-27T05:30:22.1304609Z     self.assertEqual(result["status"], "PASS", result["actual"])
+2026-10-27T05:30:22.1305008Z AssertionError: 'FAIL' != 'PASS'
+2026-10-27T05:30:22.1305245Z - FAIL
+2026-10-27T05:30:22.1305405Z + PASS
+2026-10-27T05:30:22.1306118Z  : Traceback (most recent call last):
+2026-10-27T05:30:22.1306870Z   File "D:\a\veles-android\veles-android\native-bridge\feasibility\scripts\scenario_matrix.py", line 584, in scenario_stdin
+2026-10-27T05:30:22.1307606Z     host = DirectHost([binary, identity["origin"]], env, adapter.direct_spawn_flags)
+2026-10-27T05:30:22.1308327Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-27T05:30:22.1308965Z   File "D:\a\veles-android\veles-android\native-bridge\feasibility\scripts\scenario_matrix.py", line 498, in __init__
+2026-10-27T05:30:22.1309677Z     self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+2026-10-27T05:30:22.1310158Z                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-27T05:30:22.1310679Z   File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\subprocess.py", line 1026, in __init__
+2026-10-27T05:30:22.1311224Z     self._execute_child(args, executable, preexec_fn, close_fds,
+2026-10-27T05:30:22.1311668Z OSError: [WinError 193] %1 is not a valid Win32 application
+2026-10-27T05:30:22.1311907Z 
+2026-10-27T05:30:22.1311914Z 
+2026-10-27T05:30:22.1312083Z ======================================================================
+2026-10-27T05:30:22.1312763Z FAIL: test_truncated_header_eof_is_rejected_with_exit_2 (__main__.DirectStdin.test_truncated_header_eof_is_rejected_with_exit_2)
+2026-10-27T05:30:22.1313433Z ----------------------------------------------------------------------
+2026-10-27T05:30:22.1313794Z Traceback (most recent call last):
+2026-10-27T05:30:22.1314557Z   File "D:\a\veles-android\veles-android\native-bridge\feasibility\scripts\test_scenario_matrix.py", line 450, in test_truncated_header_eof_is_rejected_with_exit_2
+2026-10-27T05:30:22.1315328Z     self.assertEqual(result["status"], "PASS", result["actual"])
+2026-10-27T05:30:22.1315691Z AssertionError: 'FAIL' != 'PASS'
+2026-10-27T05:30:22.1315912Z - FAIL
+2026-10-27T05:30:22.1316067Z + PASS
+2026-10-27T05:30:22.1316266Z  : Traceback (most recent call last):
+2026-10-27T05:30:22.1316868Z   File "D:\a\veles-android\veles-android\native-bridge\feasibility\scripts\scenario_matrix.py", line 584, in scenario_stdin
+2026-10-27T05:30:22.1317577Z     host = DirectHost([binary, identity["origin"]], env, adapter.direct_spawn_flags)
+2026-10-27T05:30:22.1318047Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-27T05:30:22.1318650Z   File "D:\a\veles-android\veles-android\native-bridge\feasibility\scripts\scenario_matrix.py", line 498, in __init__
+2026-10-27T05:30:22.1319350Z     self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+2026-10-27T05:30:22.1319826Z                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-27T05:30:22.1320338Z   File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\subprocess.py", line 1026, in __init__
+2026-10-27T05:30:22.1320869Z     self._execute_child(args, executable, preexec_fn, close_fds,
+2026-10-27T05:30:22.1321301Z OSError: [WinError 193] %1 is not a valid Win32 application
+2026-10-27T05:30:22.1321541Z 
+2026-10-27T05:30:22.1321547Z 
+2026-10-27T05:30:22.1321746Z ----------------------------------------------------------------------
+2026-10-27T05:30:22.1322070Z Ran 59 tests in 0.357s
+2026-10-27T05:30:22.1322205Z 
+2026-10-27T05:30:22.1322299Z FAILED (failures=3)
+2026-10-27T05:30:22.1322792Z m6 windows: PARTIAL (none) -> C:\Users\runneradmin\AppData\Local\Temp\tmpffmnvylv\windows.json
+2026-10-27T05:30:22.1323509Z m6 windows: BLOCKED (target_not_found) -> C:\Users\runneradmin\AppData\Local\Temp\tmp3ve2yvif\windows.json
+2026-10-27T05:30:22.1324932Z m6 windows: BLOCKED (ambiguous_target) -> C:\Users\runneradmin\AppData\Local\Temp\tmptjvx_jm7\windows.json
+2026-10-27T05:30:22.1326277Z m6 windows: BLOCKED (ambiguous_target) -> C:\Users\runneradmin\AppData\Local\Temp\tmp7qb78odj\windows.json
+2026-10-27T05:30:22.2522647Z ##[error]Process completed with exit code 1.
+2026-10-27T05:30:22.2837770Z Post job cleanup.
+2026-10-27T05:30:22.4971180Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-27T05:30:22.5338243Z git version 2.56.0.windows.2
+2026-10-27T05:30:22.5412905Z Temporarily overriding HOME='D:\a\_temp\ae45b39c-4bfd-4ea8-a953-957c25d2c0a1' before making global git config changes
+2026-10-27T05:30:22.5414722Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T05:30:22.5425253Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\veles-android\veles-android
+2026-10-27T05:30:22.5837777Z Removing SSH command configuration
+2026-10-27T05:30:22.5857863Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T05:30:22.6270620Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-27T05:30:23.2077390Z Removing HTTP extra header
+2026-10-27T05:30:23.2087862Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T05:30:23.2481052Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-27T05:30:23.8615669Z Removing includeIf entries pointing to credentials config files
+2026-10-27T05:30:23.8627388Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T05:30:23.8986422Z includeif.gitdir:D:/a/veles-android/veles-android/.git.path
+2026-10-27T05:30:23.8987122Z includeif.gitdir:D:/a/veles-android/veles-android/.git/worktrees/*.path
+2026-10-27T05:30:23.8987652Z includeif.gitdir:/github/workspace/.git.path
+2026-10-27T05:30:23.8988583Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T05:30:23.9038905Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:D:/a/veles-android/veles-android/.git.path
+2026-10-27T05:30:23.9378337Z D:\a\_temp\git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:30:23.9420323Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:D:/a/veles-android/veles-android/.git.path D\:\\a\\_temp\\git\-credentials\-6395cf3e\-4f82\-4f1c\-b08c\-b4079ac50f20\.config
+2026-10-27T05:30:23.9847843Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:D:/a/veles-android/veles-android/.git/worktrees/*.path
+2026-10-27T05:30:24.0184264Z D:\a\_temp\git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:30:24.0226969Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:D:/a/veles-android/veles-android/.git/worktrees/*.path D\:\\a\\_temp\\git\-credentials\-6395cf3e\-4f82\-4f1c\-b08c\-b4079ac50f20\.config
+2026-10-27T05:30:24.0614310Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-27T05:30:24.0961875Z /github/runner_temp/git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:30:24.1006945Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-6395cf3e\-4f82\-4f1c\-b08c\-b4079ac50f20\.config
+2026-10-27T05:30:24.1505815Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T05:30:24.1865677Z /github/runner_temp/git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config
+2026-10-27T05:30:24.1911987Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-6395cf3e\-4f82\-4f1c\-b08c\-b4079ac50f20\.config
+2026-10-27T05:30:24.2309748Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-27T05:30:24.8306406Z Removing credentials config 'D:\a\_temp\git-credentials-6395cf3e-4f82-4f1c-b08c-b4079ac50f20.config'
+2026-10-27T05:30:24.8509746Z Cleaning up orphan processes
+2026-10-27T05:30:24.8733700Z Terminate orphan process: pid (7288) (vctip)

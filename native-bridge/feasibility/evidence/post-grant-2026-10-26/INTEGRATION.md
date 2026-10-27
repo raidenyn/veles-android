@@ -143,3 +143,7 @@ Deferred as nonblocking, with no new functional code in this pass:
 Parent clean-export check: `sha256sum -c SHA256SUMS` inside a clean `git archive` of `d72c17798f3e665adec2f2ede1442e36634e1a3a`, 186 entries all OK, exit 0 (log copied unchanged to `signing-and-gates/otp23-clean-export-d72c177-checksums.log`; it proves byte preservation, not a review or CI).
 The Sonnet byte-preservation result is `reviews-and-provenance/sonnet-byte-preservation-result.json` (session `43ad5518-8e02-497d-beda-9d091f82265e`, `claude-sonnet-5-5`; the same session id as the review-fix raw, read from the file).
 MINOR-B, C and D remain deferred as recorded above.
+
+## CI follow-up review note (appended)
+
+Opus session `ceb6e424-1e26-4ea7-972b-efa4ba2dc633` (`claude-opus-5-5`, firstParty, 0 subagents) reviewed committed `78f1784753ba0274e493ed35a92e27d6311b467a` (`66519dd..78f1784`, CI/test-only) with verdict PASS and no CRITICAL/IMPORTANT. Raw, report, the Sonnet fix result (session `de3b52c3-e10c-4e0d-be2c-0e766f9787c2`) and the initial `66519dd` CI failure logs (2 failed jobs, 8 passed) are copied unchanged; see `reviews-and-provenance/otp23-ci-followup-attestation.md`. Windows CI is pending and not claimed. CI-MINOR-2 and the global-patch NIT are deferred nonblocking. The d72c177 attestation above is unchanged; all statuses (16 PASS / 13 BLOCKED / 3 NOT RUN) and NO-GO are unchanged.
