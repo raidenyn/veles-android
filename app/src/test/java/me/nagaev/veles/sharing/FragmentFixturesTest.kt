@@ -52,7 +52,8 @@ class FragmentFixturesTest {
         val committed = transactions[0].jsonObject.getValue("fragments").jsonArray.map { it.jsonPrimitive.content }
         // A trailing empty final fragment (8 hex digits) is receiver tolerance only; the sender never emits it.
         val canonical = expected.getValue("accepted").jsonPrimitive.content == "true" &&
-            transactions.size == 1 && committed.last().length != EMPTY_FRAME_HEX
+            transactions.size == 1 &&
+            committed.last().length != EMPTY_FRAME_HEX
         if (canonical && record != null) {
             Canonical(fixture.getValue("id").jsonPrimitive.content, mtu(fixture), record, committed)
         } else {

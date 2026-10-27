@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -423,9 +424,25 @@ class DirectStdin(unittest.TestCase):
         self.binary.chmod(self.binary.stat().st_mode | stat.S_IXUSR)
         self.args = argparse.Namespace(discover_s=3.0)
 
+    def _launch_fake_via_interpreter(self):
+        """Test-only launch boundary: a shebang script is not a Windows executable (WinError 193), so run the
+        fake host as `sys.executable <script>` on every OS. Still a real Popen with real pipes, so the EOF
+        and cleanup assertions exercise the actual process path; production DirectHost is unchanged."""
+        real_popen, fake = subprocess.Popen, str(self.binary)
+
+        def popen(argv, *a, **kw):
+            if argv and argv[0] == fake:
+                argv = [sys.executable, *argv]
+            return real_popen(argv, *a, **kw)
+
+        patcher = unittest.mock.patch.object(sm.subprocess, "Popen", popen)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def run_case(self, name, phones="2"):
         os.environ["FAKE_PHONES"] = phones
         self.addCleanup(os.environ.pop, "FAKE_PHONES", None)
+        self._launch_fake_via_interpreter()
         return sm.scenario_stdin(FakeAdapter(), name, self.args, IDENTITY, self.tmp, binary=str(self.binary))
 
     def test_stdin_eof_with_scan_and_two_links_passes_and_is_not_chrome_provenance(self):

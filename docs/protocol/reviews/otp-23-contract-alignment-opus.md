@@ -135,3 +135,16 @@ R-01 is PASS for reviewed NO-GO work, bound to byte-preserved commit `d72c17798f
 (final review raw sha256 `8990eb9b…`, fix verification raw sha256 `1599974b…`, both unchanged under `native-bridge/feasibility/evidence/post-grant-2026-10-26/reviews-and-provenance/`). No CRITICAL or IMPORTANT finding remains; MINOR-A fixed; MINOR-B/C/D deferred as nonblocking.
 Opus reviewed the tree that became `5f3de250192a4f8b6d8f800531444a6b59d2143e` and did not itself re-open `d72c17798f3e665adec2f2ede1442e36634e1a3a`; the parent verified an empty `app/`, feasibility-scripts and workflow diff `5f3de250192a4f8b6d8f800531444a6b59d2143e..d72c17798f3e665adec2f2ede1442e36634e1a3a` and a clean `git archive` SHA256SUMS pass (186/186).
 Matrix: 16 PASS / 13 BLOCKED / 3 NOT RUN (waived). The decision stays **NO-GO for OTP-24**; this is not an OTP-23 acceptance and no CI result is claimed.
+
+## CI failure disposition after `66519dd` (appended; earlier review and evidence text above is unchanged)
+
+Pushed `66519dd0f5d8057941c71ddc8f07b2948502f146` failed two CI jobs. Both are test-side; no production code, raw evidence, metadata or checksum file changed, and no hardware was used.
+
+| CI failure | Cause | Fix |
+|---|---|---|
+| `spotlessKotlinCheck`: `FragmentFixturesTest.kt` line 55 | ktlint wants the `transactions.size == 1 && committed.last()...` continuation split onto two lines. The earlier local `spotlessCheck` reported UP-TO-DATE, so the formatter did not run. The reason the local cache missed the change is **not determined**; it was not investigated beyond forcing a real run with `spotlessApply --rerun-tasks` | the single two-line reformat; nothing else changed |
+| Windows `test_scenario_matrix.py` `DirectStdin` (3 tests, `WinError 193`) | the fake host is a shebang script, which Windows cannot execute directly | test-only launch boundary in `test_scenario_matrix.py`: `Popen` is wrapped so the fake host runs as `sys.executable <script>` on every OS. Still a real process with real pipes, so the stdin-EOF and cleanup assertions are unchanged; no test skipped; production `DirectHost` untouched |
+
+The Windows fix is verified on Linux only. It has not been run on Windows; the next Windows CI run is the evidence.
+
+**`R-01` scope.** The current R-01 PASS covers the reviewed `66519dd` source and the `d72c177` snapshot as attested above. The two test changes in this section are **new, uncommitted and not reviewed by Opus**; they are pending focused Opus verification by the parent, who will attest the new commit hash afterwards. No fresh review of them is claimed. Matrix stays 16 PASS / 13 BLOCKED / 3 NOT RUN; the decision stays **NO-GO for OTP-24**.
