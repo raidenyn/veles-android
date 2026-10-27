@@ -1,0 +1,374 @@
+{
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "%HOME%/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+  "host_binary": "%HOME%/homepc/work/otp23-scenarios-0d75bb2/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "sizes": [
+    4,
+    177,
+    178,
+    179,
+    180,
+    505,
+    506,
+    507,
+    508,
+    509,
+    510,
+    511,
+    1015,
+    1016,
+    1017,
+    4095,
+    4096
+  ],
+  "repeat_4096": 3,
+  "diag_scan_only": false,
+  "started_utc": "2026-10-26T16:45:05+00:00",
+  "source_revision": {
+    "available": false,
+    "stage": "rev-parse",
+    "reason": "fatal: not a git repository (or any of the parent directories): .git"
+  },
+  "macos_version": "26.5.2",
+  "python_version": "3.9.6",
+  "results": [
+    {
+      "case": "host-launched-headless",
+      "pid": 26913,
+      "ancestor_chain": [
+        {
+          "pid": 26887,
+          "comm": "Google",
+          "args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-tfdu820b --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+        },
+        {
+          "pid": 26882,
+          "comm": "Python",
+          "args": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python scripts/macos_poc.py --out evidence/post-grant-2026-10-26/macos-physical-complete.json --repeat-4096 3"
+        },
+        {
+          "pid": 26877,
+          "comm": "zsh",
+          "args": "/bin/zsh /opt/homepc/bin/runner"
+        },
+        {
+          "pid": 50208,
+          "comm": "zsh",
+          "args": "/bin/zsh /opt/homepc/bin/runner"
+        },
+        {
+          "pid": 1,
+          "comm": "launchd",
+          "args": "/sbin/launchd"
+        }
+      ],
+      "on_screen_windows": []
+    },
+    {
+      "case": "two-independent-connects",
+      "handles": 2
+    },
+    {
+      "case": "record-4-0",
+      "bytes_per_phone": 4,
+      "seeds": [
+        17,
+        137
+      ],
+      "received_sha256": [
+        "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff"
+      ]
+    },
+    {
+      "case": "record-177-1",
+      "bytes_per_phone": 177,
+      "seeds": [
+        18,
+        138
+      ],
+      "received_sha256": [
+        "56c3d10ffb823b826f9ea559ca55c926dba6fdc9bbc9612d78c89333fb12cfd5",
+        "7794978e9162c3d49b68d96c1bfee3c591a78273590d24419714b0fbec4d093e"
+      ]
+    },
+    {
+      "case": "record-178-2",
+      "bytes_per_phone": 178,
+      "seeds": [
+        19,
+        139
+      ],
+      "received_sha256": [
+        "0485fafa5c192053fb805def5bf21100535fadfc7e86559550b625ffd6802b90",
+        "38a0a1f7da9ac5132bbaff00797798f08290472fe8c5dc758454917156d5f479"
+      ]
+    },
+    {
+      "case": "record-179-3",
+      "bytes_per_phone": 179,
+      "seeds": [
+        20,
+        140
+      ],
+      "received_sha256": [
+        "9fa4c4c50844501ffcec8903b179334cf507cb0b09cd48e6831bb218ce977cce",
+        "6cd382213fc82490ed737aceade353cbdb995495464eeb2f9e57689c506ad700"
+      ]
+    },
+    {
+      "case": "record-180-4",
+      "bytes_per_phone": 180,
+      "seeds": [
+        21,
+        141
+      ],
+      "received_sha256": [
+        "05c891fbc26688c510a535d470e30c6ff29fea5a4e4a0b7e94463dfbc0937c76",
+        "d0ea528655c16067c8fa4c9d4d9b0e3b3d4e5597fa6e693b3686eaaf1bcb46b0"
+      ]
+    },
+    {
+      "case": "record-505-5",
+      "bytes_per_phone": 505,
+      "seeds": [
+        22,
+        142
+      ],
+      "received_sha256": [
+        "6e45ba441e6886c9705aacb57f97b7dc5531ad48d21d03997c51d0d1fbc8d379",
+        "8627c82af3887e9aa56383e8752de50505d9ef61f893da802bd799943dd41560"
+      ]
+    },
+    {
+      "case": "record-506-6",
+      "bytes_per_phone": 506,
+      "seeds": [
+        23,
+        143
+      ],
+      "received_sha256": [
+        "141a25566a0f077ec7602c5b48f4a1141e27da68d2be868b805c77633d583a94",
+        "ab154f58369ec5b453843e290ba4f870665eec30eb54349817f52a5c47ce8b6f"
+      ]
+    },
+    {
+      "case": "record-507-7",
+      "bytes_per_phone": 507,
+      "seeds": [
+        24,
+        144
+      ],
+      "received_sha256": [
+        "8dfa9d5eba8c2992771c666ca12abc99237d2f23c1b72091d6d0c9ef4b9654c9",
+        "5978716f5d069887c8479ef2b89e540def34bff6e698e168da37fb905ee7d0c8"
+      ]
+    },
+    {
+      "case": "record-508-8",
+      "bytes_per_phone": 508,
+      "seeds": [
+        25,
+        145
+      ],
+      "received_sha256": [
+        "1be0b7faff64c6b209b5c15ffc56e75f6c2eb80c2d0a867cdc03afd03a805a36",
+        "4791654f80ff8b0b7c8c8a84f995e620d77402303c675846c423851f2e177069"
+      ]
+    },
+    {
+      "case": "record-509-9",
+      "bytes_per_phone": 509,
+      "seeds": [
+        26,
+        146
+      ],
+      "received_sha256": [
+        "7601e5c906d9ea83e663ce3ba617fb8d0aaf3730bff1a9d738d9ee24c1730078",
+        "79a138a5b3244589aba8f0780f838c482e52c201f8ab0c2c47bc8d5393c06543"
+      ]
+    },
+    {
+      "case": "record-510-10",
+      "bytes_per_phone": 510,
+      "seeds": [
+        27,
+        147
+      ],
+      "received_sha256": [
+        "86f18d54404764eac20b2219f7e42fec86bac822f54ec7fef5ceb2965e5c4b7a",
+        "7554431078cfe0b7a21c6c97d40fecb0d6b04944660ced49cc3e2b1640331e6b"
+      ]
+    },
+    {
+      "case": "record-511-11",
+      "bytes_per_phone": 511,
+      "seeds": [
+        28,
+        148
+      ],
+      "received_sha256": [
+        "3ebc7d3997b1da7be22fce367c5fe5f4f2f4e78b949594ca74861c6855ac2239",
+        "830ab40485f66aeb447db5152360ed59ac259a940a23230bb4af5bf4d1e3b001"
+      ]
+    },
+    {
+      "case": "record-1015-12",
+      "bytes_per_phone": 1015,
+      "seeds": [
+        29,
+        149
+      ],
+      "received_sha256": [
+        "666407bfbf1e66a36960511a84d982aeeca9db0e207733832f0b5935d3383ece",
+        "04a9b8935d6b1a4acefe13a0f89139c0a151d7a93dab28f4d8acfe8a41d5ac7d"
+      ]
+    },
+    {
+      "case": "record-1016-13",
+      "bytes_per_phone": 1016,
+      "seeds": [
+        30,
+        150
+      ],
+      "received_sha256": [
+        "e36cac440265ac434f763b2870b9bd296d3af248adf430ed32a6eb33ae61ed40",
+        "535f266156cbe6ab71b0aba817625131a9906a587941dbb6ecc1dfa7edf3ba75"
+      ]
+    },
+    {
+      "case": "record-1017-14",
+      "bytes_per_phone": 1017,
+      "seeds": [
+        31,
+        151
+      ],
+      "received_sha256": [
+        "13762f520680ec3899f6d802271901349d762f0381da8b53fbca1976f822b563",
+        "89535422ee093088dd86609e1bae61f4a2eb3cff0440170b5b45224e2b271d8a"
+      ]
+    },
+    {
+      "case": "record-4095-15",
+      "bytes_per_phone": 4095,
+      "seeds": [
+        32,
+        152
+      ],
+      "received_sha256": [
+        "2ea4bc35346c433bbcd20f2c9926263e4e74386b6af52e686d29f3fa703bbfc2",
+        "eb87a4b101dcdde724f8c27b33f3ac3652fec2e9647e0cbca021c8ddcacac444"
+      ]
+    },
+    {
+      "case": "record-4096-16",
+      "bytes_per_phone": 4096,
+      "seeds": [
+        33,
+        153
+      ],
+      "received_sha256": [
+        "8012bae7fd2ab3b472ea9d1456f119c20f70f4fef25fd2b6c87f77654f769f92",
+        "78b7a92cb4ef124f3526174a283b9d819eecb5684781e6e87fc7055155861875"
+      ]
+    },
+    {
+      "case": "record-4096-17",
+      "bytes_per_phone": 4096,
+      "seeds": [
+        34,
+        154
+      ],
+      "received_sha256": [
+        "80144c4497d35f36467c8b776e77a579f53e3241f43d834bcc6ec1403e30a7b6",
+        "7becb90ff09d1b181d2ccd6c12b7d1eb57455b23bf850acf36b7675bd3553fa3"
+      ]
+    },
+    {
+      "case": "record-4096-18",
+      "bytes_per_phone": 4096,
+      "seeds": [
+        35,
+        155
+      ],
+      "received_sha256": [
+        "5c83961e0c16bb875c203ca7928a4cfb7e458c85d1d314ed52aac54d0dd0a3bd",
+        "2bec71e758624421fbe0c0579ced87e56b73842aff9a15e16d12403ffcc4817d"
+      ]
+    },
+    {
+      "case": "record-4096-19",
+      "bytes_per_phone": 4096,
+      "seeds": [
+        36,
+        156
+      ],
+      "received_sha256": [
+        "848b85b7fa9df74869428bf418db7964a64022785a381cc442c62f9ea44beb48",
+        "a2c74b9a8ffb1516fc4ace7c8394bbabb340bf85d0ae92b31cc46ba6eec3fc06"
+      ]
+    },
+    {
+      "case": "disconnect-one-rejects-send",
+      "code": "unknown_handle"
+    },
+    {
+      "case": "survivor-exchanges-4096",
+      "bytes_per_phone": 4096,
+      "seeds": [
+        219
+      ],
+      "received_sha256": [
+        "fadc7c0e99d343cac1154a6c117a654a0bf60400d9be43d0d7b54dc30d23c4be"
+      ]
+    },
+    {
+      "case": "shutdown",
+      "mode": "matrix"
+    },
+    {
+      "case": "port-close",
+      "pid": 26999
+    }
+  ],
+  "result": "PASS",
+  "pre_existing_host_processes_untouched": [],
+  "chrome_version": "Chrome/155.0.8059.86",
+  "chrome_pid": 26887,
+  "ready": {
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "platform": "macos",
+    "api_version": 1
+  },
+  "host_pid": 26913,
+  "scan_handle_seen": "c9ca84b5e68be0b9",
+  "negotiation": {
+    "source": "host trace (VELES_OTP23_TRACE); keyed by the host connection token only; no per-handle association is inferred",
+    "per_conn": {
+      "2": {
+        "max_write_without_response": 512,
+        "attribute_budget": 512,
+        "payload_budget": 508,
+        "source": "measured_max_write_without_response"
+      },
+      "3": {
+        "max_write_without_response": 512,
+        "attribute_budget": 512,
+        "payload_budget": 508,
+        "source": "measured_max_write_without_response"
+      }
+    },
+    "mtu_source_legend": {
+      "negotiated": "WinRT trace line reports the negotiated MTU measurement",
+      "measured_max_write_without_response": "macOS corebluetooth: no ATT MTU is observed or invented; the measured max write-without-response length W is a backend limit; a budget exists only for W >= 512 (smaller W is refused)",
+      "inferred_from_max_write": "legacy host trace only: MTU derived as max write + 3, NOT a negotiated measurement"
+    },
+    "fragment_attribute_rule": "min(ATT MTU - 3, 512)  (macOS: 512 when max write >= 512, else the link is refused)",
+    "fragment_payload_rule": "attribute - 4",
+    "trace_sends": 42,
+    "trace_replies": 41
+  },
+  "finished_utc": "2026-10-26T16:45:16+00:00"
+}

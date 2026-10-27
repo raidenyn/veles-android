@@ -1,0 +1,24 @@
+[       0ms pid=59848] start pid=59848
+[       1ms pid=59848] in  len=81 type=hello request_id=r1-8ee2v2
+[       1ms pid=59848] out len=183 type=ready request_id=r1-8ee2v2 api_version=1
+[    5056ms pid=59848] in  len=137 type=start_scan request_id=r2-q27typ api_version=1
+[    5108ms pid=59848] out len=135 type=scan_state request_id=r2-q27typ api_version=1 status=started scan_handle=a157c19259487be6
+[    5964ms pid=59848] out len=195 type=device_found api_version=1 scan_handle=a157c19259487be6 device_handle=0ed0f5584ebb34e0 label.len=17 platform_hint.len=20
+[    5969ms pid=59848] out len=195 type=device_found api_version=1 scan_handle=a157c19259487be6 device_handle=8431a21555b7882c label.len=17 platform_hint.len=20
+[    6364ms pid=59848] in  len=115 type=stop_scan request_id=r3-q7kn2x api_version=1 scan_handle=a157c19259487be6
+[    6364ms pid=59848] out len=135 type=scan_state request_id=r3-q7kn2x api_version=1 status=stopped scan_handle=a157c19259487be6
+[    6365ms pid=59848] in  len=115 type=connect request_id=r4-b2yn68 api_version=1 device_handle=0ed0f5584ebb34e0
+[    6365ms pid=59848] in  len=115 type=connect request_id=r5-ninzeu api_version=1 device_handle=8431a21555b7882c
+[    6406ms pid=59848] conn 3 device at 40ms
+[    6406ms pid=59848] conn 2 device at 40ms
+[    6427ms pid=59848] conn 3 session at 61ms
+[    6427ms pid=59848] conn 2 session at 61ms
+[    6510ms pid=59848] conn 3 service at 144ms
+[    6510ms pid=59848] conn 3 mtu=517 at 144ms
+[    6512ms pid=59848] conn 3 setup failed: stage=access_denied retryable=false
+[    6512ms pid=59848] out len=151 type=error request_id=r5-ninzeu api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    6541ms pid=59848] conn 2 service at 175ms
+[    6541ms pid=59848] conn 2 mtu=517 at 175ms
+[    6543ms pid=59848] conn 2 setup failed: stage=access_denied retryable=false
+[    6543ms pid=59848] out len=151 type=error request_id=r4-b2yn68 api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    6553ms pid=59848] exit code=0 stdout_drained=true

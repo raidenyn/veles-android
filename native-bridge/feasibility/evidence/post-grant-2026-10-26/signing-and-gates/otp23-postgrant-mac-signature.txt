@@ -1,0 +1,14 @@
+Executable=/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host
+Identifier=me.nagaev.veles.bridge
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=3578 flags=0x0(none) hashes=105+3 location=embedded
+Signature size=4784
+Authority=Apple Development: yuriy@nagaev.me (ZWYYS8X98S)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+Signed Time=26 Oct 2026 at 13:40:26
+Info.plist entries=11
+TeamIdentifier=7T39M26Z99
+Sealed Resources version=2 rules=13 files=0
+Internal requirements count=1 size=188
+e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c  /Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host

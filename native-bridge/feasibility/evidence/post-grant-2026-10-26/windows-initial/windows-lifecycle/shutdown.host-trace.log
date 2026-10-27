@@ -1,0 +1,27 @@
+[       0ms pid=99152] start pid=99152
+[       0ms pid=99152] in  len=81 type=hello request_id=r1-1rzh1h
+[       1ms pid=99152] out len=183 type=ready request_id=r1-1rzh1h api_version=1
+[    4902ms pid=99152] in  len=137 type=start_scan request_id=r2-wqn0g3 api_version=1
+[    4955ms pid=99152] out len=135 type=scan_state request_id=r2-wqn0g3 api_version=1 status=started scan_handle=ea6d2a24df146628
+[    5527ms pid=99152] out len=195 type=device_found api_version=1 scan_handle=ea6d2a24df146628 device_handle=b1dd82887a1460f0 label.len=17 platform_hint.len=20
+[    5640ms pid=99152] out len=195 type=device_found api_version=1 scan_handle=ea6d2a24df146628 device_handle=15441b9e09e7c517 label.len=17 platform_hint.len=20
+[    5960ms pid=99152] in  len=115 type=stop_scan request_id=r3-f5e11g api_version=1 scan_handle=ea6d2a24df146628
+[    5960ms pid=99152] out len=135 type=scan_state request_id=r3-f5e11g api_version=1 status=stopped scan_handle=ea6d2a24df146628
+[    5961ms pid=99152] in  len=115 type=connect request_id=r4-fl0kyz api_version=1 device_handle=b1dd82887a1460f0
+[    5961ms pid=99152] in  len=115 type=connect request_id=r5-mhxu2w api_version=1 device_handle=15441b9e09e7c517
+[    5992ms pid=99152] conn 2 device at 31ms
+[    6002ms pid=99152] conn 3 device at 41ms
+[    6013ms pid=99152] conn 2 session at 51ms
+[    6023ms pid=99152] conn 3 session at 61ms
+[    6105ms pid=99152] conn 3 service at 143ms
+[    6105ms pid=99152] conn 3 mtu=517 at 143ms
+[    6109ms pid=99152] conn 3 setup failed: stage=access_denied retryable=false
+[    6109ms pid=99152] out len=151 type=error request_id=r5-mhxu2w api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    7271ms pid=99152] conn 2 service at 1309ms
+[    7271ms pid=99152] conn 2 mtu=517 at 1309ms
+[    7440ms pid=99152] conn 2 write properties=0x4
+[    7513ms pid=99152] conn 2 notify properties=0x10
+[    7513ms pid=99152] conn 2 characteristics at 1551ms
+[    7534ms pid=99152] conn 2 subscribed at 1572ms
+[    7534ms pid=99152] out len=160 type=connected request_id=r4-fl0kyz api_version=1 connection_handle=d937054e0b1b6f69 platform_hint.len=20
+[    7546ms pid=99152] exit code=0 stdout_drained=true

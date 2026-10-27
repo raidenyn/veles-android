@@ -1,0 +1,185 @@
+{
+  "measured_utc": "2026-10-26T23:25:44.184751+00:00",
+  "method": "remote epoch minus Linux midpoint; half SSH/adb round-trip is the uncertainty bound; 7 samples, minimum RTT selected",
+  "units": "milliseconds",
+  "clocks": {
+    "windows": {
+      "selected": {
+        "rtt_ms": 2891.479,
+        "remote_minus_reference_ms": 2316.738,
+        "uncertainty_ms": 1446.74
+      },
+      "samples": [
+        {
+          "rtt_ms": 3117.976,
+          "remote_minus_reference_ms": 2429.841,
+          "uncertainty_ms": 1559.988
+        },
+        {
+          "rtt_ms": 2998.236,
+          "remote_minus_reference_ms": 2367.643,
+          "uncertainty_ms": 1500.118
+        },
+        {
+          "rtt_ms": 2891.479,
+          "remote_minus_reference_ms": 2316.738,
+          "uncertainty_ms": 1446.74
+        },
+        {
+          "rtt_ms": 3428.215,
+          "remote_minus_reference_ms": 2583.861,
+          "uncertainty_ms": 1715.107
+        },
+        {
+          "rtt_ms": 3157.575,
+          "remote_minus_reference_ms": 2203.939,
+          "uncertainty_ms": 1579.788
+        },
+        {
+          "rtt_ms": 3456.646,
+          "remote_minus_reference_ms": 2600.784,
+          "uncertainty_ms": 1729.323
+        },
+        {
+          "rtt_ms": 2903.796,
+          "remote_minus_reference_ms": 2323.526,
+          "uncertainty_ms": 1452.898
+        }
+      ]
+    },
+    "macos": {
+      "selected": {
+        "rtt_ms": 2412.731,
+        "remote_minus_reference_ms": 1002.527,
+        "uncertainty_ms": 1207.365
+      },
+      "samples": [
+        {
+          "rtt_ms": 2619.218,
+          "remote_minus_reference_ms": 1106.903,
+          "uncertainty_ms": 1310.609
+        },
+        {
+          "rtt_ms": 2443.046,
+          "remote_minus_reference_ms": 1018.73,
+          "uncertainty_ms": 1222.523
+        },
+        {
+          "rtt_ms": 2417.98,
+          "remote_minus_reference_ms": 1005.176,
+          "uncertainty_ms": 1209.99
+        },
+        {
+          "rtt_ms": 2882.212,
+          "remote_minus_reference_ms": 782.04,
+          "uncertainty_ms": 1442.106
+        },
+        {
+          "rtt_ms": 2412.731,
+          "remote_minus_reference_ms": 1002.527,
+          "uncertainty_ms": 1207.365
+        },
+        {
+          "rtt_ms": 2645.956,
+          "remote_minus_reference_ms": 1119.129,
+          "uncertainty_ms": 1323.978
+        },
+        {
+          "rtt_ms": 2423.862,
+          "remote_minus_reference_ms": 1008.158,
+          "uncertainty_ms": 1212.931
+        }
+      ]
+    },
+    "phone_6t": {
+      "selected": {
+        "rtt_ms": 1679.065,
+        "remote_minus_reference_ms": 726.769,
+        "uncertainty_ms": 840.532
+      },
+      "samples": [
+        {
+          "rtt_ms": 1709.04,
+          "remote_minus_reference_ms": 741.646,
+          "uncertainty_ms": 855.52
+        },
+        {
+          "rtt_ms": 1700.736,
+          "remote_minus_reference_ms": 737.71,
+          "uncertainty_ms": 851.368
+        },
+        {
+          "rtt_ms": 1679.065,
+          "remote_minus_reference_ms": 726.769,
+          "uncertainty_ms": 840.532
+        },
+        {
+          "rtt_ms": 1700.158,
+          "remote_minus_reference_ms": 737.121,
+          "uncertainty_ms": 851.079
+        },
+        {
+          "rtt_ms": 1699.815,
+          "remote_minus_reference_ms": 737.094,
+          "uncertainty_ms": 850.908
+        },
+        {
+          "rtt_ms": 1698.722,
+          "remote_minus_reference_ms": 737.785,
+          "uncertainty_ms": 850.361
+        },
+        {
+          "rtt_ms": 1700.161,
+          "remote_minus_reference_ms": 737.274,
+          "uncertainty_ms": 851.08
+        }
+      ]
+    },
+    "phone_10pro": {
+      "selected": {
+        "rtt_ms": 1655.942,
+        "remote_minus_reference_ms": -1214.834,
+        "uncertainty_ms": 828.971
+      },
+      "samples": [
+        {
+          "rtt_ms": 1655.942,
+          "remote_minus_reference_ms": -1214.834,
+          "uncertainty_ms": 828.971
+        },
+        {
+          "rtt_ms": 1661.914,
+          "remote_minus_reference_ms": -1211.793,
+          "uncertainty_ms": 831.957
+        },
+        {
+          "rtt_ms": 1665.603,
+          "remote_minus_reference_ms": -1210.606,
+          "uncertainty_ms": 833.802
+        },
+        {
+          "rtt_ms": 1665.919,
+          "remote_minus_reference_ms": -1209.499,
+          "uncertainty_ms": 833.959
+        },
+        {
+          "rtt_ms": 1663.331,
+          "remote_minus_reference_ms": -1211.164,
+          "uncertainty_ms": 832.665
+        },
+        {
+          "rtt_ms": 1658.977,
+          "remote_minus_reference_ms": -1213.384,
+          "uncertainty_ms": 830.488
+        },
+        {
+          "rtt_ms": 1657.646,
+          "remote_minus_reference_ms": -1213.744,
+          "uncertainty_ms": 829.823
+        }
+      ]
+    }
+  },
+  "windows_minus_macos_ms": 1314.211,
+  "windows_macos_uncertainty_ms": 2654.105
+}

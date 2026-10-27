@@ -89,3 +89,42 @@ Focused read-only verification completed in the same actual `claude-opus-5-5` / 
 `f3746c7a-184d-4343-933a-12093f203b6a` (raw `opus-ci-portability-review.json`): **no CRITICAL or IMPORTANT findings**,
 ASCII rules unchanged, Bash 3.2 compatible, no acceptance criterion weakened. Mergeability is conditional on the real Mac and Windows
 CI jobs passing. The mandatory local Gradle gates were rerun successfully after this helper-only change. The NO-GO decision is unchanged.
+
+## Post-grant phase: interim Opus reviews and manual adjudication (NOT the final review)
+
+Everything above is the preserved record of the earlier phases. This section records the reviews made around the post-grant harness (`0d75bb2`, `15f57a4`, `3dbe3db`, `db5d4db`).
+
+**Reviewer metadata (actual, from raw Claude Code CLI results, copied unchanged under `native-bridge/feasibility/evidence/post-grant-2026-10-26/`).** One session,
+`97410d6b-c523-444a-86e8-f934f3da6b5c`, `modelUsage` key `claude-opus-5-5`, provider `firstParty`, 0 subagents, read-only (no repository edits, no builds, no devices). Four raw results:
+
+| Raw | Outcome | Disposition |
+|---|---|---|
+| `reviews-and-provenance/otp23-resume-opus-preflight.json` | **eight IMPORTANT** harness defects before measurement: ST-13 flag scan empty on elevated Windows, weak ST-08 phone check, wrong distinct-phone field, unmeasured M6 clock offset, no real M6 barrier, M6 "same phone" resting on a typed label, a path that could mark M6 discharged, a canned recovery human note | fixed by the `claude-sonnet-5-5` harness waves before measurement |
+| `reviews-and-provenance/otp23-resume-opus-fixes-review.json` | "not approved yet": six of eight fixes correct; **IMPORTANT** final phone snapshot could miss late callback failures and look clean; lifecycle wrapper hygiene check dropped; should-fix text (a note not to claim `SyntheticTransportFixture` vanishes from release without inspecting the release APK) | fixed (service-stop wait, `final_after_service_stopped`, `pending_unresolved`/`pending_dropped`, wrapper hygiene restored) |
+| `reviews-and-provenance/otp23-resume-opus-last-preflight.json` | **approved for physical measurement**; no remaining CRITICAL or IMPORTANT | measurements then ran on `3dbe3db`/`db5d4db` |
+| `m6/otp23-resume-opus-m6-adjudication.json` | **A-02 (M6) PASS by independent manual adjudication**; the machine FAIL is retained; six residuals | recorded in matrix row A-02 and alignment section 15 |
+
+The M6 adjudication states, and the matrix preserves: the machine adjudicator failed `same_phone_identity` and `real_io_intervals_overlap` (uncertainty +/-3154.105 ms, not shrunk); the PASS rests on the phone's single
+elapsed-realtime clock (16 overlapping record pairs, 1505 ms summed; 100 records per peer fragmented 8x512+36 bytes; 900 notify returns all SUCCESS and 900 callbacks all GATT_SUCCESS per peer; 71 survivor records after the other peer disconnected).
+Residuals: operator-asserted physical phone, inferred peer-to-central mapping, orderly (not fault-injected) isolation, loose barrier (2.8 s), synthetic fixture with no Veles trust, key use read from the installer readback. It is **not** an OTP-24 GO.
+
+**Implementation sessions (actual `claude-sonnet-5-5` modelUsage key, 0 subagents):** strict `6e198e91-fd1d-4e54-a2fc-fa9024059b42`, lifecycle `1aedf9f2-a8e8-437f-a321-8afcacf4d7d1`,
+permission `37885501-841f-4246-9c90-9a90bdd4ed79`, phone `93fb7008-5c51-4ade-9ff8-082723b3dd3b` (`reviews-and-provenance/sonnet-*-result.json`, `post-grant-model-provenance.json`).
+
+**Status of `R-01`.** See the final-review section below: the review ran and its corrections are made but unverified; matrix row `R-01` is `BLOCKED`/PENDING for this phase until the parent independently verifies them. The earlier `R-01` PASS
+(session `f3746c7a-184d-4343-933a-12093f203b6a`, verified commit `e19c8ca555b3275313cd325a12e15791a2cf894d`) is preserved and scoped to the source before this harness and telemetry code. None of the four interim raws above replaces it. The NO-GO decision is unchanged.
+
+## Post-grant final review (session `ceb6e424-1e26-4ea7-972b-efa4ba2dc633`) and corrections
+
+**Reviewer metadata (actual).** Claude Code CLI result `reviews-and-provenance/otp23-postgrant-final-opus-result.json` (copied unchanged; report `otp23-postgrant-final-opus-review.md`): `modelUsage` key `claude-opus-5-5`, 0 subagents, read-only, scope `7afd164..db5d4db` plus the uncommitted working-tree integration.
+The earlier integration pass was `claude-sonnet-5-5`, session `fe9d1222-792e-4494-a2af-3e5468bb4d6a` (`sonnet-postgrant-integration-result.json`).
+
+**Result.** 0 CRITICAL, 2 IMPORTANT, 7 MINOR; no acceptance criterion rewritten; NO-GO unchanged.
+
+| Finding | Disposition |
+|---|---|
+| IMPORTANT-1: HEAD finalizer cannot reproduce the committed Mac PASS adjudications; evaluator not recorded | Option (b): documented as pre-`db5d4db` evaluator, operator-inferred; new HEAD re-evaluations (BLOCKED, ST-15) saved as separate files; finalizer outputs now record evaluator revision, scoped dirty flag and SHA256 of `strict_background_core.py`, `strict_phone_validation.py` and itself; tests re-run the finalizer on both committed Mac raws; no legacy bypass, no status promotion |
+| IMPORTANT-2: M-11 blocker stale | Rewritten: not executed, no unsigned host built or run, grant covers only the signed bundle, no result, not waived; guard test added |
+| MINOR-3..9 | A-02 algorithm committed with output; DEX and JUnit outputs saved and tested; fragment bounds marked derived; Windows run-to-phone mapping and unpreserved files stated; proof residuals listed; separate gate logs copied; AppleDouble reworded (git-ignored, not committed) |
+
+**`R-01` stays `BLOCKED`/PENDING.** These corrections are not yet independently verified by the parent, and the integration is uncommitted. The review PASS row may be written only after verification and a commit, citing this review bound to that commit.

@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -258,6 +260,100 @@ class Cli(unittest.TestCase):
             raw_path = self.write(tmp, "raw.json", {"hello": 1})
             a = self.write(tmp, "a.json", {})
             self.assertEqual(fin.run(["--raw", raw_path, "--phone-evidence", a, "--out", str(pathlib.Path(tmp) / "o.json")]), 2)
+
+
+POST_GRANT = HERE.parent / "evidence/post-grant-2026-10-26"
+LEGACY_MAC = POST_GRANT / "phone-evidence/mac"
+
+
+class Provenance(unittest.TestCase):
+    def test_hashes_are_of_the_loaded_evaluator_files_and_cover_the_finalizer(self):
+        prov = fin.evaluator_provenance()
+        self.assertEqual(set(prov["sha256"]), {"strict_background_core.py", "strict_phone_validation.py",
+                                               "strict_background_finalize.py"})
+        for name, digest in prov["sha256"].items():
+            self.assertEqual(digest, hashlib.sha256((HERE / name).read_bytes()).hexdigest(), name)
+
+    def test_non_checkout_reports_unavailable_revision_but_still_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in fin.EVALUATOR_FILES:
+                shutil.copy(HERE / name, tmp)
+            prov = fin.evaluator_provenance(tmp)
+        self.assertIsNone(prov["git_revision"])
+        self.assertFalse(prov["git_available"])
+        self.assertIsNone(prov["evaluator_files_dirty"])
+        self.assertIsNone(prov["evaluator_files_modified"])
+        self.assertTrue(all(prov["sha256"].values()))
+
+    def test_dirty_flag_is_scoped_to_evaluator_files_only(self):
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-C"]
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in fin.EVALUATOR_FILES:
+                shutil.copy(HERE / name, tmp)
+            subprocess.run(["git", "init", "-q", tmp], check=True)
+            subprocess.run(git + [tmp, "add", "."], check=True)
+            subprocess.run(git + [tmp, "commit", "-q", "-m", "x"], check=True)
+            head = subprocess.run(git + [tmp, "rev-parse", "HEAD"], check=True, capture_output=True,
+                                  text=True).stdout.strip()
+            (pathlib.Path(tmp) / "unrelated.txt").write_text("other uncommitted work")
+            clean = fin.evaluator_provenance(tmp)
+            self.assertEqual((clean["git_revision"], clean["evaluator_files_dirty"]), (head, False))
+            with open(pathlib.Path(tmp) / "strict_phone_validation.py", "a") as handle:
+                handle.write("\n# local edit\n")
+            dirty = fin.evaluator_provenance(tmp)
+            self.assertTrue(dirty["evaluator_files_dirty"])
+            self.assertEqual(dirty["evaluator_files_modified"], ["strict_phone_validation.py"])
+            self.assertNotEqual(dirty["sha256"]["strict_phone_validation.py"],
+                                clean["sha256"]["strict_phone_validation.py"])
+
+    def test_every_new_adjudication_records_the_evaluator(self):
+        doc = fin.adjudicate(raw_result(), {"path": "raw.json"}, two_good(), clock=CLOCK)
+        self.assertEqual(doc["evaluator_provenance"]["sha256"], fin.evaluator_provenance()["sha256"])
+        fixed = {"git_revision": None, "git_available": False, "evaluator_files_dirty": None,
+                 "evaluator_files_modified": None, "sha256": {}}
+        self.assertEqual(fin.adjudicate(raw_result(), {"path": "r"}, two_good(), clock=CLOCK,
+                                        provenance=fixed)["evaluator_provenance"], fixed)
+
+
+class HistoricalMacAdjudications(unittest.TestCase):
+    """The committed Mac adjudications came from the pre-db5d4db evaluator (operator-inferred, not recorded).
+    HEAD cannot reproduce their PASS: the legacy raws have no os_foreground evidence, so ST-15 is BLOCKED."""
+
+    def rerun(self, scenario):
+        raw_record = read_raw(LEGACY_MAC / f"raw-original-{scenario}.json")
+        old = json.loads((LEGACY_MAC / f"otp23-macos-strict-{scenario}-adjudicated.json").read_text())
+        records = []
+        for entry in old["inputs"]["phone_files"]:
+            copy_path = LEGACY_MAC / pathlib.Path(entry["path"]).name
+            record = spv.read_input(copy_path, entry["source_hash"])
+            self.assertEqual(record["sha256"], entry["sha256"])
+            record["mtime_epoch"] = entry["mtime_epoch"]  # the original collection time, not the git checkout's
+            records.append(record)
+        self.assertEqual(raw_record["sha256"], old["inputs"]["raw"]["sha256"])
+        doc = fin.adjudicate(raw_record["json"], raw_record, records, clock=old["phone_validation"]["clock"])
+        return old, doc
+
+    def test_head_evaluator_blocks_st15_while_the_historical_14_checks_stay_pass(self):
+        for scenario in ("cold", "prewarm"):
+            old, doc = self.rerun(scenario)
+            self.assertEqual(old["strict_result"], "PASS", scenario)
+            self.assertEqual(sorted(old["checks"]), [f"ST-{n:02d}" for n in range(1, 15)], scenario)
+            self.assertTrue(all(c["status"] == "PASS" for c in old["checks"].values()), scenario)
+            self.assertNotIn("evaluator_provenance", old)  # the historical files carry no evaluator record
+            self.assertEqual(doc["strict_result"], "BLOCKED", scenario)
+            self.assertEqual(doc["checks"]["ST-15"]["status"], "BLOCKED", scenario)
+            for key in (f"ST-{n:02d}" for n in range(1, 15)):
+                self.assertEqual(doc["checks"][key]["status"], "PASS", (scenario, key))
+            self.assertEqual(doc["phone_validation"]["status"], "PASS", scenario)
+            self.assertIn("evaluator_provenance", doc)
+
+    def test_no_legacy_bypass_exists_in_the_evaluator(self):
+        text = (HERE / "strict_background_core.py").read_text()
+        self.assertNotIn("legacy_raw_no_gate", text)
+
+
+def read_raw(path):
+    return spv.read_input(path)
 
 
 if __name__ == "__main__":

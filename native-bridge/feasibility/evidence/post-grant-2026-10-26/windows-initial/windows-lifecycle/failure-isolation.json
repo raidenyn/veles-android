@@ -1,0 +1,19 @@
+{
+  "id": "LC-failure-isolation",
+  "title": "Disconnect one link; the survivor keeps exchanging; then clean shutdown",
+  "expected": "stale handle rejected (unknown_handle), survivor exchanges 4096 bytes exactly, shutdown then removes the host",
+  "actual": "connect: [{'type': 'error', 'code': 'connect_failed', 'recoverability': 'fatal', 'stage': 'access_denied'}, {'type': 'error', 'code': 'connect_failed', 'recoverability': 'fatal', 'stage': 'access_denied'}]",
+  "status": "BLOCKED",
+  "error_class": "permission_denied",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 1,
+      "network_endpoints": 0
+    },
+    "cleanup_problems": []
+  }
+}

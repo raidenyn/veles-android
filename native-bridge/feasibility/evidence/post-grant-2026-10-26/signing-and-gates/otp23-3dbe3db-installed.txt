@@ -1,0 +1,10 @@
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e  /data/app/~~OKDu7Y0t94f1ceSgi5bJ8A==/me.nagaev.veles.otp23-84Lon-Cnu5Aeptd7m3QLfQ==/base.apk
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e  /data/app/~~o2QUnrfN_I2hpRzJbzq7Jw==/me.nagaev.veles.otp23-WTJQXEjrnpftvOTczbV_wg==/base.apk

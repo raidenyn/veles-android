@@ -1,0 +1,60 @@
+{
+  "id": "LC-shutdown",
+  "title": "Shutdown with an active scan and two active links",
+  "expected": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, host and wrapper gone, zero windows/endpoints",
+  "actual": "all checks held; see detail",
+  "status": "PASS",
+  "error_class": "none",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": "unavailable",
+      "network_endpoints": 0
+    },
+    "link_proof": [
+      {
+        "size": 4,
+        "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "status": "PASS"
+      },
+      {
+        "size": 4,
+        "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "status": "PASS"
+      }
+    ],
+    "pending_request_result": {
+      "type": "error",
+      "code": "internal",
+      "recoverability": "fatal",
+      "stage": "shutdown"
+    },
+    "port_state": false,
+    "teardown": {
+      "owned_gone_after_s": 0.005,
+      "trace_mechanism": "shutdown",
+      "trace_exit": {
+        "at_ms": 3174,
+        "code": 0,
+        "stdout_drained": true
+      },
+      "host_output_order": [
+        "sent",
+        "message",
+        "scan_state:started",
+        "error",
+        "scan_state:stopped",
+        "disconnected",
+        "disconnected",
+        "shutdown_complete"
+      ],
+      "problems": []
+    },
+    "cleanup_problems": []
+  }
+}

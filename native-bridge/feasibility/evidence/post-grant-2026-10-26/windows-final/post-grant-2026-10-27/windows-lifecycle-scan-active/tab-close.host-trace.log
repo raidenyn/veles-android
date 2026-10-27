@@ -1,0 +1,38 @@
+[       0ms pid=78256] start pid=78256
+[       0ms pid=78256] in  len=81 type=hello request_id=r1-x66wtd
+[       0ms pid=78256] out len=183 type=ready request_id=r1-x66wtd api_version=1
+[    4715ms pid=78256] in  len=137 type=start_scan request_id=r2-lkbtqx api_version=1
+[    4768ms pid=78256] out len=135 type=scan_state request_id=r2-lkbtqx api_version=1 status=started scan_handle=ba46b6ecedc0203d
+[    5460ms pid=78256] out len=195 type=device_found api_version=1 scan_handle=ba46b6ecedc0203d device_handle=5f5f43885488b10d label.len=17 platform_hint.len=20
+[    6283ms pid=78256] out len=195 type=device_found api_version=1 scan_handle=ba46b6ecedc0203d device_handle=e75aa44eb63fedf2 label.len=17 platform_hint.len=20
+[    6775ms pid=78256] in  len=115 type=connect request_id=r3-gn70qz api_version=1 device_handle=5f5f43885488b10d
+[    6775ms pid=78256] in  len=115 type=connect request_id=r4-yv2kcb api_version=1 device_handle=e75aa44eb63fedf2
+[    6817ms pid=78256] conn 3 device at 41ms
+[    6817ms pid=78256] conn 2 device at 41ms
+[    6838ms pid=78256] conn 3 session at 62ms
+[    6838ms pid=78256] conn 2 session at 62ms
+[    8054ms pid=78256] conn 3 service at 1278ms
+[    8054ms pid=78256] conn 3 mtu=517 at 1278ms
+[    8223ms pid=78256] conn 3 write properties=0x4
+[    8296ms pid=78256] conn 3 notify properties=0x10
+[    8296ms pid=78256] conn 3 characteristics at 1520ms
+[    8331ms pid=78256] conn 2 service at 1555ms
+[    8331ms pid=78256] conn 2 mtu=517 at 1555ms
+[    8347ms pid=78256] conn 3 subscribed at 1572ms
+[    8347ms pid=78256] out len=160 type=connected request_id=r4-yv2kcb api_version=1 connection_handle=52aba3c6d1322fed platform_hint.len=20
+[    8571ms pid=78256] conn 2 write properties=0x4
+[    8807ms pid=78256] conn 2 notify properties=0x10
+[    8807ms pid=78256] conn 2 characteristics at 2031ms
+[    8899ms pid=78256] conn 2 subscribed at 2123ms
+[    8899ms pid=78256] out len=160 type=connected request_id=r3-gn70qz api_version=1 connection_handle=e2588780442aee3a platform_hint.len=20
+[    8900ms pid=78256] in  len=115 type=stop_scan request_id=r5-27ebby api_version=1 scan_handle=ba46b6ecedc0203d
+[    8901ms pid=78256] out len=135 type=scan_state request_id=r5-27ebby api_version=1 status=stopped scan_handle=ba46b6ecedc0203d
+[    8901ms pid=78256] in  len=159 type=send request_id=r6-dhde0x api_version=1 connection_handle=e2588780442aee3a record_base64.len=24
+[    8912ms pid=78256] out len=116 type=sent request_id=r6-dhde0x api_version=1 connection_handle=e2588780442aee3a
+[    8921ms pid=78256] out len=137 type=message api_version=1 connection_handle=e2588780442aee3a record_base64.len=24
+[    8934ms pid=78256] in  len=159 type=send request_id=r7-op7l5h api_version=1 connection_handle=52aba3c6d1322fed record_base64.len=24
+[    8945ms pid=78256] out len=116 type=sent request_id=r7-op7l5h api_version=1 connection_handle=52aba3c6d1322fed
+[    8973ms pid=78256] out len=137 type=message api_version=1 connection_handle=52aba3c6d1322fed record_base64.len=24
+[    8987ms pid=78256] in  len=137 type=start_scan request_id=r8-l5frn1 api_version=1
+[    9032ms pid=78256] out len=135 type=scan_state request_id=r8-l5frn1 api_version=1 status=started scan_handle=8997e6475067c93c
+[    9040ms pid=78256] exit code=0 stdout_drained=true

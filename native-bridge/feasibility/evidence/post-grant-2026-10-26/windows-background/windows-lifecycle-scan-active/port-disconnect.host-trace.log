@@ -1,0 +1,24 @@
+[       0ms pid=91520] start pid=91520
+[       1ms pid=91520] in  len=81 type=hello request_id=r1-402hal
+[       1ms pid=91520] out len=183 type=ready request_id=r1-402hal api_version=1
+[    4869ms pid=91520] in  len=137 type=start_scan request_id=r2-zt4of0 api_version=1
+[    4922ms pid=91520] out len=135 type=scan_state request_id=r2-zt4of0 api_version=1 status=started scan_handle=78f913bafe38fe16
+[    5004ms pid=91520] out len=195 type=device_found api_version=1 scan_handle=78f913bafe38fe16 device_handle=6d9215891bd5d4f2 label.len=17 platform_hint.len=20
+[    5606ms pid=91520] out len=195 type=device_found api_version=1 scan_handle=78f913bafe38fe16 device_handle=2d839d75d938041c label.len=17 platform_hint.len=20
+[    5927ms pid=91520] in  len=115 type=connect request_id=r3-cry0f9 api_version=1 device_handle=6d9215891bd5d4f2
+[    5927ms pid=91520] in  len=115 type=connect request_id=r4-nmqp5j api_version=1 device_handle=2d839d75d938041c
+[    5969ms pid=91520] conn 3 device at 41ms
+[    5969ms pid=91520] conn 2 device at 41ms
+[    5990ms pid=91520] conn 3 session at 62ms
+[    5990ms pid=91520] conn 2 session at 62ms
+[    6073ms pid=91520] conn 2 service at 145ms
+[    6073ms pid=91520] conn 2 mtu=517 at 145ms
+[    6076ms pid=91520] conn 2 setup failed: stage=access_denied retryable=false
+[    6076ms pid=91520] out len=151 type=error request_id=r3-cry0f9 api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    6104ms pid=91520] conn 3 service at 176ms
+[    6104ms pid=91520] conn 3 mtu=517 at 176ms
+[    6106ms pid=91520] conn 3 setup failed: stage=access_denied retryable=false
+[    6106ms pid=91520] out len=151 type=error request_id=r4-nmqp5j api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    6107ms pid=91520] in  len=115 type=stop_scan request_id=r5-r2f8o4 api_version=1 scan_handle=78f913bafe38fe16
+[    6108ms pid=91520] out len=135 type=scan_state request_id=r5-r2f8o4 api_version=1 status=stopped scan_handle=78f913bafe38fe16
+[    6115ms pid=91520] exit code=0 stdout_drained=true

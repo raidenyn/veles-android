@@ -1,0 +1,19 @@
+{
+  "id": "LC-shutdown",
+  "title": "Shutdown with an active scan and two active links",
+  "expected": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, host and wrapper gone, zero windows/endpoints",
+  "actual": "connect: [{'type': 'error', 'code': 'connect_failed', 'recoverability': 'fatal', 'stage': 'access_denied'}]",
+  "status": "BLOCKED",
+  "error_class": "permission_denied",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 1,
+      "network_endpoints": 0
+    },
+    "cleanup_problems": []
+  }
+}

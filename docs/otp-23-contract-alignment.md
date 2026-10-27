@@ -558,3 +558,52 @@ macOS permission/signing provenance/allow/deny/recovery, the unsigned-host row M
 or rejected, the remote-debugging port stays listening during the idle interval, no macOS offline adjudication tool, and the
 `invoke-poc.ps1` allowlist excludes the strict driver. The `native-bridge/src-tauri/src/main.rs` header comment minor remains
 dispositioned as before (not edited to avoid a code-file change after freeze).
+
+## 15. POST-GRANT phase (sources `0d75bb2`, `15f57a4`, `3dbe3db`, `db5d4db`): permissions granted, physical evidence integrated; decision NO-GO
+
+This is a NEW phase. Sections 1-14 (including the 321-test `e19c8ca` record and the `R-01` PASS scoped to `e19c8ca`) are the preserved
+record of earlier phases and were not rewritten. Index, layout and data caveats: `native-bridge/feasibility/evidence/post-grant-2026-10-26/INTEGRATION.md`;
+authoritative rows: `docs/otp-23-requirements-matrix.md`.
+
+**Identities (read from real output, nothing new claimed).** Debug APK `063ac7ea…77a5e` (instrumentation `8ca89381…ede1c`, unsigned release `5d770ede…e3f10`), installed as an
+update (`-r`, no `-g`, no uninstall/data clearing) on both phones; the apksigner certificate SHA-256 is `2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e`,
+the previously approved debug key. macOS: the same signed host `e7c716c5…eb91c`, bundle `me.nagaev.veles.bridge`, Team `7T39M26Z99`, Apple Development (not Developer ID, not notarized,
+no CI provenance). Windows host: the same `6cf72ed0…fcda`; the Rust sources are unchanged since `cd971f0`. Clean `3dbe3db` gates: **334** JVM tests, 0 failures/errors/skipped (JUnit XML);
+the DEX search of the release APK (sha256 `5d770ede…`) found no `TransportTelemetry`, `SyntheticTransportFixture`, `scheduleSyntheticPush` or `OTP23_POC` (output re-read and saved as `signing-and-gates/otp23-3dbe3db-release-dex-inspection.txt`; the original inspection output was not preserved), and the per-class JUnit summary is `signing-and-gates/junit-summary-334.txt`. `db5d4db` changed only the strict harness, its tests,
+docs and the feasibility workflow. No new signing-CI provenance is claimed.
+
+**Physical results (actual).**
+
+- Two-phone sweeps: Windows 25/25 and macOS 26/26 cases PASS - independent connects, concurrent byte-exact records at 4, 177-180, 505-511, 1015-1017, 4095, 4096 (+3 repeats), stale handle, survivor and shutdown.
+  Windows measured ATT MTU 517; macOS exposes only max write-without-response 512 (attribute 512, payload 508), not an MTU of 515. The earlier narrower sweeps have no preserved raw and are not cited.
+- macOS lifecycle 6/6 PASS (scan active + two links). Windows lifecycle: the first run was mostly BLOCKED (`access_denied`); the scan-active rerun passed shutdown, tab-close, truncated EOF and failure-isolation
+  but `LC-port-disconnect` and direct `LC-stdin-eof` are BLOCKED again. The intermittent Windows AccessDenied is **unproven** (not shown to be a phone permission); direct EOF is not Chrome provenance. All failures retained.
+- Strict background: macOS cold and prewarm observational PASS (all CDP clients closed ~720 s, unsolicited 4096-byte records from both phones to a hidden connector, ordinary visible-focused tab uninterrupted, flags absent), raws ended BLOCKED
+  for a missing phone file and were finalized OFFLINE with the strong validator, explicit sources and a measured clock (by the pre-`db5d4db` evaluator, an operator-inferred provenance; the HEAD finalizer yields BLOCKED for these legacy raws because ST-15 has no foreground evidence - see "Final review corrections" below). Windows: two setup FAILs, two ordinary-tab blur FAILs (retained), then the `db5d4db` OS-foreground-gated retries passed all 15 checks (cold and prewarm).
+  **Native Messaging's intrinsic exemption is not excluded and `formal_otp23_acceptance` is false**, so the literal RFC "no exemption of any kind" wording is not satisfied; the matrix keeps W-11/W-12/M-09/M-10 `BLOCKED` and does not waive or rewrite the RFC.
+- M6: 100 x 4096-byte exchanges against each of two centrals on the sole 6T; the machine adjudication is FAIL (label hashes differ across platforms; +/-3154 ms clock uncertainty cannot prove per-exchange overlap) and is retained. An actual
+  `claude-opus-5-5` manual adjudication (session `97410d6b-c523-444a-86e8-f934f3da6b5c`) found A-02 PASS on the phone's single clock (16 overlapping pairs, 900 notify returns/callbacks per peer all success, 71 survivor records after the other peer left)
+  with six recorded residuals (operator-asserted phone identity, inferred peer mapping, orderly not fault-injected isolation, loose barrier, synthetic fixture, key readback outside these files).
+- macOS permission: a controlled retry (same Chrome pid, one extension load, same sentinel and signed binary) went baseline started -> `access_denied` (user toggled VelesOtp23PoC OFF) -> started again (ON): M-05 and M-06 PASS.
+  The Settings toggle is the user's report, not TCC-database proof; the prompt is `unknown`; M-04 stays BLOCKED (guidance text and prompt owner not recorded). The first timed-out attempt is a retained FAIL.
+
+**Still unmet (all keep NO-GO):** M-03 CI/distribution signing provenance; M-11 unsigned dev-host matrix; W-10 radio-off/adapter-absent; W-07/W-08 Chrome-provenance port-disconnect/stdin-EOF with links; W-02/M-08 connected-phase window
+measurement; M-04; A-01; the Native Messaging exemption wording; `R-01` for this phase.
+
+**Proposed, NOT approved - for owner review.** Amend the strict-background criterion to allow the architecture-required Native Messaging port while still forbidding artificial keepalive, audio, WebRTC, any other exemption and any CDP client,
+and to require actual unsolicited delivery to a hidden connector with an ordinary tab focused for >= 600 s. Until the owner decides, nothing is rewritten and the rows stay BLOCKED.
+
+**Review state.** `R-01` for this phase is **PENDING** until the parent's final fresh `claude-opus-5-5` review of the committed post-grant source and verification of the data fixes. Interim actual Opus sessions (`97410d6b-…`: preflight,
+fixes review, last preflight, M6 adjudication) and the four `claude-sonnet-5-5` implementation sessions (`6e198e91-…`, `1aedf9f2-…`, `37885501-…`, `93fb7008-…`) are recorded from raw CLI metadata in `post-grant-model-provenance.json`; none is the final review.
+
+**Final review corrections (actual `claude-opus-5-5` session `ceb6e424-1e26-4ea7-972b-efa4ba2dc633`: 0 CRITICAL, 2 IMPORTANT, 7 MINOR).** Raw result and report are copied unchanged under `reviews-and-provenance/`.
+
+- IMPORTANT-1: the committed Mac strict adjudications (ST-01..ST-14 PASS) came from the pre-`db5d4db` evaluator; that is operator-inferred, not recorded in the files. The current finalizer returns BLOCKED for the same raw and phone files (ST-15 has no foreground evidence);
+  the re-evaluations are saved as new files in `phone-evidence/mac/reevaluation-at-head/`, the originals are untouched, there is no legacy bypass and M-09/M-10 stay BLOCKED. Every new finalizer output records the evaluator git revision, scoped dirty status and SHA256 of the evaluator files.
+- IMPORTANT-2: M-11 now states that no unsigned dev-registered host was built or run on the existing account, the grant covers only the signed bundle, no result exists, and it is not waived.
+- MINOR: the A-02 overlap figures are reproduced by a committed deterministic algorithm; DEX and JUnit outputs are saved; W-05/M-07 fragment bounds are marked derived; the Windows strict run-to-phone-file mapping, the unpreserved first prewarm phone files and the proof residuals
+  (operator `SERIAL=PATH` binding, operator-identified harness revision, Mac page-focus only, fix-wave metadata not captured) are in `INTEGRATION.md`; the final gate logs are copied as separate logs; AppleDouble files are git-ignored and not committed.
+
+**`R-01` stays PENDING** until the parent independently verifies these corrections and a PASS row cites a review bound to the committed tree.
+
+**Decision: NO-GO for OTP-24.** OTP-23 is not claimed satisfied, OTP-24 is not implemented and no issue is closed. The account waiver still covers only W-01, M-01, M-02.

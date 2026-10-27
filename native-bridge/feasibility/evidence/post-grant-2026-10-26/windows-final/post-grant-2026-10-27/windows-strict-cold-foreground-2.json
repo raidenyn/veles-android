@@ -1,0 +1,508 @@
+{
+  "platform": "windows",
+  "scenario": "cold",
+  "formal_otp23_acceptance": false,
+  "meta": {
+    "started_utc": "2026-10-27T02:11:47Z",
+    "host_trace_log": "%USERPROFILE%\\repos\\otp23-scenarios-3dbe3db\\native-bridge\\feasibility\\evidence\\post-grant-2026-10-27\\windows-strict-cold-foreground-2.trace.log",
+    "phone_delay_s": 690,
+    "min_background_s": 600,
+    "diagnostic_short": false,
+    "browser_version": "Chrome/155.0.8059.85",
+    "foreground_ready_file": "%USERPROFILE%\\repos\\otp23-scenarios-3dbe3db\\native-bridge\\feasibility\\evidence\\post-grant-2026-10-27\\windows-strict-cold-foreground-2.foreground-ready.json",
+    "cdp_closed_utc": "2026-10-27T02:11:56Z",
+    "planned_idle_until_utc_offset_s": 720.0,
+    "finished_utc": "2026-10-27T02:23:57Z"
+  },
+  "cases": [
+    {
+      "id": "ST-ENV",
+      "title": "Chrome, fixed-id extension, connector page, exemption scan",
+      "result": "PASS",
+      "detail": {
+        "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+        "exemption_findings": []
+      },
+      "seconds": 0.78
+    },
+    {
+      "id": "ST-FG",
+      "title": "human click: owned Chrome is the OS foreground before any BLE work",
+      "result": "PASS",
+      "detail": {
+        "foreground_pid": 82284,
+        "waited_s": 0.0
+      },
+      "seconds": 0.0
+    },
+    {
+      "id": "ST-HELLO",
+      "title": "hello over the registered plain host",
+      "result": "PASS",
+      "detail": {
+        "host_pid": 100628
+      },
+      "seconds": 0.79
+    },
+    {
+      "id": "ST-PHONES",
+      "title": "two physical phones scanned and connected",
+      "result": "PASS",
+      "detail": {
+        "phones": 2
+      },
+      "seconds": 6.26
+    },
+    {
+      "id": "ST-BG",
+      "title": "ordinary tab focused, connector hidden, every DevTools client closed",
+      "result": "PASS",
+      "detail": {
+        "connector_visibility": "hidden",
+        "ordinary_tab_visibility": "visible",
+        "ordinary_tab_focused": true
+      },
+      "seconds": 0.02
+    },
+    {
+      "id": "ST-IDLE",
+      "title": "idle with no DevTools client until each phone's unsolicited push is due",
+      "result": "PASS",
+      "detail": {
+        "slept_s": 720.0
+      },
+      "seconds": 719.97
+    },
+    {
+      "id": "ST-REATTACH",
+      "title": "HTTP target list, re-attach, read page receipts",
+      "result": "PASS",
+      "detail": {
+        "messages": 2,
+        "title": "otp23 messages=2 last=1793067806121"
+      },
+      "seconds": 0.04
+    },
+    {
+      "id": "ST-SHUTDOWN",
+      "title": "shutdown; host gone",
+      "result": "PASS",
+      "detail": {
+        "shutdown": "complete"
+      },
+      "seconds": 0.31
+    }
+  ],
+  "strict_result": "PASS",
+  "checks": {
+    "ST-01": {
+      "status": "PASS",
+      "expected": "connector hidden and another ordinary tab visible and focused before the last DevTools client closes",
+      "actual": {
+        "connector_visibility": "hidden",
+        "ordinary_tab_visibility": "visible",
+        "ordinary_tab_focused": true
+      }
+    },
+    "ST-02": {
+      "status": "PASS",
+      "expected": "no DevTools client (target session or browser-level) for >= 600 s, 0 CDP calls",
+      "actual": {
+        "idle_seconds": 719.996,
+        "cdp_calls_during_idle": 0,
+        "browser_level_connection_closed": true,
+        "connector_session_detached_by_close": true
+      }
+    },
+    "ST-03": {
+      "status": "PASS",
+      "expected": "no audio / WebRTC / socket / interval / lock / keepalive API in the loaded extension files",
+      "actual": {
+        "files": [
+          "background.js",
+          "connector.html",
+          "connector.js",
+          "manifest.json"
+        ],
+        "findings": []
+      }
+    },
+    "ST-04": {
+      "status": "PASS",
+      "expected": "each of two phones delivers exactly one byte-exact unsolicited 4096-byte record, page hidden",
+      "actual": {
+        "per_handle": {
+          "b8a0beee": {
+            "events": 1,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+            "visibility": "hidden",
+            "focused": false
+          },
+          "cb5c5df2": {
+            "events": 1,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+            "visibility": "hidden",
+            "focused": false
+          }
+        },
+        "problems": []
+      }
+    },
+    "ST-05": {
+      "status": "PASS",
+      "expected": "page receipt >= 600 s after the last DevTools client closed and before it re-attached",
+      "actual": {
+        "seconds_in_background_at_receipt": {
+          "b8a0beee": 687.345,
+          "cb5c5df2": 690.099
+        },
+        "receipts_before_reattach": true
+      }
+    },
+    "ST-06": {
+      "status": "PASS",
+      "expected": "host trace independently places both message emissions before the driver re-attached",
+      "actual": {
+        "message_count": 2,
+        "wall_estimates": [
+          1793067803.282,
+          1793067806.036
+        ],
+        "reattach_wall": 1793067836.0183742
+      }
+    },
+    "ST-07": {
+      "status": "PASS",
+      "expected": "DevTools HTTP target list (no CDP session) shows the connector received both messages before attach",
+      "actual": {
+        "title": "otp23 messages=2 last=1793067806121"
+      }
+    },
+    "ST-08": {
+      "status": "PASS",
+      "expected": "each phone pushed the expected hash once, queued, after its configured delay",
+      "actual": {
+        "pushes": 2,
+        "validation": "PASS"
+      }
+    },
+    "ST-09": {
+      "status": "PASS",
+      "expected": "cold idle: no desktop->phone record was ever sent in this run",
+      "actual": {
+        "sends_in_host_trace": 0,
+        "warmup": false
+      }
+    },
+    "ST-10": {
+      "status": "PASS",
+      "expected": "shutdown_complete, Chrome closed, and no surviving host process counted AFTER Chrome closed",
+      "actual": {
+        "shutdown_complete": true,
+        "chrome_closed": true,
+        "surviving_hosts": [],
+        "errors": []
+      }
+    },
+    "ST-11": {
+      "status": "PASS",
+      "expected": "preconfigured history shows the connector page hidden and unfocused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [],
+        "interval_seconds": 719.996,
+        "interruptions": [],
+        "events_in_interval": [],
+        "events_after_cut_ignored": 0,
+        "lifecycle_notes": [],
+        "initial": {
+          "wall": 1793067108852,
+          "visibility": "visible",
+          "focused": true
+        },
+        "token": "mvq1uzuc-sybwbop2"
+      }
+    },
+    "ST-12": {
+      "status": "PASS",
+      "expected": "preconfigured history shows the ordinary tab visible and focused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [],
+        "interval_seconds": 719.996,
+        "interruptions": [],
+        "events_in_interval": [],
+        "events_after_cut_ignored": 0,
+        "lifecycle_notes": [],
+        "initial": {
+          "wall": 1793067116020,
+          "visibility": "visible",
+          "focused": true
+        },
+        "token": "mvq1v5dg-db5cr0d3"
+      }
+    },
+    "ST-13": {
+      "status": "PASS",
+      "expected": "recorded Chrome command line carries no throttling/backgrounding/freezing exemption flag",
+      "actual": {
+        "findings": [],
+        "arg_count": 9,
+        "args_source": "proc.args",
+        "native_messaging_exemption_not_excluded": true,
+        "scope": "flags only; Chrome-internal exemptions (e.g. Native Messaging) are NOT claimed excluded"
+      }
+    },
+    "ST-15": {
+      "status": "PASS",
+      "expected": "Windows: OS foreground window owned by the run's own Chrome PID before any BLE work and again after the ordinary-tab switch, before every DevTools client closes",
+      "actual": {
+        "gate_state": "confirmed",
+        "gate_pid": 82284,
+        "chrome_pid": 82284,
+        "after_switch": {
+          "verified": true,
+          "pid": 82284,
+          "owned": true
+        },
+        "gate_confirmed_mono": 646711.9438775,
+        "ble_start_mono": 646712.7345734
+      }
+    },
+    "ST-14": {
+      "status": "PASS",
+      "expected": "formal strict run: min_background_s >= 600 and not a diagnostic short run",
+      "actual": {
+        "min_background_s": 600,
+        "diagnostic_short": false
+      }
+    }
+  },
+  "evidence": {
+    "scenario": "cold",
+    "min_background_s": 600,
+    "timeline": {
+      "background_started_wall": 1793067116.02229,
+      "cdp_closed_wall": 1793067116.0222902,
+      "cdp_closed_mono": 646719.0163197,
+      "cdp_reopened_wall": 1793067836.0183742,
+      "cdp_reopened_mono": 647439.0124036
+    },
+    "handles": [
+      "b8a0beee",
+      "cb5c5df2"
+    ],
+    "events": [
+      {
+        "handle": "b8a0beee",
+        "at": 694557,
+        "wall": 1793067803367,
+        "visibility": "hidden",
+        "focused": false,
+        "record_sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+        "len": 4096
+      },
+      {
+        "handle": "cb5c5df2",
+        "at": 697311,
+        "wall": 1793067806121,
+        "visibility": "hidden",
+        "focused": false,
+        "record_sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+        "len": 4096
+      }
+    ],
+    "warmup": null,
+    "diagnostic_short": false,
+    "history": {
+      "connector": {
+        "token": "mvq1uzuc-sybwbop2",
+        "installed_wall": 1793067108852,
+        "initial": {
+          "wall": 1793067108852,
+          "visibility": "visible",
+          "focused": true
+        },
+        "events": [
+          {
+            "seq": 0,
+            "kind": "blur",
+            "wall": 1793067116006,
+            "visibility": "visible",
+            "focused": false
+          },
+          {
+            "seq": 1,
+            "kind": "visibilitychange",
+            "wall": 1793067116008,
+            "visibility": "hidden",
+            "focused": false
+          }
+        ],
+        "truncated": false,
+        "limit": 2000
+      },
+      "ordinary_tab": {
+        "token": "mvq1v5dg-db5cr0d3",
+        "installed_wall": 1793067116020,
+        "initial": {
+          "wall": 1793067116020,
+          "visibility": "visible",
+          "focused": true
+        },
+        "events": [],
+        "truncated": false,
+        "limit": 2000
+      }
+    },
+    "history_tokens": {
+      "connector": "mvq1uzuc-sybwbop2",
+      "ordinary_tab": "mvq1v5dg-db5cr0d3"
+    },
+    "chrome": {
+      "args": [
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "--user-data-dir=%USERPROFILE%\\AppData\\Local\\Temp\\veles-otp23-profile-bbwaplkq",
+        "--remote-debugging-port=0",
+        "--enable-unsafe-extension-debugging",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-sync",
+        "--window-size=1000,700",
+        "about:blank"
+      ],
+      "args_source": "proc.args"
+    },
+    "exemption_scan": {
+      "files": [
+        "background.js",
+        "connector.html",
+        "connector.js",
+        "manifest.json"
+      ],
+      "findings": []
+    },
+    "os_foreground": {
+      "required": true,
+      "chrome_pid": 82284,
+      "gate": {
+        "state": "confirmed",
+        "polls": 1,
+        "waited_s": 0.0,
+        "last": {
+          "verified": true,
+          "pid": 82284,
+          "owned": true
+        }
+      },
+      "gate_confirmed_mono": 646711.9438775,
+      "ble_start_mono": 646712.7345734,
+      "after_switch": {
+        "verified": true,
+        "pid": 82284,
+        "owned": true
+      }
+    },
+    "same_window_binding": {
+      "chrome_tabs": {
+        "connector_tab_id": 1568076672,
+        "connector_window_id": 1568076670,
+        "ordinary_tab_id": 1568076673,
+        "ordinary_window_id": 1568076670
+      },
+      "cdp_window_ids_equal": true,
+      "created_by": "chrome.tabs.create(windowId=connector window, active)"
+    },
+    "pre_close_probe": {
+      "connector_visibility": "hidden",
+      "ordinary_tab_visibility": "visible",
+      "ordinary_tab_focused": true
+    },
+    "browser_level_connection_closed": true,
+    "connector_session_detached_by_close": true,
+    "cdp_calls_during_idle": 0,
+    "title_probe": {
+      "title_before_attach": "otp23 messages=2 last=1793067806121"
+    },
+    "cleanup": {
+      "shutdown_complete": true,
+      "chrome_closed": true,
+      "surviving_hosts": [],
+      "errors": []
+    },
+    "host_trace": {
+      "message_count": 2,
+      "sends_in_trace": 0,
+      "message_wall_estimates": [
+        1793067803.282,
+        1793067806.036
+      ],
+      "method": "driver wall time at hello + host trace ms offset since its hello line (approximate)"
+    },
+    "phone_evidence": [
+      {
+        "kind": "otp23-unsolicited-evidence",
+        "pushes": [
+          {
+            "peer_sha256_prefix": "c3a3dc84",
+            "subscribed_at_epoch_ms": 1793067113125,
+            "fired_at_epoch_ms": 1793067803142,
+            "configured_delay_ms": 690000,
+            "queued": true,
+            "bytes": 4096,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6"
+          }
+        ]
+      },
+      {
+        "kind": "otp23-unsolicited-evidence",
+        "pushes": [
+          {
+            "peer_sha256_prefix": "c3a3dc84",
+            "subscribed_at_epoch_ms": 1793067113913,
+            "fired_at_epoch_ms": 1793067803927,
+            "configured_delay_ms": 690000,
+            "queued": true,
+            "bytes": 4096,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6"
+          }
+        ]
+      }
+    ],
+    "phone_evidence_errors": [],
+    "phone_validation": {
+      "status": "PASS",
+      "problems": [],
+      "files": [
+        {
+          "index": 1,
+          "source_hash": "c049779ebb347937c1e811616b0d63268b874b6425fff380cf98e5ee3c88a729",
+          "sha256": "c44c948611039353cc83e9b718b482a93ec321317258ef20d9bdeb3210b24c10",
+          "size": 365,
+          "mtime_utc": "2026-10-27T02:23:57Z",
+          "problems": []
+        },
+        {
+          "index": 2,
+          "source_hash": "dd63603cd0cdb86d8f0b984739b92bb91f01f0b4ee5c48421b46fa77c2ee168a",
+          "sha256": "201afcc4f228a1451e4dc3e003b911178e2f8fad7933578ef7a68c1e49e0a62a",
+          "size": 365,
+          "mtime_utc": "2026-10-27T02:23:57Z",
+          "problems": []
+        }
+      ],
+      "clock": {
+        "offset_ms": 2554.99,
+        "uncertainty_ms": 7253.0,
+        "source": "Linux-midpoint-7samples+RTT-bound-20261026T2325Z-plus-drift"
+      },
+      "central_peer_prefixes_informational": [
+        "c3a3dc84",
+        "c3a3dc84"
+      ]
+    },
+    "phone_clock": {
+      "offset_ms": 2554.99,
+      "uncertainty_ms": 7253.0,
+      "source": "Linux-midpoint-7samples+RTT-bound-20261026T2325Z-plus-drift"
+    }
+  }
+}

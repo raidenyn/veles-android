@@ -3,6 +3,7 @@
 import copy
 import json
 import pathlib
+import re
 import sys
 import unittest
 
@@ -36,23 +37,144 @@ class CommittedMatrix(unittest.TestCase):
         self.assertEqual(m.validate(BASE), [])
         self.assertEqual(m.DOC.read_text(encoding="utf-8"), m.render(BASE))
 
-    def test_unrun_hardware_rows_default_to_not_run_and_the_decision_is_no_go(self):
+    def test_hardware_rows_are_pass_only_with_actual_post_grant_or_narrow_fresh_evidence(self):
         verdict, open_rows = m.decision(BASE)
-        self.assertEqual(verdict == "GO", all(r["status"] == "PASS" for r in BASE["rows"]))
+        self.assertEqual(verdict == "GO", all(r["status"] == "PASS" for r in BASE["rows"] if not r["waiver"]))
         by_id = {r["id"]: r for r in BASE["rows"]}
-        # no hardware row is PASS from fresh scan-only or historical evidence
+        # every hardware PASS is either one of the narrow pre-grant passes or backed by the post-grant raw files
         for row in BASE["rows"]:
-            if row["group"] in ("windows", "macos", "android") and row["id"] not in ("W-13", "W-03"):
-                self.assertNotEqual(row["status"], "PASS", row["id"])
-        # phone-dependent rows are BLOCKED on the permission prerequisite, with logs as evidence
-        for rid in ("W-04", "W-05", "W-06", "W-11", "W-12", "M-07", "M-09", "M-10", "A-03"):
+            if row["group"] in ("windows", "macos", "android") and row["status"] == "PASS" and row["id"] not in ("W-13", "W-03"):
+                self.assertIn("post-grant-2026-10-26/", " ".join(row["evidence"]), row["id"])
+                self.assertTrue(row["account"] or row["group"] == "android", row["id"])
+        # promotions that the permission-granted physical runs support
+        for rid in ("W-04", "W-05", "W-06", "W-09", "M-05", "M-06", "M-07", "A-02", "A-03"):
+            self.assertEqual(by_id[rid]["status"], "PASS", rid)
+        # rows whose literal requirement the new evidence does not meet stay blocked, each with a reason
+        for rid in ("W-02", "W-07", "W-08", "W-10", "W-11", "W-12", "M-03", "M-04", "M-08", "M-09", "M-10", "A-01", "M-11"):
             self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
             self.assertTrue(by_id[rid]["blocker"], rid)
-        # scan-only fresh Windows evidence does not promote link-active cleanup rows
-        for rid in ("W-02", "W-07", "W-08", "W-09"):
-            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
-        self.assertIn("HIDDEN", by_id["W-02"]["actual"])
+            self.assertIn(rid, open_rows)
         self.assertIn("W-11", open_rows)
+
+    def test_post_grant_pass_rows_are_backed_by_the_actual_raw_files(self):
+        base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        for rid in ("W-04", "W-05", "W-06", "W-09", "M-05", "M-06", "M-07", "A-02", "A-03"):
+            for rel in by_id[rid]["evidence"]:
+                self.assertTrue((REPO / rel).exists(), (rid, rel))
+        win = json.loads((base / "windows-initial/windows-physical-complete.json").read_text())
+        self.assertEqual((win["result"], len(win["cases"]), {c["result"] for c in win["cases"]}), ("PASS", 25, {"PASS"}))
+        self.assertEqual(win["host_exe_sha256"], "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda")
+        for size in (177, 178, 179, 507, 508, 509, 1015, 1016, 1017, 4095, 4096):
+            self.assertIn(size, win["sizes"])
+        mac = json.loads((base / "macos-initial/macos-physical-complete.json").read_text())
+        self.assertEqual((mac["result"], len(mac["results"])), ("PASS", 26))
+        self.assertEqual(mac["host_binary_sha256"], "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c")
+        # macOS reports a measured max write-without-response, never a made-up MTU
+        self.assertIn("NOT an MTU of 515", by_id["M-07"]["actual"])
+        # W-09: only the rerun that actually passed shutdown is cited; the earlier BLOCKED run stays recorded
+        lc = json.loads((base / "windows-final/post-grant-2026-10-27/windows-lifecycle-scan-active/lifecycle.json").read_text())
+        res = {r["id"]: r["status"] for r in lc["results"]}
+        self.assertEqual(res["LC-shutdown"], "PASS")
+        for blocked in ("LC-port-disconnect", "LC-stdin-eof"):
+            self.assertEqual(res[blocked], "BLOCKED")
+        self.assertIn("UNPROVEN", by_id["W-07"]["actual"])
+        self.assertEqual(by_id["W-07"]["status"], by_id["W-08"]["status"], "BLOCKED")
+        first = json.loads((base / "windows-initial/windows-lifecycle/lifecycle.json").read_text())
+        self.assertEqual(sum(r["status"] == "BLOCKED" for r in first["results"]), 4)
+
+    def test_macos_permission_recovery_rows_match_the_controlled_retry_and_keep_the_failed_attempt(self):
+        base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        res = json.loads((base / "macos-final/recovery2-20261027/result.json").read_text())
+        self.assertEqual((res["result"], res["same_state_recovery"], res["failures"]), ("PASS", True, []))
+        run = res["run"]
+        self.assertEqual(run["denied"]["scan_class"], "access_denied")
+        self.assertEqual(run["recovered"]["scan_class"], "started")
+        self.assertEqual({run[k]["chrome_pid"] for k in ("baseline", "denied", "recovered")}, {60558})
+        self.assertEqual({run[k]["load_unpacked_calls"] for k in ("baseline", "denied", "recovered")}, {1})
+        self.assertEqual(run["denied"]["ack"]["prompt"], "unknown")
+        # the earlier timed-out attempt is preserved as a FAIL and nothing claims a prompt owner
+        old = json.loads((base / "macos-initial/macos-permission-recovery.json").read_text())
+        self.assertEqual(old["result"], "FAIL")
+        for rid in ("M-05", "M-06"):
+            self.assertTrue(by_id[rid]["operator"], rid)
+            self.assertIn("not", by_id[rid]["actual"].lower())
+            self.assertNotIn("TCC reset was used", by_id[rid]["actual"])
+        self.assertIn("TIMED OUT", by_id["M-04"]["actual"])
+        self.assertEqual(by_id["M-04"]["status"], "BLOCKED")
+
+    def test_strict_background_stays_blocked_while_the_native_messaging_exemption_is_not_excluded(self):
+        base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        adjudications = [base / "phone-evidence/mac/otp23-macos-strict-cold-adjudicated.json",
+                         base / "phone-evidence/mac/otp23-macos-strict-prewarm-adjudicated.json",
+                         base / "windows-final/post-grant-2026-10-27/windows-strict-cold-foreground-2.json",
+                         base / "windows-final/post-grant-2026-10-27/windows-strict-prewarm-foreground-2.json"]
+        for path in adjudications:
+            data = json.loads(path.read_text())
+            self.assertFalse(data["formal_otp23_acceptance"], path.name)
+            self.assertEqual(data["strict_result"], "PASS", path.name)
+            self.assertTrue(all(c["status"] == "PASS" for c in data["checks"].values()), path.name)
+            self.assertTrue(data["checks"]["ST-13"]["actual"]["native_messaging_exemption_not_excluded"], path.name)
+        # the failed earlier Windows attempts are retained next to the passing retries
+        history = base / "windows-strict-history"
+        for name in ("cold-first", "cold-second", "cold-foreground", "prewarm"):
+            self.assertEqual(json.loads((history / f"otp23-windows-strict-{name}.json").read_text())["strict_result"], "FAIL", name)
+        # raw Mac results stay BLOCKED; only the separate adjudications pass
+        for kind in ("cold", "prewarm"):
+            raw = json.loads((base / f"macos-final/post-grant-2026-10-26/macos-strict-{kind}-raw.json").read_text())
+            self.assertEqual(raw["strict_result"], "BLOCKED", kind)
+        for rid in ("W-11", "W-12", "M-09", "M-10"):
+            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
+            self.assertIn("Native Messaging", by_id[rid]["blocker"], rid)
+            self.assertIn("not excluded", by_id[rid]["blocker"], rid)
+
+    def test_m6_machine_fail_is_retained_beside_the_manual_adjudication(self):
+        base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26/m6"
+        row = {r["id"]: r for r in BASE["rows"]}["A-02"]
+        machine = json.loads((base / "otp23-m6-desktop-adjudication.json").read_text())
+        self.assertEqual((machine["verdict"], machine["m6_discharged"]), ("FAIL", False))
+        phone = json.loads((base / "otp23-m6-phone-transport.json").read_text())
+        self.assertTrue(phone["clean"] and phone["final"] and phone["final_after_service_stopped"] and not phone["truncated"])
+        self.assertEqual(len(phone["peers"]), 2)
+        opus = json.loads((base / "otp23-resume-opus-m6-adjudication.json").read_text())
+        self.assertEqual(list(opus["modelUsage"]), ["claude-opus-5-5"])
+        self.assertEqual(opus["session_id"], "97410d6b-c523-444a-86e8-f934f3da6b5c")
+        self.assertEqual(opus["subagent_stats"]["spawned"], 0)
+        self.assertEqual(row["status"], "PASS")
+        for needle in ("MANUAL ADJUDICATION", "machine verdict is RETAINED", "RESIDUALS", "NOT an OTP-24 GO", "97410d6b-c523-444a-86e8-f934f3da6b5c"):
+            self.assertIn(needle, row["actual"])
+
+    def test_post_grant_identity_and_gate_counts_come_from_real_outputs(self):
+        base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
+        ident = json.loads((base / "post-grant-identity.json").read_text())
+        sig = (base / "signing-and-gates/otp23-postgrant-android-signature.txt").read_text()
+        self.assertIn(ident["android"]["signing_certificate_sha256"], sig)
+        mac = (base / "signing-and-gates/otp23-postgrant-mac-signature.txt").read_text()
+        for needle in ("Identifier=me.nagaev.veles.bridge", "TeamIdentifier=7T39M26Z99", ident["macos"]["host_sha256"]):
+            self.assertIn(needle, mac)
+        gates = (base / "signing-and-gates/otp23-3dbe3db-gates.log").read_text(errors="replace")
+        self.assertIn("gradle_exit_code=0", gates)
+        self.assertIn("BUILD SUCCESSFUL", gates)
+        installed = (base / "signing-and-gates/otp23-3dbe3db-installed.txt").read_text()
+        self.assertIn(ident["android"]["debug_apk_sha256"], installed)
+        g = {r["id"]: r for r in BASE["rows"]}["G-01"]
+        self.assertIn("334 JVM tests", g["actual"])
+        self.assertIn("321 JVM tests", g["actual"])  # the old phase stays recorded
+        self.assertEqual(ident["android"]["jvm_tests"]["count"], 334)
+        junit = (base / "signing-and-gates" / ident["android"]["jvm_tests"]["summary_file"].split("/")[-1]).read_text()
+        totals = re.search(r"TOTAL files=(\d+) tests=(\d+) failures=(\d+) errors=(\d+) skipped=(\d+)", junit)
+        self.assertEqual(tuple(map(int, totals.groups())), (ident["android"]["jvm_tests"]["classes"], 334, 0, 0, 0))
+        per_class = re.findall(r"^\S+ tests=(\d+) failures=0 errors=0 skipped=0$", junit, re.M)
+        self.assertEqual((len(per_class), sum(map(int, per_class))), (42, 334))
+        dex = (base / "signing-and-gates/otp23-3dbe3db-release-dex-inspection.txt").read_text()
+        self.assertIn("apk_sha256 " + ident["android"]["release_apk_sha256_unsigned"] + " MATCHES_EXPECTED", dex)
+        self.assertIn("total_hits 0", dex)
+        self.assertIn("needle TransportTelemetry hits 0", dex)
+        for name in ("final-gradle-gates", "final-log-guards", "final-python-tests"):
+            self.assertTrue((base / f"signing-and-gates/otp23-postgrant-{name}.log").stat().st_size > 0)
+        self.assertIn("BUILD SUCCESSFUL", (base / "signing-and-gates/otp23-postgrant-final-gradle-gates.log").read_text())
 
     def test_existing_account_windows_launch_is_a_narrow_non_waived_pass(self):
         row = {r["id"]: r for r in BASE["rows"]}["W-13"]
@@ -61,16 +183,15 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("Proves nothing about phones, transfer or link cleanup", row["actual"])
         self.assertIn("W-01", m.waived(BASE))
 
-    def test_w03_is_a_narrow_pass_and_single_phone_data_never_promotes_two_phone_rows(self):
+    def test_w03_is_a_narrow_pass_and_the_earlier_single_phone_text_is_preserved(self):
         by_id = {r["id"]: r for r in BASE["rows"]}
         self.assertEqual(by_id["W-03"]["status"], "PASS")
         self.assertIn("one device", by_id["W-03"]["actual"])
+        # the pre-grant single-phone record and the unproven PH-01 failure stay in the promoted rows
         for rid in ("W-04", "W-05", "W-06"):
-            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
-            self.assertIn("SUPPORTING single-phone evidence only", by_id[rid]["actual"], rid)
-            self.assertIn("UNPROVEN", by_id[rid]["actual"], rid)
-        self.assertIn("10 Pro", by_id["A-03"]["actual"])
-        self.assertNotIn("both phones", by_id["A-03"]["blocker"])
+            self.assertIn("single-phone", by_id[rid]["actual"], rid)
+        self.assertIn("UNPROVEN", by_id["W-04"]["actual"])
+        self.assertIn("grant", by_id["A-03"]["actual"].lower())
 
     def test_review_row_is_durable_evidence_not_a_golden_state(self):
         """R-01 is never waived; before a verified review it blocks; once PASS it must be backed by the actual raw
@@ -83,10 +204,29 @@ class CommittedMatrix(unittest.TestCase):
         pending = with_row("R-01", status="NOT RUN", actual="", evidence=[], blocker="")
         self.assertIn("R-01", m.decision(pending)[1])
         # a PASS without actual + evidence is invalid
-        self.assertTrue(m.validate(with_row("R-01", actual="", evidence=[])))
-        self.assertTrue(m.validate(with_row("R-01", evidence=[])))
+        passed = dict(status="PASS", account="admin", blocker="")
+        self.assertTrue(m.validate(with_row("R-01", actual="", evidence=[], **passed)))
+        self.assertTrue(m.validate(with_row("R-01", evidence=[], **passed)))
         if row["status"] != "PASS":
+            # post-grant phase: the e19c8ca-scoped PASS is preserved but the NEW phase review is PENDING
+            self.assertEqual(row["status"], "BLOCKED")
+            self.assertIn("PENDING", row["actual"])
+            self.assertIn("PENDING", row["blocker"])
+            self.assertIn("e19c8ca", row["actual"])
+            self.assertIn("f3746c7a-184d-4343-933a-12093f203b6a", row["actual"])
+            self.assertIn("NOT the final review", row["actual"])
             self.assertIn("R-01", m.decision(BASE)[1])
+            post = json.loads((REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26/post-grant-model-provenance.json").read_text())
+            self.assertEqual(post["final_review"]["status"], "PENDING")
+            # model names come from the raw CLI results, never from self-report
+            for session in post["implementation_sessions_claude_code_cli"]:
+                raw = json.loads((REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26" / session["raw"]).read_text())
+                self.assertEqual((raw["session_id"], list(raw["modelUsage"])), (session["session_id"], ["claude-sonnet-5-5"]))
+            for interim in post["opus_interim_reviews"]["raws"]:
+                raw = json.loads((REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26" / interim["file"]).read_text())
+                self.assertEqual((raw["session_id"], list(raw["modelUsage"])), (post["opus_interim_reviews"]["session_id"], ["claude-opus-5-5"]))
+            # the older review evidence is still present
+            self.assertTrue((REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26/opus-final-ingress-verification.json").exists())
             return
         provenance = json.loads((EVIDENCE / "model-provenance.json").read_text(encoding="utf-8"))["final_review"]
         raw_names = [e for e in row["evidence"] if pathlib.Path(e).name.startswith("opus-") and e.endswith(".json")]
@@ -126,7 +266,7 @@ class CommittedMatrix(unittest.TestCase):
         blocking = [r["id"] for r in BASE["rows"] if r["status"] in ("BLOCKED", "FAIL", "NOT RUN") and not r["waiver"]]
         self.assertEqual(sorted(open_rows), sorted(blocking))
         self.assertEqual(verdict, "NO-GO" if blocking else "GO")
-        self.assertTrue({"M-03", "W-11", "M-09", "A-03", "M-11"} <= set(open_rows))
+        self.assertTrue({"M-03", "W-11", "M-09", "R-01", "M-11"} <= set(open_rows))
 
     def test_g01_is_backed_by_verbatim_same_shell_logs_on_a_committed_clean_source(self):
         g = {r["id"]: r for r in BASE["rows"]}["G-01"]
@@ -155,15 +295,47 @@ class CommittedMatrix(unittest.TestCase):
 
     def test_prerequisite_rows_are_blocked_not_bare_not_run(self):
         by_id = {r["id"]: r for r in BASE["rows"]}
-        for rid in ("A-01", "A-02", "M-11"):
+        for rid in ("A-01", "M-11"):
             self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
             self.assertTrue(by_id[rid]["blocker"], rid)
 
     def test_existing_account_unsigned_host_row_is_blocking_and_was_not_run(self):
         row = {r["id"]: r for r in BASE["rows"]}["M-11"]
-        self.assertEqual((row["status"], row["waiver"], row["actual"], row["evidence"]), ("BLOCKED", "", "", []))
+        self.assertEqual((row["status"], row["waiver"], row["evidence"]), ("BLOCKED", "", []))
         self.assertTrue(row["blocker"])
         self.assertIn("M-11", m.decision(BASE)[1])
+        for field in ("actual", "blocker"):
+            self.assertIn("no unsigned dev-registered host was built or run", row[field])
+            self.assertIn("signed me.nagaev.veles.bridge", row[field])
+        self.assertIn("NOT waived", row["actual"])
+        self.assertIn("no result exists", row["blocker"])
+
+    def test_no_row_claims_the_owner_cannot_approve_bluetooth_after_the_grant(self):
+        for row in BASE["rows"]:
+            self.assertNotIn("cannot approve", row["blocker"], row["id"])
+            self.assertNotIn("cannot be granted now", row["blocker"], row["id"])
+            if row["id"] == "M-11":
+                self.assertNotIn("cannot approve", row["actual"])
+            # the only surviving mention is explicitly labelled as pre-grant history
+            if "cannot approve" in row["actual"]:
+                self.assertIn("PRE-GRANT", row["actual"], row["id"])
+
+    def test_historical_mac_adjudication_provenance_is_stated_and_head_blocks_st15(self):
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26/phone-evidence/mac"
+        for rid, name in (("M-09", "cold"), ("M-10", "prewarm")):
+            row = by_id[rid]
+            self.assertEqual(row["status"], "BLOCKED")
+            for needle in ("HISTORICAL EVALUATOR PROVENANCE", "OPERATOR-INFERRED", "BLOCKED", "ST-15",
+                           "NOT reproducible at HEAD", "no legacy bypass"):
+                self.assertIn(needle, row["actual"], (rid, needle))
+            new = json.loads((base / f"reevaluation-at-head/otp23-macos-strict-{name}-reevaluated-at-head.json").read_text())
+            old = json.loads((base / f"otp23-macos-strict-{name}-adjudicated.json").read_text())
+            self.assertEqual((old["strict_result"], new["strict_result"]), ("PASS", "BLOCKED"))
+            self.assertEqual(new["checks"]["ST-15"]["status"], "BLOCKED")
+            self.assertEqual(new["inputs"]["raw"]["sha256"], old["inputs"]["raw"]["sha256"])
+            self.assertEqual(len(new["evaluator_provenance"]["sha256"]), 3)
+            self.assertNotIn("evaluator_provenance", old)  # the originals are untouched and carry none
 
     def test_tauri_packaging_stays_unjustified_and_review_is_a_placeholder(self):
         by_id = {r["id"]: r for r in BASE["rows"]}
@@ -187,7 +359,7 @@ class CommittedMatrix(unittest.TestCase):
         for rid in ("W-01", "M-01", "M-02"):
             self.assertNotIn(rid, open_ids)
         # nothing else is relaxed: signing/identity, allow/deny/recovery and strict background stay open
-        for rid in ("M-03", "M-04", "M-05", "M-06", "W-11", "M-09"):
+        for rid in ("M-03", "M-04", "W-11", "M-09"):
             self.assertIn(rid, open_ids)
 
     def test_waiver_rules(self):
@@ -208,12 +380,16 @@ class CommittedMatrix(unittest.TestCase):
         self.assertTrue(m.validate(with_row("W-02", account="root", **changes)))
         self.assertEqual(m.validate(with_row("W-02", account="standard", **changes)), [])
 
-    def test_every_macos_account_and_tcc_row_stays_blocked_without_human_access(self):
+    def test_macos_rows_pass_only_where_the_human_observation_and_signature_exist(self):
         rows = {r["id"]: r for r in BASE["rows"]}
-        for rid in ("M-03", "M-04", "M-05", "M-06"):
+        for rid in ("M-03", "M-04"):
             self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
             self.assertTrue(rows[rid]["human_gated"], rid)
             self.assertTrue(rows[rid]["blocker"], rid)
+        for rid in ("M-05", "M-06"):
+            self.assertEqual((rows[rid]["status"], rows[rid]["human_gated"]), ("PASS", True), rid)
+            self.assertTrue(rows[rid]["operator"].strip(), rid)
+        self.assertIn("NOT Developer ID", rows["M-03"]["actual"])
         text = " ".join(rows[r]["requirement"] + rows[r]["expected"] for r in ("M-01", "M-02", "M-03", "M-04", "M-05", "M-06"))
         for needle in ("FRESH STANDARD", "prompt owner", "signed", "final identifier", "DENY", "ALLOW", "SAME extension state"):
             self.assertIn(needle.lower(), text.lower())

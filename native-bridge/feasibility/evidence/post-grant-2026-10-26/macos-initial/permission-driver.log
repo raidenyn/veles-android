@@ -1,0 +1,31 @@
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+
+DevTools listening on ws://127.0.0.1:60834/devtools/browser/088ac856-fcec-4528-a0a4-75d684f680a2
+Trying to load the allocator multiple times. This is *not* supported.
+[29673:6486118:1026/235848.258319:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: PHONE_REGISTRATION_ERROR
+[29673:6486118:1026/235848.258481:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: PHONE_REGISTRATION_ERROR
+[29673:6486118:1026/235848.272114:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: PHONE_REGISTRATION_ERROR
+[29673:6486118:1026/235848.332664:ERROR:google_apis/gcm/engine/mcs_client.cc:702]   Error code: 401  Error message: Authentication Failed: wrong_secret
+[29673:6486118:1026/235848.332685:ERROR:google_apis/gcm/engine/mcs_client.cc:704] Failed to log in to GCM, resetting connection.
+Created TensorFlow Lite XNNPACK delegate for CPU.
+[29673:6486118:1026/235911.717470:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: DEPRECATED_ENDPOINT
+[29673:6486118:1026/235957.189638:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: DEPRECATED_ENDPOINT
+[29673:6486118:1027/000119.985087:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: DEPRECATED_ENDPOINT
+Trying to load the allocator multiple times. This is *not* supported.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1793034105.800708 6492962 environment.cc:526] Selected adapter: Apple M1 Max, arch=metal-3, vendor=apple, backend=Metal, adapterType=Integrated GPU
+I0000 00:00:1793034105.804948 6492971 environment.cc:526] Selected adapter: Apple M1 Max, arch=metal-3, vendor=apple, backend=Metal, adapterType=Integrated GPU
+[29673:6486118:1027/000516.301149:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: DEPRECATED_ENDPOINT
+result=FAIL failures=['denied:ack_missing', 'denied:deny_not_observed', 'recovered:ack_missing'] -> evidence/post-grant-2026-10-26/macos-permission-recovery.json
+{"unregistered": true, "manifest": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json", "note": "removed only this owned manifest; the PoC app bundle under target/macos-poc and any Bluetooth (TCC) grants were not touched"}
+recovery_exit=1

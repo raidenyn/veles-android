@@ -1,0 +1,93 @@
+{
+  "phase": "post-grant integration (2026-10-26/27), NEW phase after the e19c8ca-scoped final review",
+  "r01_status": "PENDING: the final fresh claude-opus-5-5 review (session ceb6e424-1e26-4ea7-972b-efa4ba2dc633) ran and found 0 CRITICAL / 2 IMPORTANT / 7 MINOR; the corrections are made but unverified; the parent verifies them. Nothing here is a PASS.",
+  "source_commits": {
+    "0d75bb2": "initial strict/scenario harness (0d75bb2d...)",
+    "15f57a4": "strong strict phone validation",
+    "3dbe3db": "debug phone evidence (TransportTelemetry/SyntheticTransportFixture, debug only) + scope fixes",
+    "db5d4db": "Windows real-OS foreground gate + CI coverage (harness/docs/workflow only; no app code)"
+  },
+  "implementation_sessions_claude_code_cli": [
+    {
+      "role": "strict harness",
+      "session_id": "6e198e91-fd1d-4e54-a2fc-fa9024059b42",
+      "raw": "reviews-and-provenance/sonnet-strict-result.json"
+    },
+    {
+      "role": "lifecycle scenarios",
+      "session_id": "1aedf9f2-a8e8-437f-a321-8afcacf4d7d1",
+      "raw": "reviews-and-provenance/sonnet-lifecycle-result.json"
+    },
+    {
+      "role": "permission recovery",
+      "session_id": "37885501-841f-4246-9c90-9a90bdd4ed79",
+      "raw": "reviews-and-provenance/sonnet-permission-result.json"
+    },
+    {
+      "role": "phone telemetry",
+      "session_id": "93fb7008-5c51-4ade-9ff8-082723b3dd3b",
+      "raw": "reviews-and-provenance/sonnet-phone-result.json"
+    }
+  ],
+  "implementation_model": {
+    "requested_model": "claude-sonnet-5-5",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "observed_canonicalModel": "claude-sonnet-5-5",
+    "source": "Claude Code JSON result metadata (modelUsage keys re-read from the four raw files when this record was written); is_error false and subagents spawned 0 in each",
+    "note": "session ids and model names are copied from the raw CLI results and the integration task; later fix-wave result files under /tmp/opencode (*-fixes.json) were not re-read or copied here"
+  },
+  "opus_interim_reviews": {
+    "session_id": "97410d6b-c523-444a-86e8-f934f3da6b5c",
+    "observed_modelUsage_key": "claude-opus-5-5",
+    "provider": "firstParty",
+    "subagents": 0,
+    "repository_edits_by_reviewer": 0,
+    "raws": [
+      {
+        "file": "reviews-and-provenance/otp23-resume-opus-preflight.json",
+        "verdict": "eight IMPORTANT defects found in harness before measurement (not approved)"
+      },
+      {
+        "file": "reviews-and-provenance/otp23-resume-opus-fixes-review.json",
+        "verdict": "not approved for physical measurement yet (one IMPORTANT telemetry defect + a dropped lifecycle check)"
+      },
+      {
+        "file": "reviews-and-provenance/otp23-resume-opus-last-preflight.json",
+        "verdict": "approved for physical measurement; no remaining CRITICAL/IMPORTANT"
+      },
+      {
+        "file": "m6/otp23-resume-opus-m6-adjudication.json",
+        "verdict": "A-02 (M6) PASS by independent manual adjudication; machine FAIL retained; residuals 1-6 recorded in the matrix"
+      }
+    ],
+    "scope": "pre-measurement code reviews and one evidence adjudication; NOT the final review of the committed post-grant tree"
+  },
+  "final_review": {
+    "status": "PENDING",
+    "review_result_recorded": true,
+    "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
+    "observed_modelUsage_key": "claude-opus-5-5",
+    "subagents_spawned": 0,
+    "repository_edits_by_reviewer": 0,
+    "raw": "reviews-and-provenance/otp23-postgrant-final-opus-result.json",
+    "report": "reviews-and-provenance/otp23-postgrant-final-opus-review.md",
+    "findings": {
+      "critical": 0,
+      "important": 2,
+      "minor": 7
+    },
+    "disposition": "IMPORTANT-1 corrected by option (b) with evaluator provenance and tests; IMPORTANT-2 corrected; MINOR items dispositioned in INTEGRATION.md; corrections made by actual claude-sonnet-5-5 (review-fix pass; its own raw result is not copied here)",
+    "required": "R-01 stays PENDING/BLOCKED until the parent independently verifies the fixes, the tree is committed, and a PASS row cites a review bound to that commit",
+    "earlier_pass_preserved": "R-01's e19c8ca-scoped PASS (session f3746c7a-184d-4343-933a-12093f203b6a) is preserved and explicitly scoped to the source before the new harness/telemetry code"
+  },
+  "integration_session": {
+    "role": "post-grant integration pass (before the final review)",
+    "session_id": "fe9d1222-792e-4494-a2af-3e5468bb4d6a",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "observed_canonicalModel": "claude-sonnet-5-5",
+    "raw": "reviews-and-provenance/sonnet-postgrant-integration-result.json",
+    "is_error": false,
+    "subagents_spawned": 0,
+    "source": "modelUsage and session_id read from the raw CLI result"
+  }
+}

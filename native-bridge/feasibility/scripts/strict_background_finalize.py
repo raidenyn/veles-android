@@ -18,6 +18,7 @@ import copy
 import json
 import os
 import pathlib
+import subprocess
 import sys
 from datetime import datetime, timezone
 
@@ -26,9 +27,41 @@ from strict_phone_validation import (KIND, parse_phone_arg, read_input, sha256_b
                                      validate_phone_files)
 
 ADJUDICATION_KIND = "otp23-strict-adjudication"
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+EVALUATOR_FILES = ("strict_background_core.py", "strict_phone_validation.py", "strict_background_finalize.py")
 
 
-def adjudicate(raw, raw_record, phone_records, now=None, clock=None):
+def _git(directory, *args):
+    """Stdout of a git command run in `directory`, or None when git or the checkout is unavailable."""
+    try:
+        done = subprocess.run(["git", "-C", str(directory), *args], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def evaluator_provenance(directory=SCRIPT_DIR):
+    """Which evaluator code produced a verdict: git revision, whether the evaluator files differ from it, and
+    their SHA256. The dirty flag covers ONLY the evaluator files (other uncommitted work is not reported as
+    evaluator change). Outside a git checkout the revision and dirty flag are null, never guessed; the hashes
+    are always computed from the files actually loaded."""
+    directory = pathlib.Path(directory)
+    revision = (_git(directory, "rev-parse", "HEAD") or "").strip() or None
+    status = _git(directory, "status", "--porcelain", "--untracked-files=all", "--", *EVALUATOR_FILES) \
+        if revision else None
+    dirty_files = None if status is None else sorted(line[3:].strip() for line in status.splitlines() if line)
+    hashes = {}
+    for name in EVALUATOR_FILES:
+        try:
+            hashes[name] = sha256_bytes((directory / name).read_bytes())
+        except OSError:
+            hashes[name] = None
+    return {"git_revision": revision, "git_available": revision is not None,
+            "evaluator_files_dirty": None if dirty_files is None else bool(dirty_files),
+            "evaluator_files_modified": dirty_files, "sha256": hashes}
+
+
+def adjudicate(raw, raw_record, phone_records, now=None, clock=None, provenance=None):
     """Pure given its inputs. Returns the new adjudication document (never mutates `raw`)."""
     validation = validate_phone_files(raw, phone_records, clock)
     evidence = copy.deepcopy(raw.get("evidence") or {})
@@ -50,6 +83,7 @@ def adjudicate(raw, raw_record, phone_records, now=None, clock=None):
         "formal_otp23_acceptance": False,
         "note": "Pure re-evaluation of an immutable raw strict result plus offline phone evidence; the "
                 "requirements matrix, not this file, adjudicates OTP-23 acceptance.",
+        "evaluator_provenance": provenance if provenance is not None else evaluator_provenance(),
         "adjudicated_utc": (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "strict_result": result,
         "scenario": raw.get("scenario"),

@@ -1,0 +1,16 @@
+{
+  "run_id": "m6-pair-20261027-a",
+  "records_per_peer": {
+    "576d2120c83dc839": 100,
+    "c3a3dc8495dd5bc2": 100
+  },
+  "overlapping_record_pairs": 16,
+  "summed_overlap_ms": 1505,
+  "earliest_disconnect_peer": "576d2120c83dc839",
+  "survivor_peer": "c3a3dc8495dd5bc2",
+  "survivor_records_after_disconnect": 71,
+  "survivor_notifications_after_disconnect": 639,
+  "clock": "phone elapsed_realtime_ms (single clock)",
+  "not": "no cryptographic peer identity, no protocol authentication, not OTP-24 GO",
+  "input_sha256": "6515a400852f4f73c49d2080073b7f7150c9daf0dca65127ee82e8cf778ae478"
+}

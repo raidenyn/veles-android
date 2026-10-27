@@ -1,0 +1,18 @@
+{
+  "recorded_utc_source": "values read from real outputs in the copied files; nothing here is a new measurement",
+  "commits": {"initial_harness": "0d75bb287774c2cca37086b8963fb84c7d4c2a7d", "strict_phone_validation": "15f57a45261d8b2c324c302e103be1fb37ebac99", "debug_phone_evidence": "3dbe3db75fc292ff19f30a8edad97cf86b987e34", "windows_os_foreground_gate": "db5d4dbe294caee68b0898c9e1670f30475a9826"},
+  "android": {
+    "debug_apk_sha256": "063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e",
+    "instrumentation_apk_sha256": "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c",
+    "release_apk_sha256_unsigned": "5d770ede86e9c18e2fe8edd2c5e8d3b98cc35ef54c1f6c3907ea5816f8de3f10",
+    "version_name_in_transport_evidence": "0.0.3-35-3dbe3db-contract_otp23-desktop-alignment",
+    "signing_certificate_sha256": "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+    "signing_source": "signing-and-gates/otp23-postgrant-android-signature.txt (apksigner output); the install was an update (-r), no -g, no uninstall, no data clear",
+    "installed_readback_sha256": "063ac7ea... on both phones (signing-and-gates/otp23-3dbe3db-installed.txt)",
+    "jvm_tests": {"count": 334, "failures": 0, "errors": 0, "skipped": 0, "classes": 42, "summary_file": "signing-and-gates/junit-summary-334.txt", "source": "per-class summary of app/build/test-results/testDebugUnitTest/*.xml saved in summary_file (read, not rerun); parent log signing-and-gates/otp23-3dbe3db-gates.log (gradle_exit_code=0)"},
+    "release_r8_dex": "0 hits for TransportTelemetry, SyntheticTransportFixture, scheduleSyntheticPush, OTP23_POC, otp23-transport-evidence, otp23-unsolicited, notify_api, callback_after_close and GATT_FAILURE in classes.dex of the release APK whose sha256 equals release_apk_sha256_unsigned; saved output: signing-and-gates/otp23-3dbe3db-release-dex-inspection.txt (re-read from /tmp/opencode/otp23-3dbe3db-release.apk by inspect_release_dex.py; the original parent inspection output was not preserved)"
+  },
+  "macos": {"bundle_identifier": "me.nagaev.veles.bridge", "team": "7T39M26Z99", "authority": "Apple Development", "host_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c", "source": "signing-and-gates/otp23-postgrant-mac-signature.txt", "not": "NOT Developer ID, not notarized, not CI-provided provenance; no new signing-CI provenance is claimed"},
+  "windows": {"host_sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda", "rust_sources_unchanged_since": "cd971f0 (git diff cd971f0..db5d4db over native-bridge/feasibility/src, Cargo.toml, Cargo.lock is empty)"},
+  "clocks": {"files": ["reviews-and-provenance/otp23-resume-clock-measurements.json", "reviews-and-provenance/otp23-resume-win-ntp.txt", "reviews-and-provenance/otp23-resume-mac-ntp.txt"], "note": "SSH-midpoint uncertainties (seconds-scale) were kept conservative and not shrunk; no clock was resynchronized; M6 overlap uses the phone's single elapsed clock; the read-only NTP reads are recorded as produced and not reconciled with the SSH offsets"}
+}

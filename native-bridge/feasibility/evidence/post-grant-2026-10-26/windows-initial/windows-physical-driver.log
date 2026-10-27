@@ -1,0 +1,534 @@
+{
+  "flavour": "plain",
+  "cases": [
+    {
+      "case": "host-no-windows-no-listeners",
+      "result": "PASS",
+      "top_level_windows": [],
+      "network_endpoints": []
+    },
+    {
+      "case": "two-independent-connects",
+      "result": "PASS"
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 4,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+          "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+          "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff"
+        }
+      ],
+      "request_ids": [
+        "r6-3ldynd",
+        "r7-6qscg5"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 177,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "56c3d10ffb823b826f9ea559ca55c926dba6fdc9bbc9612d78c89333fb12cfd5",
+          "received_sha256": "56c3d10ffb823b826f9ea559ca55c926dba6fdc9bbc9612d78c89333fb12cfd5"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "7794978e9162c3d49b68d96c1bfee3c591a78273590d24419714b0fbec4d093e",
+          "received_sha256": "7794978e9162c3d49b68d96c1bfee3c591a78273590d24419714b0fbec4d093e"
+        }
+      ],
+      "request_ids": [
+        "r8-m5yeum",
+        "r9-v8zuka"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 178,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "0485fafa5c192053fb805def5bf21100535fadfc7e86559550b625ffd6802b90",
+          "received_sha256": "0485fafa5c192053fb805def5bf21100535fadfc7e86559550b625ffd6802b90"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "38a0a1f7da9ac5132bbaff00797798f08290472fe8c5dc758454917156d5f479",
+          "received_sha256": "38a0a1f7da9ac5132bbaff00797798f08290472fe8c5dc758454917156d5f479"
+        }
+      ],
+      "request_ids": [
+        "ra-py1im9",
+        "rb-h9tz41"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 179,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "9fa4c4c50844501ffcec8903b179334cf507cb0b09cd48e6831bb218ce977cce",
+          "received_sha256": "9fa4c4c50844501ffcec8903b179334cf507cb0b09cd48e6831bb218ce977cce"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "6cd382213fc82490ed737aceade353cbdb995495464eeb2f9e57689c506ad700",
+          "received_sha256": "6cd382213fc82490ed737aceade353cbdb995495464eeb2f9e57689c506ad700"
+        }
+      ],
+      "request_ids": [
+        "rc-9smfrg",
+        "rd-z3nw3v"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 180,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "05c891fbc26688c510a535d470e30c6ff29fea5a4e4a0b7e94463dfbc0937c76",
+          "received_sha256": "05c891fbc26688c510a535d470e30c6ff29fea5a4e4a0b7e94463dfbc0937c76"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "d0ea528655c16067c8fa4c9d4d9b0e3b3d4e5597fa6e693b3686eaaf1bcb46b0",
+          "received_sha256": "d0ea528655c16067c8fa4c9d4d9b0e3b3d4e5597fa6e693b3686eaaf1bcb46b0"
+        }
+      ],
+      "request_ids": [
+        "re-2inhxg",
+        "rf-yz682i"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 505,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "6e45ba441e6886c9705aacb57f97b7dc5531ad48d21d03997c51d0d1fbc8d379",
+          "received_sha256": "6e45ba441e6886c9705aacb57f97b7dc5531ad48d21d03997c51d0d1fbc8d379"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "8627c82af3887e9aa56383e8752de50505d9ef61f893da802bd799943dd41560",
+          "received_sha256": "8627c82af3887e9aa56383e8752de50505d9ef61f893da802bd799943dd41560"
+        }
+      ],
+      "request_ids": [
+        "rg-qgki2f",
+        "rh-99kthd"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 506,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "141a25566a0f077ec7602c5b48f4a1141e27da68d2be868b805c77633d583a94",
+          "received_sha256": "141a25566a0f077ec7602c5b48f4a1141e27da68d2be868b805c77633d583a94"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "ab154f58369ec5b453843e290ba4f870665eec30eb54349817f52a5c47ce8b6f",
+          "received_sha256": "ab154f58369ec5b453843e290ba4f870665eec30eb54349817f52a5c47ce8b6f"
+        }
+      ],
+      "request_ids": [
+        "ri-oec1qo",
+        "rj-rh8g4k"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 507,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "8dfa9d5eba8c2992771c666ca12abc99237d2f23c1b72091d6d0c9ef4b9654c9",
+          "received_sha256": "8dfa9d5eba8c2992771c666ca12abc99237d2f23c1b72091d6d0c9ef4b9654c9"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "5978716f5d069887c8479ef2b89e540def34bff6e698e168da37fb905ee7d0c8",
+          "received_sha256": "5978716f5d069887c8479ef2b89e540def34bff6e698e168da37fb905ee7d0c8"
+        }
+      ],
+      "request_ids": [
+        "rk-ccsu4r",
+        "rl-cebikl"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 508,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "1be0b7faff64c6b209b5c15ffc56e75f6c2eb80c2d0a867cdc03afd03a805a36",
+          "received_sha256": "1be0b7faff64c6b209b5c15ffc56e75f6c2eb80c2d0a867cdc03afd03a805a36"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "4791654f80ff8b0b7c8c8a84f995e620d77402303c675846c423851f2e177069",
+          "received_sha256": "4791654f80ff8b0b7c8c8a84f995e620d77402303c675846c423851f2e177069"
+        }
+      ],
+      "request_ids": [
+        "rm-x1z7if",
+        "rn-g41lhr"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 509,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "7601e5c906d9ea83e663ce3ba617fb8d0aaf3730bff1a9d738d9ee24c1730078",
+          "received_sha256": "7601e5c906d9ea83e663ce3ba617fb8d0aaf3730bff1a9d738d9ee24c1730078"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "79a138a5b3244589aba8f0780f838c482e52c201f8ab0c2c47bc8d5393c06543",
+          "received_sha256": "79a138a5b3244589aba8f0780f838c482e52c201f8ab0c2c47bc8d5393c06543"
+        }
+      ],
+      "request_ids": [
+        "ro-yt9upr",
+        "rp-nb4e72"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 510,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "86f18d54404764eac20b2219f7e42fec86bac822f54ec7fef5ceb2965e5c4b7a",
+          "received_sha256": "86f18d54404764eac20b2219f7e42fec86bac822f54ec7fef5ceb2965e5c4b7a"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "7554431078cfe0b7a21c6c97d40fecb0d6b04944660ced49cc3e2b1640331e6b",
+          "received_sha256": "7554431078cfe0b7a21c6c97d40fecb0d6b04944660ced49cc3e2b1640331e6b"
+        }
+      ],
+      "request_ids": [
+        "rq-5q9v22",
+        "rr-okpd25"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 511,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "3ebc7d3997b1da7be22fce367c5fe5f4f2f4e78b949594ca74861c6855ac2239",
+          "received_sha256": "3ebc7d3997b1da7be22fce367c5fe5f4f2f4e78b949594ca74861c6855ac2239"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "830ab40485f66aeb447db5152360ed59ac259a940a23230bb4af5bf4d1e3b001",
+          "received_sha256": "830ab40485f66aeb447db5152360ed59ac259a940a23230bb4af5bf4d1e3b001"
+        }
+      ],
+      "request_ids": [
+        "rs-3jf09g",
+        "rt-8ezg08"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 1015,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "666407bfbf1e66a36960511a84d982aeeca9db0e207733832f0b5935d3383ece",
+          "received_sha256": "666407bfbf1e66a36960511a84d982aeeca9db0e207733832f0b5935d3383ece"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "04a9b8935d6b1a4acefe13a0f89139c0a151d7a93dab28f4d8acfe8a41d5ac7d",
+          "received_sha256": "04a9b8935d6b1a4acefe13a0f89139c0a151d7a93dab28f4d8acfe8a41d5ac7d"
+        }
+      ],
+      "request_ids": [
+        "ru-3k0ny1",
+        "rv-hidmij"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 1016,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "e36cac440265ac434f763b2870b9bd296d3af248adf430ed32a6eb33ae61ed40",
+          "received_sha256": "e36cac440265ac434f763b2870b9bd296d3af248adf430ed32a6eb33ae61ed40"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "535f266156cbe6ab71b0aba817625131a9906a587941dbb6ecc1dfa7edf3ba75",
+          "received_sha256": "535f266156cbe6ab71b0aba817625131a9906a587941dbb6ecc1dfa7edf3ba75"
+        }
+      ],
+      "request_ids": [
+        "rw-7gs8d0",
+        "rx-vg6zoy"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 1017,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "13762f520680ec3899f6d802271901349d762f0381da8b53fbca1976f822b563",
+          "received_sha256": "13762f520680ec3899f6d802271901349d762f0381da8b53fbca1976f822b563"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "89535422ee093088dd86609e1bae61f4a2eb3cff0440170b5b45224e2b271d8a",
+          "received_sha256": "89535422ee093088dd86609e1bae61f4a2eb3cff0440170b5b45224e2b271d8a"
+        }
+      ],
+      "request_ids": [
+        "ry-jyg4fm",
+        "rz-yuxz1s"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 4095,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "2ea4bc35346c433bbcd20f2c9926263e4e74386b6af52e686d29f3fa703bbfc2",
+          "received_sha256": "2ea4bc35346c433bbcd20f2c9926263e4e74386b6af52e686d29f3fa703bbfc2"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "eb87a4b101dcdde724f8c27b33f3ac3652fec2e9647e0cbca021c8ddcacac444",
+          "received_sha256": "eb87a4b101dcdde724f8c27b33f3ac3652fec2e9647e0cbca021c8ddcacac444"
+        }
+      ],
+      "request_ids": [
+        "r10-8xe882",
+        "r11-gvzpte"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 4096,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "8012bae7fd2ab3b472ea9d1456f119c20f70f4fef25fd2b6c87f77654f769f92",
+          "received_sha256": "8012bae7fd2ab3b472ea9d1456f119c20f70f4fef25fd2b6c87f77654f769f92"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "78b7a92cb4ef124f3526174a283b9d819eecb5684781e6e87fc7055155861875",
+          "received_sha256": "78b7a92cb4ef124f3526174a283b9d819eecb5684781e6e87fc7055155861875"
+        }
+      ],
+      "request_ids": [
+        "r12-4fm39b",
+        "r13-5ylgul"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 4096,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "80144c4497d35f36467c8b776e77a579f53e3241f43d834bcc6ec1403e30a7b6",
+          "received_sha256": "80144c4497d35f36467c8b776e77a579f53e3241f43d834bcc6ec1403e30a7b6"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "7becb90ff09d1b181d2ccd6c12b7d1eb57455b23bf850acf36b7675bd3553fa3",
+          "received_sha256": "7becb90ff09d1b181d2ccd6c12b7d1eb57455b23bf850acf36b7675bd3553fa3"
+        }
+      ],
+      "request_ids": [
+        "r14-s05syi",
+        "r15-bvw0rg"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 4096,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "5c83961e0c16bb875c203ca7928a4cfb7e458c85d1d314ed52aac54d0dd0a3bd",
+          "received_sha256": "5c83961e0c16bb875c203ca7928a4cfb7e458c85d1d314ed52aac54d0dd0a3bd"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "2bec71e758624421fbe0c0579ced87e56b73842aff9a15e16d12403ffcc4817d",
+          "received_sha256": "2bec71e758624421fbe0c0579ced87e56b73842aff9a15e16d12403ffcc4817d"
+        }
+      ],
+      "request_ids": [
+        "r16-1z38h8",
+        "r17-aojjct"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 4096,
+      "per_handle": [
+        {
+          "connection_handle": "36d4ff70433c44fd",
+          "expected_sha256": "848b85b7fa9df74869428bf418db7964a64022785a381cc442c62f9ea44beb48",
+          "received_sha256": "848b85b7fa9df74869428bf418db7964a64022785a381cc442c62f9ea44beb48"
+        },
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "a2c74b9a8ffb1516fc4ace7c8394bbabb340bf85d0ae92b31cc46ba6eec3fc06",
+          "received_sha256": "a2c74b9a8ffb1516fc4ace7c8394bbabb340bf85d0ae92b31cc46ba6eec3fc06"
+        }
+      ],
+      "request_ids": [
+        "r18-vwcbem",
+        "r19-ify2mu"
+      ]
+    },
+    {
+      "case": "disconnected-handle-rejects-send",
+      "result": "PASS",
+      "code": "unknown_handle"
+    },
+    {
+      "case": "disconnect-one-other-still-exchanges",
+      "result": "PASS",
+      "bytes_per_phone": 4096,
+      "per_handle": [
+        {
+          "connection_handle": "266de5afc18b5858",
+          "expected_sha256": "fadc7c0e99d343cac1154a6c117a654a0bf60400d9be43d0d7b54dc30d23c4be",
+          "received_sha256": "fadc7c0e99d343cac1154a6c117a654a0bf60400d9be43d0d7b54dc30d23c4be"
+        }
+      ],
+      "request_ids": [
+        "r1c-8rku60"
+      ]
+    },
+    {
+      "case": "shutdown-real-link",
+      "result": "PASS",
+      "process_gone_seconds": 0.647
+    }
+  ],
+  "result": "PASS",
+  "started_utc": "2026-10-26T16:45:09+00:00",
+  "source_revision": null,
+  "negotiation_source": "host trace file (VELES_OTP23_TRACE); no MTU exists on the wire",
+  "sizes": [
+    4,
+    177,
+    178,
+    179,
+    180,
+    505,
+    506,
+    507,
+    508,
+    509,
+    510,
+    511,
+    1015,
+    1016,
+    1017,
+    4095,
+    4096
+  ],
+  "repeat_4096": 3,
+  "pre_existing_host_processes_untouched": [],
+  "chrome_version": "Chrome/155.0.8059.85",
+  "ready": {
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "platform": "windows",
+    "api_version": 1
+  },
+  "host_pid": 99512,
+  "host_wrapper_pid": 22800,
+  "host_executable": "C:\\Users\\yuriy\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe",
+  "host_exe_sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda",
+  "setup_replies": [
+    {
+      "api_version": 1,
+      "connection_handle": "36d4ff70433c44fd",
+      "envelope_version": 1,
+      "platform_hint": "winrt:5f1790d81f64:1",
+      "request_id": "r3-3yvf6n",
+      "type": "connected"
+    },
+    {
+      "api_version": 1,
+      "connection_handle": "266de5afc18b5858",
+      "envelope_version": 1,
+      "platform_hint": "winrt:5075705cbdd9:1",
+      "request_id": "r4-9uc7hl",
+      "type": "connected"
+    }
+  ],
+  "negotiation": {
+    "source": "host trace (VELES_OTP23_TRACE); keyed by host connection token; no MTU field exists on the wire; per-handle association not inferred",
+    "per_conn": {
+      "2": {
+        "mtu": 517,
+        "attribute_budget_bytes": 512,
+        "fragment_payload_bytes": 508
+      },
+      "3": {
+        "mtu": 517,
+        "attribute_budget_bytes": 512,
+        "fragment_payload_bytes": 508
+      }
+    },
+    "fragment_attribute_rule": "min(mtu - 3, 512)",
+    "fragment_payload_rule": "attribute - 4",
+    "trace_sends": 42,
+    "trace_replies": 41
+  },
+  "finished_utc": "2026-10-26T16:45:23+00:00",
+  "duration_s": 14.1
+}

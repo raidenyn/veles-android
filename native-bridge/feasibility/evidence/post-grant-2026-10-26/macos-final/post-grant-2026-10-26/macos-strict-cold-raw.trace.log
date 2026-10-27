@@ -1,0 +1,36 @@
+[       0ms pid=4903] start pid=4903
+[       0ms pid=4903] in  len=81 type=hello request_id=r1-jayv9v
+[       0ms pid=4903] out len=181 type=ready request_id=r1-jayv9v api_version=1
+[      81ms pid=4903] in  len=137 type=start_scan request_id=r2-plscxd api_version=1
+[      89ms pid=4903] bluetooth authorization before adapter init: allowed_always
+[      90ms pid=4903] adapter init: created=true authorization=allowed_always
+[      97ms pid=4903] out len=135 type=scan_state request_id=r2-plscxd api_version=1 status=started scan_handle=f1e45f673d7b272b
+[     781ms pid=4903] out len=217 type=device_found api_version=1 scan_handle=f1e45f673d7b272b device_handle=13806b4130f8e07c label.len=17 platform_hint.len=42
+[    1050ms pid=4903] out len=217 type=device_found api_version=1 scan_handle=f1e45f673d7b272b device_handle=03d157c167a1c726 label.len=17 platform_hint.len=42
+[    1623ms pid=4903] in  len=115 type=connect request_id=r3-0p08z6 api_version=1 device_handle=03d157c167a1c726
+[    1624ms pid=4903] conn 2 device at 0ms
+[    2275ms pid=4903] conn 2 connected at 651ms
+[    2930ms pid=4903] conn 2 service at 1306ms
+[    3050ms pid=4903] conn 2 characteristics at 1426ms
+[    3050ms pid=4903] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    3230ms pid=4903] conn 2 subscribed; hint=macos:..7c94
+[    3230ms pid=4903] out len=182 type=connected request_id=r3-0p08z6 api_version=1 connection_handle=80f6e6dfe0231fa9 platform_hint.len=42
+[    3232ms pid=4903] in  len=115 type=connect request_id=r4-ow67ob api_version=1 device_handle=13806b4130f8e07c
+[    3232ms pid=4903] conn 3 device at 0ms
+[    3753ms pid=4903] conn 3 connected at 521ms
+[    4227ms pid=4903] conn 3 service at 994ms
+[    4348ms pid=4903] conn 3 characteristics at 1116ms
+[    4348ms pid=4903] conn 3 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    4527ms pid=4903] conn 3 subscribed; hint=macos:..bde8
+[    4527ms pid=4903] out len=182 type=connected request_id=r4-ow67ob api_version=1 connection_handle=400ee77320807769 platform_hint.len=42
+[    4528ms pid=4903] in  len=115 type=stop_scan request_id=r5-t6dku9 api_version=1 scan_handle=f1e45f673d7b272b
+[    4528ms pid=4903] out len=135 type=scan_state request_id=r5-t6dku9 api_version=1 status=stopped scan_handle=f1e45f673d7b272b
+[  693434ms pid=4903] out len=5577 type=message api_version=1 connection_handle=80f6e6dfe0231fa9 record_base64.len=5464
+[  694729ms pid=4903] out len=5577 type=message api_version=1 connection_handle=400ee77320807769 record_base64.len=5464
+[  724542ms pid=4903] in  len=81 type=shutdown request_id=r6-fy6ppr api_version=1
+[  724542ms pid=4903] out len=99 type=disconnected api_version=1 connection_handle=80f6e6dfe0231fa9
+[  724542ms pid=4903] conn 3 command channel closed
+[  724542ms pid=4903] conn 2 command channel closed
+[  724542ms pid=4903] out len=99 type=disconnected api_version=1 connection_handle=400ee77320807769
+[  724543ms pid=4903] out len=90 type=shutdown_complete request_id=r6-fy6ppr api_version=1
+[  724543ms pid=4903] exit code=0 stdout_drained=true
