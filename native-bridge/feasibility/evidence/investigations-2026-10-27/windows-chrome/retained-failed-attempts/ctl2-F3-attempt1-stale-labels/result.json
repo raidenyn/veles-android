@@ -1,0 +1,63 @@
+{
+  "host_binary_sha256": "e36328d2337774f28ef72d181f998a0e98e044db42fa72f6b815ef02c0572f4d",
+  "args": {
+    "host_binary": "C:\\Users\\yuriy\\otp23-probe\\diag-src2\\target\\release\\otp23-host.exe",
+    "out_dir": "C:\\Users\\yuriy\\otp23-probe\\ctl2-F3",
+    "discover": false,
+    "first": "0838be31",
+    "second": "0838be31,4603b134",
+    "gap_s": 1.0,
+    "discover_s": 30.0
+  },
+  "phases": [
+    {
+      "phase": "first",
+      "started_utc": "2026-10-27T13:53:16.728+00:00",
+      "wanted": [
+        "0838be31"
+      ],
+      "devices": [
+        "5d8dd647",
+        "c7de8e9c"
+      ],
+      "connects": [],
+      "scan": {
+        "type": "scan_state",
+        "status": "started"
+      },
+      "connect_started_utc": "2026-10-27T13:53:47.108+00:00",
+      "missing_wanted": [
+        "0838be31"
+      ],
+      "exit_code": 0,
+      "exited_utc": "2026-10-27T13:53:47.115+00:00",
+      "finished_utc": "2026-10-27T13:53:47.115+00:00"
+    },
+    {
+      "phase": "second",
+      "started_utc": "2026-10-27T13:53:48.115+00:00",
+      "wanted": [
+        "0838be31",
+        "4603b134"
+      ],
+      "devices": [
+        "5d8dd647",
+        "c7de8e9c"
+      ],
+      "connects": [],
+      "scan": {
+        "type": "scan_state",
+        "status": "started"
+      },
+      "connect_started_utc": "2026-10-27T13:54:18.310+00:00",
+      "missing_wanted": [
+        "0838be31",
+        "4603b134"
+      ],
+      "exit_code": 0,
+      "exited_utc": "2026-10-27T13:54:18.318+00:00",
+      "finished_utc": "2026-10-27T13:54:18.318+00:00"
+    }
+  ],
+  "first_exited_utc": "2026-10-27T13:53:47.115+00:00"
+}

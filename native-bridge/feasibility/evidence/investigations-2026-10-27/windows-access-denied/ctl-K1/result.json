@@ -1,0 +1,75 @@
+{
+  "host_binary_sha256": "186f920c7accd506da42605e26485b7669300fb507f5d6beaafef3b8913c0a64",
+  "args": {
+    "host_binary": "C:\\Users\\yuriy\\otp23-probe\\diag-src\\target\\release\\otp23-host.exe",
+    "out_dir": "C:\\Users\\yuriy\\otp23-probe\\ctl-K1",
+    "discover": false,
+    "first": "0838be31",
+    "second": "0838be31",
+    "gap_s": 1.0,
+    "discover_s": 30.0
+  },
+  "phases": [
+    {
+      "phase": "first",
+      "started_utc": "2026-10-27T09:38:12.956+00:00",
+      "wanted": [
+        "0838be31"
+      ],
+      "devices": [
+        "0838be31"
+      ],
+      "connects": [
+        {
+          "label_hash8": "0838be31",
+          "reply": {
+            "type": "connected"
+          },
+          "at_utc": "2026-10-27T09:38:15.977+00:00"
+        }
+      ],
+      "scan": {
+        "type": "scan_state",
+        "status": "started"
+      },
+      "connect_started_utc": "2026-10-27T09:38:13.467+00:00",
+      "missing_wanted": [],
+      "exit_code": 0,
+      "exited_utc": "2026-10-27T09:38:15.984+00:00",
+      "finished_utc": "2026-10-27T09:38:15.984+00:00"
+    },
+    {
+      "phase": "second",
+      "started_utc": "2026-10-27T09:38:16.985+00:00",
+      "wanted": [
+        "0838be31"
+      ],
+      "devices": [
+        "0838be31",
+        "4603b134"
+      ],
+      "connects": [
+        {
+          "label_hash8": "0838be31",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T09:38:19.099+00:00"
+        }
+      ],
+      "scan": {
+        "type": "scan_state",
+        "status": "started"
+      },
+      "connect_started_utc": "2026-10-27T09:38:18.972+00:00",
+      "missing_wanted": [],
+      "exit_code": 0,
+      "exited_utc": "2026-10-27T09:38:19.106+00:00",
+      "finished_utc": "2026-10-27T09:38:19.106+00:00"
+    }
+  ],
+  "first_exited_utc": "2026-10-27T09:38:15.984+00:00"
+}

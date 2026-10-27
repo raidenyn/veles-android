@@ -1,0 +1,56 @@
+{
+  "id": "LC-stdin-eof",
+  "title": "Stdin EOF with an active scan and two active links (direct native-framed process)",
+  "expected": "stdin closed (NOT shutdown): exit 0, stdout reaches EOF on a frame boundary, process gone, trace shows the stdin-closed path with no shutdown_complete",
+  "actual": "all checks held; see detail",
+  "status": "PASS",
+  "error_class": "none",
+  "detail": {
+    "provenance": {
+      "launch": "direct process with pipes",
+      "chrome_provenance": false,
+      "context": "direct launch; Chrome provenance is covered by the Chrome scenarios"
+    },
+    "host_binary_sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda",
+    "host_pid_recorded": true,
+    "integrity": {
+      "host": {
+        "integrity": "high",
+        "rid": "0x3000",
+        "token_is_elevated": true
+      },
+      "driver": {
+        "integrity": "high",
+        "rid": "0x3000",
+        "token_is_elevated": true
+      }
+    },
+    "link_proof": [
+      {
+        "size": 16,
+        "request_sha256": "c0b02f7f88737848a5e94d5ca1cb5dcf18ad3e209275f61fb93dabbac43cb36e"
+      },
+      {
+        "size": 16,
+        "request_sha256": "024fa050e1842ba63278ac97947e6d64159d62c6ee2552acdfe57ffdf2b0ebd7"
+      }
+    ],
+    "exit_code": 0,
+    "stdout_eof_state": "clean",
+    "trace_exit": {
+      "at_ms": 3148,
+      "code": 0,
+      "stdout_drained": true
+    },
+    "trace_mechanism": "stdin_closed",
+    "frames_after_close": [
+      "connected",
+      "device_found",
+      "message",
+      "ready",
+      "scan_state",
+      "sent"
+    ],
+    "problems": []
+  }
+}

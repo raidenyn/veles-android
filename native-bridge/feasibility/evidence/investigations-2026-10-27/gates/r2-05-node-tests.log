@@ -1,0 +1,13 @@
+✔ physical driver only calls methods exported by the real connector (12.878701ms)
+✔ connector records visibility/focus history through listeners only (3.541724ms)
+✔ isolated init script only adds the .otp23 suffix to the debug build type (2.474634ms)
+✔ app no longer defines or reads a cap-only OTP23_POC flag (4.97183ms)
+✔ physical driver only calls methods exported by the real connector (3.54469ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 190.550054

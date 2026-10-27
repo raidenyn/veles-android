@@ -1,0 +1,170 @@
+{
+  "chrome_version_from_cdp": "Chrome/156.0.8078.48",
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+  "profile": "/Users/raiden/homepc/work/otp23-timer-probe/out-smoke/profile",
+  "browser_pid": null,
+  "hidden_s": 20,
+  "debug_port": 9333,
+  "launch_command_flags": null,
+  "extension_id": "iajcoaiiijccaoaoifibkbljjgiacfhf",
+  "setup_check": {
+    "port": {
+      "vis": "hidden",
+      "timers": 13,
+      "messages": 3
+    },
+    "control": {
+      "vis": "hidden",
+      "timers": 13,
+      "messages": 0
+    }
+  },
+  "hidden_start_epoch_ms": 1793093349999,
+  "targets": {
+    "port": "B1E61BC4E8720295D57133289C1A7BA8",
+    "control": "802AB1CD48A01FA8DE120712D3A66797",
+    "ordinary": "B64ED2B14D4FB0A0DAE68842E0C83B0A"
+  },
+  "read_back_epoch_ms": 1793093395030,
+  "raw_logs": {
+    "port": {
+      "mode": "port",
+      "started_epoch_ms": 1793093350004,
+      "timers": [
+        341.7000000476837,
+        1954.8000000715256,
+        3965,
+        5947.800000071526,
+        7948.100000023842,
+        9948.300000071526,
+        11947.899999976158,
+        13946.399999976158,
+        15946.5,
+        17947.600000023842,
+        19945.5,
+        21947.700000047684,
+        23946.100000023842,
+        25946.100000023842,
+        27949.800000071526,
+        29951.100000023842,
+        31946.200000047684,
+        33947.5,
+        35946.10000002384,
+        37947.5,
+        39948,
+        41946.800000071526,
+        43946.10000002384
+      ],
+      "messages": [
+        {
+          "recv_perf": 1913.7000000476837,
+          "recv_epoch_ms": 1793093351576,
+          "seq": 1,
+          "host_epoch_ms": 1793093351576
+        },
+        {
+          "recv_perf": 11923.899999976158,
+          "recv_epoch_ms": 1793093361586,
+          "seq": 2,
+          "host_epoch_ms": 1793093361586
+        },
+        {
+          "recv_perf": 21934.600000023842,
+          "recv_epoch_ms": 1793093371597,
+          "seq": 3,
+          "host_epoch_ms": 1793093371596
+        },
+        {
+          "recv_perf": 31942.600000023842,
+          "recv_epoch_ms": 1793093381605,
+          "seq": 4,
+          "host_epoch_ms": 1793093381604
+        },
+        {
+          "recv_perf": 41947,
+          "recv_epoch_ms": 1793093391610,
+          "seq": 5,
+          "host_epoch_ms": 1793093391609
+        }
+      ],
+      "visibility": [
+        {
+          "perf": 341.7000000476837,
+          "state": "hidden",
+          "focus": false
+        }
+      ],
+      "disconnects": []
+    },
+    "control": {
+      "mode": "control",
+      "started_epoch_ms": 1793093350615,
+      "timers": [
+        873.8000000715256,
+        2904,
+        4869.200000047684,
+        6867.5,
+        8867.5,
+        10869.399999976158,
+        12868.899999976158,
+        14868.100000023842,
+        16873,
+        18867.800000071526,
+        20868.899999976158,
+        22868.200000047684,
+        24867.5,
+        26868.5,
+        28869.5,
+        30868.800000071526,
+        32868.89999997616,
+        34868.89999997616,
+        36868.89999997616,
+        38868.39999997616,
+        40869.700000047684,
+        42868.700000047684,
+        44868.800000071526
+      ],
+      "messages": [],
+      "visibility": [
+        {
+          "perf": 873.8000000715256,
+          "state": "hidden",
+          "focus": false
+        }
+      ],
+      "disconnects": []
+    }
+  },
+  "host_send_log_lines": [
+    "{\"seq\": 1, \"t\": 1793093351576}",
+    "{\"seq\": 2, \"t\": 1793093361586}",
+    "{\"seq\": 3, \"t\": 1793093371596}",
+    "{\"seq\": 4, \"t\": 1793093381604}",
+    "{\"seq\": 5, \"t\": 1793093391609}"
+  ],
+  "analysis": {
+    "port": {
+      "timers": {
+        "samples": 0,
+        "median_gap_ms": null,
+        "max_gap_ms": null,
+        "verdict": "inconclusive"
+      },
+      "messages": {
+        "received": 5,
+        "expected": 5,
+        "missing_seqs": [],
+        "max_lag_ms": 1,
+        "median_lag_ms": 1
+      }
+    },
+    "control": {
+      "timers": {
+        "samples": 0,
+        "median_gap_ms": null,
+        "max_gap_ms": null,
+        "verdict": "inconclusive"
+      }
+    }
+  }
+}

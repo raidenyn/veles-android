@@ -1,0 +1,19 @@
+[       0ms pid=97000] start pid=97000
+[       0ms pid=97000] in  len=81 type=hello request_id=r1-udb293
+[       1ms pid=97000] out len=183 type=ready request_id=r1-udb293 api_version=1
+[    3217ms pid=97000] in  len=137 type=start_scan request_id=r2-66qgv0 api_version=1
+[    3270ms pid=97000] out len=135 type=scan_state request_id=r2-66qgv0 api_version=1 status=started scan_handle=182b14b4305c6cc9
+[    3354ms pid=97000] out len=195 type=device_found api_version=1 scan_handle=182b14b4305c6cc9 device_handle=0939eb03fb724eda label.len=17 platform_hint.len=20
+[    3773ms pid=97000] in  len=115 type=stop_scan request_id=r3-oqdxcz api_version=1 scan_handle=182b14b4305c6cc9
+[    3774ms pid=97000] out len=135 type=scan_state request_id=r3-oqdxcz api_version=1 status=stopped scan_handle=182b14b4305c6cc9
+[    3775ms pid=97000] exit code=0 stdout_drained=true
+[       0ms pid=61512] start pid=61512
+[       0ms pid=61512] in  len=81 type=hello request_id=r4-lk9p1u
+[       0ms pid=61512] out len=183 type=ready request_id=r4-lk9p1u api_version=1
+[       1ms pid=61512] in  len=137 type=start_scan request_id=r5-74dv61 api_version=1
+[      53ms pid=61512] out len=135 type=scan_state request_id=r5-74dv61 api_version=1 status=started scan_handle=257b42d606a52c90
+[     567ms pid=61512] out len=195 type=device_found api_version=1 scan_handle=257b42d606a52c90 device_handle=2361908bd3a8c4ea label.len=17 platform_hint.len=20
+[     676ms pid=61512] out len=195 type=device_found api_version=1 scan_handle=257b42d606a52c90 device_handle=9362bf10d6c6fc07 label.len=17 platform_hint.len=20
+[    1057ms pid=61512] in  len=115 type=stop_scan request_id=r6-bgg4yy api_version=1 scan_handle=257b42d606a52c90
+[    1058ms pid=61512] out len=135 type=scan_state request_id=r6-bgg4yy api_version=1 status=stopped scan_handle=257b42d606a52c90
+[    1067ms pid=61512] exit code=0 stdout_drained=true

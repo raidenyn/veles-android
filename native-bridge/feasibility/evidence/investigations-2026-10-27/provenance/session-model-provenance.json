@@ -1,0 +1,26 @@
+{
+  "source": "Claude Code session transcript + background job state read from disk (not model self-report)",
+  "transcript_snapshot_sha256": "1c433d2ce78e3191cbb88e05acf17995543b5e81c6f1435823c60588a4da6b0a",
+  "transcript_snapshot_bytes": 2627471,
+  "transcript_snapshot_lines": 1315,
+  "assistant_message_model_counts": {
+    "claude-sonnet-5-5": 241
+  },
+  "claude_code_versions_seen": {
+    "2.1.310": 676
+  },
+  "session_ids_seen": {
+    "52694ac4-1255-4eea-8273-bb7ff12298f0": 1301
+  },
+  "entrypoints_seen": {
+    "cli": 560
+  },
+  "job_state_respawnFlags": [
+    "--permission-mode",
+    "bypassPermissions",
+    "--model",
+    "claude-sonnet-5-5"
+  ],
+  "job_template": "bg",
+  "note": "The transcript keeps growing after this snapshot; counts and hash describe the bytes read at capture time."
+}

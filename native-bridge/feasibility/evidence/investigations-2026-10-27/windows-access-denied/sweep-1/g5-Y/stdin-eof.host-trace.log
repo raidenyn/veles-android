@@ -1,0 +1,23 @@
+[       0ms pid=77048] start pid=77048
+[       1ms pid=77048] in  len=74 type=hello request_id=d1
+[       1ms pid=77048] out len=176 type=ready request_id=d1 api_version=1
+[       1ms pid=77048] in  len=130 type=start_scan request_id=d2 api_version=1
+[      52ms pid=77048] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=9eb20c0e8e88254d
+[     265ms pid=77048] out len=195 type=device_found api_version=1 scan_handle=9eb20c0e8e88254d device_handle=62ac774438118d49 label.len=17 platform_hint.len=20
+[     838ms pid=77048] out len=195 type=device_found api_version=1 scan_handle=9eb20c0e8e88254d device_handle=a4596ee2369f6cda label.len=17 platform_hint.len=20
+[     839ms pid=77048] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=9eb20c0e8e88254d
+[     839ms pid=77048] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=9eb20c0e8e88254d
+[     839ms pid=77048] in  len=108 type=connect request_id=d4 api_version=1 device_handle=62ac774438118d49
+[     839ms pid=77048] in  len=108 type=connect request_id=d5 api_version=1 device_handle=a4596ee2369f6cda
+[     871ms pid=77048] conn 2 device at 30ms
+[     871ms pid=77048] conn 3 device at 30ms
+[     892ms pid=77048] conn 3 session at 51ms
+[     892ms pid=77048] conn 2 session at 51ms
+[     986ms pid=77048] conn 3 service at 145ms
+[     986ms pid=77048] conn 3 mtu=517 at 145ms
+[     988ms pid=77048] conn 3 setup failed: stage=access_denied retryable=false
+[     988ms pid=77048] out len=144 type=error request_id=d5 api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    1006ms pid=77048] conn 2 service at 166ms
+[    1006ms pid=77048] conn 2 mtu=517 at 166ms
+[    1008ms pid=77048] conn 2 setup failed: stage=access_denied retryable=false
+[    1008ms pid=77048] out len=144 type=error request_id=d4 api_version=1 code=connect_failed recoverability=fatal stage=access_denied

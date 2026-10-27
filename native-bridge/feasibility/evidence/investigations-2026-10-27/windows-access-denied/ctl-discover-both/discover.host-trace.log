@@ -1,0 +1,7 @@
+[       0ms pid=90516] start pid=90516
+[       1ms pid=90516] in  len=74 type=hello request_id=d1
+[       1ms pid=90516] out len=176 type=ready request_id=d1 api_version=1
+[       1ms pid=90516] in  len=130 type=start_scan request_id=d2 api_version=1
+[      53ms pid=90516] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=78d2b011c8f1cc05
+[     380ms pid=90516] out len=195 type=device_found api_version=1 scan_handle=78d2b011c8f1cc05 device_handle=1d2671ca2ddc1489 label.len=17 platform_hint.len=20
+[    1797ms pid=90516] out len=195 type=device_found api_version=1 scan_handle=78d2b011c8f1cc05 device_handle=4183335a58f5e4bb label.len=17 platform_hint.len=20

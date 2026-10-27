@@ -1,0 +1,25 @@
+{
+  "port": {
+    "timers": {
+      "samples": 4,
+      "median_gap_ms": 59997.8,
+      "max_gap_ms": 60003.0,
+      "verdict": "intensively_throttled"
+    },
+    "messages": {
+      "received": 57,
+      "expected": 57,
+      "missing_seqs": [],
+      "max_lag_ms": 4,
+      "median_lag_ms": 1
+    }
+  },
+  "control": {
+    "timers": {
+      "samples": 4,
+      "median_gap_ms": 59997.75,
+      "max_gap_ms": 60003.1,
+      "verdict": "intensively_throttled"
+    }
+  }
+}

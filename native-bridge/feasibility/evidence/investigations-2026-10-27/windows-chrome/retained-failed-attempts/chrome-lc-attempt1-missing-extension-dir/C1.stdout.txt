@@ -1,0 +1,2 @@
+[FAIL   ] LC-port-disconnect environment
+lifecycle: NOT PASS (1 scenario(s)) -> C:\Users\yuriy\otp23-probe\chrome-lc\C1

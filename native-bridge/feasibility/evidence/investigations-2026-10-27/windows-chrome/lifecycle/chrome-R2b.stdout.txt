@@ -1,0 +1,1 @@
+{"first": [["5d8dd647", "connected", null], ["c7de8e9c", "connected", null]], "second": [["5d8dd647", "error", "access_denied"], ["c7de8e9c", "error", "access_denied"]]}

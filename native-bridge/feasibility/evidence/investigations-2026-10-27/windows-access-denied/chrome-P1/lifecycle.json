@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "platform": "windows",
+    "python": "3.14.3",
+    "os": "Windows-11-10.0.26300-SP0",
+    "started_utc": "2026-10-27T08:49:21+00:00",
+    "source_revision": {
+      "available": false,
+      "stage": "rev-parse",
+      "reason": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "source_sha256": {
+      "scenario_matrix.py": "3028e0780c6dd937279f0459132430291229cad419e864918a98ef2133cea596",
+      "scenario_matrix_core.py": "fe67a12799ec69f0a2043c04be51b21b7071f47d1743e7655698b951b62f480c",
+      "connector.js": null,
+      "manifest.json": null,
+      "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f"
+    },
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "foreground_only": true,
+    "no_background_exemption_measured": true,
+    "host_binary_sha256": null,
+    "host_binary_unavailable": "FileNotFoundError",
+    "pre_existing_host_pids_untouched": [],
+    "finished_utc": "2026-10-27T08:49:52+00:00"
+  },
+  "results": [
+    {
+      "id": "LC-port-disconnect",
+      "title": "Chrome port.disconnect with an active scan and two active links",
+      "expected": "owned host and wrapper gone with NO shutdown handshake (stdin EOF path), zero windows/endpoints",
+      "actual": "Traceback (most recent call last):\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 426, in scenario_chrome\n    detail[\"ready\"] = session.start()\n                      ~~~~~~~~~~~~~^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 239, in start\n    self.chrome = self.adapter.chrome_run({\"VELES_OTP23_TRACE\": str(self.trace_path)})\n                  ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 120, in chrome_run\n    return self.cv.ChromeRun(env, medium=True)\n           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\nRuntimeError: Chrome did not publish DevToolsActivePort\n",
+      "status": "FAIL",
+      "error_class": "environment",
+      "detail": {
+        "cleanup_problems": []
+      }
+    }
+  ],
+  "surviving_owned_hosts_after_run": []
+}

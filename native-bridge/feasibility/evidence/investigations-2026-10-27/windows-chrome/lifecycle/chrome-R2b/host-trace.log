@@ -1,0 +1,64 @@
+[       0ms pid=94304] start pid=94304
+[       0ms pid=94304] in  len=81 type=hello request_id=r1-fwncv6
+[       0ms pid=94304] out len=183 type=ready request_id=r1-fwncv6 api_version=1
+[    3071ms pid=94304] in  len=137 type=start_scan request_id=r2-c6u7wb api_version=1
+[    3123ms pid=94304] out len=135 type=scan_state request_id=r2-c6u7wb api_version=1 status=started scan_handle=ac2ce137535ecfb8
+[    4755ms pid=94304] out len=195 type=device_found api_version=1 scan_handle=ac2ce137535ecfb8 device_handle=76edfe83bb3ba613 label.len=17 platform_hint.len=20
+[    4994ms pid=94304] out len=195 type=device_found api_version=1 scan_handle=ac2ce137535ecfb8 device_handle=9681cbccb5200978 label.len=17 platform_hint.len=20
+[    5382ms pid=94304] in  len=115 type=stop_scan request_id=r3-3wnx5f api_version=1 scan_handle=ac2ce137535ecfb8
+[    5382ms pid=94304] out len=135 type=scan_state request_id=r3-3wnx5f api_version=1 status=stopped scan_handle=ac2ce137535ecfb8
+[    5383ms pid=94304] in  len=115 type=connect request_id=r4-kj454x api_version=1 device_handle=9681cbccb5200978
+[    5383ms pid=94304] in  len=115 type=connect request_id=r5-nf0fze api_version=1 device_handle=76edfe83bb3ba613
+[    5424ms pid=94304] conn 2 device at 41ms
+[    5425ms pid=94304] conn 3 device at 41ms
+[    5445ms pid=94304] conn 2 session at 62ms
+[    5446ms pid=94304] conn 3 session at 62ms
+[    6598ms pid=94304] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6598ms pid=94304] conn 2 service at 1214ms
+[    6598ms pid=94304] conn 2 mtu=517 at 1214ms
+[    6756ms pid=94304] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6756ms pid=94304] conn 2 write properties=0x4
+[    6804ms pid=94304] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6804ms pid=94304] conn 3 service at 1420ms
+[    6804ms pid=94304] conn 3 mtu=517 at 1420ms
+[    6818ms pid=94304] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6818ms pid=94304] conn 2 notify properties=0x10
+[    6818ms pid=94304] conn 2 characteristics at 1434ms
+[    6838ms pid=94304] conn 2 subscribed at 1455ms
+[    6838ms pid=94304] out len=160 type=connected request_id=r4-kj454x api_version=1 connection_handle=a3b8b9d94a7bbebe platform_hint.len=20
+[    7045ms pid=94304] conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7045ms pid=94304] conn 3 write properties=0x4
+[    7292ms pid=94304] conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7292ms pid=94304] conn 3 notify properties=0x10
+[    7292ms pid=94304] conn 3 characteristics at 1908ms
+[    7405ms pid=94304] conn 3 subscribed at 2021ms
+[    7405ms pid=94304] out len=160 type=connected request_id=r5-nf0fze api_version=1 connection_handle=642b6cc3b48ac492 platform_hint.len=20
+[    7406ms pid=94304] exit code=0 stdout_drained=true
+[       0ms pid=100884] start pid=100884
+[       0ms pid=100884] in  len=81 type=hello request_id=r6-uizyd2
+[       0ms pid=100884] out len=183 type=ready request_id=r6-uizyd2 api_version=1
+[       1ms pid=100884] in  len=137 type=start_scan request_id=r7-cyliy8 api_version=1
+[      53ms pid=100884] out len=135 type=scan_state request_id=r7-cyliy8 api_version=1 status=started scan_handle=23a6881a62cc393f
+[      82ms pid=100884] out len=195 type=device_found api_version=1 scan_handle=23a6881a62cc393f device_handle=baeaf112135bd7a6 label.len=17 platform_hint.len=20
+[     186ms pid=100884] out len=195 type=device_found api_version=1 scan_handle=23a6881a62cc393f device_handle=0ab68d357669e7cd label.len=17 platform_hint.len=20
+[     556ms pid=100884] in  len=115 type=stop_scan request_id=r8-nwn773 api_version=1 scan_handle=23a6881a62cc393f
+[     556ms pid=100884] out len=135 type=scan_state request_id=r8-nwn773 api_version=1 status=stopped scan_handle=23a6881a62cc393f
+[     557ms pid=100884] in  len=115 type=connect request_id=r9-qulake api_version=1 device_handle=0ab68d357669e7cd
+[     557ms pid=100884] in  len=115 type=connect request_id=ra-qkxn87 api_version=1 device_handle=baeaf112135bd7a6
+[     588ms pid=100884] conn 2 device at 30ms
+[     599ms pid=100884] conn 3 device at 41ms
+[     609ms pid=100884] conn 2 session at 51ms
+[     619ms pid=100884] conn 3 session at 61ms
+[     681ms pid=100884] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[     681ms pid=100884] conn 2 service at 124ms
+[     681ms pid=100884] conn 2 mtu=517 at 124ms
+[     682ms pid=100884] conn 2 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable
+[     683ms pid=100884] conn 2 setup failed: stage=access_denied retryable=false
+[     684ms pid=100884] out len=151 type=error request_id=r9-qulake api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[     712ms pid=100884] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[     712ms pid=100884] conn 3 service at 155ms
+[     712ms pid=100884] conn 3 mtu=517 at 155ms
+[     713ms pid=100884] conn 3 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable
+[     714ms pid=100884] conn 3 setup failed: stage=access_denied retryable=false
+[     714ms pid=100884] out len=151 type=error request_id=ra-qkxn87 api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[     723ms pid=100884] exit code=0 stdout_drained=true

@@ -1,0 +1,54 @@
+{
+  "source": "Claude Code session transcripts read from disk (assistant message.model as returned by the API); not self-report",
+  "captured_utc": "2026-10-27T14:22:58Z",
+  "sessions": [
+    {
+      "transcript": "52694ac4-1255-4eea-8273-bb7ff12298f0.jsonl",
+      "project_dir": "-home-dev-repos-veles-android--claude-worktrees-otp23-investigations",
+      "sha256_at_capture": "11234f19ad30cae58b668fc73e954c8f5bb0db6737612051ca34b2ea4c0aa2bc",
+      "bytes": 2988941,
+      "assistant_message_model_counts": {
+        "claude-sonnet-5-5": 283
+      },
+      "claude_code_versions": {
+        "2.1.310": 783
+      },
+      "session_ids": {
+        "52694ac4-1255-4eea-8273-bb7ff12298f0": 1508
+      }
+    },
+    {
+      "transcript": "0631948e-7532-471d-a4b2-9a9889c7c16d.jsonl",
+      "project_dir": "-home-dev-repos-veles-android",
+      "sha256_at_capture": "fe981daa8650a0f7d4abe9ad1044c47d77fc972e3e7e8d61aad8a9c4dac3e2af",
+      "bytes": 6046723,
+      "assistant_message_model_counts": {
+        "claude-sonnet-5-5": 692,
+        "<synthetic>": 2
+      },
+      "claude_code_versions": {
+        "2.1.310": 651,
+        "2.1.311": 955
+      },
+      "session_ids": {
+        "0631948e-7532-471d-a4b2-9a9889c7c16d": 2453
+      }
+    },
+    {
+      "transcript": "2fe20385-5ef1-4622-bf94-00b8c0c6477e.jsonl",
+      "project_dir": "-home-dev-repos-veles-android",
+      "sha256_at_capture": "e4285f5921b4c5eb107757874ce97824d3d85d29ddc2764b02aefb27f7efb619",
+      "bytes": 3201984,
+      "assistant_message_model_counts": {
+        "claude-opus-5-5": 248
+      },
+      "claude_code_versions": {
+        "2.1.311": 648
+      },
+      "session_ids": {
+        "2fe20385-5ef1-4622-bf94-00b8c0c6477e": 1047
+      }
+    }
+  ],
+  "note": "52694ac4 = first investigation session; 0631948e = its continuation/follow-up (Claude Code 2.1.310 then 2.1.311); 2fe20385 = the independent reviewer, shown for contrast. \"<synthetic>\" entries are harness-generated, not model output. Transcripts keep growing; counts and hashes describe the bytes read at capture time. The earlier session-model-provenance.json counted 234 at its capture time; the review observed 241 later in the same transcript: counts differ only by capture time."
+}

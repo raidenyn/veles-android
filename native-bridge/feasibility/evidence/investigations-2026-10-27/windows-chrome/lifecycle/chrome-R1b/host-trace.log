@@ -1,0 +1,54 @@
+[       0ms pid=75728] start pid=75728
+[       1ms pid=75728] in  len=81 type=hello request_id=r1-dwxdyc
+[       1ms pid=75728] out len=183 type=ready request_id=r1-dwxdyc api_version=1
+[    3249ms pid=75728] in  len=137 type=start_scan request_id=r2-laux4e api_version=1
+[    3302ms pid=75728] out len=135 type=scan_state request_id=r2-laux4e api_version=1 status=started scan_handle=5601050f245a1f7a
+[    3403ms pid=75728] out len=195 type=device_found api_version=1 scan_handle=5601050f245a1f7a device_handle=9a10fcef22b97dfe label.len=17 platform_hint.len=20
+[    3804ms pid=75728] in  len=115 type=stop_scan request_id=r3-pvpiw8 api_version=1 scan_handle=5601050f245a1f7a
+[    3806ms pid=75728] out len=135 type=scan_state request_id=r3-pvpiw8 api_version=1 status=stopped scan_handle=5601050f245a1f7a
+[    3807ms pid=75728] in  len=115 type=connect request_id=r4-ndhih6 api_version=1 device_handle=9a10fcef22b97dfe
+[    3838ms pid=75728] conn 2 device at 31ms
+[    3859ms pid=75728] conn 2 session at 52ms
+[    5900ms pid=75728] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    5900ms pid=75728] conn 2 service at 2093ms
+[    5900ms pid=75728] conn 2 mtu=517 at 2093ms
+[    5966ms pid=75728] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    5967ms pid=75728] conn 2 write properties=0x4
+[    6029ms pid=75728] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6029ms pid=75728] conn 2 notify properties=0x10
+[    6029ms pid=75728] conn 2 characteristics at 2222ms
+[    6132ms pid=75728] conn 2 subscribed at 2325ms
+[    6132ms pid=75728] out len=160 type=connected request_id=r4-ndhih6 api_version=1 connection_handle=0c74187181308851 platform_hint.len=20
+[    6134ms pid=75728] exit code=0 stdout_drained=true
+[       0ms pid=92600] start pid=92600
+[       0ms pid=92600] in  len=81 type=hello request_id=r5-mdp4m1
+[       0ms pid=92600] out len=183 type=ready request_id=r5-mdp4m1 api_version=1
+[       1ms pid=92600] in  len=137 type=start_scan request_id=r6-7od4bl api_version=1
+[      52ms pid=92600] out len=135 type=scan_state request_id=r6-7od4bl api_version=1 status=started scan_handle=86466499230468f1
+[     683ms pid=92600] out len=195 type=device_found api_version=1 scan_handle=86466499230468f1 device_handle=6c1418d840e62d2f label.len=17 platform_hint.len=20
+[     904ms pid=92600] out len=195 type=device_found api_version=1 scan_handle=86466499230468f1 device_handle=78086a584835ecd5 label.len=17 platform_hint.len=20
+[    1308ms pid=92600] in  len=115 type=stop_scan request_id=r7-3e1xdq api_version=1 scan_handle=86466499230468f1
+[    1309ms pid=92600] out len=135 type=scan_state request_id=r7-3e1xdq api_version=1 status=stopped scan_handle=86466499230468f1
+[    1310ms pid=92600] in  len=115 type=connect request_id=r8-4baw74 api_version=1 device_handle=6c1418d840e62d2f
+[    1310ms pid=92600] in  len=115 type=connect request_id=r9-y58qiz api_version=1 device_handle=78086a584835ecd5
+[    1341ms pid=92600] conn 2 device at 31ms
+[    1352ms pid=92600] conn 3 device at 41ms
+[    1362ms pid=92600] conn 2 session at 52ms
+[    1373ms pid=92600] conn 3 session at 62ms
+[    1487ms pid=92600] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1487ms pid=92600] conn 3 service at 176ms
+[    1487ms pid=92600] conn 3 mtu=517 at 177ms
+[    1488ms pid=92600] conn 3 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable
+[    1489ms pid=92600] conn 3 setup failed: stage=access_denied retryable=false
+[    1489ms pid=92600] out len=151 type=error request_id=r9-y58qiz api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    2777ms pid=92600] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    2777ms pid=92600] conn 2 service at 1466ms
+[    2777ms pid=92600] conn 2 mtu=517 at 1466ms
+[    2884ms pid=92600] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    2884ms pid=92600] conn 2 write properties=0x4
+[    2947ms pid=92600] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    2947ms pid=92600] conn 2 notify properties=0x10
+[    2947ms pid=92600] conn 2 characteristics at 1636ms
+[    2967ms pid=92600] conn 2 subscribed at 1657ms
+[    2967ms pid=92600] out len=160 type=connected request_id=r8-4baw74 api_version=1 connection_handle=e0b242c6dc4e22ec platform_hint.len=20
+[    2976ms pid=92600] exit code=0 stdout_drained=true

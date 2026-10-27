@@ -1,0 +1,2 @@
+Executable=/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host
+designated => identifier "me.nagaev.veles.bridge" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */

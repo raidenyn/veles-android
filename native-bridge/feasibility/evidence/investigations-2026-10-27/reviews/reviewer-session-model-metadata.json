@@ -1,0 +1,22 @@
+{
+  "source": "Claude Code session transcript of the independent reviewer read from disk (assistant message.model as returned by the API); not self-report",
+  "captured_utc": "2026-10-27T14:22:59Z",
+  "sessions": [
+    {
+      "transcript": "2fe20385-5ef1-4622-bf94-00b8c0c6477e.jsonl",
+      "project_dir": "-home-dev-repos-veles-android",
+      "sha256_at_capture": "e4285f5921b4c5eb107757874ce97824d3d85d29ddc2764b02aefb27f7efb619",
+      "bytes": 3201984,
+      "assistant_message_model_counts": {
+        "claude-opus-5-5": 248
+      },
+      "claude_code_versions": {
+        "2.1.311": 648
+      },
+      "session_ids": {
+        "2fe20385-5ef1-4622-bf94-00b8c0c6477e": 1047
+      }
+    }
+  ],
+  "note": "One reviewer session produced all three review reports. The transcript keeps growing; counts and hash describe the bytes read at capture time. The reports state their own capture-time counts (163, 215 and 245 assistant messages)."
+}

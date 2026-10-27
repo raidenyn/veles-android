@@ -1,0 +1,4 @@
+  10-27 15:45:25.234 CONNECTED    xx:xx:xx:xx:5d:24
+  10-27 15:45:40.072 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-27 15:46:34.923 CONNECTED    xx:xx:xx:xx:5d:24
+  10-27 15:47:01.773 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0

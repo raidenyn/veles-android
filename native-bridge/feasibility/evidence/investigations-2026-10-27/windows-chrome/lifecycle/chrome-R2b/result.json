@@ -1,0 +1,78 @@
+{
+  "args": {
+    "first": "all",
+    "second": "all",
+    "gap_s": 1.0,
+    "discover_s": 30.0,
+    "out_dir": "C:\\Users\\yuriy\\otp23-probe\\chrome-R2b"
+  },
+  "chrome_version": "Chrome/156.0.8078.48",
+  "phases": [
+    {
+      "discovered": [
+        "5d8dd647",
+        "c7de8e9c"
+      ],
+      "missing_wanted": [],
+      "connects": [
+        {
+          "label_hash8": "5d8dd647",
+          "reply": {
+            "type": "connected"
+          },
+          "at_utc": "2026-10-27T13:58:18.557+00:00"
+        },
+        {
+          "label_hash8": "c7de8e9c",
+          "reply": {
+            "type": "connected"
+          },
+          "at_utc": "2026-10-27T13:58:18.557+00:00"
+        }
+      ],
+      "connect_started_utc": "2026-10-27T13:58:16.534+00:00",
+      "phase": "first"
+    },
+    {
+      "discovered": [
+        "5d8dd647",
+        "c7de8e9c"
+      ],
+      "missing_wanted": [],
+      "connects": [
+        {
+          "label_hash8": "5d8dd647",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T13:58:20.906+00:00"
+        },
+        {
+          "label_hash8": "c7de8e9c",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T13:58:20.906+00:00"
+        }
+      ],
+      "connect_started_utc": "2026-10-27T13:58:20.748+00:00",
+      "phase": "second"
+    }
+  ],
+  "ready_first": {
+    "type": "ready"
+  },
+  "first_host_gone_after_s": 0.585,
+  "first_host_gone_utc": "2026-10-27T13:58:19.143+00:00",
+  "ready_second": {
+    "type": "ready"
+  },
+  "second_hello_utc": "2026-10-27T13:58:20.192+00:00",
+  "finished_utc": "2026-10-27T13:58:20.906+00:00"
+}

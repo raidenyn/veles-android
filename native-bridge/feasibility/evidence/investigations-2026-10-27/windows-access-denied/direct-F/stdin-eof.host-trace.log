@@ -1,0 +1,29 @@
+[       0ms pid=102292] start pid=102292
+[       0ms pid=102292] in  len=74 type=hello request_id=d1
+[       0ms pid=102292] out len=176 type=ready request_id=d1 api_version=1
+[       1ms pid=102292] in  len=130 type=start_scan request_id=d2 api_version=1
+[      51ms pid=102292] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=f29c16883d31de65
+[     853ms pid=102292] out len=195 type=device_found api_version=1 scan_handle=f29c16883d31de65 device_handle=ac42a938f9980bc4 label.len=17 platform_hint.len=20
+[    2393ms pid=102292] out len=195 type=device_found api_version=1 scan_handle=f29c16883d31de65 device_handle=28eef2b9edcca789 label.len=17 platform_hint.len=20
+[    2394ms pid=102292] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=f29c16883d31de65
+[    2395ms pid=102292] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=f29c16883d31de65
+[    2395ms pid=102292] in  len=108 type=connect request_id=d4 api_version=1 device_handle=ac42a938f9980bc4
+[    2395ms pid=102292] in  len=108 type=connect request_id=d5 api_version=1 device_handle=28eef2b9edcca789
+[    2426ms pid=102292] conn 3 device at 30ms
+[    2436ms pid=102292] conn 2 device at 41ms
+[    2447ms pid=102292] conn 3 session at 51ms
+[    2457ms pid=102292] conn 2 session at 61ms
+[    3740ms pid=102292] conn 3 service at 1344ms
+[    3740ms pid=102292] conn 3 mtu=517 at 1344ms
+[    3898ms pid=102292] conn 3 write properties=0x4
+[    3960ms pid=102292] conn 3 notify properties=0x10
+[    3960ms pid=102292] conn 3 characteristics at 1564ms
+[    3991ms pid=102292] conn 3 subscribed at 1596ms
+[    3992ms pid=102292] out len=153 type=connected request_id=d5 api_version=1 connection_handle=5ab2618843961133 platform_hint.len=20
+[    4132ms pid=102292] conn 2 service at 1736ms
+[    4132ms pid=102292] conn 2 mtu=517 at 1736ms
+[    4373ms pid=102292] conn 2 write properties=0x4
+[    4569ms pid=102292] conn 2 notify properties=0x10
+[    4569ms pid=102292] conn 2 characteristics at 2173ms
+[    4599ms pid=102292] conn 2 subscribed at 2203ms
+[    4599ms pid=102292] out len=153 type=connected request_id=d4 api_version=1 connection_handle=fc81a03466908711 platform_hint.len=20
