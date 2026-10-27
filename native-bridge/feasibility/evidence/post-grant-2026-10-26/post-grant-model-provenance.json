@@ -1,6 +1,6 @@
 {
   "phase": "post-grant integration (2026-10-26/27), NEW phase after the e19c8ca-scoped final review",
-  "r01_status": "PENDING: the final fresh claude-opus-5-5 review (session ceb6e424-1e26-4ea7-972b-efa4ba2dc633) ran and found 0 CRITICAL / 2 IMPORTANT / 7 MINOR; the corrections are made but unverified; the parent verifies them. Nothing here is a PASS.",
+  "r01_status": "BLOCKED: final review and fix verification are done (0 CRITICAL, 0 IMPORTANT remaining); the concrete byte-preserved commit attestation is pending the parent's commit. Nothing here is a PASS.",
   "source_commits": {
     "0d75bb2": "initial strict/scenario harness (0d75bb2d...)",
     "15f57a4": "strong strict phone validation",
@@ -77,8 +77,17 @@
       "minor": 7
     },
     "disposition": "IMPORTANT-1 corrected by option (b) with evaluator provenance and tests; IMPORTANT-2 corrected; MINOR items dispositioned in INTEGRATION.md; corrections made by actual claude-sonnet-5-5 (review-fix pass; its own raw result is not copied here)",
-    "required": "R-01 stays PENDING/BLOCKED until the parent independently verifies the fixes, the tree is committed, and a PASS row cites a review bound to that commit",
-    "earlier_pass_preserved": "R-01's e19c8ca-scoped PASS (session f3746c7a-184d-4343-933a-12093f203b6a) is preserved and explicitly scoped to the source before the new harness/telemetry code"
+    "required": "concrete byte-preserved commit attestation: the parent commits the raw-byte-preserved evidence and binds the review and fix verification to that actual commit hash; until then R-01 stays BLOCKED/PENDING",
+    "earlier_pass_preserved": "R-01's e19c8ca-scoped PASS (session f3746c7a-184d-4343-933a-12093f203b6a) is preserved and explicitly scoped to the source before the new harness/telemetry code",
+    "fix_verification": {
+      "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
+      "observed_modelUsage_key": "claude-opus-5-5",
+      "subagents_spawned": 0,
+      "is_error": false,
+      "raw": "reviews-and-provenance/otp23-postgrant-opus-fix-verification-result.json",
+      "report": "reviews-and-provenance/otp23-postgrant-opus-fix-verification.md",
+      "outcome": "IMPORTANT-1/2 resolved; no CRITICAL/IMPORTANT; MINOR-A fixed, MINOR-B/C/D deferred nonblocking"
+    }
   },
   "integration_session": {
     "role": "post-grant integration pass (before the final review)",
@@ -89,5 +98,13 @@
     "is_error": false,
     "subagents_spawned": 0,
     "source": "modelUsage and session_id read from the raw CLI result"
+  },
+  "review_fix_session": {
+    "role": "review-fix pass",
+    "session_id": "43ad5518-8e02-497d-beda-9d091f82265e",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "subagents_spawned": 0,
+    "is_error": false,
+    "raw": "reviews-and-provenance/sonnet-postgrant-review-fixes-result.json"
   }
 }

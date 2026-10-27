@@ -1,4 +1,5 @@
-b82f3e5ae43cc88c79b4585b98255486ea8eee19e813e165c5c6b9c4bed4e793  ./INTEGRATION.md
+2ee93694420197a5aab0f34c802dd8a55cf437fe15c9eeede80d660ba616caad  ./.gitattributes
+e0f808995b32a309998ead54d3bc5b69f3c3b417a6a0e95d91430b9327e81565  ./INTEGRATION.md
 e611bef198de832e9a4ac261844b7e836e132e58adb14cd92766ff50494bb763  ./README.md
 577a2c362e2be34fc69aa00014389afdcbf5eb7176a4d8a527b7c41bf0779309  ./m6/otp23-m6-barrier-a.json
 25044dc15799ebc8b025c3640e518726e668a88225e7285e6fa3d72b99b5c5f2  ./m6/otp23-m6-desktop-adjudication.json
@@ -92,9 +93,11 @@ cd955bbea562c4a27617ad09f353a4a5605e7633e9c5a01f1d9d3c0a794d0c3c  ./phone-eviden
 b02f3b3beef240818a76279f2f767a29deae6991ed398190692e928c8f73e64c  ./phone-evidence/windows/otp23-win-prewarm2-transport-10pro.json
 cc154434df0e7825983df20baae9cb0fe07e07ec113512bb8a9ba1804b94d6dd  ./phone-evidence/windows/otp23-win-prewarm2-transport-6t.json
 2c4582d80e8441a73f69d9e0d7a306022f232ad63d16f668d7347e41d37520d6  ./post-grant-identity.json
-d7f6ae0c87efbe0f57e63333d5471ef320a169c212c5adcb354a6b3293a84e75  ./post-grant-model-provenance.json
+e996770b99d0758bbf3d0fbbbcf3e536104f3901058e441bb7c88ef16cf96955  ./post-grant-model-provenance.json
 8990eb9baac558c200fa38f326a8c9e74ec16df4ddef3ffd67af5201d02caa8d  ./reviews-and-provenance/otp23-postgrant-final-opus-result.json
 4aec51dcf4466424588e14ba56e3a8244e9efa98eec2d42f160e703da9d6a340  ./reviews-and-provenance/otp23-postgrant-final-opus-review.md
+1599974ba149b3546d1906b2a05fdaca151c1b3e85b3e2cc6aac6c7d20ce3250  ./reviews-and-provenance/otp23-postgrant-opus-fix-verification-result.json
+7ac3bbc8b5cc7fedeb2eb3d2b194e14732a2cd1dbb9c03ed2d3a0c3d3ad1154c  ./reviews-and-provenance/otp23-postgrant-opus-fix-verification.md
 04daf8ee3caa2aa37e67c0572e856a2a7672a810728a2cfe47c42416f0a02ecf  ./reviews-and-provenance/otp23-resume-clock-measurements.json
 e2977f2c8a5ab82707e2e0e3c4152b9222f53d27d6ed991a7f616d15edc9ca87  ./reviews-and-provenance/otp23-resume-mac-ntp.txt
 18c995fcefb16e0df9f4353f5402e1c464dd16854b593ef92875edb21dad9ba8  ./reviews-and-provenance/otp23-resume-opus-fixes-review.json
@@ -105,6 +108,7 @@ b7890bab0bf6774bd7ea6fcd53c19a2fbdcdff254cb9087ff867a53f36c5e59d  ./reviews-and-
 a0476d64817596976852c0f1777928342cb6e7990657e3a58907b6410f890150  ./reviews-and-provenance/sonnet-permission-result.json
 c86d581509cccf94233b735b97d28e53bf9893648b567fbb2fc062bcc950faca  ./reviews-and-provenance/sonnet-phone-result.json
 26271d1066fd3e20a38a2ab426b29ec964537c7e60b7ee222db67cdedc36051b  ./reviews-and-provenance/sonnet-postgrant-integration-result.json
+9775e87bbfaae4d914e9a872d9835d77c479658804c7c0734397d40ae93886ad  ./reviews-and-provenance/sonnet-postgrant-review-fixes-result.json
 8f823659a828069750e6747e41b7526ee32e11848a4a6d03800875c9e416c55a  ./reviews-and-provenance/sonnet-strict-result.json
 99928004189066f2655b2e92398b29f49c08438c482694ca18dc5346ea3edc3b  ./signing-and-gates/inspect_release_dex.py
 8d886ab0d76889276241c355abcdfdf8923d933722e839087dc29c440c8ec40d  ./signing-and-gates/junit-summary-334.txt

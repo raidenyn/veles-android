@@ -113,3 +113,24 @@ macOS has page-reported focus/visibility only, no OS foreground gate. The fix-wa
 - `signing-and-gates/otp23-postgrant-final-log-guards.log`: the raw `android.util.Log` guard text, verbatim as recorded (`fail=0`).
 - `signing-and-gates/otp23-postgrant-final-python-tests.log`: the feasibility Python test run (297 tests at that time).
 - The parent also ran the Node suite (5), the shell suite (69 checks), protocol (165 plus text) and `matrix.py check` (all PASS). **Those results do NOT appear in the Gradle log** and no log of theirs is claimed here.
+
+## Raw-byte preservation (git storage)
+
+This directory is immutable evidence. Many raw Windows logs and traces contain CRLF line endings as produced. The feasibility-wide `.gitattributes` (`* text=auto eol=lf`) would normalize them in committed blobs,
+so `.gitattributes` in this directory sets `* -text -whitespace`: no end-of-line conversion and no whitespace diagnostics for any file here. Attributes outside this directory (source code) are unchanged.
+The working-tree files are the exact originals and `SHA256SUMS` was computed from them; no raw file was rewritten and no checksum was recomputed to match normalized data. The parent must `git add --renormalize` this directory,
+commit, and verify `SHA256SUMS` against a clean `git archive` of that commit. Until that is done R-01 stays BLOCKED.
+
+## Fix verification and deferred minors
+
+Actual `claude-opus-5-5` session `ceb6e424-1e26-4ea7-972b-efa4ba2dc633` verified the corrections (`reviews-and-provenance/otp23-postgrant-opus-fix-verification-result.json` and `.md`, unchanged): IMPORTANT-1/2 resolved, no CRITICAL/IMPORTANT remain.
+The correction pass was actual `claude-sonnet-5-5` session `43ad5518-8e02-497d-beda-9d091f82265e` (`sonnet-postgrant-review-fixes-result.json`). MINOR-A (M-09 "then-current (pre-`db5d4db`)" wording) is fixed.
+Deferred as nonblocking, with no new functional code in this pass:
+
+| Minor | Residual | Owner |
+|---|---|---|
+| B | `evaluator_provenance()` can report a foreign enclosing repository's revision when the harness is copied into an unrelated git repo; the SHA256 values stay authoritative | parent / future harness maintainer (fix: check files tracked at the revision, or record `--show-toplevel`) |
+| C | no test ties the re-evaluation hashes to the committed evaluator files (equal today) | parent (add the equality guard only if the evaluator files change) |
+| D | `m6_phone_clock_adjudication.py` does not itself assert `clean`/`final`/not-truncated/all-success codes and raises `KeyError` on a missing bound callback; no impact on the committed result | future harness maintainer |
+
+`R-01` stays BLOCKED: final review and fix verification are done; the concrete byte-preserved commit attestation is pending.
