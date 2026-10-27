@@ -536,6 +536,11 @@ class DirectHost:
         return frame
 
     def reply(self, request_id, timeout=40.0):
+        # Concurrent requests complete in any order; a reply consumed while waiting for another request stays
+        # in `seen` and must still be claimable (otherwise a healthy run times out and reports host_error).
+        for frame in self.seen:
+            if frame.get("request_id") == request_id:
+                return frame
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             frame = self.next_frame(0.2)

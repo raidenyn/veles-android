@@ -106,6 +106,17 @@ fn make_buffer(bytes: &[u8]) -> windows::core::Result<IBuffer> {
     writer.DetachBuffer()
 }
 
+/// Diagnostic only (trace): the optional ATT protocol-error byte attached to a GATT discovery result.
+fn protocol_error_text(
+    error: windows::core::Result<windows::Foundation::IReference<u8>>,
+) -> String {
+    match error.and_then(|reference| reference.Value()) {
+        Ok(value) => format!("0x{value:02x}"),
+        // A null reference and an accessor failure are not told apart here, so the trace says so.
+        Err(_) => "none_or_unavailable".to_string(),
+    }
+}
+
 fn wait_failure(error: WaitError, stage: &'static str) -> Failure {
     match error {
         WaitError::Cancelled => Failure::new("cancelled", true),
@@ -379,6 +390,10 @@ fn set_up_link(
                 .map_err(|e| abandon(&device, &session, wait_failure(e, "gatt_connect")))
         })?;
     let status = services.Status().map_or(2, |s| s.0);
+    trace!(
+        "conn {conn} services GattCommunicationStatus={status} protocol_error={}",
+        protocol_error_text(services.ProtocolError())
+    );
     if let Some(failure) = gatt_status(status, "gatt_connect") {
         return Err(abandon(&device, &session, failure));
     }
@@ -418,6 +433,11 @@ fn set_up_link(
             .GetCharacteristicsForUuidWithCacheModeAsync(guid(uuid), BluetoothCacheMode::Uncached)
             .map_err(|_| Failure::new("gatt_profile", false))?;
         let result = wait(op, cancel, deadline).map_err(|e| wait_failure(e, "gatt_profile"))?;
+        trace!(
+            "conn {conn} {name} characteristics GattCommunicationStatus={} protocol_error={}",
+            result.Status().map_or(-1, |s| s.0),
+            protocol_error_text(result.ProtocolError())
+        );
         if let Some(failure) = gatt_status(result.Status().map_or(2, |s| s.0), "gatt_profile") {
             return Err(failure);
         }

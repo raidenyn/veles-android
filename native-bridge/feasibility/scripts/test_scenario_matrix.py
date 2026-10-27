@@ -415,6 +415,35 @@ class FakeAdapter(sm.Adapter):
         return "fake direct launch"
 
 
+class DirectHostReplyOrder(unittest.TestCase):
+    """Concurrent requests may complete in any order (two phones connect in parallel); a reply that arrives
+    while another request is awaited must stay claimable. Observed on Windows: the second `connected` was
+    consumed while waiting for the first, so a healthy run was reported as `host_error` after a 70 s wait."""
+
+    def _host(self, *frames):
+        host = sm.DirectHost.__new__(sm.DirectHost)  # no process: only the frame queue and history matter
+        host.frames, host.seen = sm.queue.Queue(), []
+        for frame in frames:
+            host.frames.put(frame)
+        return host
+
+    def test_out_of_order_replies_are_each_returned(self):
+        host = self._host({"type": "connected", "request_id": "d5"}, {"type": "connected", "request_id": "d4"})
+        self.assertEqual(host.reply("d4", 2)["request_id"], "d4")
+        self.assertEqual(host.reply("d5", 0.5)["request_id"], "d5", "the earlier-arriving reply was dropped")
+
+    def test_error_reply_is_not_lost_either(self):
+        host = self._host({"type": "error", "request_id": "d5", "stage": "access_denied"},
+                          {"type": "error", "request_id": "d4", "stage": "access_denied"})
+        self.assertEqual(host.reply("d4", 2)["stage"], "access_denied")
+        self.assertEqual(host.reply("d5", 0.5)["stage"], "access_denied")
+
+    def test_a_reply_is_not_replayed_for_a_different_request(self):
+        host = self._host({"type": "sent", "request_id": "d1"})
+        self.assertEqual(host.reply("d1", 1)["type"], "sent")
+        self.assertIsNone(host.reply("d2", 0.3))
+
+
 class DirectStdin(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp())
