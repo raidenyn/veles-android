@@ -1,6 +1,6 @@
 {
   "source": "Claude Code session transcripts read from disk (assistant message.model as returned by the API); not self-report",
-  "captured_utc": "2026-10-27T14:22:58Z",
+  "captured_utc": "2026-10-27T14:29:25Z",
   "sessions": [
     {
       "transcript": "52694ac4-1255-4eea-8273-bb7ff12298f0.jsonl",
@@ -35,20 +35,37 @@
       }
     },
     {
-      "transcript": "2fe20385-5ef1-4622-bf94-00b8c0c6477e.jsonl",
+      "transcript": "b0c43fcb-5ccc-44f8-8c62-6d72bafc330b.jsonl",
       "project_dir": "-home-dev-repos-veles-android",
-      "sha256_at_capture": "e4285f5921b4c5eb107757874ce97824d3d85d29ddc2764b02aefb27f7efb619",
-      "bytes": 3201984,
+      "sha256_at_capture": "314ac6fdea206a78482fcb74aa220e5c0b911f5348f16105e5d940cef5ecf39f",
+      "bytes": 6535931,
       "assistant_message_model_counts": {
-        "claude-opus-5-5": 248
+        "claude-sonnet-5-5": 783,
+        "<synthetic>": 2
       },
       "claude_code_versions": {
-        "2.1.311": 648
+        "2.1.310": 651,
+        "2.1.311": 1063
       },
       "session_ids": {
-        "2fe20385-5ef1-4622-bf94-00b8c0c6477e": 1047
+        "b0c43fcb-5ccc-44f8-8c62-6d72bafc330b": 2171
+      }
+    },
+    {
+      "transcript": "2fe20385-5ef1-4622-bf94-00b8c0c6477e.jsonl",
+      "project_dir": "-home-dev-repos-veles-android",
+      "sha256_at_capture": "718012d9105acf8858be3705477896dac7e7551cb5c366caee05708f015dff61",
+      "bytes": 3451738,
+      "assistant_message_model_counts": {
+        "claude-opus-5-5": 265
+      },
+      "claude_code_versions": {
+        "2.1.311": 701
+      },
+      "session_ids": {
+        "2fe20385-5ef1-4622-bf94-00b8c0c6477e": 1158
       }
     }
   ],
-  "note": "52694ac4 = first investigation session; 0631948e = its continuation/follow-up (Claude Code 2.1.310 then 2.1.311); 2fe20385 = the independent reviewer, shown for contrast. \"<synthetic>\" entries are harness-generated, not model output. Transcripts keep growing; counts and hashes describe the bytes read at capture time. The earlier session-model-provenance.json counted 234 at its capture time; the review observed 241 later in the same transcript: counts differ only by capture time."
+  "note": "52694ac4 = first investigation session; 0631948e = its continuation; b0c43fcb = the later continuation that made the commits (this file was refreshed to include it; the earlier followup record omitted it); 2fe20385 = the independent reviewer, shown for contrast. \"<synthetic>\" entries are harness-generated, not model output. The 2.1.310 entry count (651) is identical in 0631948e and b0c43fcb, so the later transcript appears to carry the earlier session's history: do not add counts across sessions. Transcripts keep growing; counts and hashes describe the bytes read at capture time."
 }
