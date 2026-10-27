@@ -265,6 +265,70 @@ def parse_host_trace(text):
     return {"messages": messages, "sends": sends, "hello_ms": hello_ms}
 
 
+def sample_foreground(read_pid, owns):
+    """One OS foreground sample. verified=False when the foreground owner cannot be read (locked desktop, no
+    foreground window, API error); owned only counts when verified."""
+    try:
+        pid = read_pid()
+    except Exception:
+        return {"verified": False, "pid": None, "owned": False}
+    if not pid:
+        return {"verified": False, "pid": None, "owned": False}
+    try:
+        owned = bool(owns(pid))
+    except Exception:
+        return {"verified": False, "pid": pid, "owned": False}
+    return {"verified": True, "pid": pid, "owned": owned}
+
+
+def wait_for_foreground(sample, timeout_s, poll_s, clock, sleep, on_poll=None):
+    """Bounded pre-test controller poll (no page-side timer): wait for a human to put the owned browser in the
+    OS foreground. state: confirmed | timeout (readable but never owned) | unverifiable (never readable)."""
+    started = clock()
+    deadline = started + timeout_s
+    polls, seen_verified, last = 0, False, None
+    while True:
+        last = sample()
+        polls += 1
+        seen_verified = seen_verified or last["verified"]
+        if last["verified"] and last["owned"]:
+            return {"state": "confirmed", "polls": polls, "waited_s": round(clock() - started, 3), "last": last}
+        if on_poll:
+            on_poll(last, polls)
+        if clock() >= deadline:
+            return {"state": "timeout" if seen_verified else "unverifiable", "polls": polls,
+                    "waited_s": round(clock() - started, 3), "last": last}
+        sleep(min(poll_s, max(0.0, deadline - clock())))
+
+
+def _foreground_check(fg):
+    """ST-15 over evidence['os_foreground']. Not required (macOS, no new gate) -> PASS; Windows requires the
+    real OS foreground owned by this run's Chrome before any BLE and again after the tab switch."""
+    expected = ("Windows: OS foreground window owned by the run's own Chrome PID before any BLE work and again "
+                "after the ordinary-tab switch, before every DevTools client closes")
+    if not isinstance(fg, dict):
+        return _check("BLOCKED", expected, "no foreground evidence recorded")
+    if fg.get("required") is False:
+        return _check("PASS", "not required on this platform (no new gate)", {"required": False})
+    gate, after = fg.get("gate") or {}, fg.get("after_switch") or {}
+    detail = {"gate_state": gate.get("state"), "gate_pid": (gate.get("last") or {}).get("pid"),
+              "chrome_pid": fg.get("chrome_pid"), "after_switch": after,
+              "gate_confirmed_mono": fg.get("gate_confirmed_mono"), "ble_start_mono": fg.get("ble_start_mono")}
+    if gate.get("state") != "confirmed":
+        return _check("BLOCKED", expected, detail)  # nobody confirmed the foreground: nothing was measured
+    ordered = core_num(fg.get("gate_confirmed_mono")) and core_num(fg.get("ble_start_mono")) \
+        and fg["gate_confirmed_mono"] < fg["ble_start_mono"]
+    if not ordered:
+        return _check("FAIL", expected, detail)  # BLE work not provably after the confirmed foreground
+    if not after.get("verified"):
+        return _check("BLOCKED", expected, detail)
+    return _check("PASS" if after.get("owned") is True else "FAIL", expected, detail)
+
+
+def core_num(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _check(status, expected, actual):
     return {"status": status, "expected": expected, "actual": actual}
 
@@ -429,6 +493,8 @@ def evaluate(evidence):  # noqa: C901 - one flat list of independent requirement
          "args_source": chrome.get("args_source"),
          "native_messaging_exemption_not_excluded": True,
          "scope": "flags only; Chrome-internal exemptions (e.g. Native Messaging) are NOT claimed excluded"})
+
+    checks["ST-15"] = _foreground_check(evidence.get("os_foreground"))
 
     diagnostic = bool(evidence.get("diagnostic_short"))
     checks["ST-14"] = _check(

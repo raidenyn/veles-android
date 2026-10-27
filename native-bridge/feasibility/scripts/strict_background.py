@@ -74,6 +74,29 @@ def pull_phone_evidence(serial, adb="adb", runner=subprocess.run):
     return result.stdout if result.returncode == 0 else None
 
 
+def win_foreground_pid():
+    """PID owning the OS foreground window, or None (no foreground window / locked desktop)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    handle = user32.GetForegroundWindow()
+    if not handle:
+        return None
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+    return pid.value or None
+
+
+def write_ready_file(path, payload):
+    """Stage/ready JSON outside the browser (atomic replace); failures never stop the run."""
+    try:
+        tmp = pathlib.Path(str(path) + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
 def chrome_command_line(chrome):
     """The command line Chrome was actually launched with: proc.args (Popen), else an OS query by pid."""
     args = getattr(getattr(chrome, "proc", None), "args", None)
@@ -173,6 +196,31 @@ def run(args):
         evidence["exemption_scan"] = {"files": sorted(files), "findings": core.scan_extension_for_exemptions(files)}
         return {"extension_id": ext["id"], "exemption_findings": evidence["exemption_scan"]["findings"]}
 
+    def owns_foreground(pid):
+        chrome_pid = chrome.proc.pid
+        return pid == chrome_pid or any(link.get("ProcessId") == chrome_pid for link in cv.ancestry(pid))
+
+    def sample_fg():
+        return core.sample_foreground(foreground_reader, owns_foreground)
+
+    def ph_foreground():
+        """Windows only, before hello / any BLE work: a human must click the test Chrome window (no synthetic
+        input, no focus stealing). Polls GetForegroundWindow from the controller; nothing runs in the page."""
+        evidence["os_foreground"] = {"required": True, "chrome_pid": chrome.proc.pid}
+        ready = pathlib.Path(args.out).resolve().with_suffix(".foreground-ready.json")
+        base = {"chrome_pid": chrome.proc.pid, "wait_s": args.foreground_wait_s, "written_utc": utc(),
+                "instruction": "click the Chrome window opened by this test (physical click)"}
+        write_ready_file(ready, dict(base, state="awaiting_physical_click"))
+        print(f"awaiting_physical_click: click the test Chrome window (pid {chrome.proc.pid}); "
+              f"waiting up to {args.foreground_wait_s} s -> {ready}")
+        gate = core.wait_for_foreground(sample_fg, args.foreground_wait_s, 0.5, time.monotonic, time.sleep)
+        evidence["os_foreground"]["gate"] = gate
+        write_ready_file(ready, dict(base, state=gate["state"], written_utc=utc(), polls=gate["polls"]))
+        cv.expect(gate["state"] == "confirmed", f"OS foreground not confirmed for the owned Chrome: {gate['state']}")
+        evidence["os_foreground"]["gate_confirmed_mono"] = time.monotonic()
+        result["meta"]["foreground_ready_file"] = str(ready)
+        return {"foreground_pid": gate["last"]["pid"], "waited_s": gate["waited_s"]}
+
     def ph_hello():
         before = {p["ProcessId"] for p in cv.host_processes(exe)}
         chrome.js(st["session"], f"otp23.connect({json.dumps(cv.HOSTS['plain'])}); 1")
@@ -184,6 +232,8 @@ def run(args):
         return {"host_pid": st["owned_pid"]}
 
     def ph_phones():
+        if PLATFORM == "windows":
+            evidence["os_foreground"]["ble_start_mono"] = time.monotonic()  # no BLE work happened before this
         scan = chrome.js(st["session"], f"otp23.startScan({json.dumps(cv.VELES_SERVICE)})")
         cv.expect(scan.get("status") == "started", f"startScan {scan}")
         deadline, devices = time.time() + 40, set()
@@ -264,6 +314,10 @@ def run(args):
             if hidden == "hidden" and visible == "visible" and chrome.js(other_session, "document.hasFocus()"):
                 break
             time.sleep(0.25)
+        if PLATFORM == "windows":
+            after = sample_fg()
+            evidence["os_foreground"]["after_switch"] = after
+            cv.expect(after["verified"] and after["owned"], f"OS foreground left the owned Chrome after the tab switch: {after}")
         evidence["same_window_binding"] = {"chrome_tabs": binding, "cdp_window_ids_equal": True,
                                            "created_by": "chrome.tabs.create(windowId=connector window, active)"}
         evidence["pre_close_probe"] = {
@@ -330,8 +384,13 @@ def run(args):
         st["shutdown_done"] = True
         return {"shutdown": "complete"}
 
-    phases = [("ST-ENV", "Chrome, fixed-id extension, connector page, exemption scan", ph_env),
-              ("ST-HELLO", "hello over the registered plain host", ph_hello),
+    foreground_reader = win_foreground_pid
+    phases = [("ST-ENV", "Chrome, fixed-id extension, connector page, exemption scan", ph_env)]
+    if PLATFORM == "windows":
+        phases.append(("ST-FG", "human click: owned Chrome is the OS foreground before any BLE work", ph_foreground))
+    else:
+        evidence["os_foreground"] = {"required": False}
+    phases += [("ST-HELLO", "hello over the registered plain host", ph_hello),
               ("ST-PHONES", "two physical phones scanned and connected", ph_phones)]
     if args.scenario == "prewarm":
         phases.append(("ST-WARM", "pre-idle byte-verified 4096-byte exchange per phone", ph_warmup))
@@ -421,6 +480,9 @@ if __name__ == "__main__":
                         help="must equal the phones' -e otp23_unsolicited_after_s")
     parser.add_argument("--min-background-s", type=positive_int, default=core.MIN_BACKGROUND_S,
                         help="below 600 requires --diagnostic-short; such a run can never be a strict PASS")
+    parser.add_argument("--foreground-wait-s", type=positive_int, default=180,
+                        help="Windows only: bounded wait for a physical click to put the test Chrome in the OS "
+                             "foreground before any BLE work")
     parser.add_argument("--diagnostic-short", action="store_true",
                         help="label the run as a short diagnostic (result DIAGNOSTIC_ONLY at best)")
     parser.add_argument("--grace-s", type=positive_int, default=core.GRACE_S)

@@ -52,6 +52,7 @@ def good_evidence(scenario="cold"):
                                         "configured_delay_ms": 690_000}]}],
         "cleanup": {"shutdown_complete": True, "chrome_closed": True, "surviving_hosts": [], "errors": []},
         "diagnostic_short": False,
+        "os_foreground": {"required": False},
         "chrome": {"args": ["/chrome", "--user-data-dir=/tmp/p", "--remote-debugging-port=0", "--no-first-run"],
                    "args_source": "proc.args"},
         "history_tokens": {"connector": "tok-c", "ordinary_tab": "tok-o"},
@@ -340,6 +341,121 @@ class ChromeFlags(unittest.TestCase):
         self.assertFalse(v["formal_otp23_acceptance"])
 
 
+def windows_fg(**over):
+    fg = {"required": True, "chrome_pid": 4242,
+          "gate": {"state": "confirmed", "polls": 3, "last": {"verified": True, "pid": 4242, "owned": True}},
+          "gate_confirmed_mono": 10.0, "ble_start_mono": 12.0,
+          "after_switch": {"verified": True, "pid": 4242, "owned": True}}
+    fg.update(over)
+    return fg
+
+
+class Foreground(unittest.TestCase):
+    def evidence(self, fg):
+        e = good_evidence()
+        e["os_foreground"] = fg
+        return e
+
+    def test_confirmed_before_ble_and_after_switch_passes(self):
+        self.assertEqual(status(self.evidence(windows_fg()), "ST-15"), "PASS")
+
+    def test_missing_foreground_evidence_is_blocked_never_pass(self):
+        e = good_evidence()
+        del e["os_foreground"]
+        self.assertEqual(status(e, "ST-15"), "BLOCKED")
+        self.assertNotEqual(verdict(e)["strict_result"], "PASS")
+
+    def test_foreground_never_arrives_is_blocked(self):
+        for state in ("timeout", "unverifiable"):
+            fg = windows_fg(gate={"state": state, "polls": 360, "last": {"verified": state == "timeout",
+                                                                         "pid": 999, "owned": False}})
+            v = verdict(self.evidence(fg))
+            self.assertEqual(v["checks"]["ST-15"]["status"], "BLOCKED", state)
+            self.assertNotEqual(v["strict_result"], "PASS")
+
+    def test_ble_must_start_after_the_confirmed_foreground(self):
+        for fg in (windows_fg(ble_start_mono=9.0), windows_fg(ble_start_mono=None), windows_fg(gate_confirmed_mono=None)):
+            self.assertEqual(status(self.evidence(fg), "ST-15"), "FAIL")
+
+    def test_owned_pid_mismatch_after_the_switch_fails(self):
+        fg = windows_fg(after_switch={"verified": True, "pid": 7777, "owned": False})
+        self.assertEqual(status(self.evidence(fg), "ST-15"), "FAIL")
+
+    def test_unverifiable_after_the_switch_is_blocked(self):
+        fg = windows_fg(after_switch={"verified": False, "pid": None, "owned": False})
+        self.assertEqual(status(self.evidence(fg), "ST-15"), "BLOCKED")
+        self.assertEqual(status(self.evidence(windows_fg(after_switch={})), "ST-15"), "BLOCKED")
+
+    def test_macos_has_no_new_gate(self):
+        self.assertEqual(status(good_evidence(), "ST-15"), "PASS")
+
+    def test_sampling_distinguishes_owned_foreign_and_unreadable(self):
+        own = lambda pid: pid == 4242  # noqa: E731
+        self.assertEqual(core.sample_foreground(lambda: 4242, own), {"verified": True, "pid": 4242, "owned": True})
+        self.assertEqual(core.sample_foreground(lambda: 9, own), {"verified": True, "pid": 9, "owned": False})
+        for reader in (lambda: None, lambda: 0, lambda: (_ for _ in ()).throw(OSError("locked"))):
+            self.assertFalse(core.sample_foreground(reader, own)["verified"])
+
+    def test_wait_is_bounded_and_ends_confirmed_when_the_click_happens(self):
+        clock = {"t": 0.0}
+        pids = iter([9, 9, 9, 4242])
+        gate = core.wait_for_foreground(
+            lambda: core.sample_foreground(lambda: next(pids), lambda p: p == 4242), 180, 0.5,
+            lambda: clock["t"], lambda s: clock.__setitem__("t", clock["t"] + s))
+        self.assertEqual((gate["state"], gate["polls"]), ("confirmed", 4))
+
+    def test_wait_gives_up_at_the_deadline_when_foreground_never_arrives(self):
+        clock = {"t": 0.0}
+        gate = core.wait_for_foreground(
+            lambda: core.sample_foreground(lambda: 9, lambda p: False), 5, 1.0,
+            lambda: clock["t"], lambda s: clock.__setitem__("t", clock["t"] + s))
+        self.assertEqual(gate["state"], "timeout")
+        self.assertLessEqual(clock["t"], 5.0 + 1e-9)
+        clock = {"t": 0.0}
+        gate = core.wait_for_foreground(
+            lambda: core.sample_foreground(lambda: None, lambda p: True), 3, 1.0,
+            lambda: clock["t"], lambda s: clock.__setitem__("t", clock["t"] + s))
+        self.assertEqual(gate["state"], "unverifiable")
+
+
+class ForegroundDriverStructure(unittest.TestCase):
+    def fn(self, name):
+        return DriverStructure.fn(self, name)
+
+    def test_gate_runs_after_env_and_before_hello_and_any_ble_phase(self):
+        run = self.fn("run")
+        self.assertLess(run.index('"ST-ENV"'), run.index('"ST-FG"'))
+        self.assertLess(run.index('"ST-FG"'), run.index('"ST-HELLO"'))
+        self.assertLess(run.index('"ST-HELLO"'), run.index('"ST-PHONES"'))
+        self.assertIn('PLATFORM == "windows"', run)
+        self.assertIn('{"required": False}', run)
+
+    def test_no_ble_call_inside_the_gate_and_ready_file_is_outside_the_browser(self):
+        gate = self.fn("ph_foreground")
+        for forbidden in ("startScan", "connectDevice", "otp23.", "chrome.js(", "Input.", "SetForegroundWindow",
+                          "AttachThreadInput"):
+            self.assertNotIn(forbidden, gate)
+        self.assertIn("awaiting_physical_click", gate)
+        self.assertIn(".foreground-ready.json", gate)
+        self.assertIn("args.foreground_wait_s", gate)
+        self.assertLess(gate.index("awaiting_physical_click"), gate.index("wait_for_foreground"))
+
+    def test_ble_start_is_recorded_after_confirmation_and_switch_is_rechecked_before_close(self):
+        self.assertIn('"ble_start_mono"', self.fn("ph_phones"))
+        bg = self.fn("ph_background")
+        self.assertIn('["after_switch"]', bg)
+        self.assertLess(bg.index('["after_switch"]'), bg.index("chrome.cdp.ws.close()"))
+
+    def test_no_synthetic_input_or_focus_stealing_anywhere(self):
+        for forbidden in ("SetForegroundWindow", "AttachThreadInput", "SendInput", "keybd_event", "mouse_event",
+                          "Input.dispatch", "SwitchToThisWindow"):
+            self.assertNotIn(forbidden, SRC)
+        self.assertIn("GetForegroundWindow", SRC)
+
+    def test_default_wait_is_180_seconds(self):
+        self.assertIn('"--foreground-wait-s", type=positive_int, default=180', SRC)
+
+
 class OneStringCommandLine(unittest.TestCase):
     """Windows' OS-query fallback yields the WHOLE command line as args[0]; it used to be skipped (false PASS)."""
 
@@ -606,6 +722,10 @@ class InvokeWrapper(unittest.TestCase):
         self.assertIn("^[A-Za-z0-9._:-]{1,64}$", self.PS1)
         self.assertIn("phone_serial_count", self.PS1)
         self.assertIn("--adb <redacted>", self.PS1)
+
+    def test_foreground_wait_is_forwarded_only_for_strict(self):
+        self.assertIn("'--foreground-wait-s'", self.PS1)
+        self.assertIn("-ForegroundWaitSeconds", self.PS1)
 
     def test_clock_parameters_are_passed_to_the_driver(self):
         for flag in ("'--phone-clock-offset-ms'", "'--phone-clock-uncertainty-ms'", "'--phone-clock-source'"):

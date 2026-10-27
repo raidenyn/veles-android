@@ -17,6 +17,7 @@ macOS rows) adjudicates. The older `poc_background.py` evidence is untouched and
 | ST-11 / ST-12 | **preconfigured visibility/focus histories** (below) of the connector and the ordinary tab |
 | ST-13 | recorded Chrome command line has no throttling/backgrounding/freezing exemption flag |
 | ST-14 | `min_background_s >= 600` and not a diagnostic short run |
+| ST-15 | Windows: the real OS foreground window belongs to this run's own Chrome PID (or a window whose parent chain contains it) before any BLE work and again after the ordinary-tab switch; macOS: not required. Unverifiable foreground (locked desktop, no foreground window) or a gate nobody confirmed is BLOCKED, a mismatch after the switch or BLE work not provably after the confirmation is FAIL |
 
 ### Histories (ST-11, ST-12)
 
@@ -31,6 +32,22 @@ close, shorter than 600 s, or when any event inside the interval leaves the requ
 unfocused, ordinary tab visible + focused), even if a later event restores it. The cut time is
 `cdp_reopened_wall`, taken **before** the re-attach; events after it (caused by attaching) are counted but
 never used.
+
+### Windows OS-foreground gate (ST-FG, before hello and any BLE work)
+
+`chrome.windows.update` cannot take the OS foreground from another application, and the driver uses no
+synthetic input, `SetForegroundWindow`, `AttachThreadInput` or credential bypass. After Chrome and the
+connector are up (and before the native hello and before any scan or connect, so the phones' 690 s timer keeps
+its full >= 600 s margin) the controller writes `<--out stem>.foreground-ready.json` with
+`state: "awaiting_physical_click"` (outside the browser), prints the same, and polls Win32
+`GetForegroundWindow` every 0.5 s for at most `--foreground-wait-s` (default 180; `-ForegroundWaitSeconds` in
+`invoke-poc.ps1`) until the foreground owner is the launched Chrome PID. A human must physically click that
+Chrome window. The ready file then becomes `confirmed`, `timeout` or `unverifiable`; anything but `confirmed`
+stops the run before any BLE work and leaves ST-15 BLOCKED. The poll lives only in the controller; no page-side
+timer or keepalive is added. After the ordinary tab is created and focused, and **before every DevTools client
+closes**, the foreground owner is sampled again; a different owner stops the run (ST-BG) and ST-15 FAILs.
+Evidence: `evidence.os_foreground` (`gate`, `gate_confirmed_mono`, `ble_start_mono`, `after_switch`).
+macOS has no new gate (focus and histories already worked there).
 
 ### Ordinary tab setup (same window)
 

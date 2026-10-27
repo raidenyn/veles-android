@@ -40,6 +40,10 @@
     Measured desktop-minus-phone clock offset, with -PhoneClockUncertaintyMs and -PhoneClockSource (free text,
     no quotes). Without all three the phone-evidence check stays BLOCKED (perfect clocks are never assumed).
 
+.PARAMETER ForegroundWaitSeconds
+    Optional bounded wait (strict_background.py --foreground-wait-s; 0 keeps the driver default of 180) for a
+    human to physically click the test Chrome window so it is the OS foreground before any BLE work.
+
 .PARAMETER PhoneSerials
     Optional comma-separated adb serials (one --adb each) the phones are attached to on THIS machine; the
     status file records only the count, never the serials. Safe characters only (A-Z a-z 0-9 . _ : -).
@@ -70,7 +74,8 @@ param(
     [string]$PhoneSerials = '',
     [Nullable[double]]$PhoneClockOffsetMs = $null,
     [Nullable[double]]$PhoneClockUncertaintyMs = $null,
-    [string]$PhoneClockSource = ''
+    [string]$PhoneClockSource = '',
+    [ValidateRange(0, 3600)][int]$ForegroundWaitSeconds = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -82,6 +87,7 @@ if ($strict -and -not $Scenario) { throw '-Scenario cold|prewarm is required wit
 if (-not $strict -and ($Scenario -or $AdbPath -or $PhoneSerials)) {
     throw '-Scenario, -AdbPath and -PhoneSerials are only valid with -Script strict_background.py'
 }
+if (-not $strict -and $ForegroundWaitSeconds) { throw '-ForegroundWaitSeconds is only valid with -Script strict_background.py' }
 if ($strict -and $DiagnosticDelaySeconds) { throw '-DiagnosticDelaySeconds is not valid with strict_background.py' }
 if ($PhoneClockSource -and $PhoneClockSource -notmatch '^[A-Za-z0-9 ._:,+/=-]{1,200}$') { throw '-PhoneClockSource has unsupported characters' }
 if (-not $strict -and ($null -ne $PhoneClockOffsetMs -or $null -ne $PhoneClockUncertaintyMs -or $PhoneClockSource)) {
@@ -113,6 +119,7 @@ if ($Schedule) {
     if ($DiagnosticDelaySeconds) { $inner += " -DiagnosticDelaySeconds $DiagnosticDelaySeconds" }
     if ($strict) {
         $inner += " -Scenario $Scenario"
+        if ($ForegroundWaitSeconds) { $inner += " -ForegroundWaitSeconds $ForegroundWaitSeconds" }
         if ($AdbPath) { $inner += ' -AdbPath "{0}"' -f $AdbPath }
         if ($serialList.Count) { $inner += ' -PhoneSerials "{0}"' -f ($serialList -join ',') }
         if ($null -ne $PhoneClockOffsetMs) { $inner += " -PhoneClockOffsetMs $PhoneClockOffsetMs" }
@@ -152,6 +159,7 @@ try {
         if ($strict) {
             # strict_background.py has no --flavour option; it always uses the registered plain host.
             $pyArgs = @((Join-Path 'scripts' $Script), '--scenario', $Scenario, '--out', $outAbs)
+            if ($ForegroundWaitSeconds) { $pyArgs += @('--foreground-wait-s', [string]$ForegroundWaitSeconds) }
             if ($AdbPath) { $pyArgs += @('--adb-path', $AdbPath) }
             foreach ($serial in $serialList) { $pyArgs += @('--adb', $serial) }
             if ($null -ne $PhoneClockOffsetMs) { $pyArgs += @('--phone-clock-offset-ms', [string]$PhoneClockOffsetMs) }
