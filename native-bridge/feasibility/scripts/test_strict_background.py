@@ -434,8 +434,11 @@ class MacForegroundReaderBehaviour(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(read(payload), {"verified": False})
         self.assertEqual(read(None, failure=OSError("no CoreGraphics")), {"verified": False})
-        self.assertEqual(state(), {"verified": False},
-                         "the real probe fails closed off-macOS (no CoreGraphics CDLL here)")
+        self.assertIn("(probe or read_cg_session_dict)()", fn_src("mac_session_state"),
+                      "the default probe is the real native session dictionary reader")
+        if sys.platform != "darwin":
+            self.assertEqual(state(), {"verified": False},
+                             "the real probe fails closed off-macOS (no CoreGraphics CDLL here)")
 
     def test_session_query_is_native_ctypes_not_the_broken_jxa_bridge(self):
         """Regression (live macOS 26 diagnosis 2026-10-27): the JXA ObjC bridge cannot call
