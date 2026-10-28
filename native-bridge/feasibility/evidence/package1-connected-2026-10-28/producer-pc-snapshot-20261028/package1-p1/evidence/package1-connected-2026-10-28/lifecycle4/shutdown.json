@@ -1,0 +1,50 @@
+{
+  "id": "LC-shutdown",
+  "title": "Shutdown with an active scan and two active links",
+  "expected": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, host exits by its own trace line (code 0, never killed by Chrome's lingering-host kill), host gone, zero host windows/endpoints (wrapper chrome-created console recorded for the owner)",
+  "actual": "0 of 2 required phones advertise the service",
+  "status": "BLOCKED",
+  "error_class": "insufficient_phones",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "chrome_version_actual": "Chrome/156.0.8078.73",
+    "trace_env_passed_to_chrome": {
+      "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle4\\shutdown.host-trace.log",
+      "VELES_OTP23_DETACHED_CLOSE": null
+    },
+    "detached_close_env_unset": true,
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 0,
+      "network_endpoints": 0
+    },
+    "wrapper_hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 1,
+      "network_endpoints": 0
+    },
+    "integrity": {
+      "chrome": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "wrapper": [
+        {
+          "integrity": "medium",
+          "rid": "0x2000",
+          "token_is_elevated": false
+        }
+      ]
+    },
+    "connect_order": "scan-active",
+    "cleanup_problems": []
+  }
+}

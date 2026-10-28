@@ -1,0 +1,54 @@
+CERTIFICATE/SURVEY captured_utc=2026-10-28T05:47:13Z
+== host executables under otp23-probe ==
+C:\Users\yuriy\otp23-probe\cleanup-closejoin-1\target\release\otp23-host.exe|726528|8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33
+C:\Users\yuriy\otp23-probe\diag-src\target\release\otp23-host.exe|720384|186f920c7accd506da42605e26485b7669300fb507f5d6beaafef3b8913c0a64
+C:\Users\yuriy\otp23-probe\diag-src2\target\release\otp23-host.exe|720384|e36328d2337774f28ef72d181f998a0e98e044db42fa72f6b815ef02c0572f4d
+== bat/ps1/cmd launchers under otp23-probe ==
+C:\Users\yuriy\otp23-probe\fixed\scripts\register-host.ps1|2934|ba74a57f560739e8a5881a6a6a4206ec092c4974a07ef3f6c3dedc08b23e6937
+C:\Users\yuriy\otp23-probe\fixed\scripts\unregister-host.ps1|1323|45d01a0c48a73c1b1f6a76b9a24aaae7d564166f804e0e088bf57bc78e830e1b
+C:\Users\yuriy\otp23-probe\package1-p1\scripts\register-host.ps1|2934|ba74a57f560739e8a5881a6a6a4206ec092c4974a07ef3f6c3dedc08b23e6937
+C:\Users\yuriy\otp23-probe\package1-p1\scripts\unregister-host.ps1|1323|45d01a0c48a73c1b1f6a76b9a24aaae7d564166f804e0e088bf57bc78e830e1b
+C:\Users\yuriy\otp23-probe\tp-out-540\timerprobe-host.bat|134|95eea08b9e5a4fafba0daf544f983bfd4387bfea8921fe019adf7b24bd55ba4a
+C:\Users\yuriy\otp23-probe\tp-out-540-run1-tabs-visible\timerprobe-host.bat|134|95eea08b9e5a4fafba0daf544f983bfd4387bfea8921fe019adf7b24bd55ba4a
+C:\Users\yuriy\otp23-probe\tp-out-smoke\timerprobe-host.bat|134|95eea08b9e5a4fafba0daf544f983bfd4387bfea8921fe019adf7b24bd55ba4a
+C:\Users\yuriy\otp23-probe\chrome-lc.bat|897|6120c7ac83ffcacd9e4794e4c1b69727da24d2d0107a1cba4c42dcb27e38093b
+C:\Users\yuriy\otp23-probe\chrome1.bat|294|db77ce8d321501b8e2398d1cf400169ab9030208d9e090cecb89edde83706c7a
+C:\Users\yuriy\otp23-probe\chromeinfo.ps1|695|6d1ebd6e76295b1883abe4b8fc5648c77e4a5e8985cf3c28eaaa54cc636f69fd
+C:\Users\yuriy\otp23-probe\cr.bat|309|3fd90a782532353291a82586f90f8f33af1c733bd9e409042742f1179226f255
+C:\Users\yuriy\otp23-probe\ctl.bat|1055|62238876f791b285e10e557dc5460e228f8aa8abb72f35cfc18612d95fc07a3f
+C:\Users\yuriy\otp23-probe\desk.bat|98|fd5b37e7dabf44c348ec21d5ee73fd2955eeaf88533d2a1b1dd6a8667ee0f567
+C:\Users\yuriy\otp23-probe\desk.ps1|980|d32a354a47e0715a35606f9353fcbb3eebad33e7a63009838fb1d875e23282c3
+C:\Users\yuriy\otp23-probe\disc.bat|245|7727a1d3c599ae417bed5c6049a5946651b181a83e0f35c23f3491f690d6313d
+C:\Users\yuriy\otp23-probe\final-ctl.bat|1550|583ca5fd0a4df5df1a9534b5139c8fe7a3fdf696a8f43d8f3bcc8fd910ba65d9
+C:\Users\yuriy\otp23-probe\final-ctl2.bat|1348|fc54e9072180d6a52b6897369a7a43951e26725b1574f3adb96549c29935bafb
+C:\Users\yuriy\otp23-probe\killmine.ps1|396|7f799972c51a4c7d093d1d370eafcc60df40fc88ac23115f73083005d9b6fa1b
+C:\Users\yuriy\otp23-probe\p1-chromedebug.bat|185|21b13a60d6c56790fbf791051a3eb04976e6e31e8a1abbf02b57633fffe5d27b
+C:\Users\yuriy\otp23-probe\p1-lifecycle.bat|359|8b1731f0fa843ede6e34c1c2556bc721a86c0246eea831de5c2b5074b4191006
+C:\Users\yuriy\otp23-probe\p1-lifecycle2.bat|359|5bea23f87ba593e9eeff76728af2f987c874d4b3cbd384599f0b2527d2e6ff5d
+C:\Users\yuriy\otp23-probe\p1-lifecycle3.bat|359|f8142b5e71cf74b089ef84d29fd74990cbd104921853a3501b052ed45288e750
+C:\Users\yuriy\otp23-probe\p1-lifecycle4.bat|359|e38e98f41e0bd99e09cac371223cb9af22ed3672e1ea97d174997d62293a290f
+C:\Users\yuriy\otp23-probe\p1-lifecycle5.bat|359|d7b1bf56cdb709e7b2c54ff2a12648d7b5e4fcc699966c22c4cd99a5ecf0ab8f
+C:\Users\yuriy\otp23-probe\p1-per-scenario.bat|1970|1782288e5404a1b258bfbd57a2b7d11f7502ca28f0909e81926265ebb2f1a3a3
+C:\Users\yuriy\otp23-probe\p1-preflight.bat|527|2a3d54545cb545dcf829d5cebc5bfa726154642a74b45bf8bea1910e584c3021
+C:\Users\yuriy\otp23-probe\p1-shutdown3.bat|307|771f2f49dcfa3c9b65fef25c9a5ce63e5b166e67bfeb973d722a8a941a668415
+C:\Users\yuriy\otp23-probe\p1-strict-cold.bat|721|4703790a5344b89186eb7c605a67d0e869853cd59b613d3bd2b5d1cf57246fe6
+C:\Users\yuriy\otp23-probe\p1-strict-cold2.bat|727|c6b10ed9e1f6e37c7b713aa73995aa22a8f6889f3876b71d8efe4bc854002b10
+C:\Users\yuriy\otp23-probe\p1-strict-prewarm.bat|581|ba561a87e20e0c3eb6edd5de551390051900ba0dcd2a08ade59cc9feb1675f1c
+C:\Users\yuriy\otp23-probe\p1-strict-prewarm2.bat|716|2314128020da227daf2999a145ccb7cde4e9c99df64beac2bb2143aa657465f0
+C:\Users\yuriy\otp23-probe\p1-tabclose.bat|524|76a4069871a704910fc0cb16cdc262f27d780a536386e974ca9407f3102831ae
+C:\Users\yuriy\otp23-probe\p1-three-more.bat|1367|f28743dc02a3cb2479a45a852c2f339e06727745a112367ffe1173af2396eb57
+C:\Users\yuriy\otp23-probe\runA.bat|457|beb9242ffd955185f0c5d6541b72c2ae9b35109630b74c6e20bb4ac5183bc9e6
+C:\Users\yuriy\otp23-probe\runB.bat|920|92014e8f22c6bc16e6fed8a153c97d9a9ba2766e10c2d2143096b0e337b8ab82
+C:\Users\yuriy\otp23-probe\sweep.bat|644|b14cc6fa5abf855e5d149de7e4865258145c76d04b6d0d6fb23e9867b4b25012
+C:\Users\yuriy\otp23-probe\tp-540.bat|381|c3abe1f3df933dbfc15c0bfa3338a1e3da73bab47fbdbd92faf35d13bf71298d
+C:\Users\yuriy\otp23-probe\tp-smoke.bat|322|8c84282ac2890512ee684b8b6331acc7541dea56ba916e33bc2ea2a0c68d1874
+== registration remnants (InstallRoot / manifests) ==
+ABSENT: C:\Users\yuriy\AppData\Local\Veles\Otp23Feasibility
+EXISTS: C:\Users\yuriy\AppData\Local\Veles
+ABSENT: C:\Users\yuriy\otp23-probe\package1-p1\install
+ABSENT: C:\Users\yuriy\otp23-probe\package1-p1\host
+== registry query (all veles host keys) ==
+
+End of search: 0 match(es) found.
+
+DONE

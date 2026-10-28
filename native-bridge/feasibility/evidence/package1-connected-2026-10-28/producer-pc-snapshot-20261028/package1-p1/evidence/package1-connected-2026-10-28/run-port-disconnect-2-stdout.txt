@@ -1,0 +1,2 @@
+[BLOCKED] LC-port-disconnect criterion_conflict
+lifecycle: NOT PASS (1 scenario(s)) -> C:\Users\yuriy\otp23-probe\package1-p1\evidence\package1-connected-2026-10-28\run-port-disconnect-2

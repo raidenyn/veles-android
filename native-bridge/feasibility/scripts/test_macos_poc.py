@@ -211,11 +211,98 @@ class ProcessTests(unittest.TestCase):
         hosts = macos_poc.host_processes(rows)
         self.assertEqual([row["pid"] for row in hosts], [700], "only the plain host, not -tauri nor bait")
 
+    def test_lsof_endpoints_ports_only_and_none_on_query_failure(self):
+        canned = ("COMMAND  PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+                  "otp23-ho 700  user    6u  IPv4  0xabcdef        0t0  TCP 127.0.0.1:51111->127.0.0.1:52000"
+                  " (ESTABLISHED)\n"
+                  "otp23-ho 700  user    7u  IPv4  0xbcdef1        0t0  UDP *:5353\n")
+
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            return subprocess.CompletedProcess(argv, 0, stdout=canned, stderr="")
+
+        with mock.patch.object(macos_poc.subprocess, "run", fake_run):
+            endpoints = macos_poc.lsof_endpoints(700)
+        self.assertEqual(endpoints, [{"local_port": 51111, "remote_port": 52000, "state": "ESTABLISHED"},
+                                     {"local_port": 5353, "remote_port": None, "state": "UDP"}])
+        with mock.patch.object(macos_poc.subprocess, "run",
+                               lambda *a, **k: (_ for _ in ()).throw(OSError("no lsof"))):
+            self.assertIsNone(macos_poc.lsof_endpoints(700), "query failure stays unavailable, never empty")
+
+    def test_lsof_endpoint_port_parses_from_the_final_colon(self):
+        # I-1: bracketed IPv6 must not stop at the interior '::1' colon
+        self.assertEqual(macos_poc.port_after_final_colon("[::1]:9222"), 9222)
+        self.assertEqual(macos_poc.port_after_final_colon("fe80::1%en0:52001"), 52001)
+        self.assertEqual(macos_poc.port_after_final_colon("*:5353"), 5353)
+        self.assertEqual(macos_poc.port_after_final_colon("127.0.0.1:51111"), 51111)
+        for bad in (None, "", "nocolon", "[::1]:", "[::1]:notaport"):
+            with self.assertRaises(ValueError):
+                macos_poc.port_after_final_colon(bad)
+
+    def test_lsof_endpoints_bracketed_ipv6_and_remote_ipv6(self):
+        canned = ("COMMAND  PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+                  "Chrome   501 user    57u IPv6  0xff            0t0  TCP [::1]:9222 (LISTEN)\n"
+                  "Chrome   501 user    58u IPv6  0xff            0t0  TCP "
+                  "[fe80::1%en0]:51111->fd00::1%en1:52001 (ESTABLISHED)\n"
+                  "Chrome   501 user    59u IPv6  0xff            0t0  UDP *:5353\n")
+
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            return subprocess.CompletedProcess(argv, 0, stdout=canned, stderr="")
+
+        with mock.patch.object(macos_poc.subprocess, "run", fake_run):
+            endpoints = macos_poc.lsof_endpoints(501)
+        self.assertEqual(endpoints, [
+            {"local_port": 9222, "remote_port": None, "state": "LISTEN"},
+            {"local_port": 51111, "remote_port": 52001, "state": "ESTABLISHED"},
+            {"local_port": 5353, "remote_port": None, "state": "UDP"}],
+            "a port of 1 (or any interior-colon artifact) would be a misparse")
+
+    def test_lsof_any_nonempty_stderr_makes_the_census_unavailable_even_rc0(self):
+        # I-1 follow-up: rc=0 with a diagnostic stderr must never become a fabricated zero
+        rows = ("COMMAND  PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+                "otp23-ho 700  user    6u  IPv4  0xff  0t0      TCP *:51111 (LISTEN)\n")
+        cases = {
+            "rc0-warning-empty-stdout": (0, "", "warning: cannot stat some fd\n", None),
+            "rc0-rows-plus-warning": (0, rows, "lsof: partial output, permission restricted\n", None),
+        }
+        for name, (returncode, stdout, stderr, expected) in cases.items():
+            def fake_run(argv, capture_output=False, text=False, timeout=None, _r=(returncode, stdout, stderr)):
+                return subprocess.CompletedProcess(argv, _r[0], stdout=_r[1], stderr=_r[2])
+            with mock.patch.object(macos_poc.subprocess, "run", fake_run), self.subTest(name):
+                self.assertEqual(macos_poc.lsof_endpoints(700), expected, name)
+
+    def test_lsof_endpoints_returncode_and_stderr_are_honoured(self):
+        # I-1: only a successful query may produce []; [] is never fabricated from a failed query
+        cases = {
+            "rc1-no-stderr": (1, "", "", []),           # genuine alive-pid no-match: lsof's real "no records"
+            "rc1-permission": (1, "", "lsof: can't get process information: permission denied", None),
+            "rc2-internal": (2, "", "lsof: internal error", None),
+            "rc3-weird": (3, "", "boom", None),
+            "rc0-unparsable": (0, "COMMAND PID\notp23-ho 700 user 6u TCP garbage\n", "", None),
+            "rc0-empty": (0, "", "", []),               # rc0 with no rows: honest empty (query succeeded)
+        }
+        for name, (returncode, stdout, stderr, expected) in cases.items():
+            def fake_run(argv, capture_output=False, text=False, timeout=None, _r=(returncode, stdout, stderr)):
+                return subprocess.CompletedProcess(argv, _r[0], stdout=_r[1], stderr=_r[2])
+            with mock.patch.object(macos_poc.subprocess, "run", fake_run), self.subTest(name):
+                self.assertEqual(macos_poc.lsof_endpoints(700), expected, name)
+
+    def test_parse_lsof_endpoints_is_pure_and_total(self):
+        self.assertEqual(macos_poc.parse_lsof_endpoints(
+            ["otp23-ho 700 user 6u IPv4 0xff 0t0 TCP *:51111 (LISTEN)"]),
+            [{"local_port": 51111, "remote_port": None, "state": "LISTEN"}])
+        with self.assertRaises(ValueError):
+            macos_poc.parse_lsof_endpoints(["some unix socket row without tcp/udp"])
+
     def test_ancestry_chain(self):
         rows = macos_poc.parse_ps(self.CANNED)
         chain = macos_poc.ancestry(rows, 700)
         self.assertEqual([(link["pid"], link["comm"]) for link in chain],
                          [(501, "Google"), (1, "launchd")])
+
+    def test_pid_alive_not_invented_off_darwin(self):
+        if sys.platform == "darwin":
+            return
+        self.assertIsNone(macos_poc.pid_alive(12345), "liveness is measured, never invented off-macOS")
 
     def test_wait_gone_real_process(self):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.4)"])
@@ -225,6 +312,19 @@ class ProcessTests(unittest.TestCase):
         self.assertIsNotNone(gone, "an exited child must count as gone even before reaping")
         self.assertFalse(macos_poc.process_alive(child.pid))
         self.assertIsNotNone(macos_poc.wait_gone(child.pid, 0.3), "already-gone pid resolves fast")
+
+
+class CensusAnyLayer(unittest.TestCase):
+    """B-2: the any-layer census keeps off-screen/nonzero-layer host windows as data the summariser
+    fails on — they must never silently drop out of the probe."""
+
+    def test_census_windows_from_entries_keeps_all_layers_and_splits_layer_zero(self):
+        entries = [{"pid": 700, "layer": 0}, {"pid": 700, "layer": 24}]
+        census = macos_poc.census_windows_from_entries(entries)
+        self.assertEqual(census["all"], [{"layer": 0}, {"layer": 24}])
+        self.assertEqual(census["layer_zero"], [{"layer": 0}])
+        empty = macos_poc.census_windows_from_entries([])
+        self.assertEqual(empty, {"all": [], "layer_zero": []})
 
 
 class EvidenceTests(unittest.TestCase):

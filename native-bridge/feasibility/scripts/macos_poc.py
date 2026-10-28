@@ -116,6 +116,7 @@ class ChromeRun:
         env = dict(os.environ)
         if extra_env:
             env.update(extra_env)
+        self.env = env  # kept for evidence: the environment Chrome (and thus the host) actually received
         self.cdp = None
         try:
             self.proc = subprocess.Popen(chrome_arguments(self.profile, chrome_path), env=env)
@@ -131,7 +132,8 @@ class ChromeRun:
             self.close()
             raise RuntimeError("Chrome did not publish DevToolsActivePort")
         port, path = port_file.read_text().splitlines()[:2]
-        self.cdp = Cdp(WebSocket("127.0.0.1", int(port), path))
+        self.port = int(port)
+        self.cdp = Cdp(WebSocket("127.0.0.1", self.port, path))
         self.version = self.cdp.call("Browser.getVersion")
 
     def open_page(self, url):
@@ -274,6 +276,171 @@ def windows_owned_by(pid):
         finally:
             cf.CFRelease(array)
     except Exception:
+        return None
+
+
+def census_windows_from_entries(entries):
+    """Pure census over CGWindowList entries: any layer owned by `pid`, with the layer-0 subset kept.
+
+    `entries` is [{"pid": int, "layer": int}, ...] in CGWindowList order. This is the parsing half of
+    census_windows, split out so the ordering/filter behaviour is unit-tested without touching CoreGraphics."""
+    all_windows, layer_zero = [], []
+    for entry in entries:
+        all_windows.append({"layer": entry["layer"]})
+        if entry["layer"] == 0:
+            layer_zero.append({"layer": 0})
+    return {"all": all_windows, "layer_zero": layer_zero}
+
+
+CGWINDOW_LIST_OPTION_ALL = 0  # kCGWindowListOptionAll: any layer, on-screen or not
+CGNULL_WINDOW_ID = 0  # kCGNullWindowID
+
+
+def census_windows(pid):
+    """OTP-23 M-08 connected-phase census: windows of ANY layer owned by `pid` via
+    CGWindowListCopyWindowInfo(kCGWindowListOptionAll(0), kCGNullWindowID(0)).
+
+    Returns the census dict, or None when the API itself failed (a NULL listing is "unavailable", never
+    zero windows; an EMPTY listing is real data — the Chrome layer-0 control decides usability)."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        import ctypes.util
+        cg = ctypes.CDLL(ctypes.util.find_library("CoreGraphics"))
+        cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
+        cg.CGWindowListCopyWindowInfo.restype = ctypes.c_void_p
+        cg.CGWindowListCopyWindowInfo.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        cf.CFArrayGetCount.restype = ctypes.c_long
+        cf.CFArrayGetCount.argtypes = [ctypes.c_void_p]
+        cf.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+        cf.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+        cf.CFDictionaryGetValue.restype = ctypes.c_void_p
+        cf.CFDictionaryGetValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        cf.CFNumberGetValue.restype = ctypes.c_int
+        cf.CFNumberGetValue.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p]
+        cf.CFRelease.restype = None
+        cf.CFRelease.argtypes = [ctypes.c_void_p]
+        pid_key = ctypes.c_void_p(ctypes.c_void_p.in_dll(cg, "kCGWindowOwnerPID").value)
+        layer_key = ctypes.c_void_p(ctypes.c_void_p.in_dll(cg, "kCGWindowLayer").value)
+        array = cg.CGWindowListCopyWindowInfo(CGWINDOW_LIST_OPTION_ALL, CGNULL_WINDOW_ID)
+        if not array:
+            return None  # NULL listing is 'unavailable', never zero windows
+        owned = []
+        try:
+            for index in range(cf.CFArrayGetCount(array)):
+                window = cf.CFArrayGetValueAtIndex(array, index)
+                number = cf.CFDictionaryGetValue(window, pid_key)
+                if not number:
+                    continue
+                value = ctypes.c_longlong(0)
+                if not (cf.CFNumberGetValue(number, 4, ctypes.byref(value)) and value.value == pid):
+                    continue
+                layer_value = ctypes.c_longlong(0)
+                layer = -1
+                layer_number = cf.CFDictionaryGetValue(window, layer_key)
+                if layer_number and cf.CFNumberGetValue(layer_number, 4, ctypes.byref(layer_value)):
+                    layer = layer_value.value
+                owned.append({"layer": layer})
+        finally:
+            cf.CFRelease(array)
+        return census_windows_from_entries(owned)
+    except Exception:
+        return None
+
+
+def pid_alive(pid):
+    """True when `pid` exists right now (kill(pid, 0)); False when it is gone; None if undecidable."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, but belongs to another uid
+    except OSError:
+        return None
+
+
+def context_probe():
+    """The actual observation context this driver runs in (macOS): window manager, uid, SSH marker.
+    Recorded as data for every measured run — never a placeholder string."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        managername = subprocess.run(["launchctl", "managername"], capture_output=True, text=True,
+                                     timeout=15).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        managername = "unavailable"
+    return {"launchctl_managername": managername or "unavailable",
+            "uid": os.getuid(),
+            "ssh_connection_present": bool(os.environ.get("SSH_CONNECTION"))}
+
+
+def port_after_final_colon(token):
+    """Port after the FINAL colon of an lsof address token (I-1): '[::1]:9222' -> 9222 (never 1 from the
+    interior '::1'), 'fe80::1%en0:52001' -> 52001, '*:5353' -> 5353. Raises ValueError on garbage."""
+    if not isinstance(token, str) or token == "":
+        raise ValueError(f"empty address token: {token!r}")
+    colon = token.rfind(":")
+    if colon == -1 or colon == len(token) - 1:
+        raise ValueError(f"no port in address token: {token!r}")
+    port = token[colon + 1:]
+    if not port.isdigit():
+        raise ValueError(f"bad port in address token: {token!r}")
+    return int(port)
+
+
+def parse_lsof_endpoints(lines):
+    """Pure half of lsof_endpoints (I-1): data lines -> [{local_port, remote_port, state}].
+
+    Raises ValueError on any line that does not parse — the caller must record that as unavailable,
+    never as a fabricated zero."""
+    endpoints = []
+    for line in lines:
+        if not line.strip():
+            continue
+        match = re.search(r"\b(TCP|UDP)\s+(.*)$", line)
+        if not match:
+            raise ValueError(f"unparsable lsof line: {line!r}")
+        proto, rest = match.group(1), match.group(2).strip()
+        state = None
+        paren = re.search(r"\((\w+)\)\s*$", rest)
+        if paren:
+            state = paren.group(1)
+            rest = rest[:paren.start()].strip()
+        if "->" in rest:
+            local_token, remote_token = (part.strip() for part in rest.split("->", 1))
+        else:
+            local_token, remote_token = rest, None
+        endpoints.append({"local_port": port_after_final_colon(local_token),
+                          "remote_port": port_after_final_colon(remote_token) if remote_token else None,
+                          "state": state or proto})
+    return endpoints
+
+
+def lsof_endpoints(pid):
+    """Endpoint list owned by `pid` via `lsof -nP -a -p <pid> -i`; ports/states only, no addresses.
+
+    Honest failure semantics (I-1): `[]` is returned ONLY for a genuinely successful query with no
+    endpoint records (rc=0 with no rows, or rc=1 with NO stderr — lsof's real "no matching records")
+    for a pid that is alive. ANY nonempty stderr (rc=0 with a warning/partial-result diagnostic as
+    much as rc=1 with permission denied) makes the census incomplete and returns None (unavailable),
+    as do rc>1, an OSError, and any unparsable line — a caller can never turn a failure into a zero."""
+    try:
+        done = subprocess.run(["lsof", "-nP", "-a", "-p", str(pid), "-i"], capture_output=True,
+                              text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode not in (0, 1):
+        return None  # usage/internal error: query failed
+    if done.stderr.strip():
+        return None  # I-1: any diagnostic stderr (ANY rc) makes completeness uncertain: unavailable
+    try:
+        return parse_lsof_endpoints(done.stdout.splitlines()[1:])  # skip the lsof header row
+    except ValueError:
         return None
 
 

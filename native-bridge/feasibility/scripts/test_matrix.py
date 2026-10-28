@@ -42,20 +42,27 @@ class CommittedMatrix(unittest.TestCase):
         verdict, open_rows = m.decision(BASE)
         self.assertEqual(verdict == "GO", all(r["status"] == "PASS" for r in BASE["rows"] if not r["waiver"]))
         by_id = {r["id"]: r for r in BASE["rows"]}
-        # every hardware PASS is either one of the narrow pre-grant passes or backed by the post-grant raw files
+        # every hardware PASS is either one of the narrow pre-grant passes or backed by an actual
+        # evidence base: the post-grant raw files or the 2026-10-28 package1 evidence
         for row in BASE["rows"]:
             if row["group"] in ("windows", "macos", "android") and row["status"] == "PASS" and row["id"] not in ("W-13", "W-03"):
-                self.assertIn("post-grant-2026-10-26/", " ".join(row["evidence"]), row["id"])
+                bases = " ".join(row["evidence"])
+                self.assertTrue("post-grant-2026-10-26/" in bases or
+                                "package1-connected-2026-10-28/" in bases, row["id"])
                 self.assertTrue(row["account"] or row["group"] == "android", row["id"])
-        # promotions that the permission-granted physical runs support
-        for rid in ("W-04", "W-05", "W-06", "W-09", "M-05", "M-06", "M-07", "A-02", "A-03"):
+        # promotions that the permission-granted physical runs support, plus the 2026-10-28
+        # integrations: W-11/W-12 (latest-Chrome strict runs + GPT review) and W-02/W-07/W-08
+        # (the final integration after the independent chain; see the dedicated tests)
+        for rid in ("W-04", "W-05", "W-06", "W-09", "M-05", "M-06", "M-07", "A-02", "A-03",
+                    "W-11", "W-12", "W-02", "W-07", "W-08"):
             self.assertEqual(by_id[rid]["status"], "PASS", rid)
         # rows whose literal requirement the new evidence does not meet stay blocked, each with a reason
-        for rid in ("W-02", "W-07", "W-08", "W-10", "W-11", "W-12", "M-03", "M-04", "M-08", "A-01", "M-11"):
+        for rid in ("W-10", "M-03", "M-04", "M-08", "A-01", "M-11"):
             self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
             self.assertTrue(by_id[rid]["blocker"], rid)
             self.assertIn(rid, open_rows)
-        self.assertIn("W-11", open_rows)
+        self.assertNotIn("W-11", open_rows)
+        self.assertNotIn("W-12", open_rows)
 
     def test_post_grant_pass_rows_are_backed_by_the_actual_raw_files(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
@@ -105,7 +112,7 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("TIMED OUT", by_id["M-04"]["actual"])
         self.assertEqual(by_id["M-04"]["status"], "BLOCKED")
 
-    def test_strict_background_w_windows_stay_blocked_and_m_mac_rows_pass_under_the_clarification(self):
+    def test_strict_background_history_and_mac_rows_under_the_clarification(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
         by_id = {r["id"]: r for r in BASE["rows"]}
         adjudications = [base / "phone-evidence/mac/otp23-macos-strict-cold-adjudicated.json",
@@ -136,13 +143,83 @@ class CommittedMatrix(unittest.TestCase):
         for kind in ("cold", "prewarm"):
             raw = json.loads((base / f"macos-final/post-grant-2026-10-26/macos-strict-{kind}-raw.json").read_text())
             self.assertEqual(raw["strict_result"], "BLOCKED", kind)
-        # 2026-10-27: the criterion was clarified (owner-approved); W-11/W-12 were NOT converted by it
-        for rid in ("W-11", "W-12"):
-            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
-            blocker = by_id[rid]["blocker"]
-            self.assertIn("clarified on 2026-10-27", blocker, rid)
-            self.assertIn("not promoted", blocker, rid)
-            self.assertIn("formal_otp23_acceptance=false", blocker, rid)
+        # W-11/W-12 were promoted on the clarified criterion by the latest-Chrome strict runs + the
+        # GPT strict review (dedicated test below); W-02/W-07/W-08 were promoted later the same day
+        # by the final integration (test_w02_w07_w08_final_integration_2026_10_28 below)
+
+    def test_w11_w12_windows_strict_background_rows_pass_under_the_clarification(self):
+        """W-11/W-12 PASS on the owner-approved 2026-10-27 background clarification via the
+        latest-Chrome strict runs in the package1 connected evidence, reviewed independently by the
+        GPT strict review; NO-GO stands (final integration state)."""
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        base = REPO / "native-bridge/feasibility/evidence/package1-connected-2026-10-28"
+        for rid, scenario in (("W-11", "strict-windows-cold-2.json"),
+                              ("W-12", "strict-windows-prewarm.json")):
+            row = by_id[rid]
+            self.assertEqual(row["status"], "PASS", rid)
+            self.assertEqual(row["blocker"], "", rid)
+            self.assertEqual(row["account"], "admin", rid)
+            self.assertIn(scenario, " ".join(row["evidence"]), rid)
+            self.assertIn("LATEST-CHROME (2026-10-28", row["actual"], rid)
+            self.assertIn("[account: admin]", row["actual"], rid)
+            self.assertIn("gpt-5.6-sol", row["actual"], rid)
+            self.assertNotIn("owner present clicking", row["actual"], rid)
+        strict = json.loads((base / "strict-windows-cold-2.json").read_text())
+        self.assertEqual(strict["strict_result"], "PASS")
+        self.assertFalse(strict["formal_otp23_acceptance"])
+        ready = json.loads((base / "strict-windows-cold-2.foreground-ready.json").read_text())
+        self.assertEqual((ready["state"], ready["polls"]), ("confirmed", 1))
+        review = base / "../package1-b5-v2-20261028/reports/otp23-windows-strict-gpt-review.md"
+        self.assertTrue(review.is_file(), "the GPT strict review copy must exist")
+        # the D-02 decision row records the integration history honestly and no GO/OTP-24 change;
+        # the FINAL counts (not any interim/quota state) are the current record
+        d02 = by_id["D-02"]
+        self.assertIn("INTERIM INTEGRATION 2026-10-28", d02["actual"])
+        self.assertIn("usage_limit_reached", d02["actual"])
+        self.assertIn("FINAL INTEGRATION 2026-10-28", d02["actual"])
+        self.assertIn("23 PASS / 6 BLOCKED / 3 waived", d02["actual"])
+
+    def test_w02_w07_w08_final_integration_2026_10_28(self):
+        """The 2026-10-28 final integration promotes W-02/W-07/W-08 on the owner-scoped W-02
+        adjudication and the corrected v4 derivations, verified by the independent chain ending in
+        the user-authorized Opus 5.5 focused final verification; final counts 23/6/3 with NO-GO
+        exactly as recorded in the D-02 row."""
+        by_id = {r["id"]: r for r in BASE["rows"]}
+        evidence_root = REPO / "native-bridge/feasibility/evidence"
+        for rid, artifact in (("W-02", "w02-adjudication.json"),
+                              ("W-07", "phone-burst-association-v4.json"),
+                              ("W-08", "tab-close-phone-bound-v4.json")):
+            row = by_id[rid]
+            self.assertEqual(row["status"], "PASS", rid)
+            self.assertEqual(row["blocker"], "", rid)
+            self.assertEqual(row["account"], "admin", rid)
+            self.assertIn(artifact, " ".join(row["evidence"]), rid)
+        # W-02's expected wording matches the authoritative RFC amendment (exact owner sentence)
+        approved = ("The plain host owns no top-level window, visible or hidden, and no network "
+                    "endpoint. Chrome’s default Windows launcher may own one never-visible console "
+                    "window; any visible window or network endpoint owned by the host or its wrapper "
+                    "fails.")
+        self.assertIn(approved, by_id["W-02"]["expected"])
+        self.assertIn(approved, (REPO / "docs/rfcs/2026-08-21-otp-external-devices.md").read_text(
+            encoding="utf-8").replace("\n", " "))
+        adjud = json.loads((evidence_root / "package1-b5-v4-20261028/w02-adjudication.json").read_text())
+        self.assertEqual(adjud["adjudication"]["w02_outcome"].split()[0], "PASS")
+        census = adjud["census_from_raw"]
+        self.assertEqual((census["samples"], census["wrapper_hidden_total"]), (6, 6))
+        assoc = json.loads((evidence_root / "package1-b5-v4-20261028/phone-burst-association-v4.json").read_text())
+        self.assertEqual(assoc["verdict"]["status"], "PASS")
+        self.assertEqual([assoc["verdict"]["phones"][s]["burst"]["gap_vs_host_exit_ms"]
+                          for s in ("2be02e41", "864a3db0")], [2322, 2406])
+        tabs = json.loads((evidence_root / "package1-b5-v4-20261028/tab-close-phone-bound-v4.json").read_text())
+        self.assertEqual([tabs["phones"][ph]["gap_vs_host_exit_ms"] for ph in ("6T", "10Pro")], [2304.0, 2310.0])
+        opus = evidence_root / "package1-integration-20261028/reports/otp23-p2-opus-v4-final.md"
+        self.assertTrue(opus.is_file(), "the user-authorized Opus 5.5 final report must be published")
+        # the D-02 final postscript states the exact counts and the honest remaining rows
+        d02 = by_id["D-02"]["actual"]
+        self.assertIn("FINAL INTEGRATION 2026-10-28", d02)
+        self.assertIn("23 PASS / 6 BLOCKED / 3 waived", d02)
+        self.assertIn("W-10, M-03, M-04, M-08 (owner-deferred), M-11, A-01", d02)
+        self.assertIn("1b447229-ceaa-4cee-a5be-2181dfdd8838", d02)
         # the promotion adjudicated the fresh macOS runs (v2) after an independent verification of the fixes
         for rid in ("M-09", "M-10"):
             self.assertEqual(by_id[rid]["status"], "PASS", rid)
@@ -345,7 +422,9 @@ class CommittedMatrix(unittest.TestCase):
         blocking = [r["id"] for r in BASE["rows"] if r["status"] in ("BLOCKED", "FAIL", "NOT RUN") and not r["waiver"]]
         self.assertEqual(sorted(open_rows), sorted(blocking))
         self.assertEqual(verdict, "NO-GO" if blocking else "GO")
-        self.assertTrue({"M-03", "W-11", "W-12", "M-11"} <= set(open_rows))
+        self.assertTrue({"W-10", "M-03", "M-04", "M-08", "A-01", "M-11"} <= set(open_rows))
+        for rid in ("W-02", "W-07", "W-08", "W-11", "W-12"):
+            self.assertNotIn(rid, open_rows)
         # R-01 blocks exactly while its row is not PASS (the generic pending/false-PASS rules are tested separately)
         self.assertEqual("R-01" in open_rows, by_id["R-01"]["status"] != "PASS")
 
@@ -440,9 +519,13 @@ class CommittedMatrix(unittest.TestCase):
         open_ids = m.decision(BASE)[1]
         for rid in ("W-01", "M-01", "M-02"):
             self.assertNotIn(rid, open_ids)
-        # nothing else is relaxed: signing/identity, allow/deny/recovery and the strict background windows stay open
-        for rid in ("M-03", "M-04", "W-11", "W-12"):
+        # nothing else is relaxed: signing/identity and the remaining open rows stay open;
+        # W-11/W-12 and W-02/W-07/W-08 were promoted 2026-10-28 — never by this waiver
+        for rid in ("W-10", "M-03", "M-04", "M-08", "A-01", "M-11"):
             self.assertIn(rid, open_ids)
+        for rid in ("W-02", "W-07", "W-08", "W-11", "W-12"):
+            self.assertNotIn(rid, open_ids)
+            self.assertEqual(next(r for r in BASE["rows"] if r["id"] == rid)["waiver"], "")
 
     def test_waiver_rules(self):
         waiver = "User-approved acceptance scope revision: x"
@@ -489,7 +572,7 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("OTP-25", m03["blocker"])
         self.assertNotIn("no Developer ID", m03["blocker"])
         self.assertIn("Apple Development", m03["expected"])
-        for rid in ("M-04", "M-11", "W-11", "W-12"):
+        for rid in ("M-04", "M-11"):
             self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
         # the later strict-mac-20261027 adjudication promoted only M-09/M-10, under the clarified criterion
         for rid in ("M-09", "M-10"):
@@ -526,17 +609,17 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("as clarified by the 2026-10-27 background-criterion revision below", flat)
         self.assertIn("Background-criterion clarification", m.render(BASE))
 
-    def test_windows_port_closure_rows_state_the_non_adopted_identity_and_stay_blocked(self):
+    def test_windows_port_closure_rows_state_the_non_adopted_identity_in_their_historical_record(self):
         rows = {r["id"]: r for r in BASE["rows"]}
+        # the 2026-10-28 final integration promoted W-07/W-08 on the adopted-identity package1
+        # evidence; the HISTORICAL non-adopted-identity record (e36328d2-era runs and W-07's
+        # 6cf72ed0-era history) stays visible in the row actuals
         for rid in ("W-07", "W-08"):
-            self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
-            blocker = rows[rid]["blocker"]
-            self.assertIn("e36328d2", blocker, rid)
-            self.assertIn("non-adopted", blocker, rid)
-            self.assertIn("no automatic promotion", blocker, rid)
-            self.assertIn("6cf72ed0", blocker, rid)
-            # the stale "no Chrome-provenance proof" wording must not come back
-            self.assertNotIn("no Chrome-provenance stdin EOF", blocker, rid)
+            self.assertEqual(rows[rid]["status"], "PASS", rid)
+            self.assertIn("e36328d2", rows[rid]["actual"], rid)
+        self.assertIn("6cf72ed0", rows["W-07"]["actual"], "W-07 history retained")
+        self.assertIn("8521de4d", rows["W-07"]["actual"], "W-07 adopted-identity evidence recorded")
+        self.assertIn("stdin", rows["W-08"]["actual"], "W-08 EOF semantics recorded")
 
     def test_covers_the_rfc_acceptance_criteria_and_the_added_requirements(self):
         text = json.dumps(BASE).lower()
@@ -554,13 +637,16 @@ class CommittedMatrix(unittest.TestCase):
         """The M-09/M-10 promotion rests on the fresh 2026-10-27 v2 evidence + the independent Opus
         verification, records the residuals in the rows, changes no other row and keeps NO-GO."""
         rows = {r["id"]: r for r in BASE["rows"]}
-        # exactly the two rows moved; every previously BLOCKED row is still BLOCKED
+        # exactly the two rows moved; every row blocked at that promotion (2026-10-27) that has not
+        # been separately integrated since remains BLOCKED — W-11/W-12 were later promoted by the
+        # separate 2026-10-28 interim integration (test_w11_w12_interim_integration_...)
         self.assertEqual(rows["M-09"]["status"], rows["M-10"]["status"], "PASS")
         self.assertIn("2026-10-27", rows["M-09"]["source"])
         self.assertIn("verification 2026-10-27", rows["M-09"]["source"])
-        for rid in ("W-02", "W-07", "W-08", "W-10", "W-11", "W-12", "M-03", "M-04", "M-08", "A-01", "M-11"):
+        for rid in ("W-10", "M-03", "M-04", "M-08", "A-01", "M-11"):
             self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
         # the accounts are still identified truthfully and no waiver appeared
+        # (W-02/W-07/W-08 were later promoted by the separate final integration)
         self.assertEqual((rows["M-09"]["account"], rows["M-10"]["account"]), ("admin", "admin"))
         self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
         # the promotion source is recorded in the matrix sources and keeps the chronology intact

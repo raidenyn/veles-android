@@ -1,0 +1,130 @@
+{
+  "derived_utc": "2026-10-28T09:58:21Z",
+  "package_version": "v4 (supersedes the preserved v3 and v2 candidates from the same unchanged raws with identical values; implements the EXACT finite-number branch contract — non-boolean ints are accepted without float conversion, math.isfinite applies ONLY to floats — and adds the controlled numeric_range FAIL boundary for later arithmetic overflow)",
+  "derivation_script": {
+    "path": "native-bridge/feasibility/scripts/package1_b5_v2_derive.py",
+    "sha256": "9cad1a7041aa8e479584550cc1e3afdd0db7385a3cc6b1f7f50c61920de706f0",
+    "role": "derivation program (orchestration) — pinned in the `code` list with every output"
+  },
+  "code": [
+    {
+      "path": "native-bridge/feasibility/scripts/package1_b5_v2_derive.py",
+      "sha256": "9cad1a7041aa8e479584550cc1e3afdd0db7385a3cc6b1f7f50c61920de706f0",
+      "role": "derivation program (orchestration): parses stop markers, assembles phone documents, applies the conservative/review-value assertions, computes the W-02 census, copies the owner records and serializes these outputs — pinned by its own measured sha",
+      "pin_source": "runtime measured sha256 of this program's own file"
+    },
+    {
+      "path": "native-bridge/feasibility/scripts/scenario_matrix_core.py",
+      "sha256": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+      "role": "core helper: phone-to-PC conversion (_telemetry_bursts subtracts offset_phone_minus_pc_ms_median), phone_burst_association guards (finite-number predicate), trace_origin_calibration, parse_trace"
+    },
+    {
+      "path": "native-bridge/feasibility/scripts/package1_phone_burst_telemetry.py",
+      "sha256": "c6fcfd6eab1e90e9861232fa6d06ef2d8166e39b2b613e7e37fd77e12296663d",
+      "role": "analyzer: trace exit/anchor derivation + document assembly (phone-burst-association artifacts)"
+    },
+    {
+      "path": "native-bridge/feasibility/scripts/package1_phone_bound.py",
+      "sha256": "40d8f8242385671eb3122c812cffc4ad33d135b001ca7b0a5adfd4b1c3ecf48f",
+      "role": "analyzer: old dumpsys-history bound (row_epoch_ms subtracts the phone-minus-PC offset) for tab-close-phone-bound artifacts"
+    },
+    {
+      "path": "native-bridge/feasibility/scripts/scenario_matrix.py",
+      "sha256": "f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1",
+      "role": "driver: connected-phase sample recording (wall_ms) for connected-sample-brackets artifacts"
+    },
+    {
+      "path": "native-bridge/feasibility/scripts/pc_phone_clock_probe.py",
+      "sha256": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+      "role": "clock producer: measures and defines offset_phone_minus_pc_ms_median = phone_epoch - pc_epoch"
+    },
+    {
+      "path": "native-bridge/feasibility/scripts/chrome_validate.py",
+      "sha256": "78d53ca98c839e78bccf404beab5fb978f421f485f7945e5578d09a8b71a62f6",
+      "role": "Windows platform observer used by the sampled census (windows/endpoints)"
+    }
+  ],
+  "git_head": {
+    "commit": "8f365fce0d31f975610c235085a95b9136ac25e2",
+    "worktree_uncommitted_changes": true,
+    "note": "the per-file sha256 list under `code` pins the ACTUAL analyzer/helper/clock bytes used by this derivation; the p2-stage-manifest.txt of the run pins older staged bytes (scenario_matrix_core.py=b33b015b…, test_scenario_matrix.py=2183b847…) and does not list package1_phone_burst_telemetry.py, so that manifest is retained as HISTORICAL evidence only. The authority for what the run actually executed is the run's own self-recorded source_sha256 in p2-pd1/lifecycle.json (scenario_matrix.py=f8284c98…, scenario_matrix_core.py=527de610…, chrome_validate.py=78d53ca9…), which match these reviewed files."
+  },
+  "stage_manifest_historical": {
+    "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-stage-manifest.txt",
+    "sha256": "fca6faac598e970b8beb86e1d106722e55d0bb31e315d0d737f17309cdcf763c",
+    "status": "retained immutable as history; NOT the authority for v2 provenance"
+  },
+  "runtime_self_pins": {
+    "scenario_matrix.py": "f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1",
+    "scenario_matrix_core.py": "527de61027811319a3d72990b2cef5546c617e1fc0e151684e3e688ebd1d0a02",
+    "connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+    "manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+    "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f",
+    "platform_observer_sha256": {
+      "chrome_validate.py": "78d53ca98c839e78bccf404beab5fb978f421f485f7945e5578d09a8b71a62f6"
+    },
+    "observer_modules_missing": []
+  },
+  "runtime_self_pins_source": {
+    "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-pd1/lifecycle.json",
+    "sha256": "0e73cf5651e020d331a23a264847eaf1b91898bd52f49d67c7b5de347bffec13"
+  },
+  "outputs": {
+    "phone-burst-association-v4.json": "e430fc5cf279294bbf195f3d01ad8db60665e5ac54a17b4807ec7b14cdd9605a",
+    "tab-close-phone-bound-v4.json": "ec1294c49f4f136d6c3ddcc2aece7abc05ac809fbbfd55e030168fab4548055e",
+    "connected-sample-brackets-v4.json": "586bde724ebb197086eb123933b73ae2e1a50ed8bc60307dbd91e3084a6d3fed",
+    "w02-adjudication.json": "c0d0b333fb6fe0f10f80351ba49850244618e26e008eb089b13be1e6122d0f3c"
+  },
+  "owner_decision_records": {
+    "approval": {
+      "path": "owner-approval-w02-2026-10-28.json",
+      "sha256": "89d255383b21272590f7c3b3cc3370e7b8f1e688b2445a65dba022d529f23fd4"
+    },
+    "mac_deferral": {
+      "path": "mac-deferral-2026-10-28.json",
+      "sha256": "ace5e31e99c25ee21b4d634208ef006af02624121624952e0c40238505086e99"
+    },
+    "note": "byte-identical copies (cmp-verified shas) of the operator-captured owner records; the Mac update/restart was DECLINED, so M-08 stays deferred/unmeasured"
+  },
+  "answers_fix_verification": {
+    "record": {
+      "path": "/tmp/opencode/otp23-package1-p2-gpt-v3-final.md",
+      "sha256": "217e6f2f2bcd896a7cda0bb8b6cf484ae3da7151f98f29ca6fb399bf2d40d4d2",
+      "verified_now": true
+    },
+    "closures": {
+      "B5-2": "scenario_matrix_core._num implements the EXACT branch contract: non-boolean ints accepted WITHOUT float conversion (huge ints like 10**1000 no longer raise), math.isfinite ONLY for floats (bools/non-finites rejected as before); an overflowing later arithmetic step in the validator is a controlled FAIL named numeric_range, never an uncaught exception; regressions: test_num_accepts_huge_ints_without_overflow, test_giant_stop_epochs_never_escape_the_validator",
+      "B5-4": "confirmed closed by the focused recheck; retained: this program pins its own runtime-measured sha256 with the orchestration role as code[0] in the record and in every output provenance (7-entry code list, no hardcoded self-hash)",
+      "chrome_flags_note": "closed in v3 and retained verbatim: the raw scenario pins only the legacy env (VELES_OTP23_DETACHED_CLOSE unset); override-flag absence rests on source review + actual argv records"
+    }
+  },
+  "review_hand_values_crosscheck": {
+    "association_gaps": {
+      "2be02e41": 2322,
+      "864a3db0": 2406
+    },
+    "association_intervals": {
+      "2be02e41": [
+        629,
+        4015
+      ],
+      "864a3db0": [
+        1482,
+        3330
+      ]
+    },
+    "tab_close_gaps": {
+      "6T": 2304,
+      "10Pro": 2310
+    },
+    "sample_positions": [
+      9371,
+      9473,
+      9584,
+      9686,
+      9944,
+      9951
+    ],
+    "all_matched": true
+  }
+}

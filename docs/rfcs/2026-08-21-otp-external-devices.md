@@ -63,6 +63,15 @@ and promotes no matrix row. Cold and prewarm runs, foreground evidence (includin
 OS-foreground gate), freeze/discard requirements and the NO-GO rule are retained; OTP-24 is
 not approved.
 
+Amended on 2026-10-28 (two owner decisions, **operator-captured**, relayed by the operator, not
+GitHub approvals): (a) the OTP-23 **W-02 window criterion** is clarified by the owner-approved
+sentence recorded verbatim in the "W-02 window-criterion amendment" paragraph of the OTP-23 section
+(owner record SHA-256 `89d25538…23fd4`) — scope W-02 only, no other row touched, no OTP-24
+authorization; (b) the **M-08 macOS lifecycle row is owner-deferred**: the owner declined the Chrome
+update/restart ("Cannot restart Chrome now", owner record SHA-256 `ace5e31e…86e99`), so no Mac
+lifecycle measurement exists, none may be fabricated, and M-08 stays BLOCKED/deferred (details in
+the OTP-23 section). The NO-GO decision and every unamended OTP-23 requirement stand.
+
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
 a Veles Chrome extension today, and a LILYGO T-WATCH-S3 family (ESP32-S3)
@@ -1610,6 +1619,42 @@ and the NO-GO rule. A matrix row therefore stays `BLOCKED` while any retained re
 **Background-criterion clarification (owner-approved, 2026-10-27, operator-captured; OTP-23
 only; later than, and not overriding the record of, the owner's earlier "require more evidence
 first" answer):** "Event delivery through the architecture’s Native Messaging port is not a timer-throttling exemption. The criterion continues to forbid timer-throttling opt-outs, artificial keepalive, audio, WebRTC, exemption flags and DevTools clients during idle; ordinary timers and the port itself are permitted. If a same-build comparison shows the port tab escapes intensive timer throttling while the port-less control does not, report the criterion unsatisfied."
+
+**W-02 window-criterion amendment (owner-approved, 2026-10-28, operator-captured; W-02 only):**
+after the connected-phase Windows measurement found Chrome's default-launch `cmd.exe` wrapper owning
+exactly one never-visible console window (the plain host owning zero windows and zero endpoints in
+every sample), the owner was asked the exact captured question and answered **"Approve narrow
+clarification"** with this approved text, recorded verbatim (owner record
+`/tmp/opencode/otp23-package1-owner-approval.json` (published byte-identically at
+`native-bridge/feasibility/evidence/package1-b5-v2-20261028/owner-approval-w02-2026-10-28.json`), SHA-256
+`89d255383b21272590f7c3b3cc3370e7b8f1e688b2445a65dba022d529f23fd4`, recorded 2026-10-28T04:16:36Z,
+operator-captured, not a GitHub approval and not recorded on any issue or pull request): **"The
+plain host owns no top-level window, visible or hidden, and no network endpoint. Chrome’s default
+Windows launcher may own one never-visible console window; any visible window or network endpoint
+owned by the host or its wrapper fails."** Scope is **W-02 only**: no other row is approved, waived
+or re-scoped, no OTP-24 authorization is implied, all observed window types/endpoints and
+source/evidence provenance are retained, and independent verification is still required (the raw
+`BLOCKED criterion_conflict` scenario records stay byte-identical; the W-02-only adjudication
+lives at `native-bridge/feasibility/evidence/package1-b5-v4-20261028/w02-adjudication.json`).
+Promoting W-02 in the matrix happens only in the integration step after that verification.
+
+**M-08 Mac deferral (owner decision, 2026-10-28, operator-captured; NOT a promotion or waiver):**
+the owner was asked whether Chrome on the Mac may be updated to current stable and relaunched
+(request nonce `CHROMEUPD-20261028-a41c8f2e`, answer **"Cannot restart Chrome now"**, owner record
+`/tmp/opencode/otp23-package1-mac-deferred.json` (published byte-identically at
+`native-bridge/feasibility/evidence/package1-b5-v4-20261028/mac-deferral-2026-10-28.json`), SHA-256
+`ace5e31e99c25ee21b4d634208ef006af02624121624952e0c40238505086e99`): no update/restart of personal
+Chrome, no switch to old Chrome versions, no alternate extension loader, and no new signing without
+a new owner decision; the approved signed fixture `e7c716c5…eb91c` and its Bluetooth grant remain
+untouched. M-08 stays owner-deferred and **unmeasured**: the retained attempts
+(`native-bridge/feasibility/evidence/package1-p2-20261028/p2m8-mac-logs/`) show an
+extension-loading/browser-process failure (`Extensions.loadUnpacked` closed the tested Chrome
+sessions) BEFORE any BLE work with zero peers — not a proven universal Chrome defect, not a proven
+`.49` regression, and an update is not proven to fix it (a minimal invalid-manifest reproduction is
+invalid input; the valid real driver flow failed with the cause unproven). One preservation gap is
+recorded: the first standalone Mac SETUP capture was overwritten with `--overwrite`; only its
+surviving stdout details remain, so the setup phase stays unmeasured (no BLE) and the lost bytes are
+never recreated or claimed preserved; new attempts must use unique output directories.
 
 The determination rests on source inspection of Chromium 155.0.8059.85 and 156.0.8078.48 and on
 same-build timer probes (a port tab against a port-less control tab, no DevTools client during the

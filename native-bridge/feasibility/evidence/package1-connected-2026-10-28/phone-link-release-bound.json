@@ -1,0 +1,245 @@
+{
+  "bound_s_predeclared": 30.0,
+  "results": [
+    {
+      "run": "run-failure-isolation",
+      "host_exit_utc_ms_estimate": 1793152290930,
+      "anchor_disconnect_epoch_ms": 1793152290920,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-retry.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152290920,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-retry.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152290920,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": [
+        "6T: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required",
+        "10Pro: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required"
+      ]
+    },
+    {
+      "run": "run-failure-isolation-2",
+      "host_exit_utc_ms_estimate": 1793152716835,
+      "anchor_disconnect_epoch_ms": 1793152716824,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-POST2.txt",
+          "last_disconnect_device": "08:58:39.399",
+          "gap_vs_host_exit_ms": 3290.0,
+          "bound_epoch_anchor_ms": 1793152716824,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-POST.txt",
+          "last_disconnect_device": "08:58:39.426",
+          "gap_vs_host_exit_ms": 2993.0,
+          "bound_epoch_anchor_ms": 1793152716824,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": []
+    },
+    {
+      "run": "run-port-disconnect",
+      "host_exit_utc_ms_estimate": 1793152275273,
+      "anchor_disconnect_epoch_ms": 1793152275262,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-retry.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152275262,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-retry.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152275262,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": [
+        "6T: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required",
+        "10Pro: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required"
+      ]
+    },
+    {
+      "run": "run-port-disconnect-2",
+      "host_exit_utc_ms_estimate": 1793152683127,
+      "anchor_disconnect_epoch_ms": 1793152683117,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-POST.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152683117,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-POST.txt",
+          "last_disconnect_device": "08:58:05.796",
+          "gap_vs_host_exit_ms": 3071.0,
+          "bound_epoch_anchor_ms": 1793152683117,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": [
+        "6T: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required"
+      ]
+    },
+    {
+      "run": "run-shutdown",
+      "host_exit_utc_ms_estimate": 1793152262467,
+      "anchor_disconnect_epoch_ms": 1793152262456,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-retry.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152262456,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-retry.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152262456,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": [
+        "6T: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required",
+        "10Pro: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required"
+      ]
+    },
+    {
+      "run": "run-shutdown-2",
+      "host_exit_utc_ms_estimate": 1793152650577,
+      "anchor_disconnect_epoch_ms": 1793152650566,
+      "phones": {
+        "6T": "no readable capture",
+        "10Pro": "no readable capture"
+      },
+      "bound_s": 30.0,
+      "problems": []
+    },
+    {
+      "run": "run-shutdown-3",
+      "host_exit_utc_ms_estimate": 1793152887873,
+      "anchor_disconnect_epoch_ms": 1793152887862,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-POST.txt",
+          "last_disconnect_device": "09:01:30.907",
+          "gap_vs_host_exit_ms": 3760.0,
+          "bound_epoch_anchor_ms": 1793152887862,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-POST.txt",
+          "last_disconnect_device": "09:01:30.525",
+          "gap_vs_host_exit_ms": 3054.0,
+          "bound_epoch_anchor_ms": 1793152887862,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": []
+    },
+    {
+      "run": "run-stdin-eof",
+      "host_exit_utc_ms_estimate": 1793152297559,
+      "anchor_disconnect_epoch_ms": 1793152297548,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-retry.txt",
+          "last_disconnect_device": null,
+          "gap_vs_host_exit_ms": null,
+          "bound_epoch_anchor_ms": 1793152297548,
+          "within_bound": false,
+          "burst_own_run_found": false,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-retry.txt",
+          "last_disconnect_device": "08:51:40.249",
+          "gap_vs_host_exit_ms": 3092.0,
+          "bound_epoch_anchor_ms": 1793152297548,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": [
+        "6T: the run's own CONNECTED->DISCONNECTED burst is not in the retained phone history (rotated out); a rerun with a fresh capture is required"
+      ]
+    },
+    {
+      "run": "run-tab-close-2",
+      "host_exit_utc_ms_estimate": 1793152478375,
+      "anchor_disconnect_epoch_ms": 1793152478365,
+      "phones": {
+        "6T": {
+          "capture_file": "dumpsys-2be02e41-retry.txt",
+          "last_disconnect_device": "08:54:41.405",
+          "gap_vs_host_exit_ms": 3756.0,
+          "bound_epoch_anchor_ms": 1793152478365,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        },
+        "10Pro": {
+          "capture_file": "dumpsys-864a3db0-retry.txt",
+          "last_disconnect_device": "08:54:41.087",
+          "gap_vs_host_exit_ms": 3114.0,
+          "bound_epoch_anchor_ms": 1793152478365,
+          "within_bound": true,
+          "burst_own_run_found": true,
+          "rows_in_history": 16
+        }
+      },
+      "bound_s": 30.0,
+      "problems": []
+    }
+  ]
+}

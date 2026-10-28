@@ -1,0 +1,12 @@
+
+
+HostName    : me.nagaev.veles.otp23.plain
+Manifest    : C:\Users\yuriy\AppData\Local\Veles\Otp23Feasibility\me.nagaev.veles.otp23.plain.json
+Executable  : C:\Users\yuriy\AppData\Local\Veles\Otp23Feasibility\plain\otp23-host.exe
+Sha256      : 8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33
+Origin      : chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/
+RegistryKey : HKCU:\Software\Google\Chrome\NativeMessagingHosts\me.nagaev.veles.otp23.plain
+Scope       : HKCU (current user only)
+
+
+

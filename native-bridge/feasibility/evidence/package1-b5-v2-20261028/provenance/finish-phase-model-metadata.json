@@ -1,0 +1,94 @@
+[
+ {
+  "session_id": "ses_e7e3b9faeffeYBCtKE1CBdBH42",
+  "model": "glm-5.3-flash",
+  "provider": "ollama-cloud",
+  "variant": "default",
+  "agent": "build",
+  "opencode_version": "1.19.4",
+  "assistant_messages": 94,
+  "user_messages": 1,
+  "assistant_model_variants": [
+   "ollama-cloud/glm-5.3-flash variant None mode build"
+  ],
+  "role_note": "this finish-session (GLM implementer)",
+  "capture": "sqlite metadata only (id/role/modelID/providerID/variant/agent counts); no message text, no API headers, no cookies, no auth state read"
+ },
+ {
+  "session_id": "ses_e7e49d2cbffepV653zHccm8N62",
+  "model": "gpt-5.6-sol",
+  "provider": "openai",
+  "variant": "high",
+  "agent": "build",
+  "opencode_version": "1.19.4",
+  "assistant_messages": 31,
+  "user_messages": 1,
+  "assistant_model_variants": [
+   "openai/gpt-5.6-sol variant high mode build"
+  ],
+  "role_note": "independent P2/B5 review",
+  "capture": "sqlite metadata only (id/role/modelID/providerID/variant/agent counts); no message text, no API headers, no cookies, no auth state read"
+ },
+ {
+  "session_id": "ses_e7ef53f61ffesIPmRxLtwZ1efE",
+  "model": "gpt-5.6-sol",
+  "provider": "openai",
+  "variant": "high",
+  "agent": "build",
+  "opencode_version": "1.19.4",
+  "assistant_messages": 63,
+  "user_messages": 4,
+  "assistant_model_variants": [
+   "openai/gpt-5.6-sol variant high mode build",
+   "openai/gpt-5.6-sol variant high mode compaction"
+  ],
+  "role_note": "independent Windows strict review",
+  "capture": "sqlite metadata only (id/role/modelID/providerID/variant/agent counts); no message text, no API headers, no cookies, no auth state read"
+ },
+ {
+  "session_id": "ses_e7fbe5353ffeWU4VTjn6lgYjIL",
+  "model": "gpt-5.6-sol",
+  "provider": "openai",
+  "variant": "high",
+  "agent": "build",
+  "opencode_version": "1.19.4",
+  "assistant_messages": 92,
+  "user_messages": 10,
+  "assistant_model_variants": [
+   "openai/gpt-5.6-sol variant high mode build",
+   "openai/gpt-5.6-sol variant high mode compaction"
+  ],
+  "role_note": "strict-review preflight (different review role)",
+  "capture": "sqlite metadata only (id/role/modelID/providerID/variant/agent counts); no message text, no API headers, no cookies, no auth state read"
+ },
+ {
+  "session_id": "ses_e8393db6bffeMzWgsvMaGsH3pI",
+  "model": "gpt-6.1-sol",
+  "provider": "openai",
+  "variant": "low",
+  "agent": "build",
+  "opencode_version": "1.19.4",
+  "assistant_messages": 589,
+  "user_messages": 10,
+  "assistant_model_variants": [
+   "openai/gpt-6.1-sol variant low mode build"
+  ],
+  "role_note": "coordinating parent session",
+  "capture": "sqlite metadata only (id/role/modelID/providerID/variant/agent counts); no message text, no API headers, no cookies, no auth state read"
+ },
+ {
+  "session_id": "ses_e7ec0c67bffeEwjr45ap2JkwHS",
+  "model": "glm-5.3-flash",
+  "provider": "ollama-cloud",
+  "variant": "default",
+  "agent": "build",
+  "opencode_version": "1.19.4",
+  "assistant_messages": 208,
+  "user_messages": 2,
+  "assistant_model_variants": [
+   "ollama-cloud/glm-5.3-flash variant None mode build"
+  ],
+  "role_note": "earlier package1 implementer session",
+  "capture": "sqlite metadata only (id/role/modelID/providerID/variant/agent counts); no message text, no API headers, no cookies, no auth state read"
+ }
+]

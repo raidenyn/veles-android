@@ -1,0 +1,51 @@
+{
+  "id": "LC-stdin-eof-truncated",
+  "title": "Stdin closed inside a frame header (direct native-framed process)",
+  "expected": "host rejects the truncated frame (exit 2), logs the framing stage, stdout ends on a frame boundary, no shutdown credit",
+  "actual": "all checks held; see detail",
+  "status": "PASS",
+  "error_class": "none",
+  "detail": {
+    "provenance": {
+      "launch": "direct process with pipes",
+      "chrome_provenance": false,
+      "context": "direct launch; Chrome provenance is covered by the Chrome scenarios"
+    },
+    "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+    "host_pid_recorded": true,
+    "integrity": {
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "driver": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      }
+    },
+    "exit_code": 2,
+    "stdout_eof_state": "clean",
+    "trace_exit": {
+      "at_ms": 0,
+      "code": 2,
+      "stdout_drained": true
+    },
+    "trace_mechanism": "stdin_closed",
+    "trace_released": [],
+    "trace_join": {
+      "at_ms": 0,
+      "joined": 0,
+      "total": 0,
+      "within_ms": 0
+    },
+    "frames_after_close": [],
+    "problems": [],
+    "detached_close_env_unset": true,
+    "env_passed_to_host_veles_keys": {
+      "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle3\\stdin-eof-truncated.host-trace.log",
+      "VELES_OTP23_DETACHED_CLOSE": null
+    }
+  }
+}

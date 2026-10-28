@@ -1,0 +1,15 @@
+e97602ab9cac70102245345c5ab0fc9830df8b17f1072b188265a662a3a547ae  ./.gitattributes
+151d1d2a6f3da961b46194e07ccd1a3ffbaf494bfb17d778326f9fddf6119b4c  ./FINDING.md
+cea77aa22afb6f96e7cda8c22fe1e2161380e178e54b7a62aa43457d1af672e2  ./connected-sample-brackets-v2.json
+5ae0081395e4474170531b75dde2d8136679333a9fe14b726cf7569cc101fba0  ./derivation-record.json
+ace5e31e99c25ee21b4d634208ef006af02624121624952e0c40238505086e99  ./mac-deferral-2026-10-28.json
+89d255383b21272590f7c3b3cc3370e7b8f1e688b2445a65dba022d529f23fd4  ./owner-approval-w02-2026-10-28.json
+b0840066e435a1bba1c27ece046b665b98410e314a2ffad6421d38986771d243  ./phone-burst-association-v2.json
+e97602ab9cac70102245345c5ab0fc9830df8b17f1072b188265a662a3a547ae  ./provenance/.gitattributes
+35b448911304f8c52164256242e9952840fb75f80a3e022ae005fd221cdcf9fa  ./provenance/finish-phase-model-metadata.json
+e97602ab9cac70102245345c5ab0fc9830df8b17f1072b188265a662a3a547ae  ./reports/.gitattributes
+6b39259e74942d8d03433348c2ce0e67d2d594f677862dba9e602e87c4436a67  ./reports/SOURCE-SCOPES.md
+15a28c80341a5a5e0baa2e6cb91ecb0ae27cafbef8622db90e9f98c7f519ea2f  ./reports/otp23-p2-b5-gpt-review.md
+520c2eddbb7a8a8af9aaa0d267c8fd3e09331d6b1b96e947967077386fd52519  ./reports/otp23-windows-strict-gpt-review.md
+3deac5e26119eb25e42ba3319a1aa628030b233292f27d97e69fce081cd85c60  ./tab-close-phone-bound-v2.json
+4bbdf5124235024619835573ef099c7a881b918ddd8fa3aa3ff10acc16426a1a  ./w02-adjudication.json

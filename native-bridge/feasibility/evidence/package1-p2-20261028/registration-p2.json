@@ -1,0 +1,17 @@
+{
+  "what": "OTP-23 package1-p2 registration state and scoped per-user registration (HKCU only)",
+  "captured_utc": "2026-10-28T06:58:16Z",
+  "before": {
+    "hkcu_plain_key": "ABSENT (PowerShell Get-ItemProperty -ErrorAction SilentlyContinue, 06:47Z)",
+    "hkcu_veles_key_search": "reg query HKCU /f veles /k /s -> 0 matches (1 output line = search-end header)",
+    "note": "existing registration was removed after the p1 batch; nothing owned to restore"
+  },
+  "after": {
+    "captured_utc": "2026-10-28T06:58:16Z",
+    "hkcu_plain_key_default": "HKCU:/Software/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain -> C:/Users/yuriy/AppData/Local/Veles/Otp23Feasibility/me.nagaev.veles.otp23.plain.json",
+    "manifest_path": "C:/Users/yuriy/AppData/Local/Veles/Otp23Feasibility/me.nagaev.veles.otp23.plain.json",
+    "registered_copy": "C:/Users/yuriy/AppData/Local/Veles/Otp23Feasibility/plain/otp23-host.exe",
+    "registered_copy_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33 (live Get-FileHash after register)",
+    "scope": "HKCU (current user only); no machine-wide writes; register-host.ps1 output captured in register-out.txt"
+  }
+}

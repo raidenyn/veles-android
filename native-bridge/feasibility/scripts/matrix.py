@@ -106,7 +106,10 @@ def render(matrix):
         "**Background-criterion clarification** (2026-10-27, owner-approved and operator-captured, OTP-23 only; later than the owner's \"require more evidence first\" answer): the Native Messaging port itself is not a "
         "timer-throttling exemption, and the criterion still forbids opt-outs, keepalive, audio, WebRTC, exemption flags and DevTools clients during idle. Cold/prewarm runs, foreground evidence (macOS ST-15 is not waived), "
         "freeze/discard requirements and the NO-GO rule remain; the approval promoted nothing by itself - M-09 (cold) and M-10 (prewarm) were separately adjudicated PASS on the fresh 2026-10-27 strict-mac-20261027 evidence "
-        "(v2 adjudications with recorded evaluator provenance, after-run provenance capture and the independent Opus fix verification; residuals recorded in the rows), W-11/W-12 stay open, and OTP-24 is not approved.",
+        "(v2 adjudications with recorded evaluator provenance, after-run provenance capture and the independent Opus fix verification; residuals recorded in the rows); W-11/W-12 were promoted on this "
+        "clarification by the 2026-10-28 latest-Chrome (156.0.8078.73) package1 strict runs with the independent GPT strict review, and W-02/W-07/W-08 were promoted the same day by the FINAL integration "
+        "after the independent review chain (GPT P2/B5 + fix verification + v3-final recheck, then the user-authorized Opus 5.5 focused final verification) — final counts 23 PASS / 6 BLOCKED / 3 waived, "
+        "still NO-GO, and OTP-24 is not approved.",
         "",
         "Fresh rows start `NOT RUN`. Historical PoC results are context in the narrative documents, never a PASS here:",
         "they were taken with different binaries, an administrator account and (for background) a connected browser-level",

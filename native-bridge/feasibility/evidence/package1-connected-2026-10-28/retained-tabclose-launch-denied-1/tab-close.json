@@ -1,0 +1,11 @@
+{
+  "id": "LC-tab-close",
+  "title": "Connector tab close with an active scan and two active links",
+  "expected": "owning tab destroyed with two byte-proven links and an active scan: host exits by its OWN trace line (code 0, stdin-EOF mechanism, no shutdown handshake), host gone",
+  "actual": "Traceback (most recent call last):\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 539, in scenario_chrome\n    detail[\"ready\"] = session.start()\n                      ~~~~~~~~~~~~~^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 286, in start\n    self.chrome = self.adapter.chrome_run({\"VELES_OTP23_TRACE\": str(self.trace_path)})\n                  ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 120, in chrome_run\n    return self.cv.ChromeRun(env, medium=True)\n           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\nPermissionError: [Errno 13] Permission denied: 'C:\\\\Users\\\\yuriy\\\\AppData\\\\Local\\\\Temp\\\\veles-otp23-profile-84fw7q0z\\\\DevToolsActivePort'\n",
+  "status": "FAIL",
+  "error_class": "environment",
+  "detail": {
+    "cleanup_problems": []
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "what": "OTP-23 package1 old W-08 run-tab-close-2 phone-link-release bound v2 (same dumpsys history + pre-run clock probe, corrected phone-minus-PC SUBTRACTION); only run-tab-close-2 is recomputed — the old batch's 6T port-disconnect capture stays INVALID/diagnostic (its own CONNECT had rotated out of the 16-row phone history).",
+  "run": "run-tab-close-2",
+  "host_exit_utc_ms_estimate": 1793152478375,
+  "anchor_disconnect_epoch_ms": 1793152478365,
+  "bound_s_predeclared": 30.0,
+  "phones": {
+    "6T": {
+      "capture_file": "dumpsys-2be02e41-retry.txt",
+      "last_disconnect_device": "08:54:41.405",
+      "gap_vs_host_exit_ms": 2304.0,
+      "bound_epoch_anchor_ms": 1793152478365,
+      "within_bound": true,
+      "burst_own_run_found": true,
+      "rows_in_history": 16
+    },
+    "10Pro": {
+      "capture_file": "dumpsys-864a3db0-retry.txt",
+      "last_disconnect_device": "08:54:41.087",
+      "gap_vs_host_exit_ms": 2310.0,
+      "bound_epoch_anchor_ms": 1793152478365,
+      "within_bound": true,
+      "burst_own_run_found": true,
+      "rows_in_history": 16
+    }
+  },
+  "gap_uncertainty_intervals_ms": {
+    "6T": {
+      "gap_lower_ms": 819.0,
+      "gap_upper_ms": 3789.0,
+      "wholly_after_own_exit": true,
+      "upper_below_bound": true
+    },
+    "10Pro": {
+      "gap_lower_ms": 1388.0,
+      "gap_upper_ms": 3232.0,
+      "wholly_after_own_exit": true,
+      "upper_below_bound": true
+    }
+  },
+  "conservative_check": {
+    "rule": "the whole gap uncertainty interval must lie after the host's own exit (lower > 0) and below the pre-declared 30 s bound",
+    "phones": {
+      "6T": {
+        "gap_lower_ms": 819.0,
+        "gap_upper_ms": 3789.0,
+        "wholly_after_own_exit": true,
+        "upper_below_bound": true
+      },
+      "10Pro": {
+        "gap_lower_ms": 1388.0,
+        "gap_upper_ms": 3232.0,
+        "wholly_after_own_exit": true,
+        "upper_below_bound": true
+      }
+    }
+  },
+  "retained_unusable": {
+    "path": "native-bridge/feasibility/evidence/package1-connected-2026-10-28/phone-link-release-bound.json",
+    "sha256": "147a52604c473a30abd25ff8d976ba4a78bf8c4634962f2c0a9cc87c76837906",
+    "note": "historical analyzer output with the + sign; its run-port-disconnect-2 6T entry already records the rotated-away burst as a PROBLEM (no own-run pair) — that standalone DIS row was never a bound proof. Superseded for W-07/W-08 timing by phone-burst-association-v2 on the P2 transport telemetry."
+  },
+  "supersedes": {
+    "note": "applies the corrected subtraction to the OLD batch analyzer; the old phone-link-release-bound.json is retained immutable (6T +3756, 10Pro +3114 over-estimates). Old derived artifacts stay history."
+  },
+  "provenance": {
+    "pinned_at": "2026-10-28T09:16:57Z",
+    "code": [
+      {
+        "path": "native-bridge/feasibility/scripts/scenario_matrix_core.py",
+        "sha256": "d67ccd43c7f1955448ef983d61ace9fa93cc682df50515afca6b07b1106f1662",
+        "role": "core helper: phone-to-PC conversion (_telemetry_bursts subtracts offset_phone_minus_pc_ms_median), phone_burst_association guards, trace_origin_calibration, parse_trace"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/package1_phone_burst_telemetry.py",
+        "sha256": "c6fcfd6eab1e90e9861232fa6d06ef2d8166e39b2b613e7e37fd77e12296663d",
+        "role": "analyzer: trace exit/anchor derivation + document assembly (phone-burst-association-v2)"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/package1_phone_bound.py",
+        "sha256": "40d8f8242385671eb3122c812cffc4ad33d135b001ca7b0a5adfd4b1c3ecf48f",
+        "role": "analyzer: old dumpsys-history bound (row_epoch_ms subtracts the phone-minus-PC offset) for tab-close-phone-bound-v2"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/scenario_matrix.py",
+        "sha256": "f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1",
+        "role": "driver: connected-phase sample recording (wall_ms) for connected-sample-brackets-v2"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/pc_phone_clock_probe.py",
+        "sha256": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+        "role": "clock producer: measures and defines offset_phone_minus_pc_ms_median = phone_epoch - pc_epoch"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/chrome_validate.py",
+        "sha256": "78d53ca98c839e78bccf404beab5fb978f421f485f7945e5578d09a8b71a62f6",
+        "role": "Windows platform observer used by the sampled census (windows/endpoints)"
+      }
+    ],
+    "clock_producer_contract": {
+      "producer": "native-bridge/feasibility/scripts/pc_phone_clock_probe.py",
+      "producer_sha256": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+      "field": "offset_phone_minus_pc_ms_median",
+      "semantics": "phone_epoch - pc_epoch (measured at the adb roundtrip midpoint); the converter derives pc_epoch = phone_epoch - offset — never +",
+      "uncertainty": "uncertainty_ms = spread/2 + max latency/2 + phone resolution/2"
+    },
+    "inputs": [
+      {
+        "path": "native-bridge/feasibility/evidence/package1-connected-2026-10-28/run-tab-close-2/tab-close.host-trace.log",
+        "sha256": "53ec2e4746399e91d99a1c6cbb5fbcd87e40d7ab7250064789595422c3fc561e",
+        "verified": "SHA256SUMS"
+      },
+      {
+        "path": "native-bridge/feasibility/evidence/package1-connected-2026-10-28/run-tab-close-2/dumpsys-2be02e41-retry.txt",
+        "sha256": "5b81ce49de95a06cb0fa0b00aed502a1b8843fa240b14d6c70b02d9cd634f869",
+        "verified": "SHA256SUMS"
+      },
+      {
+        "path": "native-bridge/feasibility/evidence/package1-connected-2026-10-28/run-tab-close-2/dumpsys-864a3db0-retry.txt",
+        "sha256": "d596ddf3123f4d557f9b7620866d90ccd92c56292580715a7059acad2a33604f",
+        "verified": "SHA256SUMS"
+      },
+      {
+        "path": "native-bridge/feasibility/evidence/package1-connected-2026-10-28/clock-offset.json",
+        "sha256": "75ffac51d045ca3fc71c1ee448f8e09fce47810c46e35ce4181606df602a0d1e",
+        "verified": "SHA256SUMS"
+      },
+      {
+        "path": "native-bridge/feasibility/evidence/package1-connected-2026-10-28/phone-link-release-bound.json",
+        "sha256": "147a52604c473a30abd25ff8d976ba4a78bf8c4634962f2c0a9cc87c76837906",
+        "verified": "SHA256SUMS"
+      },
+      {
+        "path": "native-bridge/feasibility/evidence/package1-connected-2026-10-28/run-tab-close-2/tab-close.json",
+        "sha256": "ac8a2bad9b74150da644aeaf6d0d292810582f1f236bb4bf60fde573988038c5",
+        "verified": "SHA256SUMS"
+      }
+    ],
+    "git_head": {
+      "commit": "8f365fce0d31f975610c235085a95b9136ac25e2",
+      "worktree_uncommitted_changes": true,
+      "note": "the per-file sha256 list under `code` pins the ACTUAL analyzer/helper/clock bytes used by this derivation; the p2-stage-manifest.txt of the run pins older staged bytes (scenario_matrix_core.py=b33b015b…, test_scenario_matrix.py=2183b847…) and does not list package1_phone_burst_telemetry.py, so that manifest is retained as HISTORICAL evidence only. The authority for what the run actually executed is the run's own self-recorded source_sha256 in p2-pd1/lifecycle.json (scenario_matrix.py=f8284c98…, scenario_matrix_core.py=527de610…, chrome_validate.py=78d53ca9…), which match these reviewed files."
+    },
+    "stage_manifest_status": {
+      "authority": "runtime self-pins (p2-pd1/lifecycle.json meta.source_sha256) + the code entries above are the actual bytes of this derivation",
+      "historical_manifest": {
+        "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-stage-manifest.txt",
+        "sha256": "fca6faac598e970b8beb86e1d106722e55d0bb31e315d0d737f17309cdcf763c",
+        "status": "retained immutable as history; NOT the authority for v2 provenance"
+      }
+    }
+  }
+}

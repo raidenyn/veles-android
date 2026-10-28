@@ -1,0 +1,4 @@
+[       0ms pid=7644] start pid=7644
+[       0ms pid=7644] in  framing violation: TruncatedHeader { got: 2 }
+[       0ms pid=7644] shutdown joined 0/0 within 0ms
+[       0ms pid=7644] exit code=2 stdout_drained=true

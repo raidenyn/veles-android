@@ -1,0 +1,120 @@
+{
+  "started_utc": "2026-10-28T06:52:07+00:00",
+  "probes": [
+    {
+      "serial": "2be02e41",
+      "available": true,
+      "samples": 9,
+      "offset_phone_minus_pc_ms_median": 721,
+      "offset_min_ms": 714,
+      "offset_max_ms": 1220,
+      "uncertainty_ms": 1693,
+      "method": "phone stamp at adb roundtrip midpoint; uncertainty = spread/2 + max latency/2 + phone resolution/2",
+      "raw": [
+        {
+          "pc_mid_ms": 1793170328364,
+          "latency_ms": 1774,
+          "phone_ms": 1793170329082
+        },
+        {
+          "pc_mid_ms": 1793170330343,
+          "latency_ms": 1783,
+          "phone_ms": 1793170331065
+        },
+        {
+          "pc_mid_ms": 1793170332323,
+          "latency_ms": 1776,
+          "phone_ms": 1793170333042
+        },
+        {
+          "pc_mid_ms": 1793170334297,
+          "latency_ms": 1771,
+          "phone_ms": 1793170335012
+        },
+        {
+          "pc_mid_ms": 1793170336276,
+          "latency_ms": 1787,
+          "phone_ms": 1793170337002
+        },
+        {
+          "pc_mid_ms": 1793170338252,
+          "latency_ms": 1765,
+          "phone_ms": 1793170338966
+        },
+        {
+          "pc_mid_ms": 1793170340223,
+          "latency_ms": 1777,
+          "phone_ms": 1793170340944
+        },
+        {
+          "pc_mid_ms": 1793170342702,
+          "latency_ms": 2780,
+          "phone_ms": 1793170343922
+        },
+        {
+          "pc_mid_ms": 1793170345183,
+          "latency_ms": 1781,
+          "phone_ms": 1793170345905
+        }
+      ]
+    },
+    {
+      "serial": "864a3db0",
+      "available": true,
+      "samples": 9,
+      "offset_phone_minus_pc_ms_median": 192,
+      "offset_min_ms": 191,
+      "offset_max_ms": 195,
+      "uncertainty_ms": 924,
+      "method": "phone stamp at adb roundtrip midpoint; uncertainty = spread/2 + max latency/2 + phone resolution/2",
+      "raw": [
+        {
+          "pc_mid_ms": 1793170347145,
+          "latency_ms": 1742,
+          "phone_ms": 1793170347339
+        },
+        {
+          "pc_mid_ms": 1793170349084,
+          "latency_ms": 1735,
+          "phone_ms": 1793170349275
+        },
+        {
+          "pc_mid_ms": 1793170351020,
+          "latency_ms": 1736,
+          "phone_ms": 1793170351212
+        },
+        {
+          "pc_mid_ms": 1793170352957,
+          "latency_ms": 1738,
+          "phone_ms": 1793170353150
+        },
+        {
+          "pc_mid_ms": 1793170354899,
+          "latency_ms": 1744,
+          "phone_ms": 1793170355094
+        },
+        {
+          "pc_mid_ms": 1793170356842,
+          "latency_ms": 1741,
+          "phone_ms": 1793170357036
+        },
+        {
+          "pc_mid_ms": 1793170358780,
+          "latency_ms": 1735,
+          "phone_ms": 1793170358971
+        },
+        {
+          "pc_mid_ms": 1793170360716,
+          "latency_ms": 1736,
+          "phone_ms": 1793170360907
+        },
+        {
+          "pc_mid_ms": 1793170362654,
+          "latency_ms": 1739,
+          "phone_ms": 1793170362846
+        }
+      ]
+    }
+  ],
+  "finished_utc": "2026-10-28T06:52:43+00:00"
+}

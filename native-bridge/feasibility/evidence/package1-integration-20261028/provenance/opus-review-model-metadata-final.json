@@ -1,0 +1,28 @@
+{
+  "what": "CURRENT focused v4 review — FINAL model-metadata snapshot (session COMPLETED; appended as a NEW file, the running-session partial capture is preserved untouched)",
+  "review_route": "user-authorized (owner-records/opus-reviewer-approval-2026-10-28.json, sha256 9211bbf87a4d114279b547bb99bc89c5e24884cc15a6e22df6001ddb943a6313): Claude Code with claude-opus-5-5, high",
+  "partial_capture_superseded": "provenance/opus-review-model-metadata-partial.json stays unchanged on disk; the counts differ between snapshots purely because of capture MOMENTS while the session was live (the report's own safe-metadata line captured 62 real-model entries at 2026-10-28T13:55:01Z)",
+  "source": "local Claude Code transcript /home/dev/.claude/projects/-home-dev-repos-veles-android/1b447229-ceaa-4cee-a5be-2181dfdd8838.jsonl",
+  "extraction": "ONLY assistant-envelope fields: message.model, sessionId, role, timestamp. NOT read or recorded: message content, tool results, system headers, API errors, any transcript text.",
+  "captured_at_utc": "2026-10-28 (after session end)",
+  "session_id": "1b447229-ceaa-4cee-a5be-2181dfdd8838",
+  "assistant_entries_final": 69,
+  "by_model_final": {
+    "claude-opus-5-5": 68,
+    "<synthetic>": 1
+  },
+  "synthetic_note": "the single <synthetic> entry is a harness-generated operational record, NOT model output; the report title and the review role are claude-opus-5-5",
+  "first_assistant_ts": "2026-10-28T13:49:33.902Z",
+  "last_assistant_ts": "2026-10-28T13:55:58.064Z",
+  "delivered_report": {
+    "tmp_capture_path": "/tmp/opencode/otp23-package1-p2-opus-v4-final.md",
+    "published_byte_identical_counterpart": "reports/otp23-p2-opus-v4-final.md",
+    "sha256": "d85d4f5784ccda95a3ce85ed1430abee34519f54aa893c81cb3656b5dbe4ff1e",
+    "verdict_summary": "sole remaining v3 defect (exact-branch predicate) CLOSED at 1001-digit int scale; validator overflow boundary behaves as specified (controlled numeric_range FAIL); v4 values reproduced (2322/2406 ms, 2304/2310 ms, positions 9371..9951 ms, origin 1793170753120); all 7 code pins + all input/output pins and the 8-entry supersedes chain verified; recommends W-02/W-07/W-08 PASS through separate adjudication and the normal integration step; M-08 stays owner-deferred; NO-GO; OTP-24 unauthorized"
+  },
+  "role_label_rules": {
+    "final_review": "OPUS (claude-opus-5-5) — user-authorized; NOT retroactive authorship of the earlier GPT reports",
+    "earlier_reviews": "actually GPT (openai/gpt-5.6-sol): windows-strict 520c2edd…, P2/B5 15a28c80…, fix verification ee342efa…, v3-final 217e6f2f…",
+    "implementation": "ollama-cloud/glm-5.3-flash (0 subagents, all phases); no Kimi or other model in any role"
+  }
+}

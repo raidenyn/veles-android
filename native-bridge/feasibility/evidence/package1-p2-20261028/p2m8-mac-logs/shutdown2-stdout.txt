@@ -1,0 +1,32 @@
+[41926:9734934:1028/140451.821326:ERROR:components/os_crypt/common/keychain_password_mac.mm:112] Keychain lookup failed: Error Domain=NSOSStatusErrorDomain Code=-25308 "errKCInteractionNotAllowed / errSecInteractionNotAllowed: / Interaction is not allowed with the Security Server." (-25308)
+2026-10-28 14:04:51.826 Google Chrome[41926:9734890] NSNotificationCenter connection invalid
+2026-10-28 14:04:51.829 Google Chrome[41926:9734890] Connection to notification center invalid. ServerConnectionFailure: 1 invalidated: 0
+
+DevTools listening on ws://127.0.0.1:61134/devtools/browser/a78331c9-8932-4326-94ed-291e59c38de7
+Trying to load the allocator multiple times. This is *not* supported.
+2026-10-28 14:04:52.044 Google Chrome Helper (Alerts)[41935:9735028] NSNotificationCenter connection invalid
+2026-10-28 14:04:52.044 Google Chrome Helper (Alerts)[41935:9735028] Connection to notification center invalid. ServerConnectionFailure: 1 invalidated: 0
+2026-10-28 14:04:52.115 Google Chrome[41926:9734889] +[NSXPCSharedListener endpointForReply:withListenerName:replyErrorCode:]: an error occurred while attempting to obtain endpoint for listener 'ClientCallsAuxiliary': Connection interrupted
+[41926:9734934:1028/140452.132720:ERROR:components/password_manager/core/browser/password_store/login_database_async_helper.cc:100] Encryption is not available.
+[41926:9734932:1028/140452.134601:ERROR:components/password_manager/core/browser/password_store/login_database_async_helper.cc:100] Encryption is not available.
+[41932:9734952:1028/140452.136598:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9735024:1028/140452.137226:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9734952:1028/140452.137989:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9735024:1028/140452.143763:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9734952:1028/140452.144718:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+2026-10-28 14:04:52.150 Google Chrome Helper (Alerts)[41935:9735028] Connection to notification center invalid. ServerConnectionFailure: 1 invalidated: 0
+2026-10-28 14:04:52.150 Google Chrome[41926:9734906] Connection to notification center invalid. ServerConnectionFailure: 1 invalidated: 0
+[41932:9735024:1028/140452.152479:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9734952:1028/140452.157987:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9735024:1028/140452.158043:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9734952:1028/140452.158186:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9735024:1028/140452.158265:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9734952:1028/140452.158449:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[41932:9735024:1028/140452.158697:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[1028/140452.161025:WARNING:third_party/crashpad/crashpad/util/process/process_memory_mac.cc:94] mach_vm_read(0x16afac000, 0x8000): (os/kern) invalid address (1)
+[41933:9734993:1028/140452.454122:ERROR:net/socket/ssl_client_socket_impl.cc:949] handshake failed; returned -1, SSL error code 1, net_error -3
+[41941:9735094:1028/140452.454143:ERROR:base/memory/shared_memory_switch.cc:268] Mach rendezvous failed, terminating process (parent died?)
+[41933:9734993:1028/140452.457215:ERROR:net/socket/ssl_client_socket_impl.cc:949] handshake failed; returned -1, SSL error code 1, net_error -3
+[41940:9735092:1028/140452.453989:ERROR:base/memory/shared_memory_switch.cc:268] Mach rendezvous failed, terminating process (parent died?)
+[FAIL   ] LC-shutdown environment
+lifecycle: NOT PASS (1 scenario(s)) -> /Users/raiden/homepc/work/otp23-p2/evidence/p2m8/shutdown-2

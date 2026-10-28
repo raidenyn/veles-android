@@ -1,0 +1,11 @@
+{
+  "id": "LC-shutdown",
+  "title": "Shutdown with an active scan and two active links",
+  "expected": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, host exits by its own trace line (code 0, never killed by Chrome's lingering-host kill), host gone, zero host windows/endpoints (wrapper chrome-created console recorded for the owner)",
+  "actual": "Traceback (most recent call last):\n  File \"%HOME%/homepc/work/otp23-p2/scripts/scenario_matrix.py\", line 549, in scenario_chrome\n    detail[\"ready\"] = session.start()\n  File \"%HOME%/homepc/work/otp23-p2/scripts/scenario_matrix.py\", line 287, in start\n    ext = self.chrome.load_extension()[\"id\"]\n  File \"%HOME%/homepc/work/otp23-p2/scripts/macos_background_support.py\", line 63, in load_extension\n    return self.cdp.call(\"Extensions.loadUnpacked\", {\"path\": str(mp.EXT_DIR)})\nConnectionError: websocket closed\n",
+  "status": "FAIL",
+  "error_class": "environment",
+  "detail": {
+    "cleanup_problems": []
+  }
+}

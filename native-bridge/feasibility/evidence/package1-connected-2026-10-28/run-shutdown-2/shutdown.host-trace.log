@@ -1,0 +1,83 @@
+[       0ms pid=98396] start pid=98396
+[       0ms pid=98396] in  len=81 type=hello request_id=r1-d0ojkp
+[       0ms pid=98396] out len=183 type=ready request_id=r1-d0ojkp api_version=1
+[    4732ms pid=98396] in  len=137 type=start_scan request_id=r2-jbmveq api_version=1
+[    4784ms pid=98396] out len=135 type=scan_state request_id=r2-jbmveq api_version=1 status=started scan_handle=e95d0c59e5bcd1f6
+[    4860ms pid=98396] out len=195 type=device_found api_version=1 scan_handle=e95d0c59e5bcd1f6 device_handle=ae52d324a18e7cb3 label.len=17 platform_hint.len=20
+[    4864ms pid=98396] out len=195 type=device_found api_version=1 scan_handle=e95d0c59e5bcd1f6 device_handle=c4a7f8cb871dd4a5 label.len=17 platform_hint.len=20
+[    5287ms pid=98396] in  len=115 type=connect request_id=r3-mhgzvo api_version=1 device_handle=ae52d324a18e7cb3
+[    5287ms pid=98396] in  len=115 type=connect request_id=r4-xui8a4 api_version=1 device_handle=c4a7f8cb871dd4a5
+[    5287ms pid=98396] conn 2 connect worker started epoch_ms=1793152646056 hint=winrt:..3264:1
+[    5287ms pid=98396] conn 3 connect worker started epoch_ms=1793152646056 hint=winrt:..1e41:1
+[    5329ms pid=98396] conn 2 device at 41ms
+[    5329ms pid=98396] conn 3 device at 41ms
+[    5350ms pid=98396] conn 3 session at 62ms
+[    5350ms pid=98396] conn 2 session at 63ms
+[    6519ms pid=98396] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6520ms pid=98396] conn 3 service at 1232ms
+[    6520ms pid=98396] conn 3 mtu=517 at 1232ms
+[    6679ms pid=98396] conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6679ms pid=98396] conn 3 write properties=0x4
+[    6732ms pid=98396] conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6732ms pid=98396] conn 3 notify properties=0x10
+[    6732ms pid=98396] conn 3 characteristics at 1444ms
+[    6763ms pid=98396] conn 3 subscribed at 1476ms
+[    6763ms pid=98396] out len=160 type=connected request_id=r4-xui8a4 api_version=1 connection_handle=5e27d3c1609d026c platform_hint.len=20
+[    8532ms pid=98396] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    8532ms pid=98396] conn 2 service at 3245ms
+[    8532ms pid=98396] conn 2 mtu=517 at 3245ms
+[    8731ms pid=98396] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    8731ms pid=98396] conn 2 write properties=0x4
+[    8793ms pid=98396] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    8793ms pid=98396] conn 2 notify properties=0x10
+[    8793ms pid=98396] conn 2 characteristics at 3506ms
+[    8813ms pid=98396] conn 2 subscribed at 3526ms
+[    8813ms pid=98396] out len=160 type=connected request_id=r3-mhgzvo api_version=1 connection_handle=bb651c839807de07 platform_hint.len=20
+[    8814ms pid=98396] in  len=115 type=stop_scan request_id=r5-1mpnct api_version=1 scan_handle=e95d0c59e5bcd1f6
+[    8814ms pid=98396] out len=135 type=scan_state request_id=r5-1mpnct api_version=1 status=stopped scan_handle=e95d0c59e5bcd1f6
+[    8815ms pid=98396] in  len=159 type=send request_id=r6-y3bowm api_version=1 connection_handle=bb651c839807de07 record_base64.len=24
+[    8825ms pid=98396] out len=116 type=sent request_id=r6-y3bowm api_version=1 connection_handle=bb651c839807de07
+[    8843ms pid=98396] out len=137 type=message api_version=1 connection_handle=bb651c839807de07 record_base64.len=24
+[    8847ms pid=98396] in  len=159 type=send request_id=r7-2mjq5j api_version=1 connection_handle=5e27d3c1609d026c record_base64.len=24
+[    8857ms pid=98396] out len=116 type=sent request_id=r7-2mjq5j api_version=1 connection_handle=5e27d3c1609d026c
+[    8910ms pid=98396] out len=137 type=message api_version=1 connection_handle=5e27d3c1609d026c record_base64.len=24
+[    8919ms pid=98396] in  len=137 type=start_scan request_id=r8-kuvszx api_version=1
+[    8965ms pid=98396] out len=135 type=scan_state request_id=r8-kuvszx api_version=1 status=started scan_handle=abec4bca15d1a263
+[    8977ms pid=98396] in  len=5599 type=send request_id=r9-r0ui1o api_version=1 connection_handle=bb651c839807de07 record_base64.len=5464
+[    9070ms pid=98396] out len=116 type=sent request_id=r9-r0ui1o api_version=1 connection_handle=bb651c839807de07
+[    9234ms pid=98396] out len=5577 type=message api_version=1 connection_handle=bb651c839807de07 record_base64.len=5464
+[    9258ms pid=98396] in  len=5599 type=send request_id=ra-4bhcph api_version=1 connection_handle=5e27d3c1609d026c record_base64.len=5464
+[    9350ms pid=98396] out len=116 type=sent request_id=ra-4bhcph api_version=1 connection_handle=5e27d3c1609d026c
+[    9468ms pid=98396] out len=195 type=device_found api_version=1 scan_handle=abec4bca15d1a263 device_handle=8577a1bc96302374 label.len=17 platform_hint.len=20
+[    9756ms pid=98396] out len=5577 type=message api_version=1 connection_handle=5e27d3c1609d026c record_base64.len=5464
+[    9796ms pid=98396] in  len=119 type=connect request_id=rb-bz8vm7 api_version=1 platform_hint.len=20
+[    9796ms pid=98396] conn 9 connect worker started epoch_ms=1793152650565 hint=winrt:..0001:1
+[    9796ms pid=98396] in  len=81 type=shutdown request_id=rc-xb3lpp api_version=1
+[    9796ms pid=98396] out len=140 type=error request_id=rb-bz8vm7 api_version=1 code=internal recoverability=fatal stage=shutdown
+[    9796ms pid=98396] out len=110 type=scan_state api_version=1 status=stopped scan_handle=abec4bca15d1a263
+[    9796ms pid=98396] out len=99 type=disconnected api_version=1 connection_handle=bb651c839807de07
+[    9796ms pid=98396] out len=99 type=disconnected api_version=1 connection_handle=5e27d3c1609d026c
+[    9797ms pid=98396] conn 9 disconnect requested epoch_ms=1793152650566
+[    9797ms pid=98396] conn 3 disconnect requested epoch_ms=1793152650566
+[    9797ms pid=98396] conn 2 disconnect requested epoch_ms=1793152650566
+[    9797ms pid=98396] conn 3 close begin
+[    9797ms pid=98396] conn 2 close begin
+[    9797ms pid=98396] conn 3 close step remove_value_changed at 0ms ok
+[    9797ms pid=98396] conn 2 close step remove_value_changed at 0ms ok
+[    9797ms pid=98396] conn 3 close step remove_status_changed at 0ms ok
+[    9797ms pid=98396] conn 2 close step remove_status_changed at 0ms ok
+[    9798ms pid=98396] conn 2 close step service_close at 0ms ok
+[    9798ms pid=98396] conn 3 close step service_close at 0ms ok
+[    9798ms pid=98396] conn 2 close step maintain_false at 0ms ok
+[    9798ms pid=98396] conn 3 close step maintain_false at 1ms ok
+[    9799ms pid=98396] conn 2 close step session_close at 1ms ok
+[    9799ms pid=98396] conn 3 close step session_close at 1ms ok
+[    9799ms pid=98396] conn 3 close step device_close at 1ms ok
+[    9799ms pid=98396] conn 2 close step device_close at 1ms ok
+[    9799ms pid=98396] conn 3 released (objects closed; link-down unconfirmed)
+[    9800ms pid=98396] conn 2 released (objects closed; link-down unconfirmed)
+[    9806ms pid=98396] os error at device_lookup: 0x00000000
+[    9806ms pid=98396] conn 9 setup failed: stage=device_lookup retryable=true
+[    9808ms pid=98396] shutdown joined 3/3 within 10ms
+[    9808ms pid=98396] out len=90 type=shutdown_complete request_id=rc-xb3lpp api_version=1
+[    9808ms pid=98396] exit code=0 stdout_drained=true

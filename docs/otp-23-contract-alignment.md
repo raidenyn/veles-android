@@ -667,3 +667,99 @@ pre-append README bytes), `SHA256SUMS-v2` (`66ba8956…`, 34/34) stays as the re
 active manifest covering every current file (`SHA256SUMS-NOTES.md`). `windows-cleanup-2026-10-27/`: `SHA256SUMS` refreshed after the I-A/I-B edits and
 the derived artifact; all raws byte-unchanged. All raw evidence keeps its `.gitattributes` (`* -text -whitespace`) byte preservation, and the 196-row
 post-grant baseline manifest still verifies unchanged.
+
+## 18. W-02 window-wording amendment and Mac M-08 deferral (2026-10-28, operator-captured)
+
+**W-02 clarification (operator-captured owner approval, NOT a GitHub approval).** The connected-phase
+Windows measurement (Chrome's default launch creates a `cmd.exe` wrapper whose single console window is
+never visible; the plain host owns zero windows and zero endpoints in every sample) produced a raw
+`BLOCKED criterion_conflict` against the literal earlier wording. The owner was asked the exact
+captured question and answered **"Approve narrow clarification"** with this approved text, recorded
+verbatim (owner record `/tmp/opencode/otp23-package1-owner-approval.json`, SHA-256
+`89d255383b21272590f7c3b3cc3370e7b8f1e688b2445a65dba022d529f23fd4`, recorded 2026-10-28T04:16:36Z,
+operator-captured in the coordinating conversation, not a GitHub approval):
+
+> The plain host owns no top-level window, visible or hidden, and no network endpoint. Chrome’s default
+> Windows launcher may own one never-visible console window; any visible window or network endpoint
+> owned by the host or its wrapper fails.
+
+Scope is **W-02 only**: no other row is granted, waived or re-scoped, no OTP-24 authorisation is
+implied, all observed window types/endpoints and source/evidence provenance are retained, and
+independent verification is still required. The matrix amendment changes ONLY the W-02 `expected`
+(appending this approved wording with its provenance) and `source` (citing this record); the W-02
+status stays **BLOCKED** in this phase — the raw `BLOCKED criterion_conflict` scenario record stays
+byte-identical, and a separate adjudication
+(`native-bridge/feasibility/evidence/package1-b5-v2-20261028/w02-adjudication.json`) applies the exact
+owner text to the sampled census. Promoting W-02 (or any row) happens only after the parent's fix
+verification and explicit integration instruction, not in this amendment. Keep the Native Messaging
+clarification and signing minimum unchanged; no new protocol, runtime, Rust or Android change is made
+by this amendment.
+
+**Mac M-08 deferral (owner decision, NOT an approval).** The owner was asked whether Chrome on the Mac
+may be updated to current stable and relaunched (request nonce `CHROMEUPD-20261028-a41c8f2e`,
+answer **"Cannot restart Chrome now"**, owner record
+`/tmp/opencode/otp23-package1-mac-deferred.json`, SHA-256
+`ace5e31e99c25ee21b4d634208ef006af02624121624952e0c40238505086e99` — recorded 2026-10-28T08:48:33Z,
+captured verbatim in the coordinating conversation). The decision defers Mac M-08: no update/restart
+of personal Chrome, no switch to old Chrome versions (the observed attempts used `.49`;
+`.73` is the Windows-run latest), no alternate extension loader without a new owner decision, the
+approved signed fixture `e7c716c5…eb91c` and its Bluetooth grant remain untouched. M-08 is therefore
+**blocked externally, not measured to PASS**: the retained attempts and diagnostics
+(`evidence/package1-p2-20261028/p2m8-mac-logs/`) establish an extension-loading/browser-process failure
+(`Extensions.loadUnpacked` closed the tested Chrome sessions) BEFORE any BLE work with zero peers —
+they do not prove a universal unpacked-extension defect, do not prove that `.49` caused a regression,
+and do not prove that an update will fix it (a minimal invalid-manifest reproduction is invalid input;
+the valid real driver flow failed with the cause unproven). One preservation gap is recorded
+transparently: the first standalone Mac SETUP record was lost to a `--overwrite` capture; only its
+surviving stdout details remain, so the setup phase stays **unmeasured, no BLE** — the lost bytes are
+never recreated or claimed as preserved, and no further `--overwrite` use is allowed (new attempts get
+unique output dirs).
+
+**Package-1 finish status (this phase; not a GO).** The five Windows candidate rows (W-02, W-07, W-08,
+W-11, W-12) have reviewed evidence; M-08 is owner-deferred; W-10, A-01, M-03/M-04/M-11 remain open.
+The corrected B5 v2 derivations (phone-minus-PC subtraction, fail-closed completeness guards, absolute
+trace-origin brackets, v2 provenance) live in
+`native-bridge/feasibility/evidence/package1-b5-v2-20261028/` and are **not canonical until the
+parent's independent fix verification and explicit integration instruction**. The overall decision
+stays NO-GO and OTP-24 stays unauthorised. One checksum repair followed the section-17 precedent: the
+B5 correction appended a narrative section to the connected evidence `FINDING.md`, which its manifest
+lists — the original manifest stays byte-exact as
+`SHA256SUMS-before-b5-supersede.original` (`a896446a…`), the refreshed active `SHA256SUMS` differs in
+exactly that one line and re-verifies 181/181 (`SHA256SUMS-NOTES.md`); `package1-p2-20261028` needed
+no repair (34/34, folder untouched).
+
+## 19. FINAL record: package-1 Windows rows integrated (2026-10-28 evening) — 23 PASS / 6 BLOCKED / 3 waived
+
+Completes section 18 without changing anything there (both its owner decisions stand as captured). The
+focused v4 review route was resolved by a further operator-captured owner instruction (record
+`/tmp/opencode/otp23-package1-opus-reviewer-approval.json`, sha256 `9211bbf8…a6313`, preserved byte-identically
+in `native-bridge/feasibility/evidence/package1-integration-20261028/owner-records/`): **"Use Opus 5.5 via
+Claude Code"** — the current focused review is the user-authorized Opus 5.5 report
+(`/tmp/opencode/otp23-package1-p2-opus-v4-final.md`, sha256 `d85d4f57…`, published byte-identically as
+`…/package1-integration-20261028/reports/otp23-p2-opus-v4-final.md`, session `1b447229-ceaa-4cee-a5be-2181dfdd8838`
+with verified model metadata): the sole remaining v3 defect (exact-branch `_num` contract) is CLOSED —
+`_num(10**1000)` returns True without raising, floats alone require `math.isfinite`, and the validator's
+`numeric_range` boundary converts later arithmetic overflow into a controlled FAIL. The report re-derived the
+v4 values (2322/2406 ms with [629,4015]/[1482,3330]; 2304/2310 ms with [819,3789]/[1388,3232]; sample
+positions 9371…9951 ms; trace origin 1793170753120) and verified all 7 code pins, every input/output pin and
+the 8-entry supersedes chain, and recommends **W-02, W-07 and W-08 PASS** through separate adjudication and
+the normal integration step — which this section records as DONE.
+
+**Promoted rows (final, per the prepared candidate):** W-02 PASS by the separate W-02-only adjudication
+(`package1-b5-v4-20261028/w02-adjudication.json`, `c0d0b333…` — six clean samples, zero host windows of all
+four kinds, zero host endpoints in all four families, exactly one never-visible `ConsoleWindowClass`
+wrapper window, positive controls present, session equality computed; the row's expected wording matches the
+authoritative amendment in `docs/rfcs/2026-08-21-otp-external-devices.md`); W-07 PASS (Chrome port.disconnect
+with two byte-proven links on the adopted identity, own exit 0, stdin_closed, releases 2/3, join 2/2, process
+gone; corrected release bounds +2322/+2406 ms — whole intervals after own exit, below the 30 s bound);
+W-08 PASS (the same event's stdin-EOF semantics + the corrected tab-close recompute +2304/+2310 ms; the old
+6T standalone DIS row stays documented-not-proof). The raw `BLOCKED criterion_conflict` records stay
+byte-identical; all three rows carry `[account: admin]` (the existing administrator account) and cleared
+blockers with the full history preserved in their `actual` text. Earlier GPT reviews keep actual authorship
+(they are GPT, not Opus); the interim 20/9/3 state and the GPT quota block are history. **Final counts:
+23 PASS / 6 BLOCKED / 3 waived** — open rows exactly W-10, M-03, M-04, M-08 (owner-deferred), M-11, A-01.
+Still **NO-GO**; OTP-24 remains unauthorized; M-08 unmeasured. Gates re-run AFTER the last source/doc edit
+(forced `spotlessCheck --rerun-tasks` + full gradle chain + both ci.yml Log guards + the full portable
+harness + `matrix.py check` — all exit 0; see `package1-integration-20261028/gates/` for copies with exact
+sources). Nothing committed/pushed by these sessions; the parent performs the final integrated review and
+publication.

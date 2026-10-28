@@ -142,6 +142,9 @@ class WindowsAdapter(Adapter):
                 "top_level_windows": sum(len(v) for v in windows.values()),
                 "network_endpoints": sum(len(v) for v in network.values())}
 
+    def hygiene_probe(self, pids, chrome_pid, cdp_port):
+        return self.cv.hygiene_probe(pids, chrome_pid, cdp_port)
+
     def kill(self, pid):
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
 
@@ -154,6 +157,9 @@ class WindowsAdapter(Adapter):
 
 class MacAdapter(Adapter):
     platform, role = "mac", "mac"
+    # Required connected-phase host fields: any-layer census, TCP endpoints, live pid (window kind split
+    # beyond CGWindowList is structurally unavailable, so it is not demanded — never silently, see probe doc).
+    required_host_probe_fields = core.DEFAULT_MACOS_HOST_FIELDS
 
     def __init__(self):
         import macos_background_support as support
@@ -197,6 +203,47 @@ class MacAdapter(Adapter):
 
     def manifest_path(self):
         return str(self.support.registered_manifest())
+
+    def hygiene_probe(self, pids, chrome_pid, cdp_port):
+        """macOS connected-phase probe: CGWindowList census (ALL layers incl. off-screen) + lsof
+        endpoints + live-pid proof + the actual observation context + mandatory controls.
+
+        Fields that cannot be measured are recorded as "unavailable" — never as zero. The positive
+        controls are the same rule as Windows: the same CGWindowList sample must list the dedicated
+        Chrome pid's layer-0 windows, and the same lsof sample must find the Chrome CDP listener."""
+        chrome_windows = self.mp.census_windows(chrome_pid)
+        chrome_endpoints = self.mp.lsof_endpoints(chrome_pid)
+        per_pid = {}
+        for pid in pids:
+            windows = self.mp.census_windows(pid)
+            endpoints = self.mp.lsof_endpoints(pid)
+            per_pid[str(pid)] = {
+                "top_visible": len(windows.get("layer_zero", [])) if windows else "unavailable",
+                "all_layers": len(windows.get("all", [])) if windows else "unavailable",
+                "top_hidden": "unavailable", "message_only": "unavailable", "children": "unavailable",
+                "tcp4": endpoints if endpoints is not None else "unavailable",
+                "tcp6": "unavailable", "udp4": "unavailable", "udp6": "unavailable",
+                "pid_alive": self.mp.pid_alive(pid), "session": None}
+        listener_present = False
+        if chrome_endpoints:
+            listener_present = any(e["local_port"] == cdp_port for e in chrome_endpoints)  # CDP control
+        per_pid[str(chrome_pid)] = {
+            "top_visible": (len(chrome_windows.get("layer_zero", [])) if chrome_windows else "unavailable"),
+            "all_layers": (len(chrome_windows.get("all", [])) if chrome_windows else "unavailable"),
+            "top_hidden": "unavailable", "message_only": "unavailable", "children": "unavailable",
+            "tcp4": chrome_endpoints if chrome_endpoints is not None else "unavailable",
+            "tcp6": "unavailable", "udp4": "unavailable", "udp6": "unavailable",
+            "pid_alive": self.mp.pid_alive(chrome_pid), "session": None}
+        return {"mode": "sampled", "per_pid": per_pid,
+                "observer": {"pid": os.getpid(), "session": self.mp.context_probe()},
+                "active_console_session": "unavailable",
+                "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; "
+                                             "a window kind split beyond CGWindowList is structurally "
+                                             "unavailable (recorded, never zero)",
+                "controls": {"chrome_visible_top_level": (len(chrome_windows.get("layer_zero", []))
+                                                          if chrome_windows else "unavailable"),
+                             "chrome_cdp_listener_present": listener_present or None,
+                             "chrome_cdp_listener": None}}
 
     def tcc_note(self):
         return ("direct launch: Bluetooth TCC is attributed to the launching process (terminal/driver), "
@@ -244,6 +291,7 @@ class Session:
             if self.js("typeof window.otp23 === 'object'"):
                 break
             time.sleep(0.1)
+        self.host_launch_wall_ms = now_ms()  # wall time just before the host is spawned by the connector
         self.js(f"otp23.connect({json.dumps(self.adapter.host_name)}); 1")
         ready = self.js("otp23.hello()")
         if ready.get("type") != "ready":
@@ -388,10 +436,10 @@ def link_pair(session, args):
     return handles, [{k: p[k] for k in ("size", "request_sha256", "received_sha256", "status")} for p in proofs]
 
 
-def verify_gone(session, expected, args, extra=None):
+def verify_gone(session, expected, args, extra=None, min_released=None, require_join=False):
     gone = session.adapter.wait_gone(session.owned_pids(), 10.0)
     parsed = session.parsed_trace()
-    problems = core.check_teardown(parsed, expected)
+    problems = core.check_teardown(parsed, expected, min_released=min_released, require_join=require_join)
     if gone is None:
         problems.append("owned host or wrapper still alive 10 s after teardown")
     survivors = [p["ProcessId"] for p in session.adapter.owned_new_hosts(session.before, session.chrome.proc.pid)]
@@ -399,10 +447,81 @@ def verify_gone(session, expected, args, extra=None):
         problems.append(f"{len(survivors)} owned host(s) still listed")
     outs = [f"{s['type']}:{s['status']}" if s["status"] else s["type"] for s in parsed["steps"] if s["dir"] == "out"]
     detail = {"owned_gone_after_s": gone, "trace_mechanism": core.trace_mechanism(parsed), "trace_exit": parsed["exit"],
-              "host_output_order": outs[-8:], "problems": problems}
+              "host_output_order": outs[-8:],
+              "trace_released_count": len(parsed["released"]),
+              "trace_disconnect_requested_count": len(parsed["disconnect_requested"]),
+              "trace_join": parsed["joined"][-1] if parsed["joined"] else None,
+              "problems": problems}
     detail.update(extra or {})
     require(not problems, json.dumps(detail))
     return detail
+
+
+def probe_connected(session, handles):
+    """OTP-23 package1 (W-02 / M-08): window + endpoint samples DURING the connected phase while BOTH
+    links are byte-proven — not only at ready. Sampled (labelled, never claimed continuous), every sample
+    carries its own mandatory positive controls and its own summary; a sample without a control marks the
+    absence unverifiable instead of passing. Each sample's wall clock is converted into the host trace's
+    own ms timeline (offsets from the recorded host-launch wall time) so the evidence can be bracketed."""
+    adapter, role = session.adapter, session.adapter.role
+    probe_plan = core.plan_exchanges(role, 2, size=core.SIZE)
+    require(probe_plan[0]["request_sha256"] != probe_plan[1]["request_sha256"],
+            "probe records must differ per handle")
+    launch_wall = session.host_launch_wall_ms
+    required_fields = getattr(adapter, "required_host_probe_fields", None)
+    samples = []
+
+    def sample(label, exchange=None):
+        document = {"label": label, "wall_ms": now_ms(),
+                    "trace_offset_ms_estimate": now_ms() - launch_wall}
+        if exchange is not None:
+            document["exchange"] = exchange
+        document["probe"] = adapter.hygiene_probe([session.host_pid] + list(session.wrappers),
+                                                  session.chrome.proc.pid, session.chrome.port)
+        document["summary"] = core.summarise_probe(document["probe"], session.host_pid, session.wrappers,
+                                                   required_host_fields=required_fields)
+        per_pid = document["probe"].get("per_pid", {})
+        if role == "windows":
+            # B-3: the Windows integer console-equality gate applies ONLY to Windows — observer,
+            # Chrome, host AND every wrapper pid (I-4) must equal the active console session.
+            problems = core.session_identity_problem(
+                document["probe"].get("observer", {}).get("session"),
+                document["probe"].get("active_console_session"),
+                per_pid.get(str(session.chrome.proc.pid), {}).get("session"),
+                per_pid.get(str(session.host_pid), {}).get("session"),
+                tuple((w, per_pid.get(str(w), {}).get("session")) for w in session.wrappers))
+            document["summary"]["session_problems"] = problems
+        else:
+            # B-3: macOS runs the context audit (launchctl managername / uid / SSH marker), never the
+            # Windows integer-session comparator — a mac session of None is recorded data, not a problem.
+            audit = core.macos_context_audit(document["probe"].get("observer", {}).get("session"))
+            document["summary"]["context_audit"] = audit
+            problems = audit["problems"]
+        document["summary"]["problems"] = list(document["summary"]["problems"]) + problems
+        if problems:
+            document["summary"]["usable"] = False
+        samples.append(document)
+        return document
+
+    sample("linked-idle-active-scan")
+    for index, (handle, item) in enumerate(zip(handles, probe_plan)):
+        sent = session.js(f"otp23.request('send', {{connection_handle: {json.dumps(handle)}, "
+                          f"record_base64: {json.dumps(core.request_b64(item))}}})")
+        require(sent.get("type") == "sent", f"probe send {core.safe_reply(sent)}")
+        sample("send-in-flight", {"handle": core.short_handle(handle), "seed": item["seed"]})
+        got, deadline = None, time.monotonic() + 12.0
+        while got is None and time.monotonic() < deadline:
+            for message in session.pump():
+                if message.get("type") == "message":
+                    got = message
+            if got is None:
+                time.sleep(0.02)
+        require(got is not None, f"echo missing while probing the connected phase (handle {index})")
+        problem = core.verify_reply(item, handle, got)
+        require(problem is None, f"probe echo verify {problem}")
+        sample("echo-verified", {"handle": core.short_handle(handle), "seed": item["seed"]})
+    sample("after-probes-active-scan")
+    return samples
 
 
 # ---- chrome-driven lifecycle scenarios --------------------------------------------------------------
@@ -415,15 +534,26 @@ def scenario_chrome(adapter, name, args, identity, out_dir):
              "failure-isolation": "Disconnect one link; the survivor keeps exchanging; then clean shutdown"}[name]
     expected = {
         "shutdown": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, "
-                    "host and wrapper gone, zero windows/endpoints",
-        "port-disconnect": "owned host and wrapper gone with NO shutdown handshake (stdin EOF path), zero windows/endpoints",
-        "tab-close": "owned host and wrapper gone with NO shutdown handshake after the owning tab is destroyed",
+                    "host exits by its own trace line (code 0, never killed by Chrome's lingering-host kill), "
+                    "host gone, zero host windows/endpoints (wrapper chrome-created console recorded for the owner)",
+        "port-disconnect": "with two byte-proven links and an active scan, the host exits by its OWN trace line "
+                           "(code 0, stdin-EOF mechanism, NO shutdown handshake, never the ~2 s Chrome kill), "
+                           "host gone; wrapper chrome-created console window recorded for the owner",
+        "tab-close": "owning tab destroyed with two byte-proven links and an active scan: host exits by its OWN "
+                     "trace line (code 0, stdin-EOF mechanism, no shutdown handshake), host gone",
         "failure-isolation": "stale handle rejected (unknown_handle), survivor exchanges 4096 bytes exactly, "
-                             "shutdown then removes the host"}[name]
+                             "shutdown then removes the host by its own exit line"}[name]
     session = Session(adapter, out_dir / f"{name}.host-trace.log", identity)
     detail, status, error_class, actual = {}, "FAIL", "assertion", ""
     try:
         detail["ready"] = session.start()
+        detail["chrome_version_actual"] = (session.chrome.version or {}).get("product")
+        detail["trace_env_passed_to_chrome"] = {
+            k: session.chrome.env.get(k) for k in ("VELES_OTP23_TRACE", "VELES_OTP23_DETACHED_CLOSE")}
+        detail["detached_close_env_unset"] = \
+            detail["trace_env_passed_to_chrome"]["VELES_OTP23_DETACHED_CLOSE"] is None \
+            and os.environ.get("VELES_OTP23_DETACHED_CLOSE") is None
+        require(detail["detached_close_env_unset"], "VELES_OTP23_DETACHED_CLOSE must be unset for acceptance runs")
         detail["hygiene_before"] = adapter.hygiene([session.host_pid])
         if session.wrappers:  # Chrome's cmd.exe wrapper owns a hidden console window; reported apart from the host
             detail["wrapper_hygiene_before"] = adapter.hygiene(session.wrappers)
@@ -442,6 +572,13 @@ def scenario_chrome(adapter, name, args, identity, out_dir):
             if isinstance(hygiene["network_endpoints"], int):
                 require(hygiene["network_endpoints"] == 0, f"{label} owns network endpoints: {hygiene}")
         handles, detail["link_proof"] = link_pair(session, args)
+        detail["probe_during"] = probe_connected(session, handles)
+        detail["probe_labels"] = [s["label"] for s in detail["probe_during"]]
+        probe_problems = [p for s in detail["probe_during"] for p in s["summary"]["problems"]]
+        detail["probe_during_usable"] = [s["summary"]["usable"] for s in detail["probe_during"]]
+        require(not probe_problems, f"connected-phase probe problems: {probe_problems[:6]}")
+        wrapper_hidden_total = core.wrapper_hidden_conflict(detail["probe_during"])
+        detail["w02_wrapper_hidden_window_max"] = wrapper_hidden_total
         if name == "shutdown":
             session.js("window.__pending = null; otp23.connectDevice({platform_hint: "
                        + json.dumps(ABSENT_HINT[adapter.role]) + "}).then(r => { window.__pending = r; }); 1")
@@ -454,13 +591,16 @@ def scenario_chrome(adapter, name, args, identity, out_dir):
             require(not snapshot["pending"], "connector still has pending requests")
             detail["pending_request_result"] = core.safe_reply(pending)
             detail["port_state"] = snapshot["disconnect"] is not None
-            detail["teardown"] = verify_gone(session, "shutdown", args)
+            detail["teardown"] = verify_gone(session, "shutdown", args, min_released=2,
+                                             require_join=adapter.platform == "windows")
         elif name == "port-disconnect":
             session.js("otp23.closePort(); 1")
-            detail["teardown"] = verify_gone(session, "disconnect", args)
+            detail["teardown"] = verify_gone(session, "disconnect", args, min_released=2,
+                                             require_join=adapter.platform == "windows")
         elif name == "tab-close":
             session.chrome.cdp.call("Target.closeTarget", {"targetId": session.target})
-            detail["teardown"] = verify_gone(session, "disconnect", args)
+            detail["teardown"] = verify_gone(session, "disconnect", args, min_released=2,
+                                             require_join=adapter.platform == "windows")
         else:
             gone = session.js(f"otp23.disconnectDevice({json.dumps(handles[0])})")
             require(gone.get("type") == "disconnected", f"disconnect {core.safe_reply(gone)}")
@@ -473,9 +613,28 @@ def scenario_chrome(adapter, name, args, identity, out_dir):
             detail["survivor"] = {k: survivor[k] for k in ("size", "request_sha256", "received_sha256", "status")}
             done = session.js("otp23.shutdown()")
             require(done.get("type") == "shutdown_complete", f"shutdown {core.safe_reply(done)}")
-            detail["teardown"] = verify_gone(session, "shutdown", args)
+            detail["teardown"] = verify_gone(session, "shutdown", args, min_released=2,
+                                             require_join=adapter.platform == "windows")
+        if session.chrome is not None:
+            document = {"label": "after-teardown-host-exited", "wall_ms": now_ms(),
+                        "trace_offset_ms_estimate": now_ms() - session.host_launch_wall_ms}
+            document["probe"] = adapter.hygiene_probe([session.host_pid] + list(session.wrappers),
+                                                      session.chrome.proc.pid, session.chrome.port)
+            document["summary"] = core.summarise_probe(document["probe"], session.host_pid, session.wrappers,
+                                                       required_host_fields=core.DEFAULT_AFTER_HOST_FIELDS)
+            detail["probe_after"] = document
         require(not session.unexpected, f"unexpected disconnect events {session.unexpected}")
-        status, error_class, actual = "PASS", "none", "all checks held; see detail"
+        detail["probe_during"] = core.correlate_samples(detail["probe_during"], session.parsed_trace())
+        if wrapper_hidden_total > 0:
+            # The literal matrix criterion asks for zero windows "owned by the host AND its wrapper"; the
+            # Chrome-created never-visible wrapper console is a conflict that only the owner can resolve
+            # (proposed wording in evidence PLAN.md). Never a quiet PASS on W-02-style wording.
+            status, error_class = "BLOCKED", "criterion_conflict"
+            actual = (f"trace/teardown checks held, but the Chrome default-launch cmd.exe wrapper owns "
+                      f"{wrapper_hidden_total} never-visible console window(s) in the connected-phase samples; "
+                      f"W-02-style window wording is an owner decision (see evidence PLAN.md)")
+        else:
+            status, error_class, actual = "PASS", "none", "all checks held; see detail"
     except Blocked as blocked:
         status, error_class, actual = "BLOCKED", blocked.error_class, blocked.reason
     except AssertionError as failure:
@@ -638,12 +797,18 @@ def scenario_stdin(adapter, name, args, identity, out_dir, binary=None):
                 break
             time.sleep(0.1)
         problems = core.check_truncated_eof(parsed, code, host.eof_state) if truncated else \
-            core.check_teardown(parsed, "stdin_closed", require_drained=True) + \
+            core.check_teardown(parsed, "stdin_closed", require_drained=True, min_released=2,
+                                require_join=adapter.platform == "windows") + \
             ([] if code == 0 else [f"process exit code {code}"]) + \
             ([] if host.eof_state == "clean" else [f"stdout ended {host.eof_state}"])
         detail.update(exit_code=code, stdout_eof_state=host.eof_state, trace_exit=parsed["exit"],
                       trace_mechanism=core.trace_mechanism(parsed),
+                      trace_released=parsed["released"], trace_join=parsed["joined"][-1] if parsed["joined"] else None,
                       frames_after_close=sorted({f.get("type") for f in host.seen} - {None}), problems=problems)
+        detail["detached_close_env_unset"] = os.environ.get("VELES_OTP23_DETACHED_CLOSE") is None
+        detail["env_passed_to_host_veles_keys"] = {k: env.get(k) for k in ("VELES_OTP23_TRACE", "VELES_OTP23_DETACHED_CLOSE")} \
+            if isinstance(env, dict) else "unavailable"
+        require(detail["detached_close_env_unset"], "VELES_OTP23_DETACHED_CLOSE must be unset for acceptance runs")
         require(not problems, json.dumps(detail))
         status, error_class, actual = "PASS", "none", "all checks held; see detail"
     except Blocked as blocked:
@@ -668,10 +833,23 @@ def scenario_adapter_toggle():
 # ---- meta, lifecycle entry ----------------------------------------------------------------------------
 
 
+def require_observer_pinned(adapter, source_sha256):
+    """B-4 gate: an acceptance run may only measure when its metadata pins the platform observer/helper
+    hashes — the pinned map must carry EXACTLY every required `<module>.py` entry for the platform with
+    a valid 64-hex digest, and `observer_modules_missing` must be an empty list (the missing list alone
+    is never trusted: core.observer_pin_problems validates the map and the digests). Unpinned or
+    malformed provenance refuses the run before any measurement."""
+    problems = core.observer_pin_problems(getattr(adapter, "platform", None), source_sha256)
+    if problems:
+        raise SystemExit(f"refusing to measure: platform observer source not pinned (B-4): "
+                         + " | ".join(problems))
+
+
 def meta_for(adapter, identity):
     info = {"platform": adapter.platform, "python": sys.version.split()[0], "os": platform.platform(),
             "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "source_revision": core.source_revision(), "source_sha256": core.source_hashes(),
+            "source_revision": core.source_revision(),
+            "source_sha256": core.source_hashes(adapter.platform),
             "extension_id": identity["extension_id"], "foreground_only": True,
             "no_background_exemption_measured": True}
     try:
@@ -701,6 +879,7 @@ def run_lifecycle(args, adapter=None, identity=None):
     for name in names + ["lifecycle"]:
         guard_overwrite(out_dir / f"{name}.json", args)
     meta, results = meta_for(adapter, identity), []
+    require_observer_pinned(adapter, meta.get("source_sha256"))
     for name in names:
         if name == "adapter-toggle":
             result = scenario_adapter_toggle()
@@ -769,13 +948,15 @@ def run_m6(args, adapter=None, identity=None, session_factory=Session):
     stage_path = pathlib.Path(args.stage_file) if args.stage_file else out.with_suffix(".stage.json")
     guard_overwrite(out, args)
     plan = core.plan_exchanges(args.role, args.exchanges, args.seed_base)
+    run_meta = meta_for(adapter, identity)
+    require_observer_pinned(adapter, run_meta.get("source_sha256"))
     result = {"scenario": "m6-multi-central", "role": args.role, "pair_run_id": args.pair_run_id,
               "phone_label": args.phone_label, "isolation_action": args.isolation_action,
               "links_on_this_central": 0, "exchanges": [],
               "system_errors": [], "unexpected_disconnects": [], "status": "FAIL", "error_class": "assertion",
               "expected": f"one central, one explicitly selected phone, {args.exchanges} exact 4096-byte echoes after "
                           "the shared barrier; needs the peer central and m6-adjudicate",
-              "actual": "", "meta": meta_for(adapter, identity), "seeds": [p["seed"] for p in plan]}
+              "actual": "", "meta": run_meta, "seeds": [p["seed"] for p in plan]}
     session = session_factory(adapter, out.with_suffix(".host-trace.log"), identity)
     try:
         session.start()

@@ -1,0 +1,7 @@
+[FAIL   ] LC-shutdown environment
+[FAIL   ] LC-port-disconnect environment
+[FAIL   ] LC-tab-close environment
+[PASS   ] LC-stdin-eof none
+[PASS   ] LC-stdin-eof-truncated none
+[BLOCKED] LC-failure-isolation host_error
+lifecycle: NOT PASS (6 scenario(s)) -> C:\Users\yuriy\otp23-probe\package1-p1\evidence\package1-connected-2026-10-28\lifecycle2

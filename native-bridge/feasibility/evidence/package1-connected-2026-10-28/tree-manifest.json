@@ -1,0 +1,34 @@
+{
+  "what": "package1-p1 producer tree manifest (PC C:\\Users\\yuriy\\otp23-probe\\package1-p1), captured BEFORE any Chrome profile could be deleted by runs",
+  "captured_utc": "2026-10-28T00:49:10Z",
+  "tree_origin": "repo /home/dev/repos/veles-android contract/otp23-desktop-alignment HEAD 8f365fc + uncommitted package1 driver changes (hashes below are the authoritative source-of-truth for this batch)",
+  "driver_files_sha256": {
+    "scripts/chrome_validate.py": "9d457bf363bc36ee478719647dde4a31daa2d197853dd2779c2e516caae6ac32",
+    "scripts/scenario_matrix.py": "17625f40c14b826d8b1529414e44956e45dad9ed041835d37fc525d8462ea464",
+    "scripts/scenario_matrix_core.py": "b2f417c8d85617a868b50d856575db53d64b3faa00601ffff2d1689d270ae500",
+    "scripts/macos_poc.py": "8907eff6b61d14ae2b5ae63f336efd9c23d5ee10bdb1299f67e8055ce00bcc4a",
+    "scripts/macos_install.py": "fcc8604afc0c8662a7a3589248b2a22b34ed014e4d175c57dfb9c47befcf5fd5",
+    "scripts/pc_phone_clock_probe.py": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+    "scripts/package1_console_preflight.py": "97ccabdd21f93281a01f5db6fb547bc6516674745e476690a08243d72559be4e",
+    "scripts/register-host.ps1": "ba74a57f560739e8a5881a6a6a4206ec092c4974a07ef3f6c3dedc08b23e6937",
+    "scripts/unregister-host.ps1": "45d01a0c48a73c1b1f6a76b9a24aaae7d564166f804e0e088bf57bc78e830e1b",
+    "extension/background.js": "2d8a048a914e74328869cd0727f29ed26488aa6d45ba0ae7d204b1ca129deb0b",
+    "extension/connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+    "extension/connector.html": "d43f1b59c764753d2c9ce4b5fbc47e1ea211420cd83a5d1501fd293e7a42d4aa",
+    "extension/manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+    "src/identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f"
+  },
+  "host_binary": {
+    "name": "otp23-host.exe",
+    "sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+    "source_tree": "C:\\Users\\yuriy\\otp23-probe\\cleanup-closejoin-1 (src/*.rs hashes byte-identical to this repo's native-bridge/feasibility/src/*.rs at HEAD 8f365fc; verified file-by-file)",
+    "registered_copy": "C:\\Users\\yuriy\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe (registration Sha256 output 8521de4d...ae33 exact)",
+    "coverage_note": "this fixed identity covers the connected-phase rows run in this batch; older rows citing other identities are NOT re-baselined"
+  },
+  "chrome": {
+    "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "versioninfo_at_manifest_time": "156.0.8078.73",
+    "version_per_run": "recorded per run from CDP Browser.getVersion (chrome_version_actual)"
+  },
+  "python_pc": "3.14.3"
+}

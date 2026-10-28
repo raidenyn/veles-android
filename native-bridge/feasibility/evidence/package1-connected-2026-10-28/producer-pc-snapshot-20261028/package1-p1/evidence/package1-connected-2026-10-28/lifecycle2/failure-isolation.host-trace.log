@@ -1,0 +1,39 @@
+[       0ms pid=82028] start pid=82028
+[       0ms pid=82028] in  len=81 type=hello request_id=r1-d0ofl7
+[       0ms pid=82028] out len=183 type=ready request_id=r1-d0ofl7 api_version=1
+[    4725ms pid=82028] in  len=137 type=start_scan request_id=r2-5g264g api_version=1
+[    4776ms pid=82028] out len=135 type=scan_state request_id=r2-5g264g api_version=1 status=started scan_handle=604b7cbde7870f82
+[    5099ms pid=82028] out len=195 type=device_found api_version=1 scan_handle=604b7cbde7870f82 device_handle=be975c8005d61a87 label.len=17 platform_hint.len=20
+[    5705ms pid=82028] out len=195 type=device_found api_version=1 scan_handle=604b7cbde7870f82 device_handle=e71d3073360906ad label.len=17 platform_hint.len=20
+[    6035ms pid=82028] in  len=115 type=connect request_id=r3-769mju api_version=1 device_handle=be975c8005d61a87
+[    6035ms pid=82028] in  len=115 type=connect request_id=r4-zipjlx api_version=1 device_handle=e71d3073360906ad
+[    6035ms pid=82028] conn 2 connect worker started epoch_ms=1793148217148 hint=winrt:..90c9:1
+[    6035ms pid=82028] conn 3 connect worker started epoch_ms=1793148217148 hint=winrt:..553a:1
+[    6076ms pid=82028] conn 2 device at 41ms
+[    6097ms pid=82028] conn 2 session at 62ms
+[    7558ms pid=82028] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7558ms pid=82028] conn 2 service at 1522ms
+[    7558ms pid=82028] conn 2 mtu=517 at 1523ms
+[    7706ms pid=82028] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7707ms pid=82028] conn 2 write properties=0x4
+[    7769ms pid=82028] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7769ms pid=82028] conn 2 notify properties=0x10
+[    7769ms pid=82028] conn 2 characteristics at 1734ms
+[    7811ms pid=82028] conn 2 subscribed at 1776ms
+[    7811ms pid=82028] out len=160 type=connected request_id=r3-769mju api_version=1 connection_handle=e19415e94188a419 platform_hint.len=20
+[   26038ms pid=82028] conn 3 setup failed: stage=setup_timeout retryable=true
+[   26038ms pid=82028] conn 3 disconnect requested epoch_ms=1793148237151
+[   26038ms pid=82028] out len=155 type=error request_id=r4-zipjlx api_version=1 code=connect_failed recoverability=retryable stage=setup_timeout
+[   26039ms pid=82028] in  len=115 type=stop_scan request_id=r5-pky3vi api_version=1 scan_handle=604b7cbde7870f82
+[   26040ms pid=82028] out len=135 type=scan_state request_id=r5-pky3vi api_version=1 status=stopped scan_handle=604b7cbde7870f82
+[   26047ms pid=82028] conn 2 disconnect requested epoch_ms=1793148237160
+[   26047ms pid=82028] conn 2 close begin
+[   26047ms pid=82028] conn 2 close step remove_value_changed at 0ms ok
+[   26047ms pid=82028] conn 2 close step remove_status_changed at 0ms ok
+[   26048ms pid=82028] conn 2 close step service_close at 0ms ok
+[   26048ms pid=82028] conn 2 close step maintain_false at 1ms ok
+[   26049ms pid=82028] conn 2 close step session_close at 1ms ok
+[   26049ms pid=82028] conn 2 close step device_close at 1ms ok
+[   26050ms pid=82028] conn 2 released (objects closed; link-down unconfirmed)
+[   26058ms pid=82028] shutdown joined 1/1 within 10ms
+[   26058ms pid=82028] exit code=0 stdout_drained=true

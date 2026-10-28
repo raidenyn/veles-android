@@ -1,0 +1,200 @@
+{
+  "platform": "windows",
+  "scenario": "cold",
+  "formal_otp23_acceptance": false,
+  "meta": {
+    "started_utc": "2026-10-28T04:24:15Z",
+    "host_trace_log": "%USERPROFILE%\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\strict-windows-cold.trace.log",
+    "phone_delay_s": 690,
+    "min_background_s": 600,
+    "diagnostic_short": false,
+    "finished_utc": "2026-10-28T04:24:17Z"
+  },
+  "cases": [
+    {
+      "id": "ST-ENV",
+      "title": "Chrome, fixed-id extension, connector page, exemption scan",
+      "result": "FAIL",
+      "detail": "PermissionError: [Errno 13] Permission denied: 'C:\\\\Users\\\\yuriy\\\\AppData\\\\Local\\\\Temp\\\\veles-otp23-profile-69ps_no6\\\\DevToolsActivePort'",
+      "seconds": 0.32
+    }
+  ],
+  "strict_result": "FAIL",
+  "checks": {
+    "ST-01": {
+      "status": "FAIL",
+      "expected": "connector hidden and another ordinary tab visible and focused before the last DevTools client closes",
+      "actual": {}
+    },
+    "ST-02": {
+      "status": "FAIL",
+      "expected": "no DevTools client (target session or browser-level) for >= 600 s, 0 CDP calls",
+      "actual": {
+        "idle_seconds": null,
+        "cdp_calls_during_idle": null,
+        "browser_level_connection_closed": null,
+        "connector_session_detached_by_close": null
+      }
+    },
+    "ST-03": {
+      "status": "FAIL",
+      "expected": "no audio / WebRTC / socket / interval / lock / keepalive API in the loaded extension files",
+      "actual": null
+    },
+    "ST-04": {
+      "status": "FAIL",
+      "expected": "each of two phones delivers exactly one byte-exact unsolicited 4096-byte record, page hidden",
+      "actual": {
+        "per_handle": {},
+        "problems": []
+      }
+    },
+    "ST-05": {
+      "status": "FAIL",
+      "expected": "page receipt >= 600 s after the last DevTools client closed and before it re-attached",
+      "actual": {
+        "seconds_in_background_at_receipt": {},
+        "receipts_before_reattach": false
+      }
+    },
+    "ST-06": {
+      "status": "FAIL",
+      "expected": "host trace independently places both message emissions before the driver re-attached",
+      "actual": {
+        "message_count": 0,
+        "wall_estimates": [],
+        "reattach_wall": null
+      }
+    },
+    "ST-07": {
+      "status": "FAIL",
+      "expected": "DevTools HTTP target list (no CDP session) shows the connector received both messages before attach",
+      "actual": {
+        "title": ""
+      }
+    },
+    "ST-08": {
+      "status": "FAIL",
+      "expected": "two distinct current-run phone evidence files, validated after the idle interval",
+      "actual": {
+        "problems": [
+          "raw result lacks the run window / handles / phone delay needed to judge freshness",
+          "missing phone evidence: 0 file(s) for 2 phones"
+        ]
+      }
+    },
+    "ST-09": {
+      "status": "PASS",
+      "expected": "cold idle: no desktop->phone record was ever sent in this run",
+      "actual": {
+        "sends_in_host_trace": 0,
+        "warmup": false
+      }
+    },
+    "ST-10": {
+      "status": "FAIL",
+      "expected": "shutdown_complete, Chrome closed, and no surviving host process counted AFTER Chrome closed",
+      "actual": {
+        "shutdown_complete": false,
+        "chrome_closed": true,
+        "surviving_hosts": [],
+        "errors": []
+      }
+    },
+    "ST-11": {
+      "status": "FAIL",
+      "expected": "preconfigured history shows the connector page hidden and unfocused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [
+          "history absent"
+        ]
+      }
+    },
+    "ST-12": {
+      "status": "FAIL",
+      "expected": "preconfigured history shows the ordinary tab visible and focused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [
+          "history absent"
+        ]
+      }
+    },
+    "ST-13": {
+      "status": "FAIL",
+      "expected": "recorded Chrome command line carries no throttling/backgrounding/freezing exemption flag",
+      "actual": {
+        "findings": [
+          {
+            "flag": null,
+            "kind": "command_line_not_recorded"
+          }
+        ],
+        "arg_count": 0,
+        "args_source": null,
+        "native_messaging_port": "not a timer-throttling exemption (owner-approved RFC clarification, 2026-10-27): event delivery through the Native Messaging port is not an exemption; ordinary timers and the port itself are permitted",
+        "scope": "flags only; this check does not measure Chrome-internal behaviour, and the same-build port-escape comparison lives in separate probe evidence"
+      }
+    },
+    "ST-15": {
+      "status": "BLOCKED",
+      "expected": "OS foreground owned by the run's own Chrome PID (directly or through its ancestry) before any BLE work and again after the ordinary-tab switch, before every DevTools client closes",
+      "actual": "no foreground evidence recorded"
+    },
+    "ST-14": {
+      "status": "PASS",
+      "expected": "formal strict run: min_background_s >= 600 and not a diagnostic short run",
+      "actual": {
+        "min_background_s": 600,
+        "diagnostic_short": false
+      }
+    }
+  },
+  "evidence": {
+    "scenario": "cold",
+    "min_background_s": 600,
+    "timeline": {},
+    "handles": [],
+    "events": [],
+    "warmup": null,
+    "diagnostic_short": false,
+    "history": {},
+    "history_tokens": {},
+    "chrome": {},
+    "cleanup": {
+      "shutdown_complete": false,
+      "chrome_closed": true,
+      "surviving_hosts": [],
+      "errors": []
+    },
+    "host_trace": {
+      "message_count": 0,
+      "sends_in_trace": 0,
+      "message_wall_estimates": [],
+      "method": "driver wall time at hello + host trace ms offset since its hello line (approximate)"
+    },
+    "phone_evidence": null,
+    "phone_evidence_errors": [
+      "adb pull #1: no readable evidence file",
+      "adb pull #2: no readable evidence file"
+    ],
+    "phone_validation": {
+      "status": "FAIL",
+      "problems": [
+        "raw result lacks the run window / handles / phone delay needed to judge freshness",
+        "missing phone evidence: 0 file(s) for 2 phones"
+      ],
+      "files": [],
+      "clock": {
+        "offset_ms": -538.0,
+        "uncertainty_ms": 1854.0,
+        "source": "pc_phone_clock_probe.py: median of 9 adb date roundtrips per phone (union bound: offset -538ms, uncertainty 1854ms covers both phones measured individually)"
+      },
+      "central_peer_prefixes_informational": []
+    },
+    "phone_clock": {
+      "offset_ms": -538.0,
+      "uncertainty_ms": 1854.0,
+      "source": "pc_phone_clock_probe.py: median of 9 adb date roundtrips per phone (union bound: offset -538ms, uncertainty 1854ms covers both phones measured individually)"
+    }
+  }
+}

@@ -297,3 +297,35 @@ from the earlier `session-model-provenance.json` (234 at its capture) only becau
 model set by the owner; opencode-db metadata captures in `native-bridge/feasibility/evidence/integration-2026-10-27/provenance/`, including the
 `ses_e8061b402ffe…` integration session that performed this follow-up integration); the Opus minimum-fix reviews and the final M-09/M-10 fix
 verification are local Claude Code `claude-opus-5-5` sessions (`2fe20385-…`); the coordinating parent session (gpt-6.1-sol) is not the implementation.
+
+## 6. Package-1 final integration (2026-10-28, evening): W-02/W-07/W-08 promoted, 23 PASS / 6 BLOCKED / 3 waived
+
+The package-1 phase (started 2026-10-28 with the connected-phase and P2 retake `BLOCKED criterion_conflict`
+records) is now COMPLETE for the Windows rows, with NO-GO and OTP-24 unauthorised — this section records the
+truthful current disposition and points to the NEW evidence; every older section above stays as history of its
+time.
+
+- **Rows promoted:** W-02 (separate owner-scoped adjudication of the six-sample connected census under the
+  2026-10-28 owner-approved clarification, applied W-02-only), W-07 (literal `port.disconnect()` with two
+  byte-proven links on the ADOPTED identity `8521de4d…`, own exit 0, releases 2/3, join 2/2, corrected phone
+  bounds +2322/+2406 ms with wholly-in-bound uncertainty intervals), W-08 (the same Chrome-provenance event's
+  stdin-EOF semantics + the corrected tab-close recompute +2304/+2310 ms). Final counts: **23 PASS / 6 BLOCKED /
+  3 waived**; open rows exactly W-10, M-03, M-04, M-08 (owner-deferred), M-11, A-01; the interim 20/9/3 state
+  and the GPT quota block are recorded history, never the final blocker.
+- **Independent review chain (actual roles):** GPT windows-strict (`520c2edd…`), GPT P2/B5 (`15a28c80…`), GPT
+  fix verification (`ee342efa…`), GPT v3-final recheck (`217e6f2f…`) — all `openai/gpt-5.6-sol high`;
+  GPT route quota-blocked mid-day (safe record only). The FOCUSED v4 final verification is the **user-authorised
+  Opus 5.5** route (Claude Code `claude-opus-5-5`, session `1b447229-ceaa-4cee-a5be-2181dfdd8838`, report
+  `d85d4f57…`: sole remaining exact-branch defect CLOSED at 1001-digit-int scale; validator overflow boundary
+  behaves as specified; v4 values re-derived; recommends W-02/W-07/W-08 PASS). NO retroactive Opus authorship
+  of the GPT reports; implementation throughout by actual `ollama-cloud/glm-5.3-flash` (0 subagents).
+- **Evidence home (published, own manifests):** `native-bridge/feasibility/evidence/package1-integration-20261028/`
+  (Opus report byte-identical + final model metadata + provenance map resolving every `/tmp` citation of the
+  chain, incl. the v4 record's cited v3-final report, and gate-log copies with exact sources). Derivations:
+  `package1-b5-v2/v3/v4-20261028/` (v4 = the promoted record: exact-branch `_num` contract, `numeric_range`
+  overflow boundary, fail-closed guards, self-pinned 7-entry code list); raw package evidence
+  `package1-p2-20261028/` (34/34) and `package1-connected-2026-10-28/` (181/181 + curated producer snapshot
+  238/238, original capture manifest preserved) stay immutable.
+- **M-08:** owner-DEFERRED ("Cannot restart Chrome now"; attempts failed at `Extensions.loadUnpacked` before
+  BLE with zero peers; first standalone setup capture overwritten — unmeasured, never reconstructed). Not a
+  measurement; no Mac action taken. **Decision:** NO-GO; OTP-24 not authorised; release readiness not claimed.

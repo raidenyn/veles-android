@@ -1,0 +1,96 @@
+{
+  "what": "OTP-23 package1 B-5 phone burst association from fixture transport telemetry",
+  "run_id": "p2pd1-portdisconnect-20261028T0651Z",
+  "bound_s_predeclared": 30.0,
+  "fixture_stop_required": "disconnect strictly before the stop marker; stop >= bound + clock uncertainty after the host's own exit (fixture-stop confound guard)",
+  "host_exit_epoch_ms_estimate": 1793170763088,
+  "anchor_disconnect_epoch_ms": 1793170763078,
+  "stop_markers": {
+    "2be02e41": {
+      "epoch_phone_ms": 1793170805745,
+      "epoch_pc_ms": 1793170805939
+    },
+    "864a3db0": {
+      "epoch_phone_ms": 1793170810549,
+      "epoch_pc_ms": 1793170811254
+    }
+  },
+  "verdict": {
+    "status": "PASS",
+    "problems": [],
+    "run_id": "p2pd1-portdisconnect-20261028T0651Z",
+    "bound_s": 30.0,
+    "expected_serials": [
+      "2be02e41",
+      "864a3db0"
+    ],
+    "phones": {
+      "2be02e41": {
+        "kind": "otp23-transport-evidence",
+        "final": true,
+        "clean": true,
+        "truncated": false,
+        "peers_dropped": 0,
+        "clock": {
+          "offset_phone_minus_pc_ms_median": 721,
+          "uncertainty_ms": 1693
+        },
+        "connected_event_count": 1,
+        "disconnected_event_count": 1,
+        "peers_with_lifecycle": [
+          "c3a3dc8495dd5bc2"
+        ],
+        "burst": {
+          "peer_sha256_prefix": "c3a3dc8495dd5bc2",
+          "connected_epoch_phone_ms": 1793170759407,
+          "disconnected_epoch_phone_ms": 1793170766131,
+          "connected_pc_estimate_ms": 1793170760128,
+          "disconnected_pc_estimate_ms": 1793170766852,
+          "gap_vs_host_exit_ms": 3764,
+          "within_bound": true
+        },
+        "associated": true,
+        "started_at_epoch_ms": 1793170721355,
+        "fixture_stop": {
+          "epoch_phone_ms": 1793170805745,
+          "epoch_pc_ms": 1793170805939
+        }
+      },
+      "864a3db0": {
+        "kind": "otp23-transport-evidence",
+        "final": true,
+        "clean": true,
+        "truncated": false,
+        "peers_dropped": 0,
+        "clock": {
+          "offset_phone_minus_pc_ms_median": 192,
+          "uncertainty_ms": 924
+        },
+        "connected_event_count": 1,
+        "disconnected_event_count": 1,
+        "peers_with_lifecycle": [
+          "c3a3dc8495dd5bc2"
+        ],
+        "burst": {
+          "peer_sha256_prefix": "c3a3dc8495dd5bc2",
+          "connected_epoch_phone_ms": 1793170758992,
+          "disconnected_epoch_phone_ms": 1793170765686,
+          "connected_pc_estimate_ms": 1793170759184,
+          "disconnected_pc_estimate_ms": 1793170765878,
+          "gap_vs_host_exit_ms": 2790,
+          "within_bound": true
+        },
+        "associated": true,
+        "started_at_epoch_ms": 1793170719430,
+        "fixture_stop": {
+          "epoch_phone_ms": 1793170810549,
+          "epoch_pc_ms": 1793170811254
+        }
+      }
+    },
+    "central_peer_prefixes": [
+      "c3a3dc8495dd5bc2"
+    ],
+    "same_central": true
+  }
+}

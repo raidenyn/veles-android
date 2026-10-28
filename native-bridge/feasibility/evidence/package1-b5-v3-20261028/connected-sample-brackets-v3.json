@@ -1,0 +1,395 @@
+{
+  "what": "OTP-23 package1 W-02/W-07 connected-phase sample brackets v3: sample offsets are corrected against the trace's own PC-absolute disconnect-requested anchor (epoch_ms - at_ms), removing the 1718 ms native-host spawn delay the raw launch-based estimate included. Raw sample wall_ms/exchanges are copied verbatim from the pinned raw port-disconnect.json; the old trace_bracket annotations in that file (all samples 1718 ms late, wrongly placed after the final host output) are superseded, not rewritten.",
+  "raw_scenario_id": "LC-port-disconnect",
+  "raw_scenario_status": "BLOCKED",
+  "trace_origin_calibration": {
+    "method": "trace absolute disconnect-requested anchor: trace_origin_epoch_ms = epoch_ms - at_ms; corrected sample offset = wall_ms - trace_origin_epoch_ms (removes the native-host spawn delay the launch-based estimate includes)",
+    "anchor_kind": "disconnect_requested",
+    "anchor_count": 2,
+    "anchors": [
+      {
+        "at_ms": 9958,
+        "epoch_ms": 1793170763078,
+        "origin_epoch_ms": 1793170753120
+      },
+      {
+        "at_ms": 9958,
+        "epoch_ms": 1793170763078,
+        "origin_epoch_ms": 1793170753120
+      }
+    ],
+    "origin_candidates_ms": [
+      1793170753120
+    ],
+    "origin_spread_ms": 0,
+    "trace_origin_epoch_ms": 1793170753120,
+    "applied": true
+  },
+  "samples": [
+    {
+      "label": "linked-idle-active-scan",
+      "wall_ms": 1793170762491,
+      "exchange": null,
+      "trace_offset_ms_estimate": 11089,
+      "source": "verbatim fields of detail.probe_during in the pinned raw port-disconnect.json",
+      "trace_offset_corrected_ms": 9371,
+      "trace_origin_calibration": {
+        "method": "trace absolute disconnect-requested anchor: trace_origin_epoch_ms = epoch_ms - at_ms; corrected sample offset = wall_ms - trace_origin_epoch_ms (removes the native-host spawn delay the launch-based estimate includes)",
+        "anchor_kind": "disconnect_requested",
+        "anchor_count": 2,
+        "anchors": [
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          },
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          }
+        ],
+        "origin_candidates_ms": [
+          1793170753120
+        ],
+        "origin_spread_ms": 0,
+        "trace_origin_epoch_ms": 1793170753120,
+        "applied": true
+      },
+      "trace_bracket": {
+        "after": {
+          "at_ms": 9370,
+          "type": "scan_state",
+          "dir": "out",
+          "status": "started"
+        },
+        "before": {
+          "at_ms": 9379,
+          "type": "send",
+          "dir": "in",
+          "status": null
+        },
+        "estimate_basis": "sample wall_ms minus the trace's own absolute-origin calibration (trace_origin_epoch_ms 1793170753120 = disconnect-requested epoch_ms 1793170763078 at trace 9958 ms); the launch-based estimate is kept separately and corrected here for the native-host spawn delay"
+      }
+    },
+    {
+      "label": "send-in-flight",
+      "wall_ms": 1793170762593,
+      "exchange": {
+        "handle": "17ae5167b5c6",
+        "seed": 41
+      },
+      "trace_offset_ms_estimate": 11191,
+      "source": "verbatim fields of detail.probe_during in the pinned raw port-disconnect.json",
+      "trace_offset_corrected_ms": 9473,
+      "trace_origin_calibration": {
+        "method": "trace absolute disconnect-requested anchor: trace_origin_epoch_ms = epoch_ms - at_ms; corrected sample offset = wall_ms - trace_origin_epoch_ms (removes the native-host spawn delay the launch-based estimate includes)",
+        "anchor_kind": "disconnect_requested",
+        "anchor_count": 2,
+        "anchors": [
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          },
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          }
+        ],
+        "origin_candidates_ms": [
+          1793170753120
+        ],
+        "origin_spread_ms": 0,
+        "trace_origin_epoch_ms": 1793170753120,
+        "applied": true
+      },
+      "trace_bracket": {
+        "after": {
+          "at_ms": 9472,
+          "type": "sent",
+          "dir": "out",
+          "status": null
+        },
+        "before": {
+          "at_ms": 9509,
+          "type": "device_found",
+          "dir": "out",
+          "status": null
+        },
+        "estimate_basis": "sample wall_ms minus the trace's own absolute-origin calibration (trace_origin_epoch_ms 1793170753120 = disconnect-requested epoch_ms 1793170763078 at trace 9958 ms); the launch-based estimate is kept separately and corrected here for the native-host spawn delay"
+      }
+    },
+    {
+      "label": "echo-verified",
+      "wall_ms": 1793170762704,
+      "exchange": {
+        "handle": "17ae5167b5c6",
+        "seed": 41
+      },
+      "trace_offset_ms_estimate": 11302,
+      "source": "verbatim fields of detail.probe_during in the pinned raw port-disconnect.json",
+      "trace_offset_corrected_ms": 9584,
+      "trace_origin_calibration": {
+        "method": "trace absolute disconnect-requested anchor: trace_origin_epoch_ms = epoch_ms - at_ms; corrected sample offset = wall_ms - trace_origin_epoch_ms (removes the native-host spawn delay the launch-based estimate includes)",
+        "anchor_kind": "disconnect_requested",
+        "anchor_count": 2,
+        "anchors": [
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          },
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          }
+        ],
+        "origin_candidates_ms": [
+          1793170753120
+        ],
+        "origin_spread_ms": 0,
+        "trace_origin_epoch_ms": 1793170753120,
+        "applied": true
+      },
+      "trace_bracket": {
+        "after": {
+          "at_ms": 9572,
+          "type": "message",
+          "dir": "out",
+          "status": null
+        },
+        "before": {
+          "at_ms": 9592,
+          "type": "send",
+          "dir": "in",
+          "status": null
+        },
+        "estimate_basis": "sample wall_ms minus the trace's own absolute-origin calibration (trace_origin_epoch_ms 1793170753120 = disconnect-requested epoch_ms 1793170763078 at trace 9958 ms); the launch-based estimate is kept separately and corrected here for the native-host spawn delay"
+      }
+    },
+    {
+      "label": "send-in-flight",
+      "wall_ms": 1793170762806,
+      "exchange": {
+        "handle": "9737e7b431ed",
+        "seed": 54
+      },
+      "trace_offset_ms_estimate": 11404,
+      "source": "verbatim fields of detail.probe_during in the pinned raw port-disconnect.json",
+      "trace_offset_corrected_ms": 9686,
+      "trace_origin_calibration": {
+        "method": "trace absolute disconnect-requested anchor: trace_origin_epoch_ms = epoch_ms - at_ms; corrected sample offset = wall_ms - trace_origin_epoch_ms (removes the native-host spawn delay the launch-based estimate includes)",
+        "anchor_kind": "disconnect_requested",
+        "anchor_count": 2,
+        "anchors": [
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          },
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          }
+        ],
+        "origin_candidates_ms": [
+          1793170753120
+        ],
+        "origin_spread_ms": 0,
+        "trace_origin_epoch_ms": 1793170753120,
+        "applied": true
+      },
+      "trace_bracket": {
+        "after": {
+          "at_ms": 9685,
+          "type": "sent",
+          "dir": "out",
+          "status": null
+        },
+        "before": {
+          "at_ms": 9940,
+          "type": "message",
+          "dir": "out",
+          "status": null
+        },
+        "estimate_basis": "sample wall_ms minus the trace's own absolute-origin calibration (trace_origin_epoch_ms 1793170753120 = disconnect-requested epoch_ms 1793170763078 at trace 9958 ms); the launch-based estimate is kept separately and corrected here for the native-host spawn delay"
+      }
+    },
+    {
+      "label": "echo-verified",
+      "wall_ms": 1793170763064,
+      "exchange": {
+        "handle": "9737e7b431ed",
+        "seed": 54
+      },
+      "trace_offset_ms_estimate": 11662,
+      "source": "verbatim fields of detail.probe_during in the pinned raw port-disconnect.json",
+      "trace_offset_corrected_ms": 9944,
+      "trace_origin_calibration": {
+        "method": "trace absolute disconnect-requested anchor: trace_origin_epoch_ms = epoch_ms - at_ms; corrected sample offset = wall_ms - trace_origin_epoch_ms (removes the native-host spawn delay the launch-based estimate includes)",
+        "anchor_kind": "disconnect_requested",
+        "anchor_count": 2,
+        "anchors": [
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          },
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          }
+        ],
+        "origin_candidates_ms": [
+          1793170753120
+        ],
+        "origin_spread_ms": 0,
+        "trace_origin_epoch_ms": 1793170753120,
+        "applied": true
+      },
+      "trace_bracket": {
+        "after": {
+          "at_ms": 9940,
+          "type": "message",
+          "dir": "out",
+          "status": null
+        },
+        "before": null,
+        "estimate_basis": "sample wall_ms minus the trace's own absolute-origin calibration (trace_origin_epoch_ms 1793170753120 = disconnect-requested epoch_ms 1793170763078 at trace 9958 ms); the launch-based estimate is kept separately and corrected here for the native-host spawn delay"
+      }
+    },
+    {
+      "label": "after-probes-active-scan",
+      "wall_ms": 1793170763071,
+      "exchange": null,
+      "trace_offset_ms_estimate": 11669,
+      "source": "verbatim fields of detail.probe_during in the pinned raw port-disconnect.json",
+      "trace_offset_corrected_ms": 9951,
+      "trace_origin_calibration": {
+        "method": "trace absolute disconnect-requested anchor: trace_origin_epoch_ms = epoch_ms - at_ms; corrected sample offset = wall_ms - trace_origin_epoch_ms (removes the native-host spawn delay the launch-based estimate includes)",
+        "anchor_kind": "disconnect_requested",
+        "anchor_count": 2,
+        "anchors": [
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          },
+          {
+            "at_ms": 9958,
+            "epoch_ms": 1793170763078,
+            "origin_epoch_ms": 1793170753120
+          }
+        ],
+        "origin_candidates_ms": [
+          1793170753120
+        ],
+        "origin_spread_ms": 0,
+        "trace_origin_epoch_ms": 1793170753120,
+        "applied": true
+      },
+      "trace_bracket": {
+        "after": {
+          "at_ms": 9940,
+          "type": "message",
+          "dir": "out",
+          "status": null
+        },
+        "before": null,
+        "estimate_basis": "sample wall_ms minus the trace's own absolute-origin calibration (trace_origin_epoch_ms 1793170753120 = disconnect-requested epoch_ms 1793170763078 at trace 9958 ms); the launch-based estimate is kept separately and corrected here for the native-host spawn delay"
+      }
+    }
+  ],
+  "supersedes": {
+    "path": "native-bridge/feasibility/evidence/package1-b5-v2-20261028/connected-sample-brackets-v2.json",
+    "sha256": "cea77aa22afb6f96e7cda8c22fe1e2161380e178e54b7a62aa43457d1af672e2",
+    "note": "the preserved v2 candidate (own SHA256SUMS, kept immutable); superseded by this v3 artifact from the same unchanged raws with identical derived values, after the B5-2 finite-number predicate closure, the B5-4 derivation-program self-pin, and the W-02 chrome_flags_note wording fix"
+  },
+  "also_supersedes": {
+    "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-pd1/port-disconnect.json",
+    "sha256": "967f4c04af8ccd16086eb159e4323962bfc0dffd3574057b042e10941719b9c9",
+    "fields": [
+      "detail.probe_during[*].trace_offset_ms_estimate",
+      "detail.probe_during[*].trace_bracket"
+    ],
+    "note": "the raw scenario document stays byte-identical and keeps its raw BLOCKED criterion_conflict status (W-02 wording); only the DERIVED bracket labels are corrected here"
+  },
+  "provenance": {
+    "pinned_at": "2026-10-28T09:42:34Z",
+    "code": [
+      {
+        "path": "native-bridge/feasibility/scripts/package1_b5_v2_derive.py",
+        "sha256": "eaaf6b33852f8a05cf32808c0a03411cb27c4765c46a91206a860c76b558c064",
+        "role": "derivation program (orchestration): parses stop markers, assembles phone documents, applies the conservative/review-value assertions, computes the W-02 census, copies the owner records and serializes these outputs — pinned by its own measured sha",
+        "pin_source": "runtime measured sha256 of this program's own file"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/scenario_matrix_core.py",
+        "sha256": "8fb2d60814e6cef36295b506675bf6f00c798e02e0754749d36469320044689c",
+        "role": "core helper: phone-to-PC conversion (_telemetry_bursts subtracts offset_phone_minus_pc_ms_median), phone_burst_association guards (finite-number predicate), trace_origin_calibration, parse_trace"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/package1_phone_burst_telemetry.py",
+        "sha256": "c6fcfd6eab1e90e9861232fa6d06ef2d8166e39b2b613e7e37fd77e12296663d",
+        "role": "analyzer: trace exit/anchor derivation + document assembly (phone-burst-association artifacts)"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/package1_phone_bound.py",
+        "sha256": "40d8f8242385671eb3122c812cffc4ad33d135b001ca7b0a5adfd4b1c3ecf48f",
+        "role": "analyzer: old dumpsys-history bound (row_epoch_ms subtracts the phone-minus-PC offset) for tab-close-phone-bound artifacts"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/scenario_matrix.py",
+        "sha256": "f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1",
+        "role": "driver: connected-phase sample recording (wall_ms) for connected-sample-brackets artifacts"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/pc_phone_clock_probe.py",
+        "sha256": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+        "role": "clock producer: measures and defines offset_phone_minus_pc_ms_median = phone_epoch - pc_epoch"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/chrome_validate.py",
+        "sha256": "78d53ca98c839e78bccf404beab5fb978f421f485f7945e5578d09a8b71a62f6",
+        "role": "Windows platform observer used by the sampled census (windows/endpoints)"
+      }
+    ],
+    "clock_producer_contract": {
+      "producer": "native-bridge/feasibility/scripts/pc_phone_clock_probe.py",
+      "producer_sha256": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+      "field": "offset_phone_minus_pc_ms_median",
+      "semantics": "phone_epoch - pc_epoch (measured at the adb roundtrip midpoint); the converter derives pc_epoch = phone_epoch - offset — never +",
+      "uncertainty": "uncertainty_ms = spread/2 + max latency/2 + phone resolution/2"
+    },
+    "inputs": [
+      {
+        "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-pd1/port-disconnect.json",
+        "sha256": "967f4c04af8ccd16086eb159e4323962bfc0dffd3574057b042e10941719b9c9",
+        "verified": "SHA256SUMS"
+      },
+      {
+        "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-pd1/port-disconnect.host-trace.log",
+        "sha256": "22e0aecd49e12d987806d2ffbb4de563ba8713c62725a3d2d9052f921ac0ed7d",
+        "verified": "SHA256SUMS"
+      }
+    ],
+    "git_head": {
+      "commit": "8f365fce0d31f975610c235085a95b9136ac25e2",
+      "worktree_uncommitted_changes": true,
+      "note": "the per-file sha256 list under `code` pins the ACTUAL analyzer/helper/clock bytes used by this derivation; the p2-stage-manifest.txt of the run pins older staged bytes (scenario_matrix_core.py=b33b015b…, test_scenario_matrix.py=2183b847…) and does not list package1_phone_burst_telemetry.py, so that manifest is retained as HISTORICAL evidence only. The authority for what the run actually executed is the run's own self-recorded source_sha256 in p2-pd1/lifecycle.json (scenario_matrix.py=f8284c98…, scenario_matrix_core.py=527de610…, chrome_validate.py=78d53ca9…), which match these reviewed files."
+    },
+    "stage_manifest_status": {
+      "authority": "runtime self-pins (p2-pd1/lifecycle.json meta.source_sha256) + the code entries above are the actual bytes of this derivation",
+      "historical_manifest": {
+        "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-stage-manifest.txt",
+        "sha256": "fca6faac598e970b8beb86e1d106722e55d0bb31e315d0d737f17309cdcf763c",
+        "status": "retained immutable as history; NOT the authority for v2 provenance"
+      }
+    }
+  }
+}

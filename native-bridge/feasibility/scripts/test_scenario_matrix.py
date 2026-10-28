@@ -13,7 +13,9 @@ import io
 import json
 import os
 import pathlib
+import re
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -76,6 +78,19 @@ class TraceAndTeardown(unittest.TestCase):
         self.assertTrue(core.check_teardown(parsed, "disconnect"))  # shutdown must not count as disconnect
         self.assertTrue(core.check_teardown(parsed, "stdin_closed"))
 
+    def test_min_released_needs_distinct_connection_ids(self):
+        # I-3: two release LINES for one conn cannot satisfy the two-link gate...
+        dup = core.parse_trace(trace("conn 2 released", "conn 2 released",
+                                     "shutdown joined 2/2 within 10ms", "exit code=0 stdout_drained=true"))
+        problems = core.check_teardown(dup, "stdin_closed", require_drained=True, min_released=2,
+                                       require_join=True)
+        self.assertTrue(any("distinct" in p and "conn" in p for p in problems), problems)
+        # ...while distinct ids 2 and 3 pass as before
+        ok = core.parse_trace(trace("conn 2 released", "conn 3 released", "shutdown joined 2/2 within 10ms",
+                                    "exit code=0 stdout_drained=true"))
+        self.assertEqual(core.check_teardown(ok, "stdin_closed", require_drained=True,
+                                             min_released=2, require_join=True), [])
+
     def test_shutdown_complete_must_be_last_output(self):
         late = trace("in  len=1 type=shutdown", "out len=1 type=shutdown_complete",
                      "out len=1 type=scan_state status=stopped", "exit code=0 stdout_drained=true")
@@ -88,11 +103,61 @@ class TraceAndTeardown(unittest.TestCase):
         self.assertEqual(core.check_teardown(parsed, "stdin_closed", require_drained=True), [])
         self.assertTrue(core.check_teardown(parsed, "shutdown"))
 
-    def test_disconnect_allows_killed_host_without_exit_line_but_records_it(self):
+    def test_disconnect_requires_host_own_exit_line_chrome_kill_fails(self):
+        # A host that vanishes with no exit line was terminated by Chrome (~2 s lingering-host kill),
+        # not by itself: never PASS, and the reason is recorded as a problem.
         parsed = core.parse_trace(trace("start pid=7", "in  len=10 type=hello"))
         self.assertEqual(core.trace_mechanism(parsed), "no_exit")
-        self.assertEqual(core.check_teardown(parsed, "disconnect"), [])
+        problems = core.check_teardown(parsed, "disconnect")
+        self.assertTrue(any("no exit line" in p for p in problems))
+        self.assertTrue(any("mechanism" in p for p in problems))
         self.assertTrue(core.check_teardown(parsed, "stdin_closed"))  # direct EOF requires the exit line
+
+    def test_traces_record_released_requested_and_join(self):
+        text = trace("conn 2 disconnect requested epoch_ms=1793120912426",
+                     "conn 2 released (objects closed; link-down unconfirmed)",
+                     "shutdown joined 2/2 within 10ms")
+        parsed = core.parse_trace(text)
+        self.assertEqual(parsed["disconnect_requested"][0]["epoch_ms"], 1793120912426)
+        self.assertEqual(parsed["released"], [{"at_ms": 10, "conn": 2}])
+        self.assertEqual(parsed["joined"][-1]["total"], 2)
+
+    def test_min_released_clean_two_links_pass(self):
+        text = trace("conn 2 released (objects closed; link-down unconfirmed)",
+                     "conn 3 released (objects closed; link-down unconfirmed)",
+                     "shutdown joined 2/2 within 10ms",
+                     "exit code=0 stdout_drained=true")
+        problems = core.check_teardown(core.parse_trace(text), "stdin_closed", require_drained=True,
+                                       min_released=2, require_join=True)
+        self.assertEqual(problems, [])
+
+    def test_min_released_count_order_and_join_mismatch_fail(self):
+        short = core.parse_trace(trace("conn 2 released", "shutdown joined 2/2 within 10ms",
+                                       "exit code=0 stdout_drained=true"))
+        problems = core.check_teardown(short, "stdin_closed", require_drained=True, min_released=2,
+                                       require_join=True)
+        self.assertTrue(any("release line(s)" in p for p in problems))
+        late = core.parse_trace(trace("exit code=0 stdout_drained=true", "conn 2 released"))
+        problems = core.check_teardown(late, "disconnect", require_drained=False, min_released=2)
+        self.assertTrue(any("at or after the exit line" in p for p in problems))
+        uneven = core.parse_trace(trace("conn 2 released", "shutdown joined 1/2 within 10ms",
+                                        "exit code=0 stdout_drained=true"))
+        problems = core.check_teardown(uneven, "stdin_closed", require_drained=True, min_released=2,
+                                       require_join=True)
+        self.assertTrue(any("did not finish" in p for p in problems))
+        no_join = core.parse_trace(trace("conn 2 released", "exit code=0 stdout_drained=true"))
+        problems = core.check_teardown(no_join, "stdin_closed", require_drained=True, min_released=2,
+                                       require_join=True)
+        self.assertTrue(any("no shutdown joined" in p for p in problems))
+
+    def test_join_line_is_a_windows_gate_not_a_mac_or_stdin_gate(self):
+        # macOS (macos.rs) traces no shutdown join line; demanding one there would invent a platform gate.
+        mac_text = trace("conn 2 released (objects closed; link-down unconfirmed)",
+                         "conn 3 released (objects closed; link-down unconfirmed)",
+                         "exit code=0 stdout_drained=true")
+        problems = core.check_teardown(core.parse_trace(mac_text), "disconnect", require_drained=False,
+                                       min_released=2, require_join=False)
+        self.assertEqual(problems, [])
 
     def test_nonzero_exit_and_undrained_stdout_fail(self):
         bad = core.parse_trace(trace("in  len=1 type=hello", "exit code=1 stdout_drained=false"))
@@ -107,6 +172,670 @@ class TraceAndTeardown(unittest.TestCase):
         self.assertTrue(core.check_truncated_eof(parsed, 0, "clean"))
         self.assertTrue(core.check_truncated_eof(parsed, 2, "truncated_header"))
         self.assertTrue(core.check_truncated_eof(core.parse_trace(EOF_TRACE), 2, "clean"))
+
+
+class ConnectedProbeSummary(unittest.TestCase):
+    """W-02/M-08 connected-phase window/endpoint summaries: absence needs controls; fields never lie."""
+
+    @staticmethod
+    def probe(host_pid="11", wrapper_pid="22", chrome_pid="33", **overrides):
+        document = {"mode": "sampled",
+                    "per_pid": {
+                        "11": {"top_visible": 0, "top_hidden": 0, "message_only": 0, "children": 0,
+                               "tcp4": [], "tcp6": [], "udp4": [], "udp6": [], "session": 1,
+                               "pid_alive": True},
+                        "22": {"top_visible": 0, "top_hidden": 1, "message_only": 0, "children": 0,
+                               "tcp4": [], "tcp6": [], "udp4": [], "udp6": [],
+                               "top_hidden_classes": ["ConsoleWindowClass"], "session": 1,
+                               "pid_alive": True},
+                        "33": {"top_visible": 1, "tcp4": [(51111, 0, 1)], "session": 1,
+                               "pid_alive": True}},
+                    "observer": {"pid": 9, "session": 1},
+                    "active_console_session": 1,
+                    "controls": {"chrome_visible_top_level": 1, "chrome_cdp_listener_present": True}}
+        for key, value in overrides.items():
+            document[key] = value
+        return document
+
+    def summary(self, probe, wrapper=("22",), required=None):
+        return core.summarise_probe(probe, "11", wrapper, required_host_fields=required)
+
+    def test_clean_sample_with_recording_of_wrapper_console(self):
+        summary = self.summary(self.probe())
+        self.assertEqual(summary["problems"], [])
+        self.assertTrue(summary["usable"])
+        self.assertEqual(summary["wrapper_windows"]["22"]["top_hidden"], 1)  # recorded, owner-decided
+
+    def test_host_window_or_endpoint_any_kind_fails(self):
+        probe = self.probe()
+        probe["per_pid"]["11"]["top_visible"] = 1
+        self.assertTrue(any("host owns 1" in p for p in self.summary(probe)["problems"]))
+        for kind in ("top_hidden", "message_only", "children"):
+            probe = self.probe()
+            probe["per_pid"]["11"][kind] = 2
+            self.assertTrue(any(f"host owns 2 {kind}" in p for p in self.summary(probe)["problems"]))
+        probe = self.probe()
+        probe["per_pid"]["11"]["tcp4"] = [(1, 2, 3)]
+        self.assertTrue(any("host owns 1 TCP4" in p for p in self.summary(probe)["problems"]))
+
+    def test_wrapper_visible_window_fails_hidden_console_is_conflict_data(self):
+        probe = self.probe()
+        probe["per_pid"]["22"]["top_visible"] = 3
+        summary = self.summary(probe)
+        self.assertTrue(any("wrapper 22 shows 3 visible" in p for p in summary["problems"]))
+        probe = self.probe()
+        summary = self.summary(probe)
+        self.assertEqual([p for p in summary["problems"] if "wrapper" in p], [])  # hidden console: no problem
+        self.assertEqual(core.wrapper_hidden_conflict([{"summary": summary}]), 1)  # but the conflict is recorded
+        self.assertEqual(core.wrapper_hidden_conflict([]), 0)
+        zero = self.probe()
+        zero["per_pid"]["22"]["top_hidden"] = 0
+        self.assertEqual(core.wrapper_hidden_conflict([{"summary": self.summary(zero)}]), 0)
+
+    def test_missing_positive_control_makes_absence_unverifiable(self):
+        windowless = self.probe()
+        windowless["controls"]["chrome_visible_top_level"] = 0
+        summary = self.summary(windowless)
+        self.assertFalse(summary["usable"])
+        self.assertTrue(any("positive control missing" in p for p in summary["problems"]))
+        listenerless = self.probe()
+        listenerless["controls"]["chrome_cdp_listener_present"] = None
+        summary = self.summary(listenerless)
+        self.assertFalse(summary["usable"])
+        self.assertTrue(any("CDP listener" in p for p in summary["problems"]))
+
+    def test_unavailable_fields_never_become_zero(self):
+        probe = self.probe()
+        probe["per_pid"]["11"]["top_visible"] = "unavailable"
+        probe["controls"]["chrome_visible_top_level"] = "unavailable"
+        summary = self.summary(probe)
+        self.assertEqual(summary["host_windows"]["top_visible"], "unavailable")
+        self.assertFalse(summary["usable"])
+        self.assertFalse(any("host owns" in p for p in summary["problems"]))
+
+    def test_unavailable_required_host_field_invalidates_sample_even_with_good_controls(self):
+        probe = self.probe()  # chrome window + CDP listener controls both good
+        probe["per_pid"]["11"]["udp6"] = "unavailable"
+        summary = self.summary(probe)  # default required fields include udp6 (Windows)
+        self.assertFalse(summary["usable"])
+        self.assertTrue(any("required host field 'udp6'" in p for p in summary["problems"]))
+        self.assertTrue(any("positive control" not in p for p in summary["problems"]))
+        mac_probe = self.probe()
+        mac_probe["per_pid"]["11"] = {"all_layers": 0, "tcp4": [], "pid_alive": True,
+                                      "top_hidden": "unavailable", "message_only": "unavailable",
+                                      "top_visible": 0, "children": "unavailable", "tcp6": "unavailable",
+                                      "udp4": "unavailable", "udp6": "unavailable"}
+        mac_summary = core.summarise_probe(mac_probe, "11", required_host_fields=core.DEFAULT_MACOS_HOST_FIELDS)
+        self.assertEqual(mac_summary["problems"], [])  # mac criteria are all_lengths+tcp+alive, kind split N/A
+
+    def test_dead_host_pid_invalidates_sample(self):
+        probe = self.probe()
+        probe["per_pid"]["11"]["pid_alive"] = False
+        summary = self.summary(probe)
+        self.assertFalse(summary["usable"])
+        self.assertTrue(any("'pid_alive'" in p for p in summary["problems"]))
+
+    def test_after_teardown_summary_needs_no_host_fields_but_keeps_controls(self):
+        probe = self.probe()
+        del probe["per_pid"]["11"]  # the host is gone after teardown: nothing to enumerate
+        summary = self.summary(probe, wrapper=(), required=core.DEFAULT_AFTER_HOST_FIELDS)
+        self.assertTrue(summary["usable"], "controls good and no host fields required: sample is valid data")
+        self.assertEqual(summary["problems"], [])
+        self.assertNotIn("pid_alive", " ".join(summary["problems"]))
+        missing_controls = self.summary({}, wrapper=(), required=core.DEFAULT_AFTER_HOST_FIELDS)
+        self.assertFalse(missing_controls["usable"], "empty per_pid still needs the chrome controls")
+
+    def test_session_identity_must_be_console_equal(self):
+        self.assertEqual(core.session_identity_problem(1, 1, 1, 1), [])
+        problems = core.session_identity_problem(2, 1, 1, 1)
+        self.assertTrue(any("observer" in p for p in problems))
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(any("chrome" in p for p in
+                            core.session_identity_problem(1, 1, None, 1)))  # None is unavailable, never equal
+
+    def test_session_identity_also_asserts_wrapper_sessions(self):
+        # I-4: the wrapper pids the driver asserts get the same console-equality check
+        self.assertEqual(core.session_identity_problem(1, 1, 1, 1, ((44, 1),)), [])
+        problems = core.session_identity_problem(1, 1, 1, 1, ((44, 2),))
+        self.assertTrue(any("wrapper 44" in p for p in problems), problems)
+        self.assertTrue(any("wrapper 44 session unavailable" in p for p in
+                            core.session_identity_problem(1, 1, 1, 1, ((44, None),))))
+
+    def test_macos_all_layers_positive_fails_even_with_good_controls_and_live_host(self):
+        # B-2: a host window at ANY layer (e.g. off-screen) is an ownership failure, not availability data
+        probe = self.probe()
+        probe["per_pid"]["11"] = {"all_layers": 1, "top_visible": 0, "top_hidden": "unavailable",
+                                  "message_only": "unavailable", "children": "unavailable",
+                                  "tcp4": [], "tcp6": "unavailable", "udp4": "unavailable",
+                                  "udp6": "unavailable", "pid_alive": True}
+        summary = core.summarise_probe(probe, "11", required_host_fields=core.DEFAULT_MACOS_HOST_FIELDS)
+        self.assertTrue(any("all_layers" in p for p in summary["problems"]), summary["problems"])
+        self.assertEqual(summary["usable"], True, "ownership problems fail the driver's probe gate; "
+                        "usable only tracks control/required-field availability as with the other kinds")
+        zero = self.probe()
+        zero["per_pid"]["11"] = {"all_layers": 0, "tcp4": [], "pid_alive": True,
+                                 "top_hidden": "unavailable", "message_only": "unavailable",
+                                 "top_visible": 0, "children": "unavailable", "tcp6": "unavailable",
+                                 "udp4": "unavailable", "udp6": "unavailable"}
+        self.assertEqual(core.summarise_probe(zero, "11",
+                                              required_host_fields=core.DEFAULT_MACOS_HOST_FIELDS)["problems"],
+                         [])
+
+    def test_macos_context_audit_is_an_audit_not_a_session_gate(self):
+        # B-3 helper: audit the actual mac context; never compare against an invented session id
+        good = {"launchctl_managername": "Aqua", "uid": 501, "ssh_connection_present": False}
+        self.assertEqual(core.macos_context_audit(good)["problems"], [])
+        for bad in (None, {}, {"uid": 501, "ssh_connection_present": False},
+                    {"launchctl_managername": "unavailable", "uid": 501, "ssh_connection_present": False}):
+            self.assertFalse(core.macos_context_audit(bad)["usable"], bad)
+        audit_text = " ".join(core.macos_context_audit({})["problems"])
+        self.assertIn("managername", audit_text)
+        self.assertNotIn("console", audit_text, "no invented Windows console-session gate on macOS")
+
+    def test_samples_correlate_to_trace_brackets(self):
+        parsed = core.parse_trace(trace("in  len=1 type=hello",
+                                        "out len=1 type=connected",
+                                        "conn 2 disconnect requested epoch_ms=1",
+                                        "exit code=0 stdout_drained=true"))
+        early = core.correlate_samples([{"label": "in-flight", "trace_offset_ms_estimate": 5}], parsed)[0]
+        self.assertEqual(early["trace_bracket"]["after"]["type"], "hello")
+        self.assertEqual(early["trace_bracket"]["before"]["type"], "connected")
+        late = core.correlate_samples([{"label": "in-flight", "trace_offset_ms_estimate": 15}], parsed)[0]
+        self.assertEqual(late["trace_bracket"]["after"]["type"], "connected")
+        self.assertIsNone(late["trace_bracket"]["before"], "no in/out step sits between connected and exit")
+        unplaced = core.correlate_samples([{"label": "in-flight"}], parsed)[0]
+        self.assertNotIn("trace_bracket", unplaced)
+
+    def test_samples_correlate_via_absolute_origin_removing_host_spawn_delay(self):
+        # B5-3: the launch-based estimate counts from BEFORE Chrome spawns the native host, so every
+        # sample is LATE by the host startup delay (1718 ms in the measured run) and the raw brackets
+        # wrongly place all samples after the final host output. The trace's own absolute anchor
+        # (`disconnect requested epoch_ms` at a trace-relative at_ms) fixes the origin without any
+        # launch-wall or start-up reference: corrected = wall_ms - (epoch_ms - at_ms).
+        raw = "\n".join([
+            "[     0ms pid=9] start pid=9",
+            "[     0ms pid=9] in  len=81 type=hello",
+            "[     1ms pid=9] out len=183 type=ready",
+            "[   940ms pid=9] out len=20 type=connected",
+            "[   946ms pid=9] out len=20 type=connected",
+            "[  9472ms pid=9] in  len=4100 type=request",
+            "[  9572ms pid=9] out len=1 type=message status=ok",
+            "[  9685ms pid=9] in  len=4100 type=request",
+            "[  9940ms pid=9] out len=1 type=message status=ok",
+            "[  9958ms pid=9] conn 2 disconnect requested epoch_ms=1793170763078",
+            "[  9958ms pid=9] conn 3 disconnect requested epoch_ms=1793170763078",
+            "[  9968ms pid=9] exit code=0 stdout_drained=true",
+        ]) + "\n"
+        parsed = core.parse_trace(raw)
+        origin = 1793170763078 - 9958  # 1793170753120: pure trace-internal arithmetic, no launch wall
+        idle, sent = 9371, 9473        # actual trace positions of two samples
+        delay = 1718                   # the native-host spawn delay the recorded estimate includes
+        samples = [
+            {"label": "linked-idle-active-scan", "wall_ms": origin + idle,
+             "trace_offset_ms_estimate": idle + delay},
+            {"label": "send-in-flight", "wall_ms": origin + sent,
+             "trace_offset_ms_estimate": sent + delay},
+        ]
+        annotated = core.correlate_samples(samples, parsed)
+        for document, (position, after_at, before_at) in zip(annotated, [
+                (idle, 946, 9472), (sent, 9472, 9572)]):
+            calibration = document["trace_origin_calibration"]
+            self.assertTrue(calibration["applied"])
+            self.assertEqual(calibration["trace_origin_epoch_ms"], origin)
+            self.assertEqual(calibration["anchor_count"], 2)
+            self.assertEqual(calibration["origin_spread_ms"], 0, "both anchors agree exactly")
+            self.assertEqual(document["trace_offset_corrected_ms"], position)
+            self.assertEqual(document["trace_offset_ms_estimate"], position + delay,
+                             "the raw launch-based estimate stays as recorded provenance")
+            self.assertEqual(document["trace_bracket"]["after"]["at_ms"], after_at)
+            self.assertEqual(document["trace_bracket"]["before"]["at_ms"], before_at)
+        # the launch-based estimate would have bracketed BOTH samples after the final host output
+        # (after=9940, before=None) — the corrected brackets prove the samples sit during the links
+        self.assertEqual(annotated[0]["trace_bracket"]["before"]["at_ms"], 9472)
+        self.assertEqual(annotated[1]["trace_bracket"]["after"]["at_ms"], 9472)
+
+    def test_samples_without_absolute_anchor_keep_labelled_estimate(self):
+        # legacy trace (no PC-absolute anchor): no origin calibration exists, the launch-based
+        # estimate is used and the basis text keeps it honestly labelled an estimate
+        parsed = core.parse_trace(trace("in  len=1 type=hello",
+                                        "out len=1 type=connected",
+                                        "exit code=0 stdout_drained=true"))
+        document = core.correlate_samples([{"label": "s", "wall_ms": 50_000,
+                                            "trace_offset_ms_estimate": 5}], parsed)[0]
+        self.assertIsNone(document["trace_origin_calibration"])
+        self.assertNotIn("trace_offset_corrected_ms", document)
+        self.assertEqual(document["trace_bracket"]["after"]["type"], "hello")
+        self.assertIn("launch-based estimate", document["trace_bracket"]["estimate_basis"])
+
+
+@unittest.skipUnless(sys.platform == "win32", "exercises the real Windows APIs; part of the Windows CI leg")
+class WindowsMachineSmoke(unittest.TestCase):
+    """The Windows driver path must hold together without Chrome or BLE: endpoint tables parse (all four
+    families readable, never a false zero), window enumeration runs, hygiene_probe yields its controls.
+    Catches machine-level integration bugs (wrong ctypes signatures, unhashable literals, ...) in CI
+    instead of on a scarce hardware run."""
+
+    def test_endpoint_table_all_families_available(self):
+        import chrome_validate as cv
+        tables = cv.endpoint_table()
+        for family in ("tcp4", "tcp6", "udp4", "udp6"):
+            self.assertIsInstance(tables[family], list,
+                                  f"{family} must parse on a healthy Windows CI runner, got {tables[family]!r}")
+        self.assertGreater(len(tables["tcp4"]) + len(tables["udp4"]), 0)
+
+    def test_window_inventory_and_probe_shape(self):
+        import chrome_validate as cv
+        import os as _os
+        census = cv.window_inventory(_os.getpid())
+        self.assertIn("message_only_truncated", census)
+        self.assertGreaterEqual(census["children"], 0)
+        probe = cv.hygiene_probe([_os.getpid()], _os.getpid(), 51111)
+        self.assertIn("chrome_visible_top_level", probe["controls"])
+        self.assertEqual(probe["mode"], "sampled")
+        self.assertIn("active_console_session", probe)
+
+    def test_probe_slices_every_pid_from_one_endpoint_table_read(self):
+        # B-1 on the real machine path: the complete probe performs exactly ONE endpoint-table read
+        import chrome_validate as cv
+        import os as _os
+        reads = []
+        original = cv.endpoint_table
+
+        def counting():
+            reads.append(1)
+            return original()
+
+        with unittest.mock.patch.object(cv, "endpoint_table", counting):
+            probe = cv.hygiene_probe([_os.getpid()], _os.getpid(), None)
+        self.assertEqual(reads, [1], "B-1: Chrome control and host slices must come from ONE table read")
+        self.assertEqual(probe["mode"], "sampled")
+        self.assertEqual(sorted(probe["per_pid"]), [str(_os.getpid())])
+
+    def test_pid_alive_requires_still_active_when_the_object_still_exists(self):
+        # I-2 on the real machine path: a terminated-but-still-open process object is NOT alive
+        import chrome_validate as cv
+        import os as _os
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            self.assertEqual(child.poll(), None)
+            kernel = cv._kernel32()
+            # PROCESS_TERMINATE | SYNCHRONIZE: waiting on the process object itself needs SYNCHRONIZE
+            # (a TERMINATE-only handle makes WaitForSingleObject fail with ERROR_ACCESS_DENIED, as
+            # actually observed when this smoke first ran on a real Windows machine 2026-10-28).
+            handle = kernel.OpenProcess(0x0001 | 0x00100000, False, child.pid)
+            self.assertTrue(bool(handle))
+            kernel.TerminateProcess(handle, 0)
+            signaled = kernel.WaitForSingleObject(handle, 5000)  # the object signals at exit; never reaped
+            kernel.CloseHandle(handle)
+            self.assertEqual(signaled, 0, "the terminated child should have signaled")
+            alive = cv.pid_alive(child.pid)  # NOT polled: Popen's handle may keep the object open
+        finally:
+            child.kill()
+            child.wait(timeout=5)
+        self.assertFalse(alive, "I-2: terminated process must not read alive merely because OpenProcess succeeds")
+
+    def test_pid_alive_true_for_running_self_and_false_for_a_gone_pid(self):
+        import chrome_validate as cv
+        import os as _os
+        self.assertTrue(cv.pid_alive(_os.getpid()))
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait(timeout=10)  # reaped: pid is gone
+        self.assertFalse(cv.pid_alive(child.pid))
+
+
+class EndpointTables(unittest.TestCase):
+    """B-1/B-2 regressions: exact wire layouts for all four endpoint families and the retry/unavailable
+    semantics — pure bytes on any platform, no live OS reads."""
+
+    @staticmethod
+    def net(port):  # encode a port the way the IPHLPAPI tables store it (network byte order)
+        return ((port & 0x00FF) << 8) | ((port & 0xFF00) >> 8)
+
+    def test_tcp4_rows(self):
+        buf = struct.pack("<I", 2)
+        buf += struct.pack("<6I", 5, 0x0100007F, self.net(51111), 0x0100007F, self.net(52000), 42)
+        buf += struct.pack("<6I", 2, 0, self.net(80), 0, self.net(44300), 7)
+        rows = core.parse_tcp4_table(buf)
+        self.assertEqual(rows[0], {"local_port": 51111, "remote_port": 52000, "owner": 42, "state": 5})
+        self.assertEqual(rows[1], {"local_port": 80, "remote_port": 44300, "owner": 7, "state": 2})
+        with self.assertRaises(ValueError):
+            core.parse_tcp4_table(b"\x01\x00\x00\x00")  # announces 1 row, none present
+
+    def test_tcp6_rows_56_byte_stride(self):
+        buf = struct.pack("<I", 2)
+        for owner in (900, 901):
+            buf += struct.pack("<16sII16sIIII", b"\x01" * 16, 0, self.net(51111 + owner % 9),
+                               b"\x02" * 16, 0, self.net(0), 5, owner)
+        rows = core.parse_tcp6_table(buf)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0], {"local_port": 51111, "remote_port": 0, "owner": 900, "state": 5})
+        self.assertEqual(rows[1]["owner"], 901, "second row must land at offset 4+56, exactly")
+
+    def test_udp4_and_udp6_28_byte_stride(self):
+        buf4 = struct.pack("<I", 1) + struct.pack("<3I", 0, self.net(5353), 123)
+        self.assertEqual(core.parse_udp4_table(buf4), [{"local_port": 5353, "owner": 123}])
+        buf6 = struct.pack("<I", 2)
+        buf6 += struct.pack("<16sIII", b"\x0a" * 16, 0, self.net(111), 500)
+        buf6 += struct.pack("<16sIII", b"\x0b" * 16, 0, self.net(222), 501)
+        rows = core.parse_udp6_table(buf6)
+        self.assertEqual(rows, [{"local_port": 111, "owner": 500}, {"local_port": 222, "owner": 501}],
+                         "a 24-byte stride would misparse the second row to owner 496/port garbage")
+
+    def test_read_family_with_retry_then_unavailable(self):
+        calls = []
+
+        def flaky(size):
+            calls.append(size)
+            if len(calls) == 1:
+                return None, 4096, True  # table grew between probe and read
+            return b"", 4096, False
+
+        result = core.read_family_with_retry(flaky, attempts=3)
+        self.assertEqual(result, b"")
+        self.assertEqual(len(calls), 2)
+
+        def dead(size):
+            return None, 0, False
+
+        self.assertEqual(core.read_family_with_retry(dead, attempts=3), "unavailable")
+
+
+class SingleEndpointCensus(unittest.TestCase):
+    """B-1: ONE endpoint-table read backs availability, the Chrome control and host+wrapper slices."""
+
+    _tables = {"tcp4": [{"local_port": 9222, "remote_port": 0, "state": 2, "owner": 33},
+                        {"local_port": 700, "remote_port": 0, "state": 5, "owner": 11}],
+               "tcp6": "unavailable", "udp4": [], "udp6": "unavailable"}
+
+    @staticmethod
+    def _census(pid):
+        return {"top_visible": [{"class": "Chrome"}] if pid == 33 else [],
+                "top_hidden": [], "children": 0, "message_only": [], "message_only_truncated": False}
+
+    def probe(self):
+        counts = []
+
+        def reader():
+            counts.append(1)
+            return self._tables
+
+        return core.assemble_hygiene_probe([11, 22], 33, 9222, reader, self._census,
+                                           session_of=lambda pid: 1, alive_of=lambda pid: True,
+                                           observer_pid=9, observer_session=1, active_console_session=1), counts
+
+    def test_one_read_backs_chrome_host_and_wrapper_slices(self):
+        probe, counts = self.probe()
+        self.assertEqual(counts, [1], "exactly one endpoint-table read per complete probe (B-1)")
+        self.assertEqual(probe["per_pid"]["33"]["tcp4"], [(9222, 0, 2)])
+        self.assertEqual(probe["per_pid"]["11"]["tcp4"], [(700, 0, 5)])
+        self.assertEqual(probe["per_pid"]["22"]["tcp4"], [], "wrapper absence from the SAME snapshot: real zero")
+        self.assertEqual(probe["per_pid"]["33"]["tcp6"], "unavailable")
+        self.assertEqual(probe["per_pid"]["11"]["tcp6"], "unavailable")
+        self.assertEqual(probe["per_pid"]["22"]["tcp6"], "unavailable")
+        self.assertEqual(probe["controls"]["chrome_cdp_listener"]["local_port"], 9222)
+        self.assertTrue(probe["controls"]["chrome_cdp_listener_present"])
+        self.assertEqual(probe["controls"]["chrome_visible_top_level"], 1)
+        self.assertEqual(probe["endpoint_families_available"], {"tcp4": True, "tcp6": False,
+                                                               "udp4": True, "udp6": False})
+        self.assertEqual(probe["per_pid"]["33"]["pid_alive"], True)
+        self.assertEqual(probe["per_pid"]["22"]["session"], 1)
+
+    def test_slice_shape_matches_the_historical_probe(self):
+        host = dict(core.assemble_hygiene_probe([11], 33, None, lambda: {"tcp4": [], "tcp6": [], "udp4": [],
+                                                                        "udp6": []}, self._census,
+                                                 session_of=lambda pid: None, alive_of=lambda pid: None,
+                                                 observer_pid=0, observer_session=None,
+                                                 active_console_session=None)["per_pid"]["11"])
+        for key in ("top_visible", "top_hidden", "message_only", "children", "message_only_truncated",
+                    "top_hidden_classes", "message_only_classes", "tcp4", "tcp6", "udp4", "udp6",
+                    "session", "pid_alive"):
+            self.assertIn(key, host)
+
+    def test_unavailable_family_never_becomes_an_empty_list_anywhere(self):
+        probe, _ = self.probe()
+        for pid in ("11", "22", "33"):
+            self.assertEqual(probe["per_pid"][pid]["tcp6"], "unavailable")
+            self.assertEqual(probe["per_pid"][pid]["udp6"], "unavailable")
+
+
+class MeasureRefusal(unittest.TestCase):
+    """B-4: a run must refuse to measure when its metadata does not pin the platform observer bytes."""
+
+    _GOOD = "a" * 64
+
+    def _pinned(self, platform, digest=_GOOD):
+        module_names = {"windows": ("chrome_validate",),
+                        "mac": ("macos_poc", "macos_background_support", "macos_cdp", "macos_install")}[platform]
+        return {"observer_modules_missing": [],
+                "platform_observer_sha256": {name + ".py": digest for name in module_names}}
+
+    def test_require_observer_pinned_accepts_only_a_valid_complete_pin(self):
+        windows = type("A", (), {"platform": "windows"})
+        mac = type("A", (), {"platform": "mac"})
+        sm.require_observer_pinned(windows(), self._pinned("windows"))  # valid complete: no exit
+        sm.require_observer_pinned(mac(), self._pinned("mac", digest="0123456789abcdef" * 4))
+        for bad_platform in ("dos", None):
+            with self.assertRaises(SystemExit):
+                sm.require_observer_pinned(type("A", (), {"platform": bad_platform}), self._pinned("windows"))
+
+    def test_require_observer_pinned_refuses_empty_or_omitted_digest_map(self):
+        # the GPT probe: {"observer_modules_missing": [], "platform_observer_sha256": {}} must NOT pass
+        windows = type("A", (), {"platform": "windows"})
+        for bad in ({}, None, {"observer_modules_missing": []},
+                    {"observer_modules_missing": ["chrome_validate"]},
+                    {"platform_observer_sha256": {}},
+                    {"platform_observer_sha256": {"chrome_validate.py": "a" * 64}}):  # missing-list lies
+            with self.assertRaises(SystemExit):
+                sm.require_observer_pinned(windows(), bad)
+
+    def test_require_observer_pinned_refuses_none_short_and_nonhex_digests(self):
+        windows = type("A", (), {"platform": "windows"})
+        for digest in (None, "ffffff", "z" * 64, "abcdef0123456789" * 3 + "zz", 123, "a" * 63 + "g"):
+            with self.assertRaises(SystemExit):
+                sm.require_observer_pinned(windows(), self._pinned("windows", digest=digest))
+
+    def test_require_observer_pinned_refuses_missing_and_unexpected_declarations(self):
+        mac = type("A", (), {"platform": "mac"})
+        windows = type("A", (), {"platform": "windows"})
+        incomplete = self._pinned("mac")
+        del incomplete["platform_observer_sha256"]["macos_background_support.py"]  # one mac helper gone
+        incomplete["observer_modules_missing"] = ["macos_background_support"]
+        with self.assertRaises(SystemExit):
+            sm.require_observer_pinned(mac(), incomplete)
+        extra = self._pinned("mac")
+        extra["platform_observer_sha256"]["not_a_required_helper.py"] = "a" * 64
+        with self.assertRaises(SystemExit):
+            sm.require_observer_pinned(mac(), extra)
+        with self.assertRaises(SystemExit):
+            sm.require_observer_pinned(windows(), self._pinned("mac"))  # wrong platform's map
+
+    def test_observer_pin_problems_messages_are_actionable(self):
+        problems = core.observer_pin_problems("windows", {"observer_modules_missing": [],
+                                                          "platform_observer_sha256": {}})
+        self.assertTrue(any("platform_observer_sha256" in p for p in problems))
+        problems = core.observer_pin_problems("windows",
+                                              self._pinned("windows") | {"observer_modules_missing": []})
+        self.assertEqual(problems, [])
+        unknown = core.observer_pin_problems("vms", self._pinned("windows"))
+        self.assertTrue(any("unknown platform" in p for p in unknown))
+
+    def test_source_hashes_lists_an_unreadable_helper_as_missing_not_none(self):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        raw = b"# readable observer bytes\n"
+        readable = tmp / "fake_loaded.py"
+        readable.write_bytes(raw)
+        loaded = type("M", (), {"__file__": str(readable)})
+        unreadable = type("M", (), {"__file__": str(tmp / "does_not_exist.py")})
+        with unittest.mock.patch.dict(sys.modules, {"fake_loaded": loaded,
+                                                    "fake_unreadable": unreadable}):
+            hashes = core.source_hashes("windows", also_loaded=("fake_loaded", "fake_unreadable"))
+        self.assertEqual(hashes["platform_observer_sha256"].get("fake_loaded.py"),
+                         core.file_sha256(readable))
+        self.assertNotIn("fake_unreadable.py", hashes["platform_observer_sha256"],
+                         "an unreadable helper must never be pinned with a None digest")
+        self.assertIn("fake_unreadable", hashes["observer_modules_missing"])
+
+    def test_source_hashes_pins_loaded_observer_from_actual_file(self):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        raw = b"# fake observer producer bytes\n"
+        (tmp / "fake_observer.py").write_bytes(raw)
+        fake = type("M", (), {"__file__": str(tmp / "fake_observer.py")})
+        with unittest.mock.patch.dict(sys.modules, {"fake_observer": fake}):
+            hashes = core.source_hashes("windows", also_loaded=("fake_observer",))
+        self.assertEqual(hashes["platform_observer_sha256"]["fake_observer.py"],
+                         core.file_sha256(tmp / "fake_observer.py"))
+        self.assertIn("scenario_matrix.py", hashes)  # the static contract is unchanged
+        self.assertIn("chrome_validate", hashes["observer_modules_missing"],
+                      "a required name not loaded is recorded, never silently dropped")
+
+    def test_source_hashes_reports_missing_required_platform_name(self):
+        with unittest.mock.patch.object(core, "PLATFORM_OBSERVER_MODULE_NAMES",
+                                        {"windows": ("definitely_not_loaded_module_xyz",)}):
+            hashes = core.source_hashes("windows")
+        self.assertEqual(hashes["observer_modules_missing"], ["definitely_not_loaded_module_xyz"])
+        self.assertEqual(hashes["platform_observer_sha256"], {})
+
+    def test_source_hashes_without_platform_reports_no_missing(self):
+        hashes = core.source_hashes()
+        self.assertEqual(hashes["observer_modules_missing"], [])
+        self.assertEqual(hashes["platform_observer_sha256"], {})
+
+    def test_source_hashes_pins_loaded_observer_from_actual_file(self):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        raw = b"# fake observer producer bytes\n"
+        (tmp / "fake_observer.py").write_bytes(raw)
+        fake = type("M", (), {"__file__": str(tmp / "fake_observer.py")})
+        with unittest.mock.patch.dict(sys.modules, {"fake_observer": fake}):
+            hashes = core.source_hashes("windows", also_loaded=("fake_observer",))
+        self.assertEqual(hashes["platform_observer_sha256"]["fake_observer.py"],
+                         core.file_sha256(tmp / "fake_observer.py"))
+        self.assertIn("scenario_matrix.py", hashes)  # the static contract is unchanged
+        self.assertIn("chrome_validate", hashes["observer_modules_missing"],
+                      "a required name not loaded is recorded, never silently dropped")
+
+    def test_source_hashes_reports_missing_required_platform_name(self):
+        with unittest.mock.patch.object(core, "PLATFORM_OBSERVER_MODULE_NAMES",
+                                        {"windows": ("definitely_not_loaded_module_xyz",)}):
+            hashes = core.source_hashes("windows")
+        self.assertEqual(hashes["observer_modules_missing"], ["definitely_not_loaded_module_xyz"])
+        self.assertEqual(hashes["platform_observer_sha256"], {})
+
+    def test_source_hashes_without_platform_reports_no_missing(self):
+        hashes = core.source_hashes()
+        self.assertEqual(hashes["observer_modules_missing"], [])
+        self.assertEqual(hashes["platform_observer_sha256"], {})
+
+
+class MacProbeGate(unittest.TestCase):
+    """B-3: a macOS connected probe is NOT judged by the Windows integer-session comparator; its
+    launchctl/uid/SSH context is audited instead. Full fake flow through scenario_chrome."""
+
+    def _mac_result(self):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        host = {"all_layers": 0, "top_visible": 0, "top_hidden": "unavailable", "message_only": "unavailable",
+                "children": "unavailable", "tcp4": [], "tcp6": "unavailable", "udp4": "unavailable",
+                "udp6": "unavailable", "pid_alive": True, "session": None}
+        chrome = dict(host, top_visible=2, tcp4=[(51111, 0, 1)])
+
+        class FakeMacAdapter(sm.Adapter):
+            platform = role = "mac"
+            required_host_probe_fields = core.DEFAULT_MACOS_HOST_FIELDS
+
+            def integrity(self, pid):
+                return {"integrity": "n/a", "pid": pid}
+
+            def hygiene(self, pids):
+                return {"visible_windows": 0, "top_level_windows": 0, "network_endpoints": 0}
+
+            def tcc_note(self):
+                return "fake mac direct launch"
+
+            def hygiene_probe(self, pids, chrome_pid, cdp_port):
+                per_pid = {str(pid): dict(host) for pid in pids}
+                per_pid[str(chrome_pid)] = dict(chrome)
+                return {"mode": "sampled", "per_pid": per_pid,
+                        "observer": {"pid": 9, "session": {"launchctl_managername": "Aqua", "uid": 501,
+                                                           "ssh_connection_present": True}},
+                        "active_console_session": "unavailable",
+                        "controls": {"chrome_visible_top_level": 2, "chrome_cdp_listener_present": True,
+                                     "chrome_cdp_listener": {"family": "tcp4", "local_port": cdp_port}}}
+
+        with unittest.mock.patch.object(sm, "verify_gone", lambda *a, **k: {"ok": True}), \
+                unittest.mock.patch.object(sm, "Session", FakeSession):
+            return sm.scenario_chrome(FakeMacAdapter(), "port-disconnect",
+                                      argparse.Namespace(discover_s=0.1, connect_order="scan-active"),
+                                      IDENTITY, tmp)
+
+    def test_mac_session_none_is_not_a_problem_and_context_is_audited(self):
+        result = self._mac_result()
+        self.assertEqual((result["status"], result["error_class"]), ("PASS", "none"), result["actual"])
+        self.assertNotIn("criterion_conflict", result["error_class"])
+        for sample in result["detail"]["probe_during"]:
+            self.assertIn("context_audit", sample["summary"], sample["summary"])
+            self.assertTrue(sample["summary"]["context_audit"]["usable"], sample["summary"])
+            self.assertNotIn("session_problems", sample["summary"])
+            self.assertNotIn("session unavailable", " ".join(sample["summary"]["problems"]),
+                             "B-3: the macOS probe must not run the Windows integer-session gate")
+
+
+class CriterionConflict(unittest.TestCase):
+    """I-1: a never-visible wrapper console window must BLOCK the result, never quietly pass W-02."""
+
+    def _result(self, wrapper_hidden):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+
+        good = {"top_visible": 0, "top_hidden": 0, "message_only": 0, "children": 0,
+                "tcp4": [], "tcp6": [], "udp4": [], "udp6": [], "pid_alive": True, "session": 1}
+        chrome = {"top_visible": 1, "top_hidden": 0, "message_only": 0, "children": 0,
+                  "tcp4": [(51111, 0, 1)], "tcp6": [], "udp4": [], "udp6": [], "pid_alive": True, "session": 1}
+        wrapper = dict(good, top_hidden=wrapper_hidden)
+
+        class ProbeAdapter(FakeAdapter):
+            def hygiene(self, pids):
+                return {"visible_windows": 0, "top_level_windows": 0, "network_endpoints": 0}
+
+            def hygiene_probe(self, pids, chrome_pid, cdp_port):
+                per_pid = {str(pid): dict(good) for pid in pids if pid != 77}
+                per_pid["77"] = wrapper
+                per_pid[str(chrome_pid)] = chrome
+                return {"mode": "sampled", "per_pid": per_pid,
+                        "observer": {"pid": 9, "session": 1}, "active_console_session": 1,
+                        "controls": {"chrome_visible_top_level": 1, "chrome_cdp_listener_present": True,
+                                     "chrome_cdp_listener": {"family": "tcp4", "local_port": cdp_port}}}
+
+        class SessionWithWrapper(FakeSession):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.wrappers = [77]
+
+        with unittest.mock.patch.object(sm, "Session", SessionWithWrapper), \
+                unittest.mock.patch.object(sm, "verify_gone", lambda *a, **k: {"ok": True}):
+            return sm.scenario_chrome(ProbeAdapter(), "port-disconnect",
+                                      argparse.Namespace(discover_s=0.1, connect_order="scan-active"),
+                                      IDENTITY, tmp)
+
+    def test_wrapper_hidden_window_blocks_with_conflict_marker(self):
+        result = self._result(wrapper_hidden=1)
+        self.assertEqual((result["status"], result["error_class"]), ("BLOCKED", "criterion_conflict"))
+        self.assertEqual(result["detail"]["w02_wrapper_hidden_window_max"], 1)
+        self.assertIn("owner", result["actual"])
+
+    def test_zero_wrapper_windows_passes(self):
+        result = self._result(wrapper_hidden=0)
+        self.assertEqual((result["status"], result["error_class"]), ("PASS", "none"))
+
+    def test_verify_gone_forwards_platform_kwargs(self):
+        # Scenario branches pass require_join/min_released; a signature drift aborts hardware scenarios
+        # as environment FAILs, which is exactly what the first run showed. Assert the kwargs exist.
+        import inspect
+        params = inspect.signature(sm.verify_gone).parameters
+        self.assertIn("min_released", params)
+        self.assertIn("require_join", params)
 
 
 class Selection(unittest.TestCase):
@@ -375,9 +1104,15 @@ def read(n):
 if len(sys.argv) < 2 or sys.argv[1] != "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/":
     sys.exit(2)
 log("start pid=%d" % os.getpid())
+def note_exit_eof(connected_count):
+    for token in range(1, connected_count + 1):
+        log("conn %d disconnect requested epoch_ms=%d" % (token, 1793120912000 + token))
+        log("conn %d released (objects closed; link-down unconfirmed)" % token)
+    log("shutdown joined %d/%d within 10ms" % (connected_count, connected_count))
 while True:
     header = read(4)
     if not header:
+        note_exit_eof(phones)
         log("exit code=0 stdout_drained=true"); sys.exit(0)
     if len(header) < 4:
         log("in  framing violation: TruncatedHeader"); log("exit code=2 stdout_drained=true"); sys.exit(2)
@@ -410,6 +1145,12 @@ class FakeAdapter(sm.Adapter):
 
     def integrity(self, pid):
         return {"integrity": "medium", "pid": pid}
+
+    def hygiene_probe(self, pids, chrome_pid, cdp_port):
+        return {"mode": "sampled", "per_pid": {}, "observer": {"pid": 9, "session": None},
+                "active_console_session": "unavailable",
+                "controls": {"chrome_visible_top_level": "unavailable", "chrome_cdp_listener_present": None,
+                             "chrome_cdp_listener": None}}
 
     def tcc_note(self):
         return "fake direct launch"
@@ -517,6 +1258,9 @@ class FakeChrome:
         self.proc = type("P", (), {"pid": 100})()
         self.cdp = self
         self.calls = []
+        self.version = {"product": "TestChrome/0.0.0.0"}
+        self.env = {"VELES_OTP23_TRACE": "trace.log", "VELES_OTP23_DETACHED_CLOSE": None}
+        self.port = 51111
 
     def call(self, method, params=None, **_):
         self.calls.append(method)
@@ -534,6 +1278,8 @@ class FakeSession:
         self.labels, self.fail_at = labels, fail_at
         self.unexpected, self.request_ids, self.log = [], [], []
         self.host_pid, self.wrappers, self.before = 55, [], set()
+        self.host_launch_wall_ms = 1000
+        self.pending_echoes = []  # fake sends queue an echo message for the next pump() call
 
     def start(self):
         self.log.append("start")
@@ -550,7 +1296,7 @@ class FakeSession:
 
     def connect(self, devices):
         self.log.append(("connect", len(devices), devices[0]["label"]))
-        return ["handle-1"]
+        return [f"handle-{i}" for i in range(len(devices))]
 
     def exchange(self, handle, item, timeout=12.0):
         index = item["index"]
@@ -564,7 +1310,32 @@ class FakeSession:
         return base
 
     def js(self, expression, timeout=70):
+        if "'send'" in expression or '"send"' in expression:
+            self.pending_echoes.append(expression)
+            return {"type": "sent", "request_id": "fake"}
         return {"type": "shutdown_complete"} if "shutdown" in expression else {"type": "disconnected"}
+
+    def start_scan(self):
+        self.log.append("start_scan")
+
+    def pump(self):
+        """Deliver one queued fake echo per drain: the exact expected echo bytes for that request.
+
+        Like the real Session.pump, the events are unwrapped messages."""
+        if not self.pending_echoes:
+            return []
+        expression = self.pending_echoes.pop(0)
+        record_match = re.search(r"record_base64: \"([^\"]+)\"", expression)
+        handle_match = re.search(r"connection_handle: \"([^\"]+)\"", expression)
+        if not record_match:
+            return []
+        request = base64.b64decode(record_match.group(1))
+        echo = core.echo(request)
+        return [{"type": "message", "connection_handle": handle_match.group(1) if handle_match
+                 else "handle-0", "record_base64": base64.b64encode(echo).decode()}]
+
+    def parsed_trace(self):
+        return core.parse_trace("")
 
     def close(self):
         return []
@@ -577,7 +1348,8 @@ class M6Run(unittest.TestCase):
         self.barrier = self.tmp / "go"
         self.out = self.tmp / "windows.json"
         self.patches = [unittest.mock.patch.object(sm, "verify_gone", lambda *a, **k: {"ok": True}),
-                        unittest.mock.patch.object(sm, "meta_for", lambda *a, **k: {"platform": "windows"})]
+                        unittest.mock.patch.object(sm, "meta_for", lambda *a, **k: {"platform": "windows"}),
+                        unittest.mock.patch.object(sm, "require_observer_pinned", lambda *a, **k: None)]
         for patch in self.patches:
             patch.start()
             self.addCleanup(patch.stop)
@@ -897,6 +1669,469 @@ class LifecycleBlocked(unittest.TestCase):
     def test_adapter_toggle_is_operator_gated_not_fabricated(self):
         result = sm.scenario_adapter_toggle()
         self.assertEqual((result["status"], result["error_class"]), ("BLOCKED", "requires_operator"))
+
+
+class PhoneBurstAssociation(unittest.TestCase):
+    """B-5: both phones' OWN connected→disconnected bursts (transport telemetry, one shared run id)
+    must associate with the host run's own exit inside the pre-declared bound. Stale/standalone rows,
+    wrong serials/centrals/runs, out-of-bound releases and incomplete documents are rejected."""
+
+    SERIALS = ("2be02e41", "864a3db0")
+    PEER = "0123456789abbccddeefff00112233"  # 32 hex: the same central as seen by both phones
+    OTHER_PEER = "fedcba9876543210fedcba99887766"
+    CONNECT = 1_793_100_000_000  # shared connect epoch (phone-local ms)
+
+    @staticmethod
+    def _clock(offset=0, uncertainty=1500, available=True):
+        return {"available": available, "offset_phone_minus_pc_ms_median": offset,
+                "uncertainty_ms": uncertainty}
+
+    FIXTURE_PACKAGE = "me.nagaev.veles.otp23"
+    NO_STOP = object()
+
+    def _telemetry(self, run_id="run-p2-x1", peer=PEER, connected=1_793_100_000_000,
+                   disconnected=1_793_100_003_000, final=True, final_after_service_stopped=True,
+                   clean=True, truncated=False, peers_dropped=0, extra_events=None,
+                   source_package=FIXTURE_PACKAGE):
+        events = [{"seq": 1, "kind": "connected", "epoch_ms": connected},
+                  {"seq": 2, "kind": "notify_api", "epoch_ms": connected + 200, "code": 0, "bytes": 16},
+                  {"seq": 3, "kind": "notify_callback", "epoch_ms": connected + 210, "code": 0}]
+        if disconnected is not None:
+            events.append({"seq": 4, "kind": "disconnected", "epoch_ms": disconnected})
+        for extra in extra_events or []:
+            events.append(extra)
+        peers = [{"peer_sha256_prefix": peer, "connects": 1, "disconnects": 0 if disconnected is None else 1,
+                  "events": events}]
+        return {"kind": core.PHONE_TELEMETRY_KIND, "run_id": run_id, "final": final,
+                "final_after_service_stopped": final_after_service_stopped, "clean": clean,
+                "truncated": truncated, "peers_dropped": peers_dropped,
+                "source_package": source_package, "started_at_epoch_ms": connected - 1000,
+                "peers": peers}
+
+    def _doc(self, serial, telemetry, clock=None, stop=None):
+        # default stop marker: host exit+35 s on the phone clock, past bound+uncertainty (the guard
+        # fixture stays advertising through the whole window before the stop is created);
+        # NO_STOP deliberately yields an ABSENT marker (the stop-induced-guard rejection test)
+        marker = {"epoch_phone_ms": self.CONNECT + 8050 + 35_000, "epoch_pc_ms": self.CONNECT + 43_050}
+        doc = {"serial": serial, "telemetry": telemetry,
+               "clock": self._clock() if clock is None else clock}
+        if stop is None:
+            doc["fixture_stop"] = marker
+        elif stop is not self.NO_STOP:
+            doc["fixture_stop"] = stop
+        return doc
+
+    def _evaluate(self, docs, run_id="run-p2-x1", **kwargs):
+        return core.phone_burst_association(docs, self.CONNECT + 8050, self.CONNECT + 8000,
+                                            self.SERIALS, run_id=run_id,
+                                            source_package=self.FIXTURE_PACKAGE, **kwargs)
+
+    def test_accepts_proper_own_pre_post_pair(self):
+        connect, disconnect = self.CONNECT, self.CONNECT + 8000 + 3071  # ~3.07 s after own exit
+        own = self._telemetry(connected=connect, disconnected=disconnect)
+        result = self._evaluate([self._doc("2be02e41", own), self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "PASS", result["problems"])
+        self.assertTrue(result["same_central"])
+        self.assertEqual(result["central_peer_prefixes"], [self.PEER])
+        for serial in self.SERIALS:
+            burst = result["phones"][serial]["burst"]
+            self.assertEqual(burst["peer_sha256_prefix"], self.PEER)
+            self.assertEqual(burst["connected_epoch_phone_ms"], connect)
+            self.assertEqual(burst["disconnected_epoch_phone_ms"], disconnect)
+            self.assertTrue(burst["within_bound"])
+            self.assertEqual(burst["gap_vs_host_exit_ms"], 3021)
+        self.assertEqual(result["run_id"], "run-p2-x1")
+
+    def test_clock_offset_subtraction_hand_computed_offsets(self):
+        # The measured field is offset_phone_minus_pc = phone_epoch - pc_epoch, so the PC estimate is
+        # phone_epoch MINUS the offset. Both signs are hand-computed against the raw gap: the host's
+        # own exit sits CONNECT+8050, the raw (offset-free) release would be exit+1950 ms.
+        connect, disconnect = self.CONNECT, self.CONNECT + 8000 + 2000
+        # phone clock runs +406 ms AHEAD of the PC: pc_release = CONNECT+10000-406 -> gap = 1950-406.
+        own = self._telemetry(connected=connect, disconnected=disconnect)
+        ahead = self._evaluate([self._doc("2be02e41", own, self._clock(offset=406, uncertainty=900)),
+                                self._doc("864a3db0", own, self._clock(offset=406, uncertainty=900))])
+        self.assertEqual(ahead["status"], "PASS", ahead["problems"])
+        self.assertEqual(ahead["phones"]["2be02e41"]["burst"]["gap_vs_host_exit_ms"], 1544)
+        self.assertEqual(ahead["phones"]["2be02e41"]["burst"]["gap_uncertainty_interval_ms"], [644, 2444])
+        # phone clock runs 406 ms BEHIND the PC (measured offset -406): pc_release = phone+406 ->
+        # gap = 1950+406. An implementation that ADDS the offset would report 1544 here, not 2356 —
+        # the sign is pinned in both directions.
+        own = self._telemetry(connected=connect, disconnected=disconnect)
+        behind = self._evaluate([self._doc("2be02e41", own, self._clock(offset=-406, uncertainty=900)),
+                                 self._doc("864a3db0", own, self._clock(offset=-406, uncertainty=900))])
+        self.assertEqual(behind["status"], "PASS", behind["problems"])
+        self.assertEqual(behind["phones"]["2be02e41"]["burst"]["gap_vs_host_exit_ms"], 2356)
+        self.assertEqual(behind["phones"]["2be02e41"]["burst"]["gap_uncertainty_interval_ms"], [1456, 3256])
+
+    def test_rejects_standalone_old_disconnect(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 8060)
+        old = self._telemetry(connected=connect + 60_000, disconnected=None)
+        old["peers"][0]["events"].append({"seq": 9, "kind": "disconnected", "epoch_ms": connect - 60_000})
+        result = self._evaluate([self._doc("2be02e41", own), self._doc("864a3db0", old)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("864a3db0: no own-run" in p for p in result["problems"]), result["problems"])
+        self.assertTrue(any("standalone old disconnect" in p for p in result["problems"]))
+        self.assertFalse(result["phones"]["864a3db0"]["associated"])
+
+    def test_rejects_stale_connect_never_released(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        hung = self._telemetry(connected=connect + 300, disconnected=None)
+        result = self._evaluate([self._doc("2be02e41", own), self._doc("864a3db0", hung)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("stale connect" in p for p in result["problems"]), result["problems"])
+        self.assertFalse(result["phones"]["864a3db0"]["associated"])
+
+    def test_rejects_wrong_central(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        other_central = self._telemetry(connected=connect, disconnected=connect + 11_000,
+                                        peer=self.OTHER_PEER)
+        result = self._evaluate([self._doc("2be02e41", own), self._doc("864a3db0", other_central)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("different central prefixes" in p for p in result["problems"]), result["problems"])
+        self.assertFalse(result["same_central"])
+        self.assertEqual(sorted(result["central_peer_prefixes"]), sorted([self.PEER, self.OTHER_PEER]))
+
+    def test_rejects_wrong_and_missing_and_duplicate_serials(self):
+        telemetry = self._telemetry(connected=self.CONNECT, disconnected=self.CONNECT + 11_000)
+        wrong = self._evaluate([self._doc("2be02e41", telemetry), self._doc("9999ffff", telemetry)])
+        self.assertEqual(wrong["status"], "FAIL")
+        self.assertTrue(any("unexpected phone serial" in p for p in wrong["problems"]), wrong["problems"])
+        self.assertTrue(any("864a3db0: no phone document" in p for p in wrong["problems"]))
+        duplicate = self._evaluate([self._doc("2be02e41", telemetry), self._doc("2be02e41", telemetry)])
+        self.assertEqual(duplicate["status"], "FAIL")
+        self.assertTrue(any("duplicated phone document" in p for p in duplicate["problems"]))
+
+    def test_rejects_release_outside_the_predeclared_bound(self):
+        connect = self.CONNECT
+        late = connect + 61_000  # ~53 s after own exit — far beyond the 30 s pre-declared bound
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        result = self._evaluate([self._doc("2be02e41", own),
+                                 self._doc("864a3db0", self._telemetry(connected=connect, disconnected=late))])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertFalse(result["phones"]["864a3db0"]["associated"])
+        self.assertTrue(any("864a3db0: no own-run" in p for p in result["problems"]), result["problems"])
+
+    def test_rejects_release_before_host_own_exit(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        early = self._telemetry(connected=connect, disconnected=connect + 3_000)
+        result = self._evaluate([self._doc("2be02e41", own), self._doc("864a3db0", early)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertFalse(result["phones"]["864a3db0"]["associated"])
+
+    def test_rejects_post_anchor_connect(self):
+        # a connect far after the run's disconnect anchor can never be this run's "pre"
+        own = self._telemetry(connected=self.CONNECT, disconnected=self.CONNECT + 11_000)
+        fresh = self._telemetry(connected=self.CONNECT + 90_000, disconnected=self.CONNECT + 92_000)
+        result = self._evaluate([self._doc("2be02e41", own), self._doc("864a3db0", fresh)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertFalse(result["phones"]["864a3db0"]["associated"])
+        self.assertTrue(any("864a3db0: no own-run" in p for p in result["problems"]), result["problems"])
+
+    def test_rejects_run_id_mismatch_and_differing_run_ids(self):
+        connect = self.CONNECT
+        first = self._telemetry(run_id="run-p2-x1", connected=connect, disconnected=connect + 11_000)
+        second = self._telemetry(run_id="run-p2-other", connected=connect, disconnected=connect + 11_000)
+        differing = self._evaluate([self._doc("2be02e41", first), self._doc("864a3db0", second)])
+        self.assertEqual(differing["status"], "FAIL")
+        self.assertTrue(any("different run ids" in p for p in differing["problems"]), differing["problems"])
+        matching = [self._doc(s, self._telemetry(run_id="run-a", connected=connect,
+                                                 disconnected=connect + 11_000)) for s in self.SERIALS]
+        mismatch = self._evaluate(matching, run_id="run-b")
+        self.assertEqual(mismatch["status"], "FAIL")
+        self.assertTrue(any("does not match the declared run binding" in p for p in mismatch["problems"]))
+
+    def test_rejects_missing_empty_phone_run_id_fail_closed(self):
+        # B5-2 completeness guard: EVERY expected phone document carries the SAME non-empty run id;
+        # a document silently skipped by the old shared-set logic is now a named problem
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        for label, bad_id in (("missing", None), ("empty", "")):
+            with self.subTest(case=label):
+                blank = self._telemetry(run_id=bad_id, connected=connect, disconnected=connect + 11_000)
+                result = self._evaluate([self._doc("2be02e41", blank), self._doc("864a3db0", own)])
+                self.assertEqual(result["status"], "FAIL")
+                self.assertTrue(any("2be02e41: telemetry run id missing/empty" in p
+                                    for p in result["problems"]), result["problems"])
+
+    def test_rejects_false_final_after_service_stopped(self):
+        # B5-2 completeness guard: `final_after_service_stopped` must be literally True — the
+        # instrument finished only after the fixture service stopped, or the document is incomplete
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        premature = self._telemetry(connected=connect, disconnected=connect + 11_000,
+                                    final_after_service_stopped=False)
+        result = self._evaluate([self._doc("2be02e41", premature), self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL", result["problems"])
+        self.assertTrue(any("2be02e41: final_after_service_stopped is not true" in p
+                            for p in result["problems"]), result["problems"])
+
+    def test_rejects_missing_invalid_stop_pc_and_stop_phone_fail_closed(self):
+        # B5-2 completeness guard: BOTH stop epochs (phone-side and PC-side) must be present and
+        # finite for every expected document — no field may be missing without a named problem
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        cases = {
+            "missing stop pc": {"epoch_phone_ms": self.CONNECT + 43_050, "epoch_pc_ms": None},
+            "string stop pc": {"epoch_phone_ms": self.CONNECT + 43_050, "epoch_pc_ms": "1793170430500"},
+            "missing stop phone": {"epoch_phone_ms": None, "epoch_pc_ms": self.CONNECT + 43_050},
+            "string stop phone": {"epoch_phone_ms": "1793170430500", "epoch_pc_ms": self.CONNECT + 43_050},
+        }
+        for label, marker in cases.items():
+            with self.subTest(case=label):
+                result = self._evaluate([self._doc("2be02e41", own, stop=marker),
+                                         self._doc("864a3db0", own)])
+                self.assertEqual(result["status"], "FAIL", label)
+                self.assertTrue(any("2be02e41: fixture stop marker missing/unusable" in p
+                                    for p in result["problems"]), result["problems"])
+
+    def test_num_helper_rejects_nonfinite_floats(self):
+        # B5-2 closure: the shared finite-number predicate accepts ints, excludes bools and rejects
+        # the three IEEE non-finite floats (json.loads accepts NaN/Infinity/-Infinity tokens, so the
+        # guard must hold at the parser boundary)
+        self.assertTrue(core._num(0))
+        self.assertTrue(core._num(-1793170763088))
+        self.assertTrue(core._num(1793170763088.5))
+        self.assertFalse(core._num(True), "bool is not a number")
+        self.assertFalse(core._num(False))
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                self.assertFalse(core._num(value), f"{value!r} is not a finite number")
+        self.assertFalse(core._num(None))
+        self.assertFalse(core._num("1793170763088"))
+
+    def test_rejects_nonfinite_stop_epochs_fail_closed(self):
+        # B5-2 closure: BOTH supposedly-finite stop epochs must reject NaN/+Inf/-Inf (each in each
+        # field); a validator that returned PASS here would fail open at the json boundary
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        for field in ("epoch_phone_ms", "epoch_pc_ms"):
+            for label, value in (("nan", float("nan")), ("+inf", float("inf")),
+                                 ("-inf", float("-inf"))):
+                with self.subTest(field=field, value=label):
+                    marker = {"epoch_phone_ms": self.CONNECT + 43_050, "epoch_pc_ms": self.CONNECT + 43_050}
+                    marker[field] = value
+                    result = self._evaluate([self._doc("2be02e41", own, stop=marker),
+                                             self._doc("864a3db0", own)])
+                    self.assertEqual(result["status"], "FAIL", label)
+                    self.assertTrue(any("2be02e41: fixture stop marker missing/unusable" in p
+                                        for p in result["problems"]), result["problems"])
+                    self.assertFalse(result["phones"]["2be02e41"]["associated"])
+
+    def test_rejects_nonfinite_clock_values(self):
+        # the same finite predicate guards the measured clock block: non-finite offset or
+        # uncertainty can never support the ±uncertainty comparisons
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        for field, value in (("offset_phone_minus_pc_ms_median", float("nan")),
+                             ("offset_phone_minus_pc_ms_median", float("inf")),
+                             ("offset_phone_minus_pc_ms_median", float("-inf")),
+                             ("uncertainty_ms", float("nan")),
+                             ("uncertainty_ms", float("inf")),
+                             ("uncertainty_ms", float("-inf"))):
+            with self.subTest(field=field, value=value):
+                bad = self._clock(offset=0, uncertainty=1500)
+                bad[field] = value
+                result = self._evaluate([self._doc("2be02e41", own, bad),
+                                         self._doc("864a3db0", own)])
+                self.assertEqual(result["status"], "FAIL")
+                self.assertTrue(any("2be02e41: fresh measured clock offset unavailable" in p
+                                    for p in result["problems"]), result["problems"])
+
+    def test_rejects_nonfinite_event_epoch_and_host_anchors(self):
+        # the same finite predicate guards event epochs and the host-side anchors
+        connect = self.CONNECT
+        extra = [{"seq": 9, "kind": "disconnected", "epoch_ms": float("nan")}]
+        event_nan = self._telemetry(connected=connect, disconnected=connect + 11_000,
+                                    extra_events=extra)
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        result = self._evaluate([self._doc("2be02e41", event_nan), self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL", result["problems"])
+        self.assertTrue(any("event without usable epoch_ms" in p for p in result["problems"]),
+                        result["problems"])
+        docs = [self._doc(s, own) for s in self.SERIALS]
+        for label, value in (("nan", float("nan")), ("+inf", float("inf"))):
+            with self.subTest(anchor=label):
+                anchor_bad = core.phone_burst_association(docs, value, connect + 8000,
+                                                          self.SERIALS, run_id="run-p2-x1")
+                self.assertEqual(anchor_bad["status"], "FAIL")
+                self.assertTrue(any("host exit/anchor epochs missing" in p
+                                    for p in anchor_bad["problems"]))
+
+    def test_num_accepts_huge_ints_without_overflow(self):
+        # B5-2 exact-branch repair: every Python int is mathematically finite and must be accepted
+        # WITHOUT a float conversion — math.isfinite(10**1000) would raise OverflowError ("int too
+        # large to convert to float"), so the helper branches ints before any float work
+        self.assertTrue(core._num(10**1000))
+        self.assertTrue(core._num(-(10**1000)))
+        self.assertTrue(core._num(1793170763088))
+        self.assertFalse(core._num(False), "bool stays excluded")
+        for value in (float("nan"), float("inf"), float("-inf")):
+            self.assertFalse(core._num(value), "existing non-finite rejections stay green")
+
+    def test_giant_stop_epochs_never_escape_the_validator(self):
+        # a giant int passes `_num()` but can still overflow LATER validator arithmetic (the
+        # fixture-stop guard divides the stop margin by 1000 to format its problem): that
+        # OverflowError must surface as a controlled `numeric_range` FAIL, never an uncaught
+        # exception — no new gate, ordinary finite data unchanged
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        # huge-negative PC stop while the phone-side stop is ordinary: the phone-side checks pass,
+        # the association fits, and the huge negative margin overflows the guard's message arithmetic
+        overflowing = {"epoch_phone_ms": self.CONNECT + 43_050, "epoch_pc_ms": -(10**1000)}
+        result = self._evaluate([self._doc("2be02e41", own, stop=overflowing),
+                                 self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("numeric_range" in p for p in result["problems"]), result["problems"])
+        # huge-positive stops complete under the UNCHANGED criteria (the stop sits far past the
+        # declared window, satisfying the guard): no crash, semantics untouched
+        huge_positive = {"epoch_phone_ms": 10**1000, "epoch_pc_ms": 10**1000}
+        result = self._evaluate([self._doc("2be02e41", own, stop=huge_positive),
+                                 self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "PASS", result["problems"])
+        self.assertTrue(result["phones"]["864a3db0"]["associated"])
+        # huge-negative on BOTH sides trips the existing phone-side named checks instead of crashing
+        huge_negative = {"epoch_phone_ms": -(10**1000), "epoch_pc_ms": -(10**1000)}
+        result = self._evaluate([self._doc("2be02e41", own, stop=huge_negative),
+                                 self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("fixture stop marker predates the telemetry start" in p
+                            for p in result["problems"]), result["problems"])
+        self.assertFalse(result["phones"]["2be02e41"]["associated"])
+
+    def test_rejects_incomplete_or_unusable_documents(self):
+        connect = self.CONNECT
+        good = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        cases = {
+            "not final": dict(final=False), "truncated": dict(truncated=True),
+            "peers dropped": dict(peers_dropped=1), "not clean": dict(clean=False),
+        }
+        for label, kwargs in cases.items():
+            with self.subTest(case=label):
+                broken = self._telemetry(connected=connect, disconnected=connect + 11_000, **kwargs)
+                result = self._evaluate([self._doc("2be02e41", broken), self._doc("864a3db0", good)])
+                self.assertEqual(result["status"], "FAIL", result["problems"])
+        nothing = self._evaluate([self._doc("2be02e41", None), self._doc("864a3db0", good)])
+        self.assertEqual(nothing["status"], "FAIL")
+        self.assertTrue(any("2be02e41: telemetry missing/unreadable" in p for p in nothing["problems"]))
+        bad_clock = self._evaluate([self._doc("2be02e41", good),
+                                    self._doc("864a3db0", good, self._clock(available=False))])
+        self.assertEqual(bad_clock["status"], "FAIL")
+        self.assertTrue(any("clock offset unavailable" in p for p in bad_clock["problems"]), bad_clock["problems"])
+
+    def test_rejects_ambiguous_double_burst_in_window(self):
+        connect = self.CONNECT
+        extra = [{"seq": 5, "kind": "connected", "epoch_ms": connect + 100},
+                 {"seq": 6, "kind": "disconnected", "epoch_ms": connect + 12_000}]
+        double = self._telemetry(connected=connect, disconnected=connect + 11_000, extra_events=extra)
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        result = self._evaluate([self._doc("2be02e41", double), self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("ambiguous" in p for p in result["problems"]), result["problems"])
+        self.assertFalse(result["phones"]["2be02e41"]["associated"])
+
+    def test_rejects_foreign_central_pair_alongside_own(self):
+        # a second central's OWN full pair (its own peer record) alongside this run's central:
+        # two bursts, both potentially binding — never silently selectable
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        foreign = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        foreign["peers"].append({
+            "peer_sha256_prefix": self.OTHER_PEER, "connects": 1, "disconnects": 1,
+            "events": [{"seq": 21, "kind": "connected", "epoch_ms": connect + 4_000},
+                       {"seq": 22, "kind": "connected", "epoch_ms": connect + 4_800},
+                       {"seq": 23, "kind": "connected", "epoch_ms": connect + 4_900},
+                       {"seq": 24, "kind": "disconnected", "epoch_ms": connect + 12_000},
+                       {"seq": 25, "kind": "disconnected", "epoch_ms": connect + 12_100}]})
+        result = self._evaluate([self._doc("2be02e41", foreign), self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("ambiguous" in p for p in result["problems"]), result["problems"])
+
+    def test_rejects_stop_induced_release_at_the_fixture_stop(self):
+        # the fixture stop itself closes the GATT server: a disconnect AT/AFTER the stop marker is
+        # stop-induced and must fail even though it sits inside the 30 s bound
+        connect = self.CONNECT
+        stop_phone = self.CONNECT + 13_050  # stop 5 s after own exit (an early-stop mistake)
+        induced = self._telemetry(connected=connect, disconnected=stop_phone)
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        early_stop = {"epoch_phone_ms": stop_phone, "epoch_pc_ms": self.CONNECT + 13_050}
+        result = self._evaluate([self._doc("2be02e41", induced, stop=early_stop),
+                                 self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("2be02e41: the disconnected event is at/after the fixture stop marker"
+                            in p for p in result["problems"]), result["problems"])
+        self.assertFalse(result["phones"]["2be02e41"]["associated"])
+
+    def test_rejects_stop_before_the_full_declared_window(self):
+        # the stop marker must sit at least bound+clock-uncertainty after the host's own exit, so the
+        # whole pre-declared window was observed with the fixture still advertising
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        marker = {"epoch_phone_ms": self.CONNECT + 8050 + 20_000,
+                  "epoch_pc_ms": self.CONNECT + 28_050}  # only ~20 s after exit < 30 s + uncertainty
+        result = self._evaluate([self._doc("2be02e41", own, stop=marker),
+                                 self._doc("864a3db0", own, stop=marker)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("before the full pre-declared window" in p for p in result["problems"]),
+                        result["problems"])
+
+    def test_accepts_release_before_stop_with_stop_past_full_window(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_071)
+        marker = {"epoch_phone_ms": self.CONNECT + 8050 + 38_000,
+                  "epoch_pc_ms": self.CONNECT + 8050 + 38_000}  # 38 s after exit: bound+uncertainty+margin
+        result = self._evaluate([self._doc("2be02e41", own, stop=marker),
+                                 self._doc("864a3db0", own, stop=marker)])
+        self.assertEqual(result["status"], "PASS", result["problems"])
+
+    def test_rejects_acceptance_path_without_stop_marker(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        result = self._evaluate([self._doc("2be02e41", own, stop=self.NO_STOP),
+                                 self._doc("864a3db0", own, stop=self.NO_STOP)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("fixture stop marker missing/unusable" in p for p in result["problems"]),
+                        result["problems"])
+        self.assertFalse(result["phones"]["2be02e41"]["associated"])
+
+    def test_rejects_foreign_run_event_before_telemetry_start(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        # a connect stamped BEFORE the document's started_at (the real instrument-run start) cannot
+        # belong to this run
+        foreign = self._telemetry(connected=self.CONNECT - 60_000, disconnected=connect + 11_000)
+        foreign["started_at_epoch_ms"] = connect - 1000
+        result = self._evaluate([self._doc("2be02e41", foreign), self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("predates this telemetry's start" in p for p in result["problems"]),
+                        result["problems"])
+
+    def test_rejects_source_package_mismatch(self):
+        connect = self.CONNECT
+        own = self._telemetry(connected=connect, disconnected=connect + 11_000)
+        wrong = self._telemetry(connected=connect, disconnected=connect + 11_000,
+                                source_package="me.nagaev.veles")
+        result = self._evaluate([self._doc("2be02e41", wrong), self._doc("864a3db0", own)])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any("source_package" in p and "declared" in p for p in result["problems"]),
+                        result["problems"])
+
+    def test_missing_host_anchors_fail(self):
+        connect = self.CONNECT
+        docs = [self._doc("2be02e41", self._telemetry(connected=connect, disconnected=connect + 11_000)),
+                self._doc("864a3db0", self._telemetry(connected=connect, disconnected=connect + 11_000))]
+        missing = core.phone_burst_association(docs, None, connect + 8000, self.SERIALS, run_id="run-p2-x1")
+        self.assertEqual(missing["status"], "FAIL")
+        self.assertTrue(any("host exit/anchor epochs missing" in p for p in missing["problems"]))
+        declared_missing = core.phone_burst_association(docs, connect + 8050, connect + 8000, None,
+                                                        run_id="run-p2-x1",
+                                                        source_package=self.FIXTURE_PACKAGE)
+        self.assertEqual(declared_missing["status"], "FAIL")
+        self.assertTrue(any("expected phone serials not declared" in p for p in declared_missing["problems"]))
 
 
 if __name__ == "__main__":

@@ -29,6 +29,8 @@ import time
 import traceback
 from ctypes import wintypes
 
+import scenario_matrix_core as core
+
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXT_DIR = ROOT / "extension"
@@ -231,6 +233,191 @@ def network_endpoints_of(pid):
     )
 
 
+# ---- OTP-23 package1: connected-phase window/endpoint probe (one machine read per sample) -----------
+
+_IPHLPAPI = None
+
+
+def _iphlpapi():
+    global _IPHLPAPI
+    if _IPHLPAPI is None:
+        _IPHLPAPI = ctypes.WinDLL("iphlpapi", use_last_error=True)
+    return _IPHLPAPI
+
+
+def endpoint_table():
+    """One snapshot of every TCP (IPv4+IPv6) and UDP (IPv4+IPv6) endpoint with its owning pid.
+
+    Only ports, owner pids and raw states are recorded (no addresses). A family whose API read finally
+    fails stays the string "unavailable" — never an invented empty list (a false zero); per-family
+    availability travels with the probe. The bytes are parsed by the pure functions in
+    scenario_matrix_core so the parse is unit-tested on every platform."""
+    iphlp = _iphlpapi()
+    core = sys.modules.get("scenario_matrix_core") or _import_core()
+    tables = {"tcp4": "unavailable", "tcp6": "unavailable", "udp4": "unavailable", "udp6": "unavailable"}
+    family_api = (("tcp4", 2, core.TCP_TABLE_OWNER_PID_ALL, iphlp.GetExtendedTcpTable),
+                  ("tcp6", 23, core.TCP_TABLE_OWNER_PID_ALL, iphlp.GetExtendedTcpTable),
+                  ("udp4", 2, core.UDP_TABLE_OWNER_PID, iphlp.GetExtendedUdpTable),
+                  ("udp6", 23, core.UDP_TABLE_OWNER_PID, iphlp.GetExtendedUdpTable))
+    for family, af, table_class, api in family_api:
+        def read_once(size, af=af, table_class=table_class, api=api):
+            size_arg = wintypes.ULONG(size)
+            err = api(None, ctypes.byref(size_arg), False, af, table_class, 0)
+            if err != core.ERROR_INSUFFICIENT_BUFFER:
+                return None, size_arg.value, False
+            buf = ctypes.create_string_buffer(max(size_arg.value, size))
+            err = api(buf, ctypes.byref(size_arg), False, af, table_class, 0)
+            if err == 0:
+                return buf.raw[:size_arg.value], size_arg.value, False
+            if err == core.ERROR_INSUFFICIENT_BUFFER:  # the table grew between the two calls: retry
+                return None, size_arg.value, True
+            return None, size_arg.value, False
+
+        raw = core.read_family_with_retry(read_once)
+        if raw == "unavailable":
+            tables[family] = "unavailable"
+            continue
+        parser = {"tcp4": core.parse_tcp4_table, "tcp6": core.parse_tcp6_table,
+                  "udp4": core.parse_udp4_table, "udp6": core.parse_udp6_table}[family]
+        try:
+            tables[family] = parser(raw)
+        except ValueError:
+            tables[family] = "unavailable"  # a misparsed table must not look like absence
+    return tables
+
+
+def endpoints_of_pid_sliced(tables, pid):
+    """Compat name kept for the B-1 semantics: slice `pid` from the caller's ONE snapshot object.
+
+    Never re-reads the table and holds no global cache; the probe passes the same `tables` it gave to
+    the Chrome control. (The former cache/implicit re-read path was removed: endpoint_table() must be
+    read exactly once per sample and sliced explicitly.)"""
+    return core.endpoints_from_table(tables, pid)
+
+
+def _import_core():  # kept for any early callers before the module-level import exists
+    return core
+
+
+def window_inventory(pid):
+    """Window census owned by `pid`: top-level (visible/hidden), message-only and child counts.
+
+    EnumWindows skips message-only windows, so they are enumerated separately via FindWindowEx from
+    HWND_MESSAGE: the walk covers the full message-only list (cap 65536) and sets `message_only_truncated`
+    if the cap ends the walk early — a truncated census is unavailable for that kind, never under-reported.
+    Only counts, visibility and class names are recorded (no titles)."""
+    user32 = ctypes.windll.user32
+    user32.FindWindowExW.restype = wintypes.HWND
+    user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+    census = {"top_visible": [], "top_hidden": [], "children": 0, "message_only_truncated": False}
+    class_of = {}
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def count_children(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid:
+            census["children"] += 1
+        return True
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid:
+            name = ctypes.create_unicode_buffer(128)
+            user32.GetClassNameW(hwnd, name, 128)
+            class_of[hwnd] = name.value
+            (census["top_visible"] if user32.IsWindowVisible(hwnd) else census["top_hidden"]).append(
+                {"class": name.value, "hwnd_index": len(class_of)})
+        return True
+
+    user32.EnumWindows(visit, 0)
+    for hwnd in list(class_of):
+        user32.EnumChildWindows(hwnd, count_children, 0)
+    message_only = []
+    walker = user32.FindWindowExW(wintypes.HWND(-3), wintypes.HWND(0), None, None)
+    while walker is not None and len(message_only) < 65536:
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(walker, ctypes.byref(owner))
+        if owner.value == pid:
+            name = ctypes.create_unicode_buffer(128)
+            user32.GetClassNameW(walker, name, 128)
+            message_only.append({"class": name.value})
+        walker = user32.FindWindowExW(wintypes.HWND(-3), walker, None, None)
+    census["message_only_truncated"] = len(message_only) >= 65536
+    return {"top_visible": census["top_visible"], "top_hidden": census["top_hidden"],
+            "children": census["children"], "message_only": message_only,
+            "message_only_truncated": census["message_only_truncated"]}
+
+
+_KERNEL32 = None
+
+
+def session_of(pid):
+    session = wintypes.DWORD(0)
+    ok = _kernel32().ProcessIdToSessionId(pid, ctypes.byref(session))
+    return session.value if ok else None
+
+
+def _kernel32():
+    global _KERNEL32
+    if _KERNEL32 is None:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.WTSGetActiveConsoleSessionId.restype = wintypes.DWORD
+        kernel.ProcessIdToSessionId.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        kernel.ProcessIdToSessionId.restype = wintypes.BOOL
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        _KERNEL32 = kernel
+    return _KERNEL32
+
+
+STILL_ACTIVE = 259  # kernel32.GetExitCodeProcess value while the process is running
+
+
+def pid_alive(pid):
+    """True when the process object exists AND has not exited (I-2): an OpenProcess success alone is not
+    proof — Windows keeps a terminated-but-still-open process object open while handles remain, so
+    GetExitCodeProcess must report STILL_ACTIVE. Pids that exist but cannot be opened (access denied)
+    are alive; anything else (including a failed exit-code query) is fail-closed dead/unavailable."""
+    kernel = _kernel32()
+    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if handle:
+        try:
+            code = wintypes.DWORD(0)
+            if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False  # cannot assert liveness from a failed exit-code query
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel.CloseHandle(handle)
+    return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED: exists, cannot query
+
+
+def active_console_session():
+    return _kernel32().WTSGetActiveConsoleSessionId()
+
+
+def hygiene_probe(pids, chrome_pid, cdp_port):
+    """Connected-phase probe: windows + endpoints + session identity + mandatory positive controls.
+
+    The endpoint table is read EXACTLY ONCE and the same immutable snapshot object is sliced for the
+    Chrome CDP-listener control and every host/wrapper pid (B-1 — assembly itself is the pure
+    core.assemble_hygiene_probe so the one-read semantics are unit-tested everywhere). The same
+    enumeration that judges the host's absence must also see Chrome's visible window and hear Chrome's
+    CDP listener, or the caller marks the sample unusable (unavailable is never reported as zero)."""
+    kernel = _kernel32()
+    return core.assemble_hygiene_probe(
+        list(pids), chrome_pid, cdp_port,
+        read_endpoint_table=endpoint_table, census_of=window_inventory,
+        session_of=session_of, alive_of=pid_alive,
+        observer_pid=os.getpid(), observer_session=session_of(os.getpid()),
+        active_console_session=kernel.WTSGetActiveConsoleSessionId())
+
+
 def wait_gone(pid, timeout=10.0):
     start = time.time()
     while time.time() - start < timeout:
@@ -371,6 +558,7 @@ class ChromeRun:
         self.profile = pathlib.Path(tempfile.mkdtemp(prefix="veles-otp23-profile-"))
         env = os.environ.copy()
         env.update(extra_env)
+        self.env = env  # kept for evidence: the environment Chrome (and thus the host) actually received
         args = [
             CHROME, f"--user-data-dir={self.profile}", "--remote-debugging-port=0",
             "--enable-unsafe-extension-debugging", "--no-first-run", "--no-default-browser-check",
@@ -389,7 +577,8 @@ class ChromeRun:
             shutil.rmtree(self.profile, ignore_errors=True)
             raise RuntimeError("Chrome did not publish DevToolsActivePort")
         port, path = port_file.read_text().splitlines()[:2]
-        self.cdp = Cdp(WebSocket("127.0.0.1", int(port), path))
+        self.port = int(port)
+        self.cdp = Cdp(WebSocket("127.0.0.1", self.port, path))
         self.version = self.cdp.call("Browser.getVersion")
 
     def load_extension(self):

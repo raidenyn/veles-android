@@ -1,0 +1,1585 @@
+Bluetooth Status
+  enabled: true
+  state: ON
+  address: XX:XX:XX:XX:0E:C4
+  name: OnePlus 10 Pro 5G
+  time since enabled: 157:02:07.156
+
+Enable log:
+  08-11 23:15:05.885 	Package [android] requested to [Enable]. 	Reason is SYSTEM_BOOT
+  08-11 23:15:08.586 	Package [android] requested to [EnableBle]. 	Reason is APPLICATION_REQUEST
+
+Bluetooth crashed 0 times
+
+1 BLE app registered
+  android
+
+BluetoothManagerService:
+  mEnable:true
+  mQuietEnable:false
+  mEnableExternal:true
+  mQuietEnableExternal:false
+
+🚩Flag dump:
+	[■]: a2dpAsyncAllowLowLatency                               a2dp_async_allow_low_latency
+	[■]: a2dpConcurrentSourceSink                               a2dp_concurrent_source_sink
+	[ ]: a2dpIgnoreStartedWhenResponder                         a2dp_ignore_started_when_responder
+	[■]: a2dpOffloadCodecExtensibility                          a2dp_offload_codec_extensibility
+	[ ]: a2dpServiceLooper                                      a2dp_service_looper
+	[ ]: absVolumeSdpConflict                                   abs_volume_sdp_conflict
+	[■]: airplaneModeXBleOn                                     airplane_mode_x_ble_on
+	[■]: allowSwitchingHidAndHogp                               allow_switching_hid_and_hogp
+	[■]: androidHeadtrackerService                              android_headtracker_service
+	[■]: apiGetConnectionStateUsingIdentityAddress              api_get_connection_state_using_identity_address
+	[■]: ashaAsrc                                               asha_asrc
+	[■]: asymmetricPhyForUnidirectionalCis                      asymmetric_phy_for_unidirectional_cis
+	[■]: audioPortBinderInheritRt                               audio_port_binder_inherit_rt
+	[ ]: audioRoutingCentralization                             audio_routing_centralization
+	[■]: autoConnectOnHfpWhenNoA2dpDevice                       auto_connect_on_hfp_when_no_a2dp_device
+	[ ]: autoConnectOnMultipleHfpWhenNoA2dpDevice               auto_connect_on_multiple_hfp_when_no_a2dp_device
+	[■]: autoOnFeature                                          auto_on_feature
+	[ ]: avdtpErrorCodes                                        avdtp_error_codes
+	[ ]: avoidStaticLoadingOfNative                             avoid_static_loading_of_native
+	[ ]: avrcpConnectA2dpDelayed                                avrcp_connect_a2dp_delayed
+	[ ]: avrcpSdpRecords                                        avrcp_sdp_records
+	[■]: bleCheckDataLengthOnLegacyAdvertising                  ble_check_data_length_on_legacy_advertising
+	[ ]: bleContextMapRemoveFix                                 ble_context_map_remove_fix
+	[■]: bleGattServerUseAddressTypeInConnection                ble_gatt_server_use_address_type_in_connection
+	[ ]: bleScanAdvMetricsRedesign                              ble_scan_adv_metrics_redesign
+	[ ]: bluetoothPowerTelemetry                                bluetooth_power_telemetry
+	[ ]: bondTransportAfterBondCancelFix                        bond_transport_after_bond_cancel_fix
+	[■]: breakUhidPollingEarly                                  break_uhid_polling_early
+	[ ]: browsingRefactor                                       browsing_refactor
+	[ ]: btSocketApiL2capCid                                    bt_socket_api_l2cap_cid
+	[■]: btSystemContextReport                                  bt_system_context_report
+	[ ]: btaAgCmdBrsfAllowUint32                                bta_ag_cmd_brsf_allow_uint32
+	[ ]: btaAvSetconfigRejTypeConfusion                         bta_av_setconfig_rej_type_confusion
+	[ ]: btaAvUsePeerCodec                                      bta_av_use_peer_codec
+	[ ]: btaDmDeferDeviceDiscoveryStateChangeUntilRnrComplete   bta_dm_defer_device_discovery_state_change_until_rnr_complete
+	[■]: btaDmDiscStuckInCancellingFix                          bta_dm_disc_stuck_in_cancelling_fix
+	[ ]: btaDmDiscoverBoth                                      bta_dm_discover_both
+	[ ]: cancelPairingOnlyOnDisconnectedTransport               cancel_pairing_only_on_disconnected_transport
+	[■]: channelSounding                                        channel_sounding
+	[ ]: channelSoundingInStack                                 channel_sounding_in_stack
+	[■]: cleanupLeOnlyDeviceType                                cleanup_le_only_device_type
+	[ ]: clearCollisionStateOnPairingComplete                   clear_collision_state_on_pairing_complete
+	[■]: closeRfcommInsteadOfReset                              close_rfcomm_instead_of_reset
+	[■]: connectHidAfterServiceDiscovery                        connect_hid_after_service_discovery
+	[ ]: continueServiceDiscoveryWhenCancelDeviceDiscovery      continue_service_discovery_when_cancel_device_discovery
+	[■]: correctBondTypeOfLoadedDevices                         correct_bond_type_of_loaded_devices
+	[ ]: deviceIotConfigLogging                                 device_iot_config_logging
+	[■]: divideLongSingleGapData                                divide_long_single_gap_data
+	[■]: doNotReplaceExistingCodWithUncategorizedCod            do_not_replace_existing_cod_with_uncategorized_cod
+	[■]: dumpsysAcquireStackWhenExecuting                       dumpsys_acquire_stack_when_executing
+	[ ]: enableHapByDefault                                     enable_hap_by_default
+	[ ]: enableSniffOffload                                     enable_sniff_offload
+	[ ]: encryptedAdvertisingData                               encrypted_advertising_data
+	[■]: ensureValidAdvFlag                                     ensure_valid_adv_flag
+	[■]: enumerateGattErrors                                    enumerate_gatt_errors
+	[■]: explicitKillFromSystemServer                           explicit_kill_from_system_server
+	[ ]: fastBindToApp                                          fast_bind_to_app
+	[ ]: fixHfpQual19                                           fix_hfp_qual19
+	[■]: fixLeOobPairingBypass                                  fix_le_oob_pairing_bypass
+	[■]: fixLePairingPasskeyEntryBypass                         fix_le_pairing_passkey_entry_bypass
+	[■]: fixNonconnectableScannableAdvertisement                fix_nonconnectable_scannable_advertisement
+	[■]: fixPairingFailureReasonFromRemote                      fix_pairing_failure_reason_from_remote
+	[ ]: flossSeparateHostPrivacyAndLlprivacy                   floss_separate_host_privacy_and_llprivacy
+	[■]: forceBredrForSdpRetry                                  force_bredr_for_sdp_retry
+	[■]: gattCleanupRestrictedHandles                           gatt_cleanup_restricted_handles
+	[■]: gattDropAclOnOutOfResourcesFix                         gatt_drop_acl_on_out_of_resources_fix
+	[■]: gattFixDeviceBusy                                      gatt_fix_device_busy
+	[■]: gattReconnectOnBtOnFix                                 gatt_reconnect_on_bt_on_fix
+	[■]: gattRediscoverOnCanceled                               gatt_rediscover_on_canceled
+	[ ]: gdxDeviceDiscovery                                     gdx_device_discovery
+	[ ]: gdxServiceDiscovery                                    gdx_service_discovery
+	[■]: getAddressTypeApi                                      get_address_type_api
+	[ ]: handleDeliverySendingFailureEvents                     handle_delivery_sending_failure_events
+	[ ]: headsetClientAmHfVolumeSymmetric                       headset_client_am_hf_volume_symmetric
+	[■]: headtrackerCodecCapability                             headtracker_codec_capability
+	[■]: hfpCodecAptxVoice                                      hfp_codec_aptx_voice
+	[ ]: hidReportQueuing                                       hid_report_queuing
+	[ ]: higherL2capFlushThreshold                              higher_l2cap_flush_threshold
+	[ ]: identityAddressNullIfUnknown                           identity_address_null_if_unknown
+	[■]: ignoreBondTypeForLe                                    ignore_bond_type_for_le
+	[ ]: isScoManagedByAudio                                    is_sco_managed_by_audio
+	[■]: keepHfpActiveDuringLeaudioHandover                     keep_hfp_active_during_leaudio_handover
+	[■]: keepStoppedMediaBrowserService                         keep_stopped_media_browser_service
+	[ ]: keyMissingAsOrderedBroadcast                           key_missing_as_ordered_broadcast
+	[■]: keyMissingBroadcast                                    key_missing_broadcast
+	[ ]: keyMissingClassicDevice                                key_missing_classic_device
+	[ ]: killInsteadOfExit                                      kill_instead_of_exit
+	[ ]: l2capLeDoNotAdjustMinInterval                          l2cap_le_do_not_adjust_min_interval
+	[ ]: l2capPCcbCheckRewrite                                  l2cap_p_ccb_check_rewrite
+	[ ]: l2capTxCompleteCbInfo                                  l2cap_tx_complete_cb_info
+	[ ]: leAudioBaseEcosystemInterval                           le_audio_base_ecosystem_interval
+	[■]: leAudioDevTypeDetectionFix                             le_audio_dev_type_detection_fix
+	[ ]: leAudioSupportUnidirectionalVoiceAssistant             le_audio_support_unidirectional_voice_assistant
+	[■]: leInquiryDuration                                      le_inquiry_duration
+	[■]: lePeriodicScanningReassembler                          le_periodic_scanning_reassembler
+	[■]: leScanFixRemoteException                               le_scan_fix_remote_exception
+	[ ]: leScanUseAddressType                                   le_scan_use_address_type
+	[■]: leScanUseUidForImportance                              le_scan_use_uid_for_importance
+	[■]: leaudioActiveDeviceManagerGroupHandlingFix             leaudio_active_device_manager_group_handling_fix
+	[■]: leaudioAddSamplingFrequencies                          leaudio_add_sampling_frequencies
+	[ ]: leaudioAllowLeaudioOnlyDevices                         leaudio_allow_leaudio_only_devices
+	[ ]: leaudioAllowedContextMask                              leaudio_allowed_context_mask
+	[■]: leaudioApiSynchronizedBlockFix                         leaudio_api_synchronized_block_fix
+	[ ]: leaudioBigDependsOnAudioState                          leaudio_big_depends_on_audio_state
+	[■]: leaudioBroadcastAssistantHandleCommandStatuses         leaudio_broadcast_assistant_handle_command_statuses
+	[ ]: leaudioBroadcastAssistantPeripheralEntrustment         leaudio_broadcast_assistant_peripheral_entrustment
+	[■]: leaudioBroadcastAudioHandoverPolicies                  leaudio_broadcast_audio_handover_policies
+	[ ]: leaudioBroadcastDestroyAfterTimeout                    leaudio_broadcast_destroy_after_timeout
+	[ ]: leaudioBroadcastExtractPeriodicScannerFromStateMachine leaudio_broadcast_extract_periodic_scanner_from_state_machine
+	[■]: leaudioBroadcastFeatureSupport                         leaudio_broadcast_feature_support
+	[■]: leaudioBroadcastMonitorSourceSyncStatus                leaudio_broadcast_monitor_source_sync_status
+	[ ]: leaudioBroadcastStopOnStreamingRequest                 leaudio_broadcast_stop_on_streaming_request
+	[■]: leaudioBroadcastVolumeControlForConnectedDevices       leaudio_broadcast_volume_control_for_connected_devices
+	[ ]: leaudioBroadcastVolumeControlWithSetVolume             leaudio_broadcast_volume_control_with_set_volume
+	[■]: leaudioCallbackOnGroupStreamStatus                     leaudio_callback_on_group_stream_status
+	[ ]: leaudioCodecConfigCallbackOrderFix                     leaudio_codec_config_callback_order_fix
+	[■]: leaudioDynamicSpatialAudio                             leaudio_dynamic_spatial_audio
+	[■]: leaudioEnableHealthBasedActions                        leaudio_enable_health_based_actions
+	[ ]: leaudioGettingActiveStateSupport                       leaudio_getting_active_state_support
+	[■]: leaudioHalClientAsrc                                   leaudio_hal_client_asrc
+	[■]: leaudioMcsTbsAuthorizationRebondFix                    leaudio_mcs_tbs_authorization_rebond_fix
+	[ ]: leaudioMonoLocationErrata                              leaudio_mono_location_errata
+	[ ]: leaudioMulticodecAidlSupport                           leaudio_multicodec_aidl_support
+	[■]: leaudioMultipleVocsInstancesApi                        leaudio_multiple_vocs_instances_api
+	[ ]: leaudioNoContextValidateStreamingRequest               leaudio_no_context_validate_streaming_request
+	[■]: leaudioQuickLeaudioToggleSwitchFix                     leaudio_quick_leaudio_toggle_switch_fix
+	[■]: leaudioResumeActiveAfterHfpHandover                    leaudio_resume_active_after_hfp_handover
+	[ ]: leaudioStartRequestStateMutexCheck                     leaudio_start_request_state_mutex_check
+	[■]: leaudioStartStreamRaceFix                              leaudio_start_stream_race_fix
+	[ ]: leaudioSynchronizeStart                                leaudio_synchronize_start
+	[■]: leaudioUnicastInactivateDeviceBasedOnContext           leaudio_unicast_inactivate_device_based_on_context
+	[ ]: leaudioUseAudioModeListener                            leaudio_use_audio_mode_listener
+	[■]: leaudioVolumeChangeOnRingtoneFix                       leaudio_volume_change_on_ringtone_fix
+	[■]: loadDidConfigFromSysprops                              load_did_config_from_sysprops
+	[ ]: mapLimitNotification                                   map_limit_notification
+	[ ]: mcpAllowPlayWithoutActivePlayer                        mcp_allow_play_without_active_player
+	[■]: metadataApiInactiveAudioDeviceUponConnection           metadata_api_inactive_audio_device_upon_connection
+	[■]: mfiHasUuid                                             mfi_has_uuid
+	[ ]: msftAddrTrackingQuirk                                  msft_addr_tracking_quirk
+	[ ]: nrpaNonConnectableAdv                                  nrpa_non_connectable_adv
+	[■]: oppFixMultipleNotificationsIssues                      opp_fix_multiple_notifications_issues
+	[ ]: oppIgnoreContentObserverAfterServiceStop               opp_ignore_content_observer_after_service_stop
+	[■]: oppStartActivityDirectlyFromNotification               opp_start_activity_directly_from_notification
+	[■]: pairingOnUnknownTransport                              pairing_on_unknown_transport
+	[ ]: phyToNative                                            phy_to_native
+	[■]: pretendNetworkService                                  pretend_network_service
+	[■]: preventHogpReconnectWhenConnected                      prevent_hogp_reconnect_when_connected
+	[ ]: randomizeDeviceLevelMediaIds                           randomize_device_level_media_ids
+	[■]: readModelNumFix                                        read_model_num_fix
+	[■]: removeAddressMapOnUnbond                               remove_address_map_on_unbond
+	[ ]: resetAfterCollision                                    reset_after_collision
+	[ ]: resetAgStateOnCollision                                reset_ag_state_on_collision
+	[■]: resetPairingOnlyForRelatedServiceDiscovery             reset_pairing_only_for_related_service_discovery
+	[ ]: respectBleScanSetting                                  respect_ble_scan_setting
+	[■]: retryEscoWithZeroRetransmissionEffort                  retry_esco_with_zero_retransmission_effort
+	[ ]: rfcommAlwaysUseMitm                                    rfcomm_always_use_mitm
+	[ ]: rfcommBypassPostToMain                                 rfcomm_bypass_post_to_main
+	[■]: rnrPresentDuringServiceDiscovery                       rnr_present_during_service_discovery
+	[■]: rnrResetStateAtCancel                                  rnr_reset_state_at_cancel
+	[ ]: rnrStoreDeviceType                                     rnr_store_device_type
+	[ ]: rnrValidatePageScanRepetitionMode                      rnr_validate_page_scan_repetition_mode
+	[ ]: runBleAudioTicksInWorkerThread                         run_ble_audio_ticks_in_worker_thread
+	[ ]: runClockRecoveryInWorkerThread                         run_clock_recovery_in_worker_thread
+	[■]: saveInitialHidConnectionPolicy                         save_initial_hid_connection_policy
+	[ ]: scanManagerRefactor                                    scan_manager_refactor
+	[ ]: scanRecordManufacturerDataMerge                        scan_record_manufacturer_data_merge
+	[ ]: secDontClearKeysOnEncryptionErr                        sec_dont_clear_keys_on_encryption_err
+	[■]: separateServiceAndDeviceDiscovery                      separate_service_and_device_discovery
+	[■]: settingsCanControlHapPreset                            settings_can_control_hap_preset
+	[■]: sinkAudioPolicyHandover                                sink_audio_policy_handover
+	[ ]: skipUnknownRobustCaching                               skip_unknown_robust_caching
+	[ ]: stackSdpDetectNilPropertyType                          stack_sdp_detect_nil_property_type
+	[ ]: stackSdpDisconnectWhenCancelInPendingState             stack_sdp_disconnect_when_cancel_in_pending_state
+	[■]: supportExclusiveManager                                support_exclusive_manager
+	[ ]: supportMetadataDeviceTypesApis                         support_metadata_device_types_apis
+	[ ]: suppressHidRejectionBroadcast                          suppress_hid_rejection_broadcast
+	[ ]: synchronousBtaSec                                      synchronous_bta_sec
+	[ ]: systemServerMessenger                                  system_server_messenger
+	[■]: temporaryPairingDeviceProperties                       temporary_pairing_device_properties
+	[ ]: uncachePlayerWhenBrowsedPlayerChanges                  uncache_player_when_browsed_player_changes
+	[■]: unixFileSocketCreationFailure                          unix_file_socket_creation_failure
+	[■]: updateInquiryResultOnFlagChange                        update_inquiry_result_on_flag_change
+	[■]: useDspCodecWhenControllerDoesNotSupport                use_dsp_codec_when_controller_does_not_support
+	[ ]: useEntireMessageHandle                                 use_entire_message_handle
+	[ ]: useLeShimConnectionMapGuard                            use_le_shim_connection_map_guard
+	[■]: useLocalOobExtendedCommand                             use_local_oob_extended_command
+	[ ]: vcpMuteUnmute                                          vcp_mute_unmute
+
+
+AdapterProperties
+  Name: OnePlus 10 Pro 5G
+  ScanMode: SCAN_MODE_CONNECTABLE
+  ConnectionState: STATE_DISCONNECTED
+  State: ON
+  MaxConnectedAudioDevices: 5
+  A2dpOffloadEnabled: true
+  Discovering: false
+  DiscoveryEndMs: 0
+  Bonded devices:
+
+  Scan Mode Changes:
+    10-21 19:53:58.974 (uid/pid=1002/4671) SCAN_MODE_CONNECTABLE
+    10-21 19:53:59.202 (uid/pid=1000/5776) SCAN_MODE_CONNECTABLE_DISCOVERABLE
+    10-21 19:53:59.222 (uid/pid=1000/5776) SCAN_MODE_CONNECTABLE_DISCOVERABLE
+    10-21 19:55:59.222 (uid/pid=1000/5776) SCAN_MODE_CONNECTABLE
+sSnoopLogSettingAtEnable = EMPTY
+sDefaultSnoopLogSettingAtEnable = null
+
+Enabled Profile Services:
+  A2DP
+  AVRCP
+  BATTERY
+  HEADSET
+  HEARING_AID
+  HID_DEVICE
+  HID_HOST
+  GATT
+  MAP
+  OPP
+  PAN
+  PBAP
+
+AdapterState:
+ total records=4
+ rec[0]: time=08-11 23:15:09.567 processed=OffState org=OffState dest=TurningBleOnState what=3(0x3) BLE_TURN_ON
+ rec[1]: time=08-11 23:15:10.080 processed=TurningBleOnState org=TurningBleOnState dest=BleOnState what=7(0x7) BLE_STARTED
+ rec[2]: time=08-11 23:15:10.122 processed=BleOnState org=BleOnState dest=TurningOnState what=1(0x1) USER_TURN_ON
+ rec[3]: time=10-21 19:53:58.975 processed=TurningOnState org=TurningOnState dest=OnState what=5(0x5) BREDR_STARTED
+curState=OnState
+
+SilenceDeviceManager:
+  Address            | Is silenced?
+
+BluetoothDatabase:
+  Metadata Changes:
+    10-23 05:05:11.420 (uid/pid=1002/4671) XX:XX:XX:XX:BA:54 Metadata created
+    10-25 18:59:15.373 (uid/pid=1002/4671) XX:XX:XX:XX:16:F1 Metadata created
+    10-26 07:56:35.064 (uid/pid=1002/4671) XX:XX:XX:XX:A1:4D Metadata created
+
+Metadata:
+    XX:XX:XX:XX:16:F1 last_active_time=16 {profile connection policy(A2DP=-1|A2DP_SINK=-1|CSIP_SET_COORDINATOR=-1|HEADSET=-1|HEADSET_CLIENT=-1|HID_HOST=-1|PAN=-1|PBAP=-1|PBAP_CLIENT=-1|MAP=-1|MAP_CLIENT=-1|SAP=-1|HAP=-1|HEARING_AID=-1|LE_AUDIO=-1|VOLUME_CONTROL=-1|LE_CALL_CONTROL=-1|LE_BROADCAST_ASSISTANT=-1|BATTERY=-1), optional codec(support=-1|enabled=-1), isActiveHfpDevice (false), custom metadata(manufacturer_name=null|model_name=null|software_version=null|hardware_version=null|companion_app=null|main_icon=null|is_untethered_headset=null|untethered_left_icon=null|untethered_right_icon=null|untethered_case_icon=null|untethered_left_battery=null|untethered_right_battery=null|untethered_case_battery=null|untethered_left_charging=null|untethered_right_charging=null|untethered_case_charging=null|enhanced_settings_ui_uri=null|device_type=null|main_battery=null|main_charging=null|main_low_battery_threshold=null|untethered_left_low_battery_threshold=null|untethered_right_low_battery_threshold=null|untethered_case_low_battery_threshold=null|spatial_audio=null|fastpair_customized=null|le_audio=null|gmcs_cccd=null|gtbs_cccd=null|exclusive_manager=null), hfp client audio policy(callEstablishAudioPolicy=0|connectingTimeAudioPolicy=0|inBandRingtoneAudioPolicy=0)}
+    XX:XX:XX:XX:A1:4D last_active_time=126 {profile connection policy(A2DP=-1|A2DP_SINK=-1|CSIP_SET_COORDINATOR=-1|HEADSET=-1|HEADSET_CLIENT=-1|HID_HOST=-1|PAN=-1|PBAP=-1|PBAP_CLIENT=-1|MAP=-1|MAP_CLIENT=-1|SAP=-1|HAP=-1|HEARING_AID=-1|LE_AUDIO=-1|VOLUME_CONTROL=-1|LE_CALL_CONTROL=-1|LE_BROADCAST_ASSISTANT=-1|BATTERY=-1), optional codec(support=-1|enabled=-1), isActiveHfpDevice (false), custom metadata(manufacturer_name=null|model_name=null|software_version=null|hardware_version=null|companion_app=null|main_icon=null|is_untethered_headset=null|untethered_left_icon=null|untethered_right_icon=null|untethered_case_icon=null|untethered_left_battery=null|untethered_right_battery=null|untethered_case_battery=null|untethered_left_charging=null|untethered_right_charging=null|untethered_case_charging=null|enhanced_settings_ui_uri=null|device_type=null|main_battery=null|main_charging=null|main_low_battery_threshold=null|untethered_left_low_battery_threshold=null|untethered_right_low_battery_threshold=null|untethered_case_low_battery_threshold=null|spatial_audio=null|fastpair_customized=null|le_audio=null|gmcs_cccd=null|gtbs_cccd=null|exclusive_manager=null), hfp client audio policy(callEstablishAudioPolicy=0|connectingTimeAudioPolicy=0|inBandRingtoneAudioPolicy=0)}
+    XX:XX:XX:XX:5D:24 last_active_time=182 {profile connection policy(A2DP=-1|A2DP_SINK=-1|CSIP_SET_COORDINATOR=-1|HEADSET=-1|HEADSET_CLIENT=-1|HID_HOST=-1|PAN=-1|PBAP=-1|PBAP_CLIENT=-1|MAP=-1|MAP_CLIENT=-1|SAP=-1|HAP=-1|HEARING_AID=-1|LE_AUDIO=-1|VOLUME_CONTROL=-1|LE_CALL_CONTROL=-1|LE_BROADCAST_ASSISTANT=-1|BATTERY=-1), optional codec(support=-1|enabled=-1), isActiveHfpDevice (false), custom metadata(manufacturer_name=null|model_name=null|software_version=null|hardware_version=null|companion_app=null|main_icon=null|is_untethered_headset=null|untethered_left_icon=null|untethered_right_icon=null|untethered_case_icon=null|untethered_left_battery=null|untethered_right_battery=null|untethered_case_battery=null|untethered_left_charging=null|untethered_right_charging=null|untethered_case_charging=null|enhanced_settings_ui_uri=null|device_type=null|main_battery=null|main_charging=null|main_low_battery_threshold=null|untethered_left_low_battery_threshold=null|untethered_right_low_battery_threshold=null|untethered_case_low_battery_threshold=null|spatial_audio=null|fastpair_customized=null|le_audio=null|gmcs_cccd=null|gtbs_cccd=null|exclusive_manager=null), hfp client audio policy(callEstablishAudioPolicy=0|connectingTimeAudioPolicy=0|inBandRingtoneAudioPolicy=0)}
+    XX:XX:XX:XX:BA:54 last_active_time=14 {profile connection policy(A2DP=-1|A2DP_SINK=-1|CSIP_SET_COORDINATOR=-1|HEADSET=-1|HEADSET_CLIENT=-1|HID_HOST=-1|PAN=-1|PBAP=-1|PBAP_CLIENT=-1|MAP=-1|MAP_CLIENT=-1|SAP=-1|HAP=-1|HEARING_AID=-1|LE_AUDIO=-1|VOLUME_CONTROL=-1|LE_CALL_CONTROL=-1|LE_BROADCAST_ASSISTANT=-1|BATTERY=-1), optional codec(support=-1|enabled=-1), isActiveHfpDevice (false), custom metadata(manufacturer_name=null|model_name=null|software_version=null|hardware_version=null|companion_app=null|main_icon=null|is_untethered_headset=null|untethered_left_icon=null|untethered_right_icon=null|untethered_case_icon=null|untethered_left_battery=null|untethered_right_battery=null|untethered_case_battery=null|untethered_left_charging=null|untethered_right_charging=null|untethered_case_charging=null|enhanced_settings_ui_uri=null|device_type=null|main_battery=null|main_charging=null|main_low_battery_threshold=null|untethered_left_low_battery_threshold=null|untethered_right_low_battery_threshold=null|untethered_case_low_battery_threshold=null|spatial_audio=null|fastpair_customized=null|le_audio=null|gmcs_cccd=null|gtbs_cccd=null|exclusive_manager=null), hfp client audio policy(callEstablishAudioPolicy=0|connectingTimeAudioPolicy=0|inBandRingtoneAudioPolicy=0)}
+
+Profile: GattService
+  mAdvertisingServiceUuids:
+
+Registered App
+  Scanner:
+      app_if: 1, appName: com.google.uid.shared:10124
+  Client:
+  Server:
+      app_if: 6, appName: com.google.uid.shared:10124
+      app_if: 7, appName: me.nagaev.veles.otp23
+
+
+GATT Scanner Map
+  Entries: 1
+
+  com.google.uid.shared:10124
+  LE scans (started/stopped)                                  : 209 / 208
+  Scan time in ms (active/suspend/total)                      : 595685113 / 7918 / 595693031
+  Scan time with mode in ms (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):259424702 / 19925418 / 107018394 / 166582 / 209150017 / 0
+  Scan mode counter (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):33 / 23 / 74 / 28 / 51
+  Score                                                       : 81201226
+  Total number of results                                     : 8681
+  Last 5 scans                                                :
+    10-27 20:45:58 - 846405ms Filter 2 results (2) CB Auto Batch Scan
+      └ Scan Config: [ ScanMode=LOW_POWER, callbackType=ALL_MATCHES_AUTO_BATCH ]
+      └ BluetoothLeScanFilter [ ServiceDataUuid=0000feaa-0000-1000-8000-00805f9b34fb ServiceData=[] ServiceDataMask=[] ]
+    10-27 20:40:58 - 5684640ms Opp Filter 0 results (1) CB Regular Scan
+      └ Scan Config: [ ScanMode=OPPORTUNISTIC, callbackType=ALL_MATCHES ]
+      └ BluetoothLeScanFilter [ ServiceDataUuid=0000fcf1-0000-1000-8000-00805f9b34fb ServiceData=[] ServiceDataMask=[] ]
+    10-27 22:28:31 - 1037846ms Filter 4 results (1) CB Auto Batch Scan
+      └ Scan Config: [ ScanMode=LOW_POWER, callbackType=ALL_MATCHES_AUTO_BATCH ]
+      └ BluetoothLeScanFilter [ ServiceDataUuid=0000feaa-0000-1000-8000-00805f9b34fb ServiceData=[] ServiceDataMask=[] ]
+    10-28 05:05:08 - 221031ms Opp Filter 0 results (1) CB Regular Scan
+      └ Scan Config: [ ScanMode=OPPORTUNISTIC, callbackType=ALL_MATCHES ]
+      └ BluetoothLeScanFilter [ ServiceDataUuid=0000fcf1-0000-1000-8000-00805f9b34fb ServiceData=[] ServiceDataMask=[] ]
+    10-28 08:37:21 - 810733ms Filter 1 results (2) CB Auto Batch Scan
+      └ Scan Config: [ ScanMode=LOW_POWER, callbackType=ALL_MATCHES_AUTO_BATCH ]
+      └ BluetoothLeScanFilter [ ServiceDataUuid=0000feaa-0000-1000-8000-00805f9b34fb ServiceData=[] ServiceDataMask=[] ]
+  Ongoing scans                                               :
+    10-28 08:29:29 - 1598957ms Opp Filter 0 results (1) CB Regular Scan
+      └ Scan Config: [ ScanMode=OPPORTUNISTIC, callbackType=ALL_MATCHES ]
+      └ BluetoothLeScanFilter [ ServiceDataUuid=0000fcf1-0000-1000-8000-00805f9b34fb ServiceData=[] ServiceDataMask=[] ]
+
+GATT Advertiser Map
+
+  last 5 advertising:
+    com.google.uid.shared:10124
+     Advertising ID                                     : 0
+      1:
+        └Start time                                     : 10-28 08:43:16
+        └Stop time                                      : 10-28 08:43:18
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 160
+        └TX POWER(dbm)                                  : -7
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : false
+        └Scannable                                      : false
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Data(UUID, length of data)           : 
+            [0000fef3-xxxx-xxxx-xxxx-xxxxxxxxxxxx, 6]
+
+    com.google.uid.shared:10124
+     Advertising ID                                     : 1
+      1:
+        └Start time                                     : 10-28 08:29:29
+        └Stop time                                      : 10-28 08:43:51
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 400
+        └TX POWER(dbm)                                  : 1
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : true
+        └Scannable                                      : true
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Data(UUID, length of data)           : 
+            [0000fcf1-xxxx-xxxx-xxxx-xxxxxxxxxxxx, 20]
+
+    me.nagaev.veles.otp23
+     Advertising ID                                     : 2
+      1:
+        └Start time                                     : 10-28 08:31:18
+        └Stop time                                      : 10-28 08:54:03
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 160
+        └TX POWER(dbm)                                  : -7
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : true
+        └Scannable                                      : true
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Uuids                                : 
+            [8e40000-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+    com.google.uid.shared:10124
+     Advertising ID                                     : 3
+      1:
+        └Start time                                     : 10-28 08:43:16
+        └Stop time                                      : 10-28 08:55:25
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 1600
+        └TX POWER(dbm)                                  : -15
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : false
+        └Scannable                                      : false
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Data(UUID, length of data)           : 
+            [0000fef3-xxxx-xxxx-xxxx-xxxxxxxxxxxx, 27]
+
+    com.google.uid.shared:10124
+     Advertising ID                                     : 2
+      1:
+        └Start time                                     : 10-28 08:55:25
+        └Stop time                                      : 10-28 08:55:27
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 160
+        └TX POWER(dbm)                                  : -7
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : false
+        └Scannable                                      : false
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Data(UUID, length of data)           : 
+            [0000fef3-xxxx-xxxx-xxxx-xxxxxxxxxxxx, 6]
+
+  Total number of ongoing advertising                   : 3
+  Ongoing advertising:
+    com.google.uid.shared:10124
+     Advertising ID                                     : 0
+      1:
+        └Start time                                     : 10-28 08:43:51
+        └Elapsed time                                   : 737330ms
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 400
+        └TX POWER(dbm)                                  : 1
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : true
+        └Scannable                                      : true
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Data(UUID, length of data)           : 
+            [0000fcf1-xxxx-xxxx-xxxx-xxxxxxxxxxxx, 20]
+
+    me.nagaev.veles.otp23
+     Advertising ID                                     : 1
+      1:
+        └Start time                                     : 10-28 08:54:09
+        └Elapsed time                                   : 119168ms
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 160
+        └TX POWER(dbm)                                  : -7
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : true
+        └Scannable                                      : true
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Uuids                                : 
+            [8e40000-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+    com.google.uid.shared:10124
+     Advertising ID                                     : 3
+      1:
+        └Start time                                     : 10-28 08:55:25
+        └Elapsed time                                   : 43215ms
+        └Duration(10ms unit)                            : 0
+        └Maximum number of extended advertising events  : 0
+      └Advertising:
+        └Interval(0.625ms)                              : 1600
+        └TX POWER(dbm)                                  : -15
+        └Primary Phy                                    : LE_1M
+        └Secondary Phy                                  : LE_1M
+        └Legacy                                         : true
+        └Anonymous                                      : false
+        └Connectable                                    : false
+        └Scannable                                      : false
+        └Advertise Data:
+          └Include Device Name                          : false
+          └Include Tx Power Level                       : false
+          └Service Data(UUID, length of data)           : 
+            [0000fef3-xxxx-xxxx-xxxx-xxxxxxxxxxxx, 27]
+
+GATT Client Map
+  Entries: 1
+
+  com.google.uid.shared:10124
+  LE scans (started/stopped)                                  : 0 / 0
+  Scan time in ms (active/suspend/total)                      : 0 / 0 / 0
+  Scan time with mode in ms (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0 / 0
+  Scan mode counter (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0
+  Score                                                       : 0
+  Total number of results                                     : 0
+
+GATT Server Map
+  Entries: 4
+
+  me.nagaev.veles.debug
+  LE scans (started/stopped)                                  : 0 / 0
+  Scan time in ms (active/suspend/total)                      : 0 / 0 / 0
+  Scan time with mode in ms (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0 / 0
+  Scan mode counter (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0
+  Score                                                       : 0
+  Total number of results                                     : 0
+
+  me.nagaev.veles.otp23
+  LE scans (started/stopped)                                  : 0 / 0
+  Scan time in ms (active/suspend/total)                      : 0 / 0 / 0
+  Scan time with mode in ms (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0 / 0
+  Scan mode counter (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0
+  Score                                                       : 0
+  Total number of results                                     : 0
+
+  com.google.uid.shared:10124 (Registered)
+  LE scans (started/stopped)                                  : 0 / 0
+  Scan time in ms (active/suspend/total)                      : 0 / 0 / 0
+  Scan time with mode in ms (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0 / 0
+  Scan mode counter (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0
+  Score                                                       : 0
+  Total number of results                                     : 0
+  Application ID                     : 6
+  UUID                               : b9ae14da-c953-484c-a9f2-6f7a88d0f7b3
+  Connections: 0
+
+  me.nagaev.veles.otp23 (Registered)
+  LE scans (started/stopped)                                  : 0 / 0
+  Scan time in ms (active/suspend/total)                      : 0 / 0 / 0
+  Scan time with mode in ms (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0 / 0
+  Scan mode counter (Opp/LowPower/Balanced/LowLatency/AmbientDiscovery):0 / 0 / 0 / 0 / 0
+  Score                                                       : 0
+  Total number of results                                     : 0
+  Application ID                     : 7
+  UUID                               : 95df1562-c750-4c38-b654-767522d8fb3a
+  Connections: 0
+
+GATT Handle Map
+  Entries: 11
+  Requests: 77
+  6: [134] Service 0000fef3-0000-1000-8000-00805f9b34fb, started true
+  6: [136]   Characteristic 00000100-0004-1000-8000-001a11000102
+  6: [137]     Descriptor 00002902-0000-1000-8000-00805f9b34fb
+  6: [139]   Characteristic 00000100-0004-1000-8000-001a11000101
+  6: [140] Service 0000fcf1-0000-1000-8000-00805f9b34fb, started true
+  6: [142]   Characteristic fe2c1237-8366-4814-8eb0-01de32100bea
+  6: [143]     Descriptor 00002902-0000-1000-8000-00805f9b34fb
+  7: [144] Service 8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51, started true
+  7: [146]   Characteristic 8e400001-8f3c-4d1a-b64a-8e3c9b0d2a51
+  7: [148]   Characteristic 8e400002-8f3c-4d1a-b64a-8e3c9b0d2a51
+  7: [149]     Descriptor 00002902-0000-1000-8000-00805f9b34fb
+
+Profile: A2dpService
+  mActiveDevice: null
+  mMaxConnectedAudioDevices: 5
+  codecConfigPriorities:
+    SBC: 1001
+    AAC: 2001
+    aptX: 3001
+    aptX HD: 4001
+    LDAC: 8001
+    Opus: 6001
+    LHDC: 9001
+    LHDC: 9002
+    aptX Adaptive: 5001
+  mA2dpOffloadEnabled: true
+  codecConfigOffloading:
+    {codecName:aptX Adaptive,mCodecType:16,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:null,mCodecType:1000000,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:LDAC,mCodecType:4,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:aptX HD,mCodecType:3,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:null,mCodecType:1000000,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:aptX,mCodecType:2,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:AAC,mCodecType:1,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:aptX TWS+,mCodecType:17,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+    {codecName:SBC,mCodecType:0,mCodecPriority:0,mSampleRate:0x0(NONE),mBitsPerSample:0x0(NONE),mChannelMode:0x0(NONE),mCodecSpecific1:0,mCodecSpecific2:0,mCodecSpecific3:0,mCodecSpecific4:0}
+
+Profile: AvrcpTargetService:
+  AVRCP version: 1.5
+  List of MediaControllers: size=1
+    Media Player 1: com.spotify.music
+    MediaController (com.spotify.music@6e1f3b5) null, null, null
+    Current Data:
+      Song: { mediaId="currsong" title="Not Provided" artist="" album="" duration=0 trackPosition=1/1 image=null }
+      PlayState: null
+      Queue: size=0
+    BTAudio Playback State change Event:
+  
+  List of Browsers: size=0
+  BTAudio Active Player Events:
+  
+  BTAudio Audio Playback State Events:
+  
+  BTAudio Media Key Events:
+  
+  AvrcpVolumeManager:
+    mCurrentDevice: null
+    Current System Volume: 10
+    Device Volume Memory Map:
+      Device Address    : Device Name    : Vol : AbsVol
+    BTAudio Volume Events:
+      10-21 19:53:58.927 syncOnAudioDevicesAddedFromA2dp: Not expecting device changed
+      10-21 19:53:58.927 onAudioDevicesAdded: Implement remove to syncOnAudioDevicesAddedFromA2dp()
+
+Profile: BatteryService
+
+Profile: HeadsetService
+  mMaxHeadsetConnections: 5
+  DefaultMaxHeadsetConnections: 5
+  mActiveDevice: null
+  isInbandRingingEnabled: true
+  isInbandRingingSupported: true
+  mInbandRingingRuntimeDisable: true
+  mAudioRouteAllowed: true
+  mVoiceRecognitionStarted: false
+  mVoiceRecognitionTimeoutEvent: null
+  mVirtualCallStarted: false
+  mDialingOutTimeoutEvent: null
+  mForceScoAudio: false
+  AudioManager.isBluetoothScoOn(): false
+  Telecom.isInCall(): false
+  Telecom.isRinging(): false
+
+Profile: HearingAidService
+
+Profile: HidDeviceService
+
+Profile: HidHostService
+  mTargetDevice: null
+  mInputDevices:
+
+Profile: BluetoothMapService
+  mRemoteDevice: null
+  sRemoteDeviceName: null
+  mState: 0
+  mAppObserver: com.android.bluetooth.map.BluetoothMapAppObserver@9741a4a
+  mIsWaitingAuthorization: false
+  mRemoveTimeoutMsg: false
+  mPermission: 0
+  mAccountChanged: false
+  mBluetoothMnsObexClient: null
+  mMasInstanceMap:
+    null : MasId: 0 Uri:null SMS/MMS:true
+  mEnabledAccounts:
+
+Profile: BluetoothOppService
+
+Profile: PanService
+  mMaxPanDevices: 5
+  mPanIfName: bt-pan
+  mTetherOn: false
+  mPanDevices:
+
+Profile: BluetoothPbapService
+ActiveDeviceManager:
+  mA2dpActiveDevice: null
+  mHfpActiveDevice: null
+  mLeAudioActiveDevice: null
+  mA2dpConnectedDeviceNum: 0
+  mHfpConnectedDeviceNum: 0
+  mLeAudioConnectedDeviceNum: 0
+ActiveDevice Manager Event:
+
+
+  BluetoothA2dpLowLatencyModeImpl
+    mEnableLL: true
+    mGameMode: false
+    mLowLatencyMode: false
+    mIsSwitchLHDCing: false
+    mIsSetCodecOngoing: false
+    mCurrentTimeStamp: 565345554
+    mLastCodecUpdateTime: 0
+    mA2dpSuspendTimestamp: 0
+    mActiveMediaPlayerController: null
+    mActiveMediaPlayerState: 0
+
+  BluetoothA2dpLowLatencyUtil
+    mLowLatencyMode: 1
+      GamePackageProcess
+    mGamePackageName: null
+    mPid: 0
+    mUid: 0
+    mIsForegroud: false
+    mWatingTime: 0
+    mBackgroudTimestmp: 0
+    mIsProcessDied: true
+    mProcessDiedTimeStamp: 0
+
+
+Connection Events:
+  10-28 08:54:41.088 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:54:41.087 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:54:41.087 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:54:41.087 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:54:41.087 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:54:34.647 CONNECTED    xx:xx:xx:xx:5d:24
+  10-28 08:54:34.647 CONNECTED    xx:xx:xx:xx:5d:24
+  10-28 08:54:34.647 CONNECTED    xx:xx:xx:xx:5d:24
+  10-28 08:54:34.646 CONNECTED    xx:xx:xx:xx:5d:24
+  10-28 08:54:34.646 CONNECTED    xx:xx:xx:xx:5d:24
+  10-28 08:51:40.250 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:51:40.249 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:51:40.249 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:51:40.249 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:51:40.249 DISCONNECTED xx:xx:xx:xx:5d:24 reason=0
+  10-28 08:51:35.366 CONNECTED    xx:xx:xx:xx:5d:24
+
+Bond Events: 
+  Total Number of events: 0
+
+Link Key Types:
+
+AVRCP Native State:
+  Devices (0 / 5):
+
+A2DP State:
+  TxQueue:
+  Counts (enqueue/dequeue/readbuf)                        : 0 / 0 / 0
+  Last update time ago in ms (enqueue/dequeue/readbuf)    : 0 / 0 / 0
+  Frames per packet (total/max/ave)                       : 0 / 0 / 0
+  Counts (flushed/dropped/dropouts)                       : 0 / 0 / 0
+  Counts (max dropped)                                    : 0
+  Last update time ago in ms (flushed/dropped)            : 0 / 0
+  Counts (underflow)                                      : 0
+  Bytes (underflow)                                       : 0
+  Last update time ago in ms (underflow)                  : 0
+  Enqueue deviation counts (overdue/premature)            : 0 / 0
+  Enqueue overdue scheduling time in ms (total/max/ave)   : 0 / 0 / 0
+  Enqueue premature scheduling time in ms (total/max/ave) : 0 / 0 / 0
+  Dequeue deviation counts (overdue/premature)            : 0 / 0
+  Dequeue overdue scheduling time in ms (total/max/ave)   : 0 / 0 / 0
+  Dequeue premature scheduling time in ms (total/max/ave) : 0 / 0 / 0
+
+A2DP Peers State:
+  Active peer: null
+  Source: active peer: null
+  Sink: active peer: null
+
+A2DP Source State: Enabled
+  Active peer: 00:00:00:00:00:00
+
+A2DP Sink State: Disabled
+
+BTA AV State:
+  State Machine State: INIT
+  SDP A2DP source handle: 65539
+  SDP A2DP sink handle: 0
+  Features: 0x865f
+  SDP handle: 0
+  Disabling: false
+  SCO occupied: false
+  Connected audio channels: 0
+  Connected audio channels mask: 0x0
+  Registered audio channels mask: 0x3f
+  Connected LCBs mask: 0x0
+  Offload start pending handle: 0
+  Offload started handle: 0
+
+AVDTP Stack State:
+  AVDTP signalling L2CAP channel MTU: 672
+
+Socket Events: 
+  Time        	Address          	State             	Role              	Channel   	Type     	ServerName
+  08:11:03.093	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	8         	RFCOMM	NearbySharing
+  08:23:47.651	00:00:00:00:00:00	STATE_DISCONNECTED   	ROLE_LISTEN      	8         	RFCOMM	NearbySharing
+  08:23:47.685	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	-1         	RFCOMM	NearbySharing
+  08:23:47.688	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	9         	RFCOMM	NearbySharing
+  08:29:28.466	00:00:00:00:00:00	STATE_DISCONNECTED   	ROLE_LISTEN      	9         	RFCOMM	NearbySharing
+  08:29:28.472	00:00:00:00:00:00	STATE_DISCONNECTED   	ROLE_LISTEN      	139         	L2CAP_LE	
+  08:29:29.259	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	-2         	L2CAP_LE	
+  08:29:29.260	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	140         	L2CAP_LE	
+  08:29:29.407	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	-1         	RFCOMM	NearbySharing
+  08:29:29.408	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	10         	RFCOMM	NearbySharing
+  08:43:16.304	00:00:00:00:00:00	STATE_DISCONNECTED   	ROLE_LISTEN      	10         	RFCOMM	NearbySharing
+  08:43:16.342	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	-1         	RFCOMM	NearbySharing
+  08:43:16.344	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	11         	RFCOMM	NearbySharing
+  08:55:25.643	00:00:00:00:00:00	STATE_DISCONNECTED   	ROLE_LISTEN      	11         	RFCOMM	NearbySharing
+  08:55:25.665	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	-1         	RFCOMM	NearbySharing
+  08:55:25.669	00:00:00:00:00:00	STATE_LISTENING   	ROLE_LISTEN      	13         	RFCOMM	NearbySharing
+
+
+AVRCP Target Native Service: 0 devices
+TCB (GATT_MAX_PHY_CHANNEL: 8) in_use: 0
+
+
+Bluetooth HF Client BTA Statistics
+
+Bluetooth Wakelock Statistics:
+  Is acquired                    : false
+  Acquired/released count        : 8 / 8
+  Acquired/released error count  : 0 / 0
+  Last acquire/release error code: 0 / 0
+  Last acquired time (ms)        : 1000
+  Acquired time min/max/avg (ms) : 3 / 3589 / 1200
+  Total acquired time (ms)       : 9600
+  Total run time (ms)            : 565325774
+
+Bluetooth Alarms Statistics:
+  Total Alarms: 0
+
+Coordinated Set Service Client:
+
+Hearing Access Service Client:
+  no instance
+
+Hearing Aid Manager:
+  Hearing Aid Audio HAL:
+    Counts (underflow)                                      : 0
+    Bytes (underflow)                                       : 0
+    Last update time ago in ms (underflow)                  : 0
+
+Device Groups Manager:
+  Not initialized 
+LeAudio Manager: 
+  Not initialized 
+  LE AudioHalClient:
+    Counts (underflow)                                      : 0
+    Bytes (underflow)                                       : 0
+    Last update time ago in ms (underflow)                  : 0
+
+ AudioSetConfigurationProvider not initialized: config provider: 0, pimpl: 0 
+  ----------------
+   ISO Manager:
+    Available credits: 3
+    Controller buffer size: 155
+    Num of ISO traffic callbacks: 1
+    CISes:
+    BISes:
+  ----------------
+ 
+Le Audio Broadcaster:
+
+Volume Control Manager:
+
+
+connection_manager state:
+	no Low Energy connection attempts
+
+BT Quality Report Events: 
+Event queue is empty.
+ ----- shim::legacy::pan -----
+shim::legacy::pan Connections:0 roles configured:C.N[0x5] current:...[0x0] previous:...[0x0]
+shim::legacy::pan service_name_user:"Android Network User"
+shim::legacy::pan service_name_nap:"Android Network Access Point"
+ ----- shim::legacy::hid -----
+shim::legacy::hid status:BTIF_HH_ENABLED num_devices:0
+shim::legacy::hid status:BTIF_HH_ENABLED
+ ----- shim::legacy::bta::dm -----
+shim::legacy::bta::dm  last 0 discovery state transitions
+shim::legacy::bta::dm  current bta_dm_discovery_state:BTA_DM_DISCOVER_IDLE
+shim::legacy::bta::dm  last 0 search state transitions
+shim::legacy::bta::dm  current bta_dm_search_state:BTA_DM_SEARCH_IDLE
+shim::legacy::bta::dm  last 0 gatt history entries
+shim::legacy::dumpsys Dumping shim legacy targets:1
+ ----- shim::legacy::record -----
+shim::legacy::record 001 xx:xx:xx:xx:5d:24   DUAL cod:2e40-1-4 remote_info:13-32607-00029 sm4:0x11 SecureConn:T name:"COOKIESPC"sec_prop:bredr_linkkey_known:F,le_linkkey_known:F,bond_type:BOND_TYPE_UNKNOWN,bredr_linkkey_type:COMBINATION,ble_enc_key_size:0,bredr_authenticated:F,le_authenticated:F,16_digit_key_authenticated:F,bredr_encrypted:F,le_encrypted:F
+shim::legacy::record 002 xx:xx:xx:xx:ba:54   DUAL cod:0-0-0 remote_info:14-32289-00029 sm4:0x00 SecureConn:F name:""sec_prop:bredr_linkkey_known:F,le_linkkey_known:F,bond_type:BOND_TYPE_UNKNOWN,bredr_linkkey_type:COMBINATION,ble_enc_key_size:0,bredr_authenticated:F,le_authenticated:F,16_digit_key_authenticated:F,bredr_encrypted:F,le_encrypted:F
+shim::legacy::record 003 xx:xx:xx:xx:16:f1    BLE cod:0-0-0 remote_info:09-00702-00029 sm4:0x00 SecureConn:F name:""sec_prop:bredr_linkkey_known:F,le_linkkey_known:F,bond_type:BOND_TYPE_UNKNOWN,bredr_linkkey_type:COMBINATION,ble_enc_key_size:0,bredr_authenticated:F,le_authenticated:F,16_digit_key_authenticated:F,bredr_encrypted:F,le_encrypted:F
+shim::legacy::record 004 xx:xx:xx:xx:a1:4d    BLE cod:0-0-0 remote_info:12-00636-00015 sm4:0x00 SecureConn:F name:""sec_prop:bredr_linkkey_known:F,le_linkkey_known:F,bond_type:BOND_TYPE_UNKNOWN,bredr_linkkey_type:COMBINATION,ble_enc_key_size:0,bredr_authenticated:F,le_authenticated:F,16_digit_key_authenticated:F,bredr_encrypted:F,le_encrypted:F
+shim::legacy::stack Stack information ᛒᚼ
+shim::legacy::stack Classic inquiry:disabled
+shim::legacy::stack Le scan:disabled
+shim::legacy::stack Last 0 inquiry scans:
+ ----- shim::legacy::acl -----
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0011 is_locally_initiated:false creation_time:2026-10-27 16:39:01.803 teardown_time:2026-10-27 16:39:20.113 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0012 is_locally_initiated:false creation_time:2026-10-27 16:39:52.451 teardown_time:2026-10-27 16:40:10.999 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0013 is_locally_initiated:false creation_time:2026-10-27 16:40:43.333 teardown_time:2026-10-27 16:40:58.040 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0014 is_locally_initiated:false creation_time:2026-10-27 16:41:31.023 teardown_time:2026-10-27 16:41:58.452 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0015 is_locally_initiated:false creation_time:2026-10-27 20:43:54.929 teardown_time:2026-10-27 20:44:22.962 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0016 is_locally_initiated:false creation_time:2026-10-27 20:45:05.790 teardown_time:2026-10-27 20:45:20.835 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0001 is_locally_initiated:false creation_time:2026-10-27 20:57:19.889 teardown_time:2026-10-27 20:57:34.180 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0002 is_locally_initiated:false creation_time:2026-10-27 20:58:13.794 teardown_time:2026-10-27 20:58:28.634 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0004 is_locally_initiated:false creation_time:2026-10-27 20:59:04.261 teardown_time:2026-10-27 20:59:21.132 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0005 is_locally_initiated:false creation_time:2026-10-27 20:59:53.523 teardown_time:2026-10-27 21:00:10.701 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:a1:4d[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0006 is_locally_initiated:false creation_time:2026-10-27 23:11:57.633 teardown_time:2026-10-27 23:23:59.344 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:a1:4d[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0007 is_locally_initiated:false creation_time:2026-10-27 23:28:56.147 teardown_time:2026-10-27 23:41:00.110 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0008 is_locally_initiated:false creation_time:2026-10-28 00:08:28.637 teardown_time:2026-10-28 00:08:36.450 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0009 is_locally_initiated:false creation_time:2026-10-28 00:08:47.745 teardown_time:2026-10-28 00:09:02.401 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000a is_locally_initiated:false creation_time:2026-10-28 00:09:04.282 teardown_time:2026-10-28 00:09:18.932 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000b is_locally_initiated:false creation_time:2026-10-28 00:09:20.926 teardown_time:2026-10-28 00:09:28.141 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000c is_locally_initiated:false creation_time:2026-10-28 00:09:38.360 teardown_time:2026-10-28 00:09:45.212 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000d is_locally_initiated:false creation_time:2026-10-28 00:09:55.274 teardown_time:2026-10-28 00:10:09.991 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000e is_locally_initiated:false creation_time:2026-10-28 07:41:04.207 teardown_time:2026-10-28 07:41:10.642 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000f is_locally_initiated:false creation_time:2026-10-28 07:41:17.251 teardown_time:2026-10-28 07:41:21.716 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0010 is_locally_initiated:false creation_time:2026-10-28 07:41:26.581 teardown_time:2026-10-28 07:41:31.639 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0011 is_locally_initiated:false creation_time:2026-10-28 07:41:31.802 teardown_time:2026-10-28 07:41:36.740 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0012 is_locally_initiated:false creation_time:2026-10-28 07:41:40.861 teardown_time:2026-10-28 07:41:46.041 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0013 is_locally_initiated:false creation_time:2026-10-28 07:43:03.789 teardown_time:2026-10-28 07:43:08.717 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0014 is_locally_initiated:false creation_time:2026-10-28 07:43:14.168 teardown_time:2026-10-28 07:43:19.097 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0015 is_locally_initiated:false creation_time:2026-10-28 07:43:24.337 teardown_time:2026-10-28 07:43:32.573 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0016 is_locally_initiated:false creation_time:2026-10-28 07:43:37.327 teardown_time:2026-10-28 07:43:59.830 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0001 is_locally_initiated:false creation_time:2026-10-28 07:58:39.179 teardown_time:2026-10-28 07:58:45.675 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0002 is_locally_initiated:false creation_time:2026-10-28 07:58:51.089 teardown_time:2026-10-28 07:58:56.739 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0004 is_locally_initiated:false creation_time:2026-10-28 07:59:01.708 teardown_time:2026-10-28 07:59:09.946 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0005 is_locally_initiated:false creation_time:2026-10-28 07:59:14.944 teardown_time:2026-10-28 07:59:20.481 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0006 is_locally_initiated:false creation_time:2026-10-28 08:40:44.210 teardown_time:2026-10-28 08:40:50.107 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0007 is_locally_initiated:false creation_time:2026-10-28 08:40:55.579 teardown_time:2026-10-28 08:41:01.122 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0008 is_locally_initiated:false creation_time:2026-10-28 08:41:07.136 teardown_time:2026-10-28 08:41:16.630 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x0009 is_locally_initiated:false creation_time:2026-10-28 08:41:20.659 teardown_time:2026-10-28 08:41:26.323 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000a is_locally_initiated:false creation_time:2026-10-28 08:50:58.562 teardown_time:2026-10-28 08:51:05.083 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000b is_locally_initiated:false creation_time:2026-10-28 08:51:12.298 teardown_time:2026-10-28 08:51:17.948 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000c is_locally_initiated:false creation_time:2026-10-28 08:51:27.472 teardown_time:2026-10-28 08:51:33.193 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000d is_locally_initiated:false creation_time:2026-10-28 08:51:35.362 teardown_time:2026-10-28 08:51:40.246 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl peer:xx:xx:xx:xx:5d:24[PUBLIC_DEVICE_ADDRESS(0x00)] handle:0x000e is_locally_initiated:false creation_time:2026-10-28 08:54:34.475 teardown_time:2026-10-28 08:54:41.084 disconnect_reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::acl Le sources of initiated disconnects
+shim::acl   stack::l2cap::l2c_link::l2c_link_timeout All channels closed:6
+shim::acl Shadow le accept list              size:0   controller_max_size:128
+shim::acl Shadow le address resolution list  size:0   controller_max_size:32
+ ----- shim::legacy::l2cap -----
+ ----- shim::legacy::btm -----
+shim::legacy::btm  2026-10-28 05:30:58.001 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 05:30:58.006 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2279
+shim::legacy::btm  2026-10-28 05:30:58.022 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:24 scn:14 dlci:28 is_server:true
+shim::legacy::btm  2026-10-28 05:30:58.075 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:25 scn:15 dlci:30 mtu:990
+shim::legacy::btm  2026-10-28 05:30:58.077 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2280
+shim::legacy::btm  2026-10-28 05:31:00.027 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 05:43:08.157 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 05:43:08.160 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2281
+shim::legacy::btm  2026-10-28 05:43:08.195 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:25 scn:15 dlci:30 is_server:true
+shim::legacy::btm  2026-10-28 05:43:08.202 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:26 scn:16 dlci:32 mtu:990
+shim::legacy::btm  2026-10-28 05:43:08.204 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2282
+shim::legacy::btm  2026-10-28 05:43:10.202 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 05:43:48.706 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 05:43:48.709 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2283
+shim::legacy::btm  2026-10-28 05:43:48.727 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:26 scn:16 dlci:32 is_server:true
+shim::legacy::btm  2026-10-28 05:43:48.774 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:27 scn:17 dlci:34 mtu:990
+shim::legacy::btm  2026-10-28 05:43:48.780 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2284
+shim::legacy::btm  2026-10-28 05:43:50.731 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 05:56:34.019 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 05:56:34.022 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2285
+shim::legacy::btm  2026-10-28 05:56:34.053 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:27 scn:17 dlci:34 is_server:true
+shim::legacy::btm  2026-10-28 05:56:34.062 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:28 scn:18 dlci:36 mtu:990
+shim::legacy::btm  2026-10-28 05:56:34.066 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2286
+shim::legacy::btm  2026-10-28 05:56:35.823 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 05:56:35.825 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 05:56:35.828 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2287
+shim::legacy::btm  2026-10-28 05:56:35.844 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:28 scn:18 dlci:36 is_server:true
+shim::legacy::btm  2026-10-28 05:56:35.867 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:29 scn:20 dlci:40 mtu:990
+shim::legacy::btm  2026-10-28 05:56:35.868 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2288
+shim::legacy::btm  2026-10-28 05:56:37.847 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 06:09:58.416 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 06:09:58.420 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2289
+shim::legacy::btm  2026-10-28 06:09:58.435 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:29 scn:20 dlci:40 is_server:true
+shim::legacy::btm  2026-10-28 06:09:58.463 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:30 scn:21 dlci:42 mtu:990
+shim::legacy::btm  2026-10-28 06:09:58.468 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2290
+shim::legacy::btm  2026-10-28 06:10:00.442 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 06:23:04.684 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 06:23:04.687 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2291
+shim::legacy::btm  2026-10-28 06:23:04.707 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:30 scn:21 dlci:42 is_server:true
+shim::legacy::btm  2026-10-28 06:23:04.756 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:31 scn:22 dlci:44 mtu:990
+shim::legacy::btm  2026-10-28 06:23:04.761 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2292
+shim::legacy::btm  2026-10-28 06:23:06.717 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 06:38:01.225 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 06:38:01.229 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2293
+shim::legacy::btm  2026-10-28 06:38:01.246 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:31 scn:22 dlci:44 is_server:true
+shim::legacy::btm  2026-10-28 06:38:01.297 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:32 scn:23 dlci:46 mtu:990
+shim::legacy::btm  2026-10-28 06:38:01.302 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2294
+shim::legacy::btm  2026-10-28 06:38:03.256 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 06:51:27.478 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 06:51:27.482 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2295
+shim::legacy::btm  2026-10-28 06:51:27.494 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:32 scn:23 dlci:46 is_server:true
+shim::legacy::btm  2026-10-28 06:51:27.546 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:33 scn:24 dlci:48 mtu:990
+shim::legacy::btm  2026-10-28 06:51:27.550 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2296
+shim::legacy::btm  2026-10-28 06:51:29.497 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 07:03:33.913 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:03:33.917 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2297
+shim::legacy::btm  2026-10-28 07:03:33.932 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:33 scn:24 dlci:48 is_server:true
+shim::legacy::btm  2026-10-28 07:03:33.961 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:34 scn:25 dlci:50 mtu:990
+shim::legacy::btm  2026-10-28 07:03:33.968 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2298
+shim::legacy::btm  2026-10-28 07:03:35.935 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 07:17:06.712 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:17:06.717 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2299
+shim::legacy::btm  2026-10-28 07:17:06.734 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:34 scn:25 dlci:50 is_server:true
+shim::legacy::btm  2026-10-28 07:17:06.772 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:35 scn:27 dlci:54 mtu:990
+shim::legacy::btm  2026-10-28 07:17:06.776 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2300
+shim::legacy::btm  2026-10-28 07:17:08.737 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 07:29:21.926 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2301
+shim::legacy::btm  2026-10-28 07:30:04.534 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:30:04.536 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2302
+shim::legacy::btm  2026-10-28 07:30:04.567 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:35 scn:27 dlci:54 is_server:true
+shim::legacy::btm  2026-10-28 07:30:04.575 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:36 scn:28 dlci:56 mtu:990
+shim::legacy::btm  2026-10-28 07:30:04.577 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2303
+shim::legacy::btm  2026-10-28 07:30:06.574 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:30:58.601 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:3
+shim::legacy::btm  2026-10-28 07:30:58.607 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2304
+shim::legacy::btm  2026-10-28 07:30:58.625 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:36 scn:28 dlci:56 is_server:true
+shim::legacy::btm  2026-10-28 07:30:58.688 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:37 scn:29 dlci:58 mtu:990
+shim::legacy::btm  2026-10-28 07:30:58.692 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2305
+shim::legacy::btm  2026-10-28 07:31:00.630 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:38:54.301 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 07:39:00.200 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2306
+shim::legacy::btm  2026-10-28 07:41:04.208 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:41:04.561 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 07:41:10.642 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:41:17.252 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:41:17.373 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 07:41:21.716 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:41:26.581 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:41:26.701 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 07:41:31.639 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:41:31.803 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:41:36.740 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:41:40.862 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:41:46.042 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:43:03.790 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:43:08.717 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:43:14.168 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:43:14.278 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 07:43:19.098 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:43:24.339 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:43:32.573 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:43:37.328 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:43:59.830 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:44:43.071 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:3
+shim::legacy::btm  2026-10-28 07:44:43.076 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2307
+shim::legacy::btm  2026-10-28 07:44:43.093 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:37 scn:29 dlci:58 is_server:true
+shim::legacy::btm  2026-10-28 07:44:43.102 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:38 scn:4 dlci:8 mtu:990
+shim::legacy::btm  2026-10-28 07:44:43.105 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2308
+shim::legacy::btm  2026-10-28 07:44:45.095 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:45:45.289 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:3
+shim::legacy::btm  2026-10-28 07:45:45.292 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2309
+shim::legacy::btm  2026-10-28 07:45:45.310 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:38 scn:4 dlci:8 is_server:true
+shim::legacy::btm  2026-10-28 07:45:45.341 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:39 scn:5 dlci:10 mtu:990
+shim::legacy::btm  2026-10-28 07:45:45.346 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2310
+shim::legacy::btm  2026-10-28 07:45:47.313 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:57:47.219 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:3
+shim::legacy::btm  2026-10-28 07:57:47.225 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2311
+shim::legacy::btm  2026-10-28 07:57:47.250 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:39 scn:5 dlci:10 is_server:true
+shim::legacy::btm  2026-10-28 07:57:47.263 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:40 scn:6 dlci:12 mtu:990
+shim::legacy::btm  2026-10-28 07:57:47.271 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2312
+shim::legacy::btm  2026-10-28 07:57:49.250 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:58:39.179 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:58:39.538 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 07:58:45.676 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:58:51.089 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:58:55.566 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:3
+shim::legacy::btm  2026-10-28 07:58:55.571 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2313
+shim::legacy::btm  2026-10-28 07:58:55.588 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:40 scn:6 dlci:12 is_server:true
+shim::legacy::btm  2026-10-28 07:58:55.641 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:1 scn:7 dlci:14 mtu:990
+shim::legacy::btm  2026-10-28 07:58:55.646 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2314
+shim::legacy::btm  2026-10-28 07:58:56.740 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:58:57.595 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 07:59:01.709 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:59:01.827 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 07:59:09.946 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 07:59:14.945 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 07:59:15.058 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 07:59:20.482 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:09:00.524 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 08:11:03.018 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:3
+shim::legacy::btm  2026-10-28 08:11:03.023 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2315
+shim::legacy::btm  2026-10-28 08:11:03.043 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:1 scn:7 dlci:14 is_server:true
+shim::legacy::btm  2026-10-28 08:11:03.092 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:17 scn:8 dlci:16 mtu:990
+shim::legacy::btm  2026-10-28 08:11:03.094 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2316
+shim::legacy::btm  2026-10-28 08:11:05.046 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 08:23:47.626 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 08:23:47.631 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2317
+shim::legacy::btm  2026-10-28 08:23:47.653 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:17 scn:8 dlci:16 is_server:true
+shim::legacy::btm  2026-10-28 08:23:47.687 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:18 scn:9 dlci:18 mtu:990
+shim::legacy::btm  2026-10-28 08:23:47.694 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2318
+shim::legacy::btm  2026-10-28 08:23:49.658 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 08:29:28.467 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:18 scn:9 dlci:18 is_server:true
+shim::legacy::btm  2026-10-28 08:29:28.476 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 08:29:28.480 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:0
+shim::legacy::btm  2026-10-28 08:29:29.407 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:19 scn:10 dlci:20 mtu:990
+shim::legacy::btm  2026-10-28 08:29:29.413 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2319
+shim::legacy::btm  2026-10-28 08:29:29.428 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2320
+shim::legacy::btm  2026-10-28 08:29:29.650 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 08:29:29.680 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2321
+shim::legacy::btm  2026-10-28 08:29:29.884 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 08:29:29.912 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2322
+shim::legacy::btm  2026-10-28 08:31:18.305 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2323
+shim::legacy::btm  2026-10-28 08:40:44.211 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:40:44.568 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 08:40:50.107 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:40:55.579 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:40:55.698 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 08:41:01.122 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:41:07.137 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:41:16.630 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:41:20.660 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:41:26.324 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:43:16.281 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:0
+shim::legacy::btm  2026-10-28 08:43:16.286 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2324
+shim::legacy::btm  2026-10-28 08:43:16.305 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:19 scn:10 dlci:20 is_server:true
+shim::legacy::btm  2026-10-28 08:43:16.343 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:20 scn:11 dlci:22 mtu:990
+shim::legacy::btm  2026-10-28 08:43:16.348 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2325
+shim::legacy::btm  2026-10-28 08:43:18.312 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:0
+shim::legacy::btm  2026-10-28 08:43:51.524 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:1
+shim::legacy::btm  2026-10-28 08:43:51.555 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2326
+shim::legacy::btm  2026-10-28 08:50:58.562 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:51:05.083 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:51:12.299 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:51:12.412 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 08:51:17.949 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:51:27.473 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:51:33.193 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:51:35.363 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:51:40.246 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:54:03.816 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+shim::legacy::btm  2026-10-28 08:54:09.717 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2327
+shim::legacy::btm  2026-10-28 08:54:34.476 ACL    Connection successful    : xx:xx:xx:xx:5d:24[public] Le
+shim::legacy::btm  2026-10-28 08:54:34.820 L2CAP  LE Data length change    : xx:xx:xx:xx:5d:24 tx_octets:27 => 251
+shim::legacy::btm  2026-10-28 08:54:41.084 ACL    Disconnected             : xx:xx:xx:xx:5d:24[public] Le reason:REMOTE_USER_TERMINATED_CONNECTION(0x13)
+shim::legacy::btm  2026-10-28 08:55:25.612 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:3
+shim::legacy::btm  2026-10-28 08:55:25.629 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2328
+shim::legacy::btm  2026-10-28 08:55:25.644 RFCOMM Server stopped           : 00:00:00:00:00:00 handle:20 scn:11 dlci:22 is_server:true
+shim::legacy::btm  2026-10-28 08:55:25.667 RFCOMM Server started           : ff:ff:ff:ff:ff:ff handle:21 scn:13 dlci:26 mtu:990
+shim::legacy::btm  2026-10-28 08:55:25.669 ADV    Le advert started        : 00:00:00:00:00:00 reg_id:-2329
+shim::legacy::btm  2026-10-28 08:55:27.645 ADV    Le advert stopped        : 00:00:00:00:00:00 advert_id:2
+ ----- Filtering as Developer -----
+{
+  title: "----- Gd Dumpsys ------",
+  init_flags: {
+    values: [
+      {
+        flag: "always_send_services_if_gatt_disc_done",
+        value: "true"
+      },
+      {
+        flag: "always_use_private_gatt_for_debugging",
+        value: "false"
+      },
+      {
+        flag: "asha_packet_drop_frequency_threshold",
+        value: "60"
+      },
+      {
+        flag: "asha_phy_update_retry_limit",
+        value: "5"
+      },
+      {
+        flag: "att_mtu_default",
+        value: "517"
+      },
+      {
+        flag: "bluetooth_power_telemetry",
+        value: "false"
+      },
+      {
+        flag: "btm_dm_flush_discovery_queue_on_search_cancel",
+        value: "false"
+      },
+      {
+        flag: "classic_discovery_only",
+        value: "false"
+      },
+      {
+        flag: "dynamic_avrcp_version_enhancement",
+        value: "false"
+      },
+      {
+        flag: "encryption_in_busy_state",
+        value: "true"
+      },
+      {
+        flag: "gatt_robust_caching_client",
+        value: "false"
+      },
+      {
+        flag: "gatt_robust_caching_server",
+        value: "false"
+      },
+      {
+        flag: "hci_adapter",
+        value: "0"
+      },
+      {
+        flag: "hfp_dynamic_version",
+        value: "true"
+      },
+      {
+        flag: "irk_rotation",
+        value: "false"
+      },
+      {
+        flag: "leaudio_multicodec_support",
+        value: "false"
+      },
+      {
+        flag: "leaudio_targeted_announcement_reconnection_mode",
+        value: "true"
+      },
+      {
+        flag: "pbap_pse_dynamic_version_upgrade",
+        value: "false"
+      },
+      {
+        flag: "redact_log",
+        value: "true"
+      },
+      {
+        flag: "sco_codec_timeout_clear",
+        value: "false"
+      },
+      {
+        flag: "sdp_return_classic_services_when_le_discovery_fails",
+        value: "true"
+      },
+      {
+        flag: "sdp_serialization",
+        value: "true"
+      },
+      {
+        flag: "sdp_skip_rnr_if_known",
+        value: "true"
+      },
+      {
+        flag: "set_min_encryption",
+        value: "true"
+      },
+      {
+        flag: "subrating",
+        value: "true"
+      },
+      {
+        flag: "use_rsi_from_cached_inqiry_results",
+        value: "false"
+      },
+      {
+        flag: "use_unified_connection_manager",
+        value: "false"
+      }
+    ]
+  },
+  wakelock_manager_data: {
+    title: "Bluetooth Wakelock Statistics",
+    is_acquired: false,
+    is_native: true,
+    acquired_count: 1,
+    released_count: 1,
+    acquired_error_count: 0,
+    released_error_count: 0,
+    last_acquire_error_code: 0,
+    last_release_error_code: 0,
+    last_acquired_timestamp_millis: 1078,
+    last_released_timestamp_millis: 18586,
+    last_interval_millis: 1078,
+    max_interval_millis: 1078,
+    min_interval_millis: 1078,
+    avg_interval_millis: 1078,
+    total_interval_millis: 1078,
+    total_time_since_reset_millis: 565328051
+  },
+  shim_dumpsys_data: {
+    title: "----- Shim Dumpsys -----",
+    number_of_bundled_schemas: 7
+  },
+  hci_acl_manager_dumpsys_data: {
+    title: "----- Acl Manager Dumpsys -----",
+    le_filter_accept_list_count: 0,
+    le_filter_accept_list: [
+
+    ],
+    le_connectability_state: "ConnectabilityState::DISARMED",
+    le_create_connection_timeout_alarms_count: 0
+  },
+  hci_controller_dumpsys_data: {
+    title: "----- Hci Controller Dumpsys -----",
+    local_version_information: {
+      hci_version: "V_5_3(0x0c)",
+      hci_revision: 0,
+      lmp_version: "V_5_3(0x0c)",
+      manufacturer_name: 29,
+      lmp_subversion: 19553
+    },
+    acl_buffer_size: {
+      data_packet_length: 1021,
+      total_num_packets: 8
+    },
+    sco_buffer_size: {
+      data_packet_length: 240,
+      total_num_packets: 4
+    },
+    iso_buffer_size: {
+      data_packet_length: 155,
+      total_num_packets: 3
+    },
+    le_buffer_size: {
+      data_packet_length: 251,
+      total_num_packets: 16
+    },
+    le_accept_list_size: 128,
+    le_resolving_list_size: 32,
+    le_maximum_data_length: {
+      supported_max_tx_octets: 251,
+      supported_max_tx_time: 17040,
+      supported_max_rx_octets: 251,
+      supported_max_rx_time: 17040
+    },
+    le_maximum_advertising_data_length: 1650,
+    le_suggested_default_data_length: 27,
+    le_number_supported_advertising_sets: 16,
+    le_periodic_advertiser_list_size: 3,
+    local_supported_commands: [
+      {
+        index: 0,
+        value: 255
+      },
+      {
+        index: 1,
+        value: 255
+      },
+      {
+        index: 2,
+        value: 255
+      },
+      {
+        index: 3,
+        value: 3
+      },
+      {
+        index: 4,
+        value: 206
+      },
+      {
+        index: 5,
+        value: 255
+      },
+      {
+        index: 6,
+        value: 239
+      },
+      {
+        index: 7,
+        value: 255
+      },
+      {
+        index: 8,
+        value: 255
+      },
+      {
+        index: 9,
+        value: 255
+      },
+      {
+        index: 10,
+        value: 255
+      },
+      {
+        index: 11,
+        value: 31
+      },
+      {
+        index: 12,
+        value: 242
+      },
+      {
+        index: 13,
+        value: 15
+      },
+      {
+        index: 14,
+        value: 232
+      },
+      {
+        index: 15,
+        value: 254
+      },
+      {
+        index: 16,
+        value: 63
+      },
+      {
+        index: 17,
+        value: 247
+      },
+      {
+        index: 18,
+        value: 131
+      },
+      {
+        index: 19,
+        value: 255
+      },
+      {
+        index: 20,
+        value: 28
+      },
+      {
+        index: 21,
+        value: 0
+      },
+      {
+        index: 22,
+        value: 4
+      },
+      {
+        index: 23,
+        value: 0
+      },
+      {
+        index: 24,
+        value: 97
+      },
+      {
+        index: 25,
+        value: 255
+      },
+      {
+        index: 26,
+        value: 255
+      },
+      {
+        index: 27,
+        value: 255
+      },
+      {
+        index: 28,
+        value: 127
+      },
+      {
+        index: 29,
+        value: 56
+      },
+      {
+        index: 30,
+        value: 32
+      },
+      {
+        index: 31,
+        value: 245
+      },
+      {
+        index: 32,
+        value: 255
+      },
+      {
+        index: 33,
+        value: 240
+      },
+      {
+        index: 34,
+        value: 255
+      },
+      {
+        index: 35,
+        value: 255
+      },
+      {
+        index: 36,
+        value: 255
+      },
+      {
+        index: 37,
+        value: 255
+      },
+      {
+        index: 38,
+        value: 255
+      },
+      {
+        index: 39,
+        value: 23
+      },
+      {
+        index: 40,
+        value: 224
+      },
+      {
+        index: 41,
+        value: 239
+      },
+      {
+        index: 42,
+        value: 255
+      },
+      {
+        index: 43,
+        value: 255
+      },
+      {
+        index: 44,
+        value: 255
+      },
+      {
+        index: 45,
+        value: 255
+      },
+      {
+        index: 46,
+        value: 0
+      },
+      {
+        index: 47,
+        value: 0
+      },
+      {
+        index: 48,
+        value: 0
+      },
+      {
+        index: 49,
+        value: 0
+      },
+      {
+        index: 50,
+        value: 0
+      },
+      {
+        index: 51,
+        value: 0
+      },
+      {
+        index: 52,
+        value: 0
+      },
+      {
+        index: 53,
+        value: 0
+      },
+      {
+        index: 54,
+        value: 0
+      },
+      {
+        index: 55,
+        value: 0
+      },
+      {
+        index: 56,
+        value: 0
+      },
+      {
+        index: 57,
+        value: 0
+      },
+      {
+        index: 58,
+        value: 0
+      },
+      {
+        index: 59,
+        value: 0
+      },
+      {
+        index: 60,
+        value: 0
+      },
+      {
+        index: 61,
+        value: 0
+      },
+      {
+        index: 62,
+        value: 0
+      },
+      {
+        index: 63,
+        value: 0
+      }
+    ],
+    extended_lmp_features_array: [
+      9753459619217276671,
+      2,
+      853
+    ],
+    le_local_supported_features: 614163675647,
+    le_supported_states: 4398046511103,
+    vendor_capabilities: {
+      is_supported: 1,
+      max_advt_instances: 16,
+      offloaded_resolution_of_private_address: 1,
+      total_scan_results_storage: 10240,
+      max_irk_list_sz: 32,
+      filtering_support: 1,
+      max_filter: 64,
+      activity_energy_info_support: 1,
+      version_supported: 98,
+      total_num_of_advt_tracked: 64,
+      extended_scan_support: 1,
+      debug_logging_supported: 1,
+      le_address_generation_offloading_support: 0,
+      a2dp_source_offload_capability_mask: 31,
+      bluetooth_quality_report_support: 1
+    }
+  }
+}

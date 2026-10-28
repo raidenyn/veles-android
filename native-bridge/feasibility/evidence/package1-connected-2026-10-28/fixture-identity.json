@@ -1,0 +1,25 @@
+{
+  "what": "installed-fixture identity verification before package1 connected runs (no install performed)",
+  "captured_utc": "2026-10-28T00:30:38Z",
+  "recorded_approved_shas": {
+    "app": "063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e",
+    "test": "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c"
+  },
+  "phones": {
+    "2be02e41": {
+      "model": "ONEPLUS A6013 (OnePlus 6T)",
+      "app_base_apk_sha256_device": "063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e",
+      "test_base_apk_sha256_device": "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c",
+      "matches_recorded": true
+    },
+    "864a3db0": {
+      "model": "NE2215 (OnePlus 10 Pro)",
+      "app_base_apk_sha256_device": "063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e",
+      "test_base_apk_sha256_device": "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c",
+      "matches_recorded": true
+    }
+  },
+  "method": "adb shell pm path + adb shell sha256sum of the installed base.apk, both phones",
+  "reinstall_performed": false,
+  "clock_uncertainty_note": "phone wall-clock offset measured separately in clock-offset.json (pre-declared source of the 30 s link-release bound input)"
+}

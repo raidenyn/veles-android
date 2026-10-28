@@ -1,0 +1,11 @@
+[PASS ] ST-ENV Chrome, fixed-id extension, connector page, exemption scan
+awaiting_physical_click: click the test Chrome window (pid 70168); waiting up to 600 s -> C:\Users\yuriy\otp23-probe\package1-p1\evidence\package1-connected-2026-10-28\strict-windows-prewarm.foreground-ready.json
+[PASS ] ST-FG human click: owned Chrome is the OS foreground before any BLE work
+[PASS ] ST-HELLO hello over the registered plain host
+[PASS ] ST-PHONES two physical phones scanned and connected
+[PASS ] ST-WARM pre-idle byte-verified 4096-byte exchange per phone
+[PASS ] ST-BG ordinary tab focused, connector hidden, every DevTools client closed
+[PASS ] ST-IDLE idle with no DevTools client until each phone's unsolicited push is due
+[PASS ] ST-REATTACH HTTP target list, re-attach, read page receipts
+[PASS ] ST-SHUTDOWN shutdown; host gone
+strict_result=PASS scenario=prewarm formal_otp23_acceptance=false -> evidence\package1-connected-2026-10-28\strict-windows-prewarm.json

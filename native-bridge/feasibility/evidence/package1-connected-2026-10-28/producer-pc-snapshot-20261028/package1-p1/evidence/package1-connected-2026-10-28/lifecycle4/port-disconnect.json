@@ -1,0 +1,50 @@
+{
+  "id": "LC-port-disconnect",
+  "title": "Chrome port.disconnect with an active scan and two active links",
+  "expected": "with two byte-proven links and an active scan, the host exits by its OWN trace line (code 0, stdin-EOF mechanism, NO shutdown handshake, never the ~2 s Chrome kill), host gone; wrapper chrome-created console window recorded for the owner",
+  "actual": "0 of 2 required phones advertise the service",
+  "status": "BLOCKED",
+  "error_class": "insufficient_phones",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "chrome_version_actual": "Chrome/156.0.8078.73",
+    "trace_env_passed_to_chrome": {
+      "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle4\\port-disconnect.host-trace.log",
+      "VELES_OTP23_DETACHED_CLOSE": null
+    },
+    "detached_close_env_unset": true,
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 0,
+      "network_endpoints": 0
+    },
+    "wrapper_hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 1,
+      "network_endpoints": 0
+    },
+    "integrity": {
+      "chrome": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "wrapper": [
+        {
+          "integrity": "medium",
+          "rid": "0x2000",
+          "token_is_elevated": false
+        }
+      ]
+    },
+    "connect_order": "scan-active",
+    "cleanup_problems": []
+  }
+}
