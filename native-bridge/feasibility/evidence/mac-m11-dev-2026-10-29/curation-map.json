@@ -1,0 +1,67 @@
+{
+  "what": "Curation record for mac-m11-dev-2026-10-29",
+  "policy": "every raw/record file is a byte-exact copy of its source (verified below); exclusions and transport duplicates are listed with sha256 in provenance.json; no capture status, problem or timestamp was edited; noise logs kept privately",
+  "exact_copies": {
+    "attempts/m11-attempt-1/m11-capture.json": {
+      "sha256": "9f9e33d28d20e965ebfbcf964acea8d815d5b17f94392a8169761edc38b6f533",
+      "controller_source": "otp23-m11-controller-20261029/m11-attempt-1/m11-capture.json",
+      "identical": true
+    },
+    "attempts/m11-attempt-2/m11-capture.json": {
+      "sha256": "209fe71d4d400258d7f433570d16726e382d703585f3fcc59719d1e4b16e5e94",
+      "controller_source": "otp23-m11-controller-20261029/m11-attempt-2/m11-capture.json",
+      "identical": true
+    },
+    "attempts/m11-attempt-2/m11-prompt-ac6b44f7-2857-416d-bc00-75e2aa44139d.answer.json": {
+      "sha256": "0bda401f41df67255fcc3fbf880872a23e7ae18707cf5128aac947c30c686492",
+      "controller_source": "otp23-m11-controller-20261029/m11-attempt-2/m11-prompt-ac6b44f7-2857-416d-bc00-75e2aa44139d.answer.json",
+      "identical": true
+    },
+    "attempts/m11-attempt-2/m11-prompt-ac6b44f7-2857-416d-bc00-75e2aa44139d.request.json": {
+      "sha256": "40c875b1fb8a0f03a5a2d78e17c8999f7a2be97b19254e0bc1f14a8e70b0d474",
+      "controller_source": "otp23-m11-controller-20261029/m11-attempt-2/m11-prompt-ac6b44f7-2857-416d-bc00-75e2aa44139d.request.json",
+      "identical": true
+    },
+    "attempts/m11-attempt-3/.owner-answer-8a055ccc.tmp": {
+      "sha256": "d003747339506ebb338040dd2714bd067eb730b0609e4a41b5ea108b9a36272e",
+      "controller_source": "otp23-m11-controller-20261029/m11-attempt-3/.owner-answer-8a055ccc.tmp",
+      "identical": true
+    },
+    "attempts/m11-attempt-3/m11-capture.json": {
+      "sha256": "f04c9045de668cdddf00866f4aecf2e5b280b8b46b31dbf70b7fcfdbeb31fc72",
+      "controller_source": "otp23-m11-controller-20261029/m11-attempt-3/m11-capture.json",
+      "identical": true
+    },
+    "attempts/m11-attempt-3/m11-prompt-8a055ccc-6665-4c96-9eff-81b1d000de65.request.json": {
+      "sha256": "4e558a79849b37aedd733f331066cfd018bb667765b0e41c48231c11e503c956",
+      "controller_source": "otp23-m11-controller-20261029/m11-attempt-3/m11-prompt-8a055ccc-6665-4c96-9eff-81b1d000de65.request.json",
+      "identical": true
+    },
+    "controller/OPERATOR.md": {
+      "sha256": "31c3eefe55873ae4dce66c655f231d7b6216f529df8fb695d5d9602fe05aded6",
+      "controller_source": "otp23-m11-controller-20261029/OPERATOR.md",
+      "identical": true
+    },
+    "controller/observation-timeline.json": {
+      "sha256": "beaa7267876b971021a999a423fc58003feb697d1733d56e2e19c1247ed04aa8",
+      "controller_source": "otp23-m11-controller-20261029/observation-timeline.json",
+      "identical": true
+    },
+    "owner-records/account-class.txt": {
+      "sha256": "a2bdc40c7d6119e01513ae3c3b9b71a287ad910d114ff172883043303050702d",
+      "source": "otp23-m11-controller-20261029/account-class.txt",
+      "identical": true
+    },
+    "owner-records/original-grant-owner-check.json": {
+      "sha256": "9d7f1689ac3d347ccc68a3881f5ef4d7719a61468a9e5305604a5a7d7329d28a",
+      "source": "otp23-m11-controller-20261029/original-grant-owner-check.json",
+      "identical": true
+    },
+    "owner-records/otp23-mac-permission-owner-record.json": {
+      "sha256": "0711b3ee41c74e765550dc419b44439d6d54ae16d0cbf86d8e2936a4c39e180a",
+      "source": "otp23-mac-permission-owner-record.json",
+      "identical": true
+    }
+  },
+  "exclusions_and_duplicates": "provenance.json \u2192 excluded_privately, duplicates_not_republished"
+}

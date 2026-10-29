@@ -1,0 +1,40 @@
+{
+  "what": "Source history of scripts/mac_release_attribution.py (archived BEFORE the A2 edit, 2026-10-29)",
+  "a1_superseded": {
+    "status": "SUPERSEDED \u2014 premise invalid: used origin \u2265 e16 \u2212 m16 (single-fragment 16-byte notify_api stamp before host receipt), which is not causal (review /tmp/opencode/otp23-mac-final-data-review-opus.md \u00a71.1). Unsound as a reusable analyzer; its frozen outputs stay byte-preserved as history.",
+    "files": {
+      "a1-superseded/mac_release_attribution.py": "69546ee581bed37977304c4cf65cc93e6765959c21a5e249553e2ea1b150be0c",
+      "a1-superseded/test_mac_release_attribution.py": "3151f62efc9a428b3976cb70a651650a7b4211618f049ce467cca5bcc3aed8cc"
+    },
+    "pinned_by_old_candidate_outputs": {
+      "evidence/mac-release-attributed-2026-10-29/shutdown-1/release-bound-attributed.json": {
+        "output_sha256": "de2980b5e9018c152db0833553e4fb0d173bd2f371b4a535b30ad9913d012999",
+        "helper_self_sha256": "69546ee581bed37977304c4cf65cc93e6765959c21a5e249553e2ea1b150be0c",
+        "archived_bytes": "a1-superseded/mac_release_attribution.py"
+      },
+      "evidence/mac-release-attributed-2026-10-29/port-disconnect-1/release-bound-attributed.json": {
+        "output_sha256": "33079bce96eb83a88853f25e906c956d9f9e62eaea8b3e9d7638756c86f672ae",
+        "helper_self_sha256": "69546ee581bed37977304c4cf65cc93e6765959c21a5e249553e2ea1b150be0c",
+        "archived_bytes": "a1-superseded/mac_release_attribution.py"
+      },
+      "evidence/mac-release-attributed-2026-10-29/tab-close-1/release-bound-attributed.json": {
+        "output_sha256": "437657dec58f93359114ea87d27784bf4f32483729269e60e968bda2b8ba3497",
+        "helper_self_sha256": "69546ee581bed37977304c4cf65cc93e6765959c21a5e249553e2ea1b150be0c",
+        "archived_bytes": "a1-superseded/mac_release_attribution.py"
+      }
+    },
+    "old_folder_SHA256SUMS_sha256": "dd05dac4b63f67336370a8a203d2dff47471e3fbd10eaee73a1692a54b763355"
+  },
+  "a2_current": {
+    "status": "current working-tree version (awaiting independent micro-review)",
+    "files": {
+      "scripts/mac_release_attribution.py": "ce75a8f1253157975b4004199d4db425d9f69ea02b2bb4360a829ed696d0634e",
+      "scripts/test_mac_release_attribution.py": "219c78bee389d74d9142905fabd502f4c5ee27859d6da9fd075fed178850f016"
+    },
+    "outputs": "evidence/mac-release-attributed-safe-2026-10-29/"
+  },
+  "frozen_analyzer_imported_unchanged": {
+    "scripts/mac_release_bound.py": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560"
+  },
+  "author": "Claude Code / claude-opus-5-5, session 752e1974-0617-470b-a425-dfbda97ac728 (implementer of A1 and A2)"
+}

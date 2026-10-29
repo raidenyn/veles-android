@@ -1,0 +1,18 @@
+{
+  "what": "M-08 lifecycle run provenance",
+  "started_utc": "2026-10-28T15:44:16+00:00",
+  "argv": [
+    "-"
+  ],
+  "cwd": "/Users/raiden/homepc/work/otp23-mac-resume",
+  "env": {
+    "USER": "raiden",
+    "HOME": "/Users/raiden",
+    "SSH_CLIENT": "10.13.13.1 50744 22",
+    "SSH_CONNECTION": "10.13.13.1 50744 192.168.11.116 22",
+    "TMPDIR": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/"
+  },
+  "veles_detached_close_unset": true,
+  "remote_debugging_run_id": "mac-m08-resume-20261028T1546Z",
+  "python": "3.9.6"
+}

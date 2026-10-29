@@ -1,0 +1,6 @@
+$ git diff --check; echo diff_check_exit=$?; rc=0; for f in $(git ls-files --others --exclude-standard | grep -v '/evidence/'); do git diff --no-index --check /dev/null "$f" >/dev/null 2>&1; r=$?; [ $r -eq 1 ] || { echo "whitespace issue: $f (exit $r)"; rc=1; }; done; echo untracked_non_evidence_whitespace_exit=$rc; [ $rc -eq 0 ]
+cwd=/home/dev/repos/veles-android started_utc=2026-10-29T16:21:57Z head=9c3ddc54a3721eced84e49f02ed76ef156f0baed
+diff_check_exit=0
+untracked_non_evidence_whitespace_exit=0
+exit_code=0
+finished_utc=2026-10-29T16:21:58Z

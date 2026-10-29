@@ -1,0 +1,31 @@
+{
+  "what": "OTP-23 Mac M-08 retake listener self-test (reviewed lsof classifier, own loopback listener)",
+  "wall_ms": 1793248386073,
+  "pid": 85027,
+  "listener_port": 52408,
+  "env_VELES_OTP23_LSOF_DIAG": "/Users/raiden/homepc/work/otp23-mac-retake-20261029/evidence/mac-retake-2026-10-29/listener-selftest/lsof-diagnostics.jsonl",
+  "macos_poc_sha256": "e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0",
+  "self_sha256": "f40e7507b1f631b8ee66e8ec51a22f2c7778c47281bdf297f63a270c741fd891",
+  "raw_lsof": {
+    "argv": [
+      "lsof",
+      "-nP",
+      "-a",
+      "-p",
+      "85027",
+      "-i"
+    ],
+    "rc": 0,
+    "stdout_lines": 2,
+    "stderr_verbatim": "lsof: WARNING: can't stat() nullfs file system /private/var/folders/yc/d7qkpc795mz8nprkhm8xlpr80000gp/T/AppTranslocation/7BA7CCAC-123C-4593-9838-F34CA30F033C\n      Output information may be incomplete.\n      assuming \"dev=2e000004\" from mount table\n",
+    "foreign_nullfs_warning_present": true
+  },
+  "lsof_endpoints_result": [
+    {
+      "local_port": 52408,
+      "remote_port": null,
+      "state": "LISTEN"
+    }
+  ],
+  "listener_port_returned": true
+}

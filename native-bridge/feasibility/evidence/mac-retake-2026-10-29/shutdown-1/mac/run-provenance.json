@@ -1,0 +1,20 @@
+{
+  "what": "M-08 retake scenario run provenance (Mac side, written before the driver starts)",
+  "started_utc": "2026-10-29T04:34:56.927+00:00",
+  "cwd": "/Users/raiden/homepc/work/otp23-mac-retake-20261029",
+  "python": "3.9.6",
+  "scenario": "shutdown",
+  "attempt": "1",
+  "phone_run_id": "mac-m08-shutdown-20261029T043432Z",
+  "driver_argv": [
+    "python3",
+    "scripts/scenario_matrix.py",
+    "lifecycle",
+    "--scenario",
+    "shutdown",
+    "--out-dir",
+    "evidence/mac-retake-2026-10-29/shutdown-1"
+  ],
+  "env_VELES_OTP23_LSOF_DIAG": "evidence/mac-retake-2026-10-29/shutdown-1/lsof-diagnostics.jsonl",
+  "env_VELES_OTP23_DETACHED_CLOSE_unset": true
+}

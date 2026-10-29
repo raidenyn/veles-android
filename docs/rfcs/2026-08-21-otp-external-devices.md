@@ -72,6 +72,13 @@ update/restart ("Cannot restart Chrome now", owner record SHA-256 `ace5e31e…86
 lifecycle measurement exists, none may be fabricated, and M-08 stays BLOCKED/deferred (details in
 the OTP-23 section). The NO-GO decision and every unamended OTP-23 requirement stand.
 
+Follow-up recorded on 2026-10-29 (**operator-captured** owner records, not GitHub approvals; no
+gate amendment and no new waiver): the owner later completed the precondition the 2026-10-28 M-08
+deferral had left open (Chrome updated and relaunched; observed 156.0.8078.74). The deferral record
+above stays as written. M-08 was then measured and, with M-11, promoted after independent review, as
+recorded in the "M-08 Mac deferral follow-up" paragraph of the OTP-23 section. The NO-GO decision
+stands and OTP-24 is not approved.
+
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
 a Veles Chrome extension today, and a LILYGO T-WATCH-S3 family (ESP32-S3)
@@ -1655,6 +1662,31 @@ invalid input; the valid real driver flow failed with the cause unproven). One p
 recorded: the first standalone Mac SETUP capture was overwritten with `--overwrite`; only its
 surviving stdout details remain, so the setup phase stays unmeasured (no BLE) and the lost bytes are
 never recreated or claimed preserved; new attempts must use unique output directories.
+
+**M-08 Mac deferral follow-up (2026-10-29, operator-captured owner records; supersedes the deferral's
+"unmeasured" status, not its record; no gate change and no new waiver):**
+- **Owner completion of the deferred step.** The owner asked to continue the Mac tests. Asked to
+  update and relaunch Chrome, the owner answered **"Updated and relaunched"**. The operator then
+  observed Chrome 156.0.8078.74 and the unchanged approved signed fixture `e7c716c5…eb91c`
+  (`me.nagaev.veles.bridge`, Team `7T39M26Z99`, `codesign --strict` success). The record is
+  published at
+  `native-bridge/feasibility/evidence/mac-integration-2026-10-29/route/otp23-mac-resume-owner-record.json`.
+  This completes the deferred precondition. It is not a waiver.
+- **M-08 measurement.** Three fresh Chrome-owned runs (shutdown, port-disconnect, tab-close) used an
+  active scan and two byte-proven links. Window and endpoint absence was measured in the connected
+  phase. The release proof comes from the phone side.
+- **Phone release attribution.** The source-proven "A2" attribution is adopted. Its interval widths
+  are 235–282 ms. The earlier ≤ 250 ms figure was an instrument precision target, never a gate, and
+  is not claimed. The superseded hull and "A1" results are retained as history.
+- **M-11.** The unsigned dev-registered host comparison ran on the existing admin account as a
+  distinct identity. It is a scoped manual PASS with its recorded caveats.
+- **Approval.** Both rows were approved for integration by an independent Claude Code Opus 5.5
+  micro-review. The adjudications are in `native-bridge/feasibility/evidence/mac-integration-2026-10-29/`.
+- **Unchanged:** every OTP-23 requirement. M-03 (the observed prompt owner of the signed
+  final-identifier fixture) remains unobserved: neither the distinct developer prompt, nor the
+  current Settings entry, nor any later log record is taken as that observation. M-04 (exact Settings
+  retry guidance with an owner-approved OFF→ON recovery) remains unmet. The matrix is 25 PASS /
+  4 BLOCKED / 3 waived, the decision stays NO-GO, and OTP-24 is not approved.
 
 The determination rests on source inspection of Chromium 155.0.8059.85 and 156.0.8078.48 and on
 same-build timer probes (a port tab against a port-less control tab, no DevTools client during the

@@ -108,8 +108,14 @@ def render(matrix):
         "freeze/discard requirements and the NO-GO rule remain; the approval promoted nothing by itself - M-09 (cold) and M-10 (prewarm) were separately adjudicated PASS on the fresh 2026-10-27 strict-mac-20261027 evidence "
         "(v2 adjudications with recorded evaluator provenance, after-run provenance capture and the independent Opus fix verification; residuals recorded in the rows); W-11/W-12 were promoted on this "
         "clarification by the 2026-10-28 latest-Chrome (156.0.8078.73) package1 strict runs with the independent GPT strict review, and W-02/W-07/W-08 were promoted the same day by the FINAL integration "
-        "after the independent review chain (GPT P2/B5 + fix verification + v3-final recheck, then the user-authorized Opus 5.5 focused final verification) — final counts 23 PASS / 6 BLOCKED / 3 waived, "
+        "after the independent review chain (GPT P2/B5 + fix verification + v3-final recheck, then the user-authorized Opus 5.5 focused final verification) — final counts 23 PASS / 6 BLOCKED / 3 waived as of 2026-10-28 (superseded by the 2026-10-29 Mac integration below), "
         "still NO-GO, and OTP-24 is not approved.",
+        "",
+        "**Mac M-08/M-11 integration** (2026-10-29, after the independent Opus 5.5 micro-review; owner records operator-captured, not GitHub approvals): M-08 was promoted on the frozen "
+        "mac-retake-2026-10-29 evidence and the adopted A2 safe phone-release attribution after the owner completed the deferred Chrome update (that completion resumes, and does not waive, "
+        "the 2026-10-28 deferral; the earlier <=250 ms figure was an instrument precision target, not a gate, and is not claimed); M-11 is a scoped manual PASS on the existing admin account "
+        "with its recorded caveats (late, never-accepted owner answers; no host trace; no discovery comparison). M-03 (original signed prompt owner unobserved) and M-04 (no OFF/ON toggle "
+        "approved) stay BLOCKED; no new waiver, no gate change, still NO-GO, and OTP-24 is not approved.",
         "",
         "Fresh rows start `NOT RUN`. Historical PoC results are context in the narrative documents, never a PASS here:",
         "they were taken with different binaries, an administrator account and (for background) a connected browser-level",

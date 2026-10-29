@@ -1,0 +1,9 @@
+{
+  "record_type": "operator_captured_owner_reviewer_selection",
+  "owner_instruction_verbatim": "Use kimi k3.1 pro for review.",
+  "configured_model_confirmed": "kimi-code-plan-global/k3.1-pro",
+  "scope": "Remaining independent closure and publication-readiness review",
+  "prior_review_authorship_unchanged": true,
+  "not_an_implementation_model_change": true,
+  "not_a_product_gate_waiver": true
+}

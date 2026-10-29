@@ -1,0 +1,96 @@
+{
+  "what": "OTP-23 Mac M-08 release attribution (Option A) derivation record, 2026-10-29",
+  "role": {
+    "implementer": "Claude Code / claude-opus-5-5, session 752e1974-0617-470b-a425-dfbda97ac728 (no subagents)",
+    "approved_design": "independent reviewer Opus 5.5 session 7b4ee6ca: /tmp/opencode/otp23-mac-m08-physical-review-opus.md \u00a72-3 (parent selected Option A)",
+    "historical": "frozen analyzer mac_release_bound.py and the M-08 code phase: ollama-cloud/glm-5.3-flash; code verification: ollama-cloud/kimi-k3; fix micro-verification: Opus 7b4ee6ca"
+  },
+  "status": "derived analysis awaiting independent micro-review; NOT a matrix/row decision (matrix stays 23/6/3 NO-GO)",
+  "source_binding": {
+    "head": "9c3ddc54a3721eced84e49f02ed76ef156f0baed",
+    "tracked_dirty_diff_sha256": "2376ca99bb9ddc9eac0aa16bbc864f2b358e050e1f9762eb84d97b54e11da4d9",
+    "new_untracked_analysis_files": {
+      "scripts/mac_release_attribution.py": "69546ee581bed37977304c4cf65cc93e6765959c21a5e249553e2ea1b150be0c",
+      "scripts/test_mac_release_attribution.py": "3151f62efc9a428b3976cb70a651650a7b4211618f049ce467cca5bcc3aed8cc"
+    }
+  },
+  "code_pins": {
+    "scripts/mac_release_attribution.py": "69546ee581bed37977304c4cf65cc93e6765959c21a5e249553e2ea1b150be0c",
+    "scripts/mac_release_bound.py": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560",
+    "scripts/scenario_matrix.py": "f8bbf2d6ea158d2bd30bee35b97a655c727a7ca7fc677a5c9a3a53eafe6b7f28",
+    "scripts/scenario_matrix_core.py": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+    "scripts/macos_poc.py": "e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0",
+    ".github/workflows/otp23-feasibility.yml": "df1305d4d3729318d4e9cef123a1c0cd1fcbcf46e4ffaea09e7f0e45f1ba6291"
+  },
+  "frozen_inputs": {
+    "folder": "evidence/mac-retake-2026-10-29 (immutable; read only, nothing appended)",
+    "SHA256SUMS_sha256_before": "f952c123a1c74a5b1c811f4faa2453ed5f81cae49e39e3f974136798e4ea6455",
+    "SHA256SUMS_sha256_after": "f952c123a1c74a5b1c811f4faa2453ed5f81cae49e39e3f974136798e4ea6455",
+    "entries": 79,
+    "sha256sum_c": "OK before and after"
+  },
+  "commands": [
+    "python3 scripts/mac_release_attribution.py --lifecycle-dir evidence/mac-retake-2026-10-29/shutdown-1/mac --scenario shutdown --transport evidence/mac-retake-2026-10-29/shutdown-1/phones/transport-2be02e41.json --transport evidence/mac-retake-2026-10-29/shutdown-1/phones/transport-864a3db0.json --stops evidence/mac-retake-2026-10-29/shutdown-1/stops.json --hull-release-bound evidence/mac-retake-2026-10-29/shutdown-1/release-bound.json --out evidence/mac-release-attributed-2026-10-29/shutdown-1/release-bound-attributed.json",
+    "python3 scripts/mac_release_attribution.py --lifecycle-dir evidence/mac-retake-2026-10-29/port-disconnect-1/mac --scenario port-disconnect --transport evidence/mac-retake-2026-10-29/port-disconnect-1/phones/transport-2be02e41.json --transport evidence/mac-retake-2026-10-29/port-disconnect-1/phones/transport-864a3db0.json --stops evidence/mac-retake-2026-10-29/port-disconnect-1/stops.json --hull-release-bound evidence/mac-retake-2026-10-29/port-disconnect-1/release-bound.json --out evidence/mac-release-attributed-2026-10-29/port-disconnect-1/release-bound-attributed.json",
+    "python3 scripts/mac_release_attribution.py --lifecycle-dir evidence/mac-retake-2026-10-29/tab-close-1/mac --scenario tab-close --transport evidence/mac-retake-2026-10-29/tab-close-1/phones/transport-2be02e41.json --transport evidence/mac-retake-2026-10-29/tab-close-1/phones/transport-864a3db0.json --stops evidence/mac-retake-2026-10-29/tab-close-1/stops.json --hull-release-bound evidence/mac-retake-2026-10-29/tab-close-1/release-bound.json --out evidence/mac-release-attributed-2026-10-29/tab-close-1/release-bound-attributed.json"
+  ],
+  "uniform_application": "the same command for all three frozen cases (shutdown included); no per-case selection",
+  "quantum_ms": 1,
+  "declared_bound_ms": 30000,
+  "cases": {
+    "shutdown": {
+      "output": "shutdown-1/release-bound-attributed.json",
+      "output_sha256": "de2980b5e9018c152db0833553e4fb0d173bd2f371b4a535b30ad9913d012999",
+      "frozen_hull_release_bound_sha256": "9cd2169318d223b136d131729c7ce0010f442c1172f58a2c3ed137599b0eb7aa",
+      "hull_verdict": "PASS",
+      "attribution_status": "unique_mapping",
+      "verdict": "PASS",
+      "upgraded_from_hull_fail": false,
+      "m08_creditable": true,
+      "mapping": {
+        "2be02e41": "e7b2832a8828839e",
+        "864a3db0": "053544add3f3ad4d"
+      },
+      "feasible_bits": [
+        false,
+        true
+      ]
+    },
+    "port-disconnect": {
+      "output": "port-disconnect-1/release-bound-attributed.json",
+      "output_sha256": "33079bce96eb83a88853f25e906c956d9f9e62eaea8b3e9d7638756c86f672ae",
+      "frozen_hull_release_bound_sha256": "0e831e933097a43cfffbcee218bbff477057d5b71bcd8523a27eb07fb88e2898",
+      "hull_verdict": "FAIL",
+      "attribution_status": "unique_mapping",
+      "verdict": "PASS",
+      "upgraded_from_hull_fail": true,
+      "m08_creditable": true,
+      "mapping": {
+        "2be02e41": "56433e089280829e",
+        "864a3db0": "c710e81543b792ef"
+      },
+      "feasible_bits": [
+        true,
+        false
+      ]
+    },
+    "tab-close": {
+      "output": "tab-close-1/release-bound-attributed.json",
+      "output_sha256": "437657dec58f93359114ea87d27784bf4f32483729269e60e968bda2b8ba3497",
+      "frozen_hull_release_bound_sha256": "8d550ae19a4efc45b3521eb9c1e7075f668b5d638f743c94dd426f1049f3dccb",
+      "hull_verdict": "FAIL",
+      "attribution_status": "unique_mapping",
+      "verdict": "PASS",
+      "upgraded_from_hull_fail": true,
+      "m08_creditable": true,
+      "mapping": {
+        "2be02e41": "71857b85775992a2",
+        "864a3db0": "093954e54c2fa8d8"
+      },
+      "feasible_bits": [
+        false,
+        true
+      ]
+    }
+  }
+}

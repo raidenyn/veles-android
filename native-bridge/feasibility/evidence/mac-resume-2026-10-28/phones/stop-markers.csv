@@ -1,0 +1,3 @@
+phone,serial,marker_kind,marker_before_phone_ms,pc_ms_at_stop_or_mac,marker_after_phone_ms,method
+6T,2be02e41,fixture_stop,1793202408026,1793202415352..1793202427136 (mac ssh python3 epoch-ms readback bracket around the touch),1793202423752..1793202423792 (phone date before/after the run-as touch),"stop file created via adb run-as me.nagaev.veles.otp23; MAC clock read back by ssh python3 time.time() (no adb on the Mac); brackets are honest; the phone-local stop epoch is finished_at_epoch_ms inside transport-2be02e41.json = 1793202424991"
+10Pro,864a3db0,fixture_stop,1793202410359,1793202415352..1793202427136,1793202429176..1793202429238,"same method; the phone-local stop epoch is finished_at_epoch_ms inside transport-864a3db0.json = 1793202430481"

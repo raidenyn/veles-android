@@ -436,6 +436,16 @@ def link_pair(session, args):
     return handles, [{k: p[k] for k in ("size", "request_sha256", "received_sha256", "status")} for p in proofs]
 
 
+def release_gate(platform):
+    """P0-A (parent decision, 2026-10-28, after the Opus preflight): the host-trace release-count gate
+    is Windows-only. The approved macOS fixture exits before any awaited release_device, so its trace
+    never contains `conn N released` lines (that is a driver-criterion mismatch, not a host defect);
+    the released count stays recorded honestly (typically 0) and every macOS acceptance scenario must
+    additionally carry independent phone-side release proof (scripts/mac_release_bound.py). Windows
+    behaviour is unchanged (still min_released=2 + the bounded join)."""
+    return 2 if platform == "windows" else None
+
+
 def verify_gone(session, expected, args, extra=None, min_released=None, require_join=False):
     gone = session.adapter.wait_gone(session.owned_pids(), 10.0)
     parsed = session.parsed_trace()
@@ -591,15 +601,15 @@ def scenario_chrome(adapter, name, args, identity, out_dir):
             require(not snapshot["pending"], "connector still has pending requests")
             detail["pending_request_result"] = core.safe_reply(pending)
             detail["port_state"] = snapshot["disconnect"] is not None
-            detail["teardown"] = verify_gone(session, "shutdown", args, min_released=2,
+            detail["teardown"] = verify_gone(session, "shutdown", args, min_released=release_gate(adapter.platform),
                                              require_join=adapter.platform == "windows")
         elif name == "port-disconnect":
             session.js("otp23.closePort(); 1")
-            detail["teardown"] = verify_gone(session, "disconnect", args, min_released=2,
+            detail["teardown"] = verify_gone(session, "disconnect", args, min_released=release_gate(adapter.platform),
                                              require_join=adapter.platform == "windows")
         elif name == "tab-close":
             session.chrome.cdp.call("Target.closeTarget", {"targetId": session.target})
-            detail["teardown"] = verify_gone(session, "disconnect", args, min_released=2,
+            detail["teardown"] = verify_gone(session, "disconnect", args, min_released=release_gate(adapter.platform),
                                              require_join=adapter.platform == "windows")
         else:
             gone = session.js(f"otp23.disconnectDevice({json.dumps(handles[0])})")
@@ -613,7 +623,7 @@ def scenario_chrome(adapter, name, args, identity, out_dir):
             detail["survivor"] = {k: survivor[k] for k in ("size", "request_sha256", "received_sha256", "status")}
             done = session.js("otp23.shutdown()")
             require(done.get("type") == "shutdown_complete", f"shutdown {core.safe_reply(done)}")
-            detail["teardown"] = verify_gone(session, "shutdown", args, min_released=2,
+            detail["teardown"] = verify_gone(session, "shutdown", args, min_released=release_gate(adapter.platform),
                                              require_join=adapter.platform == "windows")
         if session.chrome is not None:
             document = {"label": "after-teardown-host-exited", "wall_ms": now_ms(),
@@ -797,7 +807,8 @@ def scenario_stdin(adapter, name, args, identity, out_dir, binary=None):
                 break
             time.sleep(0.1)
         problems = core.check_truncated_eof(parsed, code, host.eof_state) if truncated else \
-            core.check_teardown(parsed, "stdin_closed", require_drained=True, min_released=2,
+            core.check_teardown(parsed, "stdin_closed", require_drained=True,
+                                min_released=release_gate(adapter.platform),
                                 require_join=adapter.platform == "windows") + \
             ([] if code == 0 else [f"process exit code {code}"]) + \
             ([] if host.eof_state == "clean" else [f"stdout ended {host.eof_state}"])

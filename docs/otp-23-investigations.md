@@ -329,3 +329,98 @@ time.
 - **M-08:** owner-DEFERRED ("Cannot restart Chrome now"; attempts failed at `Extensions.loadUnpacked` before
   BLE with zero peers; first standalone setup capture overwritten — unmeasured, never reconstructed). Not a
   measurement; no Mac action taken. **Decision:** NO-GO; OTP-24 not authorised; release readiness not claimed.
+
+## 7. Mac M-08/M-11 integration (2026-10-29): two rows promoted, 25 PASS / 4 BLOCKED / 3 waived
+
+This section records the disposition as of 2026-10-29. Every section above stays as the history of its
+time; section 6's 23/6/3 state and the M-08 deferral are not rewritten.
+
+### Why the deferral ended
+
+The owner completed the deferred step: asked to update and relaunch Chrome, they answered "Updated
+and relaunched". The operator then observed Chrome **156.0.8078.74**, with the approved signed
+fixture `e7c716c5…eb91c` unchanged. This resumes the deferred prerequisite. It is not a waiver.
+
+### M-08 → PASS
+
+**Frozen retake** `native-bridge/feasibility/evidence/mac-retake-2026-10-29/` (79 entries):
+- Three fresh Chrome-owned runs: shutdown, port-disconnect and tab-close.
+- Each run had an active scan and two byte-proven links.
+- 18/18 usable connected-phase samples. In every sample the host owned zero windows at every layer
+  and no IP endpoints, and the same-sample Chrome controls held.
+- Teardown was clean in every run.
+- The Mac trace's `released` count is honestly 0. On macOS, release is proven from the phone side.
+
+**Phone release proof.** Only the source-proven "A2" attribution
+(`…/mac-release-attributed-safe-2026-10-29/`, analyzer `ce75a8f1…`) is adopted:
+- The lower bound is the first fragment of the multi-fragment 4 KiB echo. The 16-byte lower bound
+  turned out not to be causal and is now diagnostic only.
+- All three cases have a unique handle↔phone mapping, and every retained check passes, with margins of
+  +54…+93 ms against the global last exchange.
+
+**Measured precision is 235–282 ms.** The earlier ≤ 250 ms figure was only an instrument precision
+target, never an RFC gate, and is **not** claimed as met.
+
+**What stays as recorded history:**
+- the frozen hull results (PASS/FAIL/FAIL)
+- the superseded "A1" attribution (invalid premise)
+- the direct-SSH stdin-EOF `permission_pending` diagnostic
+
+### M-11 → scoped manual PASS
+
+**What was run.** A distinct developer host, run on the existing **admin** account (uid 501, from the
+post-run account record `a2bdc40c…`):
+- identity `me.nagaev.veles.bridge.dev` / `me.nagaev.veles.otp23.dev`
+- the unsigned counterpart `c36894dc…`, with only the automatic linker ad-hoc signature
+
+**Result.** Chrome launched it from a disposable profile:
+- attempt 2: `permission_pending`, i.e. NotDetermined
+- after the owner's Allow, attempt 3: `scan_state started`, i.e. authorized (inferred; no enum)
+
+**Caveats, all kept:**
+- **Setup failure.** Attempt 1 is a setup FAIL caused by the runbook's relative `--stage .`.
+- **Late answers.** Attempts 2 and 3 ended by deadline with `null` answers. The owner's answers arrived
+  late and were never bound to a capture.
+- **No dev host trace.**
+- **No discovery comparison.**
+- **Script hash.** It is controller-attested only.
+- **Operator.** The physical operator was the parent controller (gpt-6.1-sol), not an Opus session.
+
+**Read-only TCC log supplement** (`…/mac-tcc-supplement-2026-10-29/`), added after the curation:
+- It corroborates the developer prompt (05:29:58Z) and an OS authorization result (06:17:25Z,
+  `authValue=2`) through a separate OS channel.
+- It found **no** original signed-host prompt record.
+- It makes no retention claim.
+
+### What remains blocked
+
+**Open rows: W-10, M-03, M-04, A-01.**
+- **M-03:** the original signed prompt owner is still unobserved. The developer prompt, the current
+  Settings entry and later log records are not that observation.
+- **M-04:** no OFF→ON toggle was approved or done, and the exact Settings retry guidance is not
+  implemented.
+  - The next step needs an owner decision.
+  - For M-04 it also needs a small connector/host guidance implementation, then an owner-approved,
+    coordinated recovery run.
+
+**Decision:** NO-GO. OTP-24 is not authorised.
+
+**Approval and records.**
+- Independent approval came from the fresh Opus 5.5 micro-review `e30e474d-…`.
+- The final adjudications, reports and gate logs are in `…/mac-integration-2026-10-29/`.
+- The final independent review of the integrated tree is still **pending** with the parent.
+
+**Final review closure (2026-10-29, appended; the "pending" statement above is history).** The
+independent final integrated-tree review (Claude Code `claude-opus-5-5`, session
+`faee6a0e-43c5-41d7-9bc4-a2cd3f3de09b`, published as `…/mac-integration-2026-10-29/reports/otp23-mac-final-integrated-opus-review.md`)
+returned **CHANGES REQUIRED, bounded and non-substantive**. It confirmed the substance: the M-08/M-11
+promotion, 25/4/3, and M-03/M-04 unchanged. Its three findings were closed exactly as it authorized:
+- **F1, option (a).** Four unrelated applications' Native Messaging manifest file names in
+  `mac-resume-2026-10-28/registration/record.json` are redacted in place. The original is kept
+  privately, and the old manifest is preserved in `manifest-history/`.
+- **F2.** The M-08 adjudication now correctly attributes the W-08 EOF reading: the parent preflight
+  chose it, and this final review verified it.
+- **F3.** Gate 06 was rerun with the command that was actually executed.
+
+With every gate green, the review counts as **APPROVED for commit/publication pending clean export and
+green CI**. Counts and the decision are unchanged.

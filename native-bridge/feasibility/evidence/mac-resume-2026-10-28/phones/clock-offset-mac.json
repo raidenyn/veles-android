@@ -1,0 +1,253 @@
+{
+  "started_utc": "2026-10-28T15:40:26+00:00",
+  "what": "OTP-23 Mac-resume phone clock probe (MAC clock bound explicitly)",
+  "probes": [
+    {
+      "serial": "2be02e41",
+      "phone_raw": [
+        {
+          "loc_mid_ms": 1793201954239,
+          "latency_ms": 3470,
+          "stamp_ms": 1793201955792
+        },
+        {
+          "loc_mid_ms": 1793201957712,
+          "latency_ms": 3478,
+          "stamp_ms": 1793201959268
+        },
+        {
+          "loc_mid_ms": 1793201963941,
+          "latency_ms": 8980,
+          "stamp_ms": 1793201968250
+        },
+        {
+          "loc_mid_ms": 1793201969327,
+          "latency_ms": 1791,
+          "stamp_ms": 1793201970040
+        },
+        {
+          "loc_mid_ms": 1793201971454,
+          "latency_ms": 2463,
+          "stamp_ms": 1793201972504
+        },
+        {
+          "loc_mid_ms": 1793201974595,
+          "latency_ms": 3819,
+          "stamp_ms": 1793201976323
+        },
+        {
+          "loc_mid_ms": 1793201977747,
+          "latency_ms": 2485,
+          "stamp_ms": 1793201978808
+        },
+        {
+          "loc_mid_ms": 1793201980563,
+          "latency_ms": 3146,
+          "stamp_ms": 1793201981953
+        },
+        {
+          "loc_mid_ms": 1793201983885,
+          "latency_ms": 3498,
+          "stamp_ms": 1793201985452
+        }
+      ],
+      "mac_raw": [
+        {
+          "loc_mid_ms": 1793201897803,
+          "latency_ms": 10916,
+          "stamp_ms": 1793201903000
+        },
+        {
+          "loc_mid_ms": 1793201905204,
+          "latency_ms": 3884,
+          "stamp_ms": 1793201906000
+        },
+        {
+          "loc_mid_ms": 1793201908889,
+          "latency_ms": 3487,
+          "stamp_ms": 1793201910000
+        },
+        {
+          "loc_mid_ms": 1793201913004,
+          "latency_ms": 4744,
+          "stamp_ms": 1793201915000
+        },
+        {
+          "loc_mid_ms": 1793201918587,
+          "latency_ms": 6422,
+          "stamp_ms": 1793201921000
+        },
+        {
+          "loc_mid_ms": 1793201923693,
+          "latency_ms": 3789,
+          "stamp_ms": 1793201925000
+        },
+        {
+          "loc_mid_ms": 1793201932943,
+          "latency_ms": 14710,
+          "stamp_ms": 1793201939000
+        },
+        {
+          "loc_mid_ms": 1793201943609,
+          "latency_ms": 6622,
+          "stamp_ms": 1793201946000
+        },
+        {
+          "loc_mid_ms": 1793201949712,
+          "latency_ms": 5583,
+          "stamp_ms": 1793201952000
+        }
+      ],
+      "available": true,
+      "phone_component": {
+        "component": "phone-2be02e41-minus-local",
+        "samples": 9,
+        "offset_stamp_minus_local_ms_median": 1553,
+        "offset_min_ms": 713,
+        "offset_max_ms": 4309,
+        "max_latency_ms": 8980,
+        "resolution_note": "ms resolution",
+        "uncertainty_ms": 6338,
+        "method": "stamp at roundtrip midpoint; uncertainty = spread/2 + max latency/2 + resolution/2"
+      },
+      "mac_component": {
+        "component": "mac-minus-local",
+        "samples": 9,
+        "offset_stamp_minus_local_ms_median": 2288,
+        "offset_min_ms": 796,
+        "offset_max_ms": 6057,
+        "max_latency_ms": 14710,
+        "resolution_note": "macOS date whole seconds -> 1 s resolution term",
+        "uncertainty_ms": 10486,
+        "method": "stamp at roundtrip midpoint; uncertainty = spread/2 + max latency/2 + resolution/2"
+      },
+      "offset_phone_minus_mac_ms_median": -735,
+      "uncertainty_ms": 16824,
+      "method": "phone-minus-local minus mac-minus-local (both midpoints on the same local clock); conservative uncertainty = sum of components"
+    },
+    {
+      "serial": "864a3db0",
+      "phone_raw": [
+        {
+          "loc_mid_ms": 1793201987326,
+          "latency_ms": 3385,
+          "stamp_ms": 1793201988054
+        },
+        {
+          "loc_mid_ms": 1793201990219,
+          "latency_ms": 2400,
+          "stamp_ms": 1793201990454
+        },
+        {
+          "loc_mid_ms": 1793201993344,
+          "latency_ms": 3849,
+          "stamp_ms": 1793201994303
+        },
+        {
+          "loc_mid_ms": 1793201996147,
+          "latency_ms": 1757,
+          "stamp_ms": 1793201996060
+        },
+        {
+          "loc_mid_ms": 1793202000256,
+          "latency_ms": 6461,
+          "stamp_ms": 1793202002519
+        },
+        {
+          "loc_mid_ms": 1793202005568,
+          "latency_ms": 4164,
+          "stamp_ms": 1793202006685
+        },
+        {
+          "loc_mid_ms": 1793202009694,
+          "latency_ms": 4089,
+          "stamp_ms": 1793202010773
+        },
+        {
+          "loc_mid_ms": 1793202015194,
+          "latency_ms": 6912,
+          "stamp_ms": 1793202017686
+        },
+        {
+          "loc_mid_ms": 1793202022427,
+          "latency_ms": 7553,
+          "stamp_ms": 1793202025238
+        }
+      ],
+      "mac_raw": [
+        {
+          "loc_mid_ms": 1793201897803,
+          "latency_ms": 10916,
+          "stamp_ms": 1793201903000
+        },
+        {
+          "loc_mid_ms": 1793201905204,
+          "latency_ms": 3884,
+          "stamp_ms": 1793201906000
+        },
+        {
+          "loc_mid_ms": 1793201908889,
+          "latency_ms": 3487,
+          "stamp_ms": 1793201910000
+        },
+        {
+          "loc_mid_ms": 1793201913004,
+          "latency_ms": 4744,
+          "stamp_ms": 1793201915000
+        },
+        {
+          "loc_mid_ms": 1793201918587,
+          "latency_ms": 6422,
+          "stamp_ms": 1793201921000
+        },
+        {
+          "loc_mid_ms": 1793201923693,
+          "latency_ms": 3789,
+          "stamp_ms": 1793201925000
+        },
+        {
+          "loc_mid_ms": 1793201932943,
+          "latency_ms": 14710,
+          "stamp_ms": 1793201939000
+        },
+        {
+          "loc_mid_ms": 1793201943609,
+          "latency_ms": 6622,
+          "stamp_ms": 1793201946000
+        },
+        {
+          "loc_mid_ms": 1793201949712,
+          "latency_ms": 5583,
+          "stamp_ms": 1793201952000
+        }
+      ],
+      "available": true,
+      "phone_component": {
+        "component": "phone-864a3db0-minus-local",
+        "samples": 9,
+        "offset_stamp_minus_local_ms_median": 1079,
+        "offset_min_ms": -87,
+        "offset_max_ms": 2811,
+        "max_latency_ms": 7553,
+        "resolution_note": "ms resolution",
+        "uncertainty_ms": 5276,
+        "method": "stamp at roundtrip midpoint; uncertainty = spread/2 + max latency/2 + resolution/2"
+      },
+      "mac_component": {
+        "component": "mac-minus-local",
+        "samples": 9,
+        "offset_stamp_minus_local_ms_median": 2288,
+        "offset_min_ms": 796,
+        "offset_max_ms": 6057,
+        "max_latency_ms": 14710,
+        "resolution_note": "macOS date whole seconds -> 1 s resolution term",
+        "uncertainty_ms": 10486,
+        "method": "stamp at roundtrip midpoint; uncertainty = spread/2 + max latency/2 + resolution/2"
+      },
+      "offset_phone_minus_mac_ms_median": -1209,
+      "uncertainty_ms": 15762,
+      "method": "phone-minus-local minus mac-minus-local (both midpoints on the same local clock); conservative uncertainty = sum of components"
+    }
+  ],
+  "finished_utc": "2026-10-28T15:40:26+00:00"
+}

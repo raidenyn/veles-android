@@ -1,0 +1,25 @@
+{
+  "captured_at_utc": "2026-10-29T04:11:55Z",
+  "capture_method": "Claude Code transcript /home/dev/.claude/projects/-home-dev-repos-veles-android/752e1974-0617-470b-a425-dfbda97ac728.jsonl (sessionId + per-message model field counted from the file, not self-report)",
+  "role": "IMPLEMENTER (continuation of the interrupted M-08 minimum-fix phase + M-11 prep correction/staging)",
+  "session_id": "752e1974-0617-470b-a425-dfbda97ac728",
+  "client": "Claude Code",
+  "modelID": "claude-opus-5-5",
+  "distinct_models_in_session": ["claude-opus-5-5"],
+  "subagents_spawned": 0,
+  "authorization": "/tmp/opencode/otp23-mac-opus-continuation-owner-record.json (owner: \"Use Opus 5.5 via Claude code\")",
+  "predecessor_session": {
+    "session_id": "ses_e7cde50b5ffezoaQLsnQlF6FlE",
+    "provider_model": "ollama-cloud/glm-5.3-flash",
+    "ended": "API 429 usage limit at 2026-10-28T18:00:51Z, before its final report, before re-running tests after its privacy/M-11 edits, and mid-way through the Mac stage upload",
+    "event_log": "/tmp/opencode/otp23-mac-m08-fix-events.jsonl"
+  },
+  "attribution": {
+    "GLM (ses_e7cde50b5ffezoaQLsnQlF6FlE)": "F-1 gate + nested fixture, F-2 propagation, F-3 prose, F-4 tmp removal, F-7 parser, clock fallback term + targeted tests, workflow lines, privacy archive/redaction/active manifest, first M-11 docstring/argparse edits, partial README edits, interrupted Mac upload",
+    "Opus 5.5 implementer (this session)": "independent re-verification of all of the above; real-artifact F-1 regression test; mutation checks; Windows-CI gating fix for test_mac_clock_corroborate; pre-curation-archive.json accounting correction; private archive permission tightening; M-11 APPROVED_APP TypeError fix; pre-launch dev plist label guard; README section 3/5/7 rewrite (GLM's section 3 replacement had silently not matched); prep-doc appended section 10; Mac staging + history preservation; this report",
+    "Kimi K3": "completed independent code verification (/tmp/opencode/otp23-mac-m08-code-verification-kimi.md) - unchanged",
+    "Opus (earlier)": "design preflight (/tmp/opencode/otp23-mac-m08-preflight-opus.md) - unchanged; the interrupted Opus code verification approved nothing"
+  },
+  "not_an_independent_review": true,
+  "not_a_github_approval": true
+}

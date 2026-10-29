@@ -1,0 +1,35 @@
+{
+  "what": "Mac-resume 2026-10-28: phone DIS/CONNECT events correlated to the four Chrome-launched sessions of the partial lifecycle-1 attempt",
+  "clock_binding": {
+    "method": "mac_phone_clock_probe.py: phone-minus-LOCAL and mac-minus-LOCAL midpoints measured against the same operator-side clock; composed offset = median(phone) - median(mac); uncertainty is the conservative SUM of both components (spread/2 + max-latency/2 + resolution/2 each)",
+    "offset_phone_minus_mac_ms": {"2be02e41": -735, "864a3db0": -1209},
+    "uncertainty_ms": {"2be02e41": 16824, "864a3db0": 15762},
+    "source": "helpers/mac_phone_clock_probe.py run pre-experiments 2026-10-28T15:34Z; raw pairs kept in phones/clock-offset-mac.json",
+    "provenance": "MAC clock measured explicitly here; no Windows/PC offset reused; no absolute Mac trace anchor invented"
+  },
+  "conversion_rule": "mac_ms ~= phone_ms + 735 (6T) / phone_ms + 1209 (10Pro), each +- uncertainty_ms",
+  "session_order": ["LC-shutdown", "LC-port-disconnect", "LC-tab-close", "LC-failure-isolation"],
+  "important_scope_note": "The M-08 teardown scenarios did NOT execute: every Chrome scenario aborted at the connected-phase probe requirement BEFORE its teardown step, then the driver closed Chrome (cleanup). The phone DIS events below are therefore Chrome-session-close releases observed during cleanup, NOT shutdown/port.disconnect/tab-close teardown evidence. The trace host exits (code=0, stdout_drained=true) are the cleanup EOF exits.",
+  "pairs": {
+    "2be02e41": [
+      {"session": "LC-shutdown", "connected_phone_ms": 1793202258333, "disconnected_phone_ms": 1793202260737, "disconnected_mac_estimate_ms": 1793202261472},
+      {"session": "LC-port-disconnect", "connected_phone_ms": 1793202263143, "disconnected_phone_ms": 1793202266299, "disconnected_mac_estimate_ms": 1793202267034},
+      {"session": "LC-tab-close", "connected_phone_ms": 1793202269746, "disconnected_phone_ms": 1793202272220, "disconnected_mac_estimate_ms": 1793202272955},
+      {"session": "LC-failure-isolation", "connected_phone_ms": 1793202285945, "disconnected_phone_ms": 1793202288215, "disconnected_mac_estimate_ms": 1793202288950}
+    ],
+    "864a3db0": [
+      {"session": "LC-shutdown", "connected_phone_ms": 1793202257257, "disconnected_phone_ms": 1793202259949, "disconnected_mac_estimate_ms": 1793202261158},
+      {"session": "LC-port-disconnect", "connected_phone_ms": 1793202262654, "disconnected_phone_ms": 1793202265525, "disconnected_mac_estimate_ms": 1793202266734},
+      {"session": "LC-tab-close", "connected_phone_ms": 1793202267862, "disconnected_phone_ms": 1793202271416, "disconnected_mac_estimate_ms": 1793202272625},
+      {"session": "LC-failure-isolation", "connected_phone_ms": 1793202283983, "disconnected_phone_ms": 1793202287490, "disconnected_mac_estimate_ms": 1793202288699}
+    ]
+  },
+  "honesty_labels": {
+    "disconnected_mac_estimate": "arithmetic application of the stated offset; +- 16.8 s (6T) / 15.8 s (10Pro) uncertainty applies; order-of-magnitude claims only",
+    "within_bound_claimed": false
+  },
+  "consistent_with": "per phone, each DIS mac estimate lands ~1 s after that session's last connected-phase sample wall_ms (e.g. 6T LC-shutdown last sample 1793202260355 vs DIS estimate 1793202261472), which is the abort + Chrome Browser.close cleanup window; with the stated uncertainty the mapping is NOT precise enough to prove any per-scenario bound",
+  "declared_release_bound": "the historical package1 bound (30 s) applies to the M-08 teardown rows, which did not run; this partial attempt makes no bound claim for them",
+  "peer_binding": "each phone saw exactly ONE peer prefix (576d2120c83dc839) = the Mac central; run_id mac-m08-resume-20261028T1546Z on both phones; transport evidence final, final_after_service_stopped=true, clean=true, truncated=false for both phones",
+  "transfer_observed": "per phone: 40 notify API calls, 40 callback successes, 0 non-zero codes, 0 unbound, 0 dropped = the 4 link proofs + 4 4096-byte probe records really moved bytes over both links"
+}

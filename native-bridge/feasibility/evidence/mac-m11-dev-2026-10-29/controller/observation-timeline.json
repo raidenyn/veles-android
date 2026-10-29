@@ -1,0 +1,108 @@
+{
+  "observed_utc": "2026-10-29T10:45:35.605084+00:00",
+  "attempts": [
+    {
+      "attempt": "m11-attempt-1",
+      "started_utc": "2026-10-29T05:26:31+00:00",
+      "finished_utc": "2026-10-29T05:26:32+00:00",
+      "hello": {
+        "envelope_version": 1,
+        "type": "error",
+        "request_id": "r1-vei27e",
+        "code": "internal",
+        "recoverability": "fatal",
+        "stage": "port_closed",
+        "synthesized": true,
+        "request_type": "hello"
+      },
+      "scan_outcome": null,
+      "authorized_state_classified": null,
+      "problems": [
+        "RuntimeError: dev host hello failed: {'envelope_version': 1, 'type': 'error', 'request_id': 'r1-vei27e', 'code': 'internal', 'recoverability': 'fatal', 'stage': 'port_closed', 'synthesized': True, 'request_type': 'hello'}"
+      ],
+      "answer_files": [],
+      "capture_sha256": "9f9e33d28d20e965ebfbcf964acea8d815d5b17f94392a8169761edc38b6f533"
+    },
+    {
+      "attempt": "m11-attempt-2",
+      "started_utc": "2026-10-29T05:29:57+00:00",
+      "finished_utc": "2026-10-29T05:42:00+00:00",
+      "hello": {
+        "api_version": 1,
+        "bridge_version": "otp23-feasibility/0.1.0 plain",
+        "capabilities": [
+          "veles_record_v1"
+        ],
+        "envelope_version": 1,
+        "platform": "macos",
+        "request_id": "r1-668q3m",
+        "type": "ready"
+      },
+      "scan_outcome": {
+        "api_version": 1,
+        "code": "scan_failed",
+        "envelope_version": 1,
+        "recoverability": "retryable",
+        "request_id": "r2-3gdjv6",
+        "stage": "permission_pending",
+        "type": "error"
+      },
+      "authorized_state_classified": {
+        "state": "pending_at_host_budget_not_denial",
+        "post_init_authorization": null,
+        "owner_dialog_observed": null,
+        "ended_by": "deadline"
+      },
+      "problems": [
+        "prompt watch reached its deadline without the owner's nonce answer and a post-answer scan reply (recorded as observed, not adjudicated)"
+      ],
+      "answer_files": [
+        {
+          "name": "m11-prompt-ac6b44f7-2857-416d-bc00-75e2aa44139d.answer.json",
+          "mtime_utc": "2026-10-29T06:18:28.184961+00:00",
+          "sha256": "0bda401f41df67255fcc3fbf880872a23e7ae18707cf5128aac947c30c686492"
+        }
+      ],
+      "capture_sha256": "209fe71d4d400258d7f433570d16726e382d703585f3fcc59719d1e4b16e5e94"
+    },
+    {
+      "attempt": "m11-attempt-3",
+      "started_utc": "2026-10-29T06:21:17+00:00",
+      "finished_utc": "2026-10-29T07:21:19+00:00",
+      "hello": {
+        "api_version": 1,
+        "bridge_version": "otp23-feasibility/0.1.0 plain",
+        "capabilities": [
+          "veles_record_v1"
+        ],
+        "envelope_version": 1,
+        "platform": "macos",
+        "request_id": "r1-kaceht",
+        "type": "ready"
+      },
+      "scan_outcome": {
+        "api_version": 1,
+        "envelope_version": 1,
+        "request_id": "r2-e5v2lw",
+        "scan_handle": "361362adef91c463",
+        "status": "started",
+        "type": "scan_state"
+      },
+      "authorized_state_classified": {
+        "state": "authorized_started",
+        "post_init_authorization": null,
+        "owner_dialog_observed": null,
+        "ended_by": "deadline"
+      },
+      "problems": [
+        "prompt watch reached its deadline without the owner's nonce answer and a post-answer scan reply (recorded as observed, not adjudicated)"
+      ],
+      "answer_files": [],
+      "capture_sha256": "f04c9045de668cdddf00866f4aecf2e5b280b8b46b31dbf70b7fcfdbeb31fc72"
+    }
+  ],
+  "approved_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "approved_codesign_strict": true,
+  "dev_manifest_remaining": false,
+  "controller_operator": "OpenCode parent gpt-6.1-sol executing unchanged reviewed Opus scripts"
+}

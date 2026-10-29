@@ -1,0 +1,239 @@
+{
+  "what": "OTP-23 Mac M-08 release attribution A2 (source-proven inequalities) derivation record, 2026-10-29",
+  "roles": {
+    "implementer": "Claude Code / claude-opus-5-5, session 752e1974-0617-470b-a425-dfbda97ac728 (no subagents)",
+    "design_and_premise_correction": "independent fresh Opus review /tmp/opencode/otp23-mac-final-data-review-opus.md §1-3 (reviewer distinct from the implementer)",
+    "parent_decision": "/tmp/opencode/otp23-mac-safe-analysis-parent-decision.json",
+    "historical": "frozen analyzer + M-08 code phase: ollama-cloud/glm-5.3-flash; code verification: ollama-cloud/kimi-k3; Option-A design and fix micro-verification: Opus 7b4ee6ca; A1 implementation: Opus implementer 752e1974 (superseded)"
+  },
+  "status": "derived analysis awaiting independent micro-review; NOT a matrix/row decision (matrix stays 23/6/3 NO-GO)",
+  "premise_correction": "A1 (69546ee5) and the frozen analyzer's docstring assumed the phone's single-fragment 16-byte notify_api is stamped before the host logs `out … type=message`. Not causal: the stamp is taken after notifyCharacteristicChanged() returns. A2 uses only: lower = first fragment of the verified 9-fragment 4096-byte echo (main-looper sequencing puts it before the host's reassembled message); upper = min(e16 − i16, e_first − i4096); q = ±1 ms. The 16-byte lower value is recorded as a non-causal diagnostic only.",
+  "hull_role": "the frozen hull result is diagnostics only; a hull PASS is never accepted as a fallback (ambiguous mapping, unmet preconditions/premises and structural problems all fail closed, m08_creditable false)",
+  "precision": "assigned origin widths are 235-282 ms. The earlier <= 250 ms figure was a test-instrument precision target, not an RFC acceptance clause, and it is NOT claimed met. Acceptance rests on the unchanged full-interval checks — release after the GLOBAL last exchange (min margin +54 ms), within own exit + 30 s, disconnect before fixture stop, stop >= hi + exit + 30 s — all pass with the wider intervals. This is not a waiver.",
+  "source_binding": {
+    "head": "9c3ddc54a3721eced84e49f02ed76ef156f0baed",
+    "tracked_dirty_diff_sha256": "2376ca99bb9ddc9eac0aa16bbc864f2b358e050e1f9762eb84d97b54e11da4d9",
+    "untracked_analysis_files": {
+      "scripts/mac_release_attribution.py": "ce75a8f1253157975b4004199d4db425d9f69ea02b2bb4360a829ed696d0634e",
+      "scripts/test_mac_release_attribution.py": "219c78bee389d74d9142905fabd502f4c5ee27859d6da9fd075fed178850f016"
+    }
+  },
+  "code_pins": {
+    "scripts/mac_release_attribution.py": "ce75a8f1253157975b4004199d4db425d9f69ea02b2bb4360a829ed696d0634e",
+    "scripts/mac_release_bound.py": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560",
+    "scripts/scenario_matrix.py": "f8bbf2d6ea158d2bd30bee35b97a655c727a7ca7fc677a5c9a3a53eafe6b7f28",
+    "scripts/scenario_matrix_core.py": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+    "scripts/macos_poc.py": "e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0",
+    ".github/workflows/otp23-feasibility.yml": "df1305d4d3729318d4e9cef123a1c0cd1fcbcf46e4ffaea09e7f0e45f1ba6291"
+  },
+  "source_history": {
+    "folder": "evidence/mac-release-attribution-source-history-2026-10-29",
+    "SHA256SUMS_sha256": "2a550c1cf0add0ea863b216e78c45c7d3acf18f0ee666d729411690ece7a2854"
+  },
+  "immutable_inputs_and_history": {
+    "evidence/mac-retake-2026-10-29 (79 raw)": {
+      "SHA256SUMS_sha256": "f952c123a1c74a5b1c811f4faa2453ed5f81cae49e39e3f974136798e4ea6455",
+      "check": "OK before and after; 0 files modified"
+    },
+    "evidence/mac-release-attributed-2026-10-29 (6, A1 superseded)": {
+      "SHA256SUMS_sha256": "dd05dac4b63f67336370a8a203d2dff47471e3fbd10eaee73a1692a54b763355",
+      "check": "OK before and after; 0 files modified"
+    }
+  },
+  "commands": [
+    "python3 scripts/mac_release_attribution.py --lifecycle-dir evidence/mac-retake-2026-10-29/shutdown-1/mac --scenario shutdown --transport evidence/mac-retake-2026-10-29/shutdown-1/phones/transport-2be02e41.json --transport evidence/mac-retake-2026-10-29/shutdown-1/phones/transport-864a3db0.json --stops evidence/mac-retake-2026-10-29/shutdown-1/stops.json --hull-release-bound evidence/mac-retake-2026-10-29/shutdown-1/release-bound.json --out evidence/mac-release-attributed-safe-2026-10-29/shutdown-1/release-bound-attributed.json",
+    "python3 scripts/mac_release_attribution.py --lifecycle-dir evidence/mac-retake-2026-10-29/port-disconnect-1/mac --scenario port-disconnect --transport evidence/mac-retake-2026-10-29/port-disconnect-1/phones/transport-2be02e41.json --transport evidence/mac-retake-2026-10-29/port-disconnect-1/phones/transport-864a3db0.json --stops evidence/mac-retake-2026-10-29/port-disconnect-1/stops.json --hull-release-bound evidence/mac-retake-2026-10-29/port-disconnect-1/release-bound.json --out evidence/mac-release-attributed-safe-2026-10-29/port-disconnect-1/release-bound-attributed.json",
+    "python3 scripts/mac_release_attribution.py --lifecycle-dir evidence/mac-retake-2026-10-29/tab-close-1/mac --scenario tab-close --transport evidence/mac-retake-2026-10-29/tab-close-1/phones/transport-2be02e41.json --transport evidence/mac-retake-2026-10-29/tab-close-1/phones/transport-864a3db0.json --stops evidence/mac-retake-2026-10-29/tab-close-1/stops.json --hull-release-bound evidence/mac-retake-2026-10-29/tab-close-1/release-bound.json --out evidence/mac-release-attributed-safe-2026-10-29/tab-close-1/release-bound-attributed.json"
+  ],
+  "uniform_application": "the same command for all three frozen cases; no per-case selection",
+  "quantum_ms": 1,
+  "declared_bound_ms": 30000,
+  "cases": {
+    "shutdown": {
+      "output": "shutdown-1/release-bound-attributed.json",
+      "output_sha256": "e9dc87d8e8ab1cb4625023c407aa71f68fc2102f3f085c0aad2d776235cbad68",
+      "hull_diagnostic_verdict": "PASS",
+      "attribution_status": "unique_mapping",
+      "verdict": "PASS",
+      "m08_creditable": true,
+      "causal_premises_met": {
+        "2be02e41": true,
+        "864a3db0": true
+      },
+      "epoch_minus_elapsed_spread_ms": {
+        "2be02e41": 1,
+        "864a3db0": 1
+      },
+      "feasible_bits": [
+        false,
+        true
+      ],
+      "candidate_widths_ms": {
+        "2be02e41": {
+          "053544add3f3ad4d": -230,
+          "e7b2832a8828839e": 256
+        },
+        "864a3db0": {
+          "053544add3f3ad4d": 258,
+          "e7b2832a8828839e": 504
+        }
+      },
+      "assignments": {
+        "2be02e41": {
+          "handle": "e7b2832a8828839e",
+          "origin_width_ms": 256,
+          "dis_trace_interval": [
+            4143,
+            4399
+          ],
+          "margin_vs_global_last_ms": 84,
+          "checks": {
+            "release_after_last_exchange": true,
+            "within_bound_of_own_exit": true,
+            "stop_after_disconnect": true,
+            "stop_after_bound_plus_uncertainty": true
+          }
+        },
+        "864a3db0": {
+          "handle": "053544add3f3ad4d",
+          "origin_width_ms": 258,
+          "dis_trace_interval": [
+            4152,
+            4410
+          ],
+          "margin_vs_global_last_ms": 93,
+          "checks": {
+            "release_after_last_exchange": true,
+            "within_bound_of_own_exit": true,
+            "stop_after_disconnect": true,
+            "stop_after_bound_plus_uncertainty": true
+          }
+        }
+      }
+    },
+    "port-disconnect": {
+      "output": "port-disconnect-1/release-bound-attributed.json",
+      "output_sha256": "3f04e4d1c47bef8ca4b9bc60858d4357a2aa77b182b6ff4f70f813f4ac9a6fe7",
+      "hull_diagnostic_verdict": "FAIL",
+      "attribution_status": "unique_mapping",
+      "verdict": "PASS",
+      "m08_creditable": true,
+      "causal_premises_met": {
+        "2be02e41": true,
+        "864a3db0": true
+      },
+      "epoch_minus_elapsed_spread_ms": {
+        "2be02e41": 1,
+        "864a3db0": 1
+      },
+      "feasible_bits": [
+        true,
+        false
+      ],
+      "candidate_widths_ms": {
+        "2be02e41": {
+          "56433e089280829e": 273,
+          "c710e81543b792ef": 533
+        },
+        "864a3db0": {
+          "56433e089280829e": -224,
+          "c710e81543b792ef": 282
+        }
+      },
+      "assignments": {
+        "2be02e41": {
+          "handle": "56433e089280829e",
+          "origin_width_ms": 273,
+          "dis_trace_interval": [
+            6036,
+            6309
+          ],
+          "margin_vs_global_last_ms": 85,
+          "checks": {
+            "release_after_last_exchange": true,
+            "within_bound_of_own_exit": true,
+            "stop_after_disconnect": true,
+            "stop_after_bound_plus_uncertainty": true
+          }
+        },
+        "864a3db0": {
+          "handle": "c710e81543b792ef",
+          "origin_width_ms": 282,
+          "dis_trace_interval": [
+            6005,
+            6287
+          ],
+          "margin_vs_global_last_ms": 54,
+          "checks": {
+            "release_after_last_exchange": true,
+            "within_bound_of_own_exit": true,
+            "stop_after_disconnect": true,
+            "stop_after_bound_plus_uncertainty": true
+          }
+        }
+      }
+    },
+    "tab-close": {
+      "output": "tab-close-1/release-bound-attributed.json",
+      "output_sha256": "811d96cf9f80ee5ed569f446cce19bd120ada3760158b352e4bcb76d3748c46c",
+      "hull_diagnostic_verdict": "FAIL",
+      "attribution_status": "unique_mapping",
+      "verdict": "PASS",
+      "m08_creditable": true,
+      "causal_premises_met": {
+        "2be02e41": true,
+        "864a3db0": true
+      },
+      "epoch_minus_elapsed_spread_ms": {
+        "2be02e41": 1,
+        "864a3db0": 1
+      },
+      "feasible_bits": [
+        false,
+        true
+      ],
+      "candidate_widths_ms": {
+        "2be02e41": {
+          "093954e54c2fa8d8": -242,
+          "71857b85775992a2": 270
+        },
+        "864a3db0": {
+          "093954e54c2fa8d8": 235,
+          "71857b85775992a2": 550
+        }
+      },
+      "assignments": {
+        "2be02e41": {
+          "handle": "71857b85775992a2",
+          "origin_width_ms": 270,
+          "dis_trace_interval": [
+            5167,
+            5437
+          ],
+          "margin_vs_global_last_ms": 54,
+          "checks": {
+            "release_after_last_exchange": true,
+            "within_bound_of_own_exit": true,
+            "stop_after_disconnect": true,
+            "stop_after_bound_plus_uncertainty": true
+          }
+        },
+        "864a3db0": {
+          "handle": "093954e54c2fa8d8",
+          "origin_width_ms": 235,
+          "dis_trace_interval": [
+            5173,
+            5408
+          ],
+          "margin_vs_global_last_ms": 60,
+          "checks": {
+            "release_after_last_exchange": true,
+            "within_bound_of_own_exit": true,
+            "stop_after_disconnect": true,
+            "stop_after_bound_plus_uncertainty": true
+          }
+        }
+      }
+    }
+  }
+}

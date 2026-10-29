@@ -763,3 +763,61 @@ Still **NO-GO**; OTP-24 remains unauthorized; M-08 unmeasured. Gates re-run AFTE
 harness + `matrix.py check` — all exit 0; see `package1-integration-20261028/gates/` for copies with exact
 sources). Nothing committed/pushed by these sessions; the parent performs the final integrated review and
 publication.
+
+## 20. Mac integration (2026-10-29): M-08 and M-11 promoted — 25 PASS / 4 BLOCKED / 3 waived
+
+This completes the M-08 deferral of section 18 without rewriting it. The 2026-10-28 owner answer
+"Cannot restart Chrome now" stands as captured. The owner later completed that step ("Updated and
+relaunched", Chrome 156.0.8078.74; operator-captured record
+`native-bridge/feasibility/evidence/mac-integration-2026-10-29/route/otp23-mac-resume-owner-record.json`).
+That completion resumes the deferred prerequisite. It is not a waiver, and no gate changed.
+
+**Rows promoted (M-08 and M-11 only).** Both were approved for normal integration by a fresh,
+independent Claude Code `claude-opus-5-5` micro-review (session
+`e30e474d-65cc-44c2-99c7-d0195cfc4631`). That session is neither the implementer nor the parent, and
+it re-derived every M-08 interval from raw data.
+
+**M-08 PASS**, from the frozen retake (`mac-retake-2026-10-29/`) plus the adopted A2 safe phone-release
+attribution (`mac-release-attributed-safe-2026-10-29/`):
+- **Teardown:** Chrome-owned shutdown, port-disconnect and tab-close, each with zero host windows
+  and endpoints in the connected phase.
+- **Release proof:** a unique mapping with all retained checks passing.
+- **Precision:** widths of 235–282 ms. The old ≤ 250 ms instrument target is not claimed.
+- **History kept:** the hull and A1 history and the direct-SSH EOF diagnostic are preserved unchanged.
+
+**M-11 PASS** (scoped manual adjudication on the existing admin account):
+- the distinct unsigned, linker ad-hoc developer host
+- Chrome launch from a disposable profile
+- authorization `NotDetermined` → authorized
+- a scan start, compared with the signed fixture's `allowed_always`
+
+Every recorded caveat applies; they are listed in
+`mac-integration-2026-10-29/adjudications/m11-final-adjudication.md`. That record supersedes the frozen,
+kept draft. A read-only post-run TCC log supplement (`mac-tcc-supplement-2026-10-29/`) corroborates
+only the developer prompt.
+
+**Unchanged:**
+- **M-03:** BLOCKED. The original signed prompt owner is unobserved, and nothing is inferred.
+- **M-04:** BLOCKED. There is no approved OFF→ON toggle, and the exact Settings guidance is not
+  implemented.
+- **W-10 and A-01:** BLOCKED.
+- **Account waiver:** still exactly W-01, M-01 and M-02.
+
+The decision stays **NO-GO**, and OTP-24 is not authorized. No production UX or backlog work was done.
+
+**Review state.** The earlier reviews remain scoped to the trees they covered (up to `9c3ddc5`). The
+final independent integrated-tree review of this phase is still **pending**: the parent performs it
+before commit and publication. The gates were re-run after the last edit; the logs are in
+`mac-integration-2026-10-29/gates/`.
+
+**Final review closure (2026-10-29, appended; the "pending" statement above is history).** The final
+independent integrated-tree review is done. It ran in a fresh Claude Code `claude-opus-5-5` session,
+`faee6a0e-43c5-41d7-9bc4-a2cd3f3de09b`, with 0 subagents; the report is published byte-identically in
+`mac-integration-2026-10-29/reports/`. Its verdict: **CHANGES REQUIRED → closed by the bounded F1–F3
+closure; APPROVED for commit/publication pending clean export and green CI.**
+- **F1, option (a):** in-place redaction of four unrelated manifest names in the `mac-resume`
+  registration record, with the original private and the old manifest preserved.
+- **F2:** EOF-reading attribution corrected.
+- **F3:** accurate gate-06 command log.
+
+The closure is recorded in R-01. Matrix 25/4/3, NO-GO; OTP-24 is not authorized.

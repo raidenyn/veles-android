@@ -43,11 +43,16 @@ jobs:
       - run: python scripts/test_m6_phone_clock_adjudication.py
       - run: python scripts/test_scenario_matrix.py
       - run: python scripts/test_windows_closejoin_compare.py
+      - run: python scripts/test_mac_release_gate.py
+      - run: python scripts/test_mac_release_bound.py
+      - run: python scripts/test_mac_release_attribution.py
       - run: python scripts/test_macos_permission_recovery.py
       - run: python scripts/matrix.py check
       - run: bash scripts/test_macos_package_lib.sh
         if: runner.os != 'Windows'
       - run: python3 scripts/test_macos_poc.py
+        if: runner.os != 'Windows'
+      - run: python3 scripts/test_mac_clock_corroborate.py
         if: runner.os != 'Windows'
       - run: python3 scripts/test_macos_background_support.py
         if: runner.os != 'Windows'

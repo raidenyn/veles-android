@@ -1,0 +1,239 @@
+{
+  "what": "OTP-23 Mac M-08/M-11 chain (2026-10-28..29): model and role metadata — WHITELISTED structured fields only",
+  "policy": "no messages, no result text, no usage bodies, no API headers or error bodies; failed attempts carry only api_error_status/api_error",
+  "opencode_sessions_db_readonly": {
+    "method": "read-only query of the local opencode db: assistant messages per session grouped by data.modelID/providerID, count + first/last time",
+    "sessions": [
+      {
+        "session_id": "ses_e7cde50b5ffezoaQLsnQlF6FlE",
+        "modelID": "glm-5.3-flash",
+        "providerID": "ollama-cloud",
+        "assistant_messages": 257,
+        "first_utc": "2026-10-28T15:29:46+00:00",
+        "last_utc": "2026-10-28T17:59:42+00:00",
+        "role": "IMPLEMENTER/operator: Mac resume attempt, M-08 code phase (P0-A gate, lsof classifier, mac_release_bound.py, mac_clock_corroborate.py), M-11 prep, first minimum fixes; ended by API 429 at 17:59-18:00Z"
+      },
+      {
+        "session_id": "ses_e7c65ccb7ffer426VUPORo2z1u",
+        "modelID": "kimi-k3",
+        "providerID": "ollama-cloud",
+        "assistant_messages": 45,
+        "first_utc": "2026-10-28T17:41:24+00:00",
+        "last_utc": "2026-10-28T17:49:29+00:00",
+        "role": "independent code verification (reports/otp23-mac-m08-code-verification-kimi.md)"
+      },
+      {
+        "session_id": "ses_e8393db6bffeMzWgsvMaGsH3pI",
+        "modelID": "gpt-6.1-sol",
+        "providerID": "openai",
+        "assistant_messages_in_m11_window_2026-10-29T05:20Z-10:50Z": 49,
+        "role": "coordinating PARENT; also the M-11 CONTROLLER that executed the unchanged reviewed m11_dev_capture.py 976f61cf (not an Opus operator)"
+      }
+    ]
+  },
+  "claude_code_envelopes": [
+    {
+      "envelope": "otp23-opus-availability-retry.json",
+      "envelope_sha256_private": "e82cc18fc11285063ce2406362498f87c3f0f321308606076d97307fa4e5255c",
+      "session_id": "591fbc41-2a54-4cf4-a31d-1f7b1c181e17",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 1,
+      "subagents_spawned": 0,
+      "role": "route availability check after quota reset (READY)"
+    },
+    {
+      "envelope": "otp23-mac-m08-preflight-opus-result.json",
+      "envelope_sha256_private": "06a698e4d4db2e63761c9550f66aff0183263edf5df34fa3dbadce21b6a5133b",
+      "session_id": "1b447229-ceaa-4cee-a5be-2181dfdd8838",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 40,
+      "subagents_spawned": 0,
+      "role": "independent design preflight (Opus), report reports/otp23-mac-m08-preflight-opus.md"
+    },
+    {
+      "envelope": "otp23-mac-m08-code-verification-opus-result.json",
+      "envelope_sha256_private": "ecd4524aff19bc5d98f49a9c6d489b7c9a807eb438a063d222814d8742a36504",
+      "session_id": "1b447229-ceaa-4cee-a5be-2181dfdd8838",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": true,
+      "terminal_reason": "api_error",
+      "api_error_status": 429,
+      "api_error": "usage_limit_reached",
+      "num_turns": 1,
+      "subagents_spawned": 0,
+      "role": "same preflight session resumed for code verification; HIT QUOTA (429) — approved nothing, no report"
+    },
+    {
+      "envelope": "otp23-mac-m08-fix-opus-result.json",
+      "envelope_sha256_private": "1e4684a7c1b4a262482df03510e1bc7c23e40fc0d49efc5f9639991c6764b6f9",
+      "session_id": "752e1974-0617-470b-a425-dfbda97ac728",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 69,
+      "subagents_spawned": 0,
+      "role": "IMPLEMENTER: minimum-fix completion (reports/otp23-mac-m08-fix-result.md)"
+    },
+    {
+      "envelope": "otp23-mac-m08-fix-verification-opus-result.json",
+      "envelope_sha256_private": "8d513a930bf372e4cc9773318d55928ca8e2034777c0b726a81a5c46599239d8",
+      "session_id": "7b4ee6ca-e48e-407b-93d0-43738aa7238b",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 40,
+      "subagents_spawned": 0,
+      "role": "independent micro-verification of the minimum fixes (reports/otp23-mac-m08-fix-verification-opus.md)"
+    },
+    {
+      "envelope": "otp23-mac-m08-retake-opus-result.json",
+      "envelope_sha256_private": "c803993a423492b6e7e8627e03a4b510453076314069ce5c2e532ca0590f5aa0",
+      "session_id": "752e1974-0617-470b-a425-dfbda97ac728",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 72,
+      "subagents_spawned": 0,
+      "role": "IMPLEMENTER/operator: physical M-08 retake + M11-1 loop fix (reports/otp23-mac-m08-retake-result.md, otp23-mac-m11-loop-fix-result.md)"
+    },
+    {
+      "envelope": "otp23-mac-m08-physical-review-opus-result.json",
+      "envelope_sha256_private": "46c64a9770f6a599022359e5eda912a33710e135e8ed2280c3a1f68b4eb7cb53",
+      "session_id": "7b4ee6ca-e48e-407b-93d0-43738aa7238b",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 23,
+      "subagents_spawned": 0,
+      "role": "independent physical evidence review (reports/otp23-mac-m08-physical-review-opus.md)"
+    },
+    {
+      "envelope": "otp23-mac-m08-attribution-opus-result.json",
+      "envelope_sha256_private": "88ae6c85bb7df6d1609c03420229649e99665fd0c78c228a734158d4fc34df2a",
+      "session_id": "752e1974-0617-470b-a425-dfbda97ac728",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 21,
+      "subagents_spawned": 0,
+      "role": "IMPLEMENTER: Option A attribution A1 (reports/otp23-mac-m08-attribution-result.md; A1 later superseded)"
+    },
+    {
+      "envelope": "otp23-mac-m11-loop-verification-opus-result.json",
+      "envelope_sha256_private": "0e0925cf8fa2294e8d6b663889badf47daefd8b067a8f790e33c3423a8c3b35b",
+      "session_id": "7b4ee6ca-e48e-407b-93d0-43738aa7238b",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 19,
+      "subagents_spawned": 0,
+      "role": "independent review of the M11-1 loop fix (reports/otp23-mac-m11-loop-verification-opus.md)"
+    },
+    {
+      "envelope": "otp23-mac-m08-causal-premise-opus-result.json",
+      "envelope_sha256_private": "0284c2a1b2f9b151ccdffdf932050fa441c16f366eb029e514684da2838874bf",
+      "session_id": "7b4ee6ca-e48e-407b-93d0-43738aa7238b",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": true,
+      "terminal_reason": "api_error",
+      "api_error_status": 429,
+      "api_error": "usage_limit_reached",
+      "num_turns": 3,
+      "subagents_spawned": 0,
+      "role": "independent causal-premise check attempt; HIT QUOTA (429) — no report"
+    },
+    {
+      "envelope": "otp23-mac-m11-execution-opus-result.json",
+      "envelope_sha256_private": "ce8fe5771f47ecdcd97e7675eed1f6044b38896ff86f573bcf9bffb273480ebd",
+      "session_id": "c401a87c-93bc-4498-9de6-f3106797baa4",
+      "model_usage_keys": [],
+      "is_error": true,
+      "terminal_reason": "api_error",
+      "api_error_status": 429,
+      "api_error": "usage_limit_reached",
+      "num_turns": 1,
+      "subagents_spawned": 0,
+      "role": "fresh physical M-11 operator attempt; HIT QUOTA (429) before any tool or device action (no model usage) — the parent controller then ran the unchanged script"
+    },
+    {
+      "envelope": "otp23-mac-final-data-review-opus-result.json",
+      "envelope_sha256_private": "6d0cf1eeb2ba8f081dab5474e1e238381dea75394aca066a8e994f9fb13ef781",
+      "session_id": "e30e474d-65cc-44c2-99c7-d0195cfc4631",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 42,
+      "subagents_spawned": 0,
+      "role": "fresh independent review: M-08 causal-premise correction + M-11 adjudication (reports/otp23-mac-final-data-review-opus.md)"
+    },
+    {
+      "envelope": "otp23-mac-safe-attribution-opus-result.json",
+      "envelope_sha256_private": "6b5229d2cf99572229999e3c2d7eb82bc21159c9896e20d36fa8e01bb96c0c39",
+      "session_id": "752e1974-0617-470b-a425-dfbda97ac728",
+      "model_usage_keys": [
+        "claude-opus-5-5"
+      ],
+      "is_error": false,
+      "terminal_reason": "completed",
+      "api_error_status": null,
+      "api_error": null,
+      "num_turns": 19,
+      "subagents_spawned": 0,
+      "role": "IMPLEMENTER: A2 safe attribution (reports/otp23-mac-safe-attribution-result.md)"
+    }
+  ],
+  "route": {
+    "sequence": [
+      "ollama-cloud/glm-5.3-flash implementer (owner-selected for the Mac work)",
+      "ollama-cloud/kimi-k3 reviewer (route/otp23-mac-kimi-reviewer-approval.json, owner 'Use kimi k3', 2026-10-28)",
+      "claude-opus-5-5 via Claude Code for implementation and independent review in separate sessions (route/otp23-mac-opus-continuation-owner-record.json, owner 'Use Opus 5.5 via Claude code', record date 2026-10-29)"
+    ],
+    "date_correction": "the Opus continuation record's date field was corrected by the parent from a mistyped 2026-10-28 to 2026-10-29 BEFORE publication; the published bytes carry 2026-10-29 (sha below)",
+    "opus_continuation_record_sha256": "7b223d05468accb1bc6716994206c6408690847ad57a727244a273a9fe99281a"
+  },
+  "separation": "implementer session 752e1974 is distinct from reviewers 7b4ee6ca and e30e474d; 1b447229 (preflight) did not approve code; no subagents in any listed Claude session (subagents_spawned 0)"
+}

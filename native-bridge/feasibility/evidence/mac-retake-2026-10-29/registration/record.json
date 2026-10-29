@@ -1,0 +1,29 @@
+{
+  "what": "OTP-23 Mac M-08 retake 2026-10-29: scoped user-level native-messaging registration (own plain manifest only)",
+  "scope": "user NativeMessagingHosts dir only; nothing machine-wide; no TCC change",
+  "manifest_name": "me.nagaev.veles.otp23.plain.json",
+  "manifest_sha256_at_register": "17a196cdeb758c17c9e4e7329a416ea898d21d94f8837ac052b0625dc0c54fca",
+  "manifest_sha256_before_unregister": "17a196cdeb758c17c9e4e7329a416ea898d21d94f8837ac052b0625dc0c54fca",
+  "before": {
+    "captured_utc": "2026-10-29T04:33:50Z",
+    "veles_or_otp23_entries": [],
+    "total_entries_excluding_dot_dirs": 4,
+    "raw_listing_sha256_private": "a00c12527a40ed60bee0771b4234fa97dfdcb1d98ae76fa21a57a6e6824bab66"
+  },
+  "after_register": {
+    "captured_utc": "2026-10-29T04:33:51Z",
+    "veles_or_otp23_entries": [
+      "me.nagaev.veles.otp23.plain.json"
+    ],
+    "total_entries_excluding_dot_dirs": 5,
+    "raw_listing_sha256_private": "07a5355023061c4ac351074d8c55884c80949976731a4da2d87fe8d610eb7840"
+  },
+  "after_unregister": {
+    "captured_utc": "2026-10-29T04:43:44Z",
+    "veles_or_otp23_entries": [],
+    "total_entries_excluding_dot_dirs": 4,
+    "raw_listing_sha256_private": "64828a75649ffd10e8b7dd378d9445af9269e9a02757431e6ee872d0ba934ec6"
+  },
+  "file_set_before_equals_after_unregister": true,
+  "note": "raw directory listings name other applications' manifests (not relevant to this test); they are kept privately and represented here by their hashes and the veles-only entries"
+}

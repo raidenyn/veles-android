@@ -13,6 +13,7 @@ Usage:  python3 -m unittest discover -s scripts -p "test_macos_poc.py" -v
 import ast
 import contextlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -285,6 +286,188 @@ class ProcessTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, _r[0], stdout=_r[1], stderr=_r[2])
             with mock.patch.object(macos_poc.subprocess, "run", fake_run), self.subTest(name):
                 self.assertEqual(macos_poc.lsof_endpoints(700), expected, name)
+
+    # ---- foreign-nullfs warning classifier (P0-A era; Opus preflight Task 1) --------------------
+
+    MOUNT_POINT = "/private/var/folders/yc/someuserfolder/T/AppTranslocation/ABCDEF01-2345-6789-ABCD-EF0123456789"
+
+    def warning_block(self, mount_point=None, dev="2e000004", with_dev=True):
+        block = (f"lsof: WARNING: can't stat() nullfs file system "
+                 f"{mount_point or self.MOUNT_POINT}\n"
+                 "    Output information may be incomplete.\n")
+        if with_dev:
+            block += f'    assuming "dev={dev}" from mount table\n'
+        return block
+
+    ROWS = ("COMMAND  PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+            "otp23-ho 700 user 6u IPv4 0xff 0t0 TCP *:51111 (LISTEN)\n")
+    EXPECT = [{"local_port": 51111, "remote_port": None, "state": "LISTEN"}]
+
+    def setUp(self):
+        self._old_env = os.environ.pop("VELES_OTP23_LSOF_DIAG", None)
+        self.diag_dir = tempfile.mkdtemp(prefix="lsof-diag-")
+        self.diag_path = str(pathlib.Path(self.diag_dir) / "lsof-diagnostics.jsonl")
+
+    def tearDown(self):
+        if self._old_env is not None:
+            os.environ["VELES_OTP23_LSOF_DIAG"] = self._old_env
+        import shutil
+        shutil.rmtree(self.diag_dir, ignore_errors=True)
+        macos_poc._FOREIGN_NULLFS_CACHE = None
+        macos_poc._LSOF_SNAPSHOT_CACHE.clear()
+
+    def self_user(self):
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_name
+
+    def foreign_mount(self, owner):
+        """A fake /sbin/mount table whose only nullfs line is owned by `owner`, plus one non-nullfs line."""
+        return (f"/Users/owner/Downloads/App.app on {self.MOUNT_POINT} "
+                f"(nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by {owner})\n"
+                "/dev/disk1s1 on / (apfs, local, journaled)\n")
+
+    def patch_lsof_and_mount(self, foreign_owner, *, rc=1, stdout=ROWS, stderr=None, blocks=1):
+        stderr = stderr if stderr is not None else (self.warning_block() * blocks)
+        mount_text = self.foreign_mount(foreign_owner)
+
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            if argv == ["/sbin/mount"]:
+                return subprocess.CompletedProcess(argv, 0, stdout=mount_text, stderr="")
+            return subprocess.CompletedProcess(argv, rc, stdout=stdout, stderr=stderr)
+        return mock.patch.object(macos_poc.subprocess, "run", fake_run)
+
+    def setup_diag(self):
+        os.environ["VELES_OTP23_LSOF_DIAG"] = self.diag_path
+
+    def classify(self, stderr, mounts):
+        return macos_poc.classify_lsof_stderr(stderr, mounts)
+
+    def test_classifier_exact_block_is_benign_only_with_matching_foreign_mount(self):
+        block = self.warning_block()
+        self.assertEqual(self.classify(block, {self.MOUNT_POINT}), (True, [{"path": self.MOUNT_POINT, "dev": "2e000004"}]))
+        self.assertEqual(self.classify(block, set()), (False, None))
+        other = {self.MOUNT_POINT.replace("ABCDEF01", "FFFFFF00")}
+        self.assertEqual(self.classify(block, other), (False, None), "path not in the foreign set: unavailable")
+        self.assertEqual(self.classify("", {self.MOUNT_POINT}), (True, []), "clean stderr: nothing to classify")
+
+    def test_lsof_accepts_the_exact_foreign_block_with_rows_and_records_it(self):
+        # exact 3-line block + rows, diagnostics recorded and holding the VERBATIM stderr
+        self.setup_diag()
+        with self.patch_lsof_and_mount("someoneelse"):
+            endpoints = macos_poc.lsof_endpoints(700)
+        self.assertEqual(endpoints, self.EXPECT)
+        record = json.loads((pathlib.Path(self.diag_path).read_text().splitlines()[0]))
+        self.assertEqual(record["argv"], ["lsof", "-nP", "-a", "-p", "700", "-i"], "argv stays normal (no -w)")
+        self.assertEqual(record["rc"], 1)
+        self.assertEqual(record["stdout_rows"], 2)
+        self.assertEqual(record["stderr_verbatim"], self.warning_block())
+        self.assertEqual(record["classification"], {"benign": True, "blocks": [{"path": self.MOUNT_POINT, "dev": "2e000004"}]})
+        snapshot = pathlib.Path(self.diag_dir) / "mount-nullfs.txt"
+        self.assertTrue(snapshot.is_file())
+        self.assertEqual(record["mount_snapshot_sha256"], macos_poc.file_sha256(snapshot))
+        text = snapshot.read_text()
+        self.assertIn(self.MOUNT_POINT, text, "the mount point is kept verbatim")
+        self.assertNotIn("App.app", text, "no foreign app name in the snapshot")
+        self.assertNotIn("Users/owner", text, "no foreign source path in the snapshot")
+        self.assertNotIn("someoneelse", text, "no other user's account name in the snapshot")
+        self.assertIn("mounted by uid≠self", text)
+        self.assertNotIn("mounted by " + self.self_user(), text)
+
+    def test_lsof_exact_block_rc1_no_rows_is_honest_empty(self):
+        self.setup_diag()
+        with self.patch_lsof_and_mount("someoneelse", rc=1, stdout="COMMAND  PID USER\n"):
+            self.assertEqual(macos_poc.lsof_endpoints(700), [], "genuine no-match: never a fabricated zero")
+
+    def test_lsof_two_exact_blocks_for_two_foreign_mounts(self):
+        point_b = self.MOUNT_POINT.replace("ABCDEF01-2345", "00000009-1111")
+        blocks = self.warning_block() + self.warning_block(mount_point=point_b)
+        self.setup_diag()
+        mount_text = self.foreign_mount("someoneelse") + \
+            f"/Users/owner/Downloads/Other.app on {point_b} (nullfs, local, mounted by someoneelse)\n"
+
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            if argv == ["/sbin/mount"]:
+                return subprocess.CompletedProcess(argv, 0, stdout=mount_text, stderr="")
+            return subprocess.CompletedProcess(argv, 1, stdout=self.ROWS, stderr=blocks)
+        with mock.patch.object(macos_poc.subprocess, "run", fake_run):
+            self.assertEqual(macos_poc.lsof_endpoints(700), self.EXPECT)
+
+    def test_lsof_block_without_the_assuming_dev_line_is_unavailable(self):
+        self.setup_diag()
+        with self.patch_lsof_and_mount("someoneelse", stderr=self.warning_block(with_dev=False)):
+            self.assertIsNone(macos_poc.lsof_endpoints(700))
+
+    def test_lsof_block_for_a_mount_owned_by_self_is_unavailable(self):
+        self.setup_diag()
+        with self.patch_lsof_and_mount(self.self_user()):
+            self.assertIsNone(macos_poc.lsof_endpoints(700), "self-owned mount: the warning is not foreign")
+
+    def test_lsof_any_extra_stderr_line_is_unavailable(self):
+        self.setup_diag()
+        extra = self.warning_block() + "and one more line\n"
+        with self.patch_lsof_and_mount("someoneelse", stderr=extra):
+            self.assertIsNone(macos_poc.lsof_endpoints(700))
+
+    def test_lsof_non_nullfs_foreign_mount_is_unavailable(self):
+        # the mount table has the path but as a NON-nullfs type: it cannot be in the foreign set
+        self.setup_diag()
+        mount_text = (f"/Users/owner/Downloads/App.app on {self.MOUNT_POINT} "
+                      "(apfs, local, journaled)\n")
+
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            if argv == ["/sbin/mount"]:
+                return subprocess.CompletedProcess(argv, 0, stdout=mount_text, stderr="")
+            return subprocess.CompletedProcess(argv, 1, stdout=self.ROWS, stderr=self.warning_block())
+        with mock.patch.object(macos_poc.subprocess, "run", fake_run):
+            self.assertIsNone(macos_poc.lsof_endpoints(700))
+
+    def test_lsof_rc2_with_the_block_is_unavailable(self):
+        self.setup_diag()
+        with self.patch_lsof_and_mount("someoneelse", rc=2):
+            self.assertIsNone(macos_poc.lsof_endpoints(700))
+
+    def test_lsof_benign_block_without_diag_env_is_unavailable(self):
+        with self.patch_lsof_and_mount("someoneelse"):
+            self.assertIsNone(macos_poc.lsof_endpoints(700), "unaudited benign warning: unavailable")
+
+    def test_lsof_diag_write_failure_fails_closed(self):
+        self.setup_diag()
+        blocker = pathlib.Path(self.diag_dir) / "not-a-dir"
+        blocker.write_text("I am a file")
+        os.environ["VELES_OTP23_LSOF_DIAG"] = str(blocker / "sub" / "lsof-diagnostics.jsonl")
+        with self.patch_lsof_and_mount("someoneelse"):
+            self.assertIsNone(macos_poc.lsof_endpoints(700), "diagnostics write failure: unavailable")
+        os.environ["VELES_OTP23_LSOF_DIAG"] = self.diag_path
+
+    def test_lsof_diag_env_unset_census_still_works_when_stderr_clean(self):
+        # historical behavior preserved: a genuinely clean lsof never needed diagnostics
+        rows = "COMMAND  PID USER\n"  # rc=1 no rows
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            return subprocess.CompletedProcess(argv, 1, stdout=rows, stderr="")
+        with mock.patch.object(macos_poc.subprocess, "run", fake_run):
+            self.assertEqual(macos_poc.lsof_endpoints(700), [])
+
+    def test_clean_stderr_is_recorded_when_diag_env_is_set(self):
+        self.setup_diag()
+        rows = "COMMAND  PID USER\n"
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            if argv == ["/sbin/mount"]:
+                return subprocess.CompletedProcess(argv, 0, stdout="/dev/disk1s1 on / (apfs, local)\n", stderr="")
+            return subprocess.CompletedProcess(argv, 1, stdout=rows, stderr="")
+        with mock.patch.object(macos_poc.subprocess, "run", fake_run):
+            self.assertEqual(macos_poc.lsof_endpoints(700), [])
+        record = json.loads(pathlib.Path(self.diag_path).read_text().splitlines()[0])
+        self.assertEqual(record["classification"], "clean_stderr")
+        self.assertEqual(record["stderr_verbatim"], "")
+
+    def test_mount_unparseable_keeps_the_warning_unavailable(self):
+        self.setup_diag()
+        def fake_run(argv, capture_output=False, text=False, timeout=None):
+            if argv == ["/sbin/mount"]:
+                raise OSError("mount not runnable")
+            return subprocess.CompletedProcess(argv, 1, stdout=self.ROWS, stderr=self.warning_block())
+        with mock.patch.object(macos_poc.subprocess, "run", fake_run):
+            self.assertIsNone(macos_poc.lsof_endpoints(700), "unmeasurable mount table: warning stays unavailable")
 
     def test_parse_lsof_endpoints_is_pure_and_total(self):
         self.assertEqual(macos_poc.parse_lsof_endpoints(

@@ -1,0 +1,577 @@
+{
+  "id": "LC-failure-isolation",
+  "title": "Disconnect one link; the survivor keeps exchanging; then clean shutdown",
+  "expected": "stale handle rejected (unknown_handle), survivor exchanges 4096 bytes exactly, shutdown then removes the host by its own exit line",
+  "actual": "connected-phase probe problems: ['positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)', \"required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample\", 'positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)', \"required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample\", 'positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)', \"required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample\"]",
+  "status": "FAIL",
+  "error_class": "assertion",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "chrome_version_actual": "Chrome/156.0.8078.74",
+    "trace_env_passed_to_chrome": {
+      "VELES_OTP23_TRACE": "%HOME%/homepc/work/otp23-mac-resume/evidence/mac-resume-2026-10-28/lifecycle-1/failure-isolation.host-trace.log",
+      "VELES_OTP23_DETACHED_CLOSE": null
+    },
+    "detached_close_env_unset": true,
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": "unavailable",
+      "network_endpoints": 0
+    },
+    "integrity": {
+      "chrome": null,
+      "host": null,
+      "wrapper": []
+    },
+    "connect_order": "scan-active",
+    "link_proof": [
+      {
+        "size": 16,
+        "request_sha256": "af5973a60315832b08783a073100454cb555d4f67675c5ad66d057348eb9437a",
+        "received_sha256": "8d191539bf6937852e054776cf3306df1a7b73b68e05d5c848f520de01eec15c",
+        "status": "PASS"
+      },
+      {
+        "size": 16,
+        "request_sha256": "fa09a5dfcb8f56a16dc53e8c3d68f7ef6820ddf18cbf06dbdbc085a466e0a479",
+        "received_sha256": "4a67b0e9741bca55a7e6d21cedc5a25a37cd3bb08f2d4fef45314cdbe81845f3",
+        "status": "PASS"
+      }
+    ],
+    "probe_during": [
+      {
+        "label": "linked-idle-active-scan",
+        "wall_ms": 1793202286950,
+        "trace_offset_ms_estimate": 3675,
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "55245": {
+              "top_visible": 0,
+              "all_layers": 0,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            },
+            "55228": {
+              "top_visible": 14,
+              "all_layers": 14,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            }
+          },
+          "observer": {
+            "pid": 54905,
+            "session": {
+              "launchctl_managername": "Background",
+              "uid": 501,
+              "ssh_connection_present": true
+            }
+          },
+          "active_console_session": "unavailable",
+          "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          }
+        },
+        "summary": {
+          "problems": [
+            "positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)",
+            "required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample"
+          ],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": "unavailable",
+            "message_only": "unavailable",
+            "children": "unavailable"
+          },
+          "wrapper_windows": {},
+          "host_endpoints": {
+            "tcp4": "unavailable",
+            "tcp6": "unavailable",
+            "udp4": "unavailable",
+            "udp6": "unavailable"
+          },
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          },
+          "usable": false,
+          "context_audit": {
+            "problems": [],
+            "usable": true,
+            "launchctl_managername": "Background",
+            "uid": 501,
+            "ssh_connection_present": true
+          }
+        }
+      },
+      {
+        "label": "send-in-flight",
+        "wall_ms": 1793202286977,
+        "trace_offset_ms_estimate": 3702,
+        "exchange": {
+          "handle": "7f34224c4042",
+          "seed": 173
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "55245": {
+              "top_visible": 0,
+              "all_layers": 0,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            },
+            "55228": {
+              "top_visible": 14,
+              "all_layers": 14,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            }
+          },
+          "observer": {
+            "pid": 54905,
+            "session": {
+              "launchctl_managername": "Background",
+              "uid": 501,
+              "ssh_connection_present": true
+            }
+          },
+          "active_console_session": "unavailable",
+          "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          }
+        },
+        "summary": {
+          "problems": [
+            "positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)",
+            "required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample"
+          ],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": "unavailable",
+            "message_only": "unavailable",
+            "children": "unavailable"
+          },
+          "wrapper_windows": {},
+          "host_endpoints": {
+            "tcp4": "unavailable",
+            "tcp6": "unavailable",
+            "udp4": "unavailable",
+            "udp6": "unavailable"
+          },
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          },
+          "usable": false,
+          "context_audit": {
+            "problems": [],
+            "usable": true,
+            "launchctl_managername": "Background",
+            "uid": 501,
+            "ssh_connection_present": true
+          }
+        }
+      },
+      {
+        "label": "echo-verified",
+        "wall_ms": 1793202287417,
+        "trace_offset_ms_estimate": 4142,
+        "exchange": {
+          "handle": "7f34224c4042",
+          "seed": 173
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "55245": {
+              "top_visible": 0,
+              "all_layers": 0,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            },
+            "55228": {
+              "top_visible": 14,
+              "all_layers": 14,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            }
+          },
+          "observer": {
+            "pid": 54905,
+            "session": {
+              "launchctl_managername": "Background",
+              "uid": 501,
+              "ssh_connection_present": true
+            }
+          },
+          "active_console_session": "unavailable",
+          "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          }
+        },
+        "summary": {
+          "problems": [
+            "positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)",
+            "required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample"
+          ],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": "unavailable",
+            "message_only": "unavailable",
+            "children": "unavailable"
+          },
+          "wrapper_windows": {},
+          "host_endpoints": {
+            "tcp4": "unavailable",
+            "tcp6": "unavailable",
+            "udp4": "unavailable",
+            "udp6": "unavailable"
+          },
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          },
+          "usable": false,
+          "context_audit": {
+            "problems": [],
+            "usable": true,
+            "launchctl_managername": "Background",
+            "uid": 501,
+            "ssh_connection_present": true
+          }
+        }
+      },
+      {
+        "label": "send-in-flight",
+        "wall_ms": 1793202287446,
+        "trace_offset_ms_estimate": 4171,
+        "exchange": {
+          "handle": "cd4f65a400e1",
+          "seed": 186
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "55245": {
+              "top_visible": 0,
+              "all_layers": 0,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            },
+            "55228": {
+              "top_visible": 14,
+              "all_layers": 14,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            }
+          },
+          "observer": {
+            "pid": 54905,
+            "session": {
+              "launchctl_managername": "Background",
+              "uid": 501,
+              "ssh_connection_present": true
+            }
+          },
+          "active_console_session": "unavailable",
+          "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          }
+        },
+        "summary": {
+          "problems": [
+            "positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)",
+            "required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample"
+          ],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": "unavailable",
+            "message_only": "unavailable",
+            "children": "unavailable"
+          },
+          "wrapper_windows": {},
+          "host_endpoints": {
+            "tcp4": "unavailable",
+            "tcp6": "unavailable",
+            "udp4": "unavailable",
+            "udp6": "unavailable"
+          },
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          },
+          "usable": false,
+          "context_audit": {
+            "problems": [],
+            "usable": true,
+            "launchctl_managername": "Background",
+            "uid": 501,
+            "ssh_connection_present": true
+          }
+        }
+      },
+      {
+        "label": "echo-verified",
+        "wall_ms": 1793202287834,
+        "trace_offset_ms_estimate": 4559,
+        "exchange": {
+          "handle": "cd4f65a400e1",
+          "seed": 186
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "55245": {
+              "top_visible": 0,
+              "all_layers": 0,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            },
+            "55228": {
+              "top_visible": 14,
+              "all_layers": 14,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            }
+          },
+          "observer": {
+            "pid": 54905,
+            "session": {
+              "launchctl_managername": "Background",
+              "uid": 501,
+              "ssh_connection_present": true
+            }
+          },
+          "active_console_session": "unavailable",
+          "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          }
+        },
+        "summary": {
+          "problems": [
+            "positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)",
+            "required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample"
+          ],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": "unavailable",
+            "message_only": "unavailable",
+            "children": "unavailable"
+          },
+          "wrapper_windows": {},
+          "host_endpoints": {
+            "tcp4": "unavailable",
+            "tcp6": "unavailable",
+            "udp4": "unavailable",
+            "udp6": "unavailable"
+          },
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          },
+          "usable": false,
+          "context_audit": {
+            "problems": [],
+            "usable": true,
+            "launchctl_managername": "Background",
+            "uid": 501,
+            "ssh_connection_present": true
+          }
+        }
+      },
+      {
+        "label": "after-probes-active-scan",
+        "wall_ms": 1793202287867,
+        "trace_offset_ms_estimate": 4592,
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "55245": {
+              "top_visible": 0,
+              "all_layers": 0,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            },
+            "55228": {
+              "top_visible": 14,
+              "all_layers": 14,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable",
+              "tcp4": "unavailable",
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable",
+              "pid_alive": true,
+              "session": null
+            }
+          },
+          "observer": {
+            "pid": 54905,
+            "session": {
+              "launchctl_managername": "Background",
+              "uid": 501,
+              "ssh_connection_present": true
+            }
+          },
+          "active_console_session": "unavailable",
+          "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          }
+        },
+        "summary": {
+          "problems": [
+            "positive control missing: owned Chrome CDP listener not seen in the same endpoint sample (absence unverifiable, not zero)",
+            "required host field 'tcp4' is 'unavailable': absence claim unsupported for this sample"
+          ],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": "unavailable",
+            "message_only": "unavailable",
+            "children": "unavailable"
+          },
+          "wrapper_windows": {},
+          "host_endpoints": {
+            "tcp4": "unavailable",
+            "tcp6": "unavailable",
+            "udp4": "unavailable",
+            "udp6": "unavailable"
+          },
+          "controls": {
+            "chrome_visible_top_level": 14,
+            "chrome_cdp_listener_present": null,
+            "chrome_cdp_listener": null
+          },
+          "usable": false,
+          "context_audit": {
+            "problems": [],
+            "usable": true,
+            "launchctl_managername": "Background",
+            "uid": 501,
+            "ssh_connection_present": true
+          }
+        }
+      }
+    ],
+    "probe_labels": [
+      "linked-idle-active-scan",
+      "send-in-flight",
+      "echo-verified",
+      "send-in-flight",
+      "echo-verified",
+      "after-probes-active-scan"
+    ],
+    "probe_during_usable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "cleanup_problems": []
+  }
+}

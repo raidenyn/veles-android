@@ -1,0 +1,37 @@
+{
+  "what": "OTP-23 Mac M-08 retake 2026-10-29: stage source provenance (working tree = reviewed bytes)",
+  "head": "9c3ddc54a3721eced84e49f02ed76ef156f0baed",
+  "branch": "contract/otp23-desktop-alignment",
+  "tracked_dirty_diff_sha256": "67bec972c97a6b61bdeb2fe2fd7771bfa4d3f354b1de2278302fc79e5cc28b1e",
+  "tracked_dirty_diff_bytes": 27643,
+  "git_status_porcelain": [
+    " M .github/workflows/otp23-feasibility.yml",
+    " M native-bridge/feasibility/scripts/macos_poc.py",
+    " M native-bridge/feasibility/scripts/scenario_matrix.py",
+    " M native-bridge/feasibility/scripts/test_macos_poc.py",
+    "?? native-bridge/feasibility/evidence/mac-m08-codephase-2026-10-28/",
+    "?? native-bridge/feasibility/evidence/mac-resume-2026-10-28/",
+    "?? native-bridge/feasibility/scripts/mac_clock_corroborate.py",
+    "?? native-bridge/feasibility/scripts/mac_release_bound.py",
+    "?? native-bridge/feasibility/scripts/test_mac_clock_corroborate.py",
+    "?? native-bridge/feasibility/scripts/test_mac_release_bound.py",
+    "?? native-bridge/feasibility/scripts/test_mac_release_gate.py"
+  ],
+  "note": "scenario_matrix.py/macos_poc.py differ from HEAD by the reviewed P0-A gate + lsof classifier (+F-7); all other staged files equal HEAD",
+  "head_equal": {
+    "scripts/scenario_matrix.py": false,
+    "scripts/scenario_matrix_core.py": true,
+    "scripts/macos_poc.py": false,
+    "scripts/macos_background_support.py": true,
+    "scripts/macos_cdp.py": true,
+    "scripts/macos_install.py": true,
+    "scripts/macos-register.sh": true,
+    "scripts/macos-unregister.sh": true,
+    "extension/manifest.json": true,
+    "extension/background.js": true,
+    "extension/connector.js": true,
+    "extension/connector.html": true,
+    "src/identity.rs": true
+  },
+  "reviewed_inventory_ref": "/tmp/opencode/otp23-mac-m08-fix-result.md \u00a72 + /tmp/opencode/otp23-mac-m08-fix-verification-opus.md \u00a72"
+}

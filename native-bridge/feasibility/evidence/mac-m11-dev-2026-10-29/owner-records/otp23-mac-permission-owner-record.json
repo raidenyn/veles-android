@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-28",
+  "record_type": "operator_captured_owner_answers",
+  "m11_question": "May I run M-11 with a separate developer host and distinct Native Messaging identity, without Apple Development signing? On Apple Silicon, the linker adds an ad-hoc signature automatically. The approved signed fixture and its Bluetooth grant will stay intact. If a permission dialog appears, I’ll ask you to report its exact name and choose Allow or Deny.",
+  "m11_owner_answer_verbatim": "Approve separate dev test",
+  "m11_approved": true,
+  "m11_scope": "Separate developer host, distinct identity and Native Messaging name, disposable Chrome profile; actual automatic ad-hoc signature recorded, no substitution for the approved signed fixture",
+  "m11_prompt_response": "Not yet supplied; request the owner's exact prompt-name observation and Allow/Deny decision if a dialog appears",
+  "m04_readonly_entry_question": "Please open System Settings → Privacy & Security → Bluetooth on the Mac. What exact entry controls the Veles test app? Read the label only for now; this will let us test precise recovery guidance. This is not being treated as observation of the original permission prompt.",
+  "m04_owner_answer_verbatim": "VelesOtp23PoC",
+  "m04_permission_toggles_authorized": false,
+  "m03_original_prompt_owner_observed": false,
+  "not_a_tcc_reset_or_existing_identity_change_approval": true,
+  "not_a_waiver_or_gate_amendment": true,
+  "not_a_github_approval": true
+}

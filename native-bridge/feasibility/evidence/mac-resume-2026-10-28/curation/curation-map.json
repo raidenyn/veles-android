@@ -1,0 +1,40 @@
+{
+  "what": "Curation record: redacted FINDING.md narrative (published) for the Mac M-08 resume attempt",
+  "policy": "The raw FINDING narrative and the original curation map contained another local user's account name and a foreign app name; both are NARRATIVE files, not raw measurements. Their exact private bytes are preserved OUTSIDE the workspace (see manifest-history); the published FINDING.md here is the redacted narrative; actual raw measurement files are byte-unchanged and covered by the active SHA256SUMS.",
+  "original": {
+    "sha256": "2518c1637fb20ff765c5df88579ecbbd23007f2d0077b6468ff81dd5fd63e5d1",
+    "role": "PRIVATE ORIGINAL (contains the other local user's account name and the foreign app name); NOT present in the workspace; preserved in the private archive referenced by manifest-history/pre-curation-archive.json",
+    "note": "its specific redaction locations are described WITHOUT quoting the private names"
+  },
+  "public_copy": {
+    "path": "../FINDING.md",
+    "sha256": "821ce855efd12c9509fa3c2b331e768e10d64f2f8ee199d0a4b35327a78aeedf",
+    "note": "the redacted narrative is published AT the canonical FINDING.md location; no separate public copy file is kept in the workspace"
+  },
+  "redactions": [
+    {
+      "scope": "the lsof mount sentence in section 2 of the narrative",
+      "kept": "the mount-point path prefix (mount-path fact) and the uid\u2260self fact",
+      "redacted": "the other local user's account name and the foreign app name",
+      "note": "exact original/public text pairs preserved in the private archive, not quoted here"
+    },
+    {
+      "scope": "registration/record.json -> before_2026-10-28T15:41Z.native_messaging_hosts_dir_listing (the pre-run listing of the owner's user-level Chrome NativeMessagingHosts directory)",
+      "date": "2026-10-29",
+      "reason": "final integrated review F1 (Opus faee6a0e-43c5-41d7-9bc4-a2cd3f3de09b), closure option (a): the four entries are other applications' Native Messaging manifest file names on the owner's account, the class of names this publication redacts elsewhere",
+      "kept": "array length 4, veles_manifest_present false, otp23_processes and every other byte and field",
+      "redacted": "exactly the four file-name strings, each replaced by the placeholder <other application's manifest>; names NOT quoted here",
+      "source_sha256": "a5c405ac18027c75311ff210275387eef8a73fe2641457c6d3f5628be403deac",
+      "published_sha256": "61335dc55cf0e48b28a124cfd2dd0b6811552e55726a093c5a83b5158e3f21d6",
+      "private_original": "/tmp/approved-otp23-privacy/mac-resume-2026-10-28/registration-record.json.private-original (700/600, outside Git)",
+      "manifest_history": "../manifest-history/SHA256SUMS.pre-registration-redaction is the byte copy of the 35-entry active manifest 9e8ed077... that listed the original record bytes",
+      "note": "raw measurement content unchanged; earlier reports stating that the 30 non-narrative paths are byte-identical are true as of 2026-10-29 ~11:25Z and are now history for registration/record.json"
+    }
+  ],
+  "additions_vs_original": [
+    "section 3 item 1 records that the endpoint-channel blocker was resolved in the P0-A code phase (classifier + mandatory diagnostics, no -w)",
+    "section 4 adds the record that the retained clock probe is corroborating-only (truncation-bias + latency critique from the Opus preflight) and that acceptance-grade binding is scripts/mac_release_bound.py",
+    "section 6 records the three-scenario retake plan (post code verification)"
+  ],
+  "not_retconned": "the original narrative/map bytes live in the private pre-curation archive (sha256 recorded in manifest-history); this map is the publication record; no active manifest claims the superseded 32-entry byte set"
+}

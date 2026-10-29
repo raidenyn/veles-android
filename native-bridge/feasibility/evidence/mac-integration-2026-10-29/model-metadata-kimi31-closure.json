@@ -1,0 +1,21 @@
+{
+  "record_type": "independent_closure_review_model_metadata",
+  "captured_utc": "2026-10-29T16:49:32Z",
+  "source": "OpenCode database, selected metadata fields only; no message bodies or API headers",
+  "session_id": "ses_e777dfc32ffeUPAHI0ZFbnRPV8",
+  "provider": "kimi-code-plan-global",
+  "model": "k3.1-pro",
+  "configured_route": "kimi-code-plan-global/k3.1-pro",
+  "tool_agent": "build",
+  "variant": null,
+  "assistant_records_at_capture": 26,
+  "role": "Independent bounded F1-F3/R01 closure reviewer; not an implementer or physical operator",
+  "owner_selection": "Use kimi k3.1 pro for review.",
+  "owner_record": "route/otp23-mac-kimi31-reviewer-approval.json",
+  "owner_record_sha256": "e2155b56888f9d603a3c5225fe46297eb769f11e85311c33f77417b40c7a0300",
+  "report": "reports/otp23-mac-closure-review-kimi31.md",
+  "report_sha256": "ae1da8d69cab12e25071a5a5a1e2ed28eac78608ad0902eac76e8a06d866bc10",
+  "verdict": "Bounded closure verified; publication requires mechanical manifest/handoff completion, clean Git export, and green CI",
+  "prior_opus_review_authorship_unchanged": true,
+  "implementation_model_substituted": false
+}

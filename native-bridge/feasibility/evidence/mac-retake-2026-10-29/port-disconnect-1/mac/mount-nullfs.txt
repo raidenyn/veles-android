@@ -1,0 +1,2 @@
+# sanitized nullfs mount-table snapshot (mount points only; source paths dropped; owner names redacted as uid=self / uid≠self)
+on /private/var/folders/yc/d7qkpc795mz8nprkhm8xlpr80000gp/T/AppTranslocation/7BA7CCAC-123C-4593-9838-F34CA30F033C (nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by uid≠self)

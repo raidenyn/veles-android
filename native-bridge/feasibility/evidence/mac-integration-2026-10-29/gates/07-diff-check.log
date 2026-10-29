@@ -1,0 +1,4 @@
+$ git diff --check
+diff_check_exit_code=0
+$ git diff --no-index --check /dev/null <each untracked text file outside evidence> (whitespace scan of new non-evidence files)
+untracked_check_exit_code=0

@@ -1,0 +1,99 @@
+{
+ "what": "OTP-23 Mac final integration (2026-10-29): additional model/role metadata, WHITELISTED structured fields only (supplements model-metadata.json, which is unchanged)",
+ "policy": "no messages, no result texts, no usage/cost bodies, no API headers or error bodies",
+ "claude_code_envelopes": [
+  {
+   "envelope": "otp23-mac-publication-curation-opus-result.json",
+   "envelope_sha256_private": "4a4006917fbf6b1c1f8f23cf747cd6ccccc378f2ac4a38415d8c80c619b63b28",
+   "session_id": "752e1974-0617-470b-a425-dfbda97ac728",
+   "model_usage_keys": [
+    "claude-opus-5-5"
+   ],
+   "canonical_models": [
+    "claude-opus-5-5"
+   ],
+   "providers": [
+    "firstParty"
+   ],
+   "is_error": false,
+   "terminal_reason": "completed",
+   "api_error_status": null,
+   "num_turns": 40,
+   "subagents_spawned": 0,
+   "role": "CURATOR (implementer session): publication curation of mac-m11-dev-2026-10-29 and mac-integration-2026-10-29; promoted no row (report reports/otp23-mac-publication-curation-result.public.md, redacted)"
+  },
+  {
+   "envelope": "otp23-mac-safe-attribution-verification-opus-result.json",
+   "envelope_sha256_private": "3f5bea71c3bbd13a86940844f5e88c5513ad983b381e5b0e32072732d325a301",
+   "session_id": "e30e474d-65cc-44c2-99c7-d0195cfc4631",
+   "model_usage_keys": [
+    "claude-opus-5-5"
+   ],
+   "canonical_models": [
+    "claude-opus-5-5"
+   ],
+   "providers": [
+    "firstParty"
+   ],
+   "is_error": false,
+   "terminal_reason": "completed",
+   "api_error_status": null,
+   "num_turns": 18,
+   "subagents_spawned": 0,
+   "role": "INDEPENDENT final micro-review of A2 + M-11 account condition: APPROVED normal M-08/M-11 integration (reports/otp23-mac-safe-attribution-verification-opus.md); same fresh reviewer session as the final data review; not the implementer and not the parent"
+  },
+  {
+   "envelope": "otp23-mac-final-integrated-opus-result.json",
+   "envelope_sha256_private": "4e29b9b0fbdb3deb05032cc46800aa0e998fc2476e5faacb8f43bee0b40b985a",
+   "session_id": "faee6a0e-43c5-41d7-9bc4-a2cd3f3de09b",
+   "model_usage_keys": [
+    "claude-opus-5-5"
+   ],
+   "canonical_models": [
+    "claude-opus-5-5"
+   ],
+   "providers": [
+    "firstParty"
+   ],
+   "is_error": false,
+   "terminal_reason": "completed",
+   "api_error_status": null,
+   "num_turns": 62,
+   "subagents_spawned": 0,
+   "report": "reports/otp23-mac-final-integrated-opus-review.md",
+   "report_sha256": "16152fa7cd6d0d5ed563d58ce4d7bdb08ca9015b72a2fc38fa19774363341e2d",
+   "role": "INDEPENDENT final integrated-tree reviewer; not implementer 752e1974/9f6f8b0f, not micro-reviewer e30e474d, not parent",
+   "verdict": "CHANGES REQUIRED (bounded, non-substantive: F1 publication curation, F2/F3 provenance accuracy) -> closed by the bounded F1-F3 closure of its section 7 (F1 option (a)); counts as APPROVED for commit/publication pending clean export and green CI per that section"
+  }
+ ],
+ "this_integration_session": {
+  "tool": "Claude Code",
+  "model_self_reported": "claude-opus-5-5",
+  "session_id_from_local_project_path": "9f6f8b0f-01c7-4ccc-8c3a-f5daf806045e",
+  "subagents_spawned": 0,
+  "role": "IMPLEMENTER of the canonical M-08/M-11 integration (matrix rows, renderer/tests, docs/RFC follow-up, final adjudications, TCC supplement curation, gates). Not a reviewer of its own work.",
+  "history": "the first turn of this task (same session id) ended with API 429 before any canonical edit; its envelope is recorded below; the task was resumed in the same session after the quota reset",
+  "envelope_status": "the parent may overwrite the envelope file when this resumed turn exits; no field of a not-yet-written envelope is claimed here",
+  "first_turn_envelope": {
+   "envelope": "otp23-mac-integration-opus-result.json (as of the resume)",
+   "envelope_sha256_private": "4d0fbf019fd720f8f97fbcf4d1e918f624e4540def5ff6096892f633f98f2a93",
+   "session_id": "9f6f8b0f-01c7-4ccc-8c3a-f5daf806045e",
+   "model_usage_keys": [
+    "claude-opus-5-5"
+   ],
+   "is_error": true,
+   "terminal_reason": "api_error",
+   "api_error_status": 429,
+   "num_turns": 30,
+   "subagents_spawned": 0
+  }
+ },
+ "operators_and_owner": {
+  "m08_retake_operator": "Claude Code claude-opus-5-5 session 752e1974 (see ../mac-retake-2026-10-29/provenance.json)",
+  "m11_physical_operator": "OpenCode parent controller gpt-6.1-sol (openai); the fresh Opus operator call c401a87c hit 429 before any tool; no Opus model operated M-11",
+  "tcc_supplement_operator": "OpenCode parent controller gpt-6.1-sol, read-only log queries",
+  "owner": "account owner: Chrome update/relaunch completion, dev-dialog name/Allow (late), read-only Settings observation, M-11 approval; no M-04 toggle approval"
+ },
+ "final_integrated_review": "NOT performed by this session; the parent obtains the final independent integrated-tree review afterwards",
+ "final_integrated_review_2026-10-29": "performed by faee6a0e-43c5-41d7-9bc4-a2cd3f3de09b (see envelope above); this session (9f6f8b0f) then implemented the bounded closure F1(a)/F2/F3 it authorized; the closure is an implementer action, not a new review. The earlier field 'final_integrated_review' is as-of the integration hand-off and stays unchanged."
+}

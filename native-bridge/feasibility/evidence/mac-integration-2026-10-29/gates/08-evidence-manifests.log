@@ -1,0 +1,27 @@
+$ for every SHA256SUMS under native-bridge/feasibility/evidence: (cd <dir> && sha256sum -c --quiet SHA256SUMS); plus disk-set == manifest-set for the 2026-10-28/29 Mac folders
+note: mac-integration-2026-10-29 is the ACTIVE folder; its manifest is refreshed after these gate logs are written, so its disk-set check is reported outside this folder (the manifest cannot list itself or later logs)
+OK entries=11 manifest_sha256=8d96faabee1fc79c96f6a16cba15e1710e48386a15edb419d1a18db18cd637e2 ./ci-portability-2026-10-27
+OK entries=26 manifest_sha256=61f5ee4be8cf3bffd1eab25ba2619d713fc190b08524991f6582b55183fb20ef ./integration-2026-10-27
+OK entries=257 manifest_sha256=1eb7383c1b1c83744a12fb4e94c129feb079271c95d0e64567d040f475a3812c ./investigations-2026-10-27
+OK entries=34 manifest_sha256=98260d4d5be4cf140f8a4ea69bb4fadaf83cb6e8320a665d43b35cb4177671eb ./mac-integration-2026-10-29 ACTIVE(pre-final-refresh manifest; sha256 -c only)
+OK entries=2 manifest_sha256=339505b6d62e459c54d3f1cfa5dcbe6719f61ae3137eafef2aef7b425e078153 ./mac-m08-codephase-2026-10-28 diskset=manifest
+OK entries=25 manifest_sha256=071d14f114497f76b7f8c60ceaf2a7c5922dd5ff3e17cbefb5e1cfd69098c49a ./mac-m11-dev-2026-10-29 diskset=manifest
+OK entries=6 manifest_sha256=dd05dac4b63f67336370a8a203d2dff47471e3fbd10eaee73a1692a54b763355 ./mac-release-attributed-2026-10-29 diskset=manifest
+OK entries=6 manifest_sha256=c05174f458bb151039e0e944f70994f170ba8ed470f4d21317e7256a643b1f96 ./mac-release-attributed-safe-2026-10-29 diskset=manifest
+OK entries=4 manifest_sha256=2a550c1cf0add0ea863b216e78c45c7d3acf18f0ee666d729411690ece7a2854 ./mac-release-attribution-source-history-2026-10-29 diskset=manifest
+OK entries=35 manifest_sha256=9e8ed07767a0ed6f6da4094685bd6669d7f9a081f6975d9b8ecafed1917af022 ./mac-resume-2026-10-28 diskset=manifest
+OK entries=2 manifest_sha256=4933dce97d54aa72c44fd6f115969fe0596fd2872762b3d7301c67739ffcd9ce ./mac-resume-2026-10-28/curation diskset=manifest
+OK entries=79 manifest_sha256=f952c123a1c74a5b1c811f4faa2453ed5f81cae49e39e3f974136798e4ea6455 ./mac-retake-2026-10-29 diskset=manifest
+OK entries=2 manifest_sha256=c483cf2bf0f102c2f58d4253f571e5d924de300348c3a5dd538d7e622dc9a191 ./mac-retake-2026-10-29/curation diskset=manifest
+OK entries=6 manifest_sha256=a1e4d80b702753b6e63b7a583d02c01d07f22326b04cb6cf5b042fb8d5d2f42e ./mac-tcc-supplement-2026-10-29 diskset=manifest
+OK entries=15 manifest_sha256=7b2e924f6fcdbedbd7ae4b45dc4572201c49485cbb7af9f0130ba3d10d85a44f ./package1-b5-v2-20261028
+OK entries=9 manifest_sha256=3bf5a49389a79039bb46a0cb76d3356f82fe4bfe3f2def26493e442a897e4841 ./package1-b5-v3-20261028
+OK entries=9 manifest_sha256=dc214fde8c1519072b0e99b50a94fdc3758fc073516e84465ccc9c1f5f0c4303 ./package1-b5-v4-20261028
+OK entries=181 manifest_sha256=218da0f6a13daf83336981e297c0fbd5bbed4330023e33daabed01a14986a643 ./package1-connected-2026-10-28
+OK entries=238 manifest_sha256=f08a8ed67bf6b7453524794ccec5b08ca7598f67f3d0d3001a5cb7478986ee5e ./package1-connected-2026-10-28/producer-pc-snapshot-20261028
+OK entries=31 manifest_sha256=c04c7d36fa1aba72d43d428971f4c2c6f471dfe957256a21c910cae6141d34df ./package1-integration-20261028
+OK entries=34 manifest_sha256=addf32b2f68474fc65447ddadf1ae38b86dbd8bf24b05f1b740aa177d529697d ./package1-p2-20261028
+OK entries=196 manifest_sha256=cec9e5a8787a443ba9ab5252199599e2cac36e8676b78ba49f2bee19d9f2201f ./post-grant-2026-10-26
+OK entries=37 manifest_sha256=8adf03c30cc00a4fb0e722e0ae2290990429a76d522879bcbbc23ddbc50a8968 ./post-grant-2026-10-26/strict-mac-20261027
+OK entries=49 manifest_sha256=cbeac6ddebea52adc5f9ef3ae4427a863fedeb7c521fafce92019145af836f0a ./windows-cleanup-2026-10-27
+manifests_exit_code=0

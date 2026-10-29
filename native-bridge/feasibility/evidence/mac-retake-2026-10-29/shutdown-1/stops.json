@@ -1,0 +1,28 @@
+[
+  {
+    "serial": "2be02e41",
+    "phone": "6T",
+    "stop_min_phone_ms": 1793248577791,
+    "stop_max_phone_ms": 1793248577833,
+    "phone_adb_before_ms": 1793248576003,
+    "phone_adb_after_ms": 1793248580613,
+    "mac_ms_bracket": [
+      1793248573607,
+      1793248583046
+    ],
+    "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+  },
+  {
+    "serial": "864a3db0",
+    "phone": "10Pro",
+    "stop_min_phone_ms": 1793248588427,
+    "stop_max_phone_ms": 1793248588488,
+    "phone_adb_before_ms": 1793248586675,
+    "phone_adb_after_ms": 1793248590171,
+    "mac_ms_bracket": [
+      1793248586152,
+      1793248593801
+    ],
+    "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+  }
+]

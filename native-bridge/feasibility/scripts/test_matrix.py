@@ -16,6 +16,9 @@ import matrix as m  # noqa: E402
 REPO = HERE.parent.parent.parent
 EVIDENCE = REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26"
 BASE = m.load()
+# rows still open after the 2026-10-29 Mac integration (M-08/M-11 promoted); see
+# test_mac_m08_m11_final_integration_2026_10_29
+OPEN_ROWS = ("W-10", "M-03", "M-04", "A-01")
 
 
 def with_row(row_id, **changes):
@@ -43,21 +46,22 @@ class CommittedMatrix(unittest.TestCase):
         self.assertEqual(verdict == "GO", all(r["status"] == "PASS" for r in BASE["rows"] if not r["waiver"]))
         by_id = {r["id"]: r for r in BASE["rows"]}
         # every hardware PASS is either one of the narrow pre-grant passes or backed by an actual
-        # evidence base: the post-grant raw files or the 2026-10-28 package1 evidence
+        # evidence base: the post-grant raw files, the 2026-10-28 package1 evidence or the frozen
+        # 2026-10-29 Mac captures (M-08 retake, M-11 developer-host attempts)
         for row in BASE["rows"]:
             if row["group"] in ("windows", "macos", "android") and row["status"] == "PASS" and row["id"] not in ("W-13", "W-03"):
                 bases = " ".join(row["evidence"])
-                self.assertTrue("post-grant-2026-10-26/" in bases or
-                                "package1-connected-2026-10-28/" in bases, row["id"])
+                self.assertTrue(any(b in bases for b in ("post-grant-2026-10-26/", "package1-connected-2026-10-28/",
+                                                         "mac-retake-2026-10-29/", "mac-m11-dev-2026-10-29/")), row["id"])
                 self.assertTrue(row["account"] or row["group"] == "android", row["id"])
         # promotions that the permission-granted physical runs support, plus the 2026-10-28
         # integrations: W-11/W-12 (latest-Chrome strict runs + GPT review) and W-02/W-07/W-08
         # (the final integration after the independent chain; see the dedicated tests)
         for rid in ("W-04", "W-05", "W-06", "W-09", "M-05", "M-06", "M-07", "A-02", "A-03",
-                    "W-11", "W-12", "W-02", "W-07", "W-08"):
+                    "W-11", "W-12", "W-02", "W-07", "W-08", "M-08", "M-11"):
             self.assertEqual(by_id[rid]["status"], "PASS", rid)
         # rows whose literal requirement the new evidence does not meet stay blocked, each with a reason
-        for rid in ("W-10", "M-03", "M-04", "M-08", "A-01", "M-11"):
+        for rid in OPEN_ROWS:
             self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
             self.assertTrue(by_id[rid]["blocker"], rid)
             self.assertIn(rid, open_rows)
@@ -242,6 +246,103 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("never combined", by_id["M-10"]["actual"])
         self.assertEqual(m.decision(BASE)[0], "NO-GO")
 
+    def test_mac_m08_m11_final_integration_2026_10_29(self):
+        """The 2026-10-29 Mac integration promotes exactly M-08 and M-11 on frozen, checksum-pinned
+        evidence after the independent Opus micro-review: 25/4/3, open W-10/M-03/M-04/A-01, NO-GO.
+        Superseded history (the deferral, the hull and A1 results, the raw M-11 timeouts) is kept,
+        and nothing about the original signed prompt (M-03/M-04) is inferred."""
+        rows = {r["id"]: r for r in BASE["rows"]}
+        evidence = REPO / "native-bridge/feasibility/evidence"
+        counts = {s: sum(1 for r in BASE["rows"] if r["status"] == s) for s in m.STATUSES}
+        self.assertEqual((counts["PASS"], counts["BLOCKED"], counts["NOT RUN"], counts["FAIL"]), (25, 4, 3, 0))
+        self.assertEqual(m.decision(BASE), ("NO-GO", list(OPEN_ROWS)))
+        self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
+        # frozen inputs are pinned; the active integration folder is verified but not pinned
+        pinned = {"mac-retake-2026-10-29": "f952c123a1c74a5b1c811f4faa2453ed5f81cae49e39e3f974136798e4ea6455",
+                  "mac-release-attributed-safe-2026-10-29": "c05174f458bb151039e0e944f70994f170ba8ed470f4d21317e7256a643b1f96",
+                  "mac-release-attributed-2026-10-29": "dd05dac4b63f67336370a8a203d2dff47471e3fbd10eaee73a1692a54b763355",
+                  "mac-release-attribution-source-history-2026-10-29": "2a550c1cf0add0ea863b216e78c45c7d3acf18f0ee666d729411690ece7a2854",
+                  "mac-m11-dev-2026-10-29": "071d14f114497f76b7f8c60ceaf2a7c5922dd5ff3e17cbefb5e1cfd69098c49a",
+                  "mac-tcc-supplement-2026-10-29": "a1e4d80b702753b6e63b7a583d02c01d07f22326b04cb6cf5b042fb8d5d2f42e",
+                  "mac-integration-2026-10-29": None}
+        for folder, pin in pinned.items():
+            sums = (evidence / folder / "SHA256SUMS").read_bytes()
+            if pin:
+                self.assertEqual(hashlib.sha256(sums).hexdigest(), pin, folder)
+            for line in sums.decode().splitlines():
+                digest, name = line.split("  ", 1)
+                self.assertEqual(hashlib.sha256((evidence / folder / name).read_bytes()).hexdigest(), digest, (folder, name))
+        for rid in ("M-08", "M-11"):
+            row = rows[rid]
+            self.assertEqual((row["status"], row["blocker"], row["waiver"], row["account"]), ("PASS", "", "", "admin"), rid)
+            self.assertIn("verification 2026-10-29", row["source"], rid)
+            self.assertIn("2026-10-29 FINAL MAC INTEGRATION", row["actual"], rid)
+            self.assertIn("e30e474d-65cc-44c2-99c7-d0195cfc4631", row["actual"], rid)
+            for rel in row["evidence"]:
+                self.assertTrue((REPO / rel).exists(), (rid, rel))
+        # M-08: deferral history kept; only A2 adopted; the precision target is not claimed
+        m08 = rows["M-08"]
+        self.assertIn("Cannot restart Chrome now", m08["actual"])
+        self.assertIn("NOT a waiver", m08["actual"])
+        self.assertIn("156.0.8078.74", m08["actual"])
+        for needle in ("235–282 ms", "NOT an RFC gate", "NOT claimed as met", "16-byte lower bound is NOT causal",
+                       "PASS/FAIL/FAIL", "permission_pending", "neither PASS nor waived"):
+            self.assertIn(needle, m08["actual"], needle)
+        self.assertFalse(any("/mac-release-attributed-2026-10-29/" in e for e in m08["evidence"]), "A1 is never adopted")
+        for case, hull in (("shutdown", "PASS"), ("port-disconnect", "FAIL"), ("tab-close", "FAIL")):
+            a2 = json.loads((evidence / f"mac-release-attributed-safe-2026-10-29/{case}-1/release-bound-attributed.json").read_text())
+            self.assertEqual((a2["verdict"], a2["m08_creditable"], a2["attribution_status"]), ("PASS", True, "unique_mapping"), case)
+            frozen = json.loads((evidence / f"mac-retake-2026-10-29/{case}-1/release-bound.json").read_text())
+            self.assertEqual(frozen["verdict"], hull, case)
+            checks = json.loads((evidence / f"mac-retake-2026-10-29/{case}-1/acceptance-check.json").read_text())["checks"]
+            self.assertEqual((len(checks), all(v is True for v in checks.values())), (19, True), case)
+        # M-11: scoped manual PASS; the raw captures keep their timeouts and null answers
+        m11 = rows["M-11"]
+        self.assertTrue(m11["human_gated"])
+        self.assertIn("gpt-6.1-sol", m11["operator"])
+        self.assertIn("not an Opus operator", m11["operator"])
+        for needle in ("a2bdc40c7d6119e01513ae3c3b9b71a287ad910d114ff172883043303050702d", "linker ad-hoc", "setup FAIL",
+                       "720.9 s / 3600.3 s", "never bound", "not a during-run absence proof", "not traced",
+                       "no discovery comparison", "controller-attested", "c401a87c", "PERSISTS",
+                       "M-03 stays unobserved and M-04 unmet", "no universal log-retention claim"):
+            self.assertIn(needle, m11["actual"], needle)
+        for attempt, state in ((2, "pending_at_host_budget_not_denial"), (3, "authorized_started")):
+            capture = json.loads((evidence / f"mac-m11-dev-2026-10-29/attempts/m11-attempt-{attempt}/m11-capture.json").read_text())
+            self.assertIsNone(capture["human_prompt_answer"], attempt)
+            self.assertEqual(capture["authorized_state_classified"],
+                             {"state": state, "post_init_authorization": None, "owner_dialog_observed": None, "ended_by": "deadline"})
+            self.assertTrue(capture["problems"], attempt)
+        # the post-run TCC supplement: its only PROMPTING record is the developer subject's
+        records = [json.loads(line) for line in
+                   (evidence / "mac-tcc-supplement-2026-10-29/raw/scoped-tcc-history.ndjson").read_text().splitlines()]
+        prompting = [r["eventMessage"] for r in records if r.get("eventMessage", "").startswith("AUTHREQ_PROMPTING")]
+        self.assertEqual(len(prompting), 1)
+        self.assertIn("Sub:{me.nagaev.veles.bridge.dev}", prompting[0])
+        self.assertIn("msgID=95540.2", prompting[0])
+        # M-03 / M-04 stay blocked with their unmet clauses documented, nothing inferred or waived
+        for rid in ("M-03", "M-04"):
+            self.assertEqual((rows[rid]["status"], rows[rid]["waiver"]), ("BLOCKED", ""), rid)
+            self.assertIn("2026-10-29 Mac integration (NO status change)", rows[rid]["actual"], rid)
+        self.assertIn("UNOBSERVED", rows["M-03"]["actual"])
+        self.assertIn("no M-04 OFF→ON toggle was approved or performed", rows["M-04"]["actual"])
+        # the decision and review rows record the new state without erasing the 2026-10-28 record
+        d02 = rows["D-02"]["actual"]
+        self.assertIn("23 PASS / 6 BLOCKED / 3 waived", d02)
+        self.assertIn("FINAL MAC INTEGRATION 2026-10-29", d02)
+        self.assertIn("25 PASS / 4 BLOCKED / 3 waived", d02)
+        self.assertIn("W-10, M-03, M-04, A-01", d02)
+        self.assertIn("OTP-24 is NOT authorized", d02)
+        r01 = rows["R-01"]["actual"]
+        self.assertIn("2026-10-29 MAC INTEGRATION PHASE (current phase; review PENDING)", r01)
+        self.assertIn("do NOT cover the new code", r01)
+        self.assertIn("faee6a0e-43c5-41d7-9bc4-a2cd3f3de09b", r01)
+        self.assertIn("CHANGES REQUIRED \u2192 closed by the bounded F1\u2013F3 closure; APPROVED for commit/publication pending clean export and green CI", r01)
+        self.assertIn("closed by option (a)", r01)
+        self.assertIn("Mac M-08/M-11 integration", m.render(BASE))
+        rfc = " ".join((REPO / "docs/rfcs/2026-08-21-otp-external-devices.md").read_text(encoding="utf-8").split())
+        self.assertIn("Cannot restart Chrome now", rfc)
+        self.assertIn("M-08 Mac deferral follow-up (2026-10-29", rfc)
+
     def test_m6_machine_fail_is_retained_beside_the_manual_adjudication(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26/m6"
         row = {r["id"]: r for r in BASE["rows"]}["A-02"]
@@ -422,7 +523,7 @@ class CommittedMatrix(unittest.TestCase):
         blocking = [r["id"] for r in BASE["rows"] if r["status"] in ("BLOCKED", "FAIL", "NOT RUN") and not r["waiver"]]
         self.assertEqual(sorted(open_rows), sorted(blocking))
         self.assertEqual(verdict, "NO-GO" if blocking else "GO")
-        self.assertTrue({"W-10", "M-03", "M-04", "M-08", "A-01", "M-11"} <= set(open_rows))
+        self.assertEqual(set(open_rows), set(OPEN_ROWS))
         for rid in ("W-02", "W-07", "W-08", "W-11", "W-12"):
             self.assertNotIn(rid, open_rows)
         # R-01 blocks exactly while its row is not PASS (the generic pending/false-PASS rules are tested separately)
@@ -455,20 +556,21 @@ class CommittedMatrix(unittest.TestCase):
 
     def test_prerequisite_rows_are_blocked_not_bare_not_run(self):
         by_id = {r["id"]: r for r in BASE["rows"]}
-        for rid in ("A-01", "M-11"):
-            self.assertEqual(by_id[rid]["status"], "BLOCKED", rid)
-            self.assertTrue(by_id[rid]["blocker"], rid)
+        self.assertEqual(by_id["A-01"]["status"], "BLOCKED")
+        self.assertTrue(by_id["A-01"]["blocker"])
 
-    def test_existing_account_unsigned_host_row_is_blocking_and_was_not_run(self):
+    def test_existing_account_unsigned_host_row_keeps_its_not_run_history_beside_the_scoped_pass(self):
+        """M-11 was never waived: it stayed BLOCKED until it was executed on the existing account and
+        adjudicated (2026-10-29); the earlier not-executed record is preserved verbatim and labelled."""
         row = {r["id"]: r for r in BASE["rows"]}["M-11"]
-        self.assertEqual((row["status"], row["waiver"], row["evidence"]), ("BLOCKED", "", []))
-        self.assertTrue(row["blocker"])
-        self.assertIn("M-11", m.decision(BASE)[1])
-        for field in ("actual", "blocker"):
-            self.assertIn("no unsigned dev-registered host was built or run", row[field])
-            self.assertIn("signed me.nagaev.veles.bridge", row[field])
-        self.assertIn("NOT waived", row["actual"])
-        self.assertIn("no result exists", row["blocker"])
+        self.assertEqual((row["status"], row["waiver"], row["blocker"], row["account"]), ("PASS", "", "", "admin"))
+        self.assertNotIn("M-11", m.decision(BASE)[1])
+        history, _, current = row["actual"].partition(" | 2026-10-29 FINAL MAC INTEGRATION")
+        self.assertTrue(history.startswith("PRE-INTEGRATION RECORD"))
+        self.assertIn("no unsigned dev-registered host was built or run", history)
+        self.assertIn("signed me.nagaev.veles.bridge", history)
+        self.assertIn("NOT waived", history)
+        self.assertTrue(current)
 
     def test_no_row_claims_the_owner_cannot_approve_bluetooth_after_the_grant(self):
         for row in BASE["rows"]:
@@ -521,7 +623,7 @@ class CommittedMatrix(unittest.TestCase):
             self.assertNotIn(rid, open_ids)
         # nothing else is relaxed: signing/identity and the remaining open rows stay open;
         # W-11/W-12 and W-02/W-07/W-08 were promoted 2026-10-28 — never by this waiver
-        for rid in ("W-10", "M-03", "M-04", "M-08", "A-01", "M-11"):
+        for rid in OPEN_ROWS:
             self.assertIn(rid, open_ids)
         for rid in ("W-02", "W-07", "W-08", "W-11", "W-12"):
             self.assertNotIn(rid, open_ids)
@@ -572,8 +674,11 @@ class CommittedMatrix(unittest.TestCase):
         self.assertIn("OTP-25", m03["blocker"])
         self.assertNotIn("no Developer ID", m03["blocker"])
         self.assertIn("Apple Development", m03["expected"])
-        for rid in ("M-04", "M-11"):
-            self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
+        self.assertEqual(rows["M-04"]["status"], "BLOCKED")
+        # M-11 (the unsigned dev-host comparison the amendment retained) passed only by its own
+        # 2026-10-29 execution and manual adjudication, never by this amendment
+        self.assertEqual(rows["M-11"]["status"], "PASS")
+        self.assertIn("verification 2026-10-29", rows["M-11"]["source"])
         # the later strict-mac-20261027 adjudication promoted only M-09/M-10, under the clarified criterion
         for rid in ("M-09", "M-10"):
             self.assertEqual(rows[rid]["status"], "PASS", rid)
@@ -643,7 +748,7 @@ class CommittedMatrix(unittest.TestCase):
         self.assertEqual(rows["M-09"]["status"], rows["M-10"]["status"], "PASS")
         self.assertIn("2026-10-27", rows["M-09"]["source"])
         self.assertIn("verification 2026-10-27", rows["M-09"]["source"])
-        for rid in ("W-10", "M-03", "M-04", "M-08", "A-01", "M-11"):
+        for rid in OPEN_ROWS:
             self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
         # the accounts are still identified truthfully and no waiver appeared
         # (W-02/W-07/W-08 were later promoted by the separate final integration)
