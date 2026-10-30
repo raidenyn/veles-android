@@ -821,3 +821,68 @@ closure; APPROVED for commit/publication pending clean export and green CI.**
 - **F3:** accurate gate-06 command log.
 
 The closure is recorded in R-01. Matrix 25/4/3, NO-GO; OTP-24 is not authorized.
+
+## M-03 signed-host prompt follow-up — 2026-10-30
+
+**M-03 is now PASS; current matrix 26 PASS / 3 BLOCKED / 3 waived NOT RUN, still NO-GO.**
+This supersedes only the earlier current-status statements that M-03 lacked an observation.
+The historical prompt remains unknown. The user approved an app-specific Bluetooth permission
+reset for the unchanged signed final-identifier fixture on the existing administrator account,
+then requested a restart after accidentally closing Chrome. The interrupted ERROR/access_denied
+attempt remains preserved, with no invented cause.
+
+The restarted run recorded hello ready, `not_determined`/`permission_pending`, the owner's exact
+report "ValesOtp23PoC. Clicked allowed" during the 1800-second wait, and a successful scan on the
+same retained Native Messaging port. The bundle name is separately recorded as `VelesOtp23PoC`;
+the owner's spelling is not corrected. TCC request `15918.2` identifies the signed host
+`me.nagaev.veles.bridge`, PID 15918, with a real PROMPTING/RESULT chain corroborating the report.
+A subsequent fresh Chrome/host launch directly logged `allowed_always`; it is not inserted into
+the waiting trace. Executable SHA `e7c716c5…eb91c`, Team and CDHash are unchanged, with strict
+verification before and after. No new account, signing, discovery or phone result is claimed.
+
+The parent `openai/gpt-6.1-sol` performed operational capture/curation. Independent user-selected
+`kimi-code-plan-global/k3.1-pro` session `ses_e7556bd06ffeBpdEo4Fp4EVwZw` approved M-03 and bounded
+mechanical integration. Raw evidence, exact owner scope and report, source copies, review and
+safe model metadata are in `native-bridge/feasibility/evidence/mac-m03-prompt-2026-10-30/`.
+Owned sessions/registration were cleaned; the restored Bluetooth grant was left allowed.
+
+**M-04 stays BLOCKED:** the M-03 reset neither implements exact displayed Settings/retry guidance
+nor exercises coordinated no-reset denial/recovery. Its historical unknown prompt is not rewritten.
+W-10 and A-01 remain BLOCKED; account waiver unchanged (W-01/M-01/M-02 only). No expected criterion
+or waiver changed, and OTP-24 is not authorized.
+
+## Remaining physical cases — later 2026-10-30
+
+**M-04, A-01 and W-10 PASS. Current matrix 28 PASS / 1 BLOCKED (R-01) / 3 waived NOT RUN — NO-GO.**
+These dispositions supersede the dated physical blockers above, not the expected criteria.
+
+- **M-04:** exact rendered, visible Settings/retry guidance and nonce-bound owner OFF→ON actions;
+  denied/retryable then discovery/recovery with the same Chrome/profile/sentinel/one extension load
+  and unchanged signed fixture. No reset in this run; raw popup remains unknown, with the prompt
+  subject transparently supplied by the separately reviewed same-identity M-03 observation.
+- **A-01:** explicitly labelled callback injection on a real healthy link, with unchanged admission
+  state and different byte-exact 4096-byte echo afterward on the same handle; actual radio CCCD6
+  before MTU, early gated I/O, then MTU517/CCCD0/echo. Mac order is directly checked in immutable
+  accepted phone callbacks, not guessed from max-write. The isolated fixture's same-key APK updates
+  and normal SCAN permission flow were restored to original APKs on both phones; no data clearing.
+- **W-10:** deliberately controlled radio-off, verified zero-available-adapter state after owner
+  reboot, and exclusive synthetic-service OS access denial. Native results respectively
+  `radio_off/retryable`, `no_adapter/fatal`, `access_denied/fatal`; native reconnect/echo succeeds
+  after holder exit. No Windows privacy-policy denial is claimed. Failed setup history is retained.
+
+The actual operator/implementer was parent `openai/gpt-6.1-sol`. Independent Kimi K3.1 Pro evidence
+session `ses_e73f8ef5fffe3PFMdKshg41FjF` approved all three rows. Code session
+`ses_e73f8ef68ffeVYUX8uh219t6M2` approved after its Important stale-guidance finding was fixed and
+retested; the fix does not invalidate prior same-Mac/Android captures. Both authorized bounded
+mechanical integration with affected checks. A broad earlier review's context-limit interruption
+was not approval and did not cause a model substitution.
+
+Evidence, source versions, exact residuals, initial/final reports, safe model metadata and declared
+address redactions are in `native-bridge/feasibility/evidence/otp23-rest-2026-10-30/`. Originals are
+protected locally, not an off-host backup. Hardware sessions, fixtures, processes, tasks and native
+registrations were cleaned; radio ON, persistent disabled/problem flags 0, original APKs restored.
+
+**R-01 is reopened BLOCKED:** this integrated source is uncommitted/unpublished; the existing final
+committed-tree review is not satisfied by historical Opus records or a Kimi working-tree review.
+Reviewer identity is not rewritten and expected text is unchanged. No new waiver, commit/push,
+merge, OTP-23 GO or OTP-24 authorization is claimed.

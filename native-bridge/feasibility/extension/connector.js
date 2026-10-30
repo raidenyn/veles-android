@@ -7,6 +7,7 @@ const state = {
     port: null,
     hostName: null,
     apiVersion: null,
+    platform: null,
     counter: 0,
     pending: new Map(), // request_id -> { resolve, timer, type }
     events: [], // unsolicited host events
@@ -65,6 +66,24 @@ function setStatus(text) {
     if (node) node.textContent = text;
 }
 
+const MAC_PERMISSION_GUIDANCE = "Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth, enable VelesOtp23PoC, return to this connector, and retry the scan. Keep this extension loaded; no reinstall or permission reset is needed.";
+
+function updatePermissionGuidance(message) {
+    const panel = document.getElementById("permission-guidance");
+    const text = document.getElementById("permission-guidance-text");
+    if (!panel || !text) return;
+    if (state.platform && state.platform !== "macos") {
+        text.textContent = "";
+        panel.hidden = true;
+    } else if (state.platform === "macos" && message.type === "error" && message.stage === "access_denied") {
+        text.textContent = MAC_PERMISSION_GUIDANCE;
+        panel.hidden = false;
+    } else if (message.type === "scan_state" && message.status === "started") {
+        text.textContent = "";
+        panel.hidden = true;
+    }
+}
+
 function toBase64(bytes) {
     let binary = "";
     for (const b of bytes) binary += String.fromCharCode(b);
@@ -86,6 +105,7 @@ function synthesizePortClosed(type, request_id) {
 }
 
 function onMessage(message) {
+    updatePermissionGuidance(message);
     const entry = { at: now(), message };
     if (typeof message.request_id === "string" && state.pending.has(message.request_id)) {
         const { resolve, timer } = state.pending.get(message.request_id);
@@ -123,6 +143,7 @@ function connect(hostName) {
     state.hostName = hostName;
     state.disconnect = null;
     state.apiVersion = null;
+    state.platform = null;
     state.opened = now();
     state.port = chrome.runtime.connectNative(hostName);
     state.port.onMessage.addListener(onMessage);
@@ -157,7 +178,11 @@ function request(type, fields = {}, timeoutMs = 40000) {
 
 async function hello() {
     const reply = await request("hello", { api_versions: [1] });
-    if (reply.type === "ready") state.apiVersion = reply.api_version;
+    if (reply.type === "ready") {
+        state.apiVersion = reply.api_version;
+        state.platform = reply.platform;
+        updatePermissionGuidance(reply);
+    }
     return reply;
 }
 

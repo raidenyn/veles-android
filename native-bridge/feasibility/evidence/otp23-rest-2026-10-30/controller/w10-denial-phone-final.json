@@ -1,0 +1,409 @@
+{
+  "kind": "otp23-transport-evidence",
+  "run_id": "w10-denial-20261030",
+  "started_at_epoch_ms": 1793346947842,
+  "finished_at_epoch_ms": 1793348704336,
+  "final": true,
+  "final_after_service_stopped": true,
+  "clean": true,
+  "source_package": "me.nagaev.veles.otp23",
+  "source_version_name": "0.0.3-35-3dbe3db-contract_otp23-desktop-alignment",
+  "source_version_code": 3,
+  "truncated": false,
+  "peers_dropped": 0,
+  "peers": [
+    {
+      "peer_sha256_prefix": "c3a3dc8495dd5bc2",
+      "notify_calls": 3,
+      "api_success": 3,
+      "api_nonzero": 0,
+      "attempted_bytes": 24,
+      "callbacks": 3,
+      "callback_success": 3,
+      "callback_nonzero": 0,
+      "unbound_callbacks": 0,
+      "pending_unresolved": 0,
+      "pending_dropped": 0,
+      "callbacks_seen": 3,
+      "callbacks_seen_nonzero": 0,
+      "callbacks_after_close": 0,
+      "connects": 9,
+      "disconnects": 9,
+      "subscribes": 4,
+      "mtu": 517,
+      "truncated": false,
+      "events": [
+        {
+          "seq": 1,
+          "kind": "connected",
+          "epoch_ms": 1793346971230,
+          "elapsed_realtime_ms": 605515488,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 2,
+          "kind": "mtu",
+          "epoch_ms": 1793346971266,
+          "elapsed_realtime_ms": 605515524,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 3,
+          "kind": "subscribed",
+          "epoch_ms": 1793346973175,
+          "elapsed_realtime_ms": 605517433,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 5,
+          "kind": "notify_api",
+          "epoch_ms": 1793346973223,
+          "elapsed_realtime_ms": 605517481,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 8,
+          "bound_op": 4
+        },
+        {
+          "seq": 6,
+          "kind": "notify_callback",
+          "epoch_ms": 1793346973235,
+          "elapsed_realtime_ms": 605517493,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 4
+        },
+        {
+          "seq": 7,
+          "kind": "disconnected",
+          "epoch_ms": 1793346976386,
+          "elapsed_realtime_ms": 605520643,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 8,
+          "kind": "connected",
+          "epoch_ms": 1793347007216,
+          "elapsed_realtime_ms": 605551474,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 9,
+          "kind": "mtu",
+          "epoch_ms": 1793347007223,
+          "elapsed_realtime_ms": 605551481,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 10,
+          "kind": "disconnected",
+          "epoch_ms": 1793347011234,
+          "elapsed_realtime_ms": 605555491,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 11,
+          "kind": "connected",
+          "epoch_ms": 1793347128420,
+          "elapsed_realtime_ms": 605672678,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 12,
+          "kind": "mtu",
+          "epoch_ms": 1793347128428,
+          "elapsed_realtime_ms": 605672685,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 13,
+          "kind": "disconnected",
+          "epoch_ms": 1793347132393,
+          "elapsed_realtime_ms": 605676651,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 14,
+          "kind": "connected",
+          "epoch_ms": 1793347303980,
+          "elapsed_realtime_ms": 605848238,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 15,
+          "kind": "mtu",
+          "epoch_ms": 1793347303989,
+          "elapsed_realtime_ms": 605848247,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 16,
+          "kind": "disconnected",
+          "epoch_ms": 1793347307956,
+          "elapsed_realtime_ms": 605852214,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 17,
+          "kind": "connected",
+          "epoch_ms": 1793347479421,
+          "elapsed_realtime_ms": 606023679,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 18,
+          "kind": "mtu",
+          "epoch_ms": 1793347479426,
+          "elapsed_realtime_ms": 606023684,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 19,
+          "kind": "disconnected",
+          "epoch_ms": 1793347483397,
+          "elapsed_realtime_ms": 606027655,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 20,
+          "kind": "connected",
+          "epoch_ms": 1793348125754,
+          "elapsed_realtime_ms": 606670012,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 21,
+          "kind": "mtu",
+          "epoch_ms": 1793348125809,
+          "elapsed_realtime_ms": 606670067,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 22,
+          "kind": "subscribed",
+          "epoch_ms": 1793348127710,
+          "elapsed_realtime_ms": 606671968,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 24,
+          "kind": "notify_api",
+          "epoch_ms": 1793348127756,
+          "elapsed_realtime_ms": 606672014,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 8,
+          "bound_op": 23
+        },
+        {
+          "seq": 25,
+          "kind": "notify_callback",
+          "epoch_ms": 1793348127766,
+          "elapsed_realtime_ms": 606672024,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 23
+        },
+        {
+          "seq": 26,
+          "kind": "disconnected",
+          "epoch_ms": 1793348130922,
+          "elapsed_realtime_ms": 606675180,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 27,
+          "kind": "connected",
+          "epoch_ms": 1793348144116,
+          "elapsed_realtime_ms": 606688374,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 28,
+          "kind": "mtu",
+          "epoch_ms": 1793348144130,
+          "elapsed_realtime_ms": 606688388,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 29,
+          "kind": "disconnected",
+          "epoch_ms": 1793348148141,
+          "elapsed_realtime_ms": 606692399,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 30,
+          "kind": "connected",
+          "epoch_ms": 1793348427985,
+          "elapsed_realtime_ms": 606972243,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 31,
+          "kind": "mtu",
+          "epoch_ms": 1793348427990,
+          "elapsed_realtime_ms": 606972248,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 32,
+          "kind": "subscribed",
+          "epoch_ms": 1793348429029,
+          "elapsed_realtime_ms": 606973287,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 33,
+          "kind": "disconnected",
+          "epoch_ms": 1793348483010,
+          "elapsed_realtime_ms": 607027268,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 34,
+          "kind": "connected",
+          "epoch_ms": 1793348489534,
+          "elapsed_realtime_ms": 607033792,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 35,
+          "kind": "mtu",
+          "epoch_ms": 1793348489542,
+          "elapsed_realtime_ms": 607033799,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 36,
+          "kind": "subscribed",
+          "epoch_ms": 1793348490666,
+          "elapsed_realtime_ms": 607034924,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 38,
+          "kind": "notify_api",
+          "epoch_ms": 1793348490712,
+          "elapsed_realtime_ms": 607034970,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 8,
+          "bound_op": 37
+        },
+        {
+          "seq": 39,
+          "kind": "notify_callback",
+          "epoch_ms": 1793348490722,
+          "elapsed_realtime_ms": 607034980,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 37
+        },
+        {
+          "seq": 40,
+          "kind": "disconnected",
+          "epoch_ms": 1793348493869,
+          "elapsed_realtime_ms": 607038127,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        }
+      ]
+    }
+  ]
+}

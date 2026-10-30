@@ -1,0 +1,7 @@
+{
+  "phase": "human_enable_needed",
+  "nonce": "59f99c1876724a26b870f78b7ad3b848",
+  "utc": "2026-10-30T03:21:33+00:00",
+  "ack_file": "%HOME%/homepc/work/otp23-m04-20261030/capture/state/ack.json",
+  "instruction": "toggle the VelesOtp23PoC Bluetooth entry ON"
+}

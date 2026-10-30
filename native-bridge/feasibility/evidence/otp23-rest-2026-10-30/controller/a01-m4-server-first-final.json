@@ -1,0 +1,20 @@
+{
+  "run_id": "a01-m4-20261030",
+  "status": "CAPTURED",
+  "error": null,
+  "states": [
+    {
+      "epoch_ms": 1793333276151,
+      "elapsed_ms": 591820409,
+      "peers": [],
+      "ready_count": 0,
+      "subscribed_count": 0,
+      "connected_at_elapsed_ms": [],
+      "records": 0,
+      "transport_events": []
+    }
+  ],
+  "records": [],
+  "injections": [],
+  "server_closed": true
+}

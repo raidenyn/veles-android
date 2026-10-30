@@ -1,0 +1,17 @@
+{
+  "captured_utc": "2026-10-30T02:51:58.541829+00:00",
+  "source": "Read-only OpenCode database; selected actual assistant metadata only, no message bodies, API headers or raw event/error logs",
+  "session_id": "ses_e7556bd06ffeBpdEo4Fp4EVwZw",
+  "provider": "kimi-code-plan-global",
+  "model": "k3.1-pro",
+  "configured_route": "kimi-code-plan-global/k3.1-pro",
+  "tool_agent": "build",
+  "variant": null,
+  "assistant_records_at_capture": 24,
+  "role": "Independent evidence reviewer; no delegation, repository edits or hardware operations",
+  "owner_model_selection_verbatim": "Use kimi k3.1 pro for review.",
+  "operator_distinct_from_reviewer": "Parent openai/gpt-6.1-sol operated and curated; owner supplied UI observation and Allow",
+  "report": "kimi31-review.md",
+  "report_sha256": "c4b8c914fb7f2b6e553f59b137621cd05d6ed0bbdb9285a70a972bceaa98b0e8",
+  "verdict": "APPROVED M-03 ONLY and bounded mechanical integration without a second substantive review, conditional on stated checks and scope"
+}

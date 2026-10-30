@@ -1,0 +1,42 @@
+[
+    {
+        "serial":  "2be02e41",
+        "package":  "me.nagaev.veles.otp23",
+        "restored_sha256":  "063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "current_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "restored_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "method":  "same-key install -r -t; no uninstall or data clearing"
+    },
+    {
+        "serial":  "2be02e41",
+        "package":  "me.nagaev.veles.otp23.test",
+        "restored_sha256":  "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "current_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "restored_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "method":  "same-key install -r -t; no uninstall or data clearing"
+    },
+    {
+        "serial":  "864a3db0",
+        "package":  "me.nagaev.veles.otp23",
+        "restored_sha256":  "063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "current_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "restored_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "method":  "same-key install -r -t; no uninstall or data clearing"
+    },
+    {
+        "serial":  "864a3db0",
+        "package":  "me.nagaev.veles.otp23.test",
+        "restored_sha256":  "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "current_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "restored_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "method":  "same-key install -r -t; no uninstall or data clearing"
+    }
+]

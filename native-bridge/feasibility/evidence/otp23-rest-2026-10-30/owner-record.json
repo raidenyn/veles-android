@@ -1,0 +1,22 @@
+{
+  "record_kind": "Operator-captured technical user conversation/question answers, not a GitHub approval or independent transcript",
+  "operator": "OpenCode parent openai/gpt-6.1-sol",
+  "task_directives_verbatim": ["Continue with the rest items.", "Continue"],
+  "reviewer_selection_carried_forward_verbatim": "Use kimi k3.1 pro for review.",
+  "m04_off_answer_verbatim": "VelesOtp23PoC is OFF",
+  "m04_on_and_guidance_answer_verbatim": "Saw guidance; switched ON",
+  "windows_radio_adapter_question_scope": "Temporarily turn only the PC Bluetooth radio OFF and disable/re-enable only the Qualcomm Bluetooth adapter; Bluetooth peripherals may be interrupted; automatic restoration arranged first.",
+  "windows_radio_adapter_answer_verbatim": "Proceed with PC tests",
+  "phone_unlock_answer_verbatim": "10 Pro is unlocked",
+  "windows_reboot_question_scope": "Save PC work, restart the PC and sign back into the same account to clear Windows' reported pending device operation; persistent disabled flag already cleared and test processes/tasks stopped.",
+  "windows_reboot_answer_verbatim": "Restarted and signed in",
+  "limits": [
+    "No new account or acceptance waiver",
+    "No new signing identity, key export, uninstall or data clearing",
+    "No TCC reset in the new M-04 denial/recovery run",
+    "No claim of a new popup observation in M-04; reuse the separately reviewed same-identity M-03 observation transparently",
+    "No Windows privacy-policy denial claim for the controlled exclusive GATT-service case",
+    "No claim that the M3 callback duplication was naturally emitted by Android",
+    "No OTP-24 implementation, merge, commit or push requested in this continuation"
+  ]
+}

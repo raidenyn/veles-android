@@ -7,6 +7,7 @@ import pathlib
 import re
 import sys
 import unittest
+from datetime import datetime
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -16,9 +17,8 @@ import matrix as m  # noqa: E402
 REPO = HERE.parent.parent.parent
 EVIDENCE = REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26"
 BASE = m.load()
-# rows still open after the 2026-10-29 Mac integration (M-08/M-11 promoted); see
-# test_mac_m08_m11_final_integration_2026_10_29
-OPEN_ROWS = ("W-10", "M-03", "M-04", "A-01")
+# Physical cases are reviewed; the new code still needs its committed-tree/publication review.
+OPEN_ROWS = ("R-01",)
 
 
 def with_row(row_id, **changes):
@@ -52,13 +52,14 @@ class CommittedMatrix(unittest.TestCase):
             if row["group"] in ("windows", "macos", "android") and row["status"] == "PASS" and row["id"] not in ("W-13", "W-03"):
                 bases = " ".join(row["evidence"])
                 self.assertTrue(any(b in bases for b in ("post-grant-2026-10-26/", "package1-connected-2026-10-28/",
-                                                         "mac-retake-2026-10-29/", "mac-m11-dev-2026-10-29/")), row["id"])
+                                                          "mac-retake-2026-10-29/", "mac-m11-dev-2026-10-29/",
+                                                          "mac-m03-prompt-2026-10-30/", "otp23-rest-2026-10-30/")), row["id"])
                 self.assertTrue(row["account"] or row["group"] == "android", row["id"])
         # promotions that the permission-granted physical runs support, plus the 2026-10-28
         # integrations: W-11/W-12 (latest-Chrome strict runs + GPT review) and W-02/W-07/W-08
         # (the final integration after the independent chain; see the dedicated tests)
         for rid in ("W-04", "W-05", "W-06", "W-09", "M-05", "M-06", "M-07", "A-02", "A-03",
-                    "W-11", "W-12", "W-02", "W-07", "W-08", "M-08", "M-11"):
+                     "W-11", "W-12", "W-02", "W-07", "W-08", "M-08", "M-11", "M-03", "M-04", "W-10", "A-01"):
             self.assertEqual(by_id[rid]["status"], "PASS", rid)
         # rows whose literal requirement the new evidence does not meet stay blocked, each with a reason
         for rid in OPEN_ROWS:
@@ -114,7 +115,7 @@ class CommittedMatrix(unittest.TestCase):
             self.assertIn("not", by_id[rid]["actual"].lower())
             self.assertNotIn("TCC reset was used", by_id[rid]["actual"])
         self.assertIn("TIMED OUT", by_id["M-04"]["actual"])
-        self.assertEqual(by_id["M-04"]["status"], "BLOCKED")
+        self.assertEqual(by_id["M-04"]["status"], "PASS")
 
     def test_strict_background_history_and_mac_rows_under_the_clarification(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
@@ -254,7 +255,7 @@ class CommittedMatrix(unittest.TestCase):
         rows = {r["id"]: r for r in BASE["rows"]}
         evidence = REPO / "native-bridge/feasibility/evidence"
         counts = {s: sum(1 for r in BASE["rows"] if r["status"] == s) for s in m.STATUSES}
-        self.assertEqual((counts["PASS"], counts["BLOCKED"], counts["NOT RUN"], counts["FAIL"]), (25, 4, 3, 0))
+        self.assertEqual((counts["PASS"], counts["BLOCKED"], counts["NOT RUN"], counts["FAIL"]), (28, 1, 3, 0))
         self.assertEqual(m.decision(BASE), ("NO-GO", list(OPEN_ROWS)))
         self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
         # frozen inputs are pinned; the active integration folder is verified but not pinned
@@ -319,10 +320,11 @@ class CommittedMatrix(unittest.TestCase):
         self.assertEqual(len(prompting), 1)
         self.assertIn("Sub:{me.nagaev.veles.bridge.dev}", prompting[0])
         self.assertIn("msgID=95540.2", prompting[0])
-        # M-03 / M-04 stay blocked with their unmet clauses documented, nothing inferred or waived
+        # Preserve the 2026-10-29 history; M-03 passed separately on the 2026-10-30 observation.
         for rid in ("M-03", "M-04"):
-            self.assertEqual((rows[rid]["status"], rows[rid]["waiver"]), ("BLOCKED", ""), rid)
+            self.assertEqual(rows[rid]["waiver"], "", rid)
             self.assertIn("2026-10-29 Mac integration (NO status change)", rows[rid]["actual"], rid)
+        self.assertEqual(rows["M-04"]["status"], "PASS")
         self.assertIn("UNOBSERVED", rows["M-03"]["actual"])
         self.assertIn("no M-04 OFF→ON toggle was approved or performed", rows["M-04"]["actual"])
         # the decision and review rows record the new state without erasing the 2026-10-28 record
@@ -358,6 +360,159 @@ class CommittedMatrix(unittest.TestCase):
         self.assertEqual(row["status"], "PASS")
         for needle in ("MANUAL ADJUDICATION", "machine verdict is RETAINED", "RESIDUALS", "NOT an OTP-24 GO", "97410d6b-c523-444a-86e8-f934f3da6b5c"):
             self.assertIn(needle, row["actual"])
+
+    def test_m03_fresh_signed_prompt_evidence_and_narrow_disposition(self):
+        rows = {r["id"]: r for r in BASE["rows"]}
+        row = rows["M-03"]
+        root = REPO / "native-bridge/feasibility/evidence/mac-m03-prompt-2026-10-30"
+        for line in (root / "SHA256SUMS").read_text().splitlines():
+            digest, name = line.split("  ", 1)
+            self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), digest, name)
+        provenance = json.loads((root / "provenance.json").read_text())
+        for item in provenance["copies"]:
+            self.assertEqual(hashlib.sha256((root / item["published"]).read_bytes()).hexdigest(), item["sha256"])
+        self.assertEqual(row["expected"], "Directly signed fixture with the final bundle identifier and a recorded stable signing identity "
+                         "(OTP-23 minimum, amended 2026-10-27: the existing approved Apple Development-signed fixture; CI-provided and distribution signing are OTP-25); "
+                         "prompt owner observed on the existing account. NOT waived. (Historical Apple Development me.nagaev.veles.otp23.poc is not proof of the production identity.)")
+        self.assertEqual((row["status"], row["blocker"], row["waiver"], row["account"]), ("PASS", "", "", "admin"))
+        self.assertIn("openai/gpt-6.1-sol", row["operator"])
+        interrupted = json.loads((root / "interrupted/result.json").read_text())
+        old_steps = {s["kind"]: s["value"] for s in interrupted["steps"]}
+        self.assertEqual(interrupted["capture_status"], "ERROR")
+        self.assertEqual(old_steps["initial_scan"]["stage"], "access_denied")
+        self.assertEqual(old_steps["owner_answer"]["action"], "ABORT_INTERRUPTED_ATTEMPT")
+        self.assertEqual(old_steps["owner_answer"]["observation"], "NOT_RECORDED")
+        capture = json.loads((root / "restart1/result.json").read_text())
+        steps = {s["kind"]: s["value"] for s in capture["steps"]}
+        times = {s["kind"]: datetime.fromisoformat(s["utc"]) for s in capture["steps"]}
+        expected_hash = "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c"
+        self.assertEqual(capture["binary_sha256_before"], expected_hash)
+        self.assertEqual(capture["binary_sha256_after"], expected_hash)
+        resets = [s["value"]["command"] for s in capture["steps"] if s["kind"] == "command" and "tccutil" in s["value"]["command"][0]]
+        self.assertEqual(resets, [["/usr/bin/tccutil", "reset", "BluetoothAlways", "me.nagaev.veles.bridge"]])
+        self.assertEqual(steps["initial_scan"]["stage"], "permission_pending")
+        self.assertEqual(steps["owner_answer"]["verbatim_owner_report"], "ValesOtp23PoC. Clicked allowed")
+        self.assertEqual(steps["owner_answer"]["reported_action"], "Allow")
+        self.assertEqual(json.loads((root / "restart1/bundle-info.json").read_text())["CFBundleName"], "VelesOtp23PoC")
+        self.assertLess((times["owner_answer"] - times["awaiting_owner"]).total_seconds(), 1800)
+        self.assertGreater((times["owner_answer"] - times["awaiting_owner"]).total_seconds(), 0)
+        hosts = steps["signed_host_processes"]
+        self.assertEqual(len(hosts), 1)
+        self.assertEqual((hosts[0]["pid"], hosts[0]["ppid"]), (15918, steps["chrome"]["pid"]))
+        records = [json.loads(line) for line in (root / "restart1/signed-prompt-chain.ndjson").read_text().splitlines()]
+        messages = [r.get("eventMessage", "") for r in records]
+        prompt = [s for s in messages if s.startswith("AUTHREQ_PROMPTING")]
+        self.assertEqual(len(prompt), 1)
+        for token in ("msgID=15918.2", "me.nagaev.veles.bridge", "pid=15918", "kTCCServiceBluetoothAlways"):
+            self.assertIn(token, prompt[0])
+        result = [s for s in messages if s.startswith("AUTHREQ_RESULT")]
+        self.assertEqual(len(result), 1)
+        for token in ("msgID=15918.2", "authValue=2", "authReason=2", "error=(null)"):
+            self.assertIn(token, result[0])
+        self.assertEqual((steps["post_allow_scan"]["status"], steps["stop_scan"]["status"], steps["shutdown"]["type"]),
+                         ("started", "stopped", "shutdown_complete"))
+        self.assertEqual(steps["events"], [])
+        trace = (root / "restart1/host.trace.log").read_text()
+        self.assertNotIn("allowed_always", trace)
+        self.assertEqual(set(re.findall(r"pid=(\d+)", trace)), {"15918"})
+        verify = json.loads((root / "restart1/verify-grant.json").read_text())
+        self.assertEqual((verify["status"], verify["binary_sha256"]), ("CAPTURED", expected_hash))
+        self.assertGreater(datetime.fromisoformat(verify["started_utc"]), datetime.fromisoformat(capture["ended_utc"]))
+        self.assertIn("authorization before adapter init: allowed_always", (root / "restart1/verify-grant.trace.log").read_text())
+        metadata = json.loads((root / "reviewer-metadata.json").read_text())
+        self.assertEqual((metadata["provider"], metadata["model"]), ("kimi-code-plan-global", "k3.1-pro"))
+        self.assertIn("**APPROVED.**", (root / "kimi31-review.md").read_text())
+        for rid in OPEN_ROWS:
+            self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
+        self.assertIn("no TCC reset", rows["M-04"]["expected"])
+        self.assertIn("26 PASS / 3 BLOCKED / 3 waived NOT RUN", rows["D-02"]["actual"])
+        self.assertEqual(m.decision(BASE), ("NO-GO", ["R-01"]))
+        self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
+
+    def test_remaining_physical_cases_have_real_evidence_and_keep_the_publication_hold(self):
+        rows = {r["id"]: r for r in BASE["rows"]}
+        root = REPO / "native-bridge/feasibility/evidence/otp23-rest-2026-10-30"
+        for line in (root / "SHA256SUMS").read_text().splitlines():
+            digest, name = line.split("  ", 1)
+            self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), digest, name)
+        for rid in ("M-04", "A-01", "W-10"):
+            self.assertEqual((rows[rid]["status"], rows[rid]["blocker"], rows[rid]["waiver"]), ("PASS", "", ""), rid)
+            self.assertIn("2026-10-30 REMAINING-CASES INTEGRATION", rows[rid]["actual"], rid)
+        load = lambda name: json.loads((root / name).read_text())
+        mac = load("m04/result.json")
+        self.assertEqual((mac["result"], mac["failures"], mac["guidance_required"]), ("PASS", [], True))
+        run = mac["run"]
+        for phase in ("denied", "recovered"):
+            for key in ("chrome_pid", "profile", "sentinel_sha256", "extension_id", "binary_sha256", "signature"):
+                self.assertEqual(run[phase][key], run["baseline"][key], (phase, key))
+            self.assertEqual(run[phase]["load_unpacked_calls"], 1)
+        self.assertEqual(run["denied"]["scan_reply"]["stage"], "access_denied")
+        self.assertEqual(run["denied"]["scan_reply"]["recoverability"], "retryable")
+        self.assertTrue(run["denied"]["permission_guidance"]["visible"])
+        self.assertIn("System Settings -> Privacy & Security -> Bluetooth, enable VelesOtp23PoC", run["denied"]["permission_guidance"]["text"])
+        self.assertEqual((run["recovered"]["permission_guidance"]["visible"], run["recovered"]["permission_guidance"]["text"]), (False, ""))
+        self.assertTrue(load("m04/owner-on.json")["guidance_observed"])
+        self.assertEqual(mac["prompt_observation"]["value"], "unknown")
+        self.assertTrue(run["profile_removed"])
+        m3 = load("windows-first/capture/a01-m3.json")
+        ack = load("controller/a01-m3-phone-ack.json")
+        self.assertEqual(m3["capture_status"], "PASS")
+        self.assertEqual(m3["nonce"], ack["nonce"])
+        self.assertIn("not a naturally repeated OS callback", ack["origin"])
+        self.assertEqual(ack["before"]["peers"], ack["after"]["peers"])
+        self.assertEqual(ack["before"]["connected_at_elapsed_ms"], ack["after"]["connected_at_elapsed_ms"])
+        self.assertEqual([e["bytes"] for e in m3["exchanges"]], [16, 4096, 4096])
+        self.assertEqual(len({e["connection_handle"] for e in m3["exchanges"]}), 1)
+        for exchange in m3["exchanges"]:
+            self.assertEqual(exchange["received_sha256"], exchange["expected_sha256"])
+        self.assertNotEqual(m3["exchanges"][1]["input_sha256"], m3["exchanges"][2]["input_sha256"])
+        self.assertTrue(m3["connected"]["platform_hint"].startswith("sha256:"))
+        server = load("controller/a01-m3-server-final.json")
+        self.assertEqual((len(server["records"]), len(server["injections"]), server["server_closed"]), (3, 1, True))
+        client = load("controller/a01-m4-client-retake3.json")
+        server = load("controller/a01-m4-server-retake3-final.json")
+        self.assertEqual((client["status"], client["run_id"]), ("PASS", server["run_id"]))
+        events = client["events"]
+        cccd = [e for e in events if e["kind"] == "cccd"]
+        mtu = next(e for e in events if e["kind"] == "mtu")
+        self.assertEqual([e["code"] for e in cccd], [6, 0])
+        self.assertEqual((mtu["code"], mtu["extra"]), (0, 517))
+        self.assertLess(cccd[0]["elapsed_ms"], mtu["elapsed_ms"])
+        self.assertLess(mtu["elapsed_ms"], cccd[1]["elapsed_ms"])
+        self.assertEqual(len(server["records"]), 1)
+        self.assertTrue(server["server_closed"])
+        first_valid = next(i for i, state in enumerate(server["states"]) if state["ready_count"] == state["subscribed_count"] == 1)
+        self.assertTrue(all(state["records"] == 0 for state in server["states"][:first_valid + 1]))
+        self.assertTrue(any(state["records"] == 1 for state in server["states"][first_valid:]))
+        for source in load("mac-phone-order-corroboration.json")["sources"]:
+            self.assertEqual(hashlib.sha256((REPO / source["source"]).read_bytes()).hexdigest(), source["sha256"])
+            self.assertEqual(source["run_id"], "mac-m08-shutdown-20261029T043432Z")
+            for peer in source["peers"]:
+                order = peer["events"]
+                self.assertEqual([(e["kind"], e["code"]) for e in order], [("connected", None), ("mtu", 517), ("subscribed", None)])
+        self.assertEqual(load("windows-first/capture/radio-off.json")["scan"]["stage"], "radio_off")
+        self.assertEqual(load("windows-first/capture/radio-off.json")["scan"]["recoverability"], "retryable")
+        self.assertEqual(load("windows-first/capture/adapter-absent.json")["scan"]["status"], "started", "failed setup remains uncredited")
+        absent = load("windows-reboot/capture/adapter-absent-v2.json")["scan"]
+        self.assertEqual((absent["stage"], absent["recoverability"]), ("no_adapter", "fatal"))
+        held = load("windows-reboot/capture/access-held.json")
+        self.assertEqual((held["connect_reply"]["stage"], held["connect_reply"]["recoverability"]), ("access_denied", "fatal"))
+        control = load("windows-reboot/capture/exclusive-direct.json")
+        self.assertEqual((control["open_status"], control["sharing_mode"], control["subscription_status"]), ("Success", "Exclusive", "Success"))
+        utc = lambda value: datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", value.replace("Z", "+00:00")))
+        self.assertLess(utc(control["held_utc"]), utc(held["started_utc"]))
+        self.assertLess(utc(held["finished_utc"]), utc(control["finished_utc"]))
+        recovered = load("windows-reboot/capture/access-recovered.json")
+        self.assertEqual(recovered["target_hint_sha256"], load("windows-reboot/capture/access-baseline-v2.json")["target_hint_sha256"])
+        self.assertTrue(recovered["echo"]["byte_exact"])
+        cleanup = load("windows-reboot/capture/final-reboot-cleanup.json")
+        self.assertEqual((cleanup["own_processes_left"], cleanup["holder_process_left"], cleanup["own_tasks_left"]), ([], [], []))
+        self.assertTrue(cleanup["registration_absent"])
+        self.assertEqual((rows["R-01"]["status"], rows["R-01"]["waiver"]), ("BLOCKED", ""))
+        self.assertIn("uncommitted", rows["R-01"]["blocker"])
+        self.assertIn("kimi-code-plan-global/k3.1-pro", rows["R-01"]["expected"])
+        self.assertEqual(m.decision(BASE), ("NO-GO", ["R-01"]))
+        self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
 
     def test_post_grant_identity_and_gate_counts_come_from_real_outputs(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
@@ -420,7 +575,7 @@ class CommittedMatrix(unittest.TestCase):
         passed = dict(status="PASS", account="admin", blocker="")
         self.assertTrue(m.validate(with_row("R-01", actual="", evidence=[], **passed)))
         self.assertTrue(m.validate(with_row("R-01", evidence=[], **passed)))
-        if row["status"] != "PASS":
+        if row["status"] != "PASS" and "2026-10-30" not in row["blocker"]:
             # post-grant phase: the e19c8ca-scoped PASS is preserved but the NEW phase review is PENDING
             self.assertEqual(row["status"], "BLOCKED")
             self.assertIn("PENDING", row["actual"])
@@ -450,7 +605,14 @@ class CommittedMatrix(unittest.TestCase):
             self.assertRegex(post["reviewed_snapshot_commit"], r"^[0-9a-f]{40}$")
             self.assertIn(commit, row["actual"])
             self.assertIn(commit, (base / "reviews-and-provenance/otp23-postgrant-r01-attestation.md").read_text())
-            self.assertEqual((row["status"], row["blocker"], row["waiver"]), ("PASS", "", ""))
+            self.assertEqual(row["waiver"], "")
+            if row["status"] == "PASS":
+                self.assertEqual(row["blocker"], "")
+            else:
+                self.assertEqual(row["status"], "BLOCKED")
+                self.assertIn("2026-10-30", row["blocker"])
+                self.assertIn("PENDING", row["blocker"])
+                self.assertIn("committed", row["blocker"])
             self.assertEqual(post["provider"], "firstParty")
             self.assertEqual(post["observed_canonicalModel"], "claude-opus-5-5")
             self.assertEqual(post["acceptance_decision"], "NO-GO for OTP-24")
@@ -481,7 +643,7 @@ class CommittedMatrix(unittest.TestCase):
             self.assertNotEqual(post["session_id"], "f3746c7a-184d-4343-933a-12093f203b6a")
             self.assertTrue((REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26/opus-final-ingress-verification.json").exists())
             verdict, open_rows = m.decision(BASE)
-            self.assertNotIn("R-01", open_rows)
+            self.assertEqual("R-01" in open_rows, row["status"] != "PASS")
             self.assertEqual(verdict, "NO-GO")
             self.assertTrue(open_rows)  # a review PASS never makes the decision GO
             return
@@ -556,8 +718,9 @@ class CommittedMatrix(unittest.TestCase):
 
     def test_prerequisite_rows_are_blocked_not_bare_not_run(self):
         by_id = {r["id"]: r for r in BASE["rows"]}
-        self.assertEqual(by_id["A-01"]["status"], "BLOCKED")
-        self.assertTrue(by_id["A-01"]["blocker"])
+        self.assertEqual((by_id["A-01"]["status"], by_id["A-01"]["blocker"]), ("PASS", ""))
+        self.assertIn("2026-10-30 REMAINING-CASES INTEGRATION", by_id["A-01"]["actual"])
+        self.assertEqual(by_id["R-01"]["status"], "BLOCKED")
 
     def test_existing_account_unsigned_host_row_keeps_its_not_run_history_beside_the_scoped_pass(self):
         """M-11 was never waived: it stayed BLOCKED until it was executed on the existing account and
@@ -610,7 +773,7 @@ class CommittedMatrix(unittest.TestCase):
         # the evaluation is not circular: it never requires OTP-25 installer work inside OTP-23
         self.assertNotIn("installer proof", d["blocker"] + d["expected"].replace("no bundler/installer is implemented or required", ""))
         self.assertIn("OTP-24 GO", d["actual"])
-        self.assertIn("claude-opus-5-5", by_id["R-01"]["expected"])
+        self.assertIn("kimi-code-plan-global/k3.1-pro", by_id["R-01"]["expected"])
 
     def test_account_waiver_covers_exactly_the_new_account_rows_and_is_never_a_pass(self):
         self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
@@ -649,11 +812,7 @@ class CommittedMatrix(unittest.TestCase):
 
     def test_macos_rows_pass_only_where_the_human_observation_and_signature_exist(self):
         rows = {r["id"]: r for r in BASE["rows"]}
-        for rid in ("M-03", "M-04"):
-            self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
-            self.assertTrue(rows[rid]["human_gated"], rid)
-            self.assertTrue(rows[rid]["blocker"], rid)
-        for rid in ("M-05", "M-06"):
+        for rid in ("M-03", "M-04", "M-05", "M-06"):
             self.assertEqual((rows[rid]["status"], rows[rid]["human_gated"]), ("PASS", True), rid)
             self.assertTrue(rows[rid]["operator"].strip(), rid)
         self.assertIn("NOT Developer ID", rows["M-03"]["actual"])
@@ -664,17 +823,18 @@ class CommittedMatrix(unittest.TestCase):
     def test_signing_provenance_amendment_is_narrow_and_not_a_waiver_or_a_go(self):
         rows = {r["id"]: r for r in BASE["rows"]}
         m03 = rows["M-03"]
-        self.assertEqual(m03["status"], "BLOCKED")
+        self.assertEqual(m03["status"], "PASS")
         self.assertEqual(m03["waiver"], "")
         self.assertNotIn("M-03", m.waived(BASE))
         self.assertIn("2026-10-27", m03["source"])
         self.assertIn("operator-captured", m03["source"])
-        # the blocker is the retained prompt-owner requirement; CI/Developer ID/notarization are OTP-25, not blockers
-        self.assertIn("prompt owner", m03["blocker"])
-        self.assertIn("OTP-25", m03["blocker"])
+        # The signing amendment alone promoted nothing; the later observed prompt discharged M-03.
+        self.assertEqual(m03["blocker"], "")
+        self.assertIn("2026-10-30 M-03 INTEGRATION", m03["actual"])
+        self.assertIn("OTP-25", m03["actual"])
         self.assertNotIn("no Developer ID", m03["blocker"])
         self.assertIn("Apple Development", m03["expected"])
-        self.assertEqual(rows["M-04"]["status"], "BLOCKED")
+        self.assertEqual(rows["M-04"]["status"], "PASS")
         # M-11 (the unsigned dev-host comparison the amendment retained) passed only by its own
         # 2026-10-29 execution and manual adjudication, never by this amendment
         self.assertEqual(rows["M-11"]["status"], "PASS")
@@ -770,8 +930,8 @@ class Rules(unittest.TestCase):
 
     def test_human_gated_pass_needs_a_named_operator(self):
         changes = dict(status="PASS", actual="ok", evidence=["e"], blocker="", account="admin")
-        self.assertTrue(m.validate(with_row("M-04", **changes)))
-        self.assertEqual(m.validate(with_row("M-04", operator="a named person", **changes)), [])
+        self.assertTrue(m.validate(unrun("M-04", **changes)))
+        self.assertEqual(m.validate(unrun("M-04", operator="a named person", **changes)), [])
 
     def test_not_run_rows_carry_no_result(self):
         self.assertTrue(m.validate(unrun("D-02", actual="looks fine")))

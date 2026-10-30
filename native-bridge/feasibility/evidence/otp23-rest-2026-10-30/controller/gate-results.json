@@ -1,0 +1,27 @@
+[
+  {
+    "name": "spotless-forced",
+    "command": [
+      "./gradlew",
+      "spotlessCheck",
+      "--rerun-tasks"
+    ],
+    "started_utc": "2026-10-30T04:44:07.999004+00:00",
+    "finished_utc": "2026-10-30T04:44:35.200520+00:00",
+    "returncode": 0
+  },
+  {
+    "name": "gradle-full",
+    "command": [
+      "./gradlew",
+      "spotlessCheck",
+      "detekt",
+      "lintDebug",
+      "testDebugUnitTest",
+      "protocolCheck"
+    ],
+    "started_utc": "2026-10-30T04:44:35.200943+00:00",
+    "finished_utc": "2026-10-30T04:46:54.216384+00:00",
+    "returncode": 0
+  }
+]

@@ -1,0 +1,10 @@
+[       0ms pid=45088] start pid=45088
+[       1ms pid=45088] in  len=81 type=hello request_id=r1-zrzk93
+[       1ms pid=45088] out len=183 type=ready request_id=r1-zrzk93 api_version=1
+[     335ms pid=45088] in  len=137 type=start_scan request_id=r2-01s95v api_version=1
+[     357ms pid=45088] scan 1 failed: stage=radio_off
+[     358ms pid=45088] out len=148 type=error request_id=r2-01s95v api_version=1 code=scan_failed recoverability=retryable stage=radio_off
+[     358ms pid=45088] in  len=81 type=shutdown request_id=r3-6p16rg api_version=1
+[     358ms pid=45088] shutdown joined 0/0 within 0ms
+[     358ms pid=45088] out len=90 type=shutdown_complete request_id=r3-6p16rg api_version=1
+[     358ms pid=45088] exit code=0 stdout_drained=true

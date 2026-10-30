@@ -1,0 +1,7 @@
+{
+  "run_id": "a01-m4-20261030",
+  "status": "FAIL",
+  "error": "AssertionError",
+  "events": [],
+  "permission_scope": "instrumentation-only shell SCAN\/CONNECT identity, dropped in finally; no persistent permission edits"
+}

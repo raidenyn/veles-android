@@ -1,0 +1,24 @@
+{
+    "utc":  "2026-10-30T04:45:52.2444388Z",
+    "registration_absent":  true,
+    "own_processes_left":  [
+
+                           ],
+    "own_tasks_left":  [
+
+                       ],
+    "adapter_properties":  [
+                               {
+                                   "KeyName":  "DEVPKEY_Device_ConfigFlags",
+                                   "Data":  0
+                               },
+                               {
+                                   "KeyName":  "DEVPKEY_Device_ProblemCode",
+                                   "Data":  0
+                               },
+                               {
+                                   "KeyName":  "DEVPKEY_Device_DevNodeStatus",
+                                   "Data":  25190666
+                               }
+                           ]
+}

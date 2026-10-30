@@ -1,0 +1,10 @@
+allprojects { p ->
+    if (p.path == ':app') {
+        p.afterEvaluate {
+            p.android.buildTypes.debug.applicationIdSuffix = '.otp23'
+            p.android.defaultConfig.testApplicationId = 'me.nagaev.veles.otp23.test'
+            p.android.sourceSets.debug.manifest.srcFile('/tmp/opencode/otp23-rest-20261030/fixture-manifest.xml')
+            p.layout.buildDirectory.set(new File('/tmp/opencode/otp23-rest-20261030/android-build'))
+        }
+    }
+}

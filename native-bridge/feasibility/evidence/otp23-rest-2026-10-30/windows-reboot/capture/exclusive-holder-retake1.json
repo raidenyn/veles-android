@@ -1,0 +1,11 @@
+{
+    "started_utc":  "2026-10-30T07:58:48.2390195Z",
+    "scope":  "Exclusive access to only the synthetic Veles GATT service; not a Windows privacy-setting denial",
+    "services_status":  "Success",
+    "status":  "ERROR",
+    "error":  "Exception calling \"Close\" with \"1\" argument(s): \"Specified cast is not valid.\"",
+    "close_errors":  [
+                         "Exception calling \"Close\" with \"1\" argument(s): \"Specified cast is not valid.\""
+                     ],
+    "finished_utc":  "2026-10-30T07:58:49.6759969Z"
+}

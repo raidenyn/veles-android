@@ -1,0 +1,1150 @@
+{
+  "operator": "Parent OpenCode openai/gpt-6.1-sol; no delegated implementation or physical operator",
+  "copies": [
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/owner-off.json",
+      "published": "m04/owner-off.json",
+      "source_sha256": "3462d30efdb6f5bf70ce42260d45eb5553f8c8afbc6f174aada96d2df6aeef54",
+      "published_sha256": "3462d30efdb6f5bf70ce42260d45eb5553f8c8afbc6f174aada96d2df6aeef54",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/owner-on.json",
+      "published": "m04/owner-on.json",
+      "source_sha256": "8450e2c56176efe57b75e9aba176469a1c67242eb39c345e7be84da0f5f17665",
+      "published_sha256": "8450e2c56176efe57b75e9aba176469a1c67242eb39c345e7be84da0f5f17665",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/result.json",
+      "published": "m04/result.json",
+      "source_sha256": "4daa869187f285477fc1e9b75ab12f39d003b4df4478c52a0d86e17fef9d2dd2",
+      "published_sha256": "4daa869187f285477fc1e9b75ab12f39d003b4df4478c52a0d86e17fef9d2dd2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/source-pins.json",
+      "published": "m04/source-pins.json",
+      "source_sha256": "c00fa5aed8f4b6f7b58b9873cd1611b96736c00d66152e22ac4331866237ddc1",
+      "published_sha256": "c00fa5aed8f4b6f7b58b9873cd1611b96736c00d66152e22ac4331866237ddc1",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/state/ack.json",
+      "published": "m04/state/ack.json",
+      "source_sha256": "3aa25814084859f77ad81295cb83572a88baa29a2b120ea2c0f2f2862a3f04a9",
+      "published_sha256": "3aa25814084859f77ad81295cb83572a88baa29a2b120ea2c0f2f2862a3f04a9",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/state/host-trace.log",
+      "published": "m04/state/host-trace.log",
+      "source_sha256": "d16ffe499f85aed9289719f8c90b3182e2f9cfe5ae2ea327870e7fb9a8bb6d2b",
+      "published_sha256": "d16ffe499f85aed9289719f8c90b3182e2f9cfe5ae2ea327870e7fb9a8bb6d2b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/state/ready.json",
+      "published": "m04/state/ready.json",
+      "source_sha256": "c4f194801d87458e97a5d2dcb023acaf2731528a607d33ea8e7cad8d53e82b93",
+      "published_sha256": "c4f194801d87458e97a5d2dcb023acaf2731528a607d33ea8e7cad8d53e82b93",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-capture/wrapper-cleanup.json",
+      "published": "m04/wrapper-cleanup.json",
+      "source_sha256": "6a6e4a26b02838058863956761f6e04818913d74b50ba810383dcf9d8d04969d",
+      "published_sha256": "6a6e4a26b02838058863956761f6e04818913d74b50ba810383dcf9d8d04969d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:a01-certificates.ps1",
+      "published": "windows-first/a01-certificates.ps1",
+      "source_sha256": "b0028b49bd6bf2b965f443f1ec93ce523f9cd00b61bc957d87986f6590bd9f31",
+      "published_sha256": "b0028b49bd6bf2b965f443f1ec93ce523f9cd00b61bc957d87986f6590bd9f31",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:a01-install-scan-fixture.ps1",
+      "published": "windows-first/a01-install-scan-fixture.ps1",
+      "source_sha256": "f7bea01217147ce1b7b7a399006c8998d14be771017b05815baf8f74dfcc3b8c",
+      "published_sha256": "f7bea01217147ce1b7b7a399006c8998d14be771017b05815baf8f74dfcc3b8c",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:a01-install-test.ps1",
+      "published": "windows-first/a01-install-test.ps1",
+      "source_sha256": "fb05bc8e751f8f87fd5c7afdbbdd118c0a516fc21f855086f82bbe8507ebff0a",
+      "published_sha256": "fb05bc8e751f8f87fd5c7afdbbdd118c0a516fc21f855086f82bbe8507ebff0a",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:a01-m3.py",
+      "published": "windows-first/a01-m3.py",
+      "source_sha256": "5f80eaabc2849561d5c557f9f62e08469233436103f653ef41d61494a8eef2ea",
+      "published_sha256": "5f80eaabc2849561d5c557f9f62e08469233436103f653ef41d61494a8eef2ea",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:a01-pull-installed.ps1",
+      "published": "windows-first/a01-pull-installed.ps1",
+      "source_sha256": "ce501b770d4c4f596dddba7d6126cf6a1bc741e0329b88a3f38758d5dd47839c",
+      "published_sha256": "ce501b770d4c4f596dddba7d6126cf6a1bc741e0329b88a3f38758d5dd47839c",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:a01-restore.ps1",
+      "published": "windows-first/a01-restore.ps1",
+      "source_sha256": "f34470e889a4cfc9550df74ad4e474415244e6950a4fde600c66b86821728361",
+      "published_sha256": "f34470e889a4cfc9550df74ad4e474415244e6950a4fde600c66b86821728361",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:a01-start-m3.ps1",
+      "published": "windows-first/a01-start-m3.ps1",
+      "source_sha256": "4f1073888109ad749297537ac3d1c1b72760b00cce419af75df480c7350eab8d",
+      "published_sha256": "4f1073888109ad749297537ac3d1c1b72760b00cce419af75df480c7350eab8d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:apply-apk-delta.py",
+      "published": "windows-first/apply-apk-delta.py",
+      "source_sha256": "b41973e6a80469111c42b06a9195def11d7b83b03ef951c37f1098d7fb00cf4e",
+      "published_sha256": "b41973e6a80469111c42b06a9195def11d7b83b03ef951c37f1098d7fb00cf4e",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/a01-continue.json",
+      "published": "windows-first/capture/a01-continue.json",
+      "source_sha256": "521259db6b52244d6a5a2dbaa70adcf71d607ebcfb16db8ee4dc42e73a0466b6",
+      "published_sha256": "521259db6b52244d6a5a2dbaa70adcf71d607ebcfb16db8ee4dc42e73a0466b6",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/a01-install-record.json",
+      "published": "windows-first/capture/a01-install-record.json",
+      "source_sha256": "a0da3bee916fa8c93df5a83c4af0615913b40ee22da7a38f18c8b8fb051c2870",
+      "published_sha256": "a0da3bee916fa8c93df5a83c4af0615913b40ee22da7a38f18c8b8fb051c2870",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/a01-m3.json",
+      "published": "windows-first/capture/a01-m3.json",
+      "source_sha256": "11e4af48ca25e8eae27f9bb418169effe5dfeda35efb3fc448495f2ea0f5b61b",
+      "published_sha256": "d50014ce3be7ecfa6dfe9dedb5332b783a7106af2aae1b03bf30d25f7a2dfa41",
+      "byte_identical": false
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/a01-m3.trace.log",
+      "published": "windows-first/capture/a01-m3.trace.log",
+      "source_sha256": "e62e9d3e00e17457c778ca5547483ec9bea001fce8ab98d3ebff6cb359a39b15",
+      "published_sha256": "e62e9d3e00e17457c778ca5547483ec9bea001fce8ab98d3ebff6cb359a39b15",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/a01-restoration.json",
+      "published": "windows-first/capture/a01-restoration.json",
+      "source_sha256": "e62788f1e06b841af5536792a05acbf84d1626df96b23dd8300601eb8b7c9d07",
+      "published_sha256": "e62788f1e06b841af5536792a05acbf84d1626df96b23dd8300601eb8b7c9d07",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/a01-scan-install-record.json",
+      "published": "windows-first/capture/a01-scan-install-record.json",
+      "source_sha256": "dae1bc30c14644999d8034317d4c71bdfeec805a7180e152b2c193ab1b15726d",
+      "published_sha256": "dae1bc30c14644999d8034317d4c71bdfeec805a7180e152b2c193ab1b15726d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/adapter-absent.json",
+      "published": "windows-first/capture/adapter-absent.json",
+      "source_sha256": "6a767b0dcc4d1564babe65c4cf22365e22ebf59194a51a7292f2a942106ecaf6",
+      "published_sha256": "6a767b0dcc4d1564babe65c4cf22365e22ebf59194a51a7292f2a942106ecaf6",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/adapter-absent.trace.log",
+      "published": "windows-first/capture/adapter-absent.trace.log",
+      "source_sha256": "fcf6010224a285913f705ef4cb5a1a0d77dedd8b10387a3b75d8095aa408604d",
+      "published_sha256": "fcf6010224a285913f705ef4cb5a1a0d77dedd8b10387a3b75d8095aa408604d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/baseline.json",
+      "published": "windows-first/capture/baseline.json",
+      "source_sha256": "8073d74845439d44d9fcdcdf71ff13384dca31ecc47803e2a3c39a3e03cc677b",
+      "published_sha256": "8073d74845439d44d9fcdcdf71ff13384dca31ecc47803e2a3c39a3e03cc677b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/baseline.trace.log",
+      "published": "windows-first/capture/baseline.trace.log",
+      "source_sha256": "d93823f3db7e1bf7a79d640f9e540627ea8aeca80ae91820fd071e60ea55b7b2",
+      "published_sha256": "d93823f3db7e1bf7a79d640f9e540627ea8aeca80ae91820fd071e60ea55b7b2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/confirmed-enabled.json",
+      "published": "windows-first/capture/confirmed-enabled.json",
+      "source_sha256": "a9f76f20a1a21208a499b6c8ee08bbcc282bd00bcaf95cb647f944831384ba75",
+      "published_sha256": "a9f76f20a1a21208a499b6c8ee08bbcc282bd00bcaf95cb647f944831384ba75",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/final-pc-cleanup.json",
+      "published": "windows-first/capture/final-pc-cleanup.json",
+      "source_sha256": "5be301442d4f0bfe6a71594ae0319c269d460918e610bb484bbbc01f04b513b2",
+      "published_sha256": "5be301442d4f0bfe6a71594ae0319c269d460918e610bb484bbbc01f04b513b2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/pnputil-disable.txt",
+      "published": "windows-first/capture/pnputil-disable.txt",
+      "source_sha256": "d8d05a06a3f94fe2e64f626ede4224600fbe1d4692b087c6e32450fd96e8f3ba",
+      "published_sha256": "d8d05a06a3f94fe2e64f626ede4224600fbe1d4692b087c6e32450fd96e8f3ba",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/radio-off.json",
+      "published": "windows-first/capture/radio-off.json",
+      "source_sha256": "fedbb77b5dee292d93a75dda199ed6a71f477298aa36c3ad2d32b51854146602",
+      "published_sha256": "fedbb77b5dee292d93a75dda199ed6a71f477298aa36c3ad2d32b51854146602",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/radio-off.trace.log",
+      "published": "windows-first/capture/radio-off.trace.log",
+      "source_sha256": "dce41f71f4f654ff539ea67acd55e4267cc72b4f848aeb9dc3347f6fb3ae772d",
+      "published_sha256": "dce41f71f4f654ff539ea67acd55e4267cc72b4f848aeb9dc3347f6fb3ae772d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/registration.txt",
+      "published": "windows-first/capture/registration.txt",
+      "source_sha256": "3d9a95ee5b3e74713ac9213d426421f65b6e9ddff577ae0cee7fa21f75d8afcf",
+      "published_sha256": "3d9a95ee5b3e74713ac9213d426421f65b6e9ddff577ae0cee7fa21f75d8afcf",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/restore-dry-run.json",
+      "published": "windows-first/capture/restore-dry-run.json",
+      "source_sha256": "797b1daebf48d2b4abf709a413e958f3e570a18a3dc3721ea9605711ff7a67ac",
+      "published_sha256": "797b1daebf48d2b4abf709a413e958f3e570a18a3dc3721ea9605711ff7a67ac",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/restore-receipt.json",
+      "published": "windows-first/capture/restore-receipt.json",
+      "source_sha256": "a02f302aba6e884cd47bcad4f014fdf75ab350b819cf2f7f14ec7bdc44eb0444",
+      "published_sha256": "a02f302aba6e884cd47bcad4f014fdf75ab350b819cf2f7f14ec7bdc44eb0444",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/restored-persistent-enabled.json",
+      "published": "windows-first/capture/restored-persistent-enabled.json",
+      "source_sha256": "9f0b2f0566f5a7aa77cde212cf866374f244a8e523260a050c14e112c1959561",
+      "published_sha256": "9f0b2f0566f5a7aa77cde212cf866374f244a8e523260a050c14e112c1959561",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/restored.json",
+      "published": "windows-first/capture/restored.json",
+      "source_sha256": "26eee15872c803fd4eb746e939cf21fe98731b4d253f925320bde9631cccc4ea",
+      "published_sha256": "26eee15872c803fd4eb746e939cf21fe98731b4d253f925320bde9631cccc4ea",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/restored.trace.log",
+      "published": "windows-first/capture/restored.trace.log",
+      "source_sha256": "a0ce669171ea34ca6cb0ba87ca26cb544b8ba66d5d56b496c1dbe38640dcf3cc",
+      "published_sha256": "a0ce669171ea34ca6cb0ba87ca26cb544b8ba66d5d56b496c1dbe38640dcf3cc",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Arm-20261030-033424-860.json",
+      "published": "windows-first/capture/state-Arm-20261030-033424-860.json",
+      "source_sha256": "6641695a45f139c67fbb1c95573aa0470ba7f07f380f39faa98101b97991bb68",
+      "published_sha256": "6641695a45f139c67fbb1c95573aa0470ba7f07f380f39faa98101b97991bb68",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-DisableAdapter-20261030-033534-538.json",
+      "published": "windows-first/capture/state-DisableAdapter-20261030-033534-538.json",
+      "source_sha256": "83107d2e8f5cc7258ec7721ae5cc4b6864ced5f871b432a417dc5cf84a73cf86",
+      "published_sha256": "83107d2e8f5cc7258ec7721ae5cc4b6864ced5f871b432a417dc5cf84a73cf86",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Disarm-20261030-033829-730.json",
+      "published": "windows-first/capture/state-Disarm-20261030-033829-730.json",
+      "source_sha256": "2f99ee6496b1d4b1fcc5a52dd991349001898d0a727f704d14fee580fa2e9ca7",
+      "published_sha256": "2f99ee6496b1d4b1fcc5a52dd991349001898d0a727f704d14fee580fa2e9ca7",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-RadioOff-20261030-033508-601.json",
+      "published": "windows-first/capture/state-RadioOff-20261030-033508-601.json",
+      "source_sha256": "aa3beab826d084a721306079e9c98cb4ab0e18fb050904e1bc2b7f5141b69655",
+      "published_sha256": "aa3beab826d084a721306079e9c98cb4ab0e18fb050904e1bc2b7f5141b69655",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Restore-20261030-033423-565.json",
+      "published": "windows-first/capture/state-Restore-20261030-033423-565.json",
+      "source_sha256": "797b1daebf48d2b4abf709a413e958f3e570a18a3dc3721ea9605711ff7a67ac",
+      "published_sha256": "797b1daebf48d2b4abf709a413e958f3e570a18a3dc3721ea9605711ff7a67ac",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Restore-20261030-033516-385.json",
+      "published": "windows-first/capture/state-Restore-20261030-033516-385.json",
+      "source_sha256": "cad65d1f07ce4815ac5c4665fe157b7b80149c5677f4393c61cebd7ae41ba874",
+      "published_sha256": "cad65d1f07ce4815ac5c4665fe157b7b80149c5677f4393c61cebd7ae41ba874",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Restore-20261030-033541-860.json",
+      "published": "windows-first/capture/state-Restore-20261030-033541-860.json",
+      "source_sha256": "44c27adb580bd08a4871087e312c31f201cff5820840f4156c816e0f38c95b03",
+      "published_sha256": "44c27adb580bd08a4871087e312c31f201cff5820840f4156c816e0f38c95b03",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Restore-20261030-033729-097.json",
+      "published": "windows-first/capture/state-Restore-20261030-033729-097.json",
+      "source_sha256": "a02f302aba6e884cd47bcad4f014fdf75ab350b819cf2f7f14ec7bdc44eb0444",
+      "published_sha256": "a02f302aba6e884cd47bcad4f014fdf75ab350b819cf2f7f14ec7bdc44eb0444",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Status-20261030-033400-942.json",
+      "published": "windows-first/capture/state-Status-20261030-033400-942.json",
+      "source_sha256": "7f75b9abb1b29f4bc7e2fc625bead57b3afa99d3015aea34c007473385bd6898",
+      "published_sha256": "7f75b9abb1b29f4bc7e2fc625bead57b3afa99d3015aea34c007473385bd6898",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/state-Status-20261030-044552-492.json",
+      "published": "windows-first/capture/state-Status-20261030-044552-492.json",
+      "source_sha256": "39c778a7a0b34db3f2f785c56735d2c75d38b7b2cea5ed7b55b26f986de4ee4b",
+      "published_sha256": "39c778a7a0b34db3f2f785c56735d2c75d38b7b2cea5ed7b55b26f986de4ee4b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:cleanup-pc.ps1",
+      "published": "windows-first/cleanup-pc.ps1",
+      "source_sha256": "968ce4f7f60a298e4e8966ff1e75a9242b90c8d016beb09fb01e023a7214734a",
+      "published_sha256": "968ce4f7f60a298e4e8966ff1e75a9242b90c8d016beb09fb01e023a7214734a",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:w10-confirm-enabled.ps1",
+      "published": "windows-first/w10-confirm-enabled.ps1",
+      "source_sha256": "0f9cce055ec9749384cb078e14554eee9ca3cd95ab5c3ef191a57dc0c6473e20",
+      "published_sha256": "0f9cce055ec9749384cb078e14554eee9ca3cd95ab5c3ef191a57dc0c6473e20",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:w10-probe.py",
+      "published": "windows-first/w10-probe.py",
+      "source_sha256": "a83846cec1ecfd89c6eb71cb3e0230fca7d05a37fb3fff6fd382af87d4f91363",
+      "published_sha256": "a83846cec1ecfd89c6eb71cb3e0230fca7d05a37fb3fff6fd382af87d4f91363",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:w10-restore-config.ps1",
+      "published": "windows-first/w10-restore-config.ps1",
+      "source_sha256": "f2fc81018f22a2619111f0f3df42105a50b12d1cb70cf9939d68b32699fc1c51",
+      "published_sha256": "f2fc81018f22a2619111f0f3df42105a50b12d1cb70cf9939d68b32699fc1c51",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:w10-start-probe.ps1",
+      "published": "windows-first/w10-start-probe.ps1",
+      "source_sha256": "c07f2a6485ca37243a018864ffb6f9979f3ee3b7bd3a775366e75a4de1a19af2",
+      "published_sha256": "c07f2a6485ca37243a018864ffb6f9979f3ee3b7bd3a775366e75a4de1a19af2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:w10-state.ps1",
+      "published": "windows-first/w10-state.ps1",
+      "source_sha256": "ada0adf0b0f012d1e27d030ad019d756d58c4e8b961ff15b33807074e0eaf4ac",
+      "published_sha256": "ada0adf0b0f012d1e27d030ad019d756d58c4e8b961ff15b33807074e0eaf4ac",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:VelesGattVector.cs",
+      "published": "windows-reboot/VelesGattVector.cs",
+      "source_sha256": "001beee69dc077577460effef5250039c977d6cacf8824596dd1f32cb426f132",
+      "published_sha256": "001beee69dc077577460effef5250039c977d6cacf8824596dd1f32cb426f132",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-baseline-v2.json",
+      "published": "windows-reboot/capture/access-baseline-v2.json",
+      "source_sha256": "df2d4ed6b3fd1c8b7c9a38e4ca996f27390d228d0a2880a146d22e65b6dafdf0",
+      "published_sha256": "df2d4ed6b3fd1c8b7c9a38e4ca996f27390d228d0a2880a146d22e65b6dafdf0",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-baseline-v2.trace.log",
+      "published": "windows-reboot/capture/access-baseline-v2.trace.log",
+      "source_sha256": "715389be32ca0340dc61db76b870e3178dfdfdc4183ff135c1c6f1f18d9a185a",
+      "published_sha256": "715389be32ca0340dc61db76b870e3178dfdfdc4183ff135c1c6f1f18d9a185a",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-baseline.json",
+      "published": "windows-reboot/capture/access-baseline.json",
+      "source_sha256": "da1e979d3c42ece95241bd6a033479ec6e61a5a2915a8ff58d555a845697481c",
+      "published_sha256": "da1e979d3c42ece95241bd6a033479ec6e61a5a2915a8ff58d555a845697481c",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-baseline.trace.log",
+      "published": "windows-reboot/capture/access-baseline.trace.log",
+      "source_sha256": "be1b5199caaff66468e3db3785c195bce1c5bc2f07b570ac16316cc7b111ee27",
+      "published_sha256": "be1b5199caaff66468e3db3785c195bce1c5bc2f07b570ac16316cc7b111ee27",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-held.json",
+      "published": "windows-reboot/capture/access-held.json",
+      "source_sha256": "878c5a44b7963b429575d807ab358754900f7e298a9316c553573e0cf8a14f1f",
+      "published_sha256": "878c5a44b7963b429575d807ab358754900f7e298a9316c553573e0cf8a14f1f",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-held.trace.log",
+      "published": "windows-reboot/capture/access-held.trace.log",
+      "source_sha256": "b929e4f4e8b3a77caf1572d3b53667dfff1e7448915676be021e82678d6aa16f",
+      "published_sha256": "b929e4f4e8b3a77caf1572d3b53667dfff1e7448915676be021e82678d6aa16f",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-recovered.json",
+      "published": "windows-reboot/capture/access-recovered.json",
+      "source_sha256": "d3a99a3d91fece781167161952cc202439f44a1bddc9c32ffe54ba32c1f36662",
+      "published_sha256": "d3a99a3d91fece781167161952cc202439f44a1bddc9c32ffe54ba32c1f36662",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/access-recovered.trace.log",
+      "published": "windows-reboot/capture/access-recovered.trace.log",
+      "source_sha256": "a12b214c29c564d3945fb9faeadcf3fef7e93bb6f5289c818fb9d611ea6b76ef",
+      "published_sha256": "a12b214c29c564d3945fb9faeadcf3fef7e93bb6f5289c818fb9d611ea6b76ef",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/adapter-absent-v2.json",
+      "published": "windows-reboot/capture/adapter-absent-v2.json",
+      "source_sha256": "dbc614aa431b92fd48324cb45aa104986d9da588173cf018c0aef736d01106e1",
+      "published_sha256": "dbc614aa431b92fd48324cb45aa104986d9da588173cf018c0aef736d01106e1",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/adapter-absent-v2.trace.log",
+      "published": "windows-reboot/capture/adapter-absent-v2.trace.log",
+      "source_sha256": "425ff30904fcb91dcdd5a475bae390b293e55565ff212de44e205052ad6d7507",
+      "published_sha256": "425ff30904fcb91dcdd5a475bae390b293e55565ff212de44e205052ad6d7507",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/baseline.json",
+      "published": "windows-reboot/capture/baseline.json",
+      "source_sha256": "7116e9962967fe63459887fbdf30126a3a71bbced57f3ae63eff9c0ab25a86ed",
+      "published_sha256": "7116e9962967fe63459887fbdf30126a3a71bbced57f3ae63eff9c0ab25a86ed",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/baseline.trace.log",
+      "published": "windows-reboot/capture/baseline.trace.log",
+      "source_sha256": "69afe0ecfb9fa67472b75cbc93a0a819b6f3a2397b4677a5a848646a4056fcfd",
+      "published_sha256": "69afe0ecfb9fa67472b75cbc93a0a819b6f3a2397b4677a5a848646a4056fcfd",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-direct.json",
+      "published": "windows-reboot/capture/exclusive-direct.json",
+      "source_sha256": "e1b6ed6de0667a9c055571994d40dadb65a93ba37a9b204d918949242fab71bc",
+      "published_sha256": "e1b6ed6de0667a9c055571994d40dadb65a93ba37a9b204d918949242fab71bc",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-holder-retake1.json",
+      "published": "windows-reboot/capture/exclusive-holder-retake1.json",
+      "source_sha256": "1cc2513b5ba7516635093ded2c9a1e6cf279006326998020d7864f905864995d",
+      "published_sha256": "1cc2513b5ba7516635093ded2c9a1e6cf279006326998020d7864f905864995d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-holder.json",
+      "published": "windows-reboot/capture/exclusive-holder.json",
+      "source_sha256": "808f5ef6f0538061979d092a910940c51734302e5224bb15fe684084294d8bc9",
+      "published_sha256": "808f5ef6f0538061979d092a910940c51734302e5224bb15fe684084294d8bc9",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-identify-v2.json",
+      "published": "windows-reboot/capture/exclusive-identify-v2.json",
+      "source_sha256": "ff3a38a024b211f349a9cdc862dc40e7d9579cf6ed2f0d15f10ae9c1ff21b988",
+      "published_sha256": "ff3a38a024b211f349a9cdc862dc40e7d9579cf6ed2f0d15f10ae9c1ff21b988",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-identify-v3.json",
+      "published": "windows-reboot/capture/exclusive-identify-v3.json",
+      "source_sha256": "ab3c3ee9fc00221e8f7bd0f15bcdd991342f40d997cc3f39da50dcda0284054e",
+      "published_sha256": "ab3c3ee9fc00221e8f7bd0f15bcdd991342f40d997cc3f39da50dcda0284054e",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-identify-v4.json",
+      "published": "windows-reboot/capture/exclusive-identify-v4.json",
+      "source_sha256": "fcabfc28df48e499098c75b8444247ff50ce8e3f1ad46cfa15d2199db0747a05",
+      "published_sha256": "fcabfc28df48e499098c75b8444247ff50ce8e3f1ad46cfa15d2199db0747a05",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-identify.json",
+      "published": "windows-reboot/capture/exclusive-identify.json",
+      "source_sha256": "fd8533d9c71e7446bf71624face2bd054d5d350a1eeb2b7967e8291b3cb50d00",
+      "published_sha256": "fd8533d9c71e7446bf71624face2bd054d5d350a1eeb2b7967e8291b3cb50d00",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-process.json",
+      "published": "windows-reboot/capture/exclusive-process.json",
+      "source_sha256": "3ba274945183691c6a307be7eba394101dc269ff125c1a94ed64d829f8a4bf48",
+      "published_sha256": "3ba274945183691c6a307be7eba394101dc269ff125c1a94ed64d829f8a4bf48",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/final-reboot-cleanup.json",
+      "published": "windows-reboot/capture/final-reboot-cleanup.json",
+      "source_sha256": "0c16e3d209902737b86cf42202d5c5843b773e7fde445785de637ccfd1ba22be",
+      "published_sha256": "0c16e3d209902737b86cf42202d5c5843b773e7fde445785de637ccfd1ba22be",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/pnputil-disable.txt",
+      "published": "windows-reboot/capture/pnputil-disable.txt",
+      "source_sha256": "1a1bf6f7d510c003449d40dcfdf14da20cec503446d23048333a6609b3859124",
+      "published_sha256": "1a1bf6f7d510c003449d40dcfdf14da20cec503446d23048333a6609b3859124",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/pnputil-enable.txt",
+      "published": "windows-reboot/capture/pnputil-enable.txt",
+      "source_sha256": "cd91fb519eb3553b25e89d2b9de3f81c112e4a03fb1e4abc435d9cdfb587abd3",
+      "published_sha256": "cd91fb519eb3553b25e89d2b9de3f81c112e4a03fb1e4abc435d9cdfb587abd3",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/registration.txt",
+      "published": "windows-reboot/capture/registration.txt",
+      "source_sha256": "23e1fa573d422f3d31be9df8e239a48f75adaeb515871082f25888747a44c26b",
+      "published_sha256": "23e1fa573d422f3d31be9df8e239a48f75adaeb515871082f25888747a44c26b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/restore-dry-run.json",
+      "published": "windows-reboot/capture/restore-dry-run.json",
+      "source_sha256": "0b2fee8af640e5d16529dcb7410f8c2e6b781354a330a134543cf8241279354d",
+      "published_sha256": "0b2fee8af640e5d16529dcb7410f8c2e6b781354a330a134543cf8241279354d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/restore-receipt.json",
+      "published": "windows-reboot/capture/restore-receipt.json",
+      "source_sha256": "dbca6aacd2885efd20b5d0a87676c858727d6c54fb70b92d359e95092c577e4e",
+      "published_sha256": "dbca6aacd2885efd20b5d0a87676c858727d6c54fb70b92d359e95092c577e4e",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/restored-persistent-enabled-20261030-050221-372.json",
+      "published": "windows-reboot/capture/restored-persistent-enabled-20261030-050221-372.json",
+      "source_sha256": "580b0b587e2da1aaf3ba1e3c9715be2233bca12dd5cb6f6e12d97e90b56a4b7d",
+      "published_sha256": "580b0b587e2da1aaf3ba1e3c9715be2233bca12dd5cb6f6e12d97e90b56a4b7d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/restored-persistent-enabled-20261030-050316-677.json",
+      "published": "windows-reboot/capture/restored-persistent-enabled-20261030-050316-677.json",
+      "source_sha256": "a317ecf9c0f47d8bdacdbf8b7013e63e2fadb953dbe16756cc692e919ebe0002",
+      "published_sha256": "a317ecf9c0f47d8bdacdbf8b7013e63e2fadb953dbe16756cc692e919ebe0002",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/restored.json",
+      "published": "windows-reboot/capture/restored.json",
+      "source_sha256": "5a41c1159670288278e510862f7cdb4ee758066c50ee069028ca7b0588d2456a",
+      "published_sha256": "5a41c1159670288278e510862f7cdb4ee758066c50ee069028ca7b0588d2456a",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/restored.trace.log",
+      "published": "windows-reboot/capture/restored.trace.log",
+      "source_sha256": "1e320d81697747b8a56eb55ac0ccf8299e604d0c3b3254a4eb03ef66befe04b0",
+      "published_sha256": "1e320d81697747b8a56eb55ac0ccf8299e604d0c3b3254a4eb03ef66befe04b0",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/state-Arm-20261030-050224-704.json",
+      "published": "windows-reboot/capture/state-Arm-20261030-050224-704.json",
+      "source_sha256": "32c62d2b8dc0e4b310b945ea86a0f7bf35e0989bee194cd1aba6552561d4f354",
+      "published_sha256": "32c62d2b8dc0e4b310b945ea86a0f7bf35e0989bee194cd1aba6552561d4f354",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/state-DisableAdapter-20261030-050312-136.json",
+      "published": "windows-reboot/capture/state-DisableAdapter-20261030-050312-136.json",
+      "source_sha256": "652c9547cf33288d37ff7a9d55c37b95164d8b1de52d831c31c38c9b24da9f48",
+      "published_sha256": "652c9547cf33288d37ff7a9d55c37b95164d8b1de52d831c31c38c9b24da9f48",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/state-Disarm-20261030-050456-259.json",
+      "published": "windows-reboot/capture/state-Disarm-20261030-050456-259.json",
+      "source_sha256": "5d10a206c61998a2b5e82c610706abcee79e71f14b65f3d4177c343ad9256a9b",
+      "published_sha256": "5d10a206c61998a2b5e82c610706abcee79e71f14b65f3d4177c343ad9256a9b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/state-Restore-20261030-050223-703.json",
+      "published": "windows-reboot/capture/state-Restore-20261030-050223-703.json",
+      "source_sha256": "0b2fee8af640e5d16529dcb7410f8c2e6b781354a330a134543cf8241279354d",
+      "published_sha256": "0b2fee8af640e5d16529dcb7410f8c2e6b781354a330a134543cf8241279354d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/state-Restore-20261030-050324-361.json",
+      "published": "windows-reboot/capture/state-Restore-20261030-050324-361.json",
+      "source_sha256": "dbca6aacd2885efd20b5d0a87676c858727d6c54fb70b92d359e95092c577e4e",
+      "published_sha256": "dbca6aacd2885efd20b5d0a87676c858727d6c54fb70b92d359e95092c577e4e",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/state-Status-20261030-050203-439.json",
+      "published": "windows-reboot/capture/state-Status-20261030-050203-439.json",
+      "source_sha256": "f117db1a7e18662d2ea22a968ac01b10d00f28ae59c608e51f23fc7587255f88",
+      "published_sha256": "f117db1a7e18662d2ea22a968ac01b10d00f28ae59c608e51f23fc7587255f88",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/state-Status-20261030-082518-977.json",
+      "published": "windows-reboot/capture/state-Status-20261030-082518-977.json",
+      "source_sha256": "5d9798a50748dfcfed6cd1e91bf62308b03103377acf2d002fc9db96ff7116a5",
+      "published_sha256": "5d9798a50748dfcfed6cd1e91bf62308b03103377acf2d002fc9db96ff7116a5",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/vector-compiler.txt",
+      "published": "windows-reboot/capture/vector-compiler.txt",
+      "source_sha256": "7fd034dfe5974bfb0be9a43a881884e943f318e5c32428ece3fbdf799ac8c092",
+      "published_sha256": "7fd034dfe5974bfb0be9a43a881884e943f318e5c32428ece3fbdf799ac8c092",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:cleanup-reboot.ps1",
+      "published": "windows-reboot/cleanup-reboot.ps1",
+      "source_sha256": "d1e440b721a2b184d068973d80f5a46a3844d39b271cbb6f38434eb761c8c110",
+      "published_sha256": "d1e440b721a2b184d068973d80f5a46a3844d39b271cbb6f38434eb761c8c110",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-access-probe.py",
+      "published": "windows-reboot/w10-access-probe.py",
+      "source_sha256": "c20a0c90f23a1764b4b737e84dd63ad3a9197fdd1c3291aef7763bcc7783bcd9",
+      "published_sha256": "c20a0c90f23a1764b4b737e84dd63ad3a9197fdd1c3291aef7763bcc7783bcd9",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-exclusive-direct.ps1",
+      "published": "windows-reboot/w10-exclusive-direct.ps1",
+      "source_sha256": "8919cef86d1c5e1a5c32dd2356d3f7ff4a585cf89bb01ba43a082fc85e35dbf2",
+      "published_sha256": "8919cef86d1c5e1a5c32dd2356d3f7ff4a585cf89bb01ba43a082fc85e35dbf2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-exclusive-holder-retake1.ps1",
+      "published": "windows-reboot/w10-exclusive-holder-retake1.ps1",
+      "source_sha256": "7ad7a43b69c6e65a68ae4d35513f14f55da5c4977b6c42c135ddab5c19e9e073",
+      "published_sha256": "7ad7a43b69c6e65a68ae4d35513f14f55da5c4977b6c42c135ddab5c19e9e073",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-exclusive-holder.ps1",
+      "published": "windows-reboot/w10-exclusive-holder.ps1",
+      "source_sha256": "91cc472b52884da52456b8e380460e86ab51ced77f8f42e03ca3b94cbd0ec5e4",
+      "published_sha256": "91cc472b52884da52456b8e380460e86ab51ced77f8f42e03ca3b94cbd0ec5e4",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-exclusive-process-v2.ps1",
+      "published": "windows-reboot/w10-exclusive-process-v2.ps1",
+      "source_sha256": "b065ef7017c478aafed6a9b0845829d7b8d370ee207ba24c3cb4360decb1e171",
+      "published_sha256": "b065ef7017c478aafed6a9b0845829d7b8d370ee207ba24c3cb4360decb1e171",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-exclusive-process-v3.ps1",
+      "published": "windows-reboot/w10-exclusive-process-v3.ps1",
+      "source_sha256": "64a0bf0619a3829dfd71a47c71607269573307d3507e90c2dc7731086b8738da",
+      "published_sha256": "64a0bf0619a3829dfd71a47c71607269573307d3507e90c2dc7731086b8738da",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-exclusive-process-v4.ps1",
+      "published": "windows-reboot/w10-exclusive-process-v4.ps1",
+      "source_sha256": "e7610f47adc75ecbee36097345f901e281d8883aba5b0b6effaaa665469005f6",
+      "published_sha256": "e7610f47adc75ecbee36097345f901e281d8883aba5b0b6effaaa665469005f6",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-exclusive-process.ps1",
+      "published": "windows-reboot/w10-exclusive-process.ps1",
+      "source_sha256": "3532b1221d0eb6cc501f2c5871437aa3bfa5b92ed3df0e0eef57ee2cfe05ba64",
+      "published_sha256": "3532b1221d0eb6cc501f2c5871437aa3bfa5b92ed3df0e0eef57ee2cfe05ba64",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-probe.py",
+      "published": "windows-reboot/w10-probe.py",
+      "source_sha256": "a83846cec1ecfd89c6eb71cb3e0230fca7d05a37fb3fff6fd382af87d4f91363",
+      "published_sha256": "a83846cec1ecfd89c6eb71cb3e0230fca7d05a37fb3fff6fd382af87d4f91363",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-restore-config.ps1",
+      "published": "windows-reboot/w10-restore-config.ps1",
+      "source_sha256": "7c54696a7f9357b060464018c3d20360069f56205237398a9935e41edbf29ddc",
+      "published_sha256": "7c54696a7f9357b060464018c3d20360069f56205237398a9935e41edbf29ddc",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-start-access.ps1",
+      "published": "windows-reboot/w10-start-access.ps1",
+      "source_sha256": "7e6222a805c80b49423a402eed40fe55f898d65c9579c17d32b81eb1523a918a",
+      "published_sha256": "7e6222a805c80b49423a402eed40fe55f898d65c9579c17d32b81eb1523a918a",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-start-probe.ps1",
+      "published": "windows-reboot/w10-start-probe.ps1",
+      "source_sha256": "c07f2a6485ca37243a018864ffb6f9979f3ee3b7bd3a775366e75a4de1a19af2",
+      "published_sha256": "c07f2a6485ca37243a018864ffb6f9979f3ee3b7bd3a775366e75a4de1a19af2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-state.ps1",
+      "published": "windows-reboot/w10-state.ps1",
+      "source_sha256": "b1e0eb423367c13678eda912e92e8014c3c9f4b6fc88296135b56bdf10b88cb9",
+      "published_sha256": "b1e0eb423367c13678eda912e92e8014c3c9f4b6fc88296135b56bdf10b88cb9",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:w10-vector-helper.ps1",
+      "published": "windows-reboot/w10-vector-helper.ps1",
+      "source_sha256": "f2bec7cc6278d48286b424a15fc025760a800dd20e08ae14f80b78aa50482f1b",
+      "published_sha256": "f2bec7cc6278d48286b424a15fc025760a800dd20e08ae14f80b78aa50482f1b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m3-phone-ack.json",
+      "published": "controller/a01-m3-phone-ack.json",
+      "source_sha256": "6a3d82c4d9e70e4a8c8ded6b35db32c5137ef6e370ea1ae72ff8ab631768d5b3",
+      "published_sha256": "6a3d82c4d9e70e4a8c8ded6b35db32c5137ef6e370ea1ae72ff8ab631768d5b3",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m3-server-final.json",
+      "published": "controller/a01-m3-server-final.json",
+      "source_sha256": "c5076b4d023ba5237fb5c3b0f30242bec013e576f101838fa85b7a3ee70446e4",
+      "published_sha256": "c5076b4d023ba5237fb5c3b0f30242bec013e576f101838fa85b7a3ee70446e4",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-client-first.json",
+      "published": "controller/a01-m4-client-first.json",
+      "source_sha256": "a0aa18b6ee605922bda0d0d11a1e28dc388caedfdcb177d869cece9e8ef0e8fd",
+      "published_sha256": "a0aa18b6ee605922bda0d0d11a1e28dc388caedfdcb177d869cece9e8ef0e8fd",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-client-retake2.json",
+      "published": "controller/a01-m4-client-retake2.json",
+      "source_sha256": "b84984ca676734239985e1b242668cf94aff538745f593bc71238f9a91010f3a",
+      "published_sha256": "b84984ca676734239985e1b242668cf94aff538745f593bc71238f9a91010f3a",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-client-retake3.json",
+      "published": "controller/a01-m4-client-retake3.json",
+      "source_sha256": "b1fe21fe48476d09043c0ff913daf96d34de6b57632a64b28c837ed0bd21dedd",
+      "published_sha256": "b1fe21fe48476d09043c0ff913daf96d34de6b57632a64b28c837ed0bd21dedd",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-server-first-final.json",
+      "published": "controller/a01-m4-server-first-final.json",
+      "source_sha256": "71194034dd1456fff2236326f8499f3cf915f8eb0d11f0534c7aa3a0c40fa6bd",
+      "published_sha256": "71194034dd1456fff2236326f8499f3cf915f8eb0d11f0534c7aa3a0c40fa6bd",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-server-first.json",
+      "published": "controller/a01-m4-server-first.json",
+      "source_sha256": "704934760185ae3a55fcf7f004ef53540b6111eb225cdefaad0c09f734d76e56",
+      "published_sha256": "704934760185ae3a55fcf7f004ef53540b6111eb225cdefaad0c09f734d76e56",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-server-retake2-final.json",
+      "published": "controller/a01-m4-server-retake2-final.json",
+      "source_sha256": "ddbc33c2ffbf0680cc8c8a0b323965ec8db5189c3daa2ee866bf3908d01a5692",
+      "published_sha256": "ddbc33c2ffbf0680cc8c8a0b323965ec8db5189c3daa2ee866bf3908d01a5692",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-server-retake3-final.json",
+      "published": "controller/a01-m4-server-retake3-final.json",
+      "source_sha256": "6a6f847518509ab0b71f06394a2e5bd3cbd69895b722eaf11c31421a4adb92f5",
+      "published_sha256": "6a6f847518509ab0b71f06394a2e5bd3cbd69895b722eaf11c31421a4adb92f5",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m3-server.log",
+      "published": "controller/a01-m3-server.log",
+      "source_sha256": "c97b270d89d42108e6232caa904c5c233e57e765c5a89c967ee8e7137c334f6d",
+      "published_sha256": "c97b270d89d42108e6232caa904c5c233e57e765c5a89c967ee8e7137c334f6d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-client-retake2.log",
+      "published": "controller/a01-m4-client-retake2.log",
+      "source_sha256": "0fdb1f299620a4d2c2c5f14314bf647ab630a58c9cd786b03a1789fa84b3b913",
+      "published_sha256": "0fdb1f299620a4d2c2c5f14314bf647ab630a58c9cd786b03a1789fa84b3b913",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-client-retake3.log",
+      "published": "controller/a01-m4-client-retake3.log",
+      "source_sha256": "da66dba32ea947ac4f7c486a7e322556d0caa3a0c35fe4dfa288edc412ce131d",
+      "published_sha256": "da66dba32ea947ac4f7c486a7e322556d0caa3a0c35fe4dfa288edc412ce131d",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-server-retake2.log",
+      "published": "controller/a01-m4-server-retake2.log",
+      "source_sha256": "97c4f9d83ec99c7fcb915778f1b3d9731988c0a8b4fcbef11e85e41373f03a8e",
+      "published_sha256": "97c4f9d83ec99c7fcb915778f1b3d9731988c0a8b4fcbef11e85e41373f03a8e",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-server-retake3.log",
+      "published": "controller/a01-m4-server-retake3.log",
+      "source_sha256": "1dd5f524047ffe85d31e3ac9c466712b3939da26736725bb67d366bec5310797",
+      "published_sha256": "1dd5f524047ffe85d31e3ac9c466712b3939da26736725bb67d366bec5310797",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m4-server.log",
+      "published": "controller/a01-m4-server.log",
+      "source_sha256": "9a78212e1aa39a428acfbe9fe63a3a3f9b3733a1c844eeab96913278e2ae8ca2",
+      "published_sha256": "9a78212e1aa39a428acfbe9fe63a3a3f9b3733a1c844eeab96913278e2ae8ca2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m3.json",
+      "published": "controller/a01-m3.json",
+      "source_sha256": "11e4af48ca25e8eae27f9bb418169effe5dfeda35efb3fc448495f2ea0f5b61b",
+      "published_sha256": "d50014ce3be7ecfa6dfe9dedb5332b783a7106af2aae1b03bf30d25f7a2dfa41",
+      "byte_identical": false
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-m3.trace.log",
+      "published": "controller/a01-m3.trace.log",
+      "source_sha256": "e62e9d3e00e17457c778ca5547483ec9bea001fce8ab98d3ebff6cb359a39b15",
+      "published_sha256": "e62e9d3e00e17457c778ca5547483ec9bea001fce8ab98d3ebff6cb359a39b15",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-phone-transport.json",
+      "published": "controller/m04-phone-transport.json",
+      "source_sha256": "6763f884b0f505c469cb43c481dc8a4563b2da2f17ec3834094c431b6a549418",
+      "published_sha256": "6763f884b0f505c469cb43c481dc8a4563b2da2f17ec3834094c431b6a549418",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/m04-phone-6t.log",
+      "published": "controller/m04-phone-6t.log",
+      "source_sha256": "f230ec9c82438d8a5883a4836f35b8b5b0be24315b6878e9535493ff83297f8a",
+      "published_sha256": "f230ec9c82438d8a5883a4836f35b8b5b0be24315b6878e9535493ff83297f8a",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/w10-denial-phone-final.json",
+      "published": "controller/w10-denial-phone-final.json",
+      "source_sha256": "155be8dda7bfb20492949c6ff7cb25a82029b9edcb7ebea26c1cc5a9c5562943",
+      "published_sha256": "155be8dda7bfb20492949c6ff7cb25a82029b9edcb7ebea26c1cc5a9c5562943",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/w10-denial-phone.log",
+      "published": "controller/w10-denial-phone.log",
+      "source_sha256": "07947b10795bb1c7ce4e33d5b5d42435e76c8c4de7632a92e51f375d6ea184c3",
+      "published_sha256": "07947b10795bb1c7ce4e33d5b5d42435e76c8c4de7632a92e51f375d6ea184c3",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-permission-build.log",
+      "published": "controller/a01-permission-build.log",
+      "source_sha256": "a4211fd4420233210c2cbbb35e6ad39c6c3a23653cae41b442b196371b3f7cad",
+      "published_sha256": "a4211fd4420233210c2cbbb35e6ad39c6c3a23653cae41b442b196371b3f7cad",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-build-final.log",
+      "published": "controller/a01-build-final.log",
+      "source_sha256": "377a38acf8adb1f7fd3b9527f5b39634dc08b8ad450de2244b3f10c113ad6885",
+      "published_sha256": "377a38acf8adb1f7fd3b9527f5b39634dc08b8ad450de2244b3f10c113ad6885",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-build-formatted.log",
+      "published": "controller/a01-build-formatted.log",
+      "source_sha256": "0d8b30b62938b2e35e31af26fabc88112c3a6825c108b535b6f21690709bf56f",
+      "published_sha256": "0d8b30b62938b2e35e31af26fabc88112c3a6825c108b535b6f21690709bf56f",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-build.log",
+      "published": "controller/a01-build.log",
+      "source_sha256": "180f63d354e6662becf712920a652c9acdd095b9f22ff0fd7a2f9832b873cfd6",
+      "published_sha256": "180f63d354e6662becf712920a652c9acdd095b9f22ff0fd7a2f9832b873cfd6",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/gate-results.json",
+      "published": "controller/gate-results.json",
+      "source_sha256": "0051953bf33e28d3b79959bac297a011764b6dee2b3880142e6e96bce699399f",
+      "published_sha256": "0051953bf33e28d3b79959bac297a011764b6dee2b3880142e6e96bce699399f",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/spotless-forced.log",
+      "published": "controller/spotless-forced.log",
+      "source_sha256": "d7676c85cce6b4a3ba90defafa2e5d2c63a85d5906c28c022f2b439629325068",
+      "published_sha256": "d7676c85cce6b4a3ba90defafa2e5d2c63a85d5906c28c022f2b439629325068",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/gradle-full.log",
+      "published": "controller/gradle-full.log",
+      "source_sha256": "1211add6528f9ef131bce6e07cc5305145bd5a6bae6281c7e1b14694e9bbe4f4",
+      "published_sha256": "1211add6528f9ef131bce6e07cc5305145bd5a6bae6281c7e1b14694e9bbe4f4",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-scan-appop-before.txt",
+      "published": "controller/a01-scan-appop-before.txt",
+      "source_sha256": "27a0f9139a9642b8e15d12525c52d16f3e13694c71325d856717f8b00c90f92c",
+      "published_sha256": "27a0f9139a9642b8e15d12525c52d16f3e13694c71325d856717f8b00c90f92c",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/run_m04.py",
+      "published": "source/run_m04.py",
+      "source_sha256": "03da443f41abe0d9b5b40f0e53997c2d54afcf4cf606a21b6e59a2cbe439d9d7",
+      "published_sha256": "03da443f41abe0d9b5b40f0e53997c2d54afcf4cf606a21b6e59a2cbe439d9d7",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/fixture.init.gradle",
+      "published": "source/fixture.init.gradle",
+      "source_sha256": "c12f3c5558334f5617d388e1864f277e76f848b6eb05137ce2bb690ea08bc899",
+      "published_sha256": "c12f3c5558334f5617d388e1864f277e76f848b6eb05137ce2bb690ea08bc899",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/fixture-manifest.xml",
+      "published": "source/fixture-manifest.xml",
+      "source_sha256": "f8f148176d21a581400851dd486d5523b28d89a7a6e54dccf1f5a2aea7a2db04",
+      "published_sha256": "f8f148176d21a581400851dd486d5523b28d89a7a6e54dccf1f5a2aea7a2db04",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/apply-apk-delta.py",
+      "published": "source/apply-apk-delta.py",
+      "source_sha256": "b41973e6a80469111c42b06a9195def11d7b83b03ef951c37f1098d7fb00cf4e",
+      "published_sha256": "b41973e6a80469111c42b06a9195def11d7b83b03ef951c37f1098d7fb00cf4e",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-first-built-source.tar.gz",
+      "published": "source/a01-first-built-source.tar.gz",
+      "source_sha256": "bd6f56dac56a32004217d42b03ad3f9f4fa15a4ab28af42231c5ca91a912c442",
+      "published_sha256": "bd6f56dac56a32004217d42b03ad3f9f4fa15a4ab28af42231c5ca91a912c442",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/w10-first-source.tar.gz",
+      "published": "source/w10-first-source.tar.gz",
+      "source_sha256": "9abc38851ccc728dd02bcc3ed4968e578826d5c586ba3b90fea8f660c89d3da4",
+      "published_sha256": "9abc38851ccc728dd02bcc3ed4968e578826d5c586ba3b90fea8f660c89d3da4",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-transfer-preformat.json",
+      "published": "source/a01-transfer-preformat.json",
+      "source_sha256": "5fa0bce4f070cb5d9285c4dc4a00affc76f5d9f8ad37def17f61b78e661478af",
+      "published_sha256": "5fa0bce4f070cb5d9285c4dc4a00affc76f5d9f8ad37def17f61b78e661478af",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/a01-transfer.json",
+      "published": "source/a01-transfer.json",
+      "source_sha256": "67f040ed9b8a299f18aa0a6ea3ee6ecd01d8d4c23a2dd92e2af7c181962133c4",
+      "published_sha256": "67f040ed9b8a299f18aa0a6ea3ee6ecd01d8d4c23a2dd92e2af7c181962133c4",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/transfer-main/a01-transfer.json",
+      "published": "source/transfer-main.json",
+      "source_sha256": "87805e9e884290d6ca5f36035a8f9bab21f80e9c90418beee100c1e4065b3ac5",
+      "published_sha256": "87805e9e884290d6ca5f36035a8f9bab21f80e9c90418beee100c1e4065b3ac5",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/transfer-test/a01-transfer.json",
+      "published": "source/transfer-test.json",
+      "source_sha256": "ad1368a24cb5be8ee814e59eb771aa80c250fa7633c09ced3d90cd5f6700609c",
+      "published_sha256": "ad1368a24cb5be8ee814e59eb771aa80c250fa7633c09ced3d90cd5f6700609c",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/app/src/androidTest/java/me/nagaev/veles/sharing/SharingInteropPhysicalTest.kt",
+      "published": "source/current/SharingInteropPhysicalTest.kt",
+      "source_sha256": "3865e5cb57f3793d49cbac74e3a4a6848da713513f7c785fde6edaedf36aecc1",
+      "published_sha256": "3865e5cb57f3793d49cbac74e3a4a6848da713513f7c785fde6edaedf36aecc1",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/extension/connector.js",
+      "published": "source/current/connector.js",
+      "source_sha256": "2819d12c32287c6f32fbc5e32a50ca4d23befc8ab6b85d142d28c545870c8bb1",
+      "published_sha256": "2819d12c32287c6f32fbc5e32a50ca4d23befc8ab6b85d142d28c545870c8bb1",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/extension/connector.html",
+      "published": "source/current/connector.html",
+      "source_sha256": "5673cb6c54391d3b6431de37b4e418b729557c6e06e8f656006a7b260af38280",
+      "published_sha256": "5673cb6c54391d3b6431de37b4e418b729557c6e06e8f656006a7b260af38280",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_permission_recovery.py",
+      "published": "source/current/macos_permission_recovery.py",
+      "source_sha256": "4bc9a4e2c3a91a0d3e96c8241e12dc3004c8dcb550377964c387799e3467a1b3",
+      "published_sha256": "4bc9a4e2c3a91a0d3e96c8241e12dc3004c8dcb550377964c387799e3467a1b3",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_permission_recovery_core.py",
+      "published": "source/current/macos_permission_recovery_core.py",
+      "source_sha256": "85e515985f5dfaed04c7a19431871e3ba73ee9b2a192925635ecd0d1c67f70f3",
+      "published_sha256": "85e515985f5dfaed04c7a19431871e3ba73ee9b2a192925635ecd0d1c67f70f3",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/python-tests-prereview.log",
+      "published": "gates/python-tests-prereview.log",
+      "source_sha256": "0fdcf147a042dfc16c9e50e6055971316fdbb77682ac168df340d2b71fb562dc",
+      "published_sha256": "0fdcf147a042dfc16c9e50e6055971316fdbb77682ac168df340d2b71fb562dc",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/node-tests.log",
+      "published": "gates/node-tests.log",
+      "source_sha256": "5351ef06271b85990ab1b8661935fc863df90cfb2f586b063a7de4ef2d3cf0b1",
+      "published_sha256": "5351ef06271b85990ab1b8661935fc863df90cfb2f586b063a7de4ef2d3cf0b1",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/log-guards.log",
+      "published": "gates/log-guards.log",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/spotless-postintegration.log",
+      "published": "gates/spotless-postintegration.log",
+      "source_sha256": "ae01e4ff1dfa19049f754996e74e45fce1414be84417f97b4df4629ba04a37e0",
+      "published_sha256": "ae01e4ff1dfa19049f754996e74e45fce1414be84417f97b4df4629ba04a37e0",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/gradle-postintegration.log",
+      "published": "gates/gradle-postintegration.log",
+      "source_sha256": "00ea3182832bd9d8e3d224ac79b1a5b525a7f388680571b99e4ada8db9837983",
+      "published_sha256": "00ea3182832bd9d8e3d224ac79b1a5b525a7f388680571b99e4ada8db9837983",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/log-guards-postintegration.log",
+      "published": "gates/log-guards-postintegration.log",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/python-tests-final.log",
+      "published": "gates/python-tests-final.log",
+      "source_sha256": "0966c239857c2fd1f8b5cc8ec4e1bbe7881904eef583cf1fe29a7661c96a9943",
+      "published_sha256": "0966c239857c2fd1f8b5cc8ec4e1bbe7881904eef583cf1fe29a7661c96a9943",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/node-tests-final.log",
+      "published": "gates/node-tests-final.log",
+      "source_sha256": "b2789fc04fc30c57d53defb09ea0b9737214ed4dab00a7ccf3080b0f9064cc06",
+      "published_sha256": "b2789fc04fc30c57d53defb09ea0b9737214ed4dab00a7ccf3080b0f9064cc06",
+      "byte_identical": true
+    }
+  ],
+  "private_exclusions": [
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/exclusive-service.private.json",
+      "sha256": "d07cd047d137b1913000f8248a7f2602ba652deaa3c5762dac3db6d8f42e5a9a",
+      "reason": "Own-phone full BLE address/interface identifier; private original retained, not published"
+    },
+    {
+      "source": "/tmp/opencode/otp23-rest-20261030/reboot-text-evidence.zip:capture/w10-access-target.private.json",
+      "sha256": "1091177d369e63713f8989557e5a2d96cea32de2bf063ed87b1db6ed3d959a68",
+      "reason": "Own-phone full BLE address/interface identifier; private original retained, not published"
+    }
+  ],
+  "redactions": [
+    {
+      "path": "windows-first/capture/a01-m3.json",
+      "field": "connected.platform_hint",
+      "method": "Replace only the one full own-phone platform hint with its SHA-256; every other byte unchanged",
+      "original_sha256": "11e4af48ca25e8eae27f9bb418169effe5dfeda35efb3fc448495f2ea0f5b61b",
+      "published_sha256": "d50014ce3be7ecfa6dfe9dedb5332b783a7106af2aae1b03bf30d25f7a2dfa41",
+      "original": "/tmp/opencode/otp23-rest-20261030/rest-text-evidence.zip:capture/a01-m3.json"
+    },
+    {
+      "path": "controller/a01-m3.json",
+      "field": "connected.platform_hint",
+      "method": "Replace only the one full own-phone platform hint with its SHA-256; every other byte unchanged",
+      "original_sha256": "11e4af48ca25e8eae27f9bb418169effe5dfeda35efb3fc448495f2ea0f5b61b",
+      "published_sha256": "d50014ce3be7ecfa6dfe9dedb5332b783a7106af2aae1b03bf30d25f7a2dfa41",
+      "original": "/tmp/opencode/otp23-rest-20261030/a01-m3.json"
+    }
+  ],
+  "signing": "Existing approved Android debug key reused, actual certificate SHA256 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e; both original APKs restored on both phones. Mac signed e7c716c5 binary unchanged.",
+  "candidate_only": "No row promoted by this curation. Independent Kimi K3.1 Pro review required."
+}

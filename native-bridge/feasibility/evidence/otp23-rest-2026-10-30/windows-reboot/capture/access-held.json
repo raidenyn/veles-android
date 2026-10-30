@@ -1,0 +1,48 @@
+{
+  "phase": "held",
+  "started_utc": "2026-10-30T08:20:55.103043+00:00",
+  "host_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+  "chrome": {
+    "pid": 52120,
+    "version": {
+      "protocolVersion": "1.3",
+      "product": "Chrome/156.0.8078.76",
+      "revision": "@93ce6b54af3fee27e384d1f30346e80db47a14da",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+      "jsVersion": "15.6.75.25"
+    },
+    "integrity": {
+      "integrity": "medium",
+      "rid": "0x2000",
+      "token_is_elevated": false
+    }
+  },
+  "hello": {
+    "api_version": 1,
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "capabilities": [
+      "veles_record_v1"
+    ],
+    "envelope_version": 1,
+    "platform": "windows",
+    "request_id": "r1-siyj2i",
+    "type": "ready"
+  },
+  "connect_reply": {
+    "api_version": 1,
+    "code": "connect_failed",
+    "envelope_version": 1,
+    "recoverability": "fatal",
+    "request_id": "r2-7fobje",
+    "stage": "access_denied",
+    "type": "error"
+  },
+  "shutdown": {
+    "api_version": 1,
+    "envelope_version": 1,
+    "request_id": "r3-i21chl",
+    "type": "shutdown_complete"
+  },
+  "capture_status": "CAPTURED_REQUIRES_ADJUDICATION",
+  "finished_utc": "2026-10-30T08:20:56.567767+00:00"
+}

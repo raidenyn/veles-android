@@ -1,0 +1,158 @@
+{
+  "run_id": "a01-m4-retake2-20261030",
+  "status": "CAPTURED",
+  "error": null,
+  "states": [
+    {
+      "epoch_ms": 1793334005323,
+      "elapsed_ms": 592549581,
+      "peers": [],
+      "ready_count": 0,
+      "subscribed_count": 0,
+      "connected_at_elapsed_ms": [],
+      "records": 0,
+      "transport_events": []
+    },
+    {
+      "epoch_ms": 1793334204840,
+      "elapsed_ms": 592749098,
+      "peers": [
+        "c04bfc9655d8c4eb"
+      ],
+      "ready_count": 0,
+      "subscribed_count": 0,
+      "connected_at_elapsed_ms": [
+        592749086
+      ],
+      "records": 0,
+      "transport_events": [
+        {
+          "peer": "c04bfc9655d8c4eb",
+          "kind": "connected",
+          "epoch_ms": 1793334204828,
+          "elapsed_ms": 592749086,
+          "code": null,
+          "bytes": 0
+        }
+      ]
+    },
+    {
+      "epoch_ms": 1793334208073,
+      "elapsed_ms": 592752331,
+      "peers": [
+        "c04bfc9655d8c4eb",
+        "f644d897c73818cc"
+      ],
+      "ready_count": 0,
+      "subscribed_count": 0,
+      "connected_at_elapsed_ms": [
+        592749086,
+        592752324
+      ],
+      "records": 0,
+      "transport_events": [
+        {
+          "peer": "c04bfc9655d8c4eb",
+          "kind": "connected",
+          "epoch_ms": 1793334204828,
+          "elapsed_ms": 592749086,
+          "code": null,
+          "bytes": 0
+        },
+        {
+          "peer": "f644d897c73818cc",
+          "kind": "connected",
+          "epoch_ms": 1793334208066,
+          "elapsed_ms": 592752324,
+          "code": null,
+          "bytes": 0
+        }
+      ]
+    },
+    {
+      "epoch_ms": 1793334208166,
+      "elapsed_ms": 592752424,
+      "peers": [
+        "f644d897c73818cc"
+      ],
+      "ready_count": 0,
+      "subscribed_count": 0,
+      "connected_at_elapsed_ms": [
+        592752324
+      ],
+      "records": 0,
+      "transport_events": [
+        {
+          "peer": "c04bfc9655d8c4eb",
+          "kind": "connected",
+          "epoch_ms": 1793334204828,
+          "elapsed_ms": 592749086,
+          "code": null,
+          "bytes": 0
+        },
+        {
+          "peer": "c04bfc9655d8c4eb",
+          "kind": "disconnected",
+          "epoch_ms": 1793334208146,
+          "elapsed_ms": 592752403,
+          "code": null,
+          "bytes": 0
+        },
+        {
+          "peer": "f644d897c73818cc",
+          "kind": "connected",
+          "epoch_ms": 1793334208066,
+          "elapsed_ms": 592752324,
+          "code": null,
+          "bytes": 0
+        }
+      ]
+    },
+    {
+      "epoch_ms": 1793334213683,
+      "elapsed_ms": 592757941,
+      "peers": [],
+      "ready_count": 0,
+      "subscribed_count": 0,
+      "connected_at_elapsed_ms": [],
+      "records": 0,
+      "transport_events": [
+        {
+          "peer": "c04bfc9655d8c4eb",
+          "kind": "connected",
+          "epoch_ms": 1793334204828,
+          "elapsed_ms": 592749086,
+          "code": null,
+          "bytes": 0
+        },
+        {
+          "peer": "c04bfc9655d8c4eb",
+          "kind": "disconnected",
+          "epoch_ms": 1793334208146,
+          "elapsed_ms": 592752403,
+          "code": null,
+          "bytes": 0
+        },
+        {
+          "peer": "f644d897c73818cc",
+          "kind": "connected",
+          "epoch_ms": 1793334208066,
+          "elapsed_ms": 592752324,
+          "code": null,
+          "bytes": 0
+        },
+        {
+          "peer": "f644d897c73818cc",
+          "kind": "disconnected",
+          "epoch_ms": 1793334213675,
+          "elapsed_ms": 592757933,
+          "code": null,
+          "bytes": 0
+        }
+      ]
+    }
+  ],
+  "records": [],
+  "injections": [],
+  "server_closed": true
+}

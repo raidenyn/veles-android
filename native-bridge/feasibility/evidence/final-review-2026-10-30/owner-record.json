@@ -1,0 +1,17 @@
+{
+  "record_kind": "Operator-captured user instructions; not a GitHub approval or independent transcript",
+  "operator": "OpenCode parent openai/gpt-6.1-sol",
+  "review_request_verbatim": "Ask Kimi to review and proceed",
+  "scope_question": "To complete the committed-tree review with Kimi, should I also commit and push the reviewed changes to the existing PR branch?",
+  "answer_verbatim": "Review, commit and push",
+  "selected_option_description": "Use Kimi for the final review, resolve findings, commit the integration and review record, then push and check CI.",
+  "reviewer_selection": "kimi-code-plan-global/k3.1-pro for the current R-01 final committed-tree review, superseding only the prior Opus reviewer-model naming",
+  "retained_requirements": [
+    "Independent review of the exact committed integrated source",
+    "No remaining CRITICAL or IMPORTANT findings and every earlier finding dispositioned",
+    "Truthful model/session/source attribution; prior Opus reviews remain historical",
+    "Unchanged physical criteria and existing W-01/M-01/M-02 account waiver only",
+    "Local checks before push and CI verification afterward"
+  ],
+  "publication_scope": "Existing contract/otp23-desktop-alignment branch and PR #123, without merging prerequisite PR #122 or starting OTP-24 implementation"
+}

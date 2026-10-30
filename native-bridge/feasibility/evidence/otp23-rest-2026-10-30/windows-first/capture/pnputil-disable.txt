@@ -1,0 +1,6 @@
+Microsoft PnP Utility
+
+Failed to disable device:  USB\VID_0489&PID_E10A\8&fad588d&0&16
+Device is pending system reboot to complete a previous operation.
+
+This command is not supported on this OS product.

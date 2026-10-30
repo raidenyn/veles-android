@@ -1,0 +1,33 @@
+[       0ms pid=25239] start pid=25239
+[       0ms pid=25239] in  len=81 type=hello request_id=r1-znt9gi
+[       0ms pid=25239] out len=181 type=ready request_id=r1-znt9gi api_version=1
+[      78ms pid=25239] in  len=137 type=start_scan request_id=r2-234i6g api_version=1
+[      84ms pid=25239] bluetooth authorization before adapter init: allowed_always
+[      85ms pid=25239] adapter init: created=true authorization=allowed_always
+[      91ms pid=25239] out len=135 type=scan_state request_id=r2-234i6g api_version=1 status=started scan_handle=5892f9608f52d58b
+[     188ms pid=25239] out len=217 type=device_found api_version=1 scan_handle=5892f9608f52d58b device_handle=f3086e7229338bfc label.len=17 platform_hint.len=42
+[     616ms pid=25239] in  len=115 type=stop_scan request_id=r3-omci2m api_version=1 scan_handle=5892f9608f52d58b
+[     616ms pid=25239] out len=135 type=scan_state request_id=r3-omci2m api_version=1 status=stopped scan_handle=5892f9608f52d58b
+[     653ms pid=25239] exit code=0 stdout_drained=true
+[       0ms pid=26411] start pid=26411
+[       0ms pid=26411] in  len=81 type=hello request_id=r4-e6r4x3
+[       1ms pid=26411] out len=181 type=ready request_id=r4-e6r4x3 api_version=1
+[      94ms pid=26411] in  len=137 type=start_scan request_id=r5-3arge0 api_version=1
+[     101ms pid=26411] bluetooth authorization before adapter init: denied
+[     102ms pid=26411] adapter init: created=true authorization=denied
+[   10104ms pid=26411] adapter wait timed out: authorization=denied -> access_denied
+[   10104ms pid=26411] out len=152 type=error request_id=r5-3arge0 api_version=1 code=scan_failed recoverability=retryable stage=access_denied
+[   10141ms pid=26411] exit code=0 stdout_drained=true
+[       0ms pid=26696] start pid=26696
+[       0ms pid=26696] in  len=81 type=hello request_id=r6-imik5s
+[       0ms pid=26696] out len=181 type=ready request_id=r6-imik5s api_version=1
+[      90ms pid=26696] in  len=137 type=start_scan request_id=r7-fw5a2y api_version=1
+[      96ms pid=26696] bluetooth authorization before adapter init: allowed_always
+[      97ms pid=26696] adapter init: created=true authorization=allowed_always
+[     105ms pid=26696] out len=135 type=scan_state request_id=r7-fw5a2y api_version=1 status=started scan_handle=a3836d60eeb0fc72
+[     781ms pid=26696] out len=217 type=device_found api_version=1 scan_handle=a3836d60eeb0fc72 device_handle=370baa00ca24cf85 label.len=17 platform_hint.len=42
+[    1124ms pid=26696] in  len=115 type=stop_scan request_id=r8-62ek80 api_version=1 scan_handle=a3836d60eeb0fc72
+[    1124ms pid=26696] out len=135 type=scan_state request_id=r8-62ek80 api_version=1 status=stopped scan_handle=a3836d60eeb0fc72
+[    1126ms pid=26696] in  len=81 type=shutdown request_id=r9-32ypd9 api_version=1
+[    1126ms pid=26696] out len=90 type=shutdown_complete request_id=r9-32ypd9 api_version=1
+[    1126ms pid=26696] exit code=0 stdout_drained=true

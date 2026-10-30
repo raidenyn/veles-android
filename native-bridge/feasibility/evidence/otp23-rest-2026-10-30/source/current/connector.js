@@ -1,0 +1,242 @@
+// Disposable connector: owns exactly one Native Messaging port and correlates requests.
+// It forwards opaque records only; it never parses, stores or logs record contents.
+"use strict";
+
+const ENVELOPE_VERSION = 1;
+const state = {
+    port: null,
+    hostName: null,
+    apiVersion: null,
+    platform: null,
+    counter: 0,
+    pending: new Map(), // request_id -> { resolve, timer, type }
+    events: [], // unsolicited host events
+    completions: [], // every correlated reply, in arrival order
+    disconnect: null, // { at, message } once the port closed
+    opened: null,
+    received: 0, // unsolicited message events seen
+    eventSeq: 0, // receipt sequence number (strict background validation)
+};
+
+// Visibility/focus history of THIS page, preconfigured at load so it needs no DevTools client while
+// the strict background measurement runs (listeners only: no timers, intervals, audio or sockets).
+// Bounded: once full it stops recording and says so (truncated), it never drops silently.
+const HISTORY_LIMIT = 2000;
+const history = {
+    token: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    installed_wall: Date.now(),
+    initial: null,
+    events: [],
+    truncated: false,
+};
+
+function historyState() {
+    const focused = typeof document.hasFocus === "function" ? document.hasFocus() : null;
+    return { wall: Date.now(), visibility: document.visibilityState ?? null, focused };
+}
+
+function recordHistory(kind) {
+    if (history.events.length >= HISTORY_LIMIT) {
+        history.truncated = true;
+        return;
+    }
+    history.events.push({ seq: history.events.length, kind, ...historyState() });
+}
+
+function now() {
+    return Math.round(performance.now());
+}
+
+// Receipt context of one unsolicited host event: page clock, wall clock and the page's own
+// visibility/focus at the instant the event was delivered (a frozen page would deliver late and
+// show a late wall time). Used by the strict background validation; carries no record contents.
+function receipt(message) {
+    return {
+        at: now(),
+        wall: Date.now(),
+        visibility: document.visibilityState,
+        focused: document.hasFocus(),
+        seq: state.eventSeq++,
+        message,
+    };
+}
+
+function setStatus(text) {
+    const node = document.getElementById("status");
+    if (node) node.textContent = text;
+}
+
+const MAC_PERMISSION_GUIDANCE = "Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth, enable VelesOtp23PoC, return to this connector, and retry the scan. Keep this extension loaded; no reinstall or permission reset is needed.";
+
+function updatePermissionGuidance(message) {
+    const panel = document.getElementById("permission-guidance");
+    const text = document.getElementById("permission-guidance-text");
+    if (!panel || !text) return;
+    if (state.platform === "macos" && message.type === "error" && message.stage === "access_denied") {
+        text.textContent = MAC_PERMISSION_GUIDANCE;
+        panel.hidden = false;
+    } else if (message.type === "scan_state" && message.status === "started") {
+        text.textContent = "";
+        panel.hidden = true;
+    }
+}
+
+function toBase64(bytes) {
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary);
+}
+
+function synthesizePortClosed(type, request_id) {
+    // RFC OTP2-BRD-020: the connector, not the host, synthesizes failures when the port dies.
+    return {
+        envelope_version: ENVELOPE_VERSION,
+        type: "error",
+        request_id,
+        code: "internal",
+        recoverability: "fatal",
+        stage: "port_closed",
+        synthesized: true,
+        request_type: type,
+    };
+}
+
+function onMessage(message) {
+    updatePermissionGuidance(message);
+    const entry = { at: now(), message };
+    if (typeof message.request_id === "string" && state.pending.has(message.request_id)) {
+        const { resolve, timer } = state.pending.get(message.request_id);
+        clearTimeout(timer);
+        state.pending.delete(message.request_id);
+        state.completions.push(entry);
+        resolve(message);
+    } else if (typeof message.request_id === "string") {
+        // Correlated message nobody is waiting for: a duplicate terminal event is a defect.
+        state.events.push({ ...receipt(message), orphan_correlated: true });
+    } else {
+        state.events.push(receipt(message));
+        if (message.type === "message") {
+            // Readable through the DevTools HTTP target list without attaching any CDP session.
+            state.received += 1;
+            document.title = `otp23 messages=${state.received} last=${Date.now()}`;
+        }
+    }
+}
+
+function onDisconnect() {
+    const message = chrome.runtime.lastError ? chrome.runtime.lastError.message : null;
+    state.disconnect = { at: now(), message };
+    state.port = null;
+    for (const [request_id, { resolve, timer, type }] of state.pending) {
+        clearTimeout(timer);
+        resolve(synthesizePortClosed(type, request_id));
+    }
+    state.pending.clear();
+    setStatus(`port closed: ${message ?? "no error"}`);
+}
+
+function connect(hostName) {
+    if (state.port) throw new Error("port already open");
+    state.hostName = hostName;
+    state.disconnect = null;
+    state.apiVersion = null;
+    state.platform = null;
+    state.opened = now();
+    state.port = chrome.runtime.connectNative(hostName);
+    state.port.onMessage.addListener(onMessage);
+    state.port.onDisconnect.addListener(onDisconnect);
+    setStatus(`port open to ${hostName}`);
+    return { opened_at: state.opened };
+}
+
+function request(type, fields = {}, timeoutMs = 40000) {
+    const request_id = `r${(++state.counter).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const body = { envelope_version: ENVELOPE_VERSION, type, request_id, ...fields };
+    if (state.apiVersion !== null && type !== "hello") body.api_version = state.apiVersion;
+    return new Promise((resolve) => {
+        if (!state.port) {
+            resolve(synthesizePortClosed(type, request_id));
+            return;
+        }
+        const timer = setTimeout(() => {
+            state.pending.delete(request_id);
+            resolve({ type: "error", request_id, code: "timeout", recoverability: "retryable", stage: "connector_timeout", synthesized: true });
+        }, timeoutMs);
+        state.pending.set(request_id, { resolve, timer, type });
+        try {
+            state.port.postMessage(body);
+        } catch (error) {
+            clearTimeout(timer);
+            state.pending.delete(request_id);
+            resolve({ type: "error", request_id, code: "internal", recoverability: "fatal", stage: "post_failed", synthesized: true, detail: String(error) });
+        }
+    });
+}
+
+async function hello() {
+    const reply = await request("hello", { api_versions: [1] });
+    if (reply.type === "ready") {
+        state.apiVersion = reply.api_version;
+        state.platform = reply.platform;
+    }
+    return reply;
+}
+
+window.otp23 = {
+    connect,
+    hello,
+    request,
+    startScan: (service_uuid) => request("start_scan", { service_uuid }),
+    stopScan: (scan_handle) => request("stop_scan", { scan_handle }),
+    connectDevice: (target) => request("connect", target),
+    disconnectDevice: (connection_handle) => request("disconnect", { connection_handle }),
+    send: (connection_handle, bytes) =>
+        request("send", { connection_handle, record_base64: toBase64(bytes) }),
+    shutdown: () => request("shutdown"),
+    closePort: () => {
+        if (state.port) state.port.disconnect();
+        state.port = null;
+        state.disconnect = { at: now(), message: "closed by connector" };
+    },
+    drainEvents: () => state.events.splice(0, state.events.length),
+    snapshot: () => ({
+        hostName: state.hostName,
+        portOpen: state.port !== null,
+        apiVersion: state.apiVersion,
+        disconnect: state.disconnect,
+        pending: [...state.pending.keys()],
+        eventCount: state.events.length,
+        completionCount: state.completions.length,
+        visibility: document.visibilityState,
+        hasFocus: document.hasFocus(),
+        now: now(),
+    }),
+    // Unsolicited-event timeline without any record contents.
+    timeline: () =>
+        state.events.map(({ at, message, orphan_correlated }) => ({
+            at,
+            type: message.type,
+            status: message.status,
+            code: message.code,
+            stage: message.stage,
+            scan_handle: message.scan_handle,
+            orphan_correlated: !!orphan_correlated,
+        })),
+};
+history.initial = historyState();
+if (typeof document.addEventListener === "function" && typeof window.addEventListener === "function") {
+    document.addEventListener("visibilitychange", () => recordHistory("visibilitychange"));
+    window.addEventListener("focus", () => recordHistory("focus"));
+    window.addEventListener("blur", () => recordHistory("blur"));
+    document.addEventListener("freeze", () => recordHistory("freeze"));
+    document.addEventListener("resume", () => recordHistory("resume"));
+}
+window.otp23.visibilityHistory = () => ({
+    token: history.token,
+    installed_wall: history.installed_wall,
+    initial: history.initial,
+    events: history.events.map((e) => ({ ...e })),
+    truncated: history.truncated,
+    limit: HISTORY_LIMIT,
+});
+setStatus("ready");

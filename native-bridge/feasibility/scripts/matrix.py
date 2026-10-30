@@ -115,7 +115,17 @@ def render(matrix):
         "mac-retake-2026-10-29 evidence and the adopted A2 safe phone-release attribution after the owner completed the deferred Chrome update (that completion resumes, and does not waive, "
         "the 2026-10-28 deferral; the earlier <=250 ms figure was an instrument precision target, not a gate, and is not claimed); M-11 is a scoped manual PASS on the existing admin account "
         "with its recorded caveats (late, never-accepted owner answers; no host trace; no discovery comparison). M-03 (original signed prompt owner unobserved) and M-04 (no OFF/ON toggle "
-        "approved) stay BLOCKED; no new waiver, no gate change, still NO-GO, and OTP-24 is not approved.",
+        "approved) stayed BLOCKED at that integration; no new waiver, no gate change, still NO-GO, and OTP-24 is not approved. The M-03 status is superseded by the follow-up below.",
+        "",
+        "**Signed-host prompt follow-up** (2026-10-30): M-03 ONLY is now PASS after the owner-approved app-specific Bluetooth reset and fresh signed-host prompt observation on the existing admin account. "
+        "The original historical prompt remains unknown; the unchanged signed host is the subject in the new TCC PROMPTING/RESULT chain. The exact owner spelling, first interrupted ERROR and initial permission_pending are preserved. "
+        "Explicit allowed_always was captured only on a subsequent fresh launch. Parent openai/gpt-6.1-sol operated; independent kimi-code-plan-global/k3.1-pro approved M-03 and bounded integration. "
+        "At that follow-up M-04 guidance/recovery, W-10 and A-01 remained BLOCKED (26 PASS / 3 BLOCKED / 3 waived NOT RUN). This dated state is superseded by the remaining-cases integration below; no expected text or waiver changed.",
+        "",
+        "**Remaining physical cases** (later 2026-10-30): M-04, A-01 and W-10 are PASS on independently reviewed controlled evidence. M-04 displayed exact guidance and recovered without a reset in the same extension state; "
+        "A-01 uses explicitly labelled real-link callback injection, actual CCCD-before-MTU radio traffic and direct phone-side Mac MTU ordering; W-10 deliberately controlled radio-off, no available adapter and exclusive-service OS access denial (not privacy-policy denial). "
+        "Kimi K3.1 Pro independently approved evidence and code after the stale-guidance fix. R-01 is reopened BLOCKED: new code is uncommitted/unpublished, and earlier Opus committed-tree reviews do not cover it. "
+        "Current 28 PASS / 1 BLOCKED (R-01) / 3 waived NOT RUN, NO-GO; expected text/waivers unchanged, and OTP-24 is not authorized.",
         "",
         "Fresh rows start `NOT RUN`. Historical PoC results are context in the narrative documents, never a PASS here:",
         "they were taken with different binaries, an administrator account and (for background) a connected browser-level",

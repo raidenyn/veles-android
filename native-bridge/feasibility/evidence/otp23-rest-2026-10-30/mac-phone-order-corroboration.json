@@ -1,0 +1,90 @@
+{
+  "scope": "Direct Android onMtuChanged(517) before subscribed in an already independently accepted Chrome-owned Mac run; not an ATT MTU inferred from CoreBluetooth max-write",
+  "existing_mac_run": "mac-m08-shutdown-20261029T043432Z, independently accepted M-08/A2 mapping; no old evidence changed",
+  "sources": [
+    {
+      "source": "native-bridge/feasibility/evidence/mac-retake-2026-10-29/shutdown-1/phones/transport-2be02e41.json",
+      "sha256": "74d7f84a02c9b015979188efa30dd5e7f45783ae34598633dd7d0df2f217eb15",
+      "run_id": "mac-m08-shutdown-20261029T043432Z",
+      "peers": [
+        {
+          "peer": "576d2120c83dc839",
+          "events": [
+            {
+              "seq": 1,
+              "kind": "connected",
+              "epoch_ms": 1793248500110,
+              "elapsed_realtime_ms": 507044368,
+              "code": null,
+              "label": null,
+              "bytes": 0,
+              "bound_op": null
+            },
+            {
+              "seq": 2,
+              "kind": "mtu",
+              "epoch_ms": 1793248500151,
+              "elapsed_realtime_ms": 507044409,
+              "code": 517,
+              "label": null,
+              "bytes": 0,
+              "bound_op": null
+            },
+            {
+              "seq": 3,
+              "kind": "subscribed",
+              "epoch_ms": 1793248500868,
+              "elapsed_realtime_ms": 507045126,
+              "code": null,
+              "label": null,
+              "bytes": 0,
+              "bound_op": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "native-bridge/feasibility/evidence/mac-retake-2026-10-29/shutdown-1/phones/transport-864a3db0.json",
+      "sha256": "0d0a2d75d5df80efce56e059c98a555c1d4bb5e14d7f5e7af60560d0fbe245c6",
+      "run_id": "mac-m08-shutdown-20261029T043432Z",
+      "peers": [
+        {
+          "peer": "576d2120c83dc839",
+          "events": [
+            {
+              "seq": 1,
+              "kind": "connected",
+              "epoch_ms": 1793248498493,
+              "elapsed_realtime_ms": 661275157,
+              "code": null,
+              "label": null,
+              "bytes": 0,
+              "bound_op": null
+            },
+            {
+              "seq": 2,
+              "kind": "mtu",
+              "epoch_ms": 1793248498769,
+              "elapsed_realtime_ms": 661275433,
+              "code": 517,
+              "label": null,
+              "bytes": 0,
+              "bound_op": null
+            },
+            {
+              "seq": 3,
+              "kind": "subscribed",
+              "epoch_ms": 1793248499669,
+              "elapsed_realtime_ms": 661276333,
+              "code": null,
+              "label": null,
+              "bytes": 0,
+              "bound_op": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

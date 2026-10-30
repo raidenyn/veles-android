@@ -1,0 +1,11 @@
+✔ physical driver only calls methods exported by the real connector (10.10228ms)
+✔ connector records visibility/focus history through listeners only (3.862462ms)
+✔ native macOS access denial displays exact retry guidance and successful scan clears it (4.937462ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 159.393692

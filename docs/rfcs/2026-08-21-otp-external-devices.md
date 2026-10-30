@@ -79,6 +79,35 @@ above stays as written. M-08 was then measured and, with M-11, promoted after in
 recorded in the "M-08 Mac deferral follow-up" paragraph of the OTP-23 section. The NO-GO decision
 stands and OTP-24 is not approved.
 
+Follow-up recorded on 2026-10-30 (**operator-captured** owner approval and prompt observation;
+no acceptance amendment or new waiver): the owner approved resetting Bluetooth permission for
+only `me.nagaev.veles.bridge` to observe a fresh prompt on the existing account, using the unchanged
+approved signed fixture. After an owner-requested restart, the signed-host prompt observation and
+matching TCC request chain discharged M-03, independently approved by the user-selected
+`kimi-code-plan-global/k3.1-pro` reviewer. This does not recover the historical prompt or waive
+M-04's no-reset denial/guidance/recovery requirement. Matrix **26 PASS / 3 BLOCKED / 3 waived NOT
+RUN**; open W-10, M-04, A-01; still NO-GO and OTP-24 is not authorized. Details and exact owner
+spelling are in the "M-03 signed-host prompt follow-up" paragraph below and its evidence set.
+
+Remaining-case follow-up recorded later on 2026-10-30 (no expected-text amendment or new waiver):
+M-04, A-01 and W-10 are PASS on controlled physical evidence approved by independent Kimi K3.1 Pro
+reviews. The new code was approved after the stale cross-platform guidance fix was verified.
+R-01 is reopened BLOCKED: the new integrated worktree is uncommitted/unpublished and the existing
+final committed-tree review requirement has not been met for it. Earlier Opus reviews do not cover
+the new code, and Kimi is not attributed as Opus. Current **28 PASS / 1 BLOCKED (R-01) / 3 waived NOT
+RUN**, still **NO-GO**; OTP-24 is not authorized. The exact residuals and review scope are recorded in
+`native-bridge/feasibility/evidence/otp23-rest-2026-10-30/ADJUDICATION.md`.
+
+Final-review/publication instruction recorded on 2026-10-30 (**operator-captured**, not a GitHub
+approval): the user requested "Ask Kimi to review and proceed" and selected "Review, commit and
+push" for the current committed-tree review. R-01 therefore uses **Kimi K3.1 Pro**
+(`kimi-code-plan-global/k3.1-pro`) in place of its earlier Opus reviewer-model naming. Exact
+committed-source review, no unresolved CRITICAL/IMPORTANT findings, disposition of earlier findings,
+every physical criterion and the existing account waiver are retained. This is a reviewer-model
+selection, not fabricated Opus authorship or a physical waiver. The record is
+`native-bridge/feasibility/evidence/final-review-2026-10-30/owner-record.json`; publication is scoped
+to the existing PR branch and does not authorize merging or OTP-24 implementation.
+
 This RFC is the canonical product and technical specification for sharing OTP
 transaction data between Veles Android and locally connected external devices:
 a Veles Chrome extension today, and a LILYGO T-WATCH-S3 family (ESP32-S3)
@@ -1698,6 +1727,59 @@ and focused), the foreground evidence (macOS ST-15 is not waived), the freeze/di
 (no exemption is claimed; OTP-08 owns them), the evaluator-provenance and `formal_otp23_acceptance`
 rules, and the NO-GO rule. This revision does not promote any matrix row, approves nothing
 about OTP-24 and waives nothing.
+
+**M-03 signed-host prompt follow-up (2026-10-30; observation, not an acceptance amendment).**
+The owner explicitly approved an app-specific `BluetoothAlways` reset for
+`me.nagaev.veles.bridge`, then requested a restart after accidentally closing Chrome. The
+interrupted first attempt remains ERROR with an unproven `access_denied` cause. The restarted
+Chrome 156.0.8078.74 capture used the unchanged Apple Development-signed `e7c716c5…eb91c` fixture,
+final identifier, Team `7T39M26Z99` and original CDHash, on the existing admin account. Host PID
+15918 was directly parented by Chrome PID 15893. The attendee reported exactly
+"ValesOtp23PoC. Clicked allowed" during the active wait; this spelling is retained separately from
+the bundle's `CFBundleName = VelesOtp23PoC`. TCC request `15918.2` independently records PROMPTING
+for the signed host and a matching Allow result. The same port subsequently started/stopped a
+scan and shut down; explicit `allowed_always` was directly logged only by a separate fresh
+verification launch. No historical-prompt recovery, new signing, fresh-account, discovery or
+phone-transfer claim is made. The parent `openai/gpt-6.1-sol` operated and curated; independent
+`kimi-code-plan-global/k3.1-pro` session `ses_e7556bd06ffeBpdEo4Fp4EVwZw` approved **M-03 only**
+and bounded integration. Evidence, exact owner approval/report, raw attempts, review and hashes:
+`native-bridge/feasibility/evidence/mac-m03-prompt-2026-10-30/`.
+
+The M-03 expected requirement is unchanged. The scoped reset approval does not approve an M-04
+reset/toggle run or satisfy its exact displayed Settings/retry guidance and coordinated no-reset
+denial/recovery. M-04, W-10 and A-01 remain BLOCKED; only W-01/M-01/M-02 are waived NOT RUN.
+Current counts **26 PASS / 3 BLOCKED / 3 waived NOT RUN**, still **NO-GO for OTP-24**. All earlier
+dated observations above remain history; no gate is relaxed and OTP-24 is not authorized.
+
+**Remaining physical cases follow-up (later 2026-10-30; no criterion amendment).** M-04 now has
+the actual exact displayed Settings/retry guidance and owner-attended OFF→ON recovery with one
+Chrome/profile/extension load/sentinel and the unchanged signed Mac fixture, without a TCC reset
+in that run. The retained prompt clause uses the separately reviewed same-identity M-03 observation;
+the new M-04 raw popup remains unknown rather than being fabricated.
+
+A-01 now includes a controlled duplicate callback into the actual real-link Android callback,
+with unchanged peer/setup/admission time and byte-exact 4096-byte exchange afterward on the same
+Windows handle; it is not natural OS-event duplication. The real two-phone central/peripheral
+negative case records CCCD status 6 before MTU, gated early I/O, then MTU 517 / CCCD success / echo.
+Normal Windows ordering is fresh; the Mac clause is directly corroborated by actual phone-side
+MTU 517 callbacks before subscription in immutable, already accepted M-08 Mac evidence, not by
+inferring ATT MTU from CoreBluetooth max-write. Same-key opt-in fixture updates were restored to
+the original APKs on both phones, without uninstall/data clearing or a production permission change.
+
+W-10 deliberately exercised radio OFF (`radio_off/retryable`), no available adapter after verified
+post-reboot disable (`no_adapter/fatal`), and a typed SDK exclusive hold on only the synthetic GATT
+service (`access_denied/fatal` for the other native process). This last control is OS service-access
+denial, not Windows privacy policy. A new request reconnected and exchanged bytes after holder
+exit. Earlier failed setup/constructors remain uncredited; final radio/configuration are restored,
+and owned tasks/processes/registration were removed.
+
+The parent `openai/gpt-6.1-sol` implemented/operated; independent `kimi-code-plan-global/k3.1-pro`
+evidence session `ses_e73f8ef5fffe3PFMdKshg41FjF` and code/fix-verification session
+`ses_e73f8ef68ffeVYUX8uh219t6M2` approved the bounded integration. Full evidence, exact scope,
+initial code finding/fix, model metadata and hashes are in `otp23-rest-2026-10-30/` under feasibility
+evidence. **R-01 remains BLOCKED** for final committed-tree/publication review of this new code;
+historical Opus approvals are not new-code coverage. Current **28 PASS / 1 BLOCKED / 3 waived NOT
+RUN**, **NO-GO**; only W-01/M-01/M-02 waived, expected text unchanged, OTP-24 not authorized.
 
 **Verification evidence:** Committed harness and physical Windows/macOS matrix
 with exact commit, Chrome and OS versions, hardware and adapters, Rust and (for

@@ -1,0 +1,51 @@
+{
+  "captured_utc": "2026-10-30T09:38:30.764015+00:00",
+  "operator": "Parent openai/gpt-6.1-sol; actual completed local tool commands, not new CI results",
+  "head": "fe9569e9f29c94fc608a6f5882df2176b3f58974",
+  "worktree": "Uncommitted integration; no commit, push or publication performed",
+  "commands": [
+    {
+      "command": "JAVA_HOME=/home/dev/.jdk/zulu21 ./gradlew spotlessCheck --rerun-tasks",
+      "returncode": 0
+    },
+    {
+      "command": "JAVA_HOME=/home/dev/.jdk/zulu21 ./gradlew spotlessCheck detekt lintDebug testDebugUnitTest protocolCheck",
+      "returncode": 0
+    },
+    {
+      "command": "bash /tmp/opencode/otp23-ci-log-guards.sh (both verbatim ci.yml raw Log guards)",
+      "returncode": 0
+    },
+    {
+      "command": "python3 -m unittest discover -s native-bridge/feasibility/scripts -p 'test_*.py'",
+      "returncode": 0,
+      "tests": 515,
+      "skipped": 5
+    },
+    {
+      "command": "node --test native-bridge/feasibility/scripts/connector-api.test.mjs",
+      "returncode": 0,
+      "tests": 3
+    },
+    {
+      "command": "python3 native-bridge/feasibility/scripts/matrix.py check",
+      "returncode": 0
+    },
+    {
+      "command": "git diff --check",
+      "returncode": 0
+    }
+  ],
+  "matrix_counts": {
+    "PASS": 28,
+    "BLOCKED": 1,
+    "NOT RUN": 3,
+    "FAIL": 0
+  },
+  "decision_command": {
+    "returncode": 1,
+    "expected_no_go_exit": true,
+    "stdout": "NO-GO: 1 row(s) open: R-01\napproved account-waived (NOT RUN, not PASS): W-01, M-01, M-02\n"
+  },
+  "scope_audit": "Compared to HEAD: expected text and waivers unchanged for every row; actual chronology prefixes preserved. Physical statuses M-03/M-04/W-10/A-01 PASS; R-01 BLOCKED. Earlier frozen evidence checksum sets remain verified."
+}

@@ -1,0 +1,197 @@
+.......................................................................................................error: /tmp/tmp91yduqfr/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json already exists and is not owned by this PoC; refusing to overwrite it
+(no file was modified). Remove or re-point that registration yourself.
+..error: /tmp/tmp61m7mrut/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json is not owned by this PoC; refusing to remove an unrelated registration
+..../home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_poc.py:569: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/lsof-diag-l0txcrcy/lsof-diagnostics.jsonl' mode='a' encoding='utf-8'>
+  pathlib.Path(diag_path).open("a", encoding="utf-8").write(json.dumps(record) + "\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_poc.py:569: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/lsof-diag-8mye87n5/lsof-diagnostics.jsonl' mode='a' encoding='utf-8'>
+  pathlib.Path(diag_path).open("a", encoding="utf-8").write(json.dumps(record) + "\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+............/home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_poc.py:569: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/lsof-diag-6h075ibr/lsof-diagnostics.jsonl' mode='a' encoding='utf-8'>
+  pathlib.Path(diag_path).open("a", encoding="utf-8").write(json.dumps(record) + "\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.../home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_poc.py:569: ResourceWarning: unclosed file <_io.TextIOWrapper name='/tmp/lsof-diag-retaeqs8/lsof-diagnostics.jsonl' mode='a' encoding='utf-8'>
+  pathlib.Path(diag_path).open("a", encoding="utf-8").write(json.dumps(record) + "\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+................................................................................................................................................result=PASS failures=[] -> /tmp/tmpsrjdqte2/out.json
+result=PASS failures=[] -> /tmp/tmpkdufal6v/out.json
+result=FAIL failures=['denied:deny_not_observed', 'denied:guidance_not_visible', 'denied:guidance_wrong_text'] -> /tmp/tmpqg_9gubc/out.json
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmp1nqxl3wt/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmp1nqxl3wt/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmp1nqxl3wt/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+[ ok ] host-launched-headless
+result=FAIL -> /tmp/tmp1nqxl3wt/evidence/poc.json
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpeagm9kxr/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpeagm9kxr/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpeagm9kxr/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+[ ok ] host-launched-headless
+[ ok ] diagnostic-scan
+[ ok ] shutdown
+result=PASS -> /tmp/tmpeagm9kxr/evidence/poc.json
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpg7oad73q/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpg7oad73q/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpg7oad73q/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpwu204pr1/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpwu204pr1/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpwu204pr1/chrome profiles dir/host registry)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmppg0933es/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmppg0933es/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmppg0933es/chrome profiles dir/host registry)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmppg0933es/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmppg0933es/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmppg0933es/chrome profiles dir/host registry)",
+  "backup": "/tmp/tmppg0933es/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json.otp23-poc-backup",
+  "note": "backed up previous owned manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpagl1rrzc/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpagl1rrzc/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpagl1rrzc/chrome profiles dir/host registry)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpagl1rrzc/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpagl1rrzc/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpagl1rrzc/chrome profiles dir/host registry)",
+  "backup": "/tmp/tmpagl1rrzc/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json.otp23-poc-backup",
+  "note": "backed up previous owned manifest"
+}
+{"unregistered": false, "restored_backup": "/tmp/tmpagl1rrzc/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json", "note": "restored the manifest backed up before this PoC replaced it; delete it yourself if unwanted"}
+{"unregistered": true, "manifest": "/tmp/tmpagl1rrzc/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json", "note": "removed only this owned manifest; the PoC app bundle under target/macos-poc and any Bluetooth (TCC) grants were not touched"}
+{"unregistered": true, "manifest": "/tmp/tmpagl1rrzc/chrome profiles dir/host registry/me.nagaev.veles.otp23.plain.json", "note": "absent; nothing to do"}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmp2qoj7cn9/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmp2qoj7cn9/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmp2qoj7cn9/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpdjckt6qh/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpdjckt6qh/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpdjckt6qh/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmp4pze6lr3/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmp4pze6lr3/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmp4pze6lr3/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpq03pr5a3/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpq03pr5a3/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpq03pr5a3/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpvxdwonuc/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpvxdwonuc/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpvxdwonuc/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+[ ok ] host-launched-headless
+result=FAIL -> /tmp/tmpvxdwonuc/ev/poc.json
+m6 adjudication: PARTIAL -> /tmp/tmp92c_vod2/a.json
+m6 adjudication: BLOCKED -> /tmp/tmp92c_vod2/b.json
+m6 adjudication: FAIL -> /tmp/tmp92c_vod2/c.json
+READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+m6 windows: BLOCKED (timeout) -> /tmp/tmpf4qfk26j/scan-active.json
+READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+.m6 windows: BLOCKED (timeout) -> /tmp/tmpf4qfk26j/scan-stopped.json
+READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+.m6 windows: FAIL (assertion) -> /tmp/tmpv499ehhg/windows.json
+READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+..m6 windows: PARTIAL (none) -> /tmp/tmpdanko8ax/windows.json
+READY a8c6c53f37fd76b5e3bc9a58f9230f7997d332c8d0027bc86b0c9c32a42bb558
+.............................................................sssss..........................................................................................................................error: refusing to overwrite existing /tmp/tmpvdxshy3x/adjudicated.json
+error: refusing to overwrite existing /tmp/tmpvdxshy3x/raw.json
+.error: --raw is not a strict_background result
+....................................................
+----------------------------------------------------------------------
+Ran 514 tests in 9.262s
+
+OK (skipped=5)
+m6 windows: PARTIAL (none) -> /tmp/tmprgr6bfr9/windows.json
+m6 windows: BLOCKED (target_not_found) -> /tmp/tmpck1o05ob/windows.json
+m6 windows: BLOCKED (ambiguous_target) -> /tmp/tmpx7zwg_gp/windows.json
+m6 windows: BLOCKED (ambiguous_target) -> /tmp/tmps0llda9o/windows.json
+strict_result=PASS scenario=cold phone_validation=PASS formal_otp23_acceptance=false -> /tmp/tmpvdxshy3x/adjudicated.json

@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-30",
+  "record_kind": "Operator-captured user conversation; not a GitHub approval or independent transcript",
+  "operator": "OpenCode parent controller openai/gpt-6.1-sol",
+  "scope": "M-03 only: observe a fresh prompt on the existing account using the unchanged signed host after an app-specific Bluetooth reset",
+  "approval_question": "Do you approve that app-specific Bluetooth permission reset, and are you available to observe the prompt?",
+  "preceding_scope_explanation": "Confirm macOS supports resetting Bluetooth permission for only me.nagaev.veles.bridge; reset that permission; launch the same host through Chrome; record the prompt app name and Allow; verify scanning. New observation, not recovery of the historical prompt; stop if only a broader reset is possible.",
+  "approval_answer_verbatim": "Yes",
+  "restart_request_verbatim": "I've closed the chrome app acedentely. Initiate the process from the begining.",
+  "restart_effect": "Interrupted attempt retained as ERROR; its owner-answer is explicitly ABORT_INTERRUPTED_ATTEMPT, not a prompt observation. Fresh disposable profile and separate capture path; repeat only the same app-specific reset.",
+  "final_observation_verbatim": "ValesOtp23PoC. Clicked allowed",
+  "spelling_note": "Owner report is preserved exactly as typed. The actual signed bundle's CFBundleName is VelesOtp23PoC; the OS prompt subject is independently recorded as me.nagaev.veles.bridge. No claim that the user typed the bundle name with exact spelling, or that a screenshot was captured.",
+  "not_approved": [
+    "a global or other-app TCC reset",
+    "re-signing, a replacement signed identity, key export or a new account",
+    "M-04 OFF/ON denial/recovery run or removal of its no-reset/guidance requirements",
+    "a new acceptance waiver, OTP-24 or a merge"
+  ]
+}

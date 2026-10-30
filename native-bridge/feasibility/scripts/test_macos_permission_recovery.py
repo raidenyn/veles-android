@@ -30,9 +30,12 @@ def state(**extra):
 def good_run():
     return {
         "baseline": state(hello_type="ready", scan_class="started", devices=2, host_gone=True),
+        "guidance_required": True,
         "denied": state(hello_type="ready", scan_class="access_denied", host_gone=True,
+                         permission_guidance={"visible": True, "text": core.GUIDANCE_TEXT},
                         ack={"toggled": "off", "entry_label": "VelesOtp23PoC", "prompt": "shown"}),
         "recovered": state(hello_type="ready", scan_class="started", devices=1, stop_status="stopped",
+                            permission_guidance={"visible": False, "text": ""},
                            shutdown_type="shutdown_complete", host_gone=True,
                            ack={"toggled": "on", "entry_label": "VelesOtp23PoC", "prompt": "unknown"}),
         "profile_removed": True, "surviving_hosts": [],
@@ -57,6 +60,14 @@ class EvaluateTests(unittest.TestCase):
         verdict = core.evaluate(run)
         self.assertEqual(verdict["result"], "PASS")
         self.assertEqual(verdict["prompt_observation"]["value"], "unknown")
+
+    def test_guidance_must_be_rendered_and_exact_and_clear_after_recovery(self):
+        for value in (None, 1, {}, {"visible": False, "text": core.GUIDANCE_TEXT},
+                      {"visible": True, "text": "Enable Bluetooth"}):
+            failures = self.failures(lambda r: r["denied"].update(permission_guidance=value))
+            self.assertTrue(any("guidance" in failure for failure in failures), value)
+        failures = self.failures(lambda r: r["recovered"].update(permission_guidance={"visible": True, "text": core.GUIDANCE_TEXT}))
+        self.assertIn("recovered:guidance_not_cleared", failures)
 
     def test_wrong_sentinel(self):
         f = self.failures(lambda r: r["recovered"].update(sentinel_sha256="bb"))
@@ -181,6 +192,7 @@ class FakeChrome:
         self.loads = 0
         self.scans = list(scan_replies)
         self.closed = False
+        self.scan_reply = None
 
     def js(self, session, expr, timeout=70):
         if expr.startswith("localStorage.setItem"):
@@ -191,7 +203,11 @@ class FakeChrome:
         if expr.startswith("otp23.hello"):
             return {"type": "ready"}
         if expr.startswith("otp23.startScan"):
-            return self.scans.pop(0)
+            self.scan_reply = self.scans.pop(0)
+            return self.scan_reply
+        if "const panel = document.getElementById('permission-guidance')" in expr:
+            denied = (self.scan_reply or {}).get("stage") == "access_denied"
+            return {"visible": denied, "text": core.GUIDANCE_TEXT if denied else ""}
         if expr.startswith("otp23.drainEvents"):
             return [{"message": {"type": "device_found", "device_handle": "d1"}}]
         if expr.startswith("otp23.stopScan"):

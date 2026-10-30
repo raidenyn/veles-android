@@ -1,0 +1,14 @@
+{
+  "run_m04.py": "03da443f41abe0d9b5b40f0e53997c2d54afcf4cf606a21b6e59a2cbe439d9d7",
+  "src/identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f",
+  "scripts/macos_background_support.py": "e02062c3edfca461cf8c0002c1df190ba4044d1c76af014d6cb4049a7ad395e3",
+  "scripts/macos_cdp.py": "e962bcc94123faa67a9f1097da2835a8fabe3cce3bc8fe3ac1a68dc29926375f",
+  "scripts/macos_permission_recovery.py": "4bc9a4e2c3a91a0d3e96c8241e12dc3004c8dcb550377964c387799e3467a1b3",
+  "scripts/macos_permission_recovery_core.py": "85e515985f5dfaed04c7a19431871e3ba73ee9b2a192925635ecd0d1c67f70f3",
+  "scripts/macos_poc.py": "e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0",
+  "scripts/macos_install.py": "fcc8604afc0c8662a7a3589248b2a22b34ed014e4d175c57dfb9c47befcf5fd5",
+  "extension/background.js": "2d8a048a914e74328869cd0727f29ed26488aa6d45ba0ae7d204b1ca129deb0b",
+  "extension/connector.html": "5673cb6c54391d3b6431de37b4e418b729557c6e06e8f656006a7b260af38280",
+  "extension/manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+  "extension/connector.js": "2819d12c32287c6f32fbc5e32a50ca4d23befc8ab6b85d142d28c545870c8bb1"
+}

@@ -424,3 +424,70 @@ promotion, 25/4/3, and M-03/M-04 unchanged. Its three findings were closed exact
 
 With every gate green, the review counts as **APPROVED for commit/publication pending clean export and
 green CI**. Counts and the decision are unchanged.
+
+## 2026-10-30 — M-03 fresh signed-host prompt observed
+
+**M-03 PASS, independently approved by Kimi K3.1 Pro.** The owner explicitly approved resetting
+only the signed fixture's Bluetooth permission to observe a fresh prompt on the existing account.
+This was not a global reset, new identity/account, or recovery of the original historical prompt.
+
+The first attempt's ERROR/access_denied remains preserved. The owner reported accidentally closing
+Chrome and requested a restart; the denial's cause is not established. On the separate restarted
+capture, Chrome PID 15893 launched signed host PID 15918, hello ready. The host initially reported
+`not_determined` and `permission_pending`. The owner reported exactly "ValesOtp23PoC. Clicked
+allowed" during the active wait, 136.6 seconds after the wait began. The spelling remains verbatim;
+the bundle's separately read `CFBundleName` is `VelesOtp23PoC`.
+
+The independent OS channel records signed-host TCC request `15918.2`: PROMPTING at
+02:23:37.553060Z and matching RESULT at 02:25:37.324777Z, `authValue=2`, `authReason=2`, null error;
+the subject query says `Allowed (User Consent)`. The same retained port then scanned successfully,
+stopped and shut down. A separate fresh launch directly logged `allowed_always`; the waiting
+trace does not. No device-discovery or phone-transfer claim is made. The signed executable SHA
+`e7c716c5…eb91c`, final identifier, Team and CDHash remain unchanged; strict checks passed.
+
+The operator/curator was parent `openai/gpt-6.1-sol`, with the owner supplying the UI observation
+and Allow. Independent reviewer `kimi-code-plan-global/k3.1-pro`, session
+`ses_e7556bd06ffeBpdEo4Fp4EVwZw`, found no defects, verified 26/26 byte-identical copies and 19
+semantic assertions, and authorized M-03-only promotion plus bounded mechanical integration.
+Evidence and review: `native-bridge/feasibility/evidence/mac-m03-prompt-2026-10-30/`.
+
+The restored grant is allowed, temporary registration/profile and owned processes were cleaned,
+and the Mac session ended. **M-04 remains BLOCKED** on exact displayed Settings/retry guidance
+and coordinated no-reset denial/recovery; M-03 reset approval does not waive those requirements.
+W-10 and A-01 remain BLOCKED. Current matrix **26 PASS / 3 BLOCKED / 3 waived NOT RUN**, still
+**NO-GO**; only W-01/M-01/M-02 waived, no expected requirement changed, OTP-24 not authorized.
+
+## Later 2026-10-30 — remaining physical blockers measured and reviewed
+
+**M-04, A-01 and W-10 are PASS.** The complete adopted record is
+`native-bridge/feasibility/evidence/otp23-rest-2026-10-30/ADJUDICATION.md`; earlier failures,
+source versions and both the initial code finding and fix verification remain beside it.
+
+M-04 now records the exact visible/focused Settings guidance and owner-confirmed recovery in
+unchanged extension state without a reset. Its popup field stays unknown; the retained prompt
+clause is met by the separately reviewed same-identity M-03 observation, not a new invented popup.
+A-01 now has controlled injection into the real callback on a physical healthy connection, with a
+post-injection 4096-byte exact echo on the same native handle. The separate real-radio negative
+case rejects CCCD before MTU (status6), gates early I/O, then accepts MTU517/subscription/echo.
+Mac normal ordering is observed directly in immutable phone callbacks from accepted M-08 data.
+Windows controlled radio-off, genuine post-reboot absent-adapter and exclusive synthetic-service
+access denial return the expected classifications; recovery succeeds after external holder exit.
+The exclusive case is not privacy-policy/user-consent denial, and no natural duplicate OS callback
+or universal negative-delivery claim is made.
+
+Parent `openai/gpt-6.1-sol` implemented and operated. Independent user-selected Kimi K3.1 Pro
+evidence review `ses_e73f8ef5fffe3PFMdKshg41FjF` approved the physical dispositions; code review
+`ses_e73f8ef68ffeVYUX8uh219t6M2` approved after verifying the stale-guidance platform-transition
+fix (3 Node / 29 recovery tests rerun by reviewer). It explicitly found existing same-Mac/Android
+physical evidence unaffected. The broad review interrupted by the plan context restriction was
+not counted as approval; both final focused reviews used the same selected provider/model.
+
+The original fixture APKs/signers are restored, no uninstall/data clearing occurred, the signed
+Mac identity is unchanged, Windows radio is ON/config and problem flags0, and owned resources
+are cleaned. Two exact full-address substitutions are declared; private originals are protected
+locally. No raw model errors/headers/transcripts are published.
+
+**Current 28 PASS / 1 BLOCKED (R-01) / 3 waived NOT RUN — NO-GO.** R-01 is an existing final
+committed-tree review gate, reopened because this new integrated code is still uncommitted and
+the earlier Opus approvals cannot cover it. Kimi is not attributed as Opus. Expected criteria and
+waivers are unchanged; no OTP-24 authorization or publication is claimed.

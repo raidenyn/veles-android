@@ -1,0 +1,11 @@
+{
+    "pid":  52784,
+    "started_utc":  "2026-10-30T08:15:43.9855747Z",
+    "scope":  "Only the synthetic Veles GATT service; exclusive service access, not a Windows privacy-setting denial",
+    "release_method":  "Dedicated holder process exits and releases its WinRT references; no explicit Close API claim",
+    "services_status":  "Success",
+    "service_count":  1,
+    "status":  "ERROR",
+    "error":  "Own service identifier is empty",
+    "finished_utc":  "2026-10-30T08:15:45.3109935Z"
+}

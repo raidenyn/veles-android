@@ -1,0 +1,13 @@
+{
+  "CFBundleIdentifier": "me.nagaev.veles.bridge",
+  "CFBundleName": "VelesOtp23PoC",
+  "CFBundleExecutable": "otp23-host",
+  "CFBundlePackageType": "APPL",
+  "CFBundleInfoDictionaryVersion": "6.0",
+  "CFBundleShortVersionString": "0.1.0",
+  "CFBundleVersion": "1",
+  "CFBundleMinimumOSVersion": "13.0",
+  "LSUIElement": true,
+  "NSBluetoothAlwaysUsageDescription": "The Veles OTP-23 feasibility host connects to two nearby Android test peripherals to exchange synthetic measurement records only.",
+  "NSBluetoothPeripheralUsageDescription": "The Veles OTP-23 feasibility host connects to two nearby Android test peripherals to exchange synthetic measurement records only."
+}

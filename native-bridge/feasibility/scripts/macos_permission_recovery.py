@@ -171,6 +171,19 @@ class Run:
             return {"timeout": True, "error": type(error).__name__}, "timeout", None
         return reply, core.classify_scan(reply), reply.get("scan_handle") if isinstance(reply, dict) else None
 
+    def permission_guidance(self, chrome):
+        """Read the rendered connector, not a driver-side copy of the instructions."""
+        return chrome.js(self.session, """(() => {
+            const panel = document.getElementById('permission-guidance');
+            const text = document.getElementById('permission-guidance-text');
+            if (!panel || !text) return {visible: null, text: null};
+            const css = getComputedStyle(panel);
+            return {visible: !panel.hidden && panel.getClientRects().length > 0 &&
+                    css.display !== 'none' && css.visibility === 'visible' && Number(css.opacity) > 0,
+                    text: text.textContent, document_visibility: document.visibilityState,
+                    document_focused: document.hasFocus()};
+        })()""")
+
     def devices(self, chrome, window):
         found, deadline = set(), time.monotonic() + window
         while not found and time.monotonic() < deadline:
@@ -235,8 +248,12 @@ class Run:
             self.save()
             if run["baseline"]["sentinel_sha256"] != sentinel_sha:
                 run["baseline"]["sentinel_sha256"] = "unreadable"
+            if hello != "ready" or klass != "started" or not devices or not run["baseline"]["host_gone"]:
+                raise RuntimeError("granted baseline with advertising phone and clean host exit not established")
             self.controller.publish(core.READY_DISABLE)
             ack, err = self.wait_ack(core.READY_DISABLE)
+            if err:
+                raise RuntimeError("disable acknowledgement failed: " + err)
 
             # phase 2: denied
             hello, pid = self.native_session(chrome, pre_existing)
@@ -245,12 +262,15 @@ class Run:
                 chrome.js(self.session, f"otp23.stopScan({json.dumps(handle)})")
             run["denied"] = {**self.state(chrome, ext_id, sentinel_sha, binary, app, loads),
                              "hello_type": hello, "scan_class": klass,
-                             "scan_reply_code": [(reply or {}).get("code"), (reply or {}).get("stage")]
-                             if isinstance(reply, dict) else None,
+                              "scan_reply_code": [(reply or {}).get("code"), (reply or {}).get("stage")]
+                              if isinstance(reply, dict) else None,
+                              "scan_reply": reply, "permission_guidance": self.permission_guidance(chrome),
                              "host_gone": self.close_port(chrome, pid), "ack": ack, "ack_error": err}
             self.save()
             self.controller.publish(core.READY_ENABLE)
             ack, err = self.wait_ack(core.READY_ENABLE)
+            if err:
+                raise RuntimeError("enable acknowledgement failed: " + err)
 
             # phase 3: recovered
             hello, pid = self.native_session(chrome, pre_existing)
@@ -260,7 +280,8 @@ class Run:
             done = chrome.js(self.session, "otp23.shutdown()") or {} if pid else {}
             run["recovered"] = {**self.state(chrome, ext_id, sentinel_sha, binary, app, loads),
                                 "hello_type": hello, "scan_class": klass, "devices": devices,
-                                "stop_status": stop.get("status"), "shutdown_type": done.get("type"),
+                                 "stop_status": stop.get("status"), "shutdown_type": done.get("type"),
+                                 "permission_guidance": self.permission_guidance(chrome),
                                 "host_gone": pid is None or macos_poc.wait_gone(pid, 10) is not None,
                                 "ack": ack, "ack_error": err}
             self.save()
@@ -287,7 +308,8 @@ class Run:
                      if r["pid"] not in self.pre_existing]
         run["abort"] = self.result["abort"]
         run.setdefault("profile_removed", False)
-        verdict = core.evaluate({**run, "surviving_hosts": survivors})
+        self.result["guidance_required"] = True
+        verdict = core.evaluate({**run, "surviving_hosts": survivors, "guidance_required": True})
         self.result.update(verdict)
         self.result["finished_utc"] = utc_now()
         self.save()

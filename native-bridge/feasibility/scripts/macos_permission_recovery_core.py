@@ -23,6 +23,9 @@ DENIAL_HINTS = ("denied", "consent", "permission", "unauthor", "not_authorized")
 STATE_KEYS = ("sentinel_sha256", "extension_id", "chrome_pid", "profile", "binary_sha256", "signature")
 LABEL_MAX = 200
 NOTE_MAX = 1000
+GUIDANCE_TEXT = ("Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth, "
+                 "enable VelesOtp23PoC, return to this connector, and retry the scan. Keep this extension "
+                 "loaded; no reinstall or permission reset is needed.")
 
 
 def human_observation(note):
@@ -150,6 +153,12 @@ def evaluate(run):
             failures.append("denied:deny_not_observed")
         if den.get("host_gone") is not True:
             failures.append("denied:host_survived")
+        if run.get("guidance_required"):
+            guidance = den.get("permission_guidance") or {}
+            if not isinstance(guidance, dict) or guidance.get("visible") is not True:
+                failures.append("denied:guidance_not_visible")
+            if not isinstance(guidance, dict) or guidance.get("text") != GUIDANCE_TEXT:
+                failures.append("denied:guidance_wrong_text")
         phases["denied"] = {"ok": len(failures) == before}
 
     rec = run.get("recovered") if isinstance(run.get("recovered"), dict) else {}
@@ -172,6 +181,10 @@ def evaluate(run):
             failures.append("recovered:shutdown_failed")
         if rec.get("host_gone") is not True:
             failures.append("recovered:host_survived")
+        if run.get("guidance_required"):
+            guidance = rec.get("permission_guidance") or {}
+            if not isinstance(guidance, dict) or guidance.get("visible") is not False or guidance.get("text") != "":
+                failures.append("recovered:guidance_not_cleared")
         phases["recovered"] = {"ok": len(failures) == before}
 
     if run.get("profile_removed") is not True:

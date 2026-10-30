@@ -1,0 +1,232 @@
+{
+  "operator": "OpenCode parent gpt-6.1-sol",
+  "scope": "M-03 fresh signed-host prompt on existing account; not historical prompt recovery",
+  "steps": [
+    {
+      "utc": "2026-10-30T02:23:36.425139+00:00",
+      "kind": "command",
+      "value": {
+        "command": [
+          "/usr/bin/codesign",
+          "--verify",
+          "--strict",
+          "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app"
+        ],
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:36.443785+00:00",
+      "kind": "command",
+      "value": {
+        "command": [
+          "/usr/bin/codesign",
+          "-dvv",
+          "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app"
+        ],
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "Executable=/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host\nIdentifier=me.nagaev.veles.bridge\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=3578 flags=0x0(none) hashes=105+3 location=embedded\nSignature size=4784\nAuthority=Apple Development: yuriy@nagaev.me (ZWYYS8X98S)\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nSigned Time=26 Oct 2026 at 13:40:26\nInfo.plist entries=11\nTeamIdentifier=7T39M26Z99\nSealed Resources version=2 rules=13 files=0\nInternal requirements count=1 size=188\n"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:36.444390+00:00",
+      "kind": "registration_preflight",
+      "value": {
+        "target": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+        "existed": false,
+        "previous_sha256": null
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:36.446329+00:00",
+      "kind": "registered_manifest",
+      "value": {
+        "name": "me.nagaev.veles.otp23.plain",
+        "description": "Veles OTP-23 macOS PoC host; synthetic bytes only",
+        "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+        "type": "stdio",
+        "allowed_origins": [
+          "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/"
+        ]
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:36.470650+00:00",
+      "kind": "command",
+      "value": {
+        "command": [
+          "/usr/bin/tccutil",
+          "reset",
+          "BluetoothAlways",
+          "me.nagaev.veles.bridge"
+        ],
+        "returncode": 0,
+        "stdout": "Successfully reset BluetoothAlways approval status for me.nagaev.veles.bridge\nSuccessfully reset BluetoothAlways approval status for me.nagaev.veles.bridge\n",
+        "stderr": ""
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:37.217698+00:00",
+      "kind": "chrome",
+      "value": {
+        "pid": 15893,
+        "version": {
+          "protocolVersion": "1.3",
+          "product": "Chrome/156.0.8078.74",
+          "revision": "@d331de35ca8ab1358c7a17e4bd41627d55eaef51",
+          "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+          "jsVersion": "15.6.75.25"
+        },
+        "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-_lbmuzqt"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:37.455239+00:00",
+      "kind": "hello",
+      "value": {
+        "api_version": 1,
+        "bridge_version": "otp23-feasibility/0.1.0 plain",
+        "capabilities": [
+          "veles_record_v1"
+        ],
+        "envelope_version": 1,
+        "platform": "macos",
+        "request_id": "r1-1brwdz",
+        "type": "ready"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:37.541530+00:00",
+      "kind": "signed_host_processes",
+      "value": [
+        {
+          "pid": 15918,
+          "ppid": 15893,
+          "ancestry": [
+            {
+              "pid": 15893,
+              "comm": "Google",
+              "args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-_lbmuzqt --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+            },
+            {
+              "pid": 15888,
+              "comm": "Python",
+              "args": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python /Users/raiden/homepc/work/otp23-m03-20261030-restart1/observe_prompt.py"
+            },
+            {
+              "pid": 15886,
+              "comm": "zsh",
+              "args": "zsh -c python3 -c \"import pathlib,shutil; a=pathlib.Path(\\\"/Users/raiden/homepc/work/otp23-m03-20261030\\\"); b=pathlib.Path(\\\"/Users/raiden/homepc/work/otp23-m03-20261030-restart1\\\"); [shutil.copytree(a/n,b/n,dirs_exist_ok=True) for n in [\\\"scripts\\\",\\\"extension\\\",\\\"src\\\"]]; shutil.copy2(a/\\\"observe_prompt.py\\\",b/\\\"observe_prompt.py\\\"); print(\\\"source copied, captures separate\\\")\"; nohup python3 /U"
+            },
+            {
+              "pid": 15884,
+              "comm": "sshd-session:",
+              "args": "sshd-session: raiden@notty  "
+            },
+            {
+              "pid": 15865,
+              "comm": "sshd-session:",
+              "args": "sshd-session: raiden [priv]  "
+            },
+            {
+              "pid": 1,
+              "comm": "launchd",
+              "args": "/sbin/launchd"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-30T02:23:47.559641+00:00",
+      "kind": "initial_scan",
+      "value": {
+        "api_version": 1,
+        "code": "scan_failed",
+        "envelope_version": 1,
+        "recoverability": "retryable",
+        "request_id": "r2-9s8r0j",
+        "stage": "permission_pending",
+        "type": "error"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:23:47.561684+00:00",
+      "kind": "awaiting_owner",
+      "value": {
+        "answer_file": "/Users/raiden/homepc/work/otp23-m03-20261030-restart1/capture/owner-answer.json",
+        "deadline_seconds": 1800,
+        "instruction": "Observe exact prompt app name, click Allow, then report both in chat."
+      }
+    },
+    {
+      "utc": "2026-10-30T02:26:04.161597+00:00",
+      "kind": "owner_answer",
+      "value": {
+        "verbatim_owner_report": "ValesOtp23PoC. Clicked allowed",
+        "reported_app_name": "ValesOtp23PoC",
+        "reported_action": "Allow",
+        "recorded_utc": "2026-10-30T02:26:03.917438+00:00",
+        "source": "user chat message after restart1 permission_pending"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:26:04.171508+00:00",
+      "kind": "post_allow_scan",
+      "value": {
+        "api_version": 1,
+        "envelope_version": 1,
+        "request_id": "r3-0hnyu7",
+        "scan_handle": "b20901542dc36cce",
+        "status": "started",
+        "type": "scan_state"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:26:07.184814+00:00",
+      "kind": "stop_scan",
+      "value": {
+        "api_version": 1,
+        "envelope_version": 1,
+        "request_id": "r4-w7fk42",
+        "scan_handle": "b20901542dc36cce",
+        "status": "stopped",
+        "type": "scan_state"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:26:07.188295+00:00",
+      "kind": "events",
+      "value": []
+    },
+    {
+      "utc": "2026-10-30T02:26:07.190445+00:00",
+      "kind": "shutdown",
+      "value": {
+        "api_version": 1,
+        "envelope_version": 1,
+        "request_id": "r5-pm8vgz",
+        "type": "shutdown_complete"
+      }
+    },
+    {
+      "utc": "2026-10-30T02:26:07.721723+00:00",
+      "kind": "owned_chrome_closed",
+      "value": true
+    },
+    {
+      "utc": "2026-10-30T02:26:07.722730+00:00",
+      "kind": "registration_restored",
+      "value": true
+    }
+  ],
+  "started_utc": "2026-10-30T02:23:36.408517+00:00",
+  "owner_approval": "User answered Yes to app-specific Bluetooth reset and prompt attendance; 2026-10-30 conversation.",
+  "binary_sha256_before": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "capture_status": "COMPLETED_REQUIRES_INDEPENDENT_ADJUDICATION",
+  "binary_sha256_after": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "ended_utc": "2026-10-30T02:26:07.724545+00:00"
+}
