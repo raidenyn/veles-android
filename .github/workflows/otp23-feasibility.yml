@@ -1,0 +1,46 @@
+name: OTP-23 feasibility harness
+
+on:
+  pull_request:
+    branches: [master]
+    paths: ['native-bridge/feasibility/**', '.github/workflows/otp23-feasibility.yml']
+  push:
+    branches: [master]
+    paths: ['native-bridge/feasibility/**', '.github/workflows/otp23-feasibility.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-2025, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: native-bridge/feasibility
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: rustup show active-toolchain
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: node --test scripts/connector-api.test.mjs scripts/isolated-device.test.mjs
+      - run: python scripts/trace-parser.test.py
+      - run: python scripts/test_poc_background.py
+      - run: python3 scripts/test_macos_poc.py
+        if: runner.os != 'Windows'
+      - run: python3 scripts/test_macos_background_support.py
+        if: runner.os != 'Windows'
+      - run: python scripts/verify-identity.py
+        if: runner.os == 'Windows'
+      - run: cargo build --locked --release --features tauri-runtime --bins
+        if: runner.os == 'Windows'

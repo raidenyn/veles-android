@@ -1,0 +1,14 @@
+[       0ms pid=60991] start pid=60991
+[       0ms pid=60991] in  len=81 type=hello request_id=r1-e1l395
+[       0ms pid=60991] out len=181 type=ready request_id=r1-e1l395 api_version=1
+[     120ms pid=60991] in  len=137 type=start_scan request_id=r2-vx1jg3 api_version=1
+[     127ms pid=60991] bluetooth authorization before adapter init: allowed_always
+[     128ms pid=60991] adapter init: created=true authorization=allowed_always
+[     147ms pid=60991] out len=135 type=scan_state request_id=r2-vx1jg3 api_version=1 status=started scan_handle=b163fe473bea1bbb
+[     570ms pid=60991] out len=217 type=device_found api_version=1 scan_handle=b163fe473bea1bbb device_handle=774335cbf26515d6 label.len=17 platform_hint.len=42
+[    1156ms pid=60991] out len=217 type=device_found api_version=1 scan_handle=b163fe473bea1bbb device_handle=6d09dd440308e043 label.len=17 platform_hint.len=42
+[    1428ms pid=60991] in  len=115 type=stop_scan request_id=r3-4crf6z api_version=1 scan_handle=b163fe473bea1bbb
+[    1428ms pid=60991] out len=135 type=scan_state request_id=r3-4crf6z api_version=1 status=stopped scan_handle=b163fe473bea1bbb
+[    1429ms pid=60991] in  len=81 type=shutdown request_id=r4-fj5py9 api_version=1
+[    1429ms pid=60991] out len=90 type=shutdown_complete request_id=r4-fj5py9 api_version=1
+[    1429ms pid=60991] exit code=0 stdout_drained=true

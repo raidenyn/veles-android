@@ -1,0 +1,46 @@
+[       0ms pid=67967] start pid=67967
+[       0ms pid=67967] in  len=81 type=hello request_id=r1-v30jbk
+[       0ms pid=67967] out len=181 type=ready request_id=r1-v30jbk api_version=1
+[     151ms pid=67967] in  len=137 type=start_scan request_id=r2-lgrt6t api_version=1
+[     158ms pid=67967] bluetooth authorization before adapter init: allowed_always
+[     159ms pid=67967] adapter init: created=true authorization=allowed_always
+[     165ms pid=67967] out len=135 type=scan_state request_id=r2-lgrt6t api_version=1 status=started scan_handle=b76a519b45b8d7fd
+[     299ms pid=67967] out len=217 type=device_found api_version=1 scan_handle=b76a519b45b8d7fd device_handle=16aac3c1b0515042 label.len=17 platform_hint.len=42
+[    1176ms pid=67967] out len=217 type=device_found api_version=1 scan_handle=b76a519b45b8d7fd device_handle=2c6ea837bbef7a82 label.len=17 platform_hint.len=42
+[    1705ms pid=67967] in  len=115 type=connect request_id=r3-m0qlpn api_version=1 device_handle=16aac3c1b0515042
+[    1714ms pid=67967] conn 2 device at 8ms
+[    2394ms pid=67967] conn 2 connected at 688ms
+[    3056ms pid=67967] conn 2 service at 1350ms
+[    3203ms pid=67967] conn 2 characteristics at 1497ms
+[    3204ms pid=67967] conn 2 max_write_without_response=512 inferred effective att mtu=515 (max write + 3, capped 517)
+[    3385ms pid=67967] conn 2 subscribed; hint=macos:..a5e9
+[    3385ms pid=67967] out len=182 type=connected request_id=r3-m0qlpn api_version=1 connection_handle=00f968bd574c8cb9 platform_hint.len=42
+[    3389ms pid=67967] in  len=115 type=connect request_id=r4-1m1jza api_version=1 device_handle=2c6ea837bbef7a82
+[    3390ms pid=67967] conn 3 device at 0ms
+[    3875ms pid=67967] conn 3 connected at 485ms
+[    4605ms pid=67967] conn 3 service at 1215ms
+[    4725ms pid=67967] conn 3 characteristics at 1335ms
+[    4725ms pid=67967] conn 3 max_write_without_response=512 inferred effective att mtu=515 (max write + 3, capped 517)
+[    4936ms pid=67967] conn 3 subscribed; hint=macos:..e10b
+[    4936ms pid=67967] out len=182 type=connected request_id=r4-1m1jza api_version=1 connection_handle=35e04b7f69a1166f platform_hint.len=42
+[    4940ms pid=67967] in  len=115 type=stop_scan request_id=r5-rsx9z1 api_version=1 scan_handle=b76a519b45b8d7fd
+[    4941ms pid=67967] out len=135 type=scan_state request_id=r5-rsx9z1 api_version=1 status=stopped scan_handle=b76a519b45b8d7fd
+[    4949ms pid=67967] in  len=5599 type=send request_id=r6-jjk1f6 api_version=1 connection_handle=00f968bd574c8cb9 record_base64.len=5464
+[    4951ms pid=67967] out len=116 type=sent request_id=r6-jjk1f6 api_version=1 connection_handle=00f968bd574c8cb9
+[    5407ms pid=67967] out len=5577 type=message api_version=1 connection_handle=00f968bd574c8cb9 record_base64.len=5464
+[    5471ms pid=67967] in  len=5599 type=send request_id=r7-avj2eo api_version=1 connection_handle=35e04b7f69a1166f record_base64.len=5464
+[    5473ms pid=67967] out len=116 type=sent request_id=r7-avj2eo api_version=1 connection_handle=35e04b7f69a1166f
+[    5929ms pid=67967] out len=5577 type=message api_version=1 connection_handle=35e04b7f69a1166f record_base64.len=5464
+[  616910ms pid=67967] in  len=5599 type=send request_id=r8-tr7uyi api_version=1 connection_handle=00f968bd574c8cb9 record_base64.len=5464
+[  616913ms pid=67967] out len=116 type=sent request_id=r8-tr7uyi api_version=1 connection_handle=00f968bd574c8cb9
+[  616916ms pid=67967] in  len=5599 type=send request_id=r9-64rod4 api_version=1 connection_handle=35e04b7f69a1166f record_base64.len=5464
+[  616918ms pid=67967] out len=116 type=sent request_id=r9-64rod4 api_version=1 connection_handle=35e04b7f69a1166f
+[  617261ms pid=67967] out len=5577 type=message api_version=1 connection_handle=00f968bd574c8cb9 record_base64.len=5464
+[  617454ms pid=67967] out len=5577 type=message api_version=1 connection_handle=35e04b7f69a1166f record_base64.len=5464
+[  636074ms pid=67967] in  len=81 type=shutdown request_id=ra-gbispr api_version=1
+[  636075ms pid=67967] out len=99 type=disconnected api_version=1 connection_handle=00f968bd574c8cb9
+[  636075ms pid=67967] out len=99 type=disconnected api_version=1 connection_handle=35e04b7f69a1166f
+[  636075ms pid=67967] conn 2 command channel closed
+[  636075ms pid=67967] conn 3 command channel closed
+[  636075ms pid=67967] out len=90 type=shutdown_complete request_id=ra-gbispr api_version=1
+[  636076ms pid=67967] exit code=0 stdout_drained=true

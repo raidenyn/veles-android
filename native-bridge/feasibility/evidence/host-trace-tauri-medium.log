@@ -1,0 +1,85 @@
+[       0ms pid=58688] start pid=58688
+[       7ms pid=58688] tauri setup: starting host thread
+[       7ms pid=58688] tauri RunEvent::Ready
+[       7ms pid=58688] start pid=58688
+[       8ms pid=58688] in  len=81 type=hello request_id=r1-pot8g6
+[       8ms pid=58688] out len=183 type=ready request_id=r1-pot8g6 api_version=1
+[    5171ms pid=58688] in  len=111 type=start_scan request_id=r2-ru0gxz api_version=1
+[    5172ms pid=58688] out len=145 type=error request_id=r2-ru0gxz api_version=1 code=invalid_request recoverability=fatal stage=schema
+[    5172ms pid=58688] in  len=143 type=send request_id=r3-xkvhi8 api_version=1 connection_handle=0123456789abcdef record_base64.len=8
+[    5173ms pid=58688] out len=155 type=error request_id=r3-xkvhi8 api_version=1 code=unknown_handle recoverability=fatal stage=connection_handle
+[    5173ms pid=58688] in  len=115 type=stop_scan request_id=r4-0yz0gk api_version=1 scan_handle=0123456789abcdef
+[    5173ms pid=58688] out len=149 type=error request_id=r4-0yz0gk api_version=1 code=unknown_handle recoverability=fatal stage=scan_handle
+[    5174ms pid=58688] in  len=137 type=start_scan request_id=r5-u1vrvu api_version=1
+[    5227ms pid=58688] out len=135 type=scan_state request_id=r5-u1vrvu api_version=1 status=started scan_handle=ddc0c3a7af49511e
+[    9229ms pid=58688] in  len=115 type=stop_scan request_id=r6-ickk7g api_version=1 scan_handle=ddc0c3a7af49511e
+[    9229ms pid=58688] out len=135 type=scan_state request_id=r6-ickk7g api_version=1 status=stopped scan_handle=ddc0c3a7af49511e
+[    9230ms pid=58688] in  len=119 type=connect request_id=r7-dpt5h0 api_version=1 platform_hint.len=20
+[    9241ms pid=58688] os error at device_lookup: 0x00000000
+[    9241ms pid=58688] conn 2 setup failed: stage=device_lookup retryable=true
+[    9241ms pid=58688] out len=155 type=error request_id=r7-dpt5h0 api_version=1 code=connect_failed recoverability=retryable stage=device_lookup
+[    9241ms pid=58688] in  len=137 type=start_scan request_id=r8-yj2m4q api_version=1
+[    9287ms pid=58688] out len=135 type=scan_state request_id=r8-yj2m4q api_version=1 status=started scan_handle=d2b7dc4a885c8616
+[    9288ms pid=58688] in  len=81 type=shutdown request_id=r9-cyrfot api_version=1
+[    9288ms pid=58688] out len=110 type=scan_state api_version=1 status=stopped scan_handle=d2b7dc4a885c8616
+[    9288ms pid=58688] out len=90 type=shutdown_complete request_id=r9-cyrfot api_version=1
+[    9288ms pid=58688] exit code=0 stdout_drained=true
+[    9289ms pid=58688] host finished code=0; asking the Tauri event loop to exit
+[    9289ms pid=58688] tauri RunEvent::ExitRequested code=Some(0)
+[    9289ms pid=58688] tauri RunEvent::Exit
+[       0ms pid=25652] start pid=25652
+[       5ms pid=25652] tauri setup: starting host thread
+[       5ms pid=25652] tauri RunEvent::Ready
+[       5ms pid=25652] start pid=25652
+[       6ms pid=25652] in  len=81 type=hello request_id=ra-y7vczo
+[       6ms pid=25652] out len=183 type=ready request_id=ra-y7vczo api_version=1
+[    1077ms pid=25652] in  len=137 type=start_scan request_id=rb-n2wjfx api_version=1
+[    1130ms pid=25652] out len=135 type=scan_state request_id=rb-n2wjfx api_version=1 status=started scan_handle=ea62006b4f105e15
+[    1132ms pid=25652] exit code=0 stdout_drained=true
+[    1132ms pid=25652] host finished code=0; asking the Tauri event loop to exit
+[    1132ms pid=25652] tauri RunEvent::ExitRequested code=Some(0)
+[    1132ms pid=25652] tauri RunEvent::Exit
+[       0ms pid=64544] start pid=64544
+[       5ms pid=64544] tauri setup: starting host thread
+[       5ms pid=64544] tauri RunEvent::Ready
+[       5ms pid=64544] start pid=64544
+[       6ms pid=64544] in  len=81 type=hello request_id=r1-08n6o7
+[       6ms pid=64544] out len=183 type=ready request_id=r1-08n6o7 api_version=1
+[    1041ms pid=64544] in  len=137 type=start_scan request_id=r2-rk2vuq api_version=1
+[    1093ms pid=64544] out len=135 type=scan_state request_id=r2-rk2vuq api_version=1 status=started scan_handle=0df2284e9b0e132a
+[    1100ms pid=64544] exit code=0 stdout_drained=true
+[    1100ms pid=64544] host finished code=0; asking the Tauri event loop to exit
+[    1101ms pid=64544] tauri RunEvent::ExitRequested code=Some(0)
+[    1101ms pid=64544] tauri RunEvent::Exit
+[       0ms pid=94440] start pid=94440
+[       5ms pid=94440] tauri setup: starting host thread
+[       5ms pid=94440] tauri RunEvent::Ready
+[       5ms pid=94440] start pid=94440
+[       6ms pid=94440] in  len=81 type=hello request_id=r1-scn8ph
+[       6ms pid=94440] out len=183 type=ready request_id=r1-scn8ph api_version=1
+[       0ms pid=25980] start pid=25980
+[       5ms pid=25980] tauri setup: starting host thread
+[       5ms pid=25980] tauri RunEvent::Ready
+[       6ms pid=25980] start pid=25980
+[       6ms pid=25980] in  len=81 type=hello request_id=r1-a5snxe
+[       6ms pid=25980] out len=183 type=ready request_id=r1-a5snxe api_version=1
+[    1052ms pid=94440] exit code=0 stdout_drained=true
+[    1052ms pid=94440] host finished code=0; asking the Tauri event loop to exit
+[    1052ms pid=94440] tauri RunEvent::ExitRequested code=Some(0)
+[    1052ms pid=94440] tauri RunEvent::Exit
+[     977ms pid=25980] exit code=0 stdout_drained=true
+[     977ms pid=25980] host finished code=0; asking the Tauri event loop to exit
+[     977ms pid=25980] tauri RunEvent::ExitRequested code=Some(0)
+[     978ms pid=25980] tauri RunEvent::Exit
+[       0ms pid=82184] start pid=82184
+[       5ms pid=82184] tauri setup: starting host thread
+[       5ms pid=82184] tauri RunEvent::Ready
+[       5ms pid=82184] start pid=82184
+[       6ms pid=82184] in  len=81 type=hello request_id=r1-srxxh9
+[       6ms pid=82184] out len=183 type=ready request_id=r1-srxxh9 api_version=1
+[     346ms pid=82184] in  len=137 type=start_scan request_id=r2-gdp6mt api_version=1
+[     399ms pid=82184] out len=135 type=scan_state request_id=r2-gdp6mt api_version=1 status=started scan_handle=e8808fe60aba71aa
+[    1091ms pid=82184] exit code=0 stdout_drained=true
+[    1091ms pid=82184] host finished code=0; asking the Tauri event loop to exit
+[    1091ms pid=82184] tauri RunEvent::ExitRequested code=Some(0)
+[    1092ms pid=82184] tauri RunEvent::Exit

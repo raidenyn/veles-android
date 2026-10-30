@@ -1,0 +1,49 @@
+[       0ms pid=95980] start pid=95980
+[       0ms pid=95980] in  len=81 type=hello request_id=r1-15a3pl
+[       1ms pid=95980] out len=183 type=ready request_id=r1-15a3pl api_version=1
+[    5182ms pid=95980] in  len=111 type=start_scan request_id=r2-avysf2 api_version=1
+[    5182ms pid=95980] out len=145 type=error request_id=r2-avysf2 api_version=1 code=invalid_request recoverability=fatal stage=schema
+[    5183ms pid=95980] in  len=143 type=send request_id=r3-1htwx4 api_version=1 connection_handle=0123456789abcdef record_base64.len=8
+[    5183ms pid=95980] out len=155 type=error request_id=r3-1htwx4 api_version=1 code=unknown_handle recoverability=fatal stage=connection_handle
+[    5184ms pid=95980] in  len=115 type=stop_scan request_id=r4-j14rq8 api_version=1 scan_handle=0123456789abcdef
+[    5184ms pid=95980] out len=149 type=error request_id=r4-j14rq8 api_version=1 code=unknown_handle recoverability=fatal stage=scan_handle
+[    5185ms pid=95980] in  len=137 type=start_scan request_id=r5-e40996 api_version=1
+[    5239ms pid=95980] out len=135 type=scan_state request_id=r5-e40996 api_version=1 status=started scan_handle=fc35379d60d9f360
+[    9241ms pid=95980] in  len=115 type=stop_scan request_id=r6-3sz8nw api_version=1 scan_handle=fc35379d60d9f360
+[    9242ms pid=95980] out len=135 type=scan_state request_id=r6-3sz8nw api_version=1 status=stopped scan_handle=fc35379d60d9f360
+[    9242ms pid=95980] in  len=119 type=connect request_id=r7-nhrkj6 api_version=1 platform_hint.len=20
+[    9255ms pid=95980] os error at device_lookup: 0x00000000
+[    9255ms pid=95980] conn 2 setup failed: stage=device_lookup retryable=true
+[    9255ms pid=95980] out len=155 type=error request_id=r7-nhrkj6 api_version=1 code=connect_failed recoverability=retryable stage=device_lookup
+[    9256ms pid=95980] in  len=137 type=start_scan request_id=r8-m3llnu api_version=1
+[    9301ms pid=95980] out len=135 type=scan_state request_id=r8-m3llnu api_version=1 status=started scan_handle=757300eb38c8bdd3
+[    9302ms pid=95980] in  len=81 type=shutdown request_id=r9-pf6ffm api_version=1
+[    9302ms pid=95980] out len=110 type=scan_state api_version=1 status=stopped scan_handle=757300eb38c8bdd3
+[    9303ms pid=95980] out len=90 type=shutdown_complete request_id=r9-pf6ffm api_version=1
+[    9303ms pid=95980] exit code=0 stdout_drained=true
+[       0ms pid=92056] start pid=92056
+[       0ms pid=92056] in  len=81 type=hello request_id=ra-07lt4v
+[       1ms pid=92056] out len=183 type=ready request_id=ra-07lt4v api_version=1
+[    1048ms pid=92056] in  len=137 type=start_scan request_id=rb-rb4lwp api_version=1
+[    1101ms pid=92056] out len=135 type=scan_state request_id=rb-rb4lwp api_version=1 status=started scan_handle=19c3f2ebc0b07043
+[    1103ms pid=92056] exit code=0 stdout_drained=true
+[       0ms pid=83296] start pid=83296
+[       1ms pid=83296] in  len=81 type=hello request_id=r1-n0a8t0
+[       1ms pid=83296] out len=183 type=ready request_id=r1-n0a8t0 api_version=1
+[    1024ms pid=83296] in  len=137 type=start_scan request_id=r2-bb09yr api_version=1
+[    1076ms pid=83296] out len=135 type=scan_state request_id=r2-bb09yr api_version=1 status=started scan_handle=c014743553c89ab9
+[    1083ms pid=83296] exit code=0 stdout_drained=true
+[       0ms pid=64660] start pid=64660
+[       0ms pid=64660] in  len=81 type=hello request_id=r1-kieqjx
+[       0ms pid=64660] out len=183 type=ready request_id=r1-kieqjx api_version=1
+[       0ms pid=56016] start pid=56016
+[       0ms pid=56016] in  len=81 type=hello request_id=r1-iy8x2f
+[       0ms pid=56016] out len=183 type=ready request_id=r1-iy8x2f api_version=1
+[    1093ms pid=64660] exit code=0 stdout_drained=true
+[    1026ms pid=56016] exit code=0 stdout_drained=true
+[       0ms pid=69880] start pid=69880
+[       0ms pid=69880] in  len=81 type=hello request_id=r1-5dv635
+[       0ms pid=69880] out len=183 type=ready request_id=r1-5dv635 api_version=1
+[     337ms pid=69880] in  len=137 type=start_scan request_id=r2-z38oa4 api_version=1
+[     389ms pid=69880] out len=135 type=scan_state request_id=r2-z38oa4 api_version=1 status=started scan_handle=a312130e38fc3e28
+[    1083ms pid=69880] exit code=0 stdout_drained=true

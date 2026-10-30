@@ -1,0 +1,9 @@
+[       0ms pid=83014] start pid=83014
+[       0ms pid=83014] in  len=81 type=hello request_id=r1-2muh6v
+[       0ms pid=83014] out len=181 type=ready request_id=r1-2muh6v api_version=1
+[     112ms pid=83014] in  len=137 type=start_scan request_id=r2-w3o49p api_version=1
+[     118ms pid=83014] bluetooth authorization before adapter init: denied
+[     119ms pid=83014] adapter init: created=true authorization=denied
+[   10126ms pid=83014] adapter wait timed out: authorization=denied -> access_denied
+[   10127ms pid=83014] out len=152 type=error request_id=r2-w3o49p api_version=1 code=scan_failed recoverability=retryable stage=access_denied
+[   10150ms pid=83014] exit code=0 stdout_drained=true

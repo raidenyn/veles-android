@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import android.os.SystemClock
+import me.nagaev.veles.BuildConfig
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -30,7 +31,10 @@ internal class SharingGattServer(
     private val onRecord: (String, ByteArray) -> ByteArray?,
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    private val transport = GattTransport(SystemClock::elapsedRealtime)
+    private val transport = GattTransport(
+        if (BuildConfig.OTP23_POC) 512 else 514,
+        SystemClock::elapsedRealtime,
+    )
     private val ingress = IngressBudget()
     private val admitted = ConcurrentHashMap.newKeySet<String>()
     private val devices = mutableMapOf<String, BluetoothDevice>()

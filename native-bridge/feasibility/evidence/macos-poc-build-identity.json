@@ -1,0 +1,39 @@
+{
+  "date_utc": "2026-10-26",
+  "source_parent_commit": "d5b6f2d",
+  "source_state": "Mac extension transferred as source archives without .git; exact tested transport files verified by SHA-256 on the Mac and controller",
+  "platform": {
+    "hardware": "MacBookPro18,2 / Apple M1 Max",
+    "os": "macOS 26.5.2 (25F84)",
+    "bluetooth_adapter": "Broadcom BCM4387",
+    "chrome": "155.0.8059.86",
+    "python": "3.9.6",
+    "rustc": "1.98.0 (88d9e12ae 2026-08-18)",
+    "cargo": "1.98.0 (797e8a9bc 2026-08-05)",
+    "xcode": "26.6 (17F113)",
+    "macos_sdk": "26.5"
+  },
+  "host": {
+    "target": "aarch64-apple-darwin",
+    "runtime": "plain Rust, CoreBluetooth via bluest 0.6.9; no Tauri event loop",
+    "bundle_identifier": "me.nagaev.veles.otp23.poc",
+    "signature": "Apple Development, WWDR and Apple Root authority chain; codesign --verify --strict passed",
+    "team_identifier": "7T39M26Z99",
+    "signed_executable_sha256": "a42900abd1006e693ee2af64ac23b13b749c03ba6bf35395adc3491699edca1e"
+  },
+  "source_sha256": {
+    "native-bridge/feasibility/Cargo.lock": "e50ce3bdd34045f0176809ba7e371db431b2bd6828a40392c3c20779b3e68d27",
+    "native-bridge/feasibility/src/macos.rs": "7db88f540ac02d0f669df22cfb7228d5a229d1f7928ade912a1e9f097b5713af",
+    "native-bridge/feasibility/src/macos_map.rs": "9ec6f1cb5e8ddc772142b087dc8a27e27d73e620ef7678493ad6e0822b81b465",
+    "native-bridge/feasibility/src/fragment.rs": "4edca0be61c88e949b332cafe763ab36b54b3119d0ff278350ac9ee5d20bf7ff"
+  },
+  "permission_observation": {
+    "before_user_action": "denied / access_denied",
+    "after_user_enabled_bluetooth_privacy": "allowed_always",
+    "same_signed_executable_before_and_after": true,
+    "settings_entry_owner": "not observed; do not infer Chrome versus host attribution",
+    "tcc_reset_or_bypass": false
+  },
+  "physical_matrix": "macos-poc-physical.json",
+  "android_build_reference": "poc-build-identity.json"
+}

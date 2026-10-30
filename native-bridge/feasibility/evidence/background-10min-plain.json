@@ -1,0 +1,208 @@
+{
+  "chrome_version": "Chrome/155.0.8059.85",
+  "flavour": "plain",
+  "snapshots": [
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 1,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 62415,
+      "elapsed_s": 60,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 1,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 123453,
+      "elapsed_s": 121,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 1,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 183797,
+      "elapsed_s": 181,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 1,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 244132,
+      "elapsed_s": 242,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 1,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 302498,
+      "elapsed_s": 300,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 2,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 362895,
+      "elapsed_s": 361,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 2,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 423229,
+      "elapsed_s": 421,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 2,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 483560,
+      "elapsed_s": 481,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 2,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 543901,
+      "elapsed_s": 542,
+      "host_alive": true
+    },
+    {
+      "hostName": "me.nagaev.veles.otp23.plain",
+      "portOpen": true,
+      "apiVersion": 1,
+      "disconnect": null,
+      "pending": [],
+      "eventCount": 0,
+      "completionCount": 2,
+      "visibility": "hidden",
+      "hasFocus": false,
+      "now": 604239,
+      "elapsed_s": 602,
+      "host_alive": true
+    }
+  ],
+  "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+  "host_pid": 67804,
+  "focused_tab": {
+    "targetId": "ECEFEFA91F418D7F6B7B7A437E8875D8",
+    "url": "about:blank",
+    "probe": {
+      "visibility": "visible",
+      "focus": true
+    }
+  },
+  "connector_tab": {
+    "targetId": "A3EA8A9393ED360F4EED3211607801E1",
+    "probe_at_hide": {
+      "visibility": "hidden",
+      "hasFocus": false,
+      "audioVideoElements": 0,
+      "webrtc": "API existed; usage/exemptions were not measured"
+    }
+  },
+  "tabs_at_hide": [
+    {
+      "type": "page",
+      "url": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/connector.html",
+      "attached": true
+    },
+    {
+      "type": "page",
+      "url": "about:blank",
+      "attached": false
+    },
+    {
+      "type": "page",
+      "url": "about:blank",
+      "attached": true
+    }
+  ],
+  "scan_started_at_s": 320.5,
+  "scan_handle": "72ae9fb33e473301",
+  "unsolicited_event": {
+    "at": 622894,
+    "type": "scan_state",
+    "status": "stopped",
+    "scan_handle": "72ae9fb33e473301",
+    "orphan_correlated": false,
+    "received_after_hidden_s": 622.2,
+    "page_visibility_at_receipt": "hidden"
+  },
+  "page_probe_at_end": {
+    "visibility": "hidden",
+    "hasFocus": false,
+    "audioVideoElements": 0,
+    "webrtc": "API existed; usage/exemptions were not measured"
+  },
+  "host_alive_at_end": true,
+  "host_pid_unchanged": null,
+  "debugger_attached": true,
+  "event_source": "scan_cap",
+  "acceptance_pass": false,
+  "annotation": "Post-review correction: the old PID field only counted processes. Original observations retained; no new run implied.",
+  "result": "DIAGNOSTIC",
+  "shutdown_after_10min": "shutdown_complete",
+  "host_gone_after_shutdown_s": 0.274
+}

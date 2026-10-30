@@ -1,0 +1,78 @@
+[       0ms pid=87052] start pid=87052
+[       0ms pid=87052] in  len=81 type=hello request_id=r1-r4m7nf
+[       1ms pid=87052] out len=183 type=ready request_id=r1-r4m7nf api_version=1
+[     391ms pid=87052] in  len=137 type=start_scan request_id=r2-viyolw api_version=1
+[     445ms pid=87052] out len=135 type=scan_state request_id=r2-viyolw api_version=1 status=started scan_handle=fc8424e0453110af
+[     905ms pid=87052] out len=195 type=device_found api_version=1 scan_handle=fc8424e0453110af device_handle=57f31374298744e4 label.len=17 platform_hint.len=20
+[    1127ms pid=87052] out len=195 type=device_found api_version=1 scan_handle=fc8424e0453110af device_handle=7f158b1afa03062e label.len=17 platform_hint.len=20
+[    1450ms pid=87052] in  len=115 type=connect request_id=r3-msc73p api_version=1 device_handle=57f31374298744e4
+[    1450ms pid=87052] in  len=115 type=connect request_id=r4-r9g52w api_version=1 device_handle=7f158b1afa03062e
+[    1492ms pid=87052] conn 2 device at 41ms
+[    1492ms pid=87052] conn 3 device at 41ms
+[    1513ms pid=87052] conn 2 session at 62ms
+[    1513ms pid=87052] conn 3 session at 62ms
+[    2693ms pid=87052] conn 2 service at 1242ms
+[    2694ms pid=87052] conn 2 mtu=517 at 1242ms
+[    2852ms pid=87052] conn 2 write properties=0x4
+[    2915ms pid=87052] conn 2 notify properties=0x10
+[    2915ms pid=87052] conn 2 characteristics at 1463ms
+[    2956ms pid=87052] conn 2 subscribed at 1505ms
+[    2956ms pid=87052] out len=160 type=connected request_id=r3-msc73p api_version=1 connection_handle=600e794c80e380a7 platform_hint.len=20
+[    3083ms pid=87052] conn 3 service at 1632ms
+[    3083ms pid=87052] conn 3 mtu=517 at 1632ms
+[    3325ms pid=87052] conn 3 write properties=0x4
+[    3520ms pid=87052] conn 3 notify properties=0x10
+[    3520ms pid=87052] conn 3 characteristics at 2069ms
+[    3540ms pid=87052] conn 3 subscribed at 2089ms
+[    3540ms pid=87052] out len=160 type=connected request_id=r4-r9g52w api_version=1 connection_handle=37dd8a389e3bb535 platform_hint.len=20
+[    3541ms pid=87052] in  len=115 type=stop_scan request_id=r5-63p1ik api_version=1 scan_handle=fc8424e0453110af
+[    3542ms pid=87052] out len=135 type=scan_state request_id=r5-63p1ik api_version=1 status=stopped scan_handle=fc8424e0453110af
+[    3543ms pid=87052] in  len=143 type=send request_id=r6-p6kicr api_version=1 connection_handle=600e794c80e380a7 record_base64.len=8
+[    3543ms pid=87052] in  len=143 type=send request_id=r7-6lfy6l api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=8
+[    3553ms pid=87052] out len=116 type=sent request_id=r6-p6kicr api_version=1 connection_handle=600e794c80e380a7
+[    3553ms pid=87052] out len=116 type=sent request_id=r7-6lfy6l api_version=1 connection_handle=37dd8a389e3bb535
+[    3568ms pid=87052] out len=121 type=message api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=8
+[    3590ms pid=87052] out len=121 type=message api_version=1 connection_handle=600e794c80e380a7 record_base64.len=8
+[    3655ms pid=87052] in  len=375 type=send request_id=r8-d5z97p api_version=1 connection_handle=600e794c80e380a7 record_base64.len=240
+[    3656ms pid=87052] in  len=375 type=send request_id=r9-nezkas api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=240
+[    3666ms pid=87052] out len=116 type=sent request_id=r9-nezkas api_version=1 connection_handle=37dd8a389e3bb535
+[    3666ms pid=87052] out len=116 type=sent request_id=r8-d5z97p api_version=1 connection_handle=600e794c80e380a7
+[    3696ms pid=87052] out len=353 type=message api_version=1 connection_handle=600e794c80e380a7 record_base64.len=240
+[    3704ms pid=87052] out len=353 type=message api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=240
+[    3768ms pid=87052] in  len=375 type=send request_id=ra-zpaxb8 api_version=1 connection_handle=600e794c80e380a7 record_base64.len=240
+[    3768ms pid=87052] in  len=375 type=send request_id=rb-v3m9vg api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=240
+[    3778ms pid=87052] out len=116 type=sent request_id=ra-zpaxb8 api_version=1 connection_handle=600e794c80e380a7
+[    3779ms pid=87052] out len=116 type=sent request_id=rb-v3m9vg api_version=1 connection_handle=37dd8a389e3bb535
+[    3809ms pid=87052] out len=353 type=message api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=240
+[    3831ms pid=87052] out len=353 type=message api_version=1 connection_handle=600e794c80e380a7 record_base64.len=240
+[    3931ms pid=87052] in  len=375 type=send request_id=rc-4jy638 api_version=1 connection_handle=600e794c80e380a7 record_base64.len=240
+[    3931ms pid=87052] in  len=375 type=send request_id=rd-s9rgf1 api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=240
+[    3942ms pid=87052] out len=116 type=sent request_id=rd-s9rgf1 api_version=1 connection_handle=37dd8a389e3bb535
+[    3942ms pid=87052] out len=116 type=sent request_id=rc-4jy638 api_version=1 connection_handle=600e794c80e380a7
+[    3974ms pid=87052] out len=353 type=message api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=240
+[    3981ms pid=87052] out len=353 type=message api_version=1 connection_handle=600e794c80e380a7 record_base64.len=240
+[    4044ms pid=87052] in  len=811 type=send request_id=re-w5z79y api_version=1 connection_handle=600e794c80e380a7 record_base64.len=676
+[    4044ms pid=87052] in  len=811 type=send request_id=rf-qebr3n api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=676
+[    4055ms pid=87052] out len=116 type=sent request_id=rf-qebr3n api_version=1 connection_handle=37dd8a389e3bb535
+[    4055ms pid=87052] out len=116 type=sent request_id=re-w5z79y api_version=1 connection_handle=600e794c80e380a7
+[    4088ms pid=87052] out len=789 type=message api_version=1 connection_handle=600e794c80e380a7 record_base64.len=676
+[    4110ms pid=87052] out len=789 type=message api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=676
+[    4208ms pid=87052] in  len=811 type=send request_id=rg-8dpp6d api_version=1 connection_handle=600e794c80e380a7 record_base64.len=676
+[    4208ms pid=87052] in  len=811 type=send request_id=rh-iyi7hb api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=676
+[    4219ms pid=87052] out len=116 type=sent request_id=rh-iyi7hb api_version=1 connection_handle=37dd8a389e3bb535
+[    4219ms pid=87052] out len=116 type=sent request_id=rg-8dpp6d api_version=1 connection_handle=600e794c80e380a7
+[    4260ms pid=87052] out len=789 type=message api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=676
+[    4313ms pid=87052] out len=789 type=message api_version=1 connection_handle=600e794c80e380a7 record_base64.len=676
+[    4376ms pid=87052] in  len=811 type=send request_id=ri-c5p3bc api_version=1 connection_handle=600e794c80e380a7 record_base64.len=676
+[    4376ms pid=87052] in  len=811 type=send request_id=rj-j05y4j api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=676
+[    4386ms pid=87052] out len=116 type=sent request_id=ri-c5p3bc api_version=1 connection_handle=600e794c80e380a7
+[    4386ms pid=87052] out len=116 type=sent request_id=rj-j05y4j api_version=1 connection_handle=37dd8a389e3bb535
+[    4438ms pid=87052] out len=789 type=message api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=676
+[    4493ms pid=87052] out len=789 type=message api_version=1 connection_handle=600e794c80e380a7 record_base64.len=676
+[    4591ms pid=87052] in  len=5595 type=send request_id=rk-rhfve6 api_version=1 connection_handle=600e794c80e380a7 record_base64.len=5460
+[    4591ms pid=87052] in  len=5595 type=send request_id=rl-jpvvkw api_version=1 connection_handle=37dd8a389e3bb535 record_base64.len=5460
+[    4684ms pid=87052] out len=116 type=sent request_id=rk-rhfve6 api_version=1 connection_handle=600e794c80e380a7
+[    4684ms pid=87052] out len=116 type=sent request_id=rl-jpvvkw api_version=1 connection_handle=37dd8a389e3bb535
+[   16700ms pid=87052] conn 2 released
+[   16700ms pid=87052] conn 3 released
+[   16708ms pid=87052] exit code=0 stdout_drained=true

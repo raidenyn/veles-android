@@ -1,0 +1,234 @@
+{
+  "poc_result": "PASS",
+  "formal_otp23_acceptance": false,
+  "reason": "working PoC evidence only: browser-level CDP connection remains and native-messaging liveness exemption not comprehensively excluded (not formal acceptance)",
+  "meta": {
+    "flavour": "plain",
+    "started_utc": "2026-10-25T15:52:00Z",
+    "browser_version": {
+      "product": "Chrome/155.0.8059.85",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+    },
+    "chrome_browser_pid": 94556,
+    "owned_host_pid": 86816,
+    "cmd_wrapper_pid": 85608,
+    "schedule_utc": "2026-10-25T15:52:11Z",
+    "timer_due_utc": "2026-10-25T16:02:21Z",
+    "detached_utc": "2026-10-25T15:52:11Z",
+    "reattached_utc": "2026-10-25T16:02:41Z",
+    "finished_utc": "2026-10-25T16:02:43Z",
+    "timer_ms": 610000,
+    "min_elapsed_ms": 600000,
+    "detach_period_s": 630,
+    "timer_clamped": {
+      "handle": "c8bd9f9c",
+      "extra_ms": 472,
+      "note": "state read after connector CDP re-attachment"
+    },
+    "hidden_probes": {
+      "pre_detach": "hidden",
+      "at_send_per_handle": {
+        "007774715189de19": "hidden",
+        "c8bd9f9c18a1d7d8": "hidden"
+      },
+      "after_reattach": "hidden"
+    },
+    "hashes": {
+      "expected_response_sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+      "record_bytes": 4096,
+      "actual_response_sha256_per_handle": {
+        "00777471": {
+          "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+          "byte_exact": true
+        },
+        "c8bd9f9c": {
+          "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+          "byte_exact": true
+        }
+      }
+    },
+    "warmup": {
+      "00777471": {
+        "seed": 41,
+        "polls": 4,
+        "notify_wait_s": 1.504,
+        "sha256": "1cef2c355bfed99b4f4edfcf5f41021ca6d45672b07e2e38743cefa284c9c853",
+        "byte_exact": true
+      },
+      "c8bd9f9c": {
+        "seed": 53,
+        "polls": 2,
+        "notify_wait_s": 0.502,
+        "sha256": "bf32170537fcd1c7453d22941ddf6c7f627bbb3e5b1537932d3245b4eb6eea67",
+        "byte_exact": true
+      }
+    },
+    "send_replies": {
+      "007774715189de19": {
+        "type": "sent",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      },
+      "c8bd9f9c18a1d7d8": {
+        "type": "sent",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      }
+    },
+    "message_events": [
+      {
+        "type": "message",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      },
+      {
+        "type": "message",
+        "code": null,
+        "stage": null,
+        "recoverability": null
+      }
+    ],
+    "result_at_first_read": true,
+    "reattachment_may_have_woken_page": false,
+    "bound_poll_reads": 1,
+    "owned_host_pid_gone_s": 0.3,
+    "surviving_host_processes_after_run": [],
+    "planned_wait_s": 630,
+    "diagnostic_short_run": false,
+    "host_trace_log": "%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\evidence\\poc-background-final.trace.log"
+  },
+  "cases": [
+    {
+      "id": "ENV-1",
+      "title": "Stable Chrome + fixed-id unpacked extension + connector page + host trace log",
+      "result": "PASS",
+      "detail": {
+        "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+        "connector_target": "78660F0FA30B77B70BF82F33EEA3F3A5"
+      },
+      "seconds": 0.77
+    },
+    {
+      "id": "NMH-1",
+      "title": "hello over registered plain host behind external cmd wrapper",
+      "result": "PASS",
+      "detail": {
+        "host_pid": 86816,
+        "wrapper_pid": 85608,
+        "ancestry": [
+          {
+            "ProcessId": 85608,
+            "Name": "cmd.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\cmd.exe /d /s /c \"\"%USERPROFILE%\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe\" chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/ --parent-window=8062414\" < \\\\.\\pipe\\chrome.nativeMessaging.in.48b8d64def5332d6 > \\\\.\\pipe\\chrome.nativeMessaging.out.48b8d64def5332d6"
+          },
+          {
+            "ProcessId": 94556,
+            "Name": "chrome.exe",
+            "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --user-data-dir=%USERPROFILE%\\AppData\\Local\\Temp\\veles-otp23-profile-g2k6g3xu --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+          },
+          {
+            "ProcessId": 1828,
+            "Name": "python.exe",
+            "CommandLine": "\"%USERPROFILE%\\AppData\\Local\\Python\\bin\\python.exe\" scripts\\poc_background.py --flavour plain --out %USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\evidence\\poc-background-final.json"
+          },
+          {
+            "ProcessId": 94608,
+            "Name": "powershell.exe",
+            "CommandLine": "\"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\scripts\\invoke-poc.ps1\" -Script poc_background.py -OutPath \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\evidence\\poc-background-final.json\" -TaskName backgroundfinal"
+          },
+          {
+            "ProcessId": 3540,
+            "Name": "svchost.exe",
+            "CommandLine": ""
+          }
+        ]
+      },
+      "seconds": 2.8
+    },
+    {
+      "id": "PH-2",
+      "title": "Two physical phones: scan, connect, stop scan, clear events",
+      "result": "PASS",
+      "detail": {
+        "phones": 2,
+        "scan_stopped": true,
+        "events_cleared": true
+      },
+      "seconds": 4.91
+    },
+    {
+      "id": "PH-3",
+      "title": "Pre-idle warmup: 4096-byte record both handles, distinct seeds, byte-verified",
+      "result": "PASS",
+      "detail": {
+        "warmup_sends": 2,
+        "seeds": [
+          41,
+          53
+        ],
+        "timeout_s": 12,
+        "note": "foreground pre-idle; async notify collected across bounded polls; scheduled record keeps seed 17"
+      },
+      "seconds": 2.2
+    },
+    {
+      "id": "BG-1",
+      "title": "Schedule dual-send timer; about:blank; connector hidden",
+      "result": "PASS",
+      "detail": {
+        "scheduled_at_ms": 10037.299999952316,
+        "timer_ms": 610000,
+        "connector_hidden_pre_detach": "hidden"
+      },
+      "seconds": 0.02
+    },
+    {
+      "id": "BG-2",
+      "title": "Detach connector session; detached wait without connector CDP traffic",
+      "result": "PASS",
+      "detail": {
+        "connector_session_detached": true,
+        "browser_connection": "open",
+        "wait_s": 630,
+        "no_connector_cdp_traffic_during_wait": true
+      },
+      "seconds": 630.0
+    },
+    {
+      "id": "BG-3",
+      "title": "Reattach: two sent replies, byte-exact records, hidden, >= min elapsed",
+      "result": "PASS",
+      "detail": {
+        "elapsed_ms_from_schedule": {
+          "007774715189de19": 610378,
+          "c8bd9f9c18a1d7d8": 610472
+        },
+        "records": {
+          "00777471": {
+            "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+            "byte_exact": true
+          },
+          "c8bd9f9c": {
+            "sha256": "418aa4ae674b365df0a7e3adcd4a24b7a7c894fade4079ad983246ec2a35cbb8",
+            "byte_exact": true
+          }
+        },
+        "message_events_seen": 2
+      },
+      "seconds": 0.0
+    },
+    {
+      "id": "NMH-2",
+      "title": "shutdown; owned host pid gone",
+      "result": "PASS",
+      "detail": {
+        "shutdown_reply": "shutdown_complete",
+        "owned_pid_gone_s": 0.3
+      },
+      "seconds": 0.3
+    }
+  ]
+}

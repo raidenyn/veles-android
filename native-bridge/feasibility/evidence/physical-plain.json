@@ -1,0 +1,122 @@
+{
+  "flavour": "plain",
+  "cases": [
+    {
+      "case": "two-independent-connects",
+      "result": "PASS"
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 4,
+      "response_sha256": [
+        "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff"
+      ],
+      "request_ids": [
+        "r6-p6kicr",
+        "r7-6lfy6l"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 178,
+      "response_sha256": [
+        "042adb4c2152868cbcfef7200867b759dd24b4bd0243543e541348a9a8620e79",
+        "7faacd193ef2807484cd8f39e57a391616e5f09de112f75ffff753b440cba22b"
+      ],
+      "request_ids": [
+        "r8-d5z97p",
+        "r9-nezkas"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 179,
+      "response_sha256": [
+        "bca0e5b8c53c0700695bbdebc5c4cad9fde7bf54da7f422372e055fbe822f6d2",
+        "710a9d7741c3523e24d30514e15107a67f78746b2b957c106ed256daed2a0ff2"
+      ],
+      "request_ids": [
+        "ra-zpaxb8",
+        "rb-v3m9vg"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 180,
+      "response_sha256": [
+        "dd17ffc678e916960486d615dfc9a22e53d0548f62a75148e085c11a4130e5ff",
+        "2beed8be47d975aeef3ff2582c55380126e856f1c853aa5ebef9060dd40870b2"
+      ],
+      "request_ids": [
+        "rc-4jy638",
+        "rd-s9rgf1"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 505,
+      "response_sha256": [
+        "3a2bb7e217bdd4c9e35be8e2cbce365150e1e8854bb01aa9f41fbe5ee167d792",
+        "57f983e905471c56926e8da70b34577ad8ceccfada16aafa8833ae4acc6c8fcf"
+      ],
+      "request_ids": [
+        "re-w5z79y",
+        "rf-qebr3n"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 506,
+      "response_sha256": [
+        "48bab92d80f77bf6d91a45c454d237058fc4a58f337f1299a03629f03f5ce23e",
+        "b0ea913583399ba02001237d03adf29f5ca05e85f2ff2f83a68f9b5529933c32"
+      ],
+      "request_ids": [
+        "rg-8dpp6d",
+        "rh-iyi7hb"
+      ]
+    },
+    {
+      "case": "concurrent-whole-records",
+      "result": "PASS",
+      "bytes_per_phone": 507,
+      "response_sha256": [
+        "2a4ddac54a87bb8de3b924b353a570ebb7c1563a25bc610fbea453110d62ecd1",
+        "d3b28d69a3a1c744111a998c2a6d8db30791f472af6cc55178bee74af6dc7ae3"
+      ],
+      "request_ids": [
+        "ri-c5p3bc",
+        "rj-j05y4j"
+      ]
+    }
+  ],
+  "result": "FAIL",
+  "chrome_version": "Chrome/155.0.8059.85",
+  "host_pid": 87052,
+  "setup_replies": [
+    {
+      "api_version": 1,
+      "connection_handle": "600e794c80e380a7",
+      "envelope_version": 1,
+      "platform_hint": "winrt:53084f189c1e:1",
+      "request_id": "r3-msc73p",
+      "type": "connected"
+    },
+    {
+      "api_version": 1,
+      "connection_handle": "37dd8a389e3bb535",
+      "envelope_version": 1,
+      "platform_hint": "winrt:704c6aee803a:1",
+      "request_id": "r4-r9g52w",
+      "type": "connected"
+    }
+  ],
+  "failure": "Traceback (most recent call last):\n  File \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\scripts\\physical_validate.py\", line 105, in run\n    evidence = exchange(handles, size, [17 + index, 137 + index])\n  File \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\scripts\\physical_validate.py\", line 99, in exchange\n    require(len(received) == len(expected), f\"only {len(received)}/{len(expected)} responses\")\n    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"%USERPROFILE%\\repos\\veles-otp23-windows\\native-bridge\\feasibility\\scripts\\physical_validate.py\", line 27, in require\n    raise AssertionError(detail)\nAssertionError: only 0/2 responses\n"
+}
