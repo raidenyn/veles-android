@@ -125,7 +125,9 @@ def render(matrix):
         "**Remaining physical cases** (later 2026-10-30): M-04, A-01 and W-10 are PASS on independently reviewed controlled evidence. M-04 displayed exact guidance and recovered without a reset in the same extension state; "
         "A-01 uses explicitly labelled real-link callback injection, actual CCCD-before-MTU radio traffic and direct phone-side Mac MTU ordering; W-10 deliberately controlled radio-off, no available adapter and exclusive-service OS access denial (not privacy-policy denial). "
         "Kimi K3.1 Pro independently approved evidence and code after the stale-guidance fix. R-01 is reopened BLOCKED: new code is uncommitted/unpublished, and earlier Opus committed-tree reviews do not cover it. "
-        "Current 28 PASS / 1 BLOCKED (R-01) / 3 waived NOT RUN, NO-GO; expected text/waivers unchanged, and OTP-24 is not authorized.",
+        "At that integration R-01 remained BLOCKED (28 PASS / 1 BLOCKED / 3 waived NOT RUN); that dated state is superseded by the final review below.",
+        "",
+        "**Final committed-tree review** (2026-10-30): owner-selected Kimi K3.1 Pro independently APPROVED committed integration 54386fddc26c510af53e56b78c8ff52ec7161678, tree 4eb098734ab86231e2d40f6d27384d871ea7bbb5. R-01 is PASS on that reviewed commit; this subsequent metadata-only attestation is not claimed to have been reviewed as a commit object. Current 29 PASS / 0 BLOCKED / 3 waived NOT RUN; GO for feasibility eligibility, not automatic authorization to implement OTP-24.",
         "",
         "Fresh rows start `NOT RUN`. Historical PoC results are context in the narrative documents, never a PASS here:",
         "they were taken with different binaries, an administrator account and (for background) a connected browser-level",

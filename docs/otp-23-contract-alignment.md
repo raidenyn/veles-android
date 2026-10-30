@@ -882,7 +882,15 @@ address redactions are in `native-bridge/feasibility/evidence/otp23-rest-2026-10
 protected locally, not an off-host backup. Hardware sessions, fixtures, processes, tasks and native
 registrations were cleaned; radio ON, persistent disabled/problem flags 0, original APKs restored.
 
-**R-01 is reopened BLOCKED:** this integrated source is uncommitted/unpublished; the existing final
+**R-01 was reopened BLOCKED:** at that point the integrated source was uncommitted/unpublished; the existing final
 committed-tree review is not satisfied by historical Opus records or a Kimi working-tree review.
 Reviewer identity is not rewritten and expected text is unchanged. No new waiver, commit/push,
 merge, OTP-23 GO or OTP-24 authorization is claimed.
+
+### Final committed-tree review
+
+User-selected Kimi K3.1 Pro independently approved commit `54386fddc26c510af53e56b78c8ff52ec7161678`
+(tree `4eb098734ab86231e2d40f6d27384d871ea7bbb5`), with no remaining critical or important findings.
+The bounded metadata-only follow-up records that review, not a review of its own future commit.
+R-01 is PASS; **29 PASS / 0 BLOCKED / 3 waived NOT RUN — GO** for feasibility eligibility. The three
+account-waived cases remain NOT RUN, and GO does not automatically authorize OTP-24 implementation.

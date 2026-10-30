@@ -491,3 +491,10 @@ locally. No raw model errors/headers/transcripts are published.
 committed-tree review gate, reopened because this new integrated code is still uncommitted and
 the earlier Opus approvals cannot cover it. Kimi is not attributed as Opus. Expected criteria and
 waivers are unchanged; no OTP-24 authorization or publication is claimed.
+
+**Final review follow-up:** owner-selected Kimi K3.1 Pro approved committed integration
+`54386fddc26c510af53e56b78c8ff52ec7161678` (tree `4eb098734ab86231e2d40f6d27384d871ea7bbb5`)
+with no remaining critical/important findings. R-01 is PASS via a separate bounded metadata-only
+attestation. Current **29 PASS / 0 BLOCKED / 3 waived NOT RUN — GO** for OTP-23 feasibility
+eligibility. The attestation is not itself claimed as reviewed, and GO does not automatically
+authorize OTP-24 implementation.

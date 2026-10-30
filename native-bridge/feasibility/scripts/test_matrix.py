@@ -18,7 +18,7 @@ REPO = HERE.parent.parent.parent
 EVIDENCE = REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26"
 BASE = m.load()
 # Physical cases are reviewed; the new code still needs its committed-tree/publication review.
-OPEN_ROWS = ("R-01",)
+OPEN_ROWS = ()
 
 
 def with_row(row_id, **changes):
@@ -245,7 +245,7 @@ class CommittedMatrix(unittest.TestCase):
         # the cold row does not claim the partial JUnit log and stays separate from prewarm
         self.assertIn("NO PASS is claimed from it", by_id["M-09"]["actual"])
         self.assertIn("never combined", by_id["M-10"]["actual"])
-        self.assertEqual(m.decision(BASE)[0], "NO-GO")
+        self.assertEqual(m.decision(BASE)[0], "GO")
 
     def test_mac_m08_m11_final_integration_2026_10_29(self):
         """The 2026-10-29 Mac integration promotes exactly M-08 and M-11 on frozen, checksum-pinned
@@ -255,8 +255,8 @@ class CommittedMatrix(unittest.TestCase):
         rows = {r["id"]: r for r in BASE["rows"]}
         evidence = REPO / "native-bridge/feasibility/evidence"
         counts = {s: sum(1 for r in BASE["rows"] if r["status"] == s) for s in m.STATUSES}
-        self.assertEqual((counts["PASS"], counts["BLOCKED"], counts["NOT RUN"], counts["FAIL"]), (28, 1, 3, 0))
-        self.assertEqual(m.decision(BASE), ("NO-GO", list(OPEN_ROWS)))
+        self.assertEqual((counts["PASS"], counts["BLOCKED"], counts["NOT RUN"], counts["FAIL"]), (29, 0, 3, 0))
+        self.assertEqual(m.decision(BASE), ("GO", list(OPEN_ROWS)))
         self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
         # frozen inputs are pinned; the active integration folder is verified but not pinned
         pinned = {"mac-retake-2026-10-29": "f952c123a1c74a5b1c811f4faa2453ed5f81cae49e39e3f974136798e4ea6455",
@@ -426,7 +426,7 @@ class CommittedMatrix(unittest.TestCase):
             self.assertEqual(rows[rid]["status"], "BLOCKED", rid)
         self.assertIn("no TCC reset", rows["M-04"]["expected"])
         self.assertIn("26 PASS / 3 BLOCKED / 3 waived NOT RUN", rows["D-02"]["actual"])
-        self.assertEqual(m.decision(BASE), ("NO-GO", ["R-01"]))
+        self.assertEqual(m.decision(BASE), ("GO", []))
         self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
 
     def test_remaining_physical_cases_have_real_evidence_and_keep_the_publication_hold(self):
@@ -508,11 +508,25 @@ class CommittedMatrix(unittest.TestCase):
         cleanup = load("windows-reboot/capture/final-reboot-cleanup.json")
         self.assertEqual((cleanup["own_processes_left"], cleanup["holder_process_left"], cleanup["own_tasks_left"]), ([], [], []))
         self.assertTrue(cleanup["registration_absent"])
-        self.assertEqual((rows["R-01"]["status"], rows["R-01"]["waiver"]), ("BLOCKED", ""))
-        self.assertIn("uncommitted", rows["R-01"]["blocker"])
+        self.assertEqual((rows["R-01"]["status"], rows["R-01"]["waiver"]), ("PASS", ""))
+        self.assertIn("54386fddc26c510af53e56b78c8ff52ec7161678", rows["R-01"]["actual"])
         self.assertIn("kimi-code-plan-global/k3.1-pro", rows["R-01"]["expected"])
-        self.assertEqual(m.decision(BASE), ("NO-GO", ["R-01"]))
+        self.assertEqual(m.decision(BASE), ("GO", []))
         self.assertEqual(m.waived(BASE), ["W-01", "M-01", "M-02"])
+
+    def test_final_committed_tree_review_attestation(self):
+        root = REPO / "native-bridge/feasibility/evidence/final-review-2026-10-30"
+        for line in (root / "SHA256SUMS").read_text().splitlines():
+            digest, name = line.split("  ", 1)
+            self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), digest, name)
+        metadata = json.loads((root / "reviewer-metadata.json").read_text())
+        self.assertEqual((metadata["provider"], metadata["model"]), ("kimi-code-plan-global", "k3.1-pro"))
+        self.assertEqual(metadata["reviewed_commit"], "54386fddc26c510af53e56b78c8ff52ec7161678")
+        self.assertEqual(metadata["reviewed_tree"], "4eb098734ab86231e2d40f6d27384d871ea7bbb5")
+        report = (root / "kimi31-final-commit-review.md").read_bytes()
+        self.assertEqual(hashlib.sha256(report).hexdigest(), metadata["report_sha256"])
+        self.assertIn(b"**Verdict: APPROVED**", report)
+        self.assertEqual(m.decision(BASE), ("GO", []))
 
     def test_post_grant_identity_and_gate_counts_come_from_real_outputs(self):
         base = REPO / "native-bridge/feasibility/evidence/post-grant-2026-10-26"
@@ -644,8 +658,8 @@ class CommittedMatrix(unittest.TestCase):
             self.assertTrue((REPO / "native-bridge/feasibility/evidence/fresh-2026-10-26/opus-final-ingress-verification.json").exists())
             verdict, open_rows = m.decision(BASE)
             self.assertEqual("R-01" in open_rows, row["status"] != "PASS")
-            self.assertEqual(verdict, "NO-GO")
-            self.assertTrue(open_rows)  # a review PASS never makes the decision GO
+            self.assertEqual(verdict, "GO")
+            self.assertFalse(open_rows)
             return
         provenance = json.loads((EVIDENCE / "model-provenance.json").read_text(encoding="utf-8"))["final_review"]
         raw_names = [e for e in row["evidence"] if pathlib.Path(e).name.startswith("opus-") and e.endswith(".json")]
@@ -720,7 +734,7 @@ class CommittedMatrix(unittest.TestCase):
         by_id = {r["id"]: r for r in BASE["rows"]}
         self.assertEqual((by_id["A-01"]["status"], by_id["A-01"]["blocker"]), ("PASS", ""))
         self.assertIn("2026-10-30 REMAINING-CASES INTEGRATION", by_id["A-01"]["actual"])
-        self.assertEqual(by_id["R-01"]["status"], "BLOCKED")
+        self.assertEqual(by_id["R-01"]["status"], "PASS")
 
     def test_existing_account_unsigned_host_row_keeps_its_not_run_history_beside_the_scoped_pass(self):
         """M-11 was never waived: it stayed BLOCKED until it was executed on the existing account and
@@ -842,7 +856,7 @@ class CommittedMatrix(unittest.TestCase):
         # the later strict-mac-20261027 adjudication promoted only M-09/M-10, under the clarified criterion
         for rid in ("M-09", "M-10"):
             self.assertEqual(rows[rid]["status"], "PASS", rid)
-        self.assertEqual(m.decision(BASE)[0], "NO-GO")
+        self.assertEqual(m.decision(BASE)[0], "GO")
         self.assertTrue(any("owner approval 2026-10-27" in key for key in BASE["sources"]))
         self.assertIn("Signing-provenance amendment", m.render(BASE))
         rfc = (m.ROOT.parent.parent / "docs" / "rfcs" / "2026-08-21-otp-external-devices.md").read_text(encoding="utf-8")
@@ -919,7 +933,7 @@ class CommittedMatrix(unittest.TestCase):
         self.assertEqual(len(key), 1)
         self.assertIn("strict-mac-20261027", BASE["sources"][key[0]])
         self.assertIn("stays NO-GO", BASE["sources"][key[0]])
-        self.assertEqual(m.decision(BASE)[0], "NO-GO")
+        self.assertEqual(m.decision(BASE)[0], "GO")
 
 
 class Rules(unittest.TestCase):
