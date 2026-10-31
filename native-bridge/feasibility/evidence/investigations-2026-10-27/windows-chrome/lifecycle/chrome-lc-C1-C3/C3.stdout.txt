@@ -1,0 +1,2 @@
+[PASS   ] LC-port-disconnect none
+lifecycle: PASS (1 scenario(s)) -> C:\Users\yuriy\otp23-probe\chrome-lc\C3

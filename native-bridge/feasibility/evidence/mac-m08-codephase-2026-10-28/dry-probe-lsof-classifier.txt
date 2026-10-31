@@ -1,0 +1,13 @@
+== Linux dry probe: macos_poc.classify_lsof_stderr / lsof_endpoints (P0-A, Opus acceptance check 1)
+classify(no foreign set — anything unknown stays unavailable) -> (False, None)
+classify(verbatim block, preflight-recorded foreign point) -> (True, [{'path': '/private/var/folders/yc/d7qkpc795mz8nprkhm8xlpr80000gp/T/AppTranslocation/7BA7CCAC-123C-4593-9838-F34CA30F033C', 'dev': '2e000004'}])
+== lsof_endpoints: fake /sbin/mount + fake lsof (both fakes are recorded here as data)
+WITH diagnostic env (benign + mandatory record) -> [{'local_port': 51111, 'remote_port': None, 'state': 'LISTEN'}]
+diagnostics line 1 verbatim: {"wall_ms": 1793204596397, "pid": 700, "argv": ["lsof", "-nP", "-a", "-p", "700", "-i"], "rc": 1, "stdout_rows": 2, "stderr_verbatim": "lsof: WARNING: can't stat() nullfs file system /private/var/fold
+snapshot content:
+# sanitized nullfs mount-table snapshot (mount points only; source paths dropped; owner names redacted as uid=self / uid≠self)
+on /private/var/folders/yc/d7qkpc795mz8nprkhm8xlpr80000gp/T/AppTranslocation/7BA7CCAC-123C-4593-9838-F34CA30F033C (nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by uid≠self)
+
+WITHOUT env (fail-closed: benign warning unaudited => unavailable) -> None
+== argv check: no -w anywhere (argv stays normal)
+'-w' present: False

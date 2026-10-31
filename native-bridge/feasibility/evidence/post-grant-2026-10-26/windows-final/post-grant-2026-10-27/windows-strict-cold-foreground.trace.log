@@ -1,0 +1,36 @@
+[       0ms pid=44724] start pid=44724
+[       1ms pid=44724] in  len=81 type=hello request_id=r1-65ayrt
+[       1ms pid=44724] out len=183 type=ready request_id=r1-65ayrt api_version=1
+[     481ms pid=44724] in  len=137 type=start_scan request_id=r2-5tkui5 api_version=1
+[     535ms pid=44724] out len=135 type=scan_state request_id=r2-5tkui5 api_version=1 status=started scan_handle=7c22113afa469c75
+[     980ms pid=44724] out len=195 type=device_found api_version=1 scan_handle=7c22113afa469c75 device_handle=8dedbc9f4da5756e label.len=17 platform_hint.len=20
+[    1825ms pid=44724] out len=195 type=device_found api_version=1 scan_handle=7c22113afa469c75 device_handle=4e579b27a6d2e753 label.len=17 platform_hint.len=20
+[    2539ms pid=44724] in  len=115 type=connect request_id=r3-fmeqf0 api_version=1 device_handle=4e579b27a6d2e753
+[    2570ms pid=44724] conn 2 device at 30ms
+[    2591ms pid=44724] conn 2 session at 51ms
+[    4926ms pid=44724] conn 2 service at 2386ms
+[    4926ms pid=44724] conn 2 mtu=517 at 2386ms
+[    4993ms pid=44724] conn 2 write properties=0x4
+[    5065ms pid=44724] conn 2 notify properties=0x10
+[    5065ms pid=44724] conn 2 characteristics at 2525ms
+[    5147ms pid=44724] conn 2 subscribed at 2607ms
+[    5147ms pid=44724] out len=160 type=connected request_id=r3-fmeqf0 api_version=1 connection_handle=89943b3bdc96c41b platform_hint.len=20
+[    5148ms pid=44724] in  len=115 type=connect request_id=r4-hupien api_version=1 device_handle=8dedbc9f4da5756e
+[    5169ms pid=44724] conn 3 device at 20ms
+[    5190ms pid=44724] conn 3 session at 41ms
+[    7811ms pid=44724] conn 3 service at 2662ms
+[    7811ms pid=44724] conn 3 mtu=517 at 2662ms
+[    7888ms pid=44724] conn 3 write properties=0x4
+[    7962ms pid=44724] conn 3 notify properties=0x10
+[    7962ms pid=44724] conn 3 characteristics at 2813ms
+[    8065ms pid=44724] conn 3 subscribed at 2916ms
+[    8065ms pid=44724] out len=160 type=connected request_id=r4-hupien api_version=1 connection_handle=017ab65cac1e06d1 platform_hint.len=20
+[    8066ms pid=44724] in  len=115 type=stop_scan request_id=r5-e4rxj5 api_version=1 scan_handle=7c22113afa469c75
+[    8067ms pid=44724] out len=135 type=scan_state request_id=r5-e4rxj5 api_version=1 status=stopped scan_handle=7c22113afa469c75
+[  695329ms pid=44724] out len=5577 type=message api_version=1 connection_handle=89943b3bdc96c41b record_base64.len=5464
+[  698190ms pid=44724] out len=5577 type=message api_version=1 connection_handle=017ab65cac1e06d1 record_base64.len=5464
+[  728088ms pid=44724] in  len=81 type=shutdown request_id=r6-4cti9l api_version=1
+[  728088ms pid=44724] out len=99 type=disconnected api_version=1 connection_handle=89943b3bdc96c41b
+[  728088ms pid=44724] out len=99 type=disconnected api_version=1 connection_handle=017ab65cac1e06d1
+[  728088ms pid=44724] out len=90 type=shutdown_complete request_id=r6-4cti9l api_version=1
+[  728088ms pid=44724] exit code=0 stdout_drained=true

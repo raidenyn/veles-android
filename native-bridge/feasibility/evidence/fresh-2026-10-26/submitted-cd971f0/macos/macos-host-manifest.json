@@ -1,0 +1,9 @@
+{
+  "name": "me.nagaev.veles.otp23.plain",
+  "description": "Veles OTP-23 macOS PoC host; synthetic bytes only",
+  "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/"
+  ]
+}

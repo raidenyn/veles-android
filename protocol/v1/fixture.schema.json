@@ -1559,7 +1559,8 @@
       "properties": {
         "mtu": {
           "type": "integer",
-          "minimum": 185
+          "minimum": 185,
+          "maximum": 517
         },
         "transactions": {
           "type": "array",

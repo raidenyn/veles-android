@@ -1,0 +1,73 @@
+[       0ms pid=14136] start pid=14136
+[       1ms pid=14136] in  len=81 type=hello request_id=r1-kbp6fv
+[       1ms pid=14136] out len=183 type=ready request_id=r1-kbp6fv api_version=1
+[    4631ms pid=14136] in  len=137 type=start_scan request_id=r2-f56u4u api_version=1
+[    4685ms pid=14136] out len=135 type=scan_state request_id=r2-f56u4u api_version=1 status=started scan_handle=de5766262e4751cb
+[    5130ms pid=14136] out len=195 type=device_found api_version=1 scan_handle=de5766262e4751cb device_handle=918f1446f63716aa label.len=17 platform_hint.len=20
+[    5365ms pid=14136] out len=195 type=device_found api_version=1 scan_handle=de5766262e4751cb device_handle=1b5e60ff315e1837 label.len=17 platform_hint.len=20
+[    5689ms pid=14136] in  len=115 type=connect request_id=r3-do02ve api_version=1 device_handle=918f1446f63716aa
+[    5689ms pid=14136] in  len=115 type=connect request_id=r4-vioeye api_version=1 device_handle=1b5e60ff315e1837
+[    5689ms pid=14136] conn 2 connect worker started epoch_ms=1793149131061 hint=winrt:..de24:1
+[    5689ms pid=14136] conn 3 connect worker started epoch_ms=1793149131061 hint=winrt:..59ff:1
+[    5730ms pid=14136] conn 3 device at 40ms
+[    5730ms pid=14136] conn 2 device at 41ms
+[    5751ms pid=14136] conn 3 session at 61ms
+[    5751ms pid=14136] conn 2 session at 62ms
+[    6732ms pid=14136] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6732ms pid=14136] conn 3 service at 1043ms
+[    6732ms pid=14136] conn 3 mtu=517 at 1043ms
+[    6891ms pid=14136] conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6891ms pid=14136] conn 3 write properties=0x4
+[    6964ms pid=14136] conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6964ms pid=14136] conn 3 notify properties=0x10
+[    6964ms pid=14136] conn 3 characteristics at 1274ms
+[    6985ms pid=14136] conn 3 subscribed at 1295ms
+[    6985ms pid=14136] out len=160 type=connected request_id=r4-vioeye api_version=1 connection_handle=819968a923e76596 platform_hint.len=20
+[    7122ms pid=14136] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7122ms pid=14136] conn 2 service at 1433ms
+[    7122ms pid=14136] conn 2 mtu=517 at 1433ms
+[    7363ms pid=14136] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7363ms pid=14136] conn 2 write properties=0x4
+[    7560ms pid=14136] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7560ms pid=14136] conn 2 notify properties=0x10
+[    7560ms pid=14136] conn 2 characteristics at 1871ms
+[    7592ms pid=14136] conn 2 subscribed at 1902ms
+[    7592ms pid=14136] out len=160 type=connected request_id=r3-do02ve api_version=1 connection_handle=cc5ce882562af37b platform_hint.len=20
+[    7593ms pid=14136] in  len=115 type=stop_scan request_id=r5-03gjxr api_version=1 scan_handle=de5766262e4751cb
+[    7593ms pid=14136] out len=135 type=scan_state request_id=r5-03gjxr api_version=1 status=stopped scan_handle=de5766262e4751cb
+[    7594ms pid=14136] in  len=159 type=send request_id=r6-bk0eob api_version=1 connection_handle=cc5ce882562af37b record_base64.len=24
+[    7604ms pid=14136] out len=116 type=sent request_id=r6-bk0eob api_version=1 connection_handle=cc5ce882562af37b
+[    7620ms pid=14136] out len=137 type=message api_version=1 connection_handle=cc5ce882562af37b record_base64.len=24
+[    7626ms pid=14136] in  len=159 type=send request_id=r7-fkibs9 api_version=1 connection_handle=819968a923e76596 record_base64.len=24
+[    7636ms pid=14136] out len=116 type=sent request_id=r7-fkibs9 api_version=1 connection_handle=819968a923e76596
+[    7672ms pid=14136] out len=137 type=message api_version=1 connection_handle=819968a923e76596 record_base64.len=24
+[    7678ms pid=14136] in  len=137 type=start_scan request_id=r8-i6uq4h api_version=1
+[    7724ms pid=14136] out len=135 type=scan_state request_id=r8-i6uq4h api_version=1 status=started scan_handle=4b6f30162303dc1c
+[    7737ms pid=14136] in  len=5599 type=send request_id=r9-ptrr8o api_version=1 connection_handle=cc5ce882562af37b record_base64.len=5464
+[    7831ms pid=14136] out len=116 type=sent request_id=r9-ptrr8o api_version=1 connection_handle=cc5ce882562af37b
+[    8073ms pid=14136] out len=5577 type=message api_version=1 connection_handle=cc5ce882562af37b record_base64.len=5464
+[    8104ms pid=14136] in  len=5599 type=send request_id=ra-qsf2na api_version=1 connection_handle=819968a923e76596 record_base64.len=5464
+[    8196ms pid=14136] out len=116 type=sent request_id=ra-qsf2na api_version=1 connection_handle=819968a923e76596
+[    8239ms pid=14136] out len=195 type=device_found api_version=1 scan_handle=4b6f30162303dc1c device_handle=ec16d92214750c4c label.len=17 platform_hint.len=20
+[    8583ms pid=14136] out len=195 type=device_found api_version=1 scan_handle=4b6f30162303dc1c device_handle=4b5e71527094f369 label.len=17 platform_hint.len=20
+[    8655ms pid=14136] out len=5577 type=message api_version=1 connection_handle=819968a923e76596 record_base64.len=5464
+[    8681ms pid=14136] conn 2 disconnect requested epoch_ms=1793149134053
+[    8681ms pid=14136] conn 3 disconnect requested epoch_ms=1793149134053
+[    8681ms pid=14136] conn 2 close begin
+[    8681ms pid=14136] conn 3 close begin
+[    8681ms pid=14136] conn 3 close step remove_value_changed at 0ms ok
+[    8681ms pid=14136] conn 2 close step remove_value_changed at 0ms ok
+[    8681ms pid=14136] conn 2 close step remove_status_changed at 0ms ok
+[    8681ms pid=14136] conn 3 close step remove_status_changed at 0ms ok
+[    8682ms pid=14136] conn 3 close step service_close at 0ms ok
+[    8682ms pid=14136] conn 3 close step maintain_false at 1ms ok
+[    8682ms pid=14136] conn 2 close step service_close at 1ms ok
+[    8682ms pid=14136] conn 2 close step maintain_false at 1ms ok
+[    8683ms pid=14136] conn 3 close step session_close at 1ms ok
+[    8683ms pid=14136] conn 2 close step session_close at 1ms ok
+[    8683ms pid=14136] conn 3 close step device_close at 2ms ok
+[    8684ms pid=14136] conn 2 close step device_close at 2ms ok
+[    8684ms pid=14136] conn 3 released (objects closed; link-down unconfirmed)
+[    8684ms pid=14136] conn 2 released (objects closed; link-down unconfirmed)
+[    8691ms pid=14136] shutdown joined 2/2 within 10ms
+[    8691ms pid=14136] exit code=0 stdout_drained=true

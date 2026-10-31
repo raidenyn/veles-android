@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/usr/bin/log",
+    "show",
+    "--start",
+    "2026-10-30 09:23:30",
+    "--end",
+    "2026-10-30 09:27:00",
+    "--style",
+    "ndjson",
+    "--info",
+    "--predicate",
+    "process == \"tccd\" AND eventMessage CONTAINS \"15918.2\""
+  ],
+  "returncode": 0,
+  "captured_utc": "2026-10-30T02:28:45.248611+00:00"
+}

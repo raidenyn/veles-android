@@ -1,0 +1,11 @@
+[2026-10-29T04:34:32.438Z] scenario=shutdown attempt=1 run_id=mac-m08-shutdown-20261029T043432Z
+REMOTE-NEW
+[2026-10-29T04:34:35.792Z] fixture 6T (2be02e41) started, adb client pid 523678
+[2026-10-29T04:34:35.805Z] fixture 10Pro (864a3db0) started, adb client pid 523683
+[2026-10-29T04:34:51.162Z] fixtures ready=1 after 3s
+[2026-10-29T04:34:53.905Z] driver start mac_ms=1793248493660
+[2026-10-29T04:35:03.371Z] driver returned
+[2026-10-29T04:36:11.341Z] post-driver hold done; second host-gone check: none 
+[2026-10-29T04:36:34.498Z] stop files created
+[2026-10-29T04:36:34.831Z] instrumentation ended (wait 1s)
+[2026-10-29T04:36:41.465Z] pulled mac evidence: chrome-argv-samples.txt driver-stderr.txt driver-stdout.txt lifecycle.json lsof-diagnostics.jsonl mount-nullfs.txt run-provenance.json shutdown.host-trace.log shutdown.json 

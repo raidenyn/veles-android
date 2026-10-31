@@ -1,0 +1,162 @@
+{
+  "driver": "macos_permission_recovery",
+  "started_utc": "2026-10-30T03:14:56+00:00",
+  "commands": [
+    "%HOME%/homepc/work/otp23-m04-20261030/run_m04.py"
+  ],
+  "result": "PASS",
+  "macos_version": "26.5.2",
+  "python_version": "3.9.6",
+  "abort": null,
+  "human_settings_observation": {
+    "text": null,
+    "source": "not_supplied",
+    "kind": "Settings entry observation; not a TCC database attribution"
+  },
+  "waivers": [
+    "fresh new-account first prompt: not observed (already granted account); non-blocking"
+  ],
+  "unsigned_dev_matrix": "unmet unless the parent supplies a separate explicit unsigned app via --app; nothing is created here",
+  "provenance_note": "Apple Development signing is not CI/distribution provenance",
+  "host_binary": "%HOME%/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "host_binary_sha256_start": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "source_revision": {
+    "available": false,
+    "stage": "rev-parse",
+    "reason": "fatal: not a git repository (or any of the parent directories): .git"
+  },
+  "run": {
+    "baseline": {
+      "sentinel_sha256": "7eb9c0c9c3a04062187d0acd7bd397c3b0b8d7ac6ec121c12692b0ea2b5878b7",
+      "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+      "chrome_pid": 25216,
+      "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-7dfy7kon",
+      "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+      "signature": {
+        "available": true,
+        "identifier": "me.nagaev.veles.bridge",
+        "team": "7T39M26Z99",
+        "signature": null,
+        "authority": "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)",
+        "cdhash": null
+      },
+      "load_unpacked_calls": 1,
+      "utc": "2026-10-30T03:14:58+00:00",
+      "hello_type": "ready",
+      "scan_class": "started",
+      "devices": 1,
+      "host_gone": true
+    },
+    "denied": {
+      "sentinel_sha256": "7eb9c0c9c3a04062187d0acd7bd397c3b0b8d7ac6ec121c12692b0ea2b5878b7",
+      "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+      "chrome_pid": 25216,
+      "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-7dfy7kon",
+      "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+      "signature": {
+        "available": true,
+        "identifier": "me.nagaev.veles.bridge",
+        "team": "7T39M26Z99",
+        "signature": null,
+        "authority": "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)",
+        "cdhash": null
+      },
+      "load_unpacked_calls": 1,
+      "utc": "2026-10-30T03:21:33+00:00",
+      "hello_type": "ready",
+      "scan_class": "access_denied",
+      "scan_reply_code": [
+        "scan_failed",
+        "access_denied"
+      ],
+      "scan_reply": {
+        "api_version": 1,
+        "code": "scan_failed",
+        "envelope_version": 1,
+        "recoverability": "retryable",
+        "request_id": "r5-3arge0",
+        "stage": "access_denied",
+        "type": "error"
+      },
+      "permission_guidance": {
+        "visible": true,
+        "text": "Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth, enable VelesOtp23PoC, return to this connector, and retry the scan. Keep this extension loaded; no reinstall or permission reset is needed.",
+        "document_visibility": "visible",
+        "document_focused": true
+      },
+      "host_gone": true,
+      "ack": {
+        "toggled": "off",
+        "entry_label": "VelesOtp23PoC",
+        "prompt": "unknown",
+        "note": "Owner selected VelesOtp23PoC is OFF in the attended question; no new popup observation supplied"
+      },
+      "ack_error": null
+    },
+    "recovered": {
+      "sentinel_sha256": "7eb9c0c9c3a04062187d0acd7bd397c3b0b8d7ac6ec121c12692b0ea2b5878b7",
+      "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+      "chrome_pid": 25216,
+      "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-7dfy7kon",
+      "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+      "signature": {
+        "available": true,
+        "identifier": "me.nagaev.veles.bridge",
+        "team": "7T39M26Z99",
+        "signature": null,
+        "authority": "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)",
+        "cdhash": null
+      },
+      "load_unpacked_calls": 1,
+      "utc": "2026-10-30T03:23:03+00:00",
+      "hello_type": "ready",
+      "scan_class": "started",
+      "devices": 1,
+      "stop_status": "stopped",
+      "shutdown_type": "shutdown_complete",
+      "permission_guidance": {
+        "visible": false,
+        "text": "",
+        "document_visibility": "visible",
+        "document_focused": false
+      },
+      "host_gone": true,
+      "ack": {
+        "toggled": "on",
+        "entry_label": "VelesOtp23PoC",
+        "prompt": "unknown",
+        "note": "Owner selected Saw guidance; switched ON; no new popup observation supplied"
+      },
+      "ack_error": null
+    },
+    "profile_removed": true
+  },
+  "native_trace_safe_summary": {
+    "conn_observations": 0,
+    "sends": 0,
+    "replies": 0,
+    "payloads_recorded": false
+  },
+  "host_binary_sha256_end": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "guidance_required": true,
+  "failures": [],
+  "phases": {
+    "baseline": {
+      "ok": true
+    },
+    "denied": {
+      "ok": true
+    },
+    "recovered": {
+      "ok": true
+    }
+  },
+  "same_state_recovery": true,
+  "prompt_observation": {
+    "value": "unknown",
+    "source": "human via ack file",
+    "popup_owner": "not inferred"
+  },
+  "fresh_first_prompt": "not_observed; waived non-blocking for new accounts (this account was already granted)",
+  "finished_utc": "2026-10-30T03:23:04+00:00"
+}

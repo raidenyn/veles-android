@@ -1,0 +1,2 @@
+$ ci.yml lint-check guard step, copied verbatim
+guard exit=0 (no output above = no matches)

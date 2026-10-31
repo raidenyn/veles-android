@@ -1,0 +1,36 @@
+what: source-hash inventory of the integrated working tree (non-evidence tracked changes + untracked non-evidence files), written after the last source/doc edit
+generated_utc=2026-10-29T15:50:36Z
+head=9c3ddc54a3721eced84e49f02ed76ef156f0baed
+branch=contract/otp23-desktop-alignment
+git_diff_sha256=dec764f4dcd02f62dc4a55c2a3b28d29468520d60ed1ba4d0a615cf91a9ac50d  (git diff of tracked files, all paths)
+## modified tracked files (git diff --name-only)
+df1305d4d3729318d4e9cef123a1c0cd1fcbcf46e4ffaea09e7f0e45f1ba6291  .github/workflows/otp23-feasibility.yml
+6c4e1ef2f2419184bd0cae3adfcb39aa6c609db5757f70586679ed955ff15e09  docs/otp-23-contract-alignment.md
+4a8088a53b8d22dd1b406ab24cea0a0c83defa11fc5ba1da5c984e87c0fc1f22  docs/otp-23-investigations.md
+542d1b5d4f66f4de27e92b0b6293ec992bb88860c9406ecbdf351341ade50594  docs/otp-23-requirements-matrix.md
+3b570be309e42ce3488c5e2e5ded4e3a5f34420d3f0d3bdccffc3a419748b0b9  docs/rfcs/2026-08-21-otp-external-devices.md
+8a54f57139941db0f3f35c560b4a21bcd6aa3a93335add7018a8c992f356c28f  native-bridge/feasibility/acceptance/otp23-matrix.json
+e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0  native-bridge/feasibility/scripts/macos_poc.py
+3d45aac15a2f132e57ba8d851e6639f90f3ea9e72267c8877cabb7ab6be7016c  native-bridge/feasibility/scripts/matrix.py
+f8bbf2d6ea158d2bd30bee35b97a655c727a7ca7fc677a5c9a3a53eafe6b7f28  native-bridge/feasibility/scripts/scenario_matrix.py
+a729dcceb71c2bf8123c2529b59db37f8ede0bf5f9af170bd3b9f2f4f7d3fb3a  native-bridge/feasibility/scripts/test_macos_poc.py
+4a7b106aaa3fedba44ae5dc6e1953b0e5c8c0f9ca757cda4229682e71e794f83  native-bridge/feasibility/scripts/test_matrix.py
+## untracked files outside evidence/
+8e6b9bbbb221b33285a7a6b30e9122ef826a74e6dcbfd450550f4dbaf19c418f  native-bridge/feasibility/scripts/mac_clock_corroborate.py
+ce75a8f1253157975b4004199d4db425d9f69ea02b2bb4360a829ed696d0634e  native-bridge/feasibility/scripts/mac_release_attribution.py
+a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560  native-bridge/feasibility/scripts/mac_release_bound.py
+e811352823106b57e97a3164b8b0a974c294afa846c46fe406dd799fb2656803  native-bridge/feasibility/scripts/test_mac_clock_corroborate.py
+219c78bee389d74d9142905fabd502f4c5ee27859d6da9fd075fed178850f016  native-bridge/feasibility/scripts/test_mac_release_attribution.py
+4b8aa10d1909774016c4b81f8e682f717e7bb03619c1dbc701c01ea78fc7dc22  native-bridge/feasibility/scripts/test_mac_release_bound.py
+7f61cdeec80bac3e1e1ad748e551614ef442f9b8d0d839847c1e4fd858d0533f  native-bridge/feasibility/scripts/test_mac_release_gate.py
+## untracked evidence folders: SHA256SUMS digests (see 08-evidence-manifests.log)
+98260d4d5be4cf140f8a4ea69bb4fadaf83cb6e8320a665d43b35cb4177671eb  native-bridge/feasibility/evidence/mac-integration-2026-10-29/SHA256SUMS (34 entries)
+339505b6d62e459c54d3f1cfa5dcbe6719f61ae3137eafef2aef7b425e078153  native-bridge/feasibility/evidence/mac-m08-codephase-2026-10-28/SHA256SUMS (2 entries)
+071d14f114497f76b7f8c60ceaf2a7c5922dd5ff3e17cbefb5e1cfd69098c49a  native-bridge/feasibility/evidence/mac-m11-dev-2026-10-29/SHA256SUMS (25 entries)
+dd05dac4b63f67336370a8a203d2dff47471e3fbd10eaee73a1692a54b763355  native-bridge/feasibility/evidence/mac-release-attributed-2026-10-29/SHA256SUMS (6 entries)
+c05174f458bb151039e0e944f70994f170ba8ed470f4d21317e7256a643b1f96  native-bridge/feasibility/evidence/mac-release-attributed-safe-2026-10-29/SHA256SUMS (6 entries)
+2a550c1cf0add0ea863b216e78c45c7d3acf18f0ee666d729411690ece7a2854  native-bridge/feasibility/evidence/mac-release-attribution-source-history-2026-10-29/SHA256SUMS (4 entries)
+9e8ed07767a0ed6f6da4094685bd6669d7f9a081f6975d9b8ecafed1917af022  native-bridge/feasibility/evidence/mac-resume-2026-10-28/SHA256SUMS (35 entries)
+f952c123a1c74a5b1c811f4faa2453ed5f81cae49e39e3f974136798e4ea6455  native-bridge/feasibility/evidence/mac-retake-2026-10-29/SHA256SUMS (79 entries)
+a1e4d80b702753b6e63b7a583d02c01d07f22326b04cb6cf5b042fb8d5d2f42e  native-bridge/feasibility/evidence/mac-tcc-supplement-2026-10-29/SHA256SUMS (6 entries)
+note: the active mac-integration-2026-10-29/SHA256SUMS digest above is pre-final-refresh; the final digest is reported outside this folder (the manifest cannot list itself)

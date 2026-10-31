@@ -1,0 +1,72 @@
+{
+  "implementation": {
+    "tool": "local Claude Code 2.1.310",
+    "session_id": "7fda8a4e-f413-455a-9895-698edf5ce7a9",
+    "requested_model": "claude-sonnet-5-5",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "observed_canonicalModel": "claude-sonnet-5-5",
+    "observed_provider": "firstParty",
+    "source": "Claude Code JSON result metadata, not a self-reported alias",
+    "subagents_spawned": 0,
+    "fix_wave_model": "claude-sonnet-5-5"
+  },
+  "final_review": {
+    "requested_model": "claude-opus-5-5",
+    "status": "PASS recorded as NO-GO contract/docs/harness review work (not OTP-23 acceptance, not OTP-24 GO)",
+    "observed_canonicalModel": "claude-opus-5-5",
+    "initial_review": {
+      "requested_model": "claude-opus-5-5",
+      "observed_canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "session_id": "1b23a799-1730-4b2d-905a-bd912cde7ef3",
+      "subagents": 0,
+      "repository_edits_by_reviewer": 0,
+      "raw_result": "opus-initial-review.json",
+      "verdict": "OTP-24 NO-GO; mergeable as NO-GO contract/harness/evidence once 4 IMPORTANT findings (I-1..I-4) fixed; no CRITICAL",
+      "findings_important": [
+        "I-1 oversize write discard dropped when ingress saturated",
+        "I-2 G-01 evidence stale / section 7 stale",
+        "I-3 waiver absorbed Windows existing-account on-demand launch (no row)",
+        "I-4 D-01 circular (required OTP-25 installer proof)"
+      ],
+      "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md",
+      "fixed_in_working_tree": "HISTORICAL wording: fixed in cd971f0; the later ingress gap was fixed in e19c8ca"
+    },
+    "second_review": {
+      "requested_model": "claude-opus-5-5",
+      "observed_canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "session_id": "f3746c7a-184d-4343-933a-12093f203b6a",
+      "subagents": 0,
+      "repository_edits_by_reviewer": 0,
+      "reviewed_commit": "cd971f0aaba9f3e49e669d63b06405a02f6cd088",
+      "raw_result": "opus-review-cd971f0.json",
+      "verdict": "no CRITICAL; I-1, I-3, I-4 verified fixed; I-2 record-keeping only partly fixed (non-verbatim guard file, JDK file not Gradle runtime)",
+      "fix": "corrected in docs/matrix using submitted-cd971f0/ evidence; old files preserved",
+      "disposition": "docs/protocol/reviews/otp-23-contract-alignment-opus.md",
+      "follow_up": {
+        "raw_result": "opus-ingress-followup.json",
+        "same_session": "f3746c7a-184d-4343-933a-12093f203b6a",
+        "finding": "IMPORTANT: postValue still silently dropped on ingress.acquire failure, so malformed <=512-byte frames (e.g. 183 B at MTU 185, <4 B) could be lost while a valid partial later completes; earlier 'I1 fully resolved' withdrawn",
+        "fix": "committed in e19c8ca (was a working-tree change when this follow-up was recorded); tests + mutation log in ingress-final/",
+        "final_re_review": "DONE: see final_verification (committed e19c8ca)"
+      }
+    },
+    "earlier_quota_probe": "an earlier availability probe hit a session quota; it was not a review",
+    "provider": "firstParty",
+    "session_id": "f3746c7a-184d-4343-933a-12093f203b6a",
+    "subagents": 0,
+    "repository_edits_by_reviewer": 0,
+    "verified_commit": "e19c8ca555b3275313cd325a12e15791a2cf894d",
+    "verified_record_fix_commit": "b1f3d7c3b2d5ecff9fab973055a2eb8a27e3c2f9",
+    "raw_result": "opus-final-ingress-verification.json",
+    "final_verification": "ingress gap FULLY resolved in e19c8ca; no remaining CRITICAL or IMPORTANT; R-01 may record success as NO-GO work",
+    "acceptance_decision": "NO-GO for OTP-24",
+    "earlier_reviews_preserved_as_history": [
+      "opus-initial-review.json",
+      "opus-review-cd971f0.json",
+      "opus-ingress-followup.json",
+      "opus-record-verification.json"
+    ]
+  }
+}

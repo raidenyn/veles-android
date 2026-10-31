@@ -1,0 +1,2 @@
+6T 2be02e41 mac_before_ms=1793248955080 phone_adb_before_ms=1793248958601 in_shell_before_after_touch_ms=[1793248960373 1793248960416 ] phone_adb_after_ms=1793248962142 mac_after_ms=1793248965731
+10Pro 864a3db0 mac_before_ms=1793248971092 phone_adb_before_ms=1793248972671 in_shell_before_after_touch_ms=[1793248974388 1793248974427 ] phone_adb_after_ms=1793248976108 mac_after_ms=1793248980259

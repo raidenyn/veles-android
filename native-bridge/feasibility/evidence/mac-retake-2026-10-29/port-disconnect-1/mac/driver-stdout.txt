@@ -1,0 +1,2 @@
+[PASS   ] LC-port-disconnect none
+lifecycle: PASS (1 scenario(s)) -> /Users/raiden/homepc/work/otp23-mac-retake-20261029/evidence/mac-retake-2026-10-29/port-disconnect-1

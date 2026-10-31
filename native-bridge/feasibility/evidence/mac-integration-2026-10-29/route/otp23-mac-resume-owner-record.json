@@ -1,0 +1,17 @@
+{
+  "record_type": "operator_captured_owner_instruction_and_readback",
+  "date": "2026-10-28",
+  "owner_request": "Let's continue with Mac tests",
+  "completion_answer_verbatim": "Updated and relaunched",
+  "completion_question": "Can you now open About Google Chrome on the Mac, let it update, and choose Relaunch once your personal tabs/forms are safe? Please confirm when it is relaunched and send the displayed version. This resumes the previously deferred prerequisite; the signed Veles fixture and Bluetooth grant will stay untouched.",
+  "observed_installed_chrome_version_after_answer": "156.0.8078.74",
+  "observed_signed_host_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "observed_bundle_identifier": "me.nagaev.veles.bridge",
+  "observed_team_identifier": "7T39M26Z99",
+  "observed_codesign_strict_verification": "success",
+  "scope": "Resume Mac tests, beginning with M-08 using the existing approved fixture and grant",
+  "prior_deferral": "/tmp/opencode/otp23-package1-mac-deferred.json",
+  "not_a_new_signing_or_tcc_reset_approval": true,
+  "not_a_github_approval": true,
+  "not_an_otp24_authorization": true
+}

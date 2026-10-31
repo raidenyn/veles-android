@@ -1,0 +1,95 @@
+{
+ "what": "OTP-23 M-11 READ-ONLY macOS unified-log (tccd) supplement, captured 2026-10-29 AFTER the frozen M-11 curation (../mac-m11-dev-2026-10-29/, SHA256SUMS 071d14f1..., unchanged)",
+ "label": "POST-RUN, READ-ONLY, operator-captured OS-log supplement. It does not edit, re-label or retroactively fill any field of the M-11 captures (post_init_authorization, owner_dialog_observed and answer stay null; problems and ended_by stay as captured).",
+ "operator": "OpenCode parent controller gpt-6.1-sol (provider openai), read-only SSH log queries on the existing Mac account (uid 501). Not an Opus operator. Curated into the repository by the Claude Code claude-opus-5-5 integration session (no Mac access by the curator).",
+ "commands_verbatim_from_raw": [
+  "log show --last 4d --style ndjson --predicate 'process == \"tccd\" AND eventMessage CONTAINS \"me.nagaev.veles.bridge\"' --info",
+  "log show --last 4d --style ndjson --predicate 'process == \"tccd\" AND eventMessage CONTAINS \"95540.2\"' --info"
+ ],
+ "command_note": "the two `log show --last 4d --style ndjson --info` queries are copied from raw/tcc-log-supplement.json; their stdout is raw/scoped-tcc-history.ndjson and raw/dev-prompt-tcc-chain.ndjson respectively (each ends with the tool's own {count, finished} footer line: 90 and 7 events).",
+ "files": {
+  "raw/scoped-tcc-history.ndjson": {
+   "source": "/tmp/opencode/otp23-m11-controller-20261029/scoped-tcc-history.ndjson",
+   "source_sha256": "a71f932dc7c27bfa06b99fa3044d0416fcb1cc3a283ed695c0de7ff4d4bd91c6",
+   "published_sha256": "a71f932dc7c27bfa06b99fa3044d0416fcb1cc3a283ed695c0de7ff4d4bd91c6",
+   "bytes": 105134,
+   "source_mtime_utc": "2026-10-29T11:20:30.363066+00:00",
+   "byte_identical": true
+  },
+  "raw/dev-prompt-tcc-chain.ndjson": {
+   "source": "/tmp/opencode/otp23-m11-controller-20261029/dev-prompt-tcc-chain.ndjson",
+   "source_sha256": "09d680b6a683a3c42281f05103557a8e653313f71e8cad4e63e25f5a219196b4",
+   "published_sha256": "09d680b6a683a3c42281f05103557a8e653313f71e8cad4e63e25f5a219196b4",
+   "bytes": 7605,
+   "source_mtime_utc": "2026-10-29T11:23:29.548442+00:00",
+   "byte_identical": true
+  },
+  "raw/tcc-log-supplement.json": {
+   "source": "/tmp/opencode/otp23-m11-controller-20261029/tcc-log-supplement.json",
+   "source_sha256": "6fb570aef0d83fe91ab03ce47ad8e41950fec46341b4a66b482adc8618b78767",
+   "published_sha256": "6fb570aef0d83fe91ab03ce47ad8e41950fec46341b4a66b482adc8618b78767",
+   "bytes": 2234,
+   "source_mtime_utc": "2026-10-29T11:25:27.404689+00:00",
+   "byte_identical": true
+  }
+ },
+ "not_published": {
+  "/tmp/opencode/otp23-m11-controller-20261029/scoped-tcc-history.stderr": {
+   "bytes": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "reason": "0-byte stderr capture of the first query; recorded by hash only"
+  },
+  "/tmp/opencode/otp23-m11-controller-20261029/dev-prompt-tcc-chain.stderr": {
+   "bytes": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "reason": "0-byte stderr capture of the second query; recorded by hash only"
+  }
+ },
+ "privacy_review": {
+  "reviewer": "the curating integration session (claude-opus-5-5), 2026-10-29",
+  "method": "parsed every ndjson record; extracted every identifier= and binary_path=/responsible_path= value",
+  "identifiers_present": [
+   "me.nagaev.veles.bridge (55)",
+   "me.nagaev.veles.bridge.dev (7)",
+   "otp23_host-b86638eeb61c91b4 (3, the dev binary's raw code identifier)",
+   "com.apple.bluetoothd (16, system daemon as requester for the accessing host)",
+   "com.apple.sshd-keygen-wrapper (13, the SSH session as responsible process)"
+  ],
+  "paths_present": [
+   "/Users/raiden/homepc/work/otp23-cd971f0/.../VelesOtp23PoC.app (signed fixture; already in published evidence)",
+   "/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app (dev host; already in the published M-11 captures)",
+   "/usr/sbin/bluetoothd",
+   "/usr/libexec/sshd-keygen-wrapper",
+   "/usr/libexec/sshd-session"
+  ],
+  "result": "own-app-scoped records only (both queries filter on our identifiers / our dev request's msgID); no other user's or third-party application's identifiers, no HTTP/API headers, cookies, tokens or transcripts. System records carry Apple framework image UUIDs, boot UUID and '<private>'-redacted fields as emitted by the OS; nothing was edited.",
+  "limit": "scoped to these two files only; no repository-wide privacy-absence claim"
+ },
+ "dev_prompt_chain_reading": {
+  "msgID": "95540.2",
+  "service": "kTCCServiceBluetoothAlways",
+  "subject": "me.nagaev.veles.bridge.dev",
+  "requesting_code_identifier": "otp23_host-b86638eeb61c91b4",
+  "requesting_pid": 95540,
+  "uid": 501,
+  "binary_path": "/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app/Contents/MacOS/otp23-host",
+  "AUTHREQ_PROMPTING_utc": "2026-10-29T05:29:58.733307Z",
+  "AUTHREQ_RESULT_utc": "2026-10-29T06:17:25.367351Z",
+  "AUTHREQ_RESULT_raw": "authValue=2, authReason=2, authVersion=1, desired_auth=0, error=(null)",
+  "timing_vs_captures": "PROMPTING falls inside M-11 attempt 2 (05:29:57Z..05:42:00Z, controller/observation-timeline.json); the RESULT is 35 min after attempt 2's deadline and about 1 min before the owner's answer file mtime 06:18:28Z. This is why the run itself could not bind the answer.",
+  "reading": "corroborates, through a separate OS channel, that tccd prompted for the DISTINCT developer subject and recorded an authorization result consistent with the owner's reported Allow. Numeric values are preserved as logged; no CoreBluetooth authorization enum is derived from them, and this is not a host trace."
+ },
+ "signed_original_prompt": {
+  "prompting_record_for_me.nagaev.veles.bridge_in_returned_data": false,
+  "first_and_last_returned_record_local": [
+   "2026-10-28 22:44:17.275569+0700",
+   "2026-10-29 13:21:18.668078+0700"
+  ],
+  "reading": "the only AUTHREQ_PROMPTING record in the returned data is the developer subject's (msgID 95540.2). The signed subject appears only in AUTHREQ_ATTRIBUTION/AUTHREQ_SUBJECT/staticCode records of later authorization checks (2026-10-28 15:44Z onward), which are NOT an observation of the original prompt. The returned data starts at 2026-10-28 22:44 +0700, after the original grant; no claim is made about what older logs did or did not contain, and no universal retention claim is made. M-03 (original signed prompt owner) and M-04 are NOT discharged and nothing is inferred for them."
+ },
+ "not_done": [
+  "no TCC reset, tccutil, permission toggle or Settings change",
+  "no edit of any M-11 raw or of ../mac-m11-dev-2026-10-29/",
+  "no inference about the original signed prompt"
+ ]
+}

@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-29",
+  "role": "coordinating_parent_analysis_implementation_decision",
+  "independent_review": "/tmp/opencode/otp23-mac-final-data-review-opus.md",
+  "decision": "Implement the corrected source-proven causal inequalities before adopting M-08 attribution outputs",
+  "single_fragment_16b_lower_bound": "Not causal; retain only as a diagnostic value, never as a feasibility or acceptance constraint",
+  "safe_lower_bound": "First notification of the verified multi-fragment 4096-byte echo precedes full host reassembly by main-looper sequencing",
+  "old_hull_pass_fallback": "Not accepted as an independent proof when mapping is non-unique or preconditions fail; preserve it as diagnostics and fail closed unless a separately computed safe proof exists",
+  "premise_guards": "Verify the actual complete multi-fragment notification sequence and phone epoch/elapsed stability needed by the causal argument",
+  "precision_target": "The prior <=250ms anchor-width target was a test-instrument precision target, not an RFC product acceptance clause. The corrected conservative widths are 235-282ms; do not claim that target was met. Acceptance requires all retained full-interval timing and stop guards to pass; none is relaxed.",
+  "unchanged_acceptance": "After the global last proven-alive exchange; within own host exit +30000ms; disconnect before fixture stop; complete observation window and final clean same-run telemetry",
+  "raw_and_old_candidates": "Preserve all original raw statuses, hull FAILs and first attributed candidate outputs unchanged; generate a new safe derivation",
+  "m11_account_followup": "/tmp/opencode/otp23-m11-controller-20261029/account-class.txt",
+  "m11_account_followup_sha256": "a2bdc40c7d6119e01513ae3c3b9b71a287ad910d114ff172883043303050702d",
+  "not_an_owner_waiver_or_product_gate_amendment": true,
+  "not_an_otp24_authorization": true
+}

@@ -1,10 +1,12 @@
-//! macOS CoreBluetooth hint format, effective-MTU policy and scan bookkeeping
+//! macOS CoreBluetooth hint format, link-budget policy and scan bookkeeping
 //! (pure mappings, no OS calls; runs on every host).
 
-use veles_otp23_feasibility::fragment::{ATTRIBUTE_LIMIT, MAX_MTU, MIN_MTU};
+use veles_otp23_feasibility::fragment::{
+    ATTRIBUTE_VALUE_MAX, BudgetError, LinkBudget, LinkCapacity, MAX_MTU, MIN_MTU,
+};
 use veles_otp23_feasibility::macos_map::{
-    Authorization, BoundedSet, GateState, MtuError, ScanGate, effective_mtu, fallback_label,
-    format_hint, parse_hint, unavailable_timeout, valid_uuid,
+    Authorization, BoundedSet, GateState, MtuError, ScanGate, fallback_label, format_hint,
+    link_budget, parse_hint, unavailable_timeout, valid_uuid,
 };
 
 const UUID: &str = "a11b52c3-7f3c-4d1a-b64a-8e3c9b0d2a51";
@@ -58,61 +60,64 @@ fn valid_uuid_accepts_only_canonical_lowercase() {
     assert!(!valid_uuid("a11b52c30f3c4d1ab64a8e3c9b0d2a51"));
 }
 
-// ---- inferred effective MTU policy --------------------------------------------------------------
+// ---- link budget from the measured write length ------------------------------------------------
 
 #[test]
-fn reported_max_write_yields_the_task_trace_values() {
-    // A phone reporting 512 attribute bytes for write-without-response infers an effective
-    // ATT MTU of 515 and a capped fragment payload of 508, matching an Android phone at a
-    // negotiated MTU of 517 (517 - 3 = 514, capped at 512, minus the 4-byte header).
-    let mtu = effective_mtu(512).unwrap();
-    assert_eq!(mtu, 515);
-    let chunk_payload = (mtu - 3).min(ATTRIBUTE_LIMIT) - 4;
-    assert_eq!(chunk_payload, 508);
-}
-
-#[test]
-fn capped_fragment_rule_matches_the_android_negotiated_cap() {
-    // MAX_MTU (517) negotiated exactly: the payload rule equals the Android phone's.
-    let mtu = effective_mtu(514).unwrap();
-    assert_eq!(mtu, MAX_MTU);
-    assert_eq!((mtu - 3).min(ATTRIBUTE_LIMIT) - 4, 508);
-}
-
-#[test]
-fn above_cap_max_write_still_caps_at_max_mtu() {
-    // A stack that negotiated more than 517 attribute bytes still reports the capped policy.
-    let mtu = effective_mtu(usize::MAX).unwrap();
-    assert_eq!(mtu, MAX_MTU);
-    assert_eq!((mtu - 3).min(ATTRIBUTE_LIMIT) - 4, 508);
-}
-
-#[test]
-fn floor_is_the_minimum_usable_value() {
-    assert_eq!(effective_mtu(MIN_MTU - 3).unwrap(), MIN_MTU);
-    assert_eq!(effective_mtu(MIN_MTU - 3 - 1), Err(MtuError::TooSmall));
-    for reported in [0usize, 1, 3, 100, MIN_MTU - 3 - 1] {
-        assert_eq!(
-            effective_mtu(reported),
-            Err(MtuError::TooSmall),
-            "{reported}"
-        );
+fn reported_512_is_the_clamped_budget_without_inventing_an_mtu() {
+    // CoreBluetooth reports a maximum write-without-response length of 512 on the measured Macs.
+    // That is the attribute budget directly (payload 508), identical to an Android phone that
+    // negotiated ATT MTU 515, 516 or 517 - no "515" is ever synthesized.
+    let budget = link_budget(512).unwrap();
+    assert_eq!((budget.attribute(), budget.payload()), (512, 508));
+    for mtu in [515, 516, MAX_MTU] {
+        assert_eq!(budget, LinkBudget::from_att_mtu(mtu).unwrap(), "mtu {mtu}");
     }
 }
 
 #[test]
-fn every_accepted_mtu_wraps_every_frame_in_one_os_write() {
-    // The policy invariant that makes the fragment rule safe on macOS: for every reported
-    // max write value whose inferred MTU is accepted, the core chunk
-    // (min(mtu - 3, 512) - 4) plus its 4-byte header is <= the measured OS write length.
-    for reported in 0..=MAX_MTU {
-        let Ok(mtu) = effective_mtu(reported) else {
+fn write_lengths_below_512_cannot_establish_a_common_budget_and_fail_closed() {
+    // W is a backend limit (<= MTU - 3, possibly platform-capped); equality is never assumed.
+    for reported in [0usize, 1, 100, MIN_MTU - 3, 244, 300, 511] {
+        assert_eq!(
+            link_budget(reported),
+            Err(MtuError::Undetermined),
+            "{reported}"
+        );
+        assert_eq!(
+            LinkBudget::from_capacity(LinkCapacity::MaxWriteWithoutResponse(reported)),
+            Err(BudgetError::Undetermined),
+            "{reported}"
+        );
+    }
+    // The ATT MTU path is unaffected: every legal MTU still yields a budget.
+    for mtu in MIN_MTU..=MAX_MTU {
+        assert!(LinkBudget::from_att_mtu(mtu).is_ok(), "mtu {mtu}");
+    }
+}
+
+#[test]
+fn write_lengths_at_or_above_512_give_the_clamped_budget() {
+    for reported in [512usize, 513, 514, 1000, usize::MAX] {
+        let budget = link_budget(reported).unwrap();
+        assert_eq!(
+            (budget.attribute(), budget.payload()),
+            (512, 508),
+            "{reported}"
+        );
+        assert_eq!(budget, LinkBudget::from_att_mtu(MAX_MTU).unwrap());
+    }
+}
+
+#[test]
+fn every_accepted_write_length_wraps_every_frame_in_one_os_write() {
+    for reported in 0..=MAX_MTU + 10 {
+        let Ok(budget) = link_budget(reported) else {
             continue;
         };
-        let chunk = (mtu - 3).min(ATTRIBUTE_LIMIT) - 4;
         assert!(
-            chunk + 4 <= reported,
-            "reported {reported} -> mtu {mtu} -> chunk {chunk}"
+            budget.attribute() <= reported && budget.attribute() <= ATTRIBUTE_VALUE_MAX,
+            "reported {reported} -> attribute {}",
+            budget.attribute()
         );
     }
 }

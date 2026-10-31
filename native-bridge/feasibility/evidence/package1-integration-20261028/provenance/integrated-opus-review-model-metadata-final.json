@@ -1,0 +1,39 @@
+{
+  "what": "INTEGRATED final review — actual model metadata, FINAL snapshot of the COMPLETED session (covers the whole Claude Code review role: the focused v4 part AND the final integrated review; appended as a NEW file — the preserved v4 snapshot and the running-session partial are NOT overwritten)",
+  "session_id": "1b447229-ceaa-4cee-a5be-2181dfdd8838",
+  "session_model_version": "Claude Code 2.1.312",
+  "agent": "local Claude Code CLI, build mode read-only reviewer",
+  "source": "/home/dev/.claude/projects/-home-dev-repos-veles-android/1b447229-ceaa-4cee-a5be-2181dfdd8838.jsonl",
+  "extraction": "ONLY assistant-envelope fields: message.model, envelope effort, sessionId, role, timestamp. NOT read or recorded: message content, tool results, system headers, API errors, any transcript text.",
+  "captured_at_utc": "2026-10-28T14:31Z (after the integrated review completed; measured, not guessed)",
+  "assistant_entries_total": 162,
+  "by_model": {
+    "claude-opus-5-5": 161,
+    "<synthetic>": 1
+  },
+  "effort": {
+    "field": "envelope-level 'effort' flag",
+    "value": "high",
+    "count": 161,
+    "note": "every real (non-synthetic) assistant record carries effort=high — the 'high' label used in the report identity is backed by measured metadata"
+  },
+  "synthetic_note": "the single <synthetic> entry is the harness placeholder for an interrupted turn, NOT model output",
+  "first_assistant_ts": "2026-10-28T13:49:33.902Z",
+  "last_assistant_ts": "2026-10-28T14:14:57.489Z",
+  "snapshot_supersession": {
+    "v4_only": "provenance/opus-review-model-metadata-final.json (69 entries at the end of the v4 review) remains CORRECT for the focused v4 report — it is not the whole-session truth for the integrated review",
+    "partial": "provenance/opus-review-model-metadata-partial.json (69 entries while running) preserved unchanged",
+    "this_file": "whole-session final counts (161 real + 1 synthetic), as of capture; the integrated review's own safe line recorded 157+1 at its 14:13:27Z capture — both are honest moment-in-time counts of a growing session"
+  },
+  "delivered_report": {
+    "tmp_capture_path": "/tmp/opencode/otp23-package1-integrated-opus-review.md",
+    "published_byte_identical_counterpart": "reports/otp23-package1-integrated-opus-review.md",
+    "sha256": "cc0b6225c25ccd0ce3ce49875c73bafdd1b8ea05bce22d83f762a08728935654",
+    "verdict_summary": "APPROVED for commit and publication, pending clean Git-export checks and green CI; all findings are non-blocking curation/wording items; no row status change; final state 23 PASS / 6 BLOCKED / 3 waived, NO-GO, OTP-24 unauthorized"
+  },
+  "role_label_rules": {
+    "final_integrated_review": "OPUS (claude-opus-5-5, effort high) — user-authorized route; NOT retroactive authorship of the GPT reports",
+    "earlier_reviews": "actually GPT (openai/gpt-5.6-sol high): windows-strict, P2/B5, fix verification, v3-final AND the two observer-code reports (session ses_e7fbe5353ffeWU4VTjn6lgYjIL for the observer pair)",
+    "implementation": "ollama-cloud/glm-5.3-flash (0 subagents, all phases); no Kimi or other model in any role"
+  }
+}

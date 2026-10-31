@@ -1,0 +1,25 @@
+$ echo git_diff_sha256=$(git diff | sha256sum | cut -d' ' -f1); echo '## modified tracked files'; git diff --name-only | LC_ALL=C sort | xargs -d '\n' sha256sum; echo '## untracked files outside evidence/'; git ls-files --others --exclude-standard | grep -v '/evidence/' | LC_ALL=C sort | xargs -d '\n' sha256sum
+cwd=/home/dev/repos/veles-android started_utc=2026-10-29T16:22:08Z head=9c3ddc54a3721eced84e49f02ed76ef156f0baed
+git_diff_sha256=49ed1bcaf0719c14a97b55fe4be4574fefcc66e2f341787d5932e9d66a139845
+## modified tracked files
+df1305d4d3729318d4e9cef123a1c0cd1fcbcf46e4ffaea09e7f0e45f1ba6291  .github/workflows/otp23-feasibility.yml
+37fc9c0d5c4adf8b287f27d24caec2a10b05d5385b41c8cca37445498118b657  docs/otp-23-contract-alignment.md
+d250fd2c45714e07ba34e8edc85c3c2bda15c89210b5a267efef641914db255f  docs/otp-23-investigations.md
+cb27c017b905d6df83f7b9d6a740db922851b740f4414d8e6d46f582f6c6d415  docs/otp-23-requirements-matrix.md
+3b570be309e42ce3488c5e2e5ded4e3a5f34420d3f0d3bdccffc3a419748b0b9  docs/rfcs/2026-08-21-otp-external-devices.md
+274ede059c500ee9f1dba4a9559eef34f2433dbbd8ca49720feaa5c72b009f7c  native-bridge/feasibility/acceptance/otp23-matrix.json
+e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0  native-bridge/feasibility/scripts/macos_poc.py
+3d45aac15a2f132e57ba8d851e6639f90f3ea9e72267c8877cabb7ab6be7016c  native-bridge/feasibility/scripts/matrix.py
+f8bbf2d6ea158d2bd30bee35b97a655c727a7ca7fc677a5c9a3a53eafe6b7f28  native-bridge/feasibility/scripts/scenario_matrix.py
+a729dcceb71c2bf8123c2529b59db37f8ede0bf5f9af170bd3b9f2f4f7d3fb3a  native-bridge/feasibility/scripts/test_macos_poc.py
+aa676ae286311b1e1ba10e06a2a406e6f4cee3f2966af5e05a696270bacebdba  native-bridge/feasibility/scripts/test_matrix.py
+## untracked files outside evidence/
+8e6b9bbbb221b33285a7a6b30e9122ef826a74e6dcbfd450550f4dbaf19c418f  native-bridge/feasibility/scripts/mac_clock_corroborate.py
+ce75a8f1253157975b4004199d4db425d9f69ea02b2bb4360a829ed696d0634e  native-bridge/feasibility/scripts/mac_release_attribution.py
+a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560  native-bridge/feasibility/scripts/mac_release_bound.py
+e811352823106b57e97a3164b8b0a974c294afa846c46fe406dd799fb2656803  native-bridge/feasibility/scripts/test_mac_clock_corroborate.py
+219c78bee389d74d9142905fabd502f4c5ee27859d6da9fd075fed178850f016  native-bridge/feasibility/scripts/test_mac_release_attribution.py
+4b8aa10d1909774016c4b81f8e682f717e7bb03619c1dbc701c01ea78fc7dc22  native-bridge/feasibility/scripts/test_mac_release_bound.py
+7f61cdeec80bac3e1e1ad748e551614ef442f9b8d0d839847c1e4fd858d0533f  native-bridge/feasibility/scripts/test_mac_release_gate.py
+exit_code=0
+finished_utc=2026-10-29T16:22:08Z

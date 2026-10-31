@@ -31,18 +31,19 @@ internal class SharingGattServer(
     private val onRecord: (String, ByteArray) -> ByteArray?,
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    private val transport = GattTransport(
-        if (BuildConfig.OTP23_POC) 512 else 514,
-        SystemClock::elapsedRealtime,
-    )
+    private val transport = GattTransport(SystemClock::elapsedRealtime)
     private val ingress = IngressBudget()
     private val admitted = ConcurrentHashMap.newKeySet<String>()
+
+    /** Peers whose malformed frame could not be queued (ingress saturated); one queued disconnect each. */
+    private val overflowed = ConcurrentHashMap.newKeySet<String>()
     private val devices = mutableMapOf<String, BluetoothDevice>()
     private val subscribed = mutableSetOf<String>()
     private val connectedAt = mutableMapOf<String, Long>()
     private val ready = mutableSetOf<String>()
     private var server: BluetoothGattServer? = null
-    private var closed = false
+
+    @Volatile private var closed = false
     private val manager = context.getSystemService(BluetoothManager::class.java)
     private val notify = BluetoothGattCharacteristic(
         NOTIFY_UUID,
@@ -76,16 +77,24 @@ internal class SharingGattServer(
             if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
                 remove(id)
             } else if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if (id in admitted) {
+                    // Repeated STATE_CONNECTED for a healthy admitted link: not a capacity refusal, so
+                    // it must neither cancel the link nor reset its setup state (#120 M3).
+                    return@post
+                }
+                overflowed.remove(id) // a stale entry must never outlive the link it was raised for
                 if (!transport.connect(id)) {
                     server?.cancelConnection(device)
                 } else {
                     devices[id] = device
                     admitted.add(id)
+                    if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.connected(id)
                     connectedAt[id] = SystemClock.elapsedRealtime()
                 }
             }
         }
         override fun onMtuChanged(device: BluetoothDevice, mtu: Int) = post {
+            if (BuildConfig.DEBUG && device.address in admitted) SyntheticTransportFixture.telemetry?.mtu(device.address, mtu)
             if (!transport.setMtu(device.address, mtu)) {
                 disconnect(device.address)
             } else {
@@ -101,8 +110,14 @@ internal class SharingGattServer(
             offset: Int,
             value: ByteArray,
         ) {
-            // Reject oversized values before copying or posting untrusted data to the main queue.
-            if (value.size > 514) return
+            // Never copy an oversized value. On the write characteristic it is a malformed frame
+            // (OTP2-GAT-010) and must discard the peer's partial transactions in arrival order; any other
+            // operation is rejected exactly like a normal invalid operation, without touching the transport.
+            if (value.size > GattTransport.ATTRIBUTE_VALUE_MAX) {
+                val valid = characteristic.uuid == WRITE_UUID && !preparedWrite && !responseNeeded && offset == 0
+                if (valid) postMalformed(device) else postUnsupported(device, requestId, responseNeeded)
+                return
+            }
             postValue(device, value) { copy ->
                 val id = device.address
                 val validOperation = characteristic.uuid == WRITE_UUID && !preparedWrite && !responseNeeded && offset == 0
@@ -174,7 +189,10 @@ internal class SharingGattServer(
                         )
                 if (valid) {
                     if (copy.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                        subscribed.add(device.address)
+                        if (subscribed.add(device.address) && BuildConfig.DEBUG) {
+                            SyntheticTransportFixture.telemetry?.subscribed(device.address)
+                            scheduleSyntheticPush(device.address)
+                        }
                     } else {
                         disconnect(device.address)
                     }
@@ -194,7 +212,13 @@ internal class SharingGattServer(
             server?.sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null)
             Unit
         }
-        override fun onNotificationSent(device: BluetoothDevice, status: Int) = post {
+        override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+            // Raw arrival is recorded before the looper hop: close() flushes queued work and drops late callbacks.
+            if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callbackSeen(device.address, status, closed)
+            onNotificationSentOnMain(device, status)
+        }
+        private fun onNotificationSentOnMain(device: BluetoothDevice, status: Int) = post {
+            if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callback(device.address, status)
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 disconnect(device.address)
             } else {
@@ -246,11 +270,40 @@ internal class SharingGattServer(
         }
     }
 
+    /**
+     * Debug fixture only (opt-in through [SyntheticTransportFixture.unsolicitedAfterMillis]): one deterministic,
+     * unsolicited record per subscription, for background-delivery validation. Evidence keeps hashes only.
+     */
+    private fun scheduleSyntheticPush(id: String) {
+        val delay = SyntheticTransportFixture.unsolicitedAfterMillis ?: return
+        val subscribedAt = System.currentTimeMillis()
+        handler.postDelayed({
+            if (id !in subscribed) return@postDelayed
+            val record = SyntheticTransportFixture.unsolicited()
+            val queued = transport.enqueue(id, record)
+            SyntheticTransportFixture.unsolicitedEvidence.add(
+                SyntheticTransportFixture.Unsolicited(
+                    peer = SyntheticTransportFixture.sha256Hex(id.toByteArray()).take(PEER_HASH_CHARS),
+                    subscribedAtMillis = subscribedAt,
+                    firedAtMillis = System.currentTimeMillis(),
+                    delayMillis = delay,
+                    queued = queued,
+                    bytes = record.size,
+                    sha256 = SyntheticTransportFixture.sha256Hex(record),
+                ),
+            )
+            record.fill(0)
+            if (queued) post { pump(id) }
+        }, delay)
+    }
+
     private fun pump(id: String) {
         if (id !in subscribed) return
         val device = devices[id] ?: return
         val bytes = transport.nextFragment(id) ?: return
-        if (server?.notifyCharacteristicChanged(device, notify, false, bytes) != BluetoothStatusCodes.SUCCESS) disconnect(id)
+        val code = server?.notifyCharacteristicChanged(device, notify, false, bytes)
+        if (BuildConfig.DEBUG && code != null) SyntheticTransportFixture.telemetry?.notifyResult(id, bytes.size, code)
+        if (code != BluetoothStatusCodes.SUCCESS) disconnect(id)
     }
 
     private fun post(block: () -> Unit) {
@@ -269,8 +322,15 @@ internal class SharingGattServer(
 
     private fun postValue(device: BluetoothDevice, value: ByteArray, block: (ByteArray) -> Unit) {
         val id = device.address
-        if (id !in admitted) return
-        if (!ingress.acquire(id)) return
+        if (id !in admitted || id in overflowed) return
+        if (!ingress.acquire(id)) {
+            // The refused frame might be malformed (e.g. 183 bytes at MTU 185, or under 4 bytes); dropping it
+            // silently would let an old partial complete across it. Fail the peer closed instead. A dropped
+            // VALID frame loses its record and the session anyway (OTP2-ENC-004), so this only turns that
+            // silent loss into a bounded disconnect. No payload is copied for a refused admission.
+            failClosed(id)
+            return
+        }
         val copy = value.copyOf()
         post {
             try {
@@ -282,8 +342,52 @@ internal class SharingGattServer(
         }
     }
 
+    /**
+     * Carries no data: one bounded ingress slot per pending discard. If the peer already has the maximum
+     * number of callbacks pending the discard cannot be queued, and dropping it would let an old partial
+     * complete across the malformed frame; so the peer fails closed with at most ONE queued disconnect,
+     * queued ahead of every later frame (later frames from an overflowed peer are refused at arrival).
+     */
+    private fun postMalformed(device: BluetoothDevice) {
+        val id = device.address
+        if (id !in admitted || id in overflowed) return
+        if (!ingress.acquire(id)) {
+            failClosed(id)
+            return
+        }
+        post {
+            try {
+                // An empty frame is below the 4-byte header, i.e. malformed: receive() discards this peer's
+                // partial transactions (OTP2-GAT-011) and delivers nothing.
+                transport.receive(id, ByteArray(0))
+            } finally {
+                ingress.release(id)
+            }
+        }
+    }
+
+    /** At most ONE queued disconnect per peer (`overflowed`), ahead of every later frame; later frames are refused at arrival. */
+    private fun failClosed(id: String) {
+        if (overflowed.add(id)) post { disconnect(id) }
+    }
+
+    /** Oversized value on an invalid operation: answer like any invalid operation, never copy the value. */
+    private fun postUnsupported(device: BluetoothDevice, requestId: Int, responseNeeded: Boolean) {
+        val id = device.address
+        if (!responseNeeded || id !in admitted || id in overflowed || !ingress.acquire(id)) return
+        post {
+            try {
+                server?.sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null)
+            } finally {
+                ingress.release(id)
+            }
+        }
+    }
+
     private fun remove(id: String) {
+        if (BuildConfig.DEBUG && id in admitted) SyntheticTransportFixture.telemetry?.disconnected(id)
         admitted.remove(id)
+        overflowed.remove(id)
         transport.disconnect(id)
         devices.remove(id)
         subscribed.remove(id)
@@ -299,6 +403,7 @@ internal class SharingGattServer(
         closed = true
         ingress.close()
         admitted.clear()
+        overflowed.clear()
         handler.removeCallbacksAndMessages(null)
         try {
             advertiser?.stopAdvertising(advertising)
@@ -323,5 +428,6 @@ internal class SharingGattServer(
         val WRITE_UUID: UUID = UUID.fromString("8e400001-8f3c-4d1a-b64a-8e3c9b0d2a51")
         val NOTIFY_UUID: UUID = UUID.fromString("8e400002-8f3c-4d1a-b64a-8e3c9b0d2a51")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        private const val PEER_HASH_CHARS = 8
     }
 }

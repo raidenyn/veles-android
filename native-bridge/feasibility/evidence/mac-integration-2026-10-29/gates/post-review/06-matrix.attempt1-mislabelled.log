@@ -1,0 +1,13 @@
+$ python3 -B scripts/matrix.py render --write; echo render_write_exit=$?; git diff --quiet --exit-code -- ../../docs/otp-23-requirements-matrix.md; echo doc_unchanged_vs_pre_write_exit=$?; python3 -B scripts/matrix.py render; echo render_staleness_exit=$?; python3 -B scripts/matrix.py check; echo check_exit=$?; python3 -B scripts/matrix.py decision; echo decision_exit=$?
+cwd=/home/dev/repos/veles-android/native-bridge/feasibility started_utc=2026-10-29T16:21:31Z head=9c3ddc54a3721eced84e49f02ed76ef156f0baed
+render_write_exit=0
+doc_unchanged_vs_pre_write_exit=1
+matrix ok: NO-GO
+render_staleness_exit=0
+matrix ok: NO-GO
+check_exit=0
+NO-GO: 4 row(s) open: W-10, M-03, M-04, A-01
+approved account-waived (NOT RUN, not PASS): W-01, M-01, M-02
+decision_exit=1
+exit_code=0
+finished_utc=2026-10-29T16:21:32Z

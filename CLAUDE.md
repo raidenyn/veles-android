@@ -22,6 +22,24 @@ the checks. Fix all failures before pushing the initial PR branch and running
 Rerun the checks after subsequent code changes before pushing PR updates.
 If a check cannot run, report the blocker instead of claiming the PR is ready.
 
+## Stable Signing Identities (Android and macOS builds)
+
+Always reuse the **same existing signing identity within each platform/app identity** for
+subsequent app and fixture builds. This is one stable key per app identity, not one
+cross-platform key: Android and macOS identities are separate.
+
+- **Android debug fixture:** keep the approved fixture keystore backed up securely across
+  containers (never in git; never commit keys or passwords). Compare the signing certificate
+  fingerprints of the new APK and the installed one before `adb install -r`. Do not
+  regenerate the key, uninstall the app, or clear data as a routine workaround; if the
+  original key is unavailable, stop and ask.
+- **macOS:** reuse the exact approved signing identity/team and bundle ID. No ad-hoc
+  substitution, key export, or TCC reset; use the Aqua keychain context when required.
+- Different production signing is a separately planned migration with revalidation. Do not
+  borrow debug credentials. Never record fingerprints that were not read from real output.
+
+Details: `docs/windows-ble-poc.md` (Android) and `docs/desktop-ble-poc.md` (macOS).
+
 ## Build & Test Commands
 
 ```bash
@@ -69,7 +87,11 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 # Build web-target WASM into web-extension/rust-wasm/pkg/
 ./gradlew rustWasm
 
-# Native-bridge (OTP-01 sub-project 1c) — Tauri 2.x headless Native Messaging host
+# Native-bridge (OTP-01 sub-project 1c) — Tauri 2.x packaging/build scaffold for the Native Messaging host.
+# NOTE: these are existing TOOLING commands, not the approved production architecture. Per the RFC
+# amendment of 2026-10-26 the production host is a plain Rust executable that never starts the Tauri
+# event loop; retaining Tauri solely for packaging is NOT approved/NOT justified (docs/otp-23-requirements-matrix.md D-01);
+# OTP-25 picks another packaging pipeline or brings a separately reviewed justification.
 # Install npm deps, check format/lint/typecheck, run npm+cargo tests
 ./gradlew bridgeInstall bridgeFormat bridgeLint bridgeTypecheck bridgeTest
 

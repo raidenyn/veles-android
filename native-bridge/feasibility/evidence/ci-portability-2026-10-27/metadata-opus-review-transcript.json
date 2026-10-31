@@ -1,0 +1,12 @@
+{
+  "source": "Claude Code transcript on disk @ /home/dev/.claude/projects/-home-dev-repos-veles-android/2fe20385-5ef1-4622-bf94-00b8c0c6477e.jsonl (metadata only; the transcript itself is personal data and is NOT copied into evidence)",
+  "transcript_file_sha256": "536bc6ef3a629f11899937e7dfcad7208bda590c8616fb486314cceeb4fce62f",
+  "sessionId": "2fe20385-5ef1-4622-bf94-00b8c0c6477e",
+  "models": ["claude-opus-5-5"],
+  "assistant_messages": 433,
+  "transcript_lines": 2295,
+  "cli_versions_seen": ["2.1.311", "2.1.312"],
+  "first_timestamp": "2026-10-27T08:20:11.696Z",
+  "last_timestamp": "2026-10-27T23:41:36.712Z",
+  "role": "read-only reviewer for OTP-23 CI portability fix; produced opus-review-r1-not-yet.md and opus-review-r2-approved.md (verdicts recorded verbatim in those copied files)"
+}

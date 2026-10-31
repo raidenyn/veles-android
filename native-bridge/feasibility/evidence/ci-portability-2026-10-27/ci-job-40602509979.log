@@ -1,0 +1,720 @@
+﻿2026-10-27T23:29:52.8284390Z Current runner version: '2.338.0'
+2026-10-27T23:29:52.8306730Z ##[group]Runner Image Provisioner
+2026-10-27T23:29:52.8307430Z Hosted Compute Agent
+2026-10-27T23:29:52.8307910Z Version: 20261021.618
+2026-10-27T23:29:52.8308380Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T23:29:52.8308990Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T23:29:52.8309480Z Worker ID: {58769229-635e-441c-a567-5f9149b1a3f6}
+2026-10-27T23:29:52.8309940Z Region: westus
+2026-10-27T23:29:52.8310300Z Cloud: MacCloud
+2026-10-27T23:29:52.8310730Z ##[endgroup]
+2026-10-27T23:29:52.8313820Z ##[group]Operating System
+2026-10-27T23:29:52.8314320Z macOS
+2026-10-27T23:29:52.8314680Z 26.6.2
+2026-10-27T23:29:52.8315070Z 25G83
+2026-10-27T23:29:52.8315970Z ##[endgroup]
+2026-10-27T23:29:52.8316420Z ##[group]Runner Image
+2026-10-27T23:29:52.8316880Z Image: macos-26-arm64
+2026-10-27T23:29:52.8317350Z Version: 20261021.0445.8
+2026-10-27T23:29:52.8318330Z Included Software: https://github.com/actions/runner-images/blob/macos-26-arm64/20261021.0445/images/macos/macos-26-arm64-Readme.md
+2026-10-27T23:29:52.8319600Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-26-arm64%2F20261021.0445
+2026-10-27T23:29:52.8320350Z ##[endgroup]
+2026-10-27T23:29:52.8321280Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T23:29:52.8322650Z Contents: read
+2026-10-27T23:29:52.8323110Z Metadata: read
+2026-10-27T23:29:52.8323520Z ##[endgroup]
+2026-10-27T23:29:52.8325600Z Secret source: Actions
+2026-10-27T23:29:52.8326260Z Cache mode: write
+2026-10-27T23:29:52.8326730Z Prepare workflow directory
+2026-10-27T23:29:52.8684200Z Prepare all required actions
+2026-10-27T23:29:52.8730260Z Getting action download info
+2026-10-27T23:29:53.2823130Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-27T23:29:53.4982250Z Download action repository 'actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1' (SHA:ece7cb06caefa5fff74198d8649806c4678c61a1)
+2026-10-27T23:29:53.5854480Z Download action repository 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38' (SHA:249970729cb0ef3589644e2896645e5dc5ba9c38)
+2026-10-27T23:29:53.7742890Z Complete job name: harness (macos-26)
+2026-10-27T23:29:53.8515640Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+2026-10-27T23:29:53.8516590Z with:
+2026-10-27T23:29:53.8517000Z   repository: raidenyn/veles-android
+2026-10-27T23:29:53.8520280Z   token: ***
+2026-10-27T23:29:53.8520580Z   ssh-strict: true
+2026-10-27T23:29:53.8520960Z   ssh-user: git
+2026-10-27T23:29:53.8521340Z   persist-credentials: true
+2026-10-27T23:29:53.8521750Z   clean: true
+2026-10-27T23:29:53.8522110Z   sparse-checkout-cone-mode: true
+2026-10-27T23:29:53.8522540Z   fetch-depth: 1
+2026-10-27T23:29:53.8523390Z   fetch-tags: false
+2026-10-27T23:29:53.8523800Z   show-progress: true
+2026-10-27T23:29:53.8524200Z   lfs: false
+2026-10-27T23:29:53.8524570Z   submodules: false
+2026-10-27T23:29:53.8524930Z   set-safe-directory: true
+2026-10-27T23:29:53.8525450Z   allow-unsafe-pr-checkout: false
+2026-10-27T23:29:53.8526300Z ##[endgroup]
+2026-10-27T23:29:54.2622860Z Syncing repository: raidenyn/veles-android
+2026-10-27T23:29:54.2624500Z ##[group]Getting Git version info
+2026-10-27T23:29:54.2625190Z Working directory is '/Users/runner/work/veles-android/veles-android'
+2026-10-27T23:29:54.2626890Z [command]/opt/homebrew/bin/git version
+2026-10-27T23:29:54.2931040Z git version 2.56.0
+2026-10-27T23:29:54.2942290Z ##[endgroup]
+2026-10-27T23:29:54.2948530Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/a3129309-cca6-494b-b6b1-d0bc82ae68a7/.gitconfig'
+2026-10-27T23:29:54.2958410Z Temporarily overriding HOME='/Users/runner/work/_temp/a3129309-cca6-494b-b6b1-d0bc82ae68a7' before making global git config changes
+2026-10-27T23:29:54.2959570Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T23:29:54.2962320Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/veles-android/veles-android
+2026-10-27T23:29:54.3328170Z Deleting the contents of '/Users/runner/work/veles-android/veles-android'
+2026-10-27T23:29:54.3388750Z ##[group]Determining repository object format
+2026-10-27T23:29:54.3389780Z ##[endgroup]
+2026-10-27T23:29:54.3390420Z ##[group]Initializing the repository
+2026-10-27T23:29:54.3393360Z [command]/opt/homebrew/bin/git init /Users/runner/work/veles-android/veles-android
+2026-10-27T23:29:54.3618660Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-27T23:29:54.3620120Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-27T23:29:54.3621120Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-27T23:29:54.3621800Z hint: call:
+2026-10-27T23:29:54.3622580Z hint:
+2026-10-27T23:29:54.3623190Z hint: 	git config --global init.defaultBranch <name>
+2026-10-27T23:29:54.3623730Z hint:
+2026-10-27T23:29:54.3624230Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-27T23:29:54.3625220Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-27T23:29:54.3625870Z hint:
+2026-10-27T23:29:54.3626230Z hint: 	git branch -m <name>
+2026-10-27T23:29:54.3626610Z hint:
+2026-10-27T23:29:54.3627200Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-27T23:29:54.3631490Z Initialized empty Git repository in /Users/runner/work/veles-android/veles-android/.git/
+2026-10-27T23:29:54.3643040Z [command]/opt/homebrew/bin/git remote add origin https://github.com/raidenyn/veles-android
+2026-10-27T23:29:54.3727600Z ##[endgroup]
+2026-10-27T23:29:54.3728380Z ##[group]Disabling automatic garbage collection
+2026-10-27T23:29:54.3732730Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-10-27T23:29:54.3805030Z ##[endgroup]
+2026-10-27T23:29:54.3805770Z ##[group]Setting up auth
+2026-10-27T23:29:54.3806290Z Removing SSH command configuration
+2026-10-27T23:29:54.3811140Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T23:29:54.3885460Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T23:29:54.4867040Z Removing HTTP extra header
+2026-10-27T23:29:54.4870410Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T23:29:54.4943880Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T23:29:54.5798030Z Removing includeIf entries pointing to credentials config files
+2026-10-27T23:29:54.5803720Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T23:29:54.5875500Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T23:29:54.7553090Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-27T23:29:54.7641550Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/veles-android/veles-android/.git.path /Users/runner/work/_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:29:54.7734050Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/veles-android/veles-android/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:29:54.7811210Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:29:54.7911810Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:29:54.7993850Z ##[endgroup]
+2026-10-27T23:29:54.7995390Z ##[group]Fetching the repository
+2026-10-27T23:29:54.7998390Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +7f518a24ad6f37f74d68ee8a904647d7847a0730:refs/remotes/pull/123/merge
+2026-10-27T23:29:55.6326970Z From https://github.com/raidenyn/veles-android
+2026-10-27T23:29:55.6423710Z  * [new ref]         7f518a24ad6f37f74d68ee8a904647d7847a0730 -> pull/123/merge
+2026-10-27T23:29:55.6511910Z ##[endgroup]
+2026-10-27T23:29:55.6572800Z ##[group]Determining the checkout info
+2026-10-27T23:29:55.6574280Z ##[endgroup]
+2026-10-27T23:29:55.6575340Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-10-27T23:29:55.6602570Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-27T23:29:55.6621860Z ##[group]Checking out the ref
+2026-10-27T23:29:55.6623680Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/123/merge
+2026-10-27T23:29:55.8596620Z HEAD is now at 7f518a2 Merge dde494558289f9d1850f427a060308a41d3a1d6f into 6e083e0ec5cb70d1bc8c5f98abca536e190722e1
+2026-10-27T23:29:55.8613050Z ##[endgroup]
+2026-10-27T23:29:55.8715950Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-10-27T23:29:55.8794880Z 7f518a24ad6f37f74d68ee8a904647d7847a0730
+2026-10-27T23:29:55.9097730Z ##[group]Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+2026-10-27T23:29:55.9098770Z with:
+2026-10-27T23:29:55.9099440Z   python-version: 3.12
+2026-10-27T23:29:55.9100150Z   check-latest: false
+2026-10-27T23:29:55.9103460Z   token: ***
+2026-10-27T23:29:55.9104130Z   update-environment: true
+2026-10-27T23:29:55.9104800Z   allow-prereleases: false
+2026-10-27T23:29:55.9105480Z   freethreaded: false
+2026-10-27T23:29:55.9106180Z ##[endgroup]
+2026-10-27T23:29:56.0403880Z ##[group]Installed versions
+2026-10-27T23:29:56.0486310Z Successfully set up CPython (3.12.10)
+2026-10-27T23:29:56.0487550Z ##[endgroup]
+2026-10-27T23:29:56.0645610Z ##[group]Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+2026-10-27T23:29:56.0646520Z with:
+2026-10-27T23:29:56.0647170Z   node-version: 22
+2026-10-27T23:29:56.0647830Z   check-latest: false
+2026-10-27T23:29:56.0651100Z   token: ***
+2026-10-27T23:29:56.0651720Z   package-manager-cache: true
+2026-10-27T23:29:56.0652430Z env:
+2026-10-27T23:29:56.0653210Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:56.0654280Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:29:56.0655310Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:56.0656280Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:56.0657260Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:56.0658150Z ##[endgroup]
+2026-10-27T23:29:56.1992380Z Found in cache @ /Users/runner/hostedtoolcache/node/22.23.4/arm64
+2026-10-27T23:29:56.1995980Z ##[group]Environment details
+2026-10-27T23:29:57.0554210Z node: v22.23.4
+2026-10-27T23:29:57.0558130Z npm: 10.9.9
+2026-10-27T23:29:57.0558450Z yarn: 1.22.22
+2026-10-27T23:29:57.0559180Z ##[endgroup]
+2026-10-27T23:29:57.0664930Z ##[group]Run rustup show active-toolchain
+2026-10-27T23:29:57.0665310Z [36;1mrustup show active-toolchain[0m
+2026-10-27T23:29:57.0735600Z shell: /bin/bash -e {0}
+2026-10-27T23:29:57.0735880Z env:
+2026-10-27T23:29:57.0736170Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:57.0736580Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:29:57.0737080Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:57.0737460Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:57.0738420Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:29:57.0738780Z ##[endgroup]
+2026-10-27T23:29:57.1931680Z info: syncing channel updates for 1.98.0-aarch64-apple-darwin
+2026-10-27T23:29:57.3310730Z info: latest update on 2026-08-20 for version 1.98.0 (88d9e12ae 2026-08-18)
+2026-10-27T23:29:57.3316310Z info: downloading 5 components
+2026-10-27T23:30:04.0892930Z warn: the missing active toolchain `1.98.0-aarch64-apple-darwin` has been auto-installed
+2026-10-27T23:30:04.0894470Z 1.98.0-aarch64-apple-darwin (overridden by '/Users/runner/work/veles-android/veles-android/native-bridge/feasibility/rust-toolchain.toml')
+2026-10-27T23:30:04.0912510Z warn: auto-installation is deprecated for most `rustup` commands
+2026-10-27T23:30:04.0915660Z warn: scripts relying on this behavior in `rustup` may stop working in the future
+2026-10-27T23:30:04.0916630Z warn: to install the active toolchain, use `rustup install` instead
+2026-10-27T23:30:04.0917340Z warn: see <https://github.com/rust-lang/rustup/issues/4836> for more info
+2026-10-27T23:30:04.1101250Z ##[group]Run cargo fmt --check
+2026-10-27T23:30:04.1101690Z [36;1mcargo fmt --check[0m
+2026-10-27T23:30:04.1146600Z shell: /bin/bash -e {0}
+2026-10-27T23:30:04.1146930Z env:
+2026-10-27T23:30:04.1147320Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.1147860Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:30:04.1148430Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.1148970Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.1149490Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.1149870Z ##[endgroup]
+2026-10-27T23:30:04.4533630Z ##[group]Run cargo test --locked
+2026-10-27T23:30:04.4534040Z [36;1mcargo test --locked[0m
+2026-10-27T23:30:04.4575800Z shell: /bin/bash -e {0}
+2026-10-27T23:30:04.4576060Z env:
+2026-10-27T23:30:04.4576460Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.4576880Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:30:04.4577350Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.4577730Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.4578190Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:04.4578590Z ##[endgroup]
+2026-10-27T23:30:04.6682910Z     Updating crates.io index
+2026-10-27T23:30:05.3554590Z  Downloading crates ...
+2026-10-27T23:30:05.4112860Z   Downloaded async-broadcast v0.7.2
+2026-10-27T23:30:05.4200400Z   Downloaded ryu v1.0.23
+2026-10-27T23:30:05.4257610Z   Downloaded cfg-if v1.0.5
+2026-10-27T23:30:05.4284180Z   Downloaded pin-project-lite v0.2.17
+2026-10-27T23:30:05.4423370Z   Downloaded itoa v1.0.18
+2026-10-27T23:30:05.4453190Z   Downloaded parking v2.2.1
+2026-10-27T23:30:05.4472800Z   Downloaded waker-fn v1.2.0
+2026-10-27T23:30:05.4492920Z   Downloaded event-listener-strategy v0.5.4
+2026-10-27T23:30:05.4525490Z   Downloaded futures-io v0.3.34
+2026-10-27T23:30:05.4541170Z   Downloaded futures-core v0.3.34
+2026-10-27T23:30:05.4571470Z   Downloaded tokio-macros v2.7.2
+2026-10-27T23:30:05.4590420Z   Downloaded async-channel v2.5.0
+2026-10-27T23:30:05.4622880Z   Downloaded fastrand v1.9.0
+2026-10-27T23:30:05.4674290Z   Downloaded async-trait v0.1.92
+2026-10-27T23:30:05.4730340Z   Downloaded concurrent-queue v2.5.0
+2026-10-27T23:30:05.4779390Z   Downloaded event-listener v5.4.2
+2026-10-27T23:30:05.4807390Z   Downloaded objc2-core-bluetooth v0.3.2
+2026-10-27T23:30:05.4867950Z   Downloaded objc2-encode v4.1.0
+2026-10-27T23:30:05.4890740Z   Downloaded quote v1.0.47
+2026-10-27T23:30:05.4961890Z   Downloaded block2 v0.6.2
+2026-10-27T23:30:05.5011890Z   Downloaded unicode-ident v1.0.27
+2026-10-27T23:30:05.5095780Z   Downloaded crossbeam-utils v0.8.23
+2026-10-27T23:30:05.5174480Z   Downloaded tracing-core v0.1.36
+2026-10-27T23:30:05.5259140Z   Downloaded dispatch2 v0.3.1
+2026-10-27T23:30:05.5325630Z   Downloaded futures-lite v1.13.0
+2026-10-27T23:30:05.5399760Z   Downloaded getrandom v0.4.3
+2026-10-27T23:30:05.5468950Z   Downloaded proc-macro2 v1.0.107
+2026-10-27T23:30:05.5547970Z   Downloaded serde_derive v1.0.228
+2026-10-27T23:30:05.5617270Z   Downloaded bitflags v2.13.2
+2026-10-27T23:30:05.5730540Z   Downloaded bytes v1.12.1
+2026-10-27T23:30:05.5814020Z   Downloaded serde v1.0.228
+2026-10-27T23:30:05.5905950Z   Downloaded serde_core v1.0.228
+2026-10-27T23:30:05.5960550Z   Downloaded socket2 v0.6.5
+2026-10-27T23:30:05.5991940Z   Downloaded uuid v1.29.0
+2026-10-27T23:30:05.6099620Z   Downloaded memchr v2.8.3
+2026-10-27T23:30:05.6233020Z   Downloaded mio v1.2.4
+2026-10-27T23:30:05.6388540Z   Downloaded bluest v0.6.9
+2026-10-27T23:30:05.6525520Z   Downloaded serde_json v1.0.140
+2026-10-27T23:30:05.6685560Z   Downloaded objc2-core-foundation v0.3.2
+2026-10-27T23:30:05.6843640Z   Downloaded syn v2.0.119
+2026-10-27T23:30:05.7059130Z   Downloaded objc2 v0.6.5
+2026-10-27T23:30:05.7294500Z   Downloaded objc2-foundation v0.3.2
+2026-10-27T23:30:05.7738810Z   Downloaded syn v3.0.9
+2026-10-27T23:30:05.7956480Z   Downloaded tracing v0.1.44
+2026-10-27T23:30:05.8255160Z   Downloaded libc v0.2.191
+2026-10-27T23:30:05.9297740Z   Downloaded tokio v1.54.1
+2026-10-27T23:30:06.1197800Z    Compiling proc-macro2 v1.0.107
+2026-10-27T23:30:06.1203080Z    Compiling quote v1.0.47
+2026-10-27T23:30:06.1203540Z    Compiling unicode-ident v1.0.27
+2026-10-27T23:30:06.3344980Z    Compiling objc2 v0.6.5
+2026-10-27T23:30:09.3408480Z    Compiling pin-project-lite v0.2.17
+2026-10-27T23:30:09.4073490Z    Compiling objc2-encode v4.1.0
+2026-10-27T23:30:09.4302920Z    Compiling parking v2.2.1
+2026-10-27T23:30:09.5961440Z    Compiling serde_core v1.0.228
+2026-10-27T23:30:09.8515480Z    Compiling libc v0.2.191
+2026-10-27T23:30:10.3825380Z    Compiling crossbeam-utils v0.8.23
+2026-10-27T23:30:10.4770220Z    Compiling bitflags v2.13.2
+2026-10-27T23:30:10.6248790Z    Compiling syn v2.0.119
+2026-10-27T23:30:10.6622230Z    Compiling syn v3.0.9
+2026-10-27T23:30:11.1783960Z    Compiling block2 v0.6.2
+2026-10-27T23:30:13.2177310Z    Compiling event-listener v5.4.2
+2026-10-27T23:30:13.2491220Z    Compiling futures-core v0.3.34
+2026-10-27T23:30:13.3597020Z    Compiling serde v1.0.228
+2026-10-27T23:30:13.4208900Z    Compiling event-listener-strategy v0.5.4
+2026-10-27T23:30:13.5263690Z    Compiling serde_derive v1.0.228
+2026-10-27T23:30:13.6763480Z    Compiling objc2-core-foundation v0.3.2
+2026-10-27T23:30:14.0594460Z    Compiling memchr v2.8.3
+2026-10-27T23:30:14.5430670Z    Compiling concurrent-queue v2.5.0
+2026-10-27T23:30:14.6144130Z    Compiling objc2-foundation v0.3.2
+2026-10-27T23:30:14.7038060Z    Compiling dispatch2 v0.3.1
+2026-10-27T23:30:15.1001800Z    Compiling futures-io v0.3.34
+2026-10-27T23:30:15.2341300Z    Compiling tracing-core v0.1.36
+2026-10-27T23:30:15.6917470Z    Compiling serde_json v1.0.140
+2026-10-27T23:30:15.9497590Z    Compiling waker-fn v1.2.0
+2026-10-27T23:30:16.0247230Z    Compiling fastrand v1.9.0
+2026-10-27T23:30:16.2525360Z    Compiling futures-lite v1.13.0
+2026-10-27T23:30:16.7265360Z    Compiling tracing v0.1.44
+2026-10-27T23:30:16.8771370Z    Compiling async-channel v2.5.0
+2026-10-27T23:30:16.8878730Z    Compiling tokio-macros v2.7.2
+2026-10-27T23:30:17.0437350Z    Compiling async-trait v0.1.92
+2026-10-27T23:30:17.4187120Z    Compiling async-broadcast v0.7.2
+2026-10-27T23:30:17.5739360Z    Compiling uuid v1.29.0
+2026-10-27T23:30:17.7836670Z    Compiling ryu v1.0.23
+2026-10-27T23:30:17.9241680Z    Compiling itoa v1.0.18
+2026-10-27T23:30:17.9278760Z    Compiling veles-otp23-feasibility v0.1.0 (/Users/runner/work/veles-android/veles-android/native-bridge/feasibility)
+2026-10-27T23:30:18.0921680Z    Compiling tokio v1.54.1
+2026-10-27T23:30:26.2718640Z    Compiling objc2-core-bluetooth v0.3.2
+2026-10-27T23:30:27.0566640Z    Compiling bluest v0.6.9
+2026-10-27T23:30:34.7415660Z     Finished `test` profile [unoptimized + debuginfo] target(s) in 30.21s
+2026-10-27T23:30:34.8192140Z      Running unittests src/lib.rs (target/debug/deps/veles_otp23_feasibility-a8e2dc308ceb1915)
+2026-10-27T23:30:34.8251800Z 
+2026-10-27T23:30:34.8252750Z running 8 tests
+2026-10-27T23:30:35.0096290Z test closejoin::tests::joins_happen_when_the_worker_observes_its_cancel_or_close_late ... ok
+2026-10-27T23:30:35.0580930Z test closejoin::tests::joins_a_worker_that_finishes_well_inside_the_budget ... ok
+2026-10-27T23:30:35.4779360Z test closejoin::tests::churn_between_shutdowns_never_accumulates_retired_handles ... ok
+2026-10-27T23:30:35.4780040Z test closejoin::tests::no_handles_joins_nothing ... ok
+2026-10-27T23:30:35.4941630Z test closejoin::tests::legacy_detached_close_is_unawaited_queued_close_is_joined ... ok
+2026-10-27T23:30:35.5730790Z test closejoin::tests::mixed_workers_count_exactly_and_stay_bounded ... ok
+2026-10-27T23:30:35.7634190Z test closejoin::tests::reap_removes_only_finished_handles_between_shutdowns ... ok
+2026-10-27T23:30:35.8154460Z test closejoin::tests::wedged_worker_never_exceeds_the_budget ... ok
+2026-10-27T23:30:35.8156010Z 
+2026-10-27T23:30:35.8157340Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+2026-10-27T23:30:35.8158980Z 
+2026-10-27T23:30:35.8160480Z      Running unittests src/bin/otp23_host.rs (target/debug/deps/otp23_host-df5c222b12b9d9ea)
+2026-10-27T23:30:35.8249860Z 
+2026-10-27T23:30:35.8251170Z running 0 tests
+2026-10-27T23:30:35.8251540Z 
+2026-10-27T23:30:35.8270210Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:35.8271120Z 
+2026-10-27T23:30:35.8271980Z      Running tests/core_correlation.rs (target/debug/deps/core_correlation-e5e546d066717257)
+2026-10-27T23:30:35.8349660Z 
+2026-10-27T23:30:35.8360540Z running 37 tests
+2026-10-27T23:30:35.8460240Z test a_scan_stops_itself_after_300_seconds ... ok
+2026-10-27T23:30:35.8561480Z test a_device_already_connected_or_connecting_is_busy_and_retryable ... ok
+2026-10-27T23:30:35.8649820Z test an_id_may_be_reused_after_its_completion_was_delivered ... ok
+2026-10-27T23:30:35.8651200Z test a_negotiated_mtu_below_185_or_above_517_is_refused ... ok
+2026-10-27T23:30:35.8652300Z test at_most_two_scans_may_be_open ... ok
+2026-10-27T23:30:35.8653720Z test connect_by_device_handle_resolves_the_hint_and_completes_after_setup ... ok
+2026-10-27T23:30:35.8655090Z test connect_failure_is_classified_and_frees_the_device ... ok
+2026-10-27T23:30:35.8656420Z test connect_to_an_unknown_or_malformed_target_fails_closed ... ok
+2026-10-27T23:30:35.8659020Z test device_found_carries_scan_and_device_handles_and_is_deduplicated_per_scan ... ok
+2026-10-27T23:30:35.8660650Z test device_labels_and_hints_are_sanitised_to_envelope_bounds ... ok
+2026-10-27T23:30:35.8661680Z test at_most_32_connections ... ok
+2026-10-27T23:30:35.8662830Z test global_send_queue_ceiling_is_128_records_or_128_kib ... ok
+2026-10-27T23:30:35.8663970Z test handles_are_unique_random_looking_and_never_reused ... ok
+2026-10-27T23:30:35.8665140Z test hello_returns_ready_and_performs_no_ble_work ... ok
+2026-10-27T23:30:35.8666260Z test inbound_records_never_cross_connections_even_when_fragments_interleave ... ok
+2026-10-27T23:30:35.8667190Z test malformed_inbound_fragments_are_dropped_silently_and_do_not_affect_the_peer_state ... ok
+2026-10-27T23:30:35.8667820Z test no_overlap_is_a_fatal_correlated_error_then_exit_3 ... ok
+2026-10-27T23:30:35.8668490Z test post_ready_uncorrelatable_input_exits_2_silently_after_full_release ... ok
+2026-10-27T23:30:35.8669070Z test pre_ready_non_hello_is_answered_once_then_exit_2 ... ok
+2026-10-27T23:30:35.8669660Z test repeated_conflicting_transaction_starts_disconnect_only_that_peer ... ok
+2026-10-27T23:30:35.8670280Z test repeated_hello_and_wrong_api_version_are_rejected_without_ending_the_session ... ok
+2026-10-27T23:30:35.8670950Z test reusing_an_id_whose_completion_is_still_queued_fails_closed ... ok
+2026-10-27T23:30:35.8671560Z test reusing_an_outstanding_request_id_fails_closed_without_a_response ... ok
+2026-10-27T23:30:35.8672530Z test scan_start_failure_is_a_correlated_classified_error ... ok
+2026-10-27T23:30:35.8673180Z test send_fragments_the_whole_record_and_reports_sent_after_the_writes_complete ... ok
+2026-10-27T23:30:35.8673750Z test evicted_device_handles_fail_with_unknown_handle ... ok
+2026-10-27T23:30:35.8674310Z test device_found_is_rate_limited_to_64_per_second_and_1024_per_scan ... ok
+2026-10-27T23:30:35.8675470Z test sends_on_one_connection_are_serialised_and_use_fresh_transaction_ids ... ok
+2026-10-27T23:30:35.8676040Z test start_scan_completes_only_when_the_backend_confirms ... ok
+2026-10-27T23:30:35.8676590Z test stop_scan_is_correlated_and_follows_the_last_device_found ... ok
+2026-10-27T23:30:35.8677120Z test send_validation_uses_the_specific_error_codes ... ok
+2026-10-27T23:30:35.8677620Z test send_queue_is_bounded_per_peer_by_records_and_bytes ... ok
+2026-10-27T23:30:35.8678070Z test uncorrelatable_pre_ready_input_is_silent_exit_2 ... ok
+2026-10-27T23:30:35.8678580Z test two_connects_complete_independently_and_out_of_order ... ok
+2026-10-27T23:30:35.8679110Z test unknown_backend_tokens_and_late_events_are_ignored ... ok
+2026-10-27T23:30:35.8679710Z test unsolicited_scan_end_has_no_request_id_and_releases_the_scan ... ok
+2026-10-27T23:30:35.8680360Z      Running tests/core_lifecycle.rs (target/debug/deps/core_lifecycle-9963860b930c26cf)
+2026-10-27T23:30:35.8680960Z test the_65th_outstanding_request_is_refused_retryably ... ok
+2026-10-27T23:30:35.8681210Z 
+2026-10-27T23:30:35.8681610Z test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+2026-10-27T23:30:35.8681970Z 
+2026-10-27T23:30:35.8717630Z 
+2026-10-27T23:30:35.8718770Z running 20 tests
+2026-10-27T23:30:35.8729470Z test an_overflowing_message_is_not_accepted_and_no_request_resurrects ... ok
+2026-10-27T23:30:35.8735760Z test a_released_handle_is_unknown_and_late_backend_events_for_it_are_ignored ... ok
+2026-10-27T23:30:35.8741200Z test a_failed_gatt_write_fails_the_send_and_tears_down_only_that_link ... ok
+2026-10-27T23:30:35.8742200Z test backend_callback_overflow_fails_closed ... ok
+2026-10-27T23:30:35.8742840Z test connect_times_out_after_30_seconds_and_releases_the_link ... ok
+2026-10-27T23:30:35.8743490Z test connect_is_failed_not_disconnected_when_the_link_drops_during_setup ... ok
+2026-10-27T23:30:35.8744140Z test disconnecting_a_connecting_link_fails_its_connect_then_reports_disconnected ... ok
+2026-10-27T23:30:35.8744700Z test eof_before_hello_also_exits_cleanly ... ok
+2026-10-27T23:30:35.8745300Z test inbound_partial_records_expire_after_five_seconds_of_inactivity ... ok
+2026-10-27T23:30:35.8745930Z test disconnect_releases_only_that_handle_and_fails_its_pending_sends_first ... ok
+2026-10-27T23:30:35.8746760Z test next_deadline_tracks_the_earliest_pending_work ... ok
+2026-10-27T23:30:35.8747360Z test framing_violations_fail_closed_with_exit_2_and_io_errors_with_exit_1 ... ok
+2026-10-27T23:30:35.8747890Z test nothing_is_accepted_or_emitted_after_shutdown ... ok
+2026-10-27T23:30:35.8748520Z test link_loss_errors_in_flight_requests_then_emits_one_unsolicited_disconnected ... ok
+2026-10-27T23:30:35.8749040Z test output_queue_byte_overflow_also_fails_closed ... ok
+2026-10-27T23:30:35.8749620Z test output_queue_message_overflow_fails_closed_without_dropping_or_reordering ... ok
+2026-10-27T23:30:35.8750300Z test shutdown_orders_errors_then_lifecycle_then_shutdown_complete_last ... ok
+2026-10-27T23:30:35.8750940Z test stdin_eof_stops_scans_disconnects_links_and_exits_without_output ... ok
+2026-10-27T23:30:35.8751540Z test send_times_out_after_30_seconds_and_the_half_written_link_is_dropped ... ok
+2026-10-27T23:30:35.8752220Z      Running tests/fragmentation.rs (target/debug/deps/fragmentation-019ba89c7ffbdf23)
+2026-10-27T23:30:35.8753150Z test stdout_closure_is_treated_as_port_closure ... ok
+2026-10-27T23:30:35.8753400Z 
+2026-10-27T23:30:35.8753790Z test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:35.8754140Z 
+2026-10-27T23:30:35.8799200Z 
+2026-10-27T23:30:35.8802370Z running 31 tests
+2026-10-27T23:30:35.8802910Z test clear_wipes_everything ... ok
+2026-10-27T23:30:35.8804710Z test conflicts_older_than_sixty_seconds_are_forgotten ... ok
+2026-10-27T23:30:35.8807390Z test chunking_at_the_mtu_floor_matches_the_frozen_boundaries ... ok
+2026-10-27T23:30:35.8808130Z test final_length_mismatch_with_correct_flag_sequence_is_discarded ... ok
+2026-10-27T23:30:35.8809170Z test duplicate_index_and_stray_fragments_of_unknown_transactions ... ok
+2026-10-27T23:30:35.8910810Z test fragment_activity_refreshes_the_inactivity_timer ... ok
+2026-10-27T23:30:35.8914990Z test first_fragment_total_must_be_1_to_4096 ... ok
+2026-10-27T23:30:35.8915550Z test global_caps_apply_across_peers_before_allocation ... ok
+2026-10-27T23:30:35.8916170Z test inactivity_timeout_is_five_seconds_per_transaction ... ok
+2026-10-27T23:30:35.8916760Z test live_duplicate_start_is_ignored_and_a_repeat_within_sixty_seconds_disconnects ... ok
+2026-10-27T23:30:35.8917500Z test malformed_fragments_discard_the_transaction_and_free_its_budget ... ok
+2026-10-27T23:30:35.8918050Z test max_mtu_uses_the_capped_non_final_fragments ... ok
+2026-10-27T23:30:35.8918610Z test max_record_is_23_full_fragments_plus_two_bytes_at_mtu_185 ... ok
+2026-10-27T23:30:35.8919270Z test only_two_incomplete_transactions_per_peer_and_the_third_changes_nothing ... ok
+2026-10-27T23:30:35.8919790Z test r2_budget_matches_the_literal_table_for_every_mtu ... ok
+2026-10-27T23:30:35.8920300Z test r2_exact_size_rules_reject_every_off_by_one_at_mtu_517 ... ok
+2026-10-27T23:30:35.8920910Z test r2_mtu_517_payload_boundary_508_fits_and_509_needs_two_fragments ... ok
+2026-10-27T23:30:35.8921560Z test r2_mtu_517_rejects_inbound_frames_above_the_512_attribute_cap ... ok
+2026-10-27T23:30:35.8922850Z test r2_mtu_517_capped_non_final_payloads_are_exactly_508_bytes ... ok
+2026-10-27T23:30:35.8923560Z test r2_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries ... ok
+2026-10-27T23:30:35.8924060Z test r2_preserves_the_mtu_185_vectors ... ok
+2026-10-27T23:30:35.8924580Z test r2_receiver_accepts_an_empty_final_only_after_an_exact_multiple ... ok
+2026-10-27T23:30:35.8925180Z test r2_revision_1_frames_at_mtu_516_and_517_fail_closed ... ok
+2026-10-27T23:30:35.8926260Z test r2_sender_reproduces_every_canonical_accepted_fixture_byte_for_byte ... ok
+2026-10-27T23:30:35.8928580Z test record_length_zero_and_above_4096_are_refused_at_fragmentation_time ... ok
+2026-10-27T23:30:35.8929930Z test committed_fragmentation_fixtures_behave_as_specified ... ok
+2026-10-27T23:30:35.8930570Z test round_trip_every_boundary_length_at_floor_and_ceiling_mtu ... ok
+2026-10-27T23:30:35.8931840Z test transaction_id_domain_and_link_capacity_domains_are_enforced ... ok
+2026-10-27T23:30:35.8932590Z test zero_length_final_fragment_is_accepted_when_the_record_is_an_exact_multiple ... ok
+2026-10-27T23:30:35.8954380Z test sender_output_matches_the_committed_max_record_vector ... ok
+2026-10-27T23:30:35.9380110Z test r2_sender_and_receiver_agree_at_every_boundary_of_every_mtu ... ok
+2026-10-27T23:30:35.9380590Z 
+2026-10-27T23:30:35.9381240Z test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+2026-10-27T23:30:35.9382060Z 
+2026-10-27T23:30:35.9384220Z      Running tests/framing.rs (target/debug/deps/framing-75f37df6b5ef3a6d)
+2026-10-27T23:30:35.9435380Z 
+2026-10-27T23:30:35.9437060Z running 10 tests
+2026-10-27T23:30:35.9438380Z test rejects_four_gigabyte_declaration_without_allocating ... ok
+2026-10-27T23:30:35.9438880Z test accepts_exactly_the_maximum_frame ... ok
+2026-10-27T23:30:35.9439300Z test reads_consecutive_frames_then_clean_eof ... ok
+2026-10-27T23:30:35.9439650Z test rejects_zero_length_frame ... ok
+2026-10-27T23:30:35.9440170Z test rejects_one_byte_over_the_maximum_without_reading_the_payload ... ok
+2026-10-27T23:30:35.9440630Z test survives_one_byte_reads ... ok
+2026-10-27T23:30:35.9441090Z test truncated_header_is_distinguished_from_clean_eof ... ok
+2026-10-27T23:30:35.9441520Z test truncated_payload_reports_progress ... ok
+2026-10-27T23:30:35.9442780Z test write_enforces_one_to_maximum_bytes ... ok
+2026-10-27T23:30:35.9443220Z test writes_header_and_payload_in_one_write_then_flushes ... ok
+2026-10-27T23:30:35.9443500Z 
+2026-10-27T23:30:35.9443890Z test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:35.9444210Z 
+2026-10-27T23:30:35.9444550Z      Running tests/hardware_scan.rs (target/debug/deps/hardware_scan-4b848f391ef732ca)
+2026-10-27T23:30:35.9491070Z 
+2026-10-27T23:30:35.9491350Z running 4 tests
+2026-10-27T23:30:35.9492120Z test connecting_to_an_absent_device_fails_closed_and_classified ... ignored, needs a Bluetooth LE radio
+2026-10-27T23:30:35.9492980Z test real_diagnostic_scan_reports_bounded_device_events ... ignored, needs a Bluetooth LE radio
+2026-10-27T23:30:35.9493790Z test real_scan_is_released_when_stdin_closes ... ignored, needs a Bluetooth LE radio
+2026-10-27T23:30:35.9494810Z test real_scan_starts_stops_and_shutdown_exits_with_idle_stdin ... ignored, needs a Bluetooth LE radio
+2026-10-27T23:30:35.9495230Z 
+2026-10-27T23:30:35.9495600Z test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:35.9495880Z 
+2026-10-27T23:30:35.9496180Z      Running tests/macos_map.rs (target/debug/deps/macos_map-dd99629a91607313)
+2026-10-27T23:30:35.9541120Z 
+2026-10-27T23:30:35.9542270Z running 13 tests
+2026-10-27T23:30:35.9542970Z test authorization_raw_values_map_to_fixed_names ... ok
+2026-10-27T23:30:35.9543600Z test every_accepted_write_length_wraps_every_frame_in_one_os_write ... ok
+2026-10-27T23:30:35.9544250Z test bounded_set_rejects_duplicates_and_capacity ... ok
+2026-10-27T23:30:35.9544790Z test hint_round_trips_the_peripheral_identifier ... ok
+2026-10-27T23:30:35.9546390Z test malformed_hints_are_refused ... ok
+2026-10-27T23:30:35.9546940Z test fallback_label_is_short_valid_and_not_the_full_identifier ... ok
+2026-10-27T23:30:35.9547530Z test reported_512_is_the_clamped_budget_without_inventing_an_mtu ... ok
+2026-10-27T23:30:35.9548030Z test scan_gate_admits_exactly_one_start_and_one_end ... ok
+2026-10-27T23:30:35.9548610Z test scan_gate_natural_end_wins_without_external_stop ... ok
+2026-10-27T23:30:35.9549160Z test unavailable_timeout_only_blames_the_radio_when_authorized ... ok
+2026-10-27T23:30:35.9549660Z test valid_uuid_accepts_only_canonical_lowercase ... ok
+2026-10-27T23:30:35.9550450Z test write_lengths_at_or_above_512_give_the_clamped_budget ... ok
+2026-10-27T23:30:35.9551980Z test write_lengths_below_512_cannot_establish_a_common_budget_and_fail_closed ... ok
+2026-10-27T23:30:35.9552340Z 
+2026-10-27T23:30:35.9552740Z test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:35.9553100Z 
+2026-10-27T23:30:35.9553410Z      Running tests/outqueue.rs (target/debug/deps/outqueue-c24d0143111f77c4)
+2026-10-27T23:30:35.9597410Z 
+2026-10-27T23:30:35.9598840Z running 9 tests
+2026-10-27T23:30:35.9599450Z test close_rejects_pushes_but_drains_what_is_queued ... ok
+2026-10-27T23:30:35.9600440Z test a_popped_frame_stays_accounted_until_its_write_finishes ... ok
+2026-10-27T23:30:35.9601200Z test byte_ceiling_overflows_at_the_boundary ... ok
+2026-10-27T23:30:35.9601600Z test limits_are_the_frozen_ceilings ... ok
+2026-10-27T23:30:35.9602030Z test message_ceiling_overflows_without_dropping_or_reordering ... ok
+2026-10-27T23:30:35.9602550Z test preserves_order_and_reports_depth ... ok
+2026-10-27T23:30:35.9603030Z test request_ids_stay_reserved_while_queued_or_being_written ... ok
+2026-10-27T23:30:36.0652670Z test pop_blocks_until_data_arrives ... ok
+2026-10-27T23:30:36.0684820Z test wait_drained_observes_the_writer_and_respects_its_deadline ... ok
+2026-10-27T23:30:36.0685150Z 
+2026-10-27T23:30:36.0685570Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+2026-10-27T23:30:36.0685910Z 
+2026-10-27T23:30:36.0687450Z      Running tests/process.rs (target/debug/deps/process-d250c95029292cfe)
+2026-10-27T23:30:36.0742260Z 
+2026-10-27T23:30:36.0743490Z running 14 tests
+2026-10-27T23:30:36.0872770Z test a_frame_delivered_in_single_byte_writes_is_reassembled ... ok
+2026-10-27T23:30:36.0880190Z test eof_with_active_scan_and_connections_exits_zero_and_leaves_no_process ... ok
+2026-10-27T23:30:36.0885190Z test disconnect_releases_one_phone_while_the_other_keeps_working ... ok
+2026-10-27T23:30:36.0931090Z test incompatible_api_flushes_the_error_then_exits_3 ... ok
+2026-10-27T23:30:36.0939610Z test link_loss_is_reported_for_one_handle_only ... ok
+2026-10-27T23:30:36.0940220Z test hello_returns_ready_and_stdin_eof_exits_zero_closing_stdout ... ok
+2026-10-27T23:30:36.0991400Z test pre_ready_request_gets_one_correlated_error_then_exit_2 ... ok
+2026-10-27T23:30:36.1063920Z test record_size_boundaries_over_the_pipe ... ok
+2026-10-27T23:30:36.1137740Z test shutdown_completes_and_exits_while_stdin_stays_open_and_idle ... ok
+2026-10-27T23:30:36.1172900Z test malformed_input_before_and_after_ready_exits_2_silently ... ok
+2026-10-27T23:30:36.1212510Z test oversize_zero_and_truncated_frames_fail_closed_with_exit_2_and_no_output ... ok
+2026-10-27T23:30:36.1213890Z test shutdown_with_open_links_orders_lifecycle_before_shutdown_complete ... ok
+2026-10-27T23:30:36.1260720Z test two_independent_phones_exchange_complete_records_and_never_cross ... ok
+2026-10-27T23:30:36.1334860Z test wrong_or_missing_origin_argument_refuses_to_start ... ok
+2026-10-27T23:30:36.1335280Z 
+2026-10-27T23:30:36.1335880Z test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+2026-10-27T23:30:36.1336390Z 
+2026-10-27T23:30:36.1339390Z      Running tests/schema.rs (target/debug/deps/schema-ff45cdfb16b2e451)
+2026-10-27T23:30:36.1384770Z 
+2026-10-27T23:30:36.1386690Z running 25 tests
+2026-10-27T23:30:36.1401130Z test base64_rejects_non_canonical_and_malformed_text ... ok
+2026-10-27T23:30:36.1401710Z test accepts_every_request_type_with_exact_fields ... ok
+2026-10-27T23:30:36.1402210Z test base64_round_trips_and_matches_rfc4648_vectors ... ok
+2026-10-27T23:30:36.1402730Z test every_error_code_has_its_wire_name ... ok
+2026-10-27T23:30:36.1403380Z test correlated_events_carry_request_id_and_unsolicited_events_do_not ... ok
+2026-10-27T23:30:36.1405150Z test hello_accepts_version_lists_and_ranges ... ok
+2026-10-27T23:30:36.1406490Z test offer_selects_highest_mutual_version ... ok
+2026-10-27T23:30:36.1407520Z test base64_enforces_decoded_size_bounds_zero_and_max ... ok
+2026-10-27T23:30:36.1408080Z      Running tests/winrt_map.rs (target/debug/deps/winrt_map-e49b99fa709f38b3)
+2026-10-27T23:30:36.1408570Z test platform_hint_bounds_are_utf8_byte_lengths ... ok
+2026-10-27T23:30:36.1409110Z test optional_fields_are_omitted_never_null ... ok
+2026-10-27T23:30:36.1409680Z test post_ready_requires_the_negotiated_api_version ... ok
+2026-10-27T23:30:36.1410250Z test pre_negotiation_error_has_no_api_version ... ok
+2026-10-27T23:30:36.1410910Z test hello_offer_shape_violations_are_rejected_as_negotiation_errors ... ok
+2026-10-27T23:30:36.1412550Z test pre_ready_non_hello_with_usable_id_is_correlated_fatal_pre_ready ... ok
+2026-10-27T23:30:36.1413230Z test request_id_accepts_64_chars_of_the_allowed_alphabet ... ok
+2026-10-27T23:30:36.1413830Z test ready_reports_selected_version_and_capabilities ... ok
+2026-10-27T23:30:36.1414430Z test strict_json_accepts_plain_documents_and_unicode ... ok
+2026-10-27T23:30:36.1415000Z test strict_json_rejects_duplicate_keys_at_any_depth ... ok
+2026-10-27T23:30:36.1415690Z test schema_violations_with_a_usable_id_are_correlated_invalid_request ... ok
+2026-10-27T23:30:36.1416320Z test strict_json_rejects_syntax_and_invalid_utf8 ... ok
+2026-10-27T23:30:36.1416880Z test strict_json_rejects_non_integers_and_null ... ok
+2026-10-27T23:30:36.1417490Z test strict_json_rejects_trailing_bytes_including_whitespace ... ok
+2026-10-27T23:30:36.1418150Z test unknown_request_types_are_correlated_unknown_request ... ok
+2026-10-27T23:30:36.1418810Z test unusable_envelopes_are_uncorrelatable_in_both_phases ... ok
+2026-10-27T23:30:36.1419450Z test send_record_validation_maps_to_specific_codes ... ok
+2026-10-27T23:30:36.1420120Z 
+2026-10-27T23:30:36.1420650Z test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:36.1421120Z 
+2026-10-27T23:30:36.1461620Z 
+2026-10-27T23:30:36.1462460Z running 6 tests
+2026-10-27T23:30:36.1463080Z test bluetooth_errors_are_classified_with_retryability ... ok
+2026-10-27T23:30:36.1463720Z test access_and_radio_states_distinguish_denied_from_off ... ok
+2026-10-27T23:30:36.1464870Z    Doc-tests veles_otp23_feasibility
+2026-10-27T23:30:36.1465420Z test fallback_label_is_short_valid_and_not_the_full_address ... ok
+2026-10-27T23:30:36.1466010Z test gatt_statuses_map_to_stable_stage_names ... ok
+2026-10-27T23:30:36.1467610Z test hint_round_trips_and_masks_to_48_bits ... ok
+2026-10-27T23:30:36.1468730Z test malformed_hints_are_refused ... ok
+2026-10-27T23:30:36.1468930Z 
+2026-10-27T23:30:36.1469340Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:36.1469660Z 
+2026-10-27T23:30:36.2722800Z 
+2026-10-27T23:30:36.2723160Z running 0 tests
+2026-10-27T23:30:36.2723340Z 
+2026-10-27T23:30:36.2723770Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-10-27T23:30:36.2724110Z 
+2026-10-27T23:30:36.2840630Z ##[group]Run cargo clippy --locked --all-targets -- -D warnings
+2026-10-27T23:30:36.2841100Z [36;1mcargo clippy --locked --all-targets -- -D warnings[0m
+2026-10-27T23:30:36.2878060Z shell: /bin/bash -e {0}
+2026-10-27T23:30:36.2878390Z env:
+2026-10-27T23:30:36.2878700Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:36.2879200Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:30:36.2879700Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:36.2880670Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:36.2881140Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:36.2881450Z ##[endgroup]
+2026-10-27T23:30:36.7669470Z     Checking pin-project-lite v0.2.17
+2026-10-27T23:30:36.7670230Z     Checking objc2-encode v4.1.0
+2026-10-27T23:30:36.7670750Z     Checking parking v2.2.1
+2026-10-27T23:30:36.8275020Z     Checking bitflags v2.13.2
+2026-10-27T23:30:36.8452140Z     Checking event-listener v5.4.2
+2026-10-27T23:30:36.9461610Z     Checking libc v0.2.191
+2026-10-27T23:30:36.9511290Z     Checking objc2 v0.6.5
+2026-10-27T23:30:37.0045670Z     Checking serde_core v1.0.228
+2026-10-27T23:30:37.4254920Z     Checking futures-core v0.3.34
+2026-10-27T23:30:37.4939990Z     Checking event-listener-strategy v0.5.4
+2026-10-27T23:30:37.5689740Z     Checking crossbeam-utils v0.8.23
+2026-10-27T23:30:37.6319020Z     Checking block2 v0.6.2
+2026-10-27T23:30:37.7445230Z     Checking objc2-core-foundation v0.3.2
+2026-10-27T23:30:37.7656670Z     Checking memchr v2.8.3
+2026-10-27T23:30:38.0030100Z     Checking dispatch2 v0.3.1
+2026-10-27T23:30:38.1836660Z     Checking serde v1.0.228
+2026-10-27T23:30:38.2631590Z     Checking concurrent-queue v2.5.0
+2026-10-27T23:30:38.3557440Z     Checking objc2-foundation v0.3.2
+2026-10-27T23:30:38.3740300Z     Checking fastrand v1.9.0
+2026-10-27T23:30:38.4683820Z     Checking waker-fn v1.2.0
+2026-10-27T23:30:38.4855610Z     Checking futures-io v0.3.34
+2026-10-27T23:30:38.5168770Z     Checking tracing-core v0.1.36
+2026-10-27T23:30:38.5533330Z     Checking futures-lite v1.13.0
+2026-10-27T23:30:38.7273490Z     Checking tracing v0.1.44
+2026-10-27T23:30:38.8525770Z     Checking async-channel v2.5.0
+2026-10-27T23:30:38.9888070Z     Checking uuid v1.29.0
+2026-10-27T23:30:39.0191240Z     Checking async-broadcast v0.7.2
+2026-10-27T23:30:39.1761230Z     Checking itoa v1.0.18
+2026-10-27T23:30:39.2387120Z     Checking ryu v1.0.23
+2026-10-27T23:30:39.3025140Z    Compiling veles-otp23-feasibility v0.1.0 (/Users/runner/work/veles-android/veles-android/native-bridge/feasibility)
+2026-10-27T23:30:39.3555660Z     Checking serde_json v1.0.140
+2026-10-27T23:30:39.4998640Z     Checking tokio v1.54.1
+2026-10-27T23:30:47.2854690Z     Checking objc2-core-bluetooth v0.3.2
+2026-10-27T23:30:47.6783990Z     Checking bluest v0.6.9
+2026-10-27T23:30:49.3760720Z     Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.96s
+2026-10-27T23:30:49.3870860Z ##[group]Run node --test scripts/connector-api.test.mjs scripts/isolated-device.test.mjs
+2026-10-27T23:30:49.3872390Z [36;1mnode --test scripts/connector-api.test.mjs scripts/isolated-device.test.mjs[0m
+2026-10-27T23:30:49.3915450Z shell: /bin/bash -e {0}
+2026-10-27T23:30:49.3915690Z env:
+2026-10-27T23:30:49.3916000Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.3916510Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:30:49.3917030Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.3917440Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.3917880Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.3918240Z ##[endgroup]
+2026-10-27T23:30:49.6985170Z TAP version 13
+2026-10-27T23:30:49.7618300Z # Subtest: physical driver only calls methods exported by the real connector
+2026-10-27T23:30:49.7619090Z ok 1 - physical driver only calls methods exported by the real connector
+2026-10-27T23:30:49.7619470Z   ---
+2026-10-27T23:30:49.7619670Z   duration_ms: 3.430333
+2026-10-27T23:30:49.7619930Z   type: 'test'
+2026-10-27T23:30:49.7620380Z   ...
+2026-10-27T23:30:49.7620920Z # Subtest: connector records visibility/focus history through listeners only
+2026-10-27T23:30:49.7621580Z ok 2 - connector records visibility/focus history through listeners only
+2026-10-27T23:30:49.7621940Z   ---
+2026-10-27T23:30:49.7622160Z   duration_ms: 1.965916
+2026-10-27T23:30:49.7622450Z   type: 'test'
+2026-10-27T23:30:49.7622700Z   ...
+2026-10-27T23:30:49.7715990Z # Subtest: isolated init script only adds the .otp23 suffix to the debug build type
+2026-10-27T23:30:49.7717700Z ok 3 - isolated init script only adds the .otp23 suffix to the debug build type
+2026-10-27T23:30:49.7718120Z   ---
+2026-10-27T23:30:49.7718330Z   duration_ms: 1.081833
+2026-10-27T23:30:49.7718560Z   type: 'test'
+2026-10-27T23:30:49.7718750Z   ...
+2026-10-27T23:30:49.7719170Z # Subtest: app no longer defines or reads a cap-only OTP23_POC flag
+2026-10-27T23:30:49.7719890Z ok 4 - app no longer defines or reads a cap-only OTP23_POC flag
+2026-10-27T23:30:49.7720220Z   ---
+2026-10-27T23:30:49.7720440Z   duration_ms: 1.902917
+2026-10-27T23:30:49.7720750Z   type: 'test'
+2026-10-27T23:30:49.7720960Z   ...
+2026-10-27T23:30:49.7721470Z # Subtest: physical driver only calls methods exported by the real connector
+2026-10-27T23:30:49.7722080Z ok 5 - physical driver only calls methods exported by the real connector
+2026-10-27T23:30:49.7734820Z   ---
+2026-10-27T23:30:49.7735040Z   duration_ms: 2.040958
+2026-10-27T23:30:49.7735300Z   type: 'test'
+2026-10-27T23:30:49.7735490Z   ...
+2026-10-27T23:30:49.7735670Z 1..5
+2026-10-27T23:30:49.7735850Z # tests 5
+2026-10-27T23:30:49.7736010Z # suites 0
+2026-10-27T23:30:49.7736180Z # pass 5
+2026-10-27T23:30:49.7736390Z # fail 0
+2026-10-27T23:30:49.7736580Z # cancelled 0
+2026-10-27T23:30:49.7736770Z # skipped 0
+2026-10-27T23:30:49.7736960Z # todo 0
+2026-10-27T23:30:49.7737180Z # duration_ms 90.673542
+2026-10-27T23:30:49.7793920Z ##[group]Run python scripts/trace-parser.test.py
+2026-10-27T23:30:49.7794300Z [36;1mpython scripts/trace-parser.test.py[0m
+2026-10-27T23:30:49.7832720Z shell: /bin/bash -e {0}
+2026-10-27T23:30:49.7832940Z env:
+2026-10-27T23:30:49.7833200Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.7833740Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:30:49.7834240Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.7834700Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.7838480Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:49.7838850Z ##[endgroup]
+2026-10-27T23:30:50.0868960Z pass sample-keys
+2026-10-27T23:30:50.0870610Z pass sample-mtu
+2026-10-27T23:30:50.0871240Z pass sample-sends
+2026-10-27T23:30:50.0871770Z pass sample-replies
+2026-10-27T23:30:50.0872640Z pass sample-no-handles
+2026-10-27T23:30:50.0873170Z pass sample-json
+2026-10-27T23:30:50.0873640Z pass empty-file
+2026-10-27T23:30:50.0874120Z pass missing-file
+2026-10-27T23:30:50.0962870Z ##[group]Run python scripts/test_poc_background.py
+2026-10-27T23:30:50.0963250Z [36;1mpython scripts/test_poc_background.py[0m
+2026-10-27T23:30:50.1002670Z shell: /bin/bash -e {0}
+2026-10-27T23:30:50.1002930Z env:
+2026-10-27T23:30:50.1003250Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.1003730Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:30:50.1004250Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.1004770Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.1005980Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.1006380Z ##[endgroup]
+2026-10-27T23:30:50.5696880Z ..........................
+2026-10-27T23:30:50.5697820Z ----------------------------------------------------------------------
+2026-10-27T23:30:50.5698480Z Ran 26 tests in 0.260s
+2026-10-27T23:30:50.5698840Z 
+2026-10-27T23:30:50.5699030Z OK
+2026-10-27T23:30:50.5852480Z ##[group]Run python scripts/test_strict_background.py
+2026-10-27T23:30:50.5852890Z [36;1mpython scripts/test_strict_background.py[0m
+2026-10-27T23:30:50.5900890Z shell: /bin/bash -e {0}
+2026-10-27T23:30:50.5901110Z env:
+2026-10-27T23:30:50.5901440Z   pythonLocation: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.5901980Z   PKG_CONFIG_PATH: /Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/pkgconfig
+2026-10-27T23:30:50.5902450Z   Python_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.5902890Z   Python2_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.5903340Z   Python3_ROOT_DIR: /Users/runner/hostedtoolcache/Python/3.12.10/arm64
+2026-10-27T23:30:50.5903700Z ##[endgroup]
+2026-10-27T23:30:50.8436250Z ..............................................................................F......................................
+2026-10-27T23:30:50.8437060Z ======================================================================
+2026-10-27T23:30:50.8437940Z FAIL: test_session_state_reads_the_dictionary (__main__.MacForegroundReaderBehaviour.test_session_state_reads_the_dictionary)
+2026-10-27T23:30:50.8438630Z ----------------------------------------------------------------------
+2026-10-27T23:30:50.8439020Z Traceback (most recent call last):
+2026-10-27T23:30:50.8439920Z   File "/Users/runner/work/veles-android/veles-android/native-bridge/feasibility/scripts/test_strict_background.py", line 437, in test_session_state_reads_the_dictionary
+2026-10-27T23:30:50.8440770Z     self.assertEqual(state(), {"verified": False},
+2026-10-27T23:30:50.8441450Z AssertionError: {'verified': True, 'on_console': True, 'screen_locked': False} != {'verified': False}
+2026-10-27T23:30:50.8442110Z - {'on_console': True, 'screen_locked': False, 'verified': True}
+2026-10-27T23:30:50.8442690Z + {'verified': False} : the real probe fails closed off-macOS (no CoreGraphics CDLL here)
+2026-10-27T23:30:50.8443050Z 
+2026-10-27T23:30:50.8443330Z ----------------------------------------------------------------------
+2026-10-27T23:30:50.8443690Z Ran 117 tests in 0.148s
+2026-10-27T23:30:50.8443840Z 
+2026-10-27T23:30:50.8443950Z FAILED (failures=1)
+2026-10-27T23:30:50.8563500Z ##[error]Process completed with exit code 1.
+2026-10-27T23:30:50.8770550Z Post job cleanup.
+2026-10-27T23:30:51.2476520Z [command]/opt/homebrew/bin/git version
+2026-10-27T23:30:51.2772440Z git version 2.56.0
+2026-10-27T23:30:51.2796330Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/12d66457-a801-4bde-bf1c-ef201dbb08fb/.gitconfig'
+2026-10-27T23:30:51.2806840Z Temporarily overriding HOME='/Users/runner/work/_temp/12d66457-a801-4bde-bf1c-ef201dbb08fb' before making global git config changes
+2026-10-27T23:30:51.2814240Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T23:30:51.2815330Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/veles-android/veles-android
+2026-10-27T23:30:51.2951040Z Removing SSH command configuration
+2026-10-27T23:30:51.2956870Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T23:30:51.3043950Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T23:30:51.4312050Z Removing HTTP extra header
+2026-10-27T23:30:51.4317820Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T23:30:51.4409890Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T23:30:51.5625530Z Removing includeIf entries pointing to credentials config files
+2026-10-27T23:30:51.5633310Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T23:30:51.5718730Z includeif.gitdir:/Users/runner/work/veles-android/veles-android/.git.path
+2026-10-27T23:30:51.5721150Z includeif.gitdir:/Users/runner/work/veles-android/veles-android/.git/worktrees/*.path
+2026-10-27T23:30:51.5722690Z includeif.gitdir:/github/workspace/.git.path
+2026-10-27T23:30:51.5724040Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T23:30:51.5727360Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/veles-android/veles-android/.git.path
+2026-10-27T23:30:51.5824290Z /Users/runner/work/_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:30:51.5829110Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/veles-android/veles-android/.git.path \/Users\/runner\/work\/_temp\/git\-credentials\-4f1e6f0e\-e644\-4976\-a37c\-5478caa15b22\.config
+2026-10-27T23:30:51.5905330Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/veles-android/veles-android/.git/worktrees/*.path
+2026-10-27T23:30:51.5982620Z /Users/runner/work/_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:30:51.5992180Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/veles-android/veles-android/.git/worktrees/*.path \/Users\/runner\/work\/_temp\/git\-credentials\-4f1e6f0e\-e644\-4976\-a37c\-5478caa15b22\.config
+2026-10-27T23:30:51.6080470Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-27T23:30:51.6148470Z /github/runner_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:30:51.6157380Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-4f1e6f0e\-e644\-4976\-a37c\-5478caa15b22\.config
+2026-10-27T23:30:51.6330740Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T23:30:51.6365930Z /github/runner_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config
+2026-10-27T23:30:51.6426540Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-4f1e6f0e\-e644\-4976\-a37c\-5478caa15b22\.config
+2026-10-27T23:30:51.6474210Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T23:30:51.7537020Z Removing credentials config '/Users/runner/work/_temp/git-credentials-4f1e6f0e-e644-4976-a37c-5478caa15b22.config'
+2026-10-27T23:30:51.7679260Z Cleaning up orphan processes

@@ -175,10 +175,34 @@
       "source_anchor": "veles-v1.md#sec-gatt-profile"
     },
     {
+      "name": "gatt_mtu_max",
+      "value": 517,
+      "unit": "bytes",
+      "scope": "largest negotiated ATT MTU an implementation accepts (Android requestMtu ceiling); a larger reported value is refused like one below the floor",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-gatt-profile"
+    },
+    {
       "name": "fragment_payload_bytes_at_min_mtu",
       "value": 178,
       "unit": "bytes",
       "scope": "non-final fragment payload at the MTU floor 185 (185 - 3 ATT header - 4 fragment header); the tested conservative chunk (M1): the largest record needs <= ceil(4096/178) = 24 fragments",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-fragmentation"
+    },
+    {
+      "name": "gatt_attribute_value_max_bytes",
+      "value": 512,
+      "unit": "bytes",
+      "scope": "one fragment frame (4-byte header + payload) in either direction: min(negotiated ATT MTU - 3, 512), the Bluetooth ATT maximum attribute value length (profile revision 2, OTP-23)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-fragmentation"
+    },
+    {
+      "name": "fragment_payload_bytes_at_attribute_max",
+      "value": 508,
+      "unit": "bytes",
+      "scope": "non-final fragment payload whenever the attribute budget is clamped, i.e. every negotiated ATT MTU >= 515 (512 attribute bytes - 4 fragment header)",
       "origin": "builder_choice",
       "source_anchor": "veles-v1.md#sec-fragmentation"
     },

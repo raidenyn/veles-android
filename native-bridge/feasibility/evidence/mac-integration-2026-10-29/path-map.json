@@ -1,0 +1,210 @@
+{
+  "what": "Resolution of every /tmp and /home path cited inside mac-integration-2026-10-29 and mac-m11-dev-2026-10-29 (paths relative to native-bridge/feasibility/evidence/)",
+  "entries": [
+    {
+      "reference": "/home/dev/.claude/projects/-home-dev-repos-veles-android/752e1974-0617-470b-a425-dfbda97ac728.jsonl",
+      "status": "not-published",
+      "resolves_to": "implementer's private session transcript; whitelisted fields in model-metadata.json"
+    },
+    {
+      "reference": "/tmp/approved-otp23-privacy/",
+      "status": "not-published-private-archive",
+      "resolves_to": "private originals by design; mapped by sha256 in the curation maps"
+    },
+    {
+      "reference": "/tmp/approved-otp23-privacy/mac-retake-2026-10-29/",
+      "status": "not-published-private-archive",
+      "resolves_to": "mapped in mac-retake-2026-10-29/curation/curation-map.json"
+    },
+    {
+      "reference": "/tmp/m11*",
+      "status": "not-published",
+      "resolves_to": "transient local test temp dirs"
+    },
+    {
+      "reference": "/tmp/m11watch-*",
+      "status": "not-published",
+      "resolves_to": "transient local test temp dirs"
+    },
+    {
+      "reference": "/tmp/opencode",
+      "status": "workspace-root",
+      "resolves_to": "the operator workspace directory itself"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-3dbe3db.apk",
+      "status": "not-published",
+      "resolves_to": "binary APK; its sha256 equals the installed app 063ac7ea\u2026 recorded in mac-retake-2026-10-29/provenance.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-m08-kimi-review/",
+      "status": "not-published",
+      "resolves_to": "reviewer scratch"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-m08-kimi-review/repro/",
+      "status": "not-published",
+      "resolves_to": "reviewer scratch"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-m08-opus-impl-scratch/",
+      "status": "not-published",
+      "resolves_to": "implementer scratch (mutation copies, smoke harness); results are in the reports"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-m08-opus-impl-scratch/m11-smoke/smoke.py",
+      "status": "not-published",
+      "resolves_to": "implementer scratch smoke harness; its case results are in reports/otp23-mac-m08-fix-result.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-m11-controller-20261029/account-class.txt",
+      "status": "published",
+      "resolves_to": "mac-m11-dev-2026-10-29/owner-records/account-class.txt"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-m11-prep/",
+      "status": "published-as-run-code",
+      "resolves_to": "mac-m11-dev-2026-10-29/as-run-code/"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-m11-prep/m11_dev_capture.py",
+      "status": "published",
+      "resolves_to": "mac-m11-dev-2026-10-29/as-run-code/m11_dev_capture.py"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-final-data-review-opus.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-final-data-review-opus.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-kimi-reviewer-approval.json",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/route/otp23-mac-kimi-reviewer-approval.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-code-result.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m08-code-result.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-code-verification-kimi.md",
+      "status": "published-redacted",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m08-code-verification-kimi.public.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-fix-events.jsonl",
+      "status": "not-published",
+      "resolves_to": "private session event log (full tool I/O); session/model in model-metadata.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-fix-opus-implementer-metadata.json",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m08-fix-opus-implementer-metadata.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-parent-preflight-decision.json",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m08-parent-preflight-decision.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-physical-review-opus.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m08-physical-review-opus.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-preflight-opus.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m08-preflight-opus.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m08-retake-result.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m08-retake-result.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m11-loop-fix-result.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m11-loop-fix-result.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m11-loop-verification-opus.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m11-loop-verification-opus.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-m11-preparation.md",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-m11-preparation.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-opus-continuation-owner-record.json",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/route/otp23-mac-opus-continuation-owner-record.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-permission-owner-record.json",
+      "status": "published",
+      "resolves_to": "mac-m11-dev-2026-10-29/owner-records/otp23-mac-permission-owner-record.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-resume-human-action.md",
+      "status": "published-redacted",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-resume-human-action.public.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-resume-owner-record.json",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/route/otp23-mac-resume-owner-record.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-resume-result.md",
+      "status": "published-redacted",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-resume-result.public.md"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-resume-stderr.log",
+      "status": "not-published",
+      "resolves_to": "0-byte stderr capture"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-resume-task.md",
+      "status": "not-published",
+      "resolves_to": "parent task prompt (operator instructions), not evidence"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-mac-safe-analysis-parent-decision.json",
+      "status": "published",
+      "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-safe-analysis-parent-decision.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-opus-availability-retry.json",
+      "status": "not-published-private-api-envelope",
+      "resolves_to": "whitelisted fields in mac-integration-2026-10-29/model-metadata.json"
+    },
+    {
+      "reference": "/tmp/opencode/otp23-package1-mac-deferred.json",
+      "status": "published-identical-bytes",
+      "resolves_to": "package1-b5-v4-20261028/mac-deferral-2026-10-28.json (sha256 ace5e31e\u2026, committed)"
+    },
+    {
+      "reference": "/tmp/opus-mac-preflight/",
+      "status": "not-published",
+      "resolves_to": "reviewer's transient scratch (deleted by the reviewer)"
+    },
+    {
+      "reference": "/tmp/opus-mac-preflight/anchor.py",
+      "status": "not-published",
+      "resolves_to": "reviewer's transient scratch (deleted by the reviewer)"
+    },
+    {
+      "reference": "/tmp/approved-otp23-privacy/mac-integration-2026-10-29",
+      "status": "not-published-private-archive",
+      "resolves_to": "private originals of the two redacted resume notes; sha256 in mac-integration-2026-10-29/curation-map.json"
+    },
+    {
+      "reference": "/tmp/approved-otp23-privacy/mac-m11-dev-2026-10-29",
+      "status": "not-published-private-archive",
+      "resolves_to": "M-11 noise logs + invalid mixed stream; sha256 in mac-m11-dev-2026-10-29/provenance.json"
+    }
+  ]
+}

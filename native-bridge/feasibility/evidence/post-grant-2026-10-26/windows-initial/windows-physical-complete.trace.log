@@ -1,0 +1,161 @@
+[       0ms pid=99512] start pid=99512
+[       0ms pid=99512] in  len=81 type=hello request_id=r1-7xz546
+[       1ms pid=99512] out len=183 type=ready request_id=r1-7xz546 api_version=1
+[    2157ms pid=99512] in  len=137 type=start_scan request_id=r2-taqvyx api_version=1
+[    2211ms pid=99512] out len=135 type=scan_state request_id=r2-taqvyx api_version=1 status=started scan_handle=0d36eef98fd224cc
+[    3010ms pid=99512] out len=195 type=device_found api_version=1 scan_handle=0d36eef98fd224cc device_handle=2a9c608dfcdab03f label.len=17 platform_hint.len=20
+[    3012ms pid=99512] out len=195 type=device_found api_version=1 scan_handle=0d36eef98fd224cc device_handle=2e507251b3a7f097 label.len=17 platform_hint.len=20
+[    3466ms pid=99512] in  len=115 type=connect request_id=r3-3yvf6n api_version=1 device_handle=2a9c608dfcdab03f
+[    3466ms pid=99512] in  len=115 type=connect request_id=r4-9uc7hl api_version=1 device_handle=2e507251b3a7f097
+[    3497ms pid=99512] conn 2 device at 30ms
+[    3498ms pid=99512] conn 3 device at 31ms
+[    3518ms pid=99512] conn 2 session at 51ms
+[    3519ms pid=99512] conn 3 session at 52ms
+[    5424ms pid=99512] conn 2 service at 1957ms
+[    5424ms pid=99512] conn 2 mtu=517 at 1957ms
+[    5489ms pid=99512] conn 2 write properties=0x4
+[    5561ms pid=99512] conn 2 notify properties=0x10
+[    5561ms pid=99512] conn 2 characteristics at 2094ms
+[    5654ms pid=99512] conn 2 subscribed at 2187ms
+[    5654ms pid=99512] out len=160 type=connected request_id=r3-3yvf6n api_version=1 connection_handle=36d4ff70433c44fd platform_hint.len=20
+[    6125ms pid=99512] conn 3 service at 2659ms
+[    6126ms pid=99512] conn 3 mtu=517 at 2659ms
+[    6192ms pid=99512] conn 3 write properties=0x4
+[    6255ms pid=99512] conn 3 notify properties=0x10
+[    6255ms pid=99512] conn 3 characteristics at 2788ms
+[    6337ms pid=99512] conn 3 subscribed at 2870ms
+[    6337ms pid=99512] out len=160 type=connected request_id=r4-9uc7hl api_version=1 connection_handle=266de5afc18b5858 platform_hint.len=20
+[    6338ms pid=99512] in  len=115 type=stop_scan request_id=r5-y3339s api_version=1 scan_handle=0d36eef98fd224cc
+[    6338ms pid=99512] out len=135 type=scan_state request_id=r5-y3339s api_version=1 status=stopped scan_handle=0d36eef98fd224cc
+[    6340ms pid=99512] in  len=143 type=send request_id=r6-3ldynd api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=8
+[    6340ms pid=99512] in  len=143 type=send request_id=r7-6qscg5 api_version=1 connection_handle=266de5afc18b5858 record_base64.len=8
+[    6350ms pid=99512] out len=116 type=sent request_id=r6-3ldynd api_version=1 connection_handle=36d4ff70433c44fd
+[    6350ms pid=99512] out len=116 type=sent request_id=r7-6qscg5 api_version=1 connection_handle=266de5afc18b5858
+[    6363ms pid=99512] out len=121 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=8
+[    6380ms pid=99512] out len=121 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=8
+[    6452ms pid=99512] in  len=371 type=send request_id=r8-m5yeum api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=236
+[    6452ms pid=99512] in  len=371 type=send request_id=r9-v8zuka api_version=1 connection_handle=266de5afc18b5858 record_base64.len=236
+[    6462ms pid=99512] out len=116 type=sent request_id=r8-m5yeum api_version=1 connection_handle=36d4ff70433c44fd
+[    6463ms pid=99512] out len=116 type=sent request_id=r9-v8zuka api_version=1 connection_handle=266de5afc18b5858
+[    6486ms pid=99512] out len=349 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=236
+[    6499ms pid=99512] out len=349 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=236
+[    6565ms pid=99512] in  len=375 type=send request_id=ra-py1im9 api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=240
+[    6565ms pid=99512] in  len=375 type=send request_id=rb-h9tz41 api_version=1 connection_handle=266de5afc18b5858 record_base64.len=240
+[    6576ms pid=99512] out len=116 type=sent request_id=rb-h9tz41 api_version=1 connection_handle=266de5afc18b5858
+[    6576ms pid=99512] out len=116 type=sent request_id=ra-py1im9 api_version=1 connection_handle=36d4ff70433c44fd
+[    6604ms pid=99512] out len=353 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=240
+[    6606ms pid=99512] out len=353 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=240
+[    6678ms pid=99512] in  len=375 type=send request_id=rc-9smfrg api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=240
+[    6678ms pid=99512] in  len=375 type=send request_id=rd-z3nw3v api_version=1 connection_handle=266de5afc18b5858 record_base64.len=240
+[    6688ms pid=99512] out len=116 type=sent request_id=rd-z3nw3v api_version=1 connection_handle=266de5afc18b5858
+[    6688ms pid=99512] out len=116 type=sent request_id=rc-9smfrg api_version=1 connection_handle=36d4ff70433c44fd
+[    6724ms pid=99512] out len=353 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=240
+[    6726ms pid=99512] out len=353 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=240
+[    6791ms pid=99512] in  len=375 type=send request_id=re-2inhxg api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=240
+[    6791ms pid=99512] in  len=375 type=send request_id=rf-yz682i api_version=1 connection_handle=266de5afc18b5858 record_base64.len=240
+[    6801ms pid=99512] out len=116 type=sent request_id=rf-yz682i api_version=1 connection_handle=266de5afc18b5858
+[    6801ms pid=99512] out len=116 type=sent request_id=re-2inhxg api_version=1 connection_handle=36d4ff70433c44fd
+[    6829ms pid=99512] out len=353 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=240
+[    6831ms pid=99512] out len=353 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=240
+[    6904ms pid=99512] in  len=811 type=send request_id=rg-qgki2f api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=676
+[    6904ms pid=99512] in  len=811 type=send request_id=rh-99kthd api_version=1 connection_handle=266de5afc18b5858 record_base64.len=676
+[    6915ms pid=99512] out len=116 type=sent request_id=rh-99kthd api_version=1 connection_handle=266de5afc18b5858
+[    6915ms pid=99512] out len=116 type=sent request_id=rg-qgki2f api_version=1 connection_handle=36d4ff70433c44fd
+[    6953ms pid=99512] out len=789 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=676
+[    6979ms pid=99512] out len=789 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=676
+[    7068ms pid=99512] in  len=811 type=send request_id=ri-oec1qo api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=676
+[    7068ms pid=99512] in  len=811 type=send request_id=rj-rh8g4k api_version=1 connection_handle=266de5afc18b5858 record_base64.len=676
+[    7078ms pid=99512] out len=116 type=sent request_id=ri-oec1qo api_version=1 connection_handle=36d4ff70433c44fd
+[    7078ms pid=99512] out len=116 type=sent request_id=rj-rh8g4k api_version=1 connection_handle=266de5afc18b5858
+[    7116ms pid=99512] out len=789 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=676
+[    7168ms pid=99512] out len=789 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=676
+[    7231ms pid=99512] in  len=811 type=send request_id=rk-ccsu4r api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=676
+[    7231ms pid=99512] in  len=811 type=send request_id=rl-cebikl api_version=1 connection_handle=266de5afc18b5858 record_base64.len=676
+[    7242ms pid=99512] out len=116 type=sent request_id=rk-ccsu4r api_version=1 connection_handle=36d4ff70433c44fd
+[    7242ms pid=99512] out len=116 type=sent request_id=rl-cebikl api_version=1 connection_handle=266de5afc18b5858
+[    7281ms pid=99512] out len=789 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=676
+[    7348ms pid=99512] out len=789 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=676
+[    7445ms pid=99512] in  len=815 type=send request_id=rm-x1z7if api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=680
+[    7445ms pid=99512] in  len=815 type=send request_id=rn-g41lhr api_version=1 connection_handle=266de5afc18b5858 record_base64.len=680
+[    7456ms pid=99512] out len=116 type=sent request_id=rm-x1z7if api_version=1 connection_handle=36d4ff70433c44fd
+[    7456ms pid=99512] out len=116 type=sent request_id=rn-g41lhr api_version=1 connection_handle=266de5afc18b5858
+[    7491ms pid=99512] out len=793 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=680
+[    7528ms pid=99512] out len=793 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=680
+[    7609ms pid=99512] in  len=815 type=send request_id=ro-yt9upr api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=680
+[    7609ms pid=99512] in  len=815 type=send request_id=rp-nb4e72 api_version=1 connection_handle=266de5afc18b5858 record_base64.len=680
+[    7630ms pid=99512] out len=116 type=sent request_id=ro-yt9upr api_version=1 connection_handle=36d4ff70433c44fd
+[    7630ms pid=99512] out len=116 type=sent request_id=rp-nb4e72 api_version=1 connection_handle=266de5afc18b5858
+[    7671ms pid=99512] out len=793 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=680
+[    7708ms pid=99512] out len=793 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=680
+[    7783ms pid=99512] in  len=815 type=send request_id=rq-5q9v22 api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=680
+[    7783ms pid=99512] in  len=815 type=send request_id=rr-okpd25 api_version=1 connection_handle=266de5afc18b5858 record_base64.len=680
+[    7804ms pid=99512] out len=116 type=sent request_id=rq-5q9v22 api_version=1 connection_handle=36d4ff70433c44fd
+[    7804ms pid=99512] out len=116 type=sent request_id=rr-okpd25 api_version=1 connection_handle=266de5afc18b5858
+[    7859ms pid=99512] out len=793 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=680
+[    7888ms pid=99512] out len=793 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=680
+[    7957ms pid=99512] in  len=819 type=send request_id=rs-3jf09g api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=684
+[    7957ms pid=99512] in  len=819 type=send request_id=rt-8ezg08 api_version=1 connection_handle=266de5afc18b5858 record_base64.len=684
+[    7977ms pid=99512] out len=116 type=sent request_id=rs-3jf09g api_version=1 connection_handle=36d4ff70433c44fd
+[    7977ms pid=99512] out len=116 type=sent request_id=rt-8ezg08 api_version=1 connection_handle=266de5afc18b5858
+[    8069ms pid=99512] out len=797 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=684
+[    8097ms pid=99512] out len=797 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=684
+[    8182ms pid=99512] in  len=1491 type=send request_id=ru-3k0ny1 api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=1356
+[    8182ms pid=99512] in  len=1491 type=send request_id=rv-hidmij api_version=1 connection_handle=266de5afc18b5858 record_base64.len=1356
+[    8202ms pid=99512] out len=116 type=sent request_id=ru-3k0ny1 api_version=1 connection_handle=36d4ff70433c44fd
+[    8202ms pid=99512] out len=116 type=sent request_id=rv-hidmij api_version=1 connection_handle=266de5afc18b5858
+[    8281ms pid=99512] out len=1469 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=1356
+[    8311ms pid=99512] out len=1469 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=1356
+[    8407ms pid=99512] in  len=1491 type=send request_id=rw-7gs8d0 api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=1356
+[    8407ms pid=99512] in  len=1491 type=send request_id=rx-vg6zoy api_version=1 connection_handle=266de5afc18b5858 record_base64.len=1356
+[    8428ms pid=99512] out len=116 type=sent request_id=rx-vg6zoy api_version=1 connection_handle=266de5afc18b5858
+[    8428ms pid=99512] out len=116 type=sent request_id=rw-7gs8d0 api_version=1 connection_handle=36d4ff70433c44fd
+[    8491ms pid=99512] out len=1469 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=1356
+[    8521ms pid=99512] out len=1469 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=1356
+[    8582ms pid=99512] in  len=1491 type=send request_id=ry-jyg4fm api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=1356
+[    8582ms pid=99512] in  len=1491 type=send request_id=rz-yuxz1s api_version=1 connection_handle=266de5afc18b5858 record_base64.len=1356
+[    8612ms pid=99512] out len=116 type=sent request_id=rz-yuxz1s api_version=1 connection_handle=266de5afc18b5858
+[    8613ms pid=99512] out len=116 type=sent request_id=ry-jyg4fm api_version=1 connection_handle=36d4ff70433c44fd
+[    8702ms pid=99512] out len=1469 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=1356
+[    8729ms pid=99512] out len=1469 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=1356
+[    8820ms pid=99512] in  len=5596 type=send request_id=r10-8xe882 api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5460
+[    8820ms pid=99512] in  len=5596 type=send request_id=r11-gvzpte api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5460
+[    8913ms pid=99512] out len=117 type=sent request_id=r10-8xe882 api_version=1 connection_handle=36d4ff70433c44fd
+[    8913ms pid=99512] out len=117 type=sent request_id=r11-gvzpte api_version=1 connection_handle=266de5afc18b5858
+[    9120ms pid=99512] out len=5573 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5460
+[    9165ms pid=99512] out len=5573 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5460
+[    9221ms pid=99512] in  len=5600 type=send request_id=r12-4fm39b api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[    9221ms pid=99512] in  len=5600 type=send request_id=r13-5ylgul api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[    9314ms pid=99512] out len=117 type=sent request_id=r13-5ylgul api_version=1 connection_handle=266de5afc18b5858
+[    9314ms pid=99512] out len=117 type=sent request_id=r12-4fm39b api_version=1 connection_handle=36d4ff70433c44fd
+[    9381ms pid=99512] out len=5577 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[    9471ms pid=99512] out len=5577 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[    9570ms pid=99512] in  len=5600 type=send request_id=r14-s05syi api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[    9570ms pid=99512] in  len=5600 type=send request_id=r15-bvw0rg api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[    9662ms pid=99512] out len=117 type=sent request_id=r14-s05syi api_version=1 connection_handle=36d4ff70433c44fd
+[    9663ms pid=99512] out len=117 type=sent request_id=r15-bvw0rg api_version=1 connection_handle=266de5afc18b5858
+[    9771ms pid=99512] out len=5577 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[    9801ms pid=99512] out len=5577 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[    9868ms pid=99512] in  len=5600 type=send request_id=r16-1z38h8 api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[    9868ms pid=99512] in  len=5600 type=send request_id=r17-aojjct api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[    9960ms pid=99512] out len=117 type=sent request_id=r16-1z38h8 api_version=1 connection_handle=36d4ff70433c44fd
+[    9960ms pid=99512] out len=117 type=sent request_id=r17-aojjct api_version=1 connection_handle=266de5afc18b5858
+[   10123ms pid=99512] out len=5577 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[   10146ms pid=99512] out len=5577 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[   10216ms pid=99512] in  len=5600 type=send request_id=r18-vwcbem api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[   10216ms pid=99512] in  len=5600 type=send request_id=r19-ify2mu api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[   10310ms pid=99512] out len=117 type=sent request_id=r18-vwcbem api_version=1 connection_handle=36d4ff70433c44fd
+[   10310ms pid=99512] out len=117 type=sent request_id=r19-ify2mu api_version=1 connection_handle=266de5afc18b5858
+[   10499ms pid=99512] out len=5577 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[   10648ms pid=99512] out len=5577 type=message api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=5464
+[   10715ms pid=99512] in  len=123 type=disconnect request_id=r1a-g0gv7l api_version=1 connection_handle=36d4ff70433c44fd
+[   10715ms pid=99512] out len=125 type=disconnected request_id=r1a-g0gv7l api_version=1 connection_handle=36d4ff70433c44fd
+[   10716ms pid=99512] in  len=144 type=send request_id=r1b-k1r3yh api_version=1 connection_handle=36d4ff70433c44fd record_base64.len=8
+[   10716ms pid=99512] out len=156 type=error request_id=r1b-k1r3yh api_version=1 code=unknown_handle recoverability=fatal stage=connection_handle
+[   10717ms pid=99512] in  len=5600 type=send request_id=r1c-8rku60 api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[   10718ms pid=99512] conn 2 released
+[   10810ms pid=99512] out len=117 type=sent request_id=r1c-8rku60 api_version=1 connection_handle=266de5afc18b5858
+[   10981ms pid=99512] out len=5577 type=message api_version=1 connection_handle=266de5afc18b5858 record_base64.len=5464
+[   11063ms pid=99512] in  len=82 type=shutdown request_id=r1d-eu2wg8 api_version=1
+[   11063ms pid=99512] out len=99 type=disconnected api_version=1 connection_handle=266de5afc18b5858
+[   11063ms pid=99512] out len=91 type=shutdown_complete request_id=r1d-eu2wg8 api_version=1
+[   11063ms pid=99512] exit code=0 stdout_drained=true

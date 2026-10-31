@@ -1,0 +1,12 @@
+{
+  "answer_verbatim": "VelesOtp23PoC is OFF",
+  "recorded_utc": "2026-10-30T03:21:22.108597+00:00",
+  "ack": {
+    "nonce": "1465361237fc427c9873ec82b33d09ec",
+    "ready": "human_disable_needed",
+    "toggled": "off",
+    "entry_label": "VelesOtp23PoC",
+    "prompt": "unknown",
+    "note": "Owner selected VelesOtp23PoC is OFF in the attended question; no new popup observation supplied"
+  }
+}

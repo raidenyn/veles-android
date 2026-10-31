@@ -43,11 +43,12 @@ EXT_DIR = ROOT / "extension"
 DEFAULT_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 HOST_NAME = "me.nagaev.veles.otp23.plain"
 VELES_SERVICE = "8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51"
-SIZES = [4, 178, 179, 180] + list(range(505, 512)) + [1015, 1016, 1017] + [4095, 4096]
+SIZES = [4, 177, 178, 179, 180] + list(range(505, 512)) + [1015, 1016, 1017] + [4095, 4096]
 SEED_BASE = [17, 137]  # per-handle distinct seed bases: handle 0 uses 17+i, handle 1 uses 137+i
 DENIAL_HINTS = ("denied", "consent", "permission", "unauthor", "not_authorized")
 MTU_NEGOTIATED = "negotiated"
-MTU_INFERRED_MAX_WRITE = "inferred_from_max_write"  # macOS: derived from max_write, not measured
+MTU_INFERRED_MAX_WRITE = "inferred_from_max_write"  # legacy host traces (<= fb224e8): MTU derived from max_write
+BUDGET_MEASURED_MAX_WRITE = "measured_max_write_without_response"  # macOS: attribute budget = min(write, 512)
 TCC_MESSAGE = (
     "Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth and "
     "allow 'Google Chrome' (and/or the VelesOtp23PoC app), then re-run this command. This "
@@ -115,6 +116,7 @@ class ChromeRun:
         env = dict(os.environ)
         if extra_env:
             env.update(extra_env)
+        self.env = env  # kept for evidence: the environment Chrome (and thus the host) actually received
         self.cdp = None
         try:
             self.proc = subprocess.Popen(chrome_arguments(self.profile, chrome_path), env=env)
@@ -130,7 +132,8 @@ class ChromeRun:
             self.close()
             raise RuntimeError("Chrome did not publish DevToolsActivePort")
         port, path = port_file.read_text().splitlines()[:2]
-        self.cdp = Cdp(WebSocket("127.0.0.1", int(port), path))
+        self.port = int(port)
+        self.cdp = Cdp(WebSocket("127.0.0.1", self.port, path))
         self.version = self.cdp.call("Browser.getVersion")
 
     def open_page(self, url):
@@ -276,6 +279,337 @@ def windows_owned_by(pid):
         return None
 
 
+def census_windows_from_entries(entries):
+    """Pure census over CGWindowList entries: any layer owned by `pid`, with the layer-0 subset kept.
+
+    `entries` is [{"pid": int, "layer": int}, ...] in CGWindowList order. This is the parsing half of
+    census_windows, split out so the ordering/filter behaviour is unit-tested without touching CoreGraphics."""
+    all_windows, layer_zero = [], []
+    for entry in entries:
+        all_windows.append({"layer": entry["layer"]})
+        if entry["layer"] == 0:
+            layer_zero.append({"layer": 0})
+    return {"all": all_windows, "layer_zero": layer_zero}
+
+
+CGWINDOW_LIST_OPTION_ALL = 0  # kCGWindowListOptionAll: any layer, on-screen or not
+CGNULL_WINDOW_ID = 0  # kCGNullWindowID
+
+
+def census_windows(pid):
+    """OTP-23 M-08 connected-phase census: windows of ANY layer owned by `pid` via
+    CGWindowListCopyWindowInfo(kCGWindowListOptionAll(0), kCGNullWindowID(0)).
+
+    Returns the census dict, or None when the API itself failed (a NULL listing is "unavailable", never
+    zero windows; an EMPTY listing is real data — the Chrome layer-0 control decides usability)."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        import ctypes.util
+        cg = ctypes.CDLL(ctypes.util.find_library("CoreGraphics"))
+        cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
+        cg.CGWindowListCopyWindowInfo.restype = ctypes.c_void_p
+        cg.CGWindowListCopyWindowInfo.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        cf.CFArrayGetCount.restype = ctypes.c_long
+        cf.CFArrayGetCount.argtypes = [ctypes.c_void_p]
+        cf.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+        cf.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
+        cf.CFDictionaryGetValue.restype = ctypes.c_void_p
+        cf.CFDictionaryGetValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        cf.CFNumberGetValue.restype = ctypes.c_int
+        cf.CFNumberGetValue.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p]
+        cf.CFRelease.restype = None
+        cf.CFRelease.argtypes = [ctypes.c_void_p]
+        pid_key = ctypes.c_void_p(ctypes.c_void_p.in_dll(cg, "kCGWindowOwnerPID").value)
+        layer_key = ctypes.c_void_p(ctypes.c_void_p.in_dll(cg, "kCGWindowLayer").value)
+        array = cg.CGWindowListCopyWindowInfo(CGWINDOW_LIST_OPTION_ALL, CGNULL_WINDOW_ID)
+        if not array:
+            return None  # NULL listing is 'unavailable', never zero windows
+        owned = []
+        try:
+            for index in range(cf.CFArrayGetCount(array)):
+                window = cf.CFArrayGetValueAtIndex(array, index)
+                number = cf.CFDictionaryGetValue(window, pid_key)
+                if not number:
+                    continue
+                value = ctypes.c_longlong(0)
+                if not (cf.CFNumberGetValue(number, 4, ctypes.byref(value)) and value.value == pid):
+                    continue
+                layer_value = ctypes.c_longlong(0)
+                layer = -1
+                layer_number = cf.CFDictionaryGetValue(window, layer_key)
+                if layer_number and cf.CFNumberGetValue(layer_number, 4, ctypes.byref(layer_value)):
+                    layer = layer_value.value
+                owned.append({"layer": layer})
+        finally:
+            cf.CFRelease(array)
+        return census_windows_from_entries(owned)
+    except Exception:
+        return None
+
+
+def pid_alive(pid):
+    """True when `pid` exists right now (kill(pid, 0)); False when it is gone; None if undecidable."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, but belongs to another uid
+    except OSError:
+        return None
+
+
+def context_probe():
+    """The actual observation context this driver runs in (macOS): window manager, uid, SSH marker.
+    Recorded as data for every measured run — never a placeholder string."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        managername = subprocess.run(["launchctl", "managername"], capture_output=True, text=True,
+                                     timeout=15).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        managername = "unavailable"
+    return {"launchctl_managername": managername or "unavailable",
+            "uid": os.getuid(),
+            "ssh_connection_present": bool(os.environ.get("SSH_CONNECTION"))}
+
+
+def port_after_final_colon(token):
+    """Port after the FINAL colon of an lsof address token (I-1): '[::1]:9222' -> 9222 (never 1 from the
+    interior '::1'), 'fe80::1%en0:52001' -> 52001, '*:5353' -> 5353. Raises ValueError on garbage."""
+    if not isinstance(token, str) or token == "":
+        raise ValueError(f"empty address token: {token!r}")
+    colon = token.rfind(":")
+    if colon == -1 or colon == len(token) - 1:
+        raise ValueError(f"no port in address token: {token!r}")
+    port = token[colon + 1:]
+    if not port.isdigit():
+        raise ValueError(f"bad port in address token: {token!r}")
+    return int(port)
+
+
+def parse_lsof_endpoints(lines):
+    """Pure half of lsof_endpoints (I-1): data lines -> [{local_port, remote_port, state}].
+
+    Raises ValueError on any line that does not parse — the caller must record that as unavailable,
+    never as a fabricated zero."""
+    endpoints = []
+    for line in lines:
+        if not line.strip():
+            continue
+        match = re.search(r"\b(TCP|UDP)\s+(.*)$", line)
+        if not match:
+            raise ValueError(f"unparsable lsof line: {line!r}")
+        proto, rest = match.group(1), match.group(2).strip()
+        state = None
+        paren = re.search(r"\((\w+)\)\s*$", rest)
+        if paren:
+            state = paren.group(1)
+            rest = rest[:paren.start()].strip()
+        if "->" in rest:
+            local_token, remote_token = (part.strip() for part in rest.split("->", 1))
+        else:
+            local_token, remote_token = rest, None
+        endpoints.append({"local_port": port_after_final_colon(local_token),
+                          "remote_port": port_after_final_colon(remote_token) if remote_token else None,
+                          "state": state or proto})
+    return endpoints
+
+
+# ---- lsof stderr classification (Opus preflight Task 1, parent P0-A decision 2026-10-28) ----------
+
+_LSOF_WARN_PATH = re.compile(r"^lsof: WARNING: can't stat\(\) nullfs file system (/\S+)$")
+_LSOF_WARN_MID = re.compile(r"^\s+Output information may be incomplete\.$")
+_LSOF_WARN_DEV = re.compile(r'^\s+assuming "dev=([0-9a-f]+)" from mount table$')
+_LSOF_DIAG_ENV = "VELES_OTP23_LSOF_DIAG"
+_FOREIGN_NULLFS_CACHE = None
+_LSOF_SNAPSHOT_CACHE = {}
+
+
+def classify_lsof_stderr(stderr, foreign_nullfs_mounts):
+    """Strict classifier: acceptable stderr consists ENTIRELY of one or more exact 3-line
+    foreign-nullfs mount-stat warning blocks, each block's path a member of `foreign_nullfs_mounts`
+    (recovered from the measured mount table ONLY — never an assumption):
+
+        lsof: WARNING: can't stat() nullfs file system <mount-point>
+              Output information may be incomplete.
+              assuming "dev=<hex>" from mount table
+
+    Returns (benign, blocks): benign True with the parsed [{"path", "dev"}] blocks (empty stderr →
+    (True, [])), or benign False with None for ANY line that is not one of these exact blocks —
+    unknown/incomplete/error stderr is never classified as benign. A benign verdict alone is never
+    enough to accept a warning: the caller must also record the mandatory diagnostics line."""
+    if not stderr or not stderr.strip():
+        return True, []
+    lines = stderr.splitlines()
+    if len(lines) % 3 != 0:
+        return False, None
+    blocks = []
+    for index in range(0, len(lines), 3):
+        head, mid, dev = _LSOF_WARN_PATH.match(lines[index]), \
+            _LSOF_WARN_MID.match(lines[index + 1]), _LSOF_WARN_DEV.match(lines[index + 2])
+        if not (head and mid and dev):
+            return False, None
+        if head.group(1) not in foreign_nullfs_mounts:
+            return False, None
+        blocks.append({"path": head.group(1), "dev": dev.group(1)})
+    return True, blocks
+
+
+def foreign_nullfs_mounts():
+    """Foreign nullfs mount points: lines of the measured `mount` table that are (nullfs, …) AND
+    'mounted by <name>' with <name> != the current user's passwd name. Cached once per process;
+    any failure to run or parse `mount` returns the EMPTY set, so the corresponding warning stays
+    unavailable — never an assumption. The mount POINT is the exact string lsof warns about;
+    foreign status is decided only by the mount table's own owner attribution."""
+    global _FOREIGN_NULLFS_CACHE
+    if _FOREIGN_NULLFS_CACHE is not None:
+        return _FOREIGN_NULLFS_CACHE
+    import pwd
+    try:
+        self_name = pwd.getpwuid(os.getuid()).pw_name
+    except (KeyError, ImportError):
+        self_name = None
+    try:
+        text = subprocess.run(["/sbin/mount"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        text = ""
+    mounts = set()
+    for line in text.splitlines():
+        if " (nullfs," not in line:
+            continue
+        head, sep, tail = line.rpartition(" (")
+        if not sep or " on " not in head:
+            continue
+        _, _, point = head.partition(" on ")
+        body = tail[:-1] if tail.endswith(")") else tail
+        # F-7: the owner name is bounded at the NEXT COMMA (it is one comma-separated option inside
+        # the mount line), never the whole option tail — a self-owned mount with a further trailing
+        # option must not be misclassified as foreign.
+        owner = re.search(r"mounted by ([^,]+)", body)
+        if point and owner and self_name is not None and owner.group(1).strip() != self_name:
+            mounts.add(point)
+    _FOREIGN_NULLFS_CACHE = mounts
+    return _FOREIGN_NULLFS_CACHE
+
+
+def _sanitized_nullfs_mount_lines(text, self_name):
+    """Nullfs-only lines of a whole `mount` output, redacted for publication: mount POINTS kept
+    verbatim (they carry no account names), source paths dropped entirely (they contain other
+    users' home dirs and app names), owner names replaced by 'uid=self' / 'uid≠self'."""
+    lines = []
+    for line in text.splitlines():
+        if " (nullfs," not in line:
+            continue
+        head, sep, tail = line.rpartition(" (")
+        if not sep or " on " not in head:
+            continue
+        _, _, point = head.partition(" on ")
+        body = tail[:-1] if tail.endswith(")") else tail
+        owner = re.search(r"mounted by ([^,]+)", body)   # F-7: comma-bounded owner token
+        who = "uid=self" if (owner and self_name is not None and owner.group(1).strip() == self_name) \
+            else "uid≠self"
+        opts = re.sub(r"mounted by [^,]+", f"mounted by {who}", body)
+        lines.append(f"on {point} ({opts})")
+    return lines
+
+
+def _lsof_mount_snapshot_sha256(directory):
+    """Write the sanitized nullfs mount snapshot ONCE per process to <directory>/mount-nullfs.txt
+    and return its sha256; None (fail-closed) on any write failure or when the mount table itself
+    cannot be read. The hash is what the mandatory diagnostics lines reference."""
+    key = str(directory)
+    if key in _LSOF_SNAPSHOT_CACHE:
+        return _LSOF_SNAPSHOT_CACHE[key]
+    try:
+        import pwd
+        self_name = pwd.getpwuid(os.getuid()).pw_name
+    except (KeyError, ImportError):
+        self_name = f"uid={os.getuid()}"
+    try:
+        text = subprocess.run(["/sbin/mount"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        _LSOF_SNAPSHOT_CACHE[key] = None
+        return None
+    content = "".join([
+        "# sanitized nullfs mount-table snapshot (mount points only; source paths dropped;",
+        " owner names redacted as uid=self / uid≠self)\n"]) + \
+        "".join(line + "\n" for line in _sanitized_nullfs_mount_lines(text, self_name))
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / "mount-nullfs.txt"
+        target.write_text(content, encoding="utf-8")
+        _LSOF_SNAPSHOT_CACHE[key] = file_sha256(target)
+    except OSError:
+        _LSOF_SNAPSHOT_CACHE[key] = None
+    return _LSOF_SNAPSHOT_CACHE[key]
+
+
+def _lsof_diag_record(pid, rc, stdout_rows, stderr_verbatim, classification):
+    """Append the mandatory JSONL diagnostics line; False when the env var is unset (or the write
+    fails) so a benign warning can then never be accepted unaudited."""
+    diag_path = os.environ.get(_LSOF_DIAG_ENV)
+    if not diag_path:
+        return False
+    mount_snapshot = _lsof_mount_snapshot_sha256(pathlib.Path(diag_path).resolve().parent)
+    if mount_snapshot is None:
+        return False
+    record = {"wall_ms": int(time.time() * 1000),
+              "pid": pid, "argv": ["lsof", "-nP", "-a", "-p", str(pid), "-i"], "rc": rc,
+              "stdout_rows": stdout_rows, "stderr_verbatim": stderr_verbatim,
+              "classification": classification, "mount_snapshot_sha256": mount_snapshot,
+              "note": "snapshot redaction drops source paths and replaces owner names "
+                      "(uid=self/uid≠self); the warning's mount point is kept verbatim"}
+    try:
+        pathlib.Path(diag_path).open("a", encoding="utf-8").write(json.dumps(record) + "\n")
+    except OSError:
+        return False
+    return True
+
+
+def lsof_endpoints(pid):
+    """Endpoint list owned by `pid` via `lsof -nP -a -p <pid> -i`; ports/states only, no addresses.
+
+    Honest failure semantics (I-1, unchanged): `[]` is returned ONLY for a genuinely successful
+    query with no endpoint records (rc=0 with no rows, or rc=1 with NO stderr — lsof's real "no
+    matching records") for a pid that is alive. rc outside (0, 1), an OSError, and any unparsable
+    line return None (unavailable) — a caller can never turn a failure into a zero.
+
+    Known foreign-nullfs stat warning (P0-A era, Opus preflight): stderr consisting ENTIRELY of
+    exact 3-line 'can't stat() nullfs file system' blocks whose mount points are foreign (mounted
+    by another user, per the measured mount table) MAY be accepted — but only when the mandatory
+    diagnostics record was written: env `VELES_OTP23_LSOF_DIAG=<run-dir>/lsof-diagnostics.jsonl`
+    appends one JSON line per invocation (verbatim stderr, classification, sanitized mount-snapshot
+    hash; the snapshot is written once to <run-dir>/mount-nullfs.txt, owner names redacted). The
+    argv stays normal — never `-w`, which would silence every warning globally. Env unset, any
+    diagnostics write failure, any unknown/extra/non-matching stderr line → None."""
+    try:
+        done = subprocess.run(["lsof", "-nP", "-a", "-p", str(pid), "-i"], capture_output=True,
+                              text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode not in (0, 1):
+        return None  # usage/internal error: query failed
+    try:
+        rows = parse_lsof_endpoints(done.stdout.splitlines()[1:])  # skip the lsof header row
+    except ValueError:
+        return None
+    clean = not done.stderr.strip()
+    benign, blocks = classify_lsof_stderr(done.stderr, foreign_nullfs_mounts())
+    if not benign:
+        return None  # I-1: unknown/incomplete/error stderr stays unavailable, never zero
+    recorded = _lsof_diag_record(pid, done.returncode, len(done.stdout.splitlines()),
+                                 done.stderr, "clean_stderr" if clean else {"benign": True, "blocks": blocks})
+    if not clean and not recorded:
+        return None  # a benign warning is accepted ONLY with its recorded diagnostics line
+    return rows
+
+
 # ---- evidence helpers ----------------------------------------------------------------------------
 
 
@@ -341,12 +675,14 @@ def parse_trace(path):
 
       WinRT (negotiated measurement):
         [    1242ms pid=87052] conn 2 mtu=517 at 1242ms
-      macOS corebluetooth (no negotiated MTU observation exists; the effective ATT MTU is
-      DERIVED from max_write_without_response = max write + 3, capped 517 -- recorded as
-      inferred, not as a negotiated measurement):
+      macOS corebluetooth (no ATT MTU observation exists and none is invented; the measured
+      maximum write-without-response length W is a backend limit; a budget exists only for W >= 512):
+        [    1242ms pid=87052] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508
+      Historical macOS traces (host <= fb224e8) carried a derived MTU instead; they still parse,
+      recorded as inferred, never as a negotiated measurement:
         [    1242ms pid=87052] conn 2 max_write_without_response=512 inferred effective att mtu=515 (max write + 3, capped 517)
     """
-    mtu_by_conn, source_by_conn, sends, replies = {}, {}, [], []
+    mtu_by_conn, source_by_conn, budget_by_conn, sends, replies = {}, {}, {}, [], []
     path = pathlib.Path(path)
     if path.exists():
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -356,6 +692,15 @@ def parse_trace(path):
             if mtu:
                 mtu_by_conn[int(mtu.group(1))] = int(mtu.group(2))
                 source_by_conn[int(mtu.group(1))] = MTU_NEGOTIATED
+            measured = re.search(
+                r"\] conn (\d+) max_write_without_response=(\d+) attribute_budget=(\d+) payload_budget=(\d+)", line)
+            if measured:
+                budget_by_conn[int(measured.group(1))] = {
+                    "max_write_without_response": int(measured.group(2)),
+                    "attribute_budget": int(measured.group(3)),
+                    "payload_budget": int(measured.group(4)),
+                }
+                source_by_conn[int(measured.group(1))] = BUDGET_MEASURED_MAX_WRITE
             inferred = re.search(
                 r"\] conn (\d+) max_write_without_response=(\d+) .*inferred effective att mtu=(\d+)", line)
             if inferred:
@@ -370,7 +715,7 @@ def parse_trace(path):
             if reply:
                 replies.append({"at_ms": at_ms, "record_base64_len": int(reply.group(1))})
     return {"mtu_by_conn": mtu_by_conn, "mtu_source_by_conn": source_by_conn,
-            "sends": sends, "replies": replies}
+            "budget_by_conn": budget_by_conn, "sends": sends, "replies": replies}
 
 
 def deny_or_raise(reply, context):
@@ -593,23 +938,30 @@ def run_driver(args, out):
             require(wait_gone(pid2, 8) is not None, "owned host survived Chrome port closure")
             note("port-close", {"pid": pid2})
             parsed = parse_trace(trace)
-            require(len(parsed["mtu_by_conn"]) == 2,
-                    f"expected exactly 2 connection-MTU observations, saw {parsed['mtu_by_conn']}")
+            observed = set(parsed["mtu_by_conn"]) | set(parsed["budget_by_conn"])
+            require(len(observed) == 2,
+                    f"expected exactly 2 connection observations, saw {sorted(observed)}")
             require(all(185 <= mtu <= 517 for mtu in parsed["mtu_by_conn"].values()), "implausible MTUs")
+            require(all(182 <= b["attribute_budget"] <= 512 and b["payload_budget"] == b["attribute_budget"] - 4
+                        for b in parsed["budget_by_conn"].values()), "implausible attribute budgets")
             result["negotiation"] = {
                 "source": "host trace (VELES_OTP23_TRACE); keyed by the host connection token only; "
                           "no per-handle association is inferred",
-                "per_conn": {str(token): {"mtu": mtu,
+                "per_conn": {str(token): {**({"mtu": parsed["mtu_by_conn"][token]}
+                                              if token in parsed["mtu_by_conn"] else {}),
+                                          **parsed["budget_by_conn"].get(token, {}),
                                           "source": parsed["mtu_source_by_conn"].get(token, "unknown")}
-                             for token, mtu in parsed["mtu_by_conn"].items()},
+                             for token in sorted(observed)},
                 "mtu_source_legend": {
                     MTU_NEGOTIATED: "WinRT trace line reports the negotiated MTU measurement",
-                    MTU_INFERRED_MAX_WRITE: "macOS corebluetooth: no negotiated MTU observation; the "
-                                            "effective ATT MTU is derived from max_write_without_response "
-                                            "(max write + 3, capped 517), NOT a negotiated measurement",
+                    BUDGET_MEASURED_MAX_WRITE: "macOS corebluetooth: no ATT MTU is observed or invented; the "
+                                               "measured max write-without-response length W is a backend limit; a "
+                                               "budget exists only for W >= 512 (smaller W is refused)",
+                    MTU_INFERRED_MAX_WRITE: "legacy host trace only: MTU derived as max write + 3, NOT a "
+                                            "negotiated measurement",
                 },
-                "poc_fragment_payload_rule": "min(mtu - 3, 512) - 4",
-                "frozen_fragment_payload_rule": "mtu - 7",
+                "fragment_attribute_rule": "min(ATT MTU - 3, 512)  (macOS: 512 when max write >= 512, else the link is refused)",
+                "fragment_payload_rule": "attribute - 4",
                 "trace_sends": len(parsed["sends"]),
                 "trace_replies": len(parsed["replies"])}
         result["result"] = FINISHED

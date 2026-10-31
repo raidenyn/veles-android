@@ -1,0 +1,11 @@
+{
+  "record_type": "operator_captured_owner_instruction",
+  "date": "2026-10-28",
+  "question": "GPT-5.6’s independent review is blocked by its usage quota until 11:42 UTC today. GLM-5.3-flash is continuing the documentation, evidence curation, and checks. How should I handle the remaining review?",
+  "owner_answer_verbatim": "Use Opus 5.5 via Claude Code",
+  "authorized_review_route": "Claude Code with claude-opus-5-5",
+  "implementation_model_unchanged": "ollama-cloud/glm-5.3-flash",
+  "scope": "Remaining independent focused v4 verification and final integrated review",
+  "not_a_github_approval": true,
+  "earlier_gpt_reviews_keep_actual_authorship": true
+}

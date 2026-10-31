@@ -1,0 +1,26 @@
+OTP-23 macOS after-run bundle identity capture (READ-ONLY; captured after the runs by the finalize session)
+captured_utc: 2026-10-27T17:23:58Z
+captured_at_utc: 2026-10-27T17:24:00Z
+The strict runs (16:11:53Z / 16:28:53Z) ended before this capture; nothing was modified on the Mac.
+
+## Registered-host executable of the run tree (the profile-loaded host, as registered 16:10:56Z)
+
+$ ssh raiden@192.168.11.116 "app=~/homepc/work/otp23-glm-dc5d127-cal/run/target/macos-poc/VelesOtp23PoC.app; exe=\"$app/Contents/MacOS/otp23-host\"; shasum -a 256 \"$exe\"; codesign -dvv \"$app\"; codesign --verify --strict -v \"$app\""
+e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c  /Users/raiden/homepc/work/otp23-glm-dc5d127-cal/run/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host
+Executable=/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host
+Identifier=me.nagaev.veles.bridge
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=3578 flags=0x0(none) hashes=105+3 location=embedded
+Signature size=4784
+Authority=Apple Development: yuriy@nagaev.me (ZWYYS8X98S)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+Signed Time=26 Oct 2026 at 13:40:26
+Info.plist entries=11
+TeamIdentifier=7T39M26Z99
+Sealed Resources version=2 rules=13 files=0
+Internal requirements count=1 size=188
+codesign --verify --strict -v:
+/Users/raiden/homepc/work/otp23-glm-dc5d127-cal/run/target/macos-poc/VelesOtp23PoC.app: valid on disk
+/Users/raiden/homepc/work/otp23-glm-dc5d127-cal/run/target/macos-poc/VelesOtp23PoC.app: satisfies its Designated Requirement
+verify_exit=0

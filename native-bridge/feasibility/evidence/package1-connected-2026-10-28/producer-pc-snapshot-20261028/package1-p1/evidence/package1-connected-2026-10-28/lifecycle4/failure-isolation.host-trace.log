@@ -1,0 +1,9 @@
+[       0ms pid=25244] start pid=25244
+[       0ms pid=25244] in  len=81 type=hello request_id=r1-4l8wlx
+[       1ms pid=25244] out len=183 type=ready request_id=r1-4l8wlx api_version=1
+[    4685ms pid=25244] in  len=137 type=start_scan request_id=r2-n36tsi api_version=1
+[    4737ms pid=25244] out len=135 type=scan_state request_id=r2-n36tsi api_version=1 status=started scan_handle=3066b9211f71cee1
+[   34830ms pid=25244] in  len=115 type=stop_scan request_id=r3-tplwmk api_version=1 scan_handle=3066b9211f71cee1
+[   34831ms pid=25244] out len=135 type=scan_state request_id=r3-tplwmk api_version=1 status=stopped scan_handle=3066b9211f71cee1
+[   34838ms pid=25244] shutdown joined 0/0 within 0ms
+[   34838ms pid=25244] exit code=0 stdout_drained=true

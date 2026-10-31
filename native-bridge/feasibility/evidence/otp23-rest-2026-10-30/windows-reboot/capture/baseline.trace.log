@@ -1,0 +1,11 @@
+[       0ms pid=43800] start pid=43800
+[       0ms pid=43800] in  len=81 type=hello request_id=r1-py50fu
+[       0ms pid=43800] out len=183 type=ready request_id=r1-py50fu api_version=1
+[     271ms pid=43800] in  len=137 type=start_scan request_id=r2-pecujd api_version=1
+[     325ms pid=43800] out len=135 type=scan_state request_id=r2-pecujd api_version=1 status=started scan_handle=ed3ede269e62327a
+[     326ms pid=43800] in  len=115 type=stop_scan request_id=r3-x9oe3k api_version=1 scan_handle=ed3ede269e62327a
+[     327ms pid=43800] out len=135 type=scan_state request_id=r3-x9oe3k api_version=1 status=stopped scan_handle=ed3ede269e62327a
+[     328ms pid=43800] in  len=81 type=shutdown request_id=r4-8ez347 api_version=1
+[     328ms pid=43800] shutdown joined 0/0 within 0ms
+[     328ms pid=43800] out len=90 type=shutdown_complete request_id=r4-8ez347 api_version=1
+[     328ms pid=43800] exit code=0 stdout_drained=true

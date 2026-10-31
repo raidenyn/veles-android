@@ -1,0 +1,36 @@
+[       0ms pid=27276] start pid=27276
+[       0ms pid=27276] in  len=74 type=hello request_id=d1
+[       0ms pid=27276] out len=174 type=ready request_id=d1 api_version=1
+[       0ms pid=27276] in  len=130 type=start_scan request_id=d2 api_version=1
+[       5ms pid=27276] bluetooth authorization before adapter init: allowed_always
+[       6ms pid=27276] adapter init: created=true authorization=allowed_always
+[      12ms pid=27276] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=fc6067d53f4fbc73
+[     378ms pid=27276] out len=217 type=device_found api_version=1 scan_handle=fc6067d53f4fbc73 device_handle=6dcc5c9d9869858d label.len=17 platform_hint.len=42
+[     453ms pid=27276] out len=217 type=device_found api_version=1 scan_handle=fc6067d53f4fbc73 device_handle=ed812d4dd79c72b8 label.len=17 platform_hint.len=42
+[     453ms pid=27276] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=fc6067d53f4fbc73
+[     453ms pid=27276] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=fc6067d53f4fbc73
+[     454ms pid=27276] in  len=108 type=connect request_id=d4 api_version=1 device_handle=6dcc5c9d9869858d
+[     454ms pid=27276] in  len=108 type=connect request_id=d5 api_version=1 device_handle=ed812d4dd79c72b8
+[     454ms pid=27276] conn 2 device at 0ms
+[     455ms pid=27276] conn 3 device at 0ms
+[     888ms pid=27276] conn 2 connected at 434ms
+[    1305ms pid=27276] conn 2 service at 850ms
+[    1423ms pid=27276] conn 3 connected at 968ms
+[    1425ms pid=27276] conn 2 characteristics at 971ms
+[    1425ms pid=27276] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    1613ms pid=27276] conn 2 subscribed; hint=macos:..c632
+[    1613ms pid=27276] out len=175 type=connected request_id=d4 api_version=1 connection_handle=aa204c9527891704 platform_hint.len=42
+[    2017ms pid=27276] conn 3 service at 1562ms
+[    2136ms pid=27276] conn 3 characteristics at 1682ms
+[    2136ms pid=27276] conn 3 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    2317ms pid=27276] conn 3 subscribed; hint=macos:..9e75
+[    2317ms pid=27276] out len=175 type=connected request_id=d5 api_version=1 connection_handle=ca010db457e913a8 platform_hint.len=42
+[    2318ms pid=27276] in  len=136 type=send request_id=d6 api_version=1 connection_handle=aa204c9527891704 record_base64.len=8
+[    2318ms pid=27276] out len=109 type=sent request_id=d6 api_version=1 connection_handle=aa204c9527891704
+[    2362ms pid=27276] out len=121 type=message api_version=1 connection_handle=aa204c9527891704 record_base64.len=8
+[    2362ms pid=27276] in  len=136 type=send request_id=d7 api_version=1 connection_handle=ca010db457e913a8 record_base64.len=8
+[    2362ms pid=27276] out len=109 type=sent request_id=d7 api_version=1 connection_handle=ca010db457e913a8
+[    2406ms pid=27276] out len=121 type=message api_version=1 connection_handle=ca010db457e913a8 record_base64.len=8
+[    2407ms pid=27276] in  len=130 type=start_scan request_id=d8 api_version=1
+[    2408ms pid=27276] out len=128 type=scan_state request_id=d8 api_version=1 status=started scan_handle=2d8f7c5f180bb155
+[    2408ms pid=27276] exit code=0 stdout_drained=true

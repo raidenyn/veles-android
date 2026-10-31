@@ -75,7 +75,7 @@ class GattTransportTest {
             receiver.connect("a")
             sender.setMtu("a", mtu)
             receiver.setMtu("a", mtu)
-            for (size in listOf(1, mtu - 7, mtu - 6, 4096)) {
+            for (size in listOf(1, GattTransport.payloadBudget(mtu), GattTransport.payloadBudget(mtu) + 1, 4096)) {
                 val expected = ByteArray(size) { (it * 17).toByte() }
                 sender.enqueue("a", expected)
                 var actual: ByteArray? = null

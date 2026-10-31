@@ -1,0 +1,127 @@
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD0C0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD0C0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD0C0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD0C0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD0C0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD0C0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DC3B0>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD170>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD170>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD170>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD170>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD170>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+Exception ignored while calling ctypes callback function <function window_inventory.<locals>.visit at 0x000002617C1DD170>:
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 347, in visit
+    class_of[hwnd] = name.value
+NameError: name 'class_of' is not defined
+[FAIL   ] LC-shutdown environment
+[FAIL   ] LC-port-disconnect environment
+[FAIL   ] LC-tab-close environment
+[PASS   ] LC-stdin-eof none
+[PASS   ] LC-stdin-eof-truncated none
+[FAIL   ] LC-failure-isolation environment
+lifecycle: NOT PASS (6 scenario(s)) -> C:\Users\yuriy\otp23-probe\package1-p1\evidence\package1-connected-2026-10-28\lifecycle1

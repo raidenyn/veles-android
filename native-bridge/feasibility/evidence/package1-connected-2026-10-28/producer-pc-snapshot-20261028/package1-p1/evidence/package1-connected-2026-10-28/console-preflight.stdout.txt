@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\package1_console_preflight.py", line 100, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\package1_console_preflight.py", line 76, in main
+    tables = cv.endpoint_table()
+  File "C:\Users\yuriy\otp23-probe\package1-p1\scripts\chrome_validate.py", line 259, in endpoint_table
+    family_api = {("tcp4", 2, core.TCP_TABLE_OWNER_PID_ALL, iphlp.GetExtendedTcpTable),
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+                  ("udp6", 23, core.UDP_TABLE_OWNER_PID, iphlp.GetExtendedUdpTable)}
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: cannot use 'tuple' as a set element (unhashable type)

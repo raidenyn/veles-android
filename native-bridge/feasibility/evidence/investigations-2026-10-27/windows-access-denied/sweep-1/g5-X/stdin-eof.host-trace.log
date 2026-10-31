@@ -1,0 +1,38 @@
+[       0ms pid=97920] start pid=97920
+[       0ms pid=97920] in  len=74 type=hello request_id=d1
+[       0ms pid=97920] out len=176 type=ready request_id=d1 api_version=1
+[       0ms pid=97920] in  len=130 type=start_scan request_id=d2 api_version=1
+[      50ms pid=97920] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=9492ac2ea1969c90
+[     876ms pid=97920] out len=195 type=device_found api_version=1 scan_handle=9492ac2ea1969c90 device_handle=bf6c8b9647f2bc5e label.len=17 platform_hint.len=20
+[    1207ms pid=97920] out len=195 type=device_found api_version=1 scan_handle=9492ac2ea1969c90 device_handle=6e1d29f26cc6f1af label.len=17 platform_hint.len=20
+[    1208ms pid=97920] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=9492ac2ea1969c90
+[    1208ms pid=97920] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=9492ac2ea1969c90
+[    1209ms pid=97920] in  len=108 type=connect request_id=d4 api_version=1 device_handle=bf6c8b9647f2bc5e
+[    1209ms pid=97920] in  len=108 type=connect request_id=d5 api_version=1 device_handle=6e1d29f26cc6f1af
+[    1240ms pid=97920] conn 3 device at 31ms
+[    1240ms pid=97920] conn 2 device at 31ms
+[    1261ms pid=97920] conn 3 session at 51ms
+[    1261ms pid=97920] conn 2 session at 51ms
+[    2299ms pid=97920] conn 3 service at 1090ms
+[    2299ms pid=97920] conn 3 mtu=517 at 1090ms
+[    2382ms pid=97920] conn 2 service at 1172ms
+[    2382ms pid=97920] conn 2 mtu=517 at 1172ms
+[    2459ms pid=97920] conn 3 write properties=0x4
+[    2531ms pid=97920] conn 3 notify properties=0x10
+[    2531ms pid=97920] conn 3 characteristics at 1321ms
+[    2552ms pid=97920] conn 3 subscribed at 1342ms
+[    2552ms pid=97920] out len=153 type=connected request_id=d5 api_version=1 connection_handle=6df94fc391ee752b platform_hint.len=20
+[    2623ms pid=97920] conn 2 write properties=0x4
+[    2862ms pid=97920] conn 2 notify properties=0x10
+[    2862ms pid=97920] conn 2 characteristics at 1652ms
+[    2985ms pid=97920] conn 2 subscribed at 1776ms
+[    2986ms pid=97920] out len=153 type=connected request_id=d4 api_version=1 connection_handle=884e972c247419b9 platform_hint.len=20
+[    2986ms pid=97920] in  len=152 type=send request_id=d6 api_version=1 connection_handle=884e972c247419b9 record_base64.len=24
+[    2996ms pid=97920] out len=109 type=sent request_id=d6 api_version=1 connection_handle=884e972c247419b9
+[    3097ms pid=97920] out len=137 type=message api_version=1 connection_handle=884e972c247419b9 record_base64.len=24
+[    3097ms pid=97920] in  len=152 type=send request_id=d7 api_version=1 connection_handle=6df94fc391ee752b record_base64.len=24
+[    3107ms pid=97920] out len=109 type=sent request_id=d7 api_version=1 connection_handle=6df94fc391ee752b
+[    3134ms pid=97920] out len=137 type=message api_version=1 connection_handle=6df94fc391ee752b record_base64.len=24
+[    3134ms pid=97920] in  len=130 type=start_scan request_id=d8 api_version=1
+[    3180ms pid=97920] out len=128 type=scan_state request_id=d8 api_version=1 status=started scan_handle=dc9dc3d6874fbcf8
+[    3180ms pid=97920] exit code=0 stdout_drained=true

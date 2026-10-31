@@ -1,0 +1,98 @@
+Tracking time.cloudflare.com [162.159.200.123:123].
+Collecting 5 samples.
+The current time is 27/10/2026 06:28:03.
+06:28:03, -01.0017024s
+[NTP Packet]
+Leap Indicator: 0(no warning)
+Version Number: 1
+Mode: 4 (Server)
+Stratum: 3 (secondary reference - syncd by (S)NTP)
+Poll Interval: 0 (unspecified)
+Precision: -25 (29.8023ns per tick)
+Root Delay: 0x0000.253C (+00.1454468s)
+Root Dispersion: 0x0000.006E (0.0016785s)
+ReferenceId: 0x0A7F08A1 (source IP:  10.127.8.161)
+Reference Timestamp: 0xEE8A5FC865B9FDB0 (155526 23:24:56.3973692s - 27/10/2026 06:24:56)
+Originate Timestamp: 0xEE8A6083AFD0CEBA (155526 23:28:03.6867799s - 27/10/2026 06:28:03)
+Receive Timestamp: 0xEE8A6082B08350F5 (155526 23:28:02.6895037s - 27/10/2026 06:28:02)
+Transmit Timestamp: 0xEE8A6082B087E27A (155526 23:28:02.6895734s - 27/10/2026 06:28:02)
+[non-NTP Packet]
+Destination Timestamp: Roundtrip Delay: 8852400 (+00.0088524s)
+Local Clock Offset: -1001702400 (-01.0017024s)
+
+06:28:05, -01.0011718s
+[NTP Packet]
+Leap Indicator: 0(no warning)
+Version Number: 1
+Mode: 4 (Server)
+Stratum: 3 (secondary reference - syncd by (S)NTP)
+Poll Interval: 0 (unspecified)
+Precision: -25 (29.8023ns per tick)
+Root Delay: 0x0000.253C (+00.1454468s)
+Root Dispersion: 0x0000.006A (0.0016174s)
+ReferenceId: 0x0A7F08A1 (source IP:  10.127.8.161)
+Reference Timestamp: 0xEE8A5FF1DDD46072 (155526 23:25:37.8665219s - 27/10/2026 06:25:37)
+Originate Timestamp: 0xEE8A6085B54EADE2 (155526 23:28:05.7082318s - 27/10/2026 06:28:05)
+Receive Timestamp: 0xEE8A6084B63165B3 (155526 23:28:04.7116912s - 27/10/2026 06:28:04)
+Transmit Timestamp: 0xEE8A6084B6369EEE (155526 23:28:04.7117709s - 27/10/2026 06:28:04)
+[non-NTP Packet]
+Destination Timestamp: Roundtrip Delay: 9262500 (+00.0092625s)
+Local Clock Offset: -1001171800 (-01.0011718s)
+
+06:28:07, -01.0012428s
+[NTP Packet]
+Leap Indicator: 0(no warning)
+Version Number: 1
+Mode: 4 (Server)
+Stratum: 3 (secondary reference - syncd by (S)NTP)
+Poll Interval: 0 (unspecified)
+Precision: -25 (29.8023ns per tick)
+Root Delay: 0x0000.253B (+00.1454315s)
+Root Dispersion: 0x0000.006B (0.0016327s)
+ReferenceId: 0x0A7F08A1 (source IP:  10.127.8.161)
+Reference Timestamp: 0xEE8A60633E2E8D98 (155526 23:27:31.2428978s - 27/10/2026 06:27:31)
+Originate Timestamp: 0xEE8A6087B8D3770A (155526 23:28:07.7219767s - 27/10/2026 06:28:07)
+Receive Timestamp: 0xEE8A6086B9C6F2B9 (155526 23:28:06.7256920s - 27/10/2026 06:28:06)
+Transmit Timestamp: 0xEE8A6086B9CB9674 (155526 23:28:06.7257628s - 27/10/2026 06:28:06)
+[non-NTP Packet]
+Destination Timestamp: Roundtrip Delay: 9916200 (+00.0099162s)
+Local Clock Offset: -1001242800 (-01.0012428s)
+
+06:28:09, -01.0012658s
+[NTP Packet]
+Leap Indicator: 0(no warning)
+Version Number: 1
+Mode: 4 (Server)
+Stratum: 3 (secondary reference - syncd by (S)NTP)
+Poll Interval: 0 (unspecified)
+Precision: -25 (29.8023ns per tick)
+Root Delay: 0x0000.253D (+00.1454620s)
+Root Dispersion: 0x0000.0067 (0.0015717s)
+ReferenceId: 0x0A7F08A1 (source IP:  10.127.8.161)
+Reference Timestamp: 0xEE8A602EDD2DC5E5 (155526 23:26:38.8639797s - 27/10/2026 06:26:38)
+Originate Timestamp: 0xEE8A6089BF417E4F (155526 23:28:09.7470931s - 27/10/2026 06:28:09)
+Receive Timestamp: 0xEE8A6088C02CDE11 (155526 23:28:08.7506846s - 27/10/2026 06:28:08)
+Transmit Timestamp: 0xEE8A6088C031B9BE (155526 23:28:08.7507588s - 27/10/2026 06:28:08)
+[non-NTP Packet]
+Destination Timestamp: Roundtrip Delay: 9714700 (+00.0097147s)
+Local Clock Offset: -1001265800 (-01.0012658s)
+
+06:28:11, -01.0011600s
+[NTP Packet]
+Leap Indicator: 0(no warning)
+Version Number: 1
+Mode: 4 (Server)
+Stratum: 3 (secondary reference - syncd by (S)NTP)
+Poll Interval: 0 (unspecified)
+Precision: -25 (29.8023ns per tick)
+Root Delay: 0x0000.253C (+00.1454468s)
+Root Dispersion: 0x0000.006A (0.0016174s)
+ReferenceId: 0x0A7F08A1 (source IP:  10.127.8.161)
+Reference Timestamp: 0xEE8A607A427D5DAC (155526 23:27:54.2597254s - 27/10/2026 06:27:54)
+Originate Timestamp: 0xEE8A608BC2212FFB (155526 23:28:11.7583189s - 27/10/2026 06:28:11)
+Receive Timestamp: 0xEE8A608AC323C8F7 (155526 23:28:10.7622648s - 27/10/2026 06:28:10)
+Transmit Timestamp: 0xEE8A608AC328BBE4 (155526 23:28:10.7623403s - 27/10/2026 06:28:10)
+[non-NTP Packet]
+Destination Timestamp: Roundtrip Delay: 10211800 (+00.0102118s)
+Local Clock Offset: -1001160000 (-01.0011600s)
+

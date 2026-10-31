@@ -1,0 +1,377 @@
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+binary: rustc
+commit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea
+commit-date: 2026-08-18
+host: aarch64-apple-darwin
+release: 1.98.0
+LLVM version: 22.1.8
+cargo 1.98.0 (797e8a9bc 2026-08-05)
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling objc2 v0.6.5
+   Compiling pin-project-lite v0.2.17
+   Compiling objc2-encode v4.1.0
+   Compiling libc v0.2.191
+   Compiling serde_core v1.0.228
+   Compiling parking v2.2.1
+   Compiling bitflags v2.13.2
+   Compiling crossbeam-utils v0.8.23
+   Compiling event-listener v5.4.2
+   Compiling serde v1.0.228
+   Compiling futures-core v0.3.34
+   Compiling event-listener-strategy v0.5.4
+   Compiling memchr v2.8.3
+   Compiling futures-io v0.3.34
+   Compiling fastrand v1.9.0
+   Compiling waker-fn v1.2.0
+   Compiling tracing-core v0.1.36
+   Compiling serde_json v1.0.140
+   Compiling futures-lite v1.13.0
+   Compiling tracing v0.1.44
+   Compiling async-broadcast v0.7.2
+   Compiling itoa v1.0.18
+   Compiling veles-otp23-feasibility v0.1.0 (/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility)
+   Compiling ryu v1.0.23
+   Compiling block2 v0.6.2
+   Compiling objc2-core-foundation v0.3.2
+   Compiling uuid v1.29.0
+   Compiling syn v2.0.119
+   Compiling syn v3.0.9
+   Compiling concurrent-queue v2.5.0
+   Compiling async-channel v2.5.0
+   Compiling serde_derive v1.0.228
+   Compiling objc2-foundation v0.3.2
+   Compiling dispatch2 v0.3.1
+   Compiling tokio-macros v2.7.2
+   Compiling async-trait v0.1.92
+   Compiling tokio v1.54.1
+   Compiling objc2-core-bluetooth v0.3.2
+   Compiling bluest v0.6.9
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.43s
+     Running unittests src/lib.rs (target/debug/deps/veles_otp23_feasibility-a8e2dc308ceb1915)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/otp23_host.rs (target/debug/deps/otp23_host-df5c222b12b9d9ea)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/core_correlation.rs (target/debug/deps/core_correlation-e5e546d066717257)
+
+running 37 tests
+test a_scan_stops_itself_after_300_seconds ... ok
+test an_id_may_be_reused_after_its_completion_was_delivered ... ok
+test at_most_two_scans_may_be_open ... ok
+test connect_by_device_handle_resolves_the_hint_and_completes_after_setup ... ok
+test connect_failure_is_classified_and_frees_the_device ... ok
+test connect_to_an_unknown_or_malformed_target_fails_closed ... ok
+test device_found_carries_scan_and_device_handles_and_is_deduplicated_per_scan ... ok
+test at_most_32_connections ... ok
+test a_device_already_connected_or_connecting_is_busy_and_retryable ... ok
+test a_negotiated_mtu_below_185_or_above_517_is_refused ... ok
+test device_labels_and_hints_are_sanitised_to_envelope_bounds ... ok
+test no_overlap_is_a_fatal_correlated_error_then_exit_3 ... ok
+test hello_returns_ready_and_performs_no_ble_work ... ok
+test malformed_inbound_fragments_are_dropped_silently_and_do_not_affect_the_peer_state ... ok
+test pre_ready_non_hello_is_answered_once_then_exit_2 ... ok
+test post_ready_uncorrelatable_input_exits_2_silently_after_full_release ... ok
+test repeated_hello_and_wrong_api_version_are_rejected_without_ending_the_session ... ok
+test repeated_conflicting_transaction_starts_disconnect_only_that_peer ... ok
+test reusing_an_id_whose_completion_is_still_queued_fails_closed ... ok
+test reusing_an_outstanding_request_id_fails_closed_without_a_response ... ok
+test scan_start_failure_is_a_correlated_classified_error ... ok
+test inbound_records_never_cross_connections_even_when_fragments_interleave ... ok
+test send_fragments_the_whole_record_and_reports_sent_after_the_writes_complete ... ok
+test sends_on_one_connection_are_serialised_and_use_fresh_transaction_ids ... ok
+test start_scan_completes_only_when_the_backend_confirms ... ok
+test uncorrelatable_pre_ready_input_is_silent_exit_2 ... ok
+test stop_scan_is_correlated_and_follows_the_last_device_found ... ok
+test two_connects_complete_independently_and_out_of_order ... ok
+test unknown_backend_tokens_and_late_events_are_ignored ... ok
+test unsolicited_scan_end_has_no_request_id_and_releases_the_scan ... ok
+test send_validation_uses_the_specific_error_codes ... ok
+test send_queue_is_bounded_per_peer_by_records_and_bytes ... ok
+test the_65th_outstanding_request_is_refused_retryably ... ok
+test handles_are_unique_random_looking_and_never_reused ... ok
+test global_send_queue_ceiling_is_128_records_or_128_kib ... ok
+test evicted_device_handles_fail_with_unknown_handle ... ok
+test device_found_is_rate_limited_to_64_per_second_and_1024_per_scan ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/core_lifecycle.rs (target/debug/deps/core_lifecycle-9963860b930c26cf)
+
+running 20 tests
+test an_overflowing_message_is_not_accepted_and_no_request_resurrects ... ok
+test connect_is_failed_not_disconnected_when_the_link_drops_during_setup ... ok
+test backend_callback_overflow_fails_closed ... ok
+test connect_times_out_after_30_seconds_and_releases_the_link ... ok
+test disconnecting_a_connecting_link_fails_its_connect_then_reports_disconnected ... ok
+test eof_before_hello_also_exits_cleanly ... ok
+test disconnect_releases_only_that_handle_and_fails_its_pending_sends_first ... ok
+test a_failed_gatt_write_fails_the_send_and_tears_down_only_that_link ... ok
+test framing_violations_fail_closed_with_exit_2_and_io_errors_with_exit_1 ... ok
+test a_released_handle_is_unknown_and_late_backend_events_for_it_are_ignored ... ok
+test inbound_partial_records_expire_after_five_seconds_of_inactivity ... ok
+test next_deadline_tracks_the_earliest_pending_work ... ok
+test nothing_is_accepted_or_emitted_after_shutdown ... ok
+test link_loss_errors_in_flight_requests_then_emits_one_unsolicited_disconnected ... ok
+test output_queue_byte_overflow_also_fails_closed ... ok
+test output_queue_message_overflow_fails_closed_without_dropping_or_reordering ... ok
+test send_times_out_after_30_seconds_and_the_half_written_link_is_dropped ... ok
+test shutdown_orders_errors_then_lifecycle_then_shutdown_complete_last ... ok
+test stdin_eof_stops_scans_disconnects_links_and_exits_without_output ... ok
+test stdout_closure_is_treated_as_port_closure ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/fragmentation.rs (target/debug/deps/fragmentation-019ba89c7ffbdf23)
+
+running 31 tests
+test clear_wipes_everything ... ok
+test chunking_at_the_mtu_floor_matches_the_frozen_boundaries ... ok
+test conflicts_older_than_sixty_seconds_are_forgotten ... ok
+test duplicate_index_and_stray_fragments_of_unknown_transactions ... ok
+test final_length_mismatch_with_correct_flag_sequence_is_discarded ... ok
+test first_fragment_total_must_be_1_to_4096 ... ok
+test fragment_activity_refreshes_the_inactivity_timer ... ok
+test global_caps_apply_across_peers_before_allocation ... ok
+test inactivity_timeout_is_five_seconds_per_transaction ... ok
+test live_duplicate_start_is_ignored_and_a_repeat_within_sixty_seconds_disconnects ... ok
+test malformed_fragments_discard_the_transaction_and_free_its_budget ... ok
+test max_mtu_uses_the_capped_non_final_fragments ... ok
+test max_record_is_23_full_fragments_plus_two_bytes_at_mtu_185 ... ok
+test only_two_incomplete_transactions_per_peer_and_the_third_changes_nothing ... ok
+test r2_budget_matches_the_literal_table_for_every_mtu ... ok
+test r2_exact_size_rules_reject_every_off_by_one_at_mtu_517 ... ok
+test r2_mtu_517_capped_non_final_payloads_are_exactly_508_bytes ... ok
+test r2_mtu_517_payload_boundary_508_fits_and_509_needs_two_fragments ... ok
+test r2_mtu_517_rejects_inbound_frames_above_the_512_attribute_cap ... ok
+test r2_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries ... ok
+test r2_preserves_the_mtu_185_vectors ... ok
+test r2_receiver_accepts_an_empty_final_only_after_an_exact_multiple ... ok
+test r2_revision_1_frames_at_mtu_516_and_517_fail_closed ... ok
+test transaction_id_domain_and_link_capacity_domains_are_enforced ... ok
+test record_length_zero_and_above_4096_are_refused_at_fragmentation_time ... ok
+test zero_length_final_fragment_is_accepted_when_the_record_is_an_exact_multiple ... ok
+test round_trip_every_boundary_length_at_floor_and_ceiling_mtu ... ok
+test sender_output_matches_the_committed_max_record_vector ... ok
+test committed_fragmentation_fixtures_behave_as_specified ... ok
+test r2_sender_reproduces_every_canonical_accepted_fixture_byte_for_byte ... ok
+test r2_sender_and_receiver_agree_at_every_boundary_of_every_mtu ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/framing.rs (target/debug/deps/framing-75f37df6b5ef3a6d)
+
+running 10 tests
+test rejects_four_gigabyte_declaration_without_allocating ... ok
+test reads_consecutive_frames_then_clean_eof ... ok
+test rejects_zero_length_frame ... ok
+test survives_one_byte_reads ... ok
+test truncated_header_is_distinguished_from_clean_eof ... ok
+test accepts_exactly_the_maximum_frame ... ok
+test truncated_payload_reports_progress ... ok
+test writes_header_and_payload_in_one_write_then_flushes ... ok
+test write_enforces_one_to_maximum_bytes ... ok
+test rejects_one_byte_over_the_maximum_without_reading_the_payload ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hardware_scan.rs (target/debug/deps/hardware_scan-4b848f391ef732ca)
+
+running 4 tests
+test connecting_to_an_absent_device_fails_closed_and_classified ... ignored, needs a Bluetooth LE radio
+test real_diagnostic_scan_reports_bounded_device_events ... ignored, needs a Bluetooth LE radio
+test real_scan_is_released_when_stdin_closes ... ignored, needs a Bluetooth LE radio
+test real_scan_starts_stops_and_shutdown_exits_with_idle_stdin ... ignored, needs a Bluetooth LE radio
+
+test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/macos_map.rs (target/debug/deps/macos_map-dd99629a91607313)
+
+running 13 tests
+test authorization_raw_values_map_to_fixed_names ... ok
+test bounded_set_rejects_duplicates_and_capacity ... ok
+test every_accepted_write_length_wraps_every_frame_in_one_os_write ... ok
+test fallback_label_is_short_valid_and_not_the_full_identifier ... ok
+test hint_round_trips_the_peripheral_identifier ... ok
+test malformed_hints_are_refused ... ok
+test reported_512_is_the_clamped_budget_without_inventing_an_mtu ... ok
+test scan_gate_admits_exactly_one_start_and_one_end ... ok
+test scan_gate_natural_end_wins_without_external_stop ... ok
+test unavailable_timeout_only_blames_the_radio_when_authorized ... ok
+test valid_uuid_accepts_only_canonical_lowercase ... ok
+test write_lengths_at_or_above_512_give_the_clamped_budget ... ok
+test write_lengths_below_512_cannot_establish_a_common_budget_and_fail_closed ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/outqueue.rs (target/debug/deps/outqueue-c24d0143111f77c4)
+
+running 9 tests
+test a_popped_frame_stays_accounted_until_its_write_finishes ... ok
+test byte_ceiling_overflows_at_the_boundary ... ok
+test close_rejects_pushes_but_drains_what_is_queued ... ok
+test limits_are_the_frozen_ceilings ... ok
+test preserves_order_and_reports_depth ... ok
+test message_ceiling_overflows_without_dropping_or_reordering ... ok
+test request_ids_stay_reserved_while_queued_or_being_written ... ok
+test pop_blocks_until_data_arrives ... ok
+test wait_drained_observes_the_writer_and_respects_its_deadline ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/process.rs (target/debug/deps/process-d250c95029292cfe)
+
+running 14 tests
+test incompatible_api_flushes_the_error_then_exits_3 ... ok
+test hello_returns_ready_and_stdin_eof_exits_zero_closing_stdout ... ok
+test a_frame_delivered_in_single_byte_writes_is_reassembled ... ok
+test record_size_boundaries_over_the_pipe ... ok
+test link_loss_is_reported_for_one_handle_only ... ok
+test disconnect_releases_one_phone_while_the_other_keeps_working ... ok
+test shutdown_completes_and_exits_while_stdin_stays_open_and_idle ... ok
+test shutdown_with_open_links_orders_lifecycle_before_shutdown_complete ... ok
+test two_independent_phones_exchange_complete_records_and_never_cross ... ok
+test pre_ready_request_gets_one_correlated_error_then_exit_2 ... ok
+test malformed_input_before_and_after_ready_exits_2_silently ... ok
+test wrong_or_missing_origin_argument_refuses_to_start ... ok
+test eof_with_active_scan_and_connections_exits_zero_and_leaves_no_process ... ok
+test oversize_zero_and_truncated_frames_fail_closed_with_exit_2_and_no_output ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+     Running tests/schema.rs (target/debug/deps/schema-ff45cdfb16b2e451)
+
+running 25 tests
+test accepts_every_request_type_with_exact_fields ... ok
+test base64_rejects_non_canonical_and_malformed_text ... ok
+test base64_round_trips_and_matches_rfc4648_vectors ... ok
+test correlated_events_carry_request_id_and_unsolicited_events_do_not ... ok
+test every_error_code_has_its_wire_name ... ok
+test hello_accepts_version_lists_and_ranges ... ok
+test hello_offer_shape_violations_are_rejected_as_negotiation_errors ... ok
+test offer_selects_highest_mutual_version ... ok
+test optional_fields_are_omitted_never_null ... ok
+test platform_hint_bounds_are_utf8_byte_lengths ... ok
+test post_ready_requires_the_negotiated_api_version ... ok
+test pre_negotiation_error_has_no_api_version ... ok
+test pre_ready_non_hello_with_usable_id_is_correlated_fatal_pre_ready ... ok
+test base64_enforces_decoded_size_bounds_zero_and_max ... ok
+test ready_reports_selected_version_and_capabilities ... ok
+test request_id_accepts_64_chars_of_the_allowed_alphabet ... ok
+test schema_violations_with_a_usable_id_are_correlated_invalid_request ... ok
+test strict_json_accepts_plain_documents_and_unicode ... ok
+test strict_json_rejects_duplicate_keys_at_any_depth ... ok
+test strict_json_rejects_non_integers_and_null ... ok
+test strict_json_rejects_syntax_and_invalid_utf8 ... ok
+test strict_json_rejects_trailing_bytes_including_whitespace ... ok
+test unknown_request_types_are_correlated_unknown_request ... ok
+test unusable_envelopes_are_uncorrelatable_in_both_phases ... ok
+test send_record_validation_maps_to_specific_codes ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/winrt_map.rs (target/debug/deps/winrt_map-e49b99fa709f38b3)
+
+running 6 tests
+test bluetooth_errors_are_classified_with_retryability ... ok
+test access_and_radio_states_distinguish_denied_from_off ... ok
+test fallback_label_is_short_valid_and_not_the_full_address ... ok
+test gatt_statuses_map_to_stable_stage_names ... ok
+test hint_round_trips_and_masks_to_48_bits ... ok
+test malformed_hints_are_refused ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests veles_otp23_feasibility
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking pin-project-lite v0.2.17
+    Checking objc2-encode v4.1.0
+    Checking parking v2.2.1
+    Checking bitflags v2.13.2
+    Checking libc v0.2.191
+    Checking serde_core v1.0.228
+    Checking futures-core v0.3.34
+    Checking crossbeam-utils v0.8.23
+    Checking memchr v2.8.3
+    Checking waker-fn v1.2.0
+    Checking fastrand v1.9.0
+    Checking event-listener v5.4.2
+    Checking futures-io v0.3.34
+    Checking tracing-core v0.1.36
+   Compiling veles-otp23-feasibility v0.1.0 (/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility)
+    Checking ryu v1.0.23
+    Checking objc2 v0.6.5
+    Checking itoa v1.0.18
+    Checking concurrent-queue v2.5.0
+    Checking event-listener-strategy v0.5.4
+    Checking tokio v1.54.1
+    Checking async-broadcast v0.7.2
+    Checking futures-lite v1.13.0
+    Checking async-channel v2.5.0
+    Checking tracing v0.1.44
+    Checking block2 v0.6.2
+    Checking objc2-core-foundation v0.3.2
+    Checking dispatch2 v0.3.1
+    Checking serde v1.0.228
+    Checking uuid v1.29.0
+    Checking objc2-foundation v0.3.2
+    Checking serde_json v1.0.140
+    Checking objc2-core-bluetooth v0.3.2
+    Checking bluest v0.6.9
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.77s
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling pin-project-lite v0.2.17
+   Compiling objc2 v0.6.5
+   Compiling objc2-encode v4.1.0
+   Compiling libc v0.2.191
+   Compiling parking v2.2.1
+   Compiling serde_core v1.0.228
+   Compiling bitflags v2.13.2
+   Compiling crossbeam-utils v0.8.23
+   Compiling serde v1.0.228
+   Compiling event-listener v5.4.2
+   Compiling futures-core v0.3.34
+   Compiling event-listener-strategy v0.5.4
+   Compiling memchr v2.8.3
+   Compiling fastrand v1.9.0
+   Compiling futures-io v0.3.34
+   Compiling serde_json v1.0.140
+   Compiling tracing-core v0.1.36
+   Compiling waker-fn v1.2.0
+   Compiling futures-lite v1.13.0
+   Compiling tracing v0.1.44
+   Compiling async-broadcast v0.7.2
+   Compiling itoa v1.0.18
+   Compiling veles-otp23-feasibility v0.1.0 (/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility)
+   Compiling ryu v1.0.23
+   Compiling block2 v0.6.2
+   Compiling objc2-core-foundation v0.3.2
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling concurrent-queue v2.5.0
+   Compiling async-channel v2.5.0
+   Compiling serde_derive v1.0.228
+   Compiling uuid v1.29.0
+   Compiling async-trait v0.1.92
+   Compiling tokio-macros v2.7.2
+   Compiling tokio v1.54.1
+   Compiling dispatch2 v0.3.1
+   Compiling objc2-foundation v0.3.2
+   Compiling objc2-core-bluetooth v0.3.2
+   Compiling bluest v0.6.9
+    Finished `release` profile [optimized] target(s) in 13.46s
+c36894dca9d47717410cf833ca4f181894d1144e48bc0f301232a2be307864ea  target/release/otp23-host

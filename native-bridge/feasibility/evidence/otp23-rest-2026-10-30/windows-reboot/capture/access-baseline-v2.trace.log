@@ -1,0 +1,40 @@
+[       0ms pid=47696] start pid=47696
+[       0ms pid=47696] in  len=81 type=hello request_id=r1-nov42i
+[       0ms pid=47696] out len=183 type=ready request_id=r1-nov42i api_version=1
+[       1ms pid=47696] in  len=137 type=start_scan request_id=r2-d8ktuf api_version=1
+[      53ms pid=47696] out len=135 type=scan_state request_id=r2-d8ktuf api_version=1 status=started scan_handle=c138a05065bb4671
+[    1791ms pid=47696] out len=195 type=device_found api_version=1 scan_handle=c138a05065bb4671 device_handle=9e3f5133a57fdaa5 label.len=17 platform_hint.len=20
+[    1966ms pid=47696] in  len=115 type=connect request_id=r3-nmh4xd api_version=1 device_handle=9e3f5133a57fdaa5
+[    1978ms pid=47696] conn 2 connect worker started epoch_ms=1793348125581 hint=winrt:..91f3:1
+[    2009ms pid=47696] conn 2 device at 30ms
+[    2030ms pid=47696] conn 2 session at 52ms
+[    4165ms pid=47696] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    4165ms pid=47696] conn 2 service at 2186ms
+[    4165ms pid=47696] conn 2 mtu=517 at 2186ms
+[    4242ms pid=47696] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    4242ms pid=47696] conn 2 write properties=0x4
+[    4305ms pid=47696] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    4305ms pid=47696] conn 2 notify properties=0x10
+[    4305ms pid=47696] conn 2 characteristics at 2326ms
+[    4419ms pid=47696] conn 2 subscribed at 2440ms
+[    4419ms pid=47696] out len=160 type=connected request_id=r3-nmh4xd api_version=1 connection_handle=16380a770b87378d platform_hint.len=20
+[    4420ms pid=47696] in  len=143 type=send request_id=r4-e3o5jy api_version=1 connection_handle=16380a770b87378d record_base64.len=8
+[    4431ms pid=47696] out len=116 type=sent request_id=r4-e3o5jy api_version=1 connection_handle=16380a770b87378d
+[    4441ms pid=47696] out len=121 type=message api_version=1 connection_handle=16380a770b87378d record_base64.len=8
+[    4533ms pid=47696] in  len=122 type=disconnect request_id=r5-o7ange api_version=1 connection_handle=16380a770b87378d
+[    4533ms pid=47696] conn 2 disconnect requested epoch_ms=1793348128136
+[    4533ms pid=47696] conn 2 close begin
+[    4533ms pid=47696] out len=124 type=disconnected request_id=r5-o7ange api_version=1 connection_handle=16380a770b87378d
+[    4533ms pid=47696] conn 2 close step remove_value_changed at 0ms ok
+[    4533ms pid=47696] conn 2 close step remove_status_changed at 0ms ok
+[    4534ms pid=47696] in  len=115 type=stop_scan request_id=r6-o9k3ly api_version=1 scan_handle=c138a05065bb4671
+[    4534ms pid=47696] conn 2 close step service_close at 0ms ok
+[    4534ms pid=47696] conn 2 close step maintain_false at 0ms ok
+[    4534ms pid=47696] out len=135 type=scan_state request_id=r6-o9k3ly api_version=1 status=stopped scan_handle=c138a05065bb4671
+[    4535ms pid=47696] conn 2 close step session_close at 1ms ok
+[    4535ms pid=47696] in  len=81 type=shutdown request_id=r7-9s9sft api_version=1
+[    4535ms pid=47696] conn 2 close step device_close at 1ms ok
+[    4536ms pid=47696] conn 2 released (objects closed; link-down unconfirmed)
+[    4545ms pid=47696] shutdown joined 1/1 within 10ms
+[    4545ms pid=47696] out len=90 type=shutdown_complete request_id=r7-9s9sft api_version=1
+[    4545ms pid=47696] exit code=0 stdout_drained=true

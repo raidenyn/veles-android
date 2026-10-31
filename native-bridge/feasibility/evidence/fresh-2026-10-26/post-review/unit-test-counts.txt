@@ -1,0 +1,8 @@
+total 316 skipped 0 failures 0 errors 0
+me.nagaev.veles.sharing.FragmentFixturesTest 2
+me.nagaev.veles.sharing.GattTransportBudgetTest 9
+me.nagaev.veles.sharing.GattTransportTest 11
+me.nagaev.veles.sharing.IngressBudgetTest 1
+me.nagaev.veles.sharing.SharingGattServerTest 17
+me.nagaev.veles.sharing.SharingServiceTest 5
+me.nagaev.veles.sharing.SyntheticTransportFixtureTest 5

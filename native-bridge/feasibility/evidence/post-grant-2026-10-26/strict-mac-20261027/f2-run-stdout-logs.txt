@@ -1,0 +1,44 @@
+[90368:8504880:1027/231153.540315:ERROR:components/os_crypt/common/keychain_password_mac.mm:112] Keychain lookup failed: Error Domain=NSOSStatusErrorDomain Code=-25308 "errKCInteractionNotAllowed / errSecInteractionNotAllowed: / Interaction is not allowed with the Security Server." (-25308)
+
+DevTools listening on ws://127.0.0.1:62646/devtools/browser/848497be-1dec-4d45-b7aa-9de1b050925e
+Trying to load the allocator multiple times. This is *not* supported.
+[90368:8504882:1027/231154.168013:ERROR:components/password_manager/core/browser/password_store/login_database_async_helper.cc:100] Encryption is not available.
+[90368:8504880:1027/231154.168582:ERROR:components/password_manager/core/browser/password_store/login_database_async_helper.cc:100] Encryption is not available.
+Created TensorFlow Lite XNNPACK delegate for CPU.
+Trying to load the allocator multiple times. This is *not* supported.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1793117693.607289 8514612 environment.cc:526] Selected adapter: Apple M1 Max, arch=metal-3, vendor=apple, backend=Metal, adapterType=Integrated GPU
+I0000 00:00:1793117693.610232 8514623 environment.cc:526] Selected adapter: Apple M1 Max, arch=metal-3, vendor=apple, backend=Metal, adapterType=Integrated GPU
+[PASS ] ST-ENV Chrome, fixed-id extension, connector page, exemption scan
+awaiting_physical_click: click the test Chrome window (pid 90368); waiting up to 180 s -> /Users/raiden/homepc/work/otp23-glm-dc5d127-cal/run/evidence/strict-mac-20261027-cold.foreground-ready.json
+[PASS ] ST-FG human click: owned Chrome is the OS foreground before any BLE work
+[PASS ] ST-HELLO hello over the registered plain host
+[PASS ] ST-PHONES two physical phones scanned and connected
+[PASS ] ST-BG ordinary tab focused, connector hidden, every DevTools client closed
+[PASS ] ST-IDLE idle with no DevTools client until each phone's unsolicited push is due
+[PASS ] ST-REATTACH HTTP target list, re-attach, read page receipts
+[PASS ] ST-SHUTDOWN shutdown; host gone
+strict_result=BLOCKED scenario=cold formal_otp23_acceptance=false -> evidence/strict-mac-20261027-cold.json
+===== PREWARM =====
+[96110:8541555:1027/232853.889125:ERROR:components/os_crypt/common/keychain_password_mac.mm:112] Keychain lookup failed: Error Domain=NSOSStatusErrorDomain Code=-25308 "errKCInteractionNotAllowed / errSecInteractionNotAllowed: / Interaction is not allowed with the Security Server." (-25308)
+
+DevTools listening on ws://127.0.0.1:63900/devtools/browser/0f082d75-0421-4a63-b7f1-896970e5bd0e
+Trying to load the allocator multiple times. This is *not* supported.
+[96110:8541555:1027/232854.214850:ERROR:components/password_manager/core/browser/password_store/login_database_async_helper.cc:100] Encryption is not available.
+[96110:8541556:1027/232854.215903:ERROR:components/password_manager/core/browser/password_store/login_database_async_helper.cc:100] Encryption is not available.
+Created TensorFlow Lite XNNPACK delegate for CPU.
+Trying to load the allocator multiple times. This is *not* supported.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1793118713.951014 8546945 environment.cc:526] Selected adapter: Apple M1 Max, arch=metal-3, vendor=apple, backend=Metal, adapterType=Integrated GPU
+I0000 00:00:1793118713.953455 8546955 environment.cc:526] Selected adapter: Apple M1 Max, arch=metal-3, vendor=apple, backend=Metal, adapterType=Integrated GPU
+[PASS ] ST-ENV Chrome, fixed-id extension, connector page, exemption scan
+awaiting_physical_click: click the test Chrome window (pid 96110); waiting up to 180 s -> /Users/raiden/homepc/work/otp23-glm-dc5d127-cal/run/evidence/strict-mac-20261027-prewarm.foreground-ready.json
+[PASS ] ST-FG human click: owned Chrome is the OS foreground before any BLE work
+[PASS ] ST-HELLO hello over the registered plain host
+[PASS ] ST-PHONES two physical phones scanned and connected
+[PASS ] ST-WARM pre-idle byte-verified 4096-byte exchange per phone
+[PASS ] ST-BG ordinary tab focused, connector hidden, every DevTools client closed
+[PASS ] ST-IDLE idle with no DevTools client until each phone's unsolicited push is due
+[PASS ] ST-REATTACH HTTP target list, re-attach, read page receipts
+[PASS ] ST-SHUTDOWN shutdown; host gone
+strict_result=BLOCKED scenario=prewarm formal_otp23_acceptance=false -> evidence/strict-mac-20261027-prewarm.json

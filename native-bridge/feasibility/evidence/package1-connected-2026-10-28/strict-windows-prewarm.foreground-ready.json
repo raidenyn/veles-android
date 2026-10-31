@@ -1,0 +1,8 @@
+{
+  "chrome_pid": 70168,
+  "wait_s": 600,
+  "written_utc": "2026-10-28T05:01:44Z",
+  "instruction": "click the Chrome window opened by this test (physical click)",
+  "state": "confirmed",
+  "polls": 1
+}

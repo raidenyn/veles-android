@@ -1,0 +1,12 @@
+apk_sha256 5d770ede86e9c18e2fe8edd2c5e8d3b98cc35ef54c1f6c3907ea5816f8de3f10 MATCHES_EXPECTED
+dex_files classes.dex
+needle TransportTelemetry hits 0 {'classes.dex': 0}
+needle SyntheticTransportFixture hits 0 {'classes.dex': 0}
+needle scheduleSyntheticPush hits 0 {'classes.dex': 0}
+needle OTP23_POC hits 0 {'classes.dex': 0}
+needle otp23-transport-evidence hits 0 {'classes.dex': 0}
+needle otp23-unsolicited hits 0 {'classes.dex': 0}
+needle notify_api hits 0 {'classes.dex': 0}
+needle callback_after_close hits 0 {'classes.dex': 0}
+needle GATT_FAILURE hits 0 {'classes.dex': 0}
+total_hits 0

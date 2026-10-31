@@ -1,0 +1,168 @@
+{
+  "what": "OTP-23 Mac M-08 phone-side release proof (in-band causal anchor, P0-A era)",
+  "verdict": "FAIL",
+  "problems": [],
+  "scenario": "port-disconnect",
+  "lifecycle_dir": "/tmp/opencode/otp23-mac-retake-20261029/attempts/port-disconnect-1/mac/port-disconnect-1",
+  "run_id": "mac-m08-port-disconnect-20261029T043749Z",
+  "declared_bound_ms": 30000.0,
+  "release_gate": "windows-only (P0-A): the Mac trace release count (usually 0) stays recorded honestly in the scenario JSON; this phone-side proof is the release evidence",
+  "target_teardown_scenario": true,
+  "creditability": "target_evidence",
+  "target_teardown_note": "an ABORTED run's cleanup exits (e.g. lifecycle-1) satisfy nothing: this flag is true only for a run whose own scenario JSON recorded trace teardown checks \u2014 replays are diagnostic only, never creditable",
+  "absolute_mac_anchor": "none \u2014 the anchor is the host trace's own origin interval; no Mac wall epoch is asserted, no PC/Windows clock offset is used",
+  "phones": [
+    {
+      "transport_path": "transport-2be02e41.json",
+      "transport_sha256": "619162ae395063396a1be3743b3bdfa6fb83b160b6880f1b39c75d0f8a9665ec",
+      "serial_hint": "2be02e41",
+      "run_id": "mac-m08-port-disconnect-20261029T043749Z",
+      "peer_sha256_prefix": "576d2120c83dc839",
+      "connect_phone_ms": 1793248703078,
+      "disconnect_phone_ms": 1793248705834,
+      "proof_notify": {
+        "seq": 5,
+        "kind": "notify_api",
+        "epoch_ms": 1793248704457,
+        "elapsed_realtime_ms": 507248715,
+        "code": 0,
+        "label": "SUCCESS",
+        "bytes": 20,
+        "bound_op": 4
+      },
+      "first_fragment_notify": {
+        "seq": 8,
+        "kind": "notify_api",
+        "epoch_ms": 1793248704899,
+        "elapsed_realtime_ms": 507249157,
+        "code": 0,
+        "label": "SUCCESS",
+        "bytes": 512,
+        "bound_op": 7
+      },
+      "origin_interval": {
+        "lo": 1793248699678,
+        "hi": 1793248699797,
+        "width_ms": 119,
+        "midpoint": 1793248699737.5,
+        "uncertainty_ms": 60.5,
+        "brackets": {
+          "proof16": [
+            1793248699678,
+            1793248699797
+          ],
+          "probe4096": [
+            1793248698948,
+            1793248700048
+          ]
+        }
+      },
+      "dis_trace_interval": [
+        6037,
+        6156
+      ],
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      },
+      "clean_telemetry": true
+    },
+    {
+      "transport_path": "transport-864a3db0.json",
+      "transport_sha256": "b4c6fa891f15d83b5a40cdd262b16020c4f73998a44cab41a2c01f56cdd20719",
+      "serial_hint": "864a3db0",
+      "run_id": "mac-m08-port-disconnect-20261029T043749Z",
+      "peer_sha256_prefix": "576d2120c83dc839",
+      "connect_phone_ms": 1793248702063,
+      "disconnect_phone_ms": 1793248704608,
+      "proof_notify": {
+        "seq": 5,
+        "kind": "notify_api",
+        "epoch_ms": 1793248703334,
+        "elapsed_realtime_ms": 661479998,
+        "code": 0,
+        "label": "SUCCESS",
+        "bytes": 20,
+        "bound_op": 4
+      },
+      "first_fragment_notify": {
+        "seq": 8,
+        "kind": "notify_api",
+        "epoch_ms": 1793248704273,
+        "elapsed_realtime_ms": 661480937,
+        "code": 0,
+        "label": "SUCCESS",
+        "bytes": 512,
+        "bound_op": 7
+      },
+      "origin_interval": {
+        "lo": 1793248698555,
+        "hi": 1793248698674,
+        "width_ms": 119,
+        "midpoint": 1793248698614.5,
+        "uncertainty_ms": 60.5,
+        "brackets": {
+          "proof16": [
+            1793248698555,
+            1793248698674
+          ],
+          "probe4096": [
+            1793248698322,
+            1793248699422
+          ]
+        }
+      },
+      "dis_trace_interval": [
+        5934,
+        6053
+      ],
+      "checks": {
+        "release_after_last_exchange": false,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      },
+      "clean_telemetry": true
+    }
+  ],
+  "inputs": {
+    "trace_path": "port-disconnect.host-trace.log",
+    "trace_sha256": "45a05e3177accd1e5a27974f043679d104c2b6cca6d86acf909bcc7a5adbb3b9",
+    "scenario_json_path": "port-disconnect.json",
+    "scenario_json_sha256": "c825a4e927da5d1f692eecaab62a628c0a304780b11b7b6516f44c5386ddb168",
+    "scenario_matrix_core_sha256": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+    "stops": [
+      {
+        "serial": "2be02e41",
+        "phone": "6T",
+        "stop_min_phone_ms": 1793248781511,
+        "stop_max_phone_ms": 1793248781553,
+        "phone_adb_before_ms": 1793248779712,
+        "phone_adb_after_ms": 1793248783291,
+        "mac_ms_bracket": [
+          1793248777949,
+          1793248785739
+        ],
+        "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+      },
+      {
+        "serial": "864a3db0",
+        "phone": "10Pro",
+        "stop_min_phone_ms": 1793248791755,
+        "stop_max_phone_ms": 1793248791783,
+        "phone_adb_before_ms": 1793248789038,
+        "phone_adb_after_ms": 1793248793462,
+        "mac_ms_bracket": [
+          1793248788236,
+          1793248797322
+        ],
+        "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+      }
+    ],
+    "corroboration": null
+  },
+  "helper_self_sha256": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560",
+  "engineered_utc": "2026-10-29T04:40:06+00:00"
+}

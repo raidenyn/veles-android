@@ -1,0 +1,3 @@
+# Immutable raw evidence: preserve exact bytes (CRLF logs from Windows, tool output as produced).
+# No end-of-line conversion, no whitespace diagnostics. Scoped to this directory only.
+* -text -whitespace

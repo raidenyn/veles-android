@@ -1,0 +1,36 @@
+{
+  "source": "opencode.db @ /home/dev/.local/share/opencode/opencode.db (canonical, canonical column values as stored)",
+  "session": {
+    "id": "ses_e804a0cc7ffeqKBdBiLFpOIxSn",
+    "title": "OTP23 macOS CI hermetic test fix",
+    "agent": "build",
+    "model": {
+      "id": "glm-5.3-flash",
+      "providerID": "ollama-cloud",
+      "variant": "default"
+    },
+    "version": "1.19.4",
+    "time_created": 1793143993144,
+    "time_updated": 1793144636803,
+    "tokens": {
+      "input": 68690,
+      "output": 16427,
+      "reasoning": 0,
+      "cache_read": 1993152
+    }
+  },
+  "messages": [
+    {
+      "role": "assistant",
+      "modelID": "glm-5.3-flash",
+      "providerID": "ollama-cloud",
+      "count": 41
+    },
+    {
+      "role": "user",
+      "modelID": null,
+      "providerID": null,
+      "count": 3
+    }
+  ]
+}

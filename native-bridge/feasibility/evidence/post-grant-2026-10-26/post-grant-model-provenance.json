@@ -1,0 +1,162 @@
+{
+  "phase": "post-grant integration (2026-10-26/27), NEW phase after the e19c8ca-scoped final review",
+  "r01_status": "PASS: attested for reviewed NO-GO work, bound to byte-preserved commit d72c17798f3e665adec2f2ede1442e36634e1a3a; decision remains NO-GO. Earlier PENDING statements are historical.",
+  "source_commits": {
+    "0d75bb2": "initial strict/scenario harness (0d75bb2d...)",
+    "15f57a4": "strong strict phone validation",
+    "3dbe3db": "debug phone evidence (TransportTelemetry/SyntheticTransportFixture, debug only) + scope fixes",
+    "db5d4db": "Windows real-OS foreground gate + CI coverage (harness/docs/workflow only; no app code)"
+  },
+  "implementation_sessions_claude_code_cli": [
+    {
+      "role": "strict harness",
+      "session_id": "6e198e91-fd1d-4e54-a2fc-fa9024059b42",
+      "raw": "reviews-and-provenance/sonnet-strict-result.json"
+    },
+    {
+      "role": "lifecycle scenarios",
+      "session_id": "1aedf9f2-a8e8-437f-a321-8afcacf4d7d1",
+      "raw": "reviews-and-provenance/sonnet-lifecycle-result.json"
+    },
+    {
+      "role": "permission recovery",
+      "session_id": "37885501-841f-4246-9c90-9a90bdd4ed79",
+      "raw": "reviews-and-provenance/sonnet-permission-result.json"
+    },
+    {
+      "role": "phone telemetry",
+      "session_id": "93fb7008-5c51-4ade-9ff8-082723b3dd3b",
+      "raw": "reviews-and-provenance/sonnet-phone-result.json"
+    }
+  ],
+  "implementation_model": {
+    "requested_model": "claude-sonnet-5-5",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "observed_canonicalModel": "claude-sonnet-5-5",
+    "source": "Claude Code JSON result metadata (modelUsage keys re-read from the four raw files when this record was written); is_error false and subagents spawned 0 in each",
+    "note": "session ids and model names are copied from the raw CLI results and the integration task; later fix-wave result files under /tmp/opencode (*-fixes.json) were not re-read or copied here"
+  },
+  "opus_interim_reviews": {
+    "session_id": "97410d6b-c523-444a-86e8-f934f3da6b5c",
+    "observed_modelUsage_key": "claude-opus-5-5",
+    "provider": "firstParty",
+    "subagents": 0,
+    "repository_edits_by_reviewer": 0,
+    "raws": [
+      {
+        "file": "reviews-and-provenance/otp23-resume-opus-preflight.json",
+        "verdict": "eight IMPORTANT defects found in harness before measurement (not approved)"
+      },
+      {
+        "file": "reviews-and-provenance/otp23-resume-opus-fixes-review.json",
+        "verdict": "not approved for physical measurement yet (one IMPORTANT telemetry defect + a dropped lifecycle check)"
+      },
+      {
+        "file": "reviews-and-provenance/otp23-resume-opus-last-preflight.json",
+        "verdict": "approved for physical measurement; no remaining CRITICAL/IMPORTANT"
+      },
+      {
+        "file": "m6/otp23-resume-opus-m6-adjudication.json",
+        "verdict": "A-02 (M6) PASS by independent manual adjudication; machine FAIL retained; residuals 1-6 recorded in the matrix"
+      }
+    ],
+    "scope": "pre-measurement code reviews and one evidence adjudication; NOT the final review of the committed post-grant tree"
+  },
+  "final_review": {
+    "status": "PASS (attested for reviewed NO-GO work; decision NO-GO)",
+    "review_result_recorded": true,
+    "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
+    "observed_modelUsage_key": "claude-opus-5-5",
+    "subagents_spawned": 0,
+    "repository_edits_by_reviewer": 0,
+    "raw": "reviews-and-provenance/otp23-postgrant-final-opus-result.json",
+    "report": "reviews-and-provenance/otp23-postgrant-final-opus-review.md",
+    "findings": {
+      "critical": 0,
+      "important": 2,
+      "minor": 7
+    },
+    "disposition": "IMPORTANT-1 corrected by option (b) with evaluator provenance and tests; IMPORTANT-2 corrected; MINOR items dispositioned in INTEGRATION.md; corrections made by actual claude-sonnet-5-5 (review-fix pass; its own raw result is not copied here)",
+    "required": "satisfied by the attestation (superseded: the earlier PENDING requirement text is historical)",
+    "earlier_pass_preserved": "R-01's e19c8ca-scoped PASS (session f3746c7a-184d-4343-933a-12093f203b6a) is preserved and explicitly scoped to the source before the new harness/telemetry code",
+    "fix_verification": {
+      "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
+      "observed_modelUsage_key": "claude-opus-5-5",
+      "subagents_spawned": 0,
+      "is_error": false,
+      "raw": "reviews-and-provenance/otp23-postgrant-opus-fix-verification-result.json",
+      "report": "reviews-and-provenance/otp23-postgrant-opus-fix-verification.md",
+      "outcome": "IMPORTANT-1/2 resolved; no CRITICAL/IMPORTANT; MINOR-A fixed, MINOR-B/C/D deferred nonblocking"
+    },
+    "verified_commit": "d72c17798f3e665adec2f2ede1442e36634e1a3a",
+    "reviewed_snapshot_commit": "5f3de250192a4f8b6d8f800531444a6b59d2143e",
+    "provider": "firstParty",
+    "observed_canonicalModel": "claude-opus-5-5",
+    "raw_result": "reviews-and-provenance/otp23-postgrant-final-opus-result.json",
+    "raw_result_sha256": "8990eb9baac558c200fa38f326a8c9e74ec16df4ddef3ffd67af5201d02caa8d",
+    "fix_verification_raw_sha256": "1599974ba149b3546d1906b2a05fdaca151c1b3e85b3e2cc6aac6c7d20ce3250",
+    "attestation": "reviews-and-provenance/otp23-postgrant-r01-attestation.json",
+    "binding": "Opus reviewed the tree that became 5f3de250192a4f8b6d8f800531444a6b59d2143e; the parent verified an empty functional/test diff to d72c17798f3e665adec2f2ede1442e36634e1a3a and a clean-archive SHA256SUMS pass (186/186); Opus did not itself re-open d72c17798f3e665adec2f2ede1442e36634e1a3a",
+    "remaining_minor_disposition": {
+      "MINOR-A": "fixed",
+      "MINOR-B": "deferred nonblocking (foreign enclosing git revision)",
+      "MINOR-C": "deferred nonblocking (re-evaluation hash drift guard)",
+      "MINOR-D": "deferred nonblocking (standalone M6 helper input strictness)"
+    },
+    "acceptance_decision": "NO-GO for OTP-24",
+    "status_history": "PENDING (before the review), then PENDING attestation (after fix verification); superseded by this PASS attestation",
+    "ci_followup_review": {
+      "status": "PASS (attested for reviewed CI/test-only NO-GO work; decision NO-GO; Windows CI result still pending)",
+      "reviewed_commit": "78f1784753ba0274e493ed35a92e27d6311b467a",
+      "range": "66519dd0f5d8057941c71ddc8f07b2948502f146..78f1784753ba0274e493ed35a92e27d6311b467a",
+      "session_id": "ceb6e424-1e26-4ea7-972b-efa4ba2dc633",
+      "observed_modelUsage_key": "claude-opus-5-5",
+      "observed_canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "subagents_spawned": 0,
+      "is_error": false,
+      "raw": "reviews-and-provenance/otp23-ci-opus-review-result.json",
+      "raw_sha256": "f0db7b80ad65052d5a059cb8ab3952da4167797cfd5963fc57b0fb5ce0e279c1",
+      "report": "reviews-and-provenance/otp23-ci-opus-review.md",
+      "report_sha256": "317d18f28fafbca0ad797c7db6291f867e04b233822d3405b265e39de50960b7",
+      "verdict": "PASS; 0 CRITICAL, 0 IMPORTANT, 2 MINOR, 1 NIT (all nonblocking)",
+      "reviewer_probe": "Windows-like probe on Linux (non-executable file, broken shebang): with the wrapper 3 tests PASS, without it (control) 3 FAIL. Not a Windows run.",
+      "fix_author_session": {
+        "session_id": "de3b52c3-e10c-4e0d-be2c-0e766f9787c2",
+        "observed_modelUsage_key": "claude-sonnet-5-5",
+        "raw": "reviews-and-provenance/sonnet-ci-fixes-result.json",
+        "raw_sha256": "4f0426bdd301552cc0db53a43bdea9e306605c587650a9861a1279192a8194ee"
+      },
+      "initial_failure_logs": [
+        "signing-and-gates/otp23-ci-66519dd-lint.log",
+        "signing-and-gates/otp23-ci-66519dd-windows.log"
+      ],
+      "findings_disposition": {
+        "MINOR-1": "stale 'uncommitted/not reviewed' wording: superseded by an appended doc section; earlier text untouched",
+        "MINOR-2": "wrapper-use assertion: deferred nonblocking (the unskipped Windows CI job is the regression gate)",
+        "NIT": "process-global Popen patch: deferred nonblocking (pass-through, undone by addCleanup)"
+      },
+      "windows_ci": "PENDING: the WinError 193 fix is proven on Linux only; no Windows CI pass is claimed until observed",
+      "base_attestation": "unchanged: verified_commit stays d72c17798f3e665adec2f2ede1442e36634e1a3a",
+      "acceptance_decision": "NO-GO for OTP-24"
+    }
+  },
+  "integration_session": {
+    "role": "post-grant integration pass (before the final review)",
+    "session_id": "fe9d1222-792e-4494-a2af-3e5468bb4d6a",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "observed_canonicalModel": "claude-sonnet-5-5",
+    "raw": "reviews-and-provenance/sonnet-postgrant-integration-result.json",
+    "is_error": false,
+    "subagents_spawned": 0,
+    "source": "modelUsage and session_id read from the raw CLI result"
+  },
+  "review_fix_session": {
+    "role": "review-fix pass",
+    "session_id": "43ad5518-8e02-497d-beda-9d091f82265e",
+    "observed_modelUsage_key": "claude-sonnet-5-5",
+    "subagents_spawned": 0,
+    "is_error": false,
+    "raw": "reviews-and-provenance/sonnet-postgrant-review-fixes-result.json"
+  }
+}

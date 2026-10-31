@@ -1,0 +1,41 @@
+warning: unused import: `reap_finished`
+  --> src\winrt.rs:38:61
+   |
+38 | use crate::closejoin::{detached_close_enabled, join_within, reap_finished};
+   |                                                             ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `closing`
+   --> src\winrt.rs:316:5
+    |
+316 |     closing: &mut Vec<JoinHandle<()>>,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_closing`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `veles-otp23-feasibility` (lib) generated 2 warnings (run `cargo fix --lib -p veles-otp23-feasibility` to apply 2 suggestions)
+warning: `veles-otp23-feasibility` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src\lib.rs (target\debug\deps\veles_otp23_feasibility-fac0a7da97729a59.exe)
+
+running 3 tests
+test winrt::tests::shutdown_joins_a_worker_retired_by_disconnect ... FAILED
+test winrt::tests::churn_joins_finished_workers_when_new_ones_are_retired ... ok
+test closejoin::tests::churn_between_shutdowns_never_accumulates_retired_handles ... ok
+
+failures:
+
+---- winrt::tests::shutdown_joins_a_worker_retired_by_disconnect stdout ----
+
+thread 'winrt::tests::shutdown_joins_a_worker_retired_by_disconnect' (101724) panicked at src\winrt.rs:947:9:
+default arm: the close is awaited when shutdown returns
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    winrt::tests::shutdown_joins_a_worker_retired_by_disconnect
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `--lib`

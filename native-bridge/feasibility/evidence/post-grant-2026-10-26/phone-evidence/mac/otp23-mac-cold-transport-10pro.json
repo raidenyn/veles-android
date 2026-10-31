@@ -1,0 +1,259 @@
+{
+  "kind": "otp23-transport-evidence",
+  "run_id": "mac-cold-3d-20261026",
+  "started_at_epoch_ms": 1793058978242,
+  "finished_at_epoch_ms": 1793059879374,
+  "final": true,
+  "final_after_service_stopped": true,
+  "clean": true,
+  "source_package": "me.nagaev.veles.otp23",
+  "source_version_name": "0.0.3-35-3dbe3db-contract_otp23-desktop-alignment",
+  "source_version_code": 3,
+  "truncated": false,
+  "peers_dropped": 0,
+  "peers": [
+    {
+      "peer_sha256_prefix": "576d2120c83dc839",
+      "notify_calls": 9,
+      "api_success": 9,
+      "api_nonzero": 0,
+      "attempted_bytes": 4132,
+      "callbacks": 9,
+      "callback_success": 9,
+      "callback_nonzero": 0,
+      "unbound_callbacks": 0,
+      "pending_unresolved": 0,
+      "pending_dropped": 0,
+      "callbacks_seen": 9,
+      "callbacks_seen_nonzero": 0,
+      "callbacks_after_close": 0,
+      "connects": 1,
+      "disconnects": 1,
+      "subscribes": 1,
+      "mtu": 517,
+      "truncated": false,
+      "events": [
+        {
+          "seq": 1,
+          "kind": "connected",
+          "epoch_ms": 1793059053008,
+          "elapsed_realtime_ms": 471832076,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 2,
+          "kind": "mtu",
+          "epoch_ms": 1793059053262,
+          "elapsed_realtime_ms": 471832331,
+          "code": 517,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 3,
+          "kind": "subscribed",
+          "epoch_ms": 1793059054176,
+          "elapsed_realtime_ms": 471833245,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        },
+        {
+          "seq": 5,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744190,
+          "elapsed_realtime_ms": 472523258,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 4
+        },
+        {
+          "seq": 6,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744194,
+          "elapsed_realtime_ms": 472523262,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 4
+        },
+        {
+          "seq": 8,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744197,
+          "elapsed_realtime_ms": 472523265,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 7
+        },
+        {
+          "seq": 9,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744200,
+          "elapsed_realtime_ms": 472523269,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 7
+        },
+        {
+          "seq": 11,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744203,
+          "elapsed_realtime_ms": 472523271,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 10
+        },
+        {
+          "seq": 12,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744207,
+          "elapsed_realtime_ms": 472523275,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 10
+        },
+        {
+          "seq": 14,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744210,
+          "elapsed_realtime_ms": 472523279,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 13
+        },
+        {
+          "seq": 15,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744215,
+          "elapsed_realtime_ms": 472523284,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 13
+        },
+        {
+          "seq": 17,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744218,
+          "elapsed_realtime_ms": 472523286,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 16
+        },
+        {
+          "seq": 18,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744221,
+          "elapsed_realtime_ms": 472523289,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 16
+        },
+        {
+          "seq": 20,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744223,
+          "elapsed_realtime_ms": 472523292,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 19
+        },
+        {
+          "seq": 21,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744225,
+          "elapsed_realtime_ms": 472523294,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 19
+        },
+        {
+          "seq": 23,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744227,
+          "elapsed_realtime_ms": 472523296,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 22
+        },
+        {
+          "seq": 24,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744230,
+          "elapsed_realtime_ms": 472523299,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 22
+        },
+        {
+          "seq": 26,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744232,
+          "elapsed_realtime_ms": 472523301,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 512,
+          "bound_op": 25
+        },
+        {
+          "seq": 27,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744234,
+          "elapsed_realtime_ms": 472523303,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 25
+        },
+        {
+          "seq": 29,
+          "kind": "notify_api",
+          "epoch_ms": 1793059744236,
+          "elapsed_realtime_ms": 472523305,
+          "code": 0,
+          "label": "SUCCESS",
+          "bytes": 36,
+          "bound_op": 28
+        },
+        {
+          "seq": 30,
+          "kind": "notify_callback",
+          "epoch_ms": 1793059744239,
+          "elapsed_realtime_ms": 472523307,
+          "code": 0,
+          "label": "GATT_SUCCESS",
+          "bytes": 0,
+          "bound_op": 28
+        },
+        {
+          "seq": 31,
+          "kind": "disconnected",
+          "epoch_ms": 1793059775553,
+          "elapsed_realtime_ms": 472554621,
+          "code": null,
+          "label": null,
+          "bytes": 0,
+          "bound_op": null
+        }
+      ]
+    }
+  ]
+}

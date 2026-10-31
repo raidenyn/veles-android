@@ -1,0 +1,401 @@
+{
+  "what": "OTP-23 Mac M-08 phone-side release proof, A2 per-handle causal attribution (source-proven inequalities only)",
+  "method_version": "A2 (supersedes A1 69546ee5: 16-byte lower bound not causal)",
+  "scenario": "port-disconnect",
+  "quantum_ms": 1,
+  "declared_bound_ms": 30000.0,
+  "hull_result_diagnostic_only": {
+    "verdict": "FAIL",
+    "problems": [],
+    "target_teardown_scenario": true,
+    "creditability": "target_evidence",
+    "run_id": "mac-m08-port-disconnect-20261029T043749Z"
+  },
+  "hull_role": "diagnostics only; a hull PASS is never accepted as a fallback proof",
+  "hull_phones_diagnostic_only": [
+    {
+      "serial_hint": "2be02e41",
+      "origin_interval": {
+        "lo": 1793248699678,
+        "hi": 1793248699797,
+        "width_ms": 119,
+        "midpoint": 1793248699737.5,
+        "uncertainty_ms": 60.5,
+        "brackets": {
+          "proof16": [
+            1793248699678,
+            1793248699797
+          ],
+          "probe4096": [
+            1793248698948,
+            1793248700048
+          ]
+        }
+      },
+      "dis_trace_interval": [
+        6037,
+        6156
+      ],
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    },
+    {
+      "serial_hint": "864a3db0",
+      "origin_interval": {
+        "lo": 1793248698555,
+        "hi": 1793248698674,
+        "width_ms": 119,
+        "midpoint": 1793248698614.5,
+        "uncertainty_ms": 60.5,
+        "brackets": {
+          "proof16": [
+            1793248698555,
+            1793248698674
+          ],
+          "probe4096": [
+            1793248698322,
+            1793248699422
+          ]
+        }
+      },
+      "dis_trace_interval": [
+        5934,
+        6053
+      ],
+      "checks": {
+        "release_after_last_exchange": false,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    }
+  ],
+  "target_teardown_scenario": true,
+  "preconditions": {
+    "problems": [],
+    "met": true
+  },
+  "causal_premises": {
+    "2be02e41": {
+      "met": true,
+      "problems": [],
+      "notify_bytes": [
+        20,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        36
+      ],
+      "later_fragments_after_first": 8,
+      "epoch_minus_elapsed_spread_ms": 1,
+      "counters": {
+        "notify_calls": 10,
+        "api_success": 10,
+        "callback_success": 10,
+        "api_nonzero": 0,
+        "callback_nonzero": 0,
+        "pending_unresolved": 0,
+        "unbound_callbacks": 0
+      }
+    },
+    "864a3db0": {
+      "met": true,
+      "problems": [],
+      "notify_bytes": [
+        20,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        36
+      ],
+      "later_fragments_after_first": 8,
+      "epoch_minus_elapsed_spread_ms": 1,
+      "counters": {
+        "notify_calls": 10,
+        "api_success": 10,
+        "callback_success": 10,
+        "api_nonzero": 0,
+        "callback_nonzero": 0,
+        "pending_unresolved": 0,
+        "unbound_callbacks": 0
+      }
+    }
+  },
+  "handles": {
+    "56433e089280829e": {
+      "p16": [
+        [
+          4660,
+          4712
+        ]
+      ],
+      "p4096": [
+        [
+          4851,
+          5373
+        ]
+      ]
+    },
+    "c710e81543b792ef": {
+      "p16": [
+        [
+          4732,
+          4779
+        ]
+      ],
+      "p4096": [
+        [
+          5420,
+          5951
+        ]
+      ]
+    }
+  },
+  "candidates": {
+    "2be02e41": {
+      "56433e089280829e": {
+        "lo": 1793248699525,
+        "hi": 1793248699798,
+        "feasible": true,
+        "width_ms": 273,
+        "lower_from": "first 4096 fragment (multi-fragment, main-looper ordered)",
+        "upper_terms": {
+          "e16_minus_i16_plus_q": 1793248699798,
+          "efirst_minus_i4096_plus_q": 1793248700049
+        },
+        "bracket16_lower_not_causal_recorded_only": 1793248699744,
+        "within_instrument_precision_target_250ms": false,
+        "own_last_exchange_message_at_ms": 5373
+      },
+      "c710e81543b792ef": {
+        "lo": 1793248698947,
+        "hi": 1793248699480,
+        "feasible": true,
+        "width_ms": 533,
+        "lower_from": "first 4096 fragment (multi-fragment, main-looper ordered)",
+        "upper_terms": {
+          "e16_minus_i16_plus_q": 1793248699726,
+          "efirst_minus_i4096_plus_q": 1793248699480
+        },
+        "bracket16_lower_not_causal_recorded_only": 1793248699677,
+        "within_instrument_precision_target_250ms": false,
+        "own_last_exchange_message_at_ms": 5951
+      }
+    },
+    "864a3db0": {
+      "56433e089280829e": {
+        "lo": 1793248698899,
+        "hi": 1793248698675,
+        "feasible": false,
+        "width_ms": -224,
+        "lower_from": "first 4096 fragment (multi-fragment, main-looper ordered)",
+        "upper_terms": {
+          "e16_minus_i16_plus_q": 1793248698675,
+          "efirst_minus_i4096_plus_q": 1793248699423
+        },
+        "bracket16_lower_not_causal_recorded_only": 1793248698621,
+        "within_instrument_precision_target_250ms": true,
+        "own_last_exchange_message_at_ms": 5373
+      },
+      "c710e81543b792ef": {
+        "lo": 1793248698321,
+        "hi": 1793248698603,
+        "feasible": true,
+        "width_ms": 282,
+        "lower_from": "first 4096 fragment (multi-fragment, main-looper ordered)",
+        "upper_terms": {
+          "e16_minus_i16_plus_q": 1793248698603,
+          "efirst_minus_i4096_plus_q": 1793248698854
+        },
+        "bracket16_lower_not_causal_recorded_only": 1793248698554,
+        "within_instrument_precision_target_250ms": false,
+        "own_last_exchange_message_at_ms": 5951
+      }
+    }
+  },
+  "mappings": [
+    {
+      "mapping": {
+        "2be02e41": "56433e089280829e",
+        "864a3db0": "c710e81543b792ef"
+      },
+      "feasible": true
+    },
+    {
+      "mapping": {
+        "2be02e41": "c710e81543b792ef",
+        "864a3db0": "56433e089280829e"
+      },
+      "feasible": false
+    }
+  ],
+  "global_last_exchange_message_at_ms": 5951,
+  "exit_at_ms": 6032,
+  "attribution_status": "unique_mapping",
+  "assignments": {
+    "2be02e41": {
+      "handle": "56433e089280829e",
+      "origin_interval": {
+        "lo": 1793248699525,
+        "hi": 1793248699798,
+        "feasible": true,
+        "width_ms": 273,
+        "lower_from": "first 4096 fragment (multi-fragment, main-looper ordered)",
+        "upper_terms": {
+          "e16_minus_i16_plus_q": 1793248699798,
+          "efirst_minus_i4096_plus_q": 1793248700049
+        },
+        "bracket16_lower_not_causal_recorded_only": 1793248699744,
+        "within_instrument_precision_target_250ms": false,
+        "own_last_exchange_message_at_ms": 5373
+      },
+      "dis_trace_interval": [
+        6036,
+        6309
+      ],
+      "global_last_exchange_message_at_ms": 5951,
+      "margin_vs_global_last_ms": 85,
+      "own_last_exchange_message_at_ms": 5373,
+      "release_after_own_link_last_recorded_only": true,
+      "exit_at_ms": 6032,
+      "exit_plus_bound_ms": 36032.0,
+      "margin_vs_exit_plus_bound_ms": 29723.0,
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      },
+      "stop_guard_with_hull_hi_recorded": {
+        "hull_hi": 1793248699797,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    },
+    "864a3db0": {
+      "handle": "c710e81543b792ef",
+      "origin_interval": {
+        "lo": 1793248698321,
+        "hi": 1793248698603,
+        "feasible": true,
+        "width_ms": 282,
+        "lower_from": "first 4096 fragment (multi-fragment, main-looper ordered)",
+        "upper_terms": {
+          "e16_minus_i16_plus_q": 1793248698603,
+          "efirst_minus_i4096_plus_q": 1793248698854
+        },
+        "bracket16_lower_not_causal_recorded_only": 1793248698554,
+        "within_instrument_precision_target_250ms": false,
+        "own_last_exchange_message_at_ms": 5951
+      },
+      "dis_trace_interval": [
+        6005,
+        6287
+      ],
+      "global_last_exchange_message_at_ms": 5951,
+      "margin_vs_global_last_ms": 54,
+      "own_last_exchange_message_at_ms": 5951,
+      "release_after_own_link_last_recorded_only": true,
+      "exit_at_ms": 6032,
+      "exit_plus_bound_ms": 36032.0,
+      "margin_vs_exit_plus_bound_ms": 29745.0,
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      },
+      "stop_guard_with_hull_hi_recorded": {
+        "hull_hi": 1793248698674,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    }
+  },
+  "verdict": "PASS",
+  "problems": [],
+  "hull_verdict_differs": true,
+  "m08_creditable": true,
+  "m08_creditable_rule": "verdict == PASS and target_teardown_scenario; hull verdict never substitutes",
+  "precision": {
+    "assigned_origin_widths_ms": [
+      273,
+      282
+    ],
+    "instrument_precision_target_ms": 250,
+    "all_within_instrument_target": false,
+    "note": "the 250 ms figure was a test-instrument precision target, not an RFC acceptance clause; it is NOT claimed here. Acceptance rests on the full-interval checks (global last exchange, exit + bound, both stop guards), none of which is relaxed \u2014 not a waiver."
+  },
+  "inputs": {
+    "lifecycle_dir": "evidence/mac-retake-2026-10-29/port-disconnect-1/mac",
+    "trace_sha256": "45a05e3177accd1e5a27974f043679d104c2b6cca6d86acf909bcc7a5adbb3b9",
+    "scenario_json_sha256": "c825a4e927da5d1f692eecaab62a628c0a304780b11b7b6516f44c5386ddb168",
+    "transports": [
+      {
+        "path": "transport-2be02e41.json",
+        "sha256": "619162ae395063396a1be3743b3bdfa6fb83b160b6880f1b39c75d0f8a9665ec"
+      },
+      {
+        "path": "transport-864a3db0.json",
+        "sha256": "b4c6fa891f15d83b5a40cdd262b16020c4f73998a44cab41a2c01f56cdd20719"
+      }
+    ],
+    "stops": [
+      {
+        "serial": "2be02e41",
+        "phone": "6T",
+        "stop_min_phone_ms": 1793248781511,
+        "stop_max_phone_ms": 1793248781553,
+        "phone_adb_before_ms": 1793248779712,
+        "phone_adb_after_ms": 1793248783291,
+        "mac_ms_bracket": [
+          1793248777949,
+          1793248785739
+        ],
+        "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+      },
+      {
+        "serial": "864a3db0",
+        "phone": "10Pro",
+        "stop_min_phone_ms": 1793248791755,
+        "stop_max_phone_ms": 1793248791783,
+        "phone_adb_before_ms": 1793248789038,
+        "phone_adb_after_ms": 1793248793462,
+        "mac_ms_bracket": [
+          1793248788236,
+          1793248797322
+        ],
+        "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+      }
+    ],
+    "hull_release_bound_frozen": {
+      "path": "release-bound.json",
+      "sha256": "0e831e933097a43cfffbcee218bbff477057d5b71bcd8523a27eb07fb88e2898",
+      "verdict": "FAIL",
+      "helper_self_sha256": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560"
+    }
+  },
+  "helper_self_sha256": "ce75a8f1253157975b4004199d4db425d9f69ea02b2bb4360a829ed696d0634e",
+  "imported_analyzer_sha256": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560",
+  "imported_core_sha256": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+  "imported_driver_sha256": "f8bbf2d6ea158d2bd30bee35b97a655c727a7ca7fc677a5c9a3a53eafe6b7f28",
+  "absolute_mac_anchor": "none (host trace's own timeline; per-phone clocks never compared)",
+  "engineered_utc": "2026-10-29T11:09:32+00:00",
+  "source_binding": {
+    "available": true,
+    "head": "9c3ddc54a3721eced84e49f02ed76ef156f0baed",
+    "tracked_dirty_diff_sha256": "2376ca99bb9ddc9eac0aa16bbc864f2b358e050e1f9762eb84d97b54e11da4d9"
+  }
+}

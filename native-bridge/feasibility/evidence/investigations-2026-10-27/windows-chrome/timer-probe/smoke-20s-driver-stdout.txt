@@ -1,0 +1,26 @@
+{
+  "port": {
+    "timers": {
+      "samples": 0,
+      "median_gap_ms": null,
+      "max_gap_ms": null,
+      "verdict": "inconclusive"
+    },
+    "messages": {
+      "received": 5,
+      "expected": 5,
+      "missing_seqs": [],
+      "max_lag_ms": 1,
+      "median_lag_ms": 0
+    }
+  },
+  "control": {
+    "timers": {
+      "samples": 0,
+      "median_gap_ms": null,
+      "max_gap_ms": null,
+      "verdict": "inconclusive"
+    }
+  }
+}
+exit=0 

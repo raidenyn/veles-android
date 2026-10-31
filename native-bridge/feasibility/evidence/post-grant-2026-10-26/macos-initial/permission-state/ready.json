@@ -1,0 +1,7 @@
+{
+  "phase": "human_enable_needed",
+  "nonce": "2c476f647d544851af3db403dfaf046b",
+  "utc": "2026-10-26T17:03:18+00:00",
+  "ack_file": "%HOME%/homepc/work/otp23-scenarios-0d75bb2/native-bridge/feasibility/evidence/post-grant-2026-10-26/permission-state/ack.json",
+  "instruction": "toggle the VelesOtp23PoC Bluetooth entry ON"
+}

@@ -1,0 +1,39 @@
+{
+  "id": "LC-stdin-eof-truncated",
+  "title": "Stdin closed inside a frame header (direct native-framed process)",
+  "expected": "host rejects the truncated frame (exit 2), logs the framing stage, stdout ends on a frame boundary, no shutdown credit",
+  "actual": "all checks held; see detail",
+  "status": "PASS",
+  "error_class": "none",
+  "detail": {
+    "provenance": {
+      "launch": "direct process with pipes",
+      "chrome_provenance": false,
+      "context": "direct launch; Chrome provenance is covered by the Chrome scenarios"
+    },
+    "host_binary_sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda",
+    "host_pid_recorded": true,
+    "integrity": {
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "driver": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      }
+    },
+    "exit_code": 2,
+    "stdout_eof_state": "clean",
+    "trace_exit": {
+      "at_ms": 0,
+      "code": 2,
+      "stdout_drained": true
+    },
+    "trace_mechanism": "stdin_closed",
+    "frames_after_close": [],
+    "problems": []
+  }
+}

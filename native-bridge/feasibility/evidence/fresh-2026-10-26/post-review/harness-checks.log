@@ -1,0 +1,99 @@
+=== python3 scripts/test_matrix.py
+..................
+----------------------------------------------------------------------
+Ran 18 tests in 0.015s
+
+OK
+exit=0
+=== python3 scripts/test_strict_background.py
+...........................
+----------------------------------------------------------------------
+Ran 27 tests in 0.027s
+
+OK
+exit=0
+=== python3 scripts/test_poc_background.py
+..........................
+----------------------------------------------------------------------
+Ran 26 tests in 0.423s
+
+OK
+exit=0
+=== python3 scripts/test_macos_background_support.py
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.017s
+
+OK
+exit=0
+=== python3 scripts/test_macos_poc.py
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmp7x4rw7fz/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpga5gz7tj/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpga5gz7tj/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpga5gz7tj/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmp25hm7l24/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmp25hm7l24/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmp25hm7l24/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/tmp/tmpiqcum34g/hosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/tmp/tmpiqcum34g/build out/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "3cc629ef9d0a73a0cd221c17e52914d63892e191fc631278e49d9c4554461b05",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/tmp/tmpiqcum34g/hosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+[ ok ] host-launched-headless
+result=FAIL -> /tmp/tmpiqcum34g/ev/poc.json
+exit=0
+=== trace-parser
+pass sample-replies
+pass sample-no-handles
+pass sample-json
+pass empty-file
+pass missing-file
+=== matrix.py check/decision
+matrix ok: NO-GO
+exit=0
+NO-GO: 25 row(s) open: W-02, W-03, W-04, W-05, W-06, W-07, W-08, W-09, W-10, W-11, W-12, M-03, M-04, M-05, M-06, M-07, M-08, M-09, M-10, A-01, A-02, D-02, M-11, A-03, R-01
+approved account-waived (NOT RUN, not PASS): W-01, M-01, M-02
+exit=1
+=== node
+✔ physical driver only calls methods exported by the real connector (12.348198ms)
+✔ isolated init script only adds the .otp23 suffix to the debug build type (3.976892ms)
+✔ app no longer defines or reads a cap-only OTP23_POC flag (5.248898ms)
+✔ physical driver only calls methods exported by the real connector (4.046077ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 189.116127
+=== shell
+syntax-ok
+macos-package-lib: 39 checks passed
+exit=0

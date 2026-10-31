@@ -1,0 +1,60 @@
+[
+  {
+    "command": [
+      "/usr/bin/id"
+    ],
+    "returncode": 0,
+    "stdout": "uid=501(raiden) gid=20(staff) groups=20(staff),12(everyone),61(localaccounts),79(_appserverusr),80(admin),81(_appserveradm),98(_lpadmin),399(com.apple.access_ssh),702(com.apple.sharepoint.group.2),703(com.apple.sharepoint.group.3),33(_appstore),100(_lpoperator),204(_developer),250(_analyticsusers),395(com.apple.access_ftp),398(com.apple.access_screensharing),400(com.apple.access_remote_ae),701(com.apple.sharepoint.group.1)\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/usr/bin/sw_vers"
+    ],
+    "returncode": 0,
+    "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t26.5.2\nBuildVersion:\t\t25F84\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/bin/date",
+      "+%Z %z"
+    ],
+    "returncode": 0,
+    "stdout": "+07 +0700\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/bin/ps",
+      "-p",
+      "11238,11244,11270,15888,15893,15918,16740,16759",
+      "-o",
+      "pid=,stat=,comm="
+    ],
+    "returncode": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/usr/bin/codesign",
+      "--verify",
+      "--strict",
+      "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/usr/bin/codesign",
+      "-dvvv",
+      "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app"
+    ],
+    "returncode": 0,
+    "stdout": "",
+    "stderr": "Executable=/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host\nIdentifier=me.nagaev.veles.bridge\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=3578 flags=0x0(none) hashes=105+3 location=embedded\nHash type=sha256 size=32\nCandidateCDHash sha256=25bc7fc25e48c4470d4c3765b6a5f9b719ff381d\nCandidateCDHashFull sha256=25bc7fc25e48c4470d4c3765b6a5f9b719ff381d3a512576b7f8dd0de30da32f\nHash choices=sha256\nCMSDigest=25bc7fc25e48c4470d4c3765b6a5f9b719ff381d3a512576b7f8dd0de30da32f\nCMSDigestType=2\nCDHash=25bc7fc25e48c4470d4c3765b6a5f9b719ff381d\nSignature size=4784\nAuthority=Apple Development: yuriy@nagaev.me (ZWYYS8X98S)\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nSigned Time=26 Oct 2026 at 13:40:26\nInfo.plist entries=11\nTeamIdentifier=7T39M26Z99\nSealed Resources version=2 rules=13 files=0\nInternal requirements count=1 size=188\n"
+  }
+]

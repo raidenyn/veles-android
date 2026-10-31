@@ -1,0 +1,9 @@
+{
+    "name":  "me.nagaev.veles.otp23.plain",
+    "description":  "Veles OTP-23 feasibility host (plain); synthetic bytes only",
+    "path":  "C:\\Users\\yuriy\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe",
+    "type":  "stdio",
+    "allowed_origins":  [
+                            "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/"
+                        ]
+}

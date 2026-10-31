@@ -1,0 +1,20 @@
+[       0ms pid=29200] start pid=29200
+[       0ms pid=29200] in  len=81 type=hello request_id=r1-cbyhwc
+[       0ms pid=29200] out len=183 type=ready request_id=r1-cbyhwc api_version=1
+[    3062ms pid=29200] in  len=137 type=start_scan request_id=r2-4ak5oe api_version=1
+[    3114ms pid=29200] out len=135 type=scan_state request_id=r2-4ak5oe api_version=1 status=started scan_handle=9e29578110a62a2a
+[    3905ms pid=29200] out len=195 type=device_found api_version=1 scan_handle=9e29578110a62a2a device_handle=9cfab5ceaaf3d535 label.len=17 platform_hint.len=20
+[    3912ms pid=29200] out len=195 type=device_found api_version=1 scan_handle=9e29578110a62a2a device_handle=b886263a7cf08050 label.len=17 platform_hint.len=20
+[    4370ms pid=29200] in  len=115 type=stop_scan request_id=r3-i89t2m api_version=1 scan_handle=9e29578110a62a2a
+[    4370ms pid=29200] out len=135 type=scan_state request_id=r3-i89t2m api_version=1 status=stopped scan_handle=9e29578110a62a2a
+[    4371ms pid=29200] exit code=0 stdout_drained=true
+[       0ms pid=26140] start pid=26140
+[       0ms pid=26140] in  len=81 type=hello request_id=r4-nj4q0a
+[       0ms pid=26140] out len=183 type=ready request_id=r4-nj4q0a api_version=1
+[       1ms pid=26140] in  len=137 type=start_scan request_id=r5-20kied api_version=1
+[      53ms pid=26140] out len=135 type=scan_state request_id=r5-20kied api_version=1 status=started scan_handle=59d05ab0366b2c94
+[      78ms pid=26140] out len=195 type=device_found api_version=1 scan_handle=59d05ab0366b2c94 device_handle=598c3366f5d582d4 label.len=17 platform_hint.len=20
+[     308ms pid=26140] out len=195 type=device_found api_version=1 scan_handle=59d05ab0366b2c94 device_handle=d9ae1fe62fa9fee9 label.len=17 platform_hint.len=20
+[     807ms pid=26140] in  len=115 type=stop_scan request_id=r6-oyig6x api_version=1 scan_handle=59d05ab0366b2c94
+[     807ms pid=26140] out len=135 type=scan_state request_id=r6-oyig6x api_version=1 status=stopped scan_handle=59d05ab0366b2c94
+[     816ms pid=26140] exit code=0 stdout_drained=true

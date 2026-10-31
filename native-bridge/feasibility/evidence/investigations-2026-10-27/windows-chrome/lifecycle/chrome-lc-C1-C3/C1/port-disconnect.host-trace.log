@@ -1,0 +1,44 @@
+[       0ms pid=74780] start pid=74780
+[       0ms pid=74780] in  len=81 type=hello request_id=r1-q1a13g
+[       1ms pid=74780] out len=183 type=ready request_id=r1-q1a13g api_version=1
+[    4704ms pid=74780] in  len=137 type=start_scan request_id=r2-zwcvgw api_version=1
+[    4756ms pid=74780] out len=135 type=scan_state request_id=r2-zwcvgw api_version=1 status=started scan_handle=727d86c05e35ba00
+[    5909ms pid=74780] out len=195 type=device_found api_version=1 scan_handle=727d86c05e35ba00 device_handle=e71f001b66714032 label.len=17 platform_hint.len=20
+[    6630ms pid=74780] out len=195 type=device_found api_version=1 scan_handle=727d86c05e35ba00 device_handle=a69106d169ad0ffa label.len=17 platform_hint.len=20
+[    7014ms pid=74780] in  len=115 type=connect request_id=r3-196j8t api_version=1 device_handle=e71f001b66714032
+[    7014ms pid=74780] in  len=115 type=connect request_id=r4-07bggu api_version=1 device_handle=a69106d169ad0ffa
+[    7045ms pid=74780] conn 2 device at 30ms
+[    7045ms pid=74780] conn 3 device at 30ms
+[    7066ms pid=74780] conn 2 session at 51ms
+[    7066ms pid=74780] conn 3 session at 51ms
+[    9231ms pid=74780] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    9231ms pid=74780] conn 2 service at 2216ms
+[    9231ms pid=74780] conn 2 mtu=517 at 2216ms
+[    9307ms pid=74780] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    9307ms pid=74780] conn 2 write properties=0x4
+[    9369ms pid=74780] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    9369ms pid=74780] conn 2 notify properties=0x10
+[    9369ms pid=74780] conn 2 characteristics at 2354ms
+[    9451ms pid=74780] conn 2 subscribed at 2436ms
+[    9451ms pid=74780] out len=160 type=connected request_id=r3-196j8t api_version=1 connection_handle=b2b1e0e1eb20157b platform_hint.len=20
+[    9851ms pid=74780] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    9851ms pid=74780] conn 3 service at 2836ms
+[    9851ms pid=74780] conn 3 mtu=517 at 2836ms
+[   10091ms pid=74780] conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[   10091ms pid=74780] conn 3 write properties=0x4
+[   10330ms pid=74780] conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[   10330ms pid=74780] conn 3 notify properties=0x10
+[   10330ms pid=74780] conn 3 characteristics at 3315ms
+[   10463ms pid=74780] conn 3 subscribed at 3449ms
+[   10463ms pid=74780] out len=160 type=connected request_id=r4-07bggu api_version=1 connection_handle=ce880a37676d24c1 platform_hint.len=20
+[   10464ms pid=74780] in  len=115 type=stop_scan request_id=r5-ymfb66 api_version=1 scan_handle=727d86c05e35ba00
+[   10465ms pid=74780] out len=135 type=scan_state request_id=r5-ymfb66 api_version=1 status=stopped scan_handle=727d86c05e35ba00
+[   10466ms pid=74780] in  len=159 type=send request_id=r6-3m4ip3 api_version=1 connection_handle=b2b1e0e1eb20157b record_base64.len=24
+[   10476ms pid=74780] out len=116 type=sent request_id=r6-3m4ip3 api_version=1 connection_handle=b2b1e0e1eb20157b
+[   10512ms pid=74780] out len=137 type=message api_version=1 connection_handle=b2b1e0e1eb20157b record_base64.len=24
+[   10518ms pid=74780] in  len=159 type=send request_id=r7-y9ajlt api_version=1 connection_handle=ce880a37676d24c1 record_base64.len=24
+[   10529ms pid=74780] out len=116 type=sent request_id=r7-y9ajlt api_version=1 connection_handle=ce880a37676d24c1
+[   10549ms pid=74780] out len=137 type=message api_version=1 connection_handle=ce880a37676d24c1 record_base64.len=24
+[   10571ms pid=74780] in  len=137 type=start_scan request_id=r8-a2ie2v api_version=1
+[   10617ms pid=74780] out len=135 type=scan_state request_id=r8-a2ie2v api_version=1 status=started scan_handle=9abc4c33e834d160
+[   10618ms pid=74780] exit code=0 stdout_drained=true

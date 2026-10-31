@@ -1,0 +1,28 @@
+Windows host binaries behind the evidence in this directory (source/binary binding, corrected after the Opus re-review I-2)
+
+1. RETAINED binary  sha256 6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda
+   Built from the `cd971f0` feasibility sources; `src/winrt.rs` in `cab0438` (the baseline commit) is the same as in `cd971f0`. It does NOT correspond to the
+   current worktree `src/winrt.rs`, which adds diagnostic trace lines (below). Used by: direct-A1/A2/C/E/F/G, sweep-1, and every retained post-grant Chrome run.
+   No raw GattCommunicationStatus is traced by this binary; API attribution for those runs is inferred from stage name, retryable=false and missing trace lines.
+
+2. EARLIER diagnostic build  sha256 186f920c7accd506da42605e26485b7669300fb507f5d6beaafef3b8913c0a64
+   Built from a COPY of the worktree made BEFORE `cargo fmt` and with `protocol_error_text()` returning "none" for any Err. That copy is NOT the committed/final source
+   (formatting differs in one signature; the Err text differs: "none" there, "none_or_unavailable" in the final source). Used by: ctl-discover-both, ctl-discover-6t-only, ctl-K1..K5.
+   In those traces `protocol_error=none` means "none or unavailable" (the helper did not distinguish a null reference from an accessor failure).
+   It is not claimed to be built from the final source.
+
+3. FINAL diagnostic build  sha256 e36328d2337774f28ef72d181f998a0e98e044db42fa72f6b815ef02c0572f4d
+   Built on the PC (`cargo build --locked --release --bin otp23-host`, 20.24 s) from a copy of `native-bridge/feasibility` taken from the FINAL worktree after `cargo fmt`; the copied
+   `src/winrt.rs` sha256 is d348d6155cad051eb292b192a25696d843f3391ed03e074771dd1b8405aed1d1 on both the Linux worktree and the PC copy (compared). Final trace text:
+   `protocol_error=none_or_unavailable`. Used by: chrome-lc/C1..C3 (registered host copy), chrome-R*b, ctl2-F*b and the final controls.
+   The only difference from the retained source is `src/winrt.rs` (three trace! lines + the helper); no behaviour change.
+
+Row policy: no acceptance row is re-baselined by binaries 2 and 3. W-07/W-08 stay BLOCKED; evidence from these builds is investigative. An acceptance retest should either use binary 1 or
+record a new host identity and name the rows it re-baselines.
+
+Phone mapping used by the ctl-* (binary 2) runs only (label SHA-256 prefixes; labels are never recorded and they rotate between fixture sessions):
+  0838be31 = OnePlus 10 Pro (864a3db0)   4603b134 = OnePlus 6T (2be02e41)
+  Derived from ctl-discover-both (both advertising) and ctl-discover-6t-only (only the 6T fixture running after the 10 Pro fixture was stopped).
+  Later runs (binary 3) use "any1"/"all" selection and record the label hash only; no phone-model mapping is claimed for them.
+
+Binding limits (final review C-3): the host hash is recorded in the result files of ctl2-F1b and ctl2-F2b (direct launch). The Chrome-launched results (chrome-lc C1-C3, chrome-R1b, chrome-R2b) do not record it; for them the binding rests on this file and on the per-user registration of the binary `C:\Users\yuriy\otp23-probe\diag-src2\target\release\otp23-host.exe` (sha256 e36328d2…2f4d) with register-host.ps1; the installed copy's hash output was not captured and the registration was removed afterwards. The e36328d2 identity is NOT adopted for acceptance; nothing is promoted on it.

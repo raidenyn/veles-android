@@ -1,0 +1,69 @@
+[       0ms pid=92940] start pid=92940
+[       0ms pid=92940] in  len=81 type=hello request_id=r1-eaw2l1
+[       0ms pid=92940] out len=183 type=ready request_id=r1-eaw2l1 api_version=1
+[     328ms pid=92940] in  len=137 type=start_scan request_id=r2-d1iq9a api_version=1
+[     382ms pid=92940] out len=135 type=scan_state request_id=r2-d1iq9a api_version=1 status=started scan_handle=2d1c40b7ba169cdd
+[     962ms pid=92940] out len=195 type=device_found api_version=1 scan_handle=2d1c40b7ba169cdd device_handle=8226e3252b34c869 label.len=17 platform_hint.len=20
+[    1295ms pid=92940] out len=195 type=device_found api_version=1 scan_handle=2d1c40b7ba169cdd device_handle=054c27591908e8c0 label.len=17 platform_hint.len=20
+[    1885ms pid=92940] in  len=115 type=connect request_id=r3-q5y4yk api_version=1 device_handle=054c27591908e8c0
+[    1885ms pid=92940] conn 2 connect worker started epoch_ms=1793163707154 hint=winrt:..8901:1
+[    1916ms pid=92940] conn 2 device at 31ms
+[    1937ms pid=92940] conn 2 session at 51ms
+[    3887ms pid=92940] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    3887ms pid=92940] conn 2 service at 2001ms
+[    3887ms pid=92940] conn 2 mtu=517 at 2001ms
+[    3964ms pid=92940] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    3964ms pid=92940] conn 2 write properties=0x4
+[    4037ms pid=92940] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    4037ms pid=92940] conn 2 notify properties=0x10
+[    4037ms pid=92940] conn 2 characteristics at 2151ms
+[    4140ms pid=92940] conn 2 subscribed at 2254ms
+[    4140ms pid=92940] out len=160 type=connected request_id=r3-q5y4yk api_version=1 connection_handle=8aeddfb693a552a3 platform_hint.len=20
+[    4141ms pid=92940] in  len=115 type=connect request_id=r4-3kobuz api_version=1 device_handle=8226e3252b34c869
+[    4141ms pid=92940] conn 3 connect worker started epoch_ms=1793163709410 hint=winrt:..485f:1
+[    4162ms pid=92940] conn 3 device at 20ms
+[    4183ms pid=92940] conn 3 session at 42ms
+[    6168ms pid=92940] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6168ms pid=92940] conn 3 service at 2026ms
+[    6168ms pid=92940] conn 3 mtu=517 at 2026ms
+[    6233ms pid=92940] conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6233ms pid=92940] conn 3 write properties=0x4
+[    6295ms pid=92940] conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6295ms pid=92940] conn 3 notify properties=0x10
+[    6295ms pid=92940] conn 3 characteristics at 2154ms
+[    6398ms pid=92940] conn 3 subscribed at 2256ms
+[    6398ms pid=92940] out len=160 type=connected request_id=r4-3kobuz api_version=1 connection_handle=54f3ff276314bb1f platform_hint.len=20
+[    6399ms pid=92940] in  len=115 type=stop_scan request_id=r5-2ez4na api_version=1 scan_handle=2d1c40b7ba169cdd
+[    6399ms pid=92940] out len=135 type=scan_state request_id=r5-2ez4na api_version=1 status=stopped scan_handle=2d1c40b7ba169cdd
+[    6401ms pid=92940] in  len=5599 type=send request_id=r6-3x0sv5 api_version=1 connection_handle=8aeddfb693a552a3 record_base64.len=5464
+[    6495ms pid=92940] out len=116 type=sent request_id=r6-3x0sv5 api_version=1 connection_handle=8aeddfb693a552a3
+[    6937ms pid=92940] out len=5577 type=message api_version=1 connection_handle=8aeddfb693a552a3 record_base64.len=5464
+[    7499ms pid=92940] in  len=5599 type=send request_id=r7-q6u7hy api_version=1 connection_handle=54f3ff276314bb1f record_base64.len=5464
+[    7592ms pid=92940] out len=116 type=sent request_id=r7-q6u7hy api_version=1 connection_handle=54f3ff276314bb1f
+[    7681ms pid=92940] out len=5577 type=message api_version=1 connection_handle=54f3ff276314bb1f record_base64.len=5464
+[  694374ms pid=92940] out len=5577 type=message api_version=1 connection_handle=8aeddfb693a552a3 record_base64.len=5464
+[  696526ms pid=92940] out len=5577 type=message api_version=1 connection_handle=54f3ff276314bb1f record_base64.len=5464
+[  726447ms pid=92940] in  len=81 type=shutdown request_id=r8-zna652 api_version=1
+[  726447ms pid=92940] out len=99 type=disconnected api_version=1 connection_handle=8aeddfb693a552a3
+[  726447ms pid=92940] conn 3 disconnect requested epoch_ms=1793164431756
+[  726447ms pid=92940] out len=99 type=disconnected api_version=1 connection_handle=54f3ff276314bb1f
+[  726447ms pid=92940] conn 3 close begin
+[  726447ms pid=92940] conn 2 disconnect requested epoch_ms=1793164431756
+[  726447ms pid=92940] conn 3 close step remove_value_changed at 0ms ok
+[  726447ms pid=92940] conn 3 close step remove_status_changed at 0ms ok
+[  726447ms pid=92940] conn 2 close begin
+[  726447ms pid=92940] conn 2 close step remove_value_changed at 0ms ok
+[  726447ms pid=92940] conn 2 close step remove_status_changed at 0ms ok
+[  726448ms pid=92940] conn 3 close step service_close at 1ms ok
+[  726448ms pid=92940] conn 3 close step maintain_false at 1ms ok
+[  726449ms pid=92940] conn 2 close step service_close at 1ms ok
+[  726449ms pid=92940] conn 2 close step maintain_false at 1ms ok
+[  726449ms pid=92940] conn 3 close step session_close at 1ms ok
+[  726449ms pid=92940] conn 2 close step session_close at 2ms ok
+[  726449ms pid=92940] conn 3 close step device_close at 2ms ok
+[  726450ms pid=92940] conn 2 close step device_close at 2ms ok
+[  726450ms pid=92940] conn 3 released (objects closed; link-down unconfirmed)
+[  726450ms pid=92940] conn 2 released (objects closed; link-down unconfirmed)
+[  726457ms pid=92940] shutdown joined 2/2 within 10ms
+[  726457ms pid=92940] out len=90 type=shutdown_complete request_id=r8-zna652 api_version=1
+[  726457ms pid=92940] exit code=0 stdout_drained=true

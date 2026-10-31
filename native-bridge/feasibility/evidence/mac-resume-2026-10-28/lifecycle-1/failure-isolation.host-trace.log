@@ -1,0 +1,46 @@
+[       0ms pid=55245] start pid=55245
+[       0ms pid=55245] in  len=81 type=hello request_id=r1-xwip4t
+[       0ms pid=55245] out len=181 type=ready request_id=r1-xwip4t api_version=1
+[     167ms pid=55245] in  len=137 type=start_scan request_id=r2-1ic9fo api_version=1
+[     173ms pid=55245] bluetooth authorization before adapter init: allowed_always
+[     174ms pid=55245] adapter init: created=true authorization=allowed_always
+[     180ms pid=55245] out len=135 type=scan_state request_id=r2-1ic9fo api_version=1 status=started scan_handle=a377b746121437f5
+[     403ms pid=55245] out len=217 type=device_found api_version=1 scan_handle=a377b746121437f5 device_handle=2ab1a48a694574e9 label.len=17 platform_hint.len=42
+[     869ms pid=55245] out len=217 type=device_found api_version=1 scan_handle=a377b746121437f5 device_handle=e69832820c303e68 label.len=17 platform_hint.len=42
+[    1217ms pid=55245] in  len=115 type=connect request_id=r3-ykynzp api_version=1 device_handle=2ab1a48a694574e9
+[    1217ms pid=55245] in  len=115 type=connect request_id=r4-vs6w73 api_version=1 device_handle=e69832820c303e68
+[    1218ms pid=55245] conn 2 device at 0ms
+[    1218ms pid=55245] conn 3 device at 1ms
+[    1766ms pid=55245] conn 2 connected at 549ms
+[    2563ms pid=55245] conn 2 service at 1346ms
+[    2710ms pid=55245] conn 2 characteristics at 1492ms
+[    2710ms pid=55245] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    2744ms pid=55245] conn 3 connected at 1527ms
+[    2958ms pid=55245] conn 2 subscribed; hint=macos:..25b3
+[    2958ms pid=55245] out len=182 type=connected request_id=r3-ykynzp api_version=1 connection_handle=e8a785bc20d59140 platform_hint.len=42
+[    3222ms pid=55245] conn 3 service at 2005ms
+[    3340ms pid=55245] conn 3 characteristics at 2122ms
+[    3340ms pid=55245] conn 3 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    3542ms pid=55245] conn 3 subscribed; hint=macos:..a8c3
+[    3542ms pid=55245] out len=182 type=connected request_id=r4-vs6w73 api_version=1 connection_handle=f402cdb84a0c4f4d platform_hint.len=42
+[    3545ms pid=55245] in  len=115 type=stop_scan request_id=r5-yahggt api_version=1 scan_handle=a377b746121437f5
+[    3545ms pid=55245] out len=135 type=scan_state request_id=r5-yahggt api_version=1 status=stopped scan_handle=a377b746121437f5
+[    3547ms pid=55245] in  len=159 type=send request_id=r6-kkf9le api_version=1 connection_handle=e8a785bc20d59140 record_base64.len=24
+[    3547ms pid=55245] out len=116 type=sent request_id=r6-kkf9le api_version=1 connection_handle=e8a785bc20d59140
+[    3588ms pid=55245] out len=137 type=message api_version=1 connection_handle=e8a785bc20d59140 record_base64.len=24
+[    3609ms pid=55245] in  len=159 type=send request_id=r7-f9gq6w api_version=1 connection_handle=f402cdb84a0c4f4d record_base64.len=24
+[    3609ms pid=55245] out len=116 type=sent request_id=r7-f9gq6w api_version=1 connection_handle=f402cdb84a0c4f4d
+[    3661ms pid=55245] out len=137 type=message api_version=1 connection_handle=f402cdb84a0c4f4d record_base64.len=24
+[    3667ms pid=55245] in  len=137 type=start_scan request_id=r8-hxdh7c api_version=1
+[    3667ms pid=55245] out len=135 type=scan_state request_id=r8-hxdh7c api_version=1 status=started scan_handle=f5b31d9a973d2963
+[    3694ms pid=55245] in  len=5599 type=send request_id=r9-yilf4z api_version=1 connection_handle=e8a785bc20d59140 record_base64.len=5464
+[    3695ms pid=55245] out len=116 type=sent request_id=r9-yilf4z api_version=1 connection_handle=e8a785bc20d59140
+[    4129ms pid=55245] out len=5577 type=message api_version=1 connection_handle=e8a785bc20d59140 record_base64.len=5464
+[    4163ms pid=55245] in  len=5599 type=send request_id=ra-9i2wqk api_version=1 connection_handle=f402cdb84a0c4f4d record_base64.len=5464
+[    4164ms pid=55245] out len=116 type=sent request_id=ra-9i2wqk api_version=1 connection_handle=f402cdb84a0c4f4d
+[    4371ms pid=55245] out len=217 type=device_found api_version=1 scan_handle=f5b31d9a973d2963 device_handle=68d94a3f2fcabd07 label.len=17 platform_hint.len=42
+[    4440ms pid=55245] out len=217 type=device_found api_version=1 scan_handle=f5b31d9a973d2963 device_handle=f6f287d9b7d11ac7 label.len=17 platform_hint.len=42
+[    4534ms pid=55245] out len=5577 type=message api_version=1 connection_handle=f402cdb84a0c4f4d record_base64.len=5464
+[    4934ms pid=55245] conn 3 command channel closed
+[    4934ms pid=55245] exit code=0 stdout_drained=true
+[    4934ms pid=55245] conn 2 command channel closed

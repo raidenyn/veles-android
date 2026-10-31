@@ -1,0 +1,115 @@
+{
+  "what": "OTP-23 package1 W-02 separate adjudication: the connected-phase census against the exact owner-approved clarification. The raw scenario record stays BLOCKED criterion_conflict and is not rewritten; this document is the W-02-only decision layered on top of it with the owner-approved wording applied to W-02 alone.",
+  "scope": "W-02 only; no waiver/promotion of other rows and no OTP-24 authorization; retain all observed window types/endpoints, source/evidence provenance and independent verification.",
+  "owner_approval": {
+    "recorded_utc": "2026-10-28T04:16:36Z",
+    "source": "operator-captured actual question/answer in coordinating conversation; not a GitHub approval",
+    "question": "The connected-phase measurements found the Chrome-created cmd.exe wrapper’s never-visible console window. Do you approve this narrow W-02 clarification: ‘The plain host owns no top-level window, visible or hidden, and no network endpoint. Chrome’s default Windows launcher may own one never-visible console window; any visible window or network endpoint owned by the host or its wrapper fails.’ This does not approve other rows or OTP-24; independent verification is still required.",
+    "approved_text": "The plain host owns no top-level window, visible or hidden, and no network endpoint. Chrome’s default Windows launcher may own one never-visible console window; any visible window or network endpoint owned by the host or its wrapper fails.",
+    "answer": "Approve narrow clarification",
+    "copied_byte_identical_from": "/tmp/opencode/otp23-package1-owner-approval.json",
+    "copy_sha256": "89d255383b21272590f7c3b3cc3370e7b8f1e688b2445a65dba022d529f23fd4",
+    "owner_record_sha256_verified": "89d255383b21272590f7c3b3cc3370e7b8f1e688b2445a65dba022d529f23fd4",
+    "recorded_utc_fallback_note": "byte-identical copy pinned by sha256 above"
+  },
+  "raw_scenario": {
+    "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-pd1/port-disconnect.json",
+    "sha256": "967f4c04af8ccd16086eb159e4323962bfc0dffd3574057b042e10941719b9c9",
+    "status": "BLOCKED",
+    "error_class": "criterion_conflict",
+    "actual": "trace/teardown checks held, but the Chrome default-launch cmd.exe wrapper owns 1 never-visible console window(s) in the connected-phase samples; W-02-style window wording is an owner decision (see evidence PLAN.md)",
+    "w02_wrapper_hidden_window_max": 1
+  },
+  "census_from_raw": {
+    "samples": 6,
+    "all_usable": true,
+    "problems": [],
+    "wrapper_hidden_total": 6,
+    "per_sample_sessions_equal": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "wrapper_window_classes": [
+      "ConsoleWindowClass"
+    ],
+    "chrome_version": "Chrome/156.0.8078.73",
+    "session_summary": "every sample's observer/Chrome/host/wrapper session equals the active console session (sessions recorded per pid; equality computed above, not assumed)"
+  },
+  "adjudication": {
+    "w02_outcome": "PASS by this separate adjudication (owner-approved narrow clarification applied to W-02 ONLY)",
+    "basis": "every sample: zero host windows of all four kinds and zero host endpoints in all four families; every endpoint family available; positive controls (Chrome visible top-level + CDP listener) present; exactly one never-visible ConsoleWindowClass on the Chrome-created wrapper, no other window kind, no wrapper endpoints, sessions equal the active console session",
+    "no_other_rows": "this document neither promotes, waives nor re-scopes any other row and creates no OTP-24 eligibility",
+    "chrome_flags_note": "the driver launches no direct-native-host feature flag or policy override; VELES_OTP23_DETACHED_CLOSE unset (raw detail records both)"
+  },
+  "provenance": {
+    "pinned_at": "2026-10-28T09:16:57Z",
+    "code": [
+      {
+        "path": "native-bridge/feasibility/scripts/scenario_matrix_core.py",
+        "sha256": "d67ccd43c7f1955448ef983d61ace9fa93cc682df50515afca6b07b1106f1662",
+        "role": "core helper: phone-to-PC conversion (_telemetry_bursts subtracts offset_phone_minus_pc_ms_median), phone_burst_association guards, trace_origin_calibration, parse_trace"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/package1_phone_burst_telemetry.py",
+        "sha256": "c6fcfd6eab1e90e9861232fa6d06ef2d8166e39b2b613e7e37fd77e12296663d",
+        "role": "analyzer: trace exit/anchor derivation + document assembly (phone-burst-association-v2)"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/package1_phone_bound.py",
+        "sha256": "40d8f8242385671eb3122c812cffc4ad33d135b001ca7b0a5adfd4b1c3ecf48f",
+        "role": "analyzer: old dumpsys-history bound (row_epoch_ms subtracts the phone-minus-PC offset) for tab-close-phone-bound-v2"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/scenario_matrix.py",
+        "sha256": "f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1",
+        "role": "driver: connected-phase sample recording (wall_ms) for connected-sample-brackets-v2"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/pc_phone_clock_probe.py",
+        "sha256": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+        "role": "clock producer: measures and defines offset_phone_minus_pc_ms_median = phone_epoch - pc_epoch"
+      },
+      {
+        "path": "native-bridge/feasibility/scripts/chrome_validate.py",
+        "sha256": "78d53ca98c839e78bccf404beab5fb978f421f485f7945e5578d09a8b71a62f6",
+        "role": "Windows platform observer used by the sampled census (windows/endpoints)"
+      }
+    ],
+    "clock_producer_contract": {
+      "producer": "native-bridge/feasibility/scripts/pc_phone_clock_probe.py",
+      "producer_sha256": "06f0de1b64775615f30abcf2582d04113601632da2006aad98b317a01637b629",
+      "field": "offset_phone_minus_pc_ms_median",
+      "semantics": "phone_epoch - pc_epoch (measured at the adb roundtrip midpoint); the converter derives pc_epoch = phone_epoch - offset — never +",
+      "uncertainty": "uncertainty_ms = spread/2 + max latency/2 + phone resolution/2"
+    },
+    "inputs": [
+      {
+        "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-pd1/port-disconnect.json",
+        "sha256": "967f4c04af8ccd16086eb159e4323962bfc0dffd3574057b042e10941719b9c9",
+        "verified": "SHA256SUMS"
+      },
+      {
+        "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-pd1/port-disconnect.host-trace.log",
+        "sha256": "22e0aecd49e12d987806d2ffbb4de563ba8713c62725a3d2d9052f921ac0ed7d",
+        "verified": "SHA256SUMS"
+      }
+    ],
+    "git_head": {
+      "commit": "8f365fce0d31f975610c235085a95b9136ac25e2",
+      "worktree_uncommitted_changes": true,
+      "note": "the per-file sha256 list under `code` pins the ACTUAL analyzer/helper/clock bytes used by this derivation; the p2-stage-manifest.txt of the run pins older staged bytes (scenario_matrix_core.py=b33b015b…, test_scenario_matrix.py=2183b847…) and does not list package1_phone_burst_telemetry.py, so that manifest is retained as HISTORICAL evidence only. The authority for what the run actually executed is the run's own self-recorded source_sha256 in p2-pd1/lifecycle.json (scenario_matrix.py=f8284c98…, scenario_matrix_core.py=527de610…, chrome_validate.py=78d53ca9…), which match these reviewed files."
+    },
+    "stage_manifest_status": {
+      "authority": "runtime self-pins (p2-pd1/lifecycle.json meta.source_sha256) + the code entries above are the actual bytes of this derivation",
+      "historical_manifest": {
+        "path": "native-bridge/feasibility/evidence/package1-p2-20261028/p2-stage-manifest.txt",
+        "sha256": "fca6faac598e970b8beb86e1d106722e55d0bb31e315d0d737f17309cdcf763c",
+        "status": "retained immutable as history; NOT the authority for v2 provenance"
+      }
+    }
+  }
+}

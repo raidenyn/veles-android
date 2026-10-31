@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "platform": "windows",
+    "python": "3.14.3",
+    "os": "Windows-11-10.0.26300-SP0",
+    "started_utc": "2026-10-28T01:51:17+00:00",
+    "source_revision": {
+      "available": false,
+      "stage": "rev-parse",
+      "reason": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "source_sha256": {
+      "scenario_matrix.py": "feaf3a5405605926d20056a2005c90efcb7fff4a500bbb1242db4e9e324f3849",
+      "scenario_matrix_core.py": "b2f417c8d85617a868b50d856575db53d64b3faa00601ffff2d1689d270ae500",
+      "connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+      "manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+      "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f"
+    },
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "foreground_only": true,
+    "no_background_exemption_measured": true,
+    "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+    "pre_existing_host_pids_untouched": [],
+    "finished_utc": "2026-10-28T01:51:18+00:00"
+  },
+  "results": [
+    {
+      "id": "LC-tab-close",
+      "title": "Connector tab close with an active scan and two active links",
+      "expected": "owning tab destroyed with two byte-proven links and an active scan: host exits by its OWN trace line (code 0, stdin-EOF mechanism, no shutdown handshake), host gone",
+      "actual": "Traceback (most recent call last):\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 539, in scenario_chrome\n    detail[\"ready\"] = session.start()\n                      ~~~~~~~~~~~~~^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 286, in start\n    self.chrome = self.adapter.chrome_run({\"VELES_OTP23_TRACE\": str(self.trace_path)})\n                  ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 120, in chrome_run\n    return self.cv.ChromeRun(env, medium=True)\n           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\nPermissionError: [Errno 13] Permission denied: 'C:\\\\Users\\\\yuriy\\\\AppData\\\\Local\\\\Temp\\\\veles-otp23-profile-84fw7q0z\\\\DevToolsActivePort'\n",
+      "status": "FAIL",
+      "error_class": "environment",
+      "detail": {
+        "cleanup_problems": []
+      }
+    }
+  ],
+  "surviving_owned_hosts_after_run": []
+}

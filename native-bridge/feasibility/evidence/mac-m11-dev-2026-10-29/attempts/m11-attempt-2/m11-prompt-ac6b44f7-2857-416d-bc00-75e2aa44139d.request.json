@@ -1,0 +1,14 @@
+{
+  "nonce": "ac6b44f7-2857-416d-bc00-75e2aa44139d",
+  "issued_utc": "2026-10-29T05:29:58+00:00",
+  "human_step": "Do NOT click yet. Read the EXACT name this Bluetooth permission dialog shows (which app is asking), reply it verbatim to the parent, and only then click your Allow/Deny choice.",
+  "expected_dialog": "the Bluetooth permission prompt naming the app asking for Bluetooth access (the M-11 observation: Chrome vs the dev binary)",
+  "answer_file": "capture/m11-attempt-2/m11-prompt-ac6b44f7-2857-416d-bc00-75e2aa44139d.answer.json",
+  "answer_format": {
+    "nonce": "ac6b44f7-2857-416d-bc00-75e2aa44139d",
+    "answered_by": "owner",
+    "dialog_observed": "true|false (owner's own observation)",
+    "prompt_name_shown": "<exact verbatim text, only if a dialog was seen>",
+    "choice": "allow|deny (only if a dialog was seen)"
+  }
+}

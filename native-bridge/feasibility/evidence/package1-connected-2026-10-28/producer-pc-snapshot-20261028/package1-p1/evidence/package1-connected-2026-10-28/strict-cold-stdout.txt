@@ -1,0 +1,2 @@
+[FAIL ] ST-ENV Chrome, fixed-id extension, connector page, exemption scan
+strict_result=FAIL scenario=cold formal_otp23_acceptance=false -> evidence\package1-connected-2026-10-28\strict-windows-cold.json

@@ -1,0 +1,4 @@
+Microsoft PnP Utility
+
+Enabling device:          USB\VID_0489&PID_E10A\8&fad588d&0&16
+Device enabled successfully.

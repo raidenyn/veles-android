@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-28",
+  "record_type": "operator_captured_owner_reviewer_selection",
+  "question": "Opus 5.5 via Claude Code is quota-blocked until its reported 04:00 UTC reset. May I use the previously approved GPT-5.6 reviewer for the remaining code verification and Mac evidence review now? Implementation remains GLM-5.3-flash, and all model attribution will stay explicit.",
+  "owner_answer_verbatim": "Use kimi k3 ",
+  "authorized_reviewer_model": "ollama-cloud/kimi-k3",
+  "scope": "Remaining independent Mac code verification and evidence reviews",
+  "implementation_model_unchanged": "ollama-cloud/glm-5.3-flash",
+  "earlier_opus_design_preflight_keeps_actual_authorship": true,
+  "opus_code_verification_completed": false,
+  "not_a_waiver_or_gate_amendment": true,
+  "not_a_github_approval": true
+}

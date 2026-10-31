@@ -1,0 +1,6 @@
+raiden@Sirius homepc % work/otp23-glm-dc5d127-cal/cal-run.sh
+RECORDER UP pid 77775 file cal-aqua-20261027T153840Z.jsonl (25 min, 1 Hz)
+{"kind": "context", "utc_start": "2026-10-27T15:38:40.672473+00:00", "host_date_u": "2026-10-27T15:38:40Z", "uid": 501, "pid": 77775, "tty": null, "ssh_connection": null, "python": "3.9.6 (default, May 22 2026, 11:13:45) \n[Clang 21.0.0 (clang-2100.1.1.101)]", "launchctl_managername": "Aqua", "gui_domain_reachable": true, "who": "tanushka         console      Oct 20 16:43 \nraiden           console      Oct 25 19:10 \nraiden           ttys001      Oct 27 22:35", "sw_vers": "ProductName:\t\tmacOS\nProductVersion:\t\t26.5.2\nBuildVersion:\t\t25F84"}
+{"kind": "sample", "index": 0, "utc": "2026-10-27T15:38:40.831997+00:00", "mono": 0.227419125, "reader": {"pid": 76617, "name": "Terminal", "bundle": "com.apple.Terminal"}, "raw_reader": "76617|Terminal|com.apple.Terminal", "session": {"verified": false}, "raw_session": null, "ps_args": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"}
+launcher: /bin/sh work/otp23-glm-dc5d127-cal/cal-run.sh   parent: -zsh
+managername: Aqua

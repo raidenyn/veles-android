@@ -1,0 +1,23 @@
+
+running 4 tests
+test winrt::tests::legacy_detached_close_is_unawaited_across_disconnect_and_shutdown ... ok
+test winrt::tests::disconnect_queues_live_workers_for_the_shutdown_join ... FAILED
+test winrt::tests::disconnected_link_slots_are_released_during_churn ... ok
+test winrt::tests::shutdown_joins_a_worker_retired_by_disconnect ... ok
+
+failures:
+
+---- winrt::tests::disconnect_queues_live_workers_for_the_shutdown_join stdout ----
+
+thread 'winrt::tests::disconnect_queues_live_workers_for_the_shutdown_join' (47028) panicked at src\winrt.rs:912:9:
+assertion `left == right` failed: live workers are queued for shutdown join
+  left: 0
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    winrt::tests::disconnect_queues_live_workers_for_the_shutdown_join
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.21s
+

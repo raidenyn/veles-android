@@ -1,0 +1,27 @@
+Read-only readback of the approved signed fixture bundle on the Mac (ssh as the Mac user that owns the bundle path).
+Command (no signing, no keychain write, no host launch, no TCC access):
+  A=/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app
+  codesign --verify --strict "$A"; codesign -dvv "$A" | grep -E "Identifier|Authority|TeamIdentifier|Signed Time"
+  shasum -a 256 "$A/Contents/MacOS/otp23-host"; codesign -dv --verbose=4 "$A" | grep -i cdhash
+Captured 2026-10-27 ~08:50Z. Output, verbatim:
+
+verify-ok
+Identifier=me.nagaev.veles.bridge
+Authority=Apple Development: yuriy@nagaev.me (ZWYYS8X98S)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+Signed Time=26 Oct 2026 at 13:40:26
+TeamIdentifier=7T39M26Z99
+e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c  /Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host
+CandidateCDHash sha256=25bc7fc25e48c4470d4c3765b6a5f9b719ff381d
+CandidateCDHashFull sha256=25bc7fc25e48c4470d4c3765b6a5f9b719ff381d3a512576b7f8dd0de30da32f
+CDHash=25bc7fc25e48c4470d4c3765b6a5f9b719ff381d
+
+Notes
+- Same identifier, team, authority, signed time and executable hash as signing-and-gates/otp23-postgrant-mac-signature.txt;
+  the bundle was therefore not re-signed or replaced. The cdhash above is new real output (the recovery driver recorded it as null).
+- Scopes inspected (names only, values never read): repository Actions secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD (Android);
+  environment github-pages: none; owner is a user account (no organization secrets); workflow files contain no codesign/notarytool/stapler step.
+  NOT inspected: secrets outside GitHub, repository variables. So no Apple signing credential is VISIBLE in the inspected scopes; this does not show that none exists.
+- Another macOS user's interactive Chrome (a different account from the one that owns this bundle) was running on the Mac during this
+  session. It was only listed read-only (process listing). No Chrome, host or Bluetooth action was started on the Mac in this pass.

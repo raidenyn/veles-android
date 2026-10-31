@@ -1,0 +1,47 @@
+{
+  "meta": {
+    "platform": "mac",
+    "python": "3.9.6",
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "started_utc": "2026-10-28T07:04:23+00:00",
+    "source_revision": {
+      "available": false,
+      "stage": "rev-parse",
+      "reason": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "source_sha256": {
+      "scenario_matrix.py": "f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1",
+      "scenario_matrix_core.py": "527de61027811319a3d72990b2cef5546c617e1fc0e151684e3e688ebd1d0a02",
+      "connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+      "manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+      "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f",
+      "platform_observer_sha256": {
+        "macos_poc.py": "c2a6a20c738720da3bd683c2a1eaf77839d410266f067dd52ee29ba1d3a35cd7",
+        "macos_background_support.py": "e02062c3edfca461cf8c0002c1df190ba4044d1c76af014d6cb4049a7ad395e3",
+        "macos_cdp.py": "e962bcc94123faa67a9f1097da2835a8fabe3cce3bc8fe3ac1a68dc29926375f",
+        "macos_install.py": "fcc8604afc0c8662a7a3589248b2a22b34ed014e4d175c57dfb9c47befcf5fd5"
+      },
+      "observer_modules_missing": []
+    },
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "foreground_only": true,
+    "no_background_exemption_measured": true,
+    "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "pre_existing_host_pids_untouched": [],
+    "finished_utc": "2026-10-28T07:04:30+00:00"
+  },
+  "results": [
+    {
+      "id": "LC-shutdown",
+      "title": "Shutdown with an active scan and two active links",
+      "expected": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, host exits by its own trace line (code 0, never killed by Chrome's lingering-host kill), host gone, zero host windows/endpoints (wrapper chrome-created console recorded for the owner)",
+      "actual": "Traceback (most recent call last):\n  File \"%HOME%/homepc/work/otp23-p2/scripts/scenario_matrix.py\", line 549, in scenario_chrome\n    detail[\"ready\"] = session.start()\n  File \"%HOME%/homepc/work/otp23-p2/scripts/scenario_matrix.py\", line 287, in start\n    ext = self.chrome.load_extension()[\"id\"]\n  File \"%HOME%/homepc/work/otp23-p2/scripts/macos_background_support.py\", line 63, in load_extension\n    return self.cdp.call(\"Extensions.loadUnpacked\", {\"path\": str(mp.EXT_DIR)})\nConnectionError: websocket closed\n",
+      "status": "FAIL",
+      "error_class": "environment",
+      "detail": {
+        "cleanup_problems": []
+      }
+    }
+  ],
+  "surviving_owned_hosts_after_run": []
+}

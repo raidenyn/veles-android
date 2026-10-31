@@ -1,0 +1,19 @@
+{
+  "registered": true,
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+  "executable": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "executable_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+  "scope": "user only (/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts)",
+  "backup": null,
+  "note": "created new manifest"
+}
+
+DevTools listening on ws://127.0.0.1:60122/devtools/browser/bb2e9120-f822-4c24-b8f3-9eb06593a0b9
+Trying to load the allocator multiple times. This is *not* supported.
+Created TensorFlow Lite XNNPACK delegate for CPU.
+READY e586ecd846007a3545cfa7fe8c5e7e293f65c0419bc32fbfb536dd9f7bcab220
+m6 mac: PARTIAL (none) -> /Users/raiden/homepc/work/otp23-scenarios-3dbe3db/native-bridge/feasibility/evidence/m6-pair-20261027-a/mac.json
+{"unregistered": true, "manifest": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json", "note": "removed only this owned manifest; the PoC app bundle under target/macos-poc and any Bluetooth (TCC) grants were not touched"}
+m6_exit=0

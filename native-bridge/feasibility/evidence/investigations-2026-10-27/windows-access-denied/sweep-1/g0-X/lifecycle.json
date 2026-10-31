@@ -1,0 +1,86 @@
+{
+  "meta": {
+    "platform": "windows",
+    "python": "3.14.3",
+    "os": "Windows-11-10.0.26300-SP0",
+    "started_utc": "2026-10-27T08:43:15+00:00",
+    "source_revision": {
+      "available": false,
+      "stage": "rev-parse",
+      "reason": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "source_sha256": {
+      "scenario_matrix.py": "3028e0780c6dd937279f0459132430291229cad419e864918a98ef2133cea596",
+      "scenario_matrix_core.py": "fe67a12799ec69f0a2043c04be51b21b7071f47d1743e7655698b951b62f480c",
+      "connector.js": null,
+      "manifest.json": null,
+      "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f"
+    },
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "foreground_only": true,
+    "no_background_exemption_measured": true,
+    "host_binary_sha256": null,
+    "host_binary_unavailable": "FileNotFoundError",
+    "pre_existing_host_pids_untouched": [],
+    "finished_utc": "2026-10-27T08:43:17+00:00"
+  },
+  "results": [
+    {
+      "id": "LC-stdin-eof",
+      "title": "Stdin EOF with an active scan and two active links (direct native-framed process)",
+      "expected": "stdin closed (NOT shutdown): exit 0, stdout reaches EOF on a frame boundary, process gone, trace shows the stdin-closed path with no shutdown_complete",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "provenance": {
+          "launch": "direct process with pipes",
+          "chrome_provenance": false,
+          "context": "direct launch; Chrome provenance is covered by the Chrome scenarios"
+        },
+        "host_binary_sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda",
+        "host_pid_recorded": true,
+        "integrity": {
+          "host": {
+            "integrity": "high",
+            "rid": "0x3000",
+            "token_is_elevated": true
+          },
+          "driver": {
+            "integrity": "high",
+            "rid": "0x3000",
+            "token_is_elevated": true
+          }
+        },
+        "link_proof": [
+          {
+            "size": 16,
+            "request_sha256": "c0b02f7f88737848a5e94d5ca1cb5dcf18ad3e209275f61fb93dabbac43cb36e"
+          },
+          {
+            "size": 16,
+            "request_sha256": "024fa050e1842ba63278ac97947e6d64159d62c6ee2552acdfe57ffdf2b0ebd7"
+          }
+        ],
+        "exit_code": 0,
+        "stdout_eof_state": "clean",
+        "trace_exit": {
+          "at_ms": 2618,
+          "code": 0,
+          "stdout_drained": true
+        },
+        "trace_mechanism": "stdin_closed",
+        "frames_after_close": [
+          "connected",
+          "device_found",
+          "message",
+          "ready",
+          "scan_state",
+          "sent"
+        ],
+        "problems": []
+      }
+    }
+  ],
+  "surviving_owned_hosts_after_run": []
+}

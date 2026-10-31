@@ -1,0 +1,21 @@
+{
+  "id": "LC-stdin-eof",
+  "title": "Stdin EOF with an active scan and two active links (direct native-framed process)",
+  "expected": "stdin closed (NOT shutdown): exit 0, stdout reaches EOF on a frame boundary, process gone, trace shows the stdin-closed path with no shutdown_complete",
+  "actual": "startScan {'type': 'error', 'code': 'scan_failed', 'recoverability': 'retryable', 'stage': 'permission_pending'}",
+  "status": "BLOCKED",
+  "error_class": "permission_denied",
+  "detail": {
+    "provenance": {
+      "launch": "direct process with pipes",
+      "chrome_provenance": false,
+      "context": "direct launch: Bluetooth TCC is attributed to the launching process (terminal/driver), not to Google Chrome; this context is NOT Chrome-provenance evidence"
+    },
+    "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "host_pid_recorded": true,
+    "integrity": {
+      "host": null,
+      "driver": null
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "host_binary_sha256": "186f920c7accd506da42605e26485b7669300fb507f5d6beaafef3b8913c0a64",
+  "args": {
+    "host_binary": "C:\\Users\\yuriy\\otp23-probe\\diag-src\\target\\release\\otp23-host.exe",
+    "out_dir": "C:\\Users\\yuriy\\otp23-probe\\ctl-discover-both",
+    "discover": true,
+    "first": "",
+    "second": "",
+    "gap_s": 1.0,
+    "discover_s": 30.0
+  },
+  "phases": [
+    {
+      "phase": "discover",
+      "started_utc": "2026-10-27T09:37:01.719+00:00",
+      "wanted": [],
+      "devices": [
+        "0838be31",
+        "4603b134"
+      ],
+      "connects": [],
+      "scan": {
+        "type": "scan_state",
+        "status": "started"
+      },
+      "finished_utc": "2026-10-27T09:37:05.249+00:00"
+    }
+  ]
+}

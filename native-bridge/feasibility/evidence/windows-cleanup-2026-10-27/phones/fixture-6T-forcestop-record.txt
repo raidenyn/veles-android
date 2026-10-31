@@ -1,0 +1,16 @@
+== 6T service state before force-stop (2026-10-27T17:16:49Z)
+== force-stop
+== post-stop veles processes:
+u0_a221      26776  1242   14439832 138704 0                   0 S me.nagaev.veles.otp23.test
+== post-stop advertising:
+	[■]: ble_check_data_length_on_legacy_advertising
+	[ ]: directed_advertising_api
+	[ ]: encrypted_advertising_data
+	[■]: fix_nonconnectable_scannable_advertisement
+GATT Advertiser Map
+Failed to write while dumping service bluetooth_manager: Broken pipe
+== post both force-stops (2026-10-27T17:17:22Z):
+no-veles-process
+== 10Pro stale session cleanup (2026-10-27T17:18:12Z)
+no-veles-process
+1

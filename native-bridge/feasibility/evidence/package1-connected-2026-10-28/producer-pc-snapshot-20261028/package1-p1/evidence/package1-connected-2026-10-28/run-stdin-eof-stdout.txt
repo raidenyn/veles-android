@@ -1,0 +1,2 @@
+[PASS   ] LC-stdin-eof none
+lifecycle: PASS (1 scenario(s)) -> C:\Users\yuriy\otp23-probe\package1-p1\evidence\package1-connected-2026-10-28\run-stdin-eof

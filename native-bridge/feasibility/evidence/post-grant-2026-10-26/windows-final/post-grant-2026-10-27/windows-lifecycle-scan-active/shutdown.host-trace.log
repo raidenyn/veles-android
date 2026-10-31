@@ -1,0 +1,45 @@
+[       0ms pid=90000] start pid=90000
+[       1ms pid=90000] in  len=81 type=hello request_id=r1-qiof5h
+[       1ms pid=90000] out len=183 type=ready request_id=r1-qiof5h api_version=1
+[    4567ms pid=90000] in  len=137 type=start_scan request_id=r2-c4ooce api_version=1
+[    4620ms pid=90000] out len=135 type=scan_state request_id=r2-c4ooce api_version=1 status=started scan_handle=31e7f20870634a91
+[    4698ms pid=90000] out len=195 type=device_found api_version=1 scan_handle=31e7f20870634a91 device_handle=3bce42b153b6e3e1 label.len=17 platform_hint.len=20
+[    5433ms pid=90000] out len=195 type=device_found api_version=1 scan_handle=31e7f20870634a91 device_handle=1c821ffae04a368e label.len=17 platform_hint.len=20
+[    5875ms pid=90000] in  len=115 type=connect request_id=r3-yhmxuo api_version=1 device_handle=3bce42b153b6e3e1
+[    5875ms pid=90000] in  len=115 type=connect request_id=r4-e9lskk api_version=1 device_handle=1c821ffae04a368e
+[    5906ms pid=90000] conn 2 device at 31ms
+[    5906ms pid=90000] conn 3 device at 31ms
+[    5927ms pid=90000] conn 3 session at 51ms
+[    5927ms pid=90000] conn 2 session at 52ms
+[    8158ms pid=90000] conn 3 service at 2283ms
+[    8158ms pid=90000] conn 3 mtu=517 at 2283ms
+[    8225ms pid=90000] conn 3 write properties=0x4
+[    8287ms pid=90000] conn 3 notify properties=0x10
+[    8287ms pid=90000] conn 3 characteristics at 2412ms
+[    8380ms pid=90000] conn 3 subscribed at 2504ms
+[    8380ms pid=90000] out len=160 type=connected request_id=r4-e9lskk api_version=1 connection_handle=01e1ae11f2c5da76 platform_hint.len=20
+[    8839ms pid=90000] conn 2 service at 2964ms
+[    8839ms pid=90000] conn 2 mtu=517 at 2964ms
+[    8947ms pid=90000] conn 2 write properties=0x4
+[    9010ms pid=90000] conn 2 notify properties=0x10
+[    9010ms pid=90000] conn 2 characteristics at 3134ms
+[    9112ms pid=90000] conn 2 subscribed at 3237ms
+[    9112ms pid=90000] out len=160 type=connected request_id=r3-yhmxuo api_version=1 connection_handle=caeb6bcaad6dac7b platform_hint.len=20
+[    9113ms pid=90000] in  len=115 type=stop_scan request_id=r5-0ndsx2 api_version=1 scan_handle=31e7f20870634a91
+[    9114ms pid=90000] out len=135 type=scan_state request_id=r5-0ndsx2 api_version=1 status=stopped scan_handle=31e7f20870634a91
+[    9115ms pid=90000] in  len=159 type=send request_id=r6-h3y9h2 api_version=1 connection_handle=caeb6bcaad6dac7b record_base64.len=24
+[    9125ms pid=90000] out len=116 type=sent request_id=r6-h3y9h2 api_version=1 connection_handle=caeb6bcaad6dac7b
+[    9136ms pid=90000] out len=137 type=message api_version=1 connection_handle=caeb6bcaad6dac7b record_base64.len=24
+[    9147ms pid=90000] in  len=159 type=send request_id=r7-s1s5iv api_version=1 connection_handle=01e1ae11f2c5da76 record_base64.len=24
+[    9157ms pid=90000] out len=116 type=sent request_id=r7-s1s5iv api_version=1 connection_handle=01e1ae11f2c5da76
+[    9189ms pid=90000] out len=137 type=message api_version=1 connection_handle=01e1ae11f2c5da76 record_base64.len=24
+[    9199ms pid=90000] in  len=137 type=start_scan request_id=r8-7nwjq0 api_version=1
+[    9245ms pid=90000] out len=135 type=scan_state request_id=r8-7nwjq0 api_version=1 status=started scan_handle=91666ac48d2c9e16
+[    9246ms pid=90000] in  len=119 type=connect request_id=r9-urctdj api_version=1 platform_hint.len=20
+[    9246ms pid=90000] in  len=81 type=shutdown request_id=ra-rr247b api_version=1
+[    9246ms pid=90000] out len=140 type=error request_id=r9-urctdj api_version=1 code=internal recoverability=fatal stage=shutdown
+[    9246ms pid=90000] out len=110 type=scan_state api_version=1 status=stopped scan_handle=91666ac48d2c9e16
+[    9246ms pid=90000] out len=99 type=disconnected api_version=1 connection_handle=caeb6bcaad6dac7b
+[    9247ms pid=90000] out len=99 type=disconnected api_version=1 connection_handle=01e1ae11f2c5da76
+[    9247ms pid=90000] out len=90 type=shutdown_complete request_id=ra-rr247b api_version=1
+[    9247ms pid=90000] exit code=0 stdout_drained=true

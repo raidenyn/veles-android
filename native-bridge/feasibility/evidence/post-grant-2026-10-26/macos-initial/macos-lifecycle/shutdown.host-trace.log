@@ -1,0 +1,47 @@
+[       0ms pid=27062] start pid=27062
+[       0ms pid=27062] in  len=81 type=hello request_id=r1-ntf9h0
+[       0ms pid=27062] out len=181 type=ready request_id=r1-ntf9h0 api_version=1
+[     201ms pid=27062] in  len=137 type=start_scan request_id=r2-t15q9y api_version=1
+[     207ms pid=27062] bluetooth authorization before adapter init: allowed_always
+[     208ms pid=27062] adapter init: created=true authorization=allowed_always
+[     215ms pid=27062] out len=135 type=scan_state request_id=r2-t15q9y api_version=1 status=started scan_handle=0831904125d0bede
+[     298ms pid=27062] out len=217 type=device_found api_version=1 scan_handle=0831904125d0bede device_handle=30269a498696f210 label.len=17 platform_hint.len=42
+[     918ms pid=27062] out len=217 type=device_found api_version=1 scan_handle=0831904125d0bede device_handle=8055c6bd56f6ffa9 label.len=17 platform_hint.len=42
+[    1245ms pid=27062] in  len=115 type=stop_scan request_id=r3-wi9kiv api_version=1 scan_handle=0831904125d0bede
+[    1249ms pid=27062] out len=135 type=scan_state request_id=r3-wi9kiv api_version=1 status=stopped scan_handle=0831904125d0bede
+[    1249ms pid=27062] in  len=115 type=connect request_id=r4-eqae7q api_version=1 device_handle=30269a498696f210
+[    1250ms pid=27062] in  len=115 type=connect request_id=r5-pd00ov api_version=1 device_handle=8055c6bd56f6ffa9
+[    1250ms pid=27062] conn 2 device at 0ms
+[    1250ms pid=27062] conn 3 device at 0ms
+[    1797ms pid=27062] conn 2 connected at 547ms
+[    2150ms pid=27062] conn 3 connected at 900ms
+[    2244ms pid=27062] conn 2 service at 994ms
+[    2370ms pid=27062] conn 2 characteristics at 1120ms
+[    2370ms pid=27062] conn 2 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    2550ms pid=27062] conn 2 subscribed; hint=macos:..c632
+[    2550ms pid=27062] out len=182 type=connected request_id=r4-eqae7q api_version=1 connection_handle=0eee4b58334062ac platform_hint.len=42
+[    2745ms pid=27062] conn 3 service at 1495ms
+[    2865ms pid=27062] conn 3 characteristics at 1615ms
+[    2866ms pid=27062] conn 3 max_write_without_response=512 attribute_budget=512 payload_budget=508
+[    3045ms pid=27062] conn 3 subscribed; hint=macos:..9e75
+[    3045ms pid=27062] out len=182 type=connected request_id=r5-pd00ov api_version=1 connection_handle=1c0b34cf1883e93e platform_hint.len=42
+[    3048ms pid=27062] in  len=143 type=send request_id=r6-nlpggl api_version=1 connection_handle=0eee4b58334062ac record_base64.len=8
+[    3049ms pid=27062] out len=116 type=sent request_id=r6-nlpggl api_version=1 connection_handle=0eee4b58334062ac
+[    3091ms pid=27062] out len=121 type=message api_version=1 connection_handle=0eee4b58334062ac record_base64.len=8
+[    3110ms pid=27062] in  len=143 type=send request_id=r7-lp1o8s api_version=1 connection_handle=1c0b34cf1883e93e record_base64.len=8
+[    3111ms pid=27062] out len=116 type=sent request_id=r7-lp1o8s api_version=1 connection_handle=1c0b34cf1883e93e
+[    3166ms pid=27062] out len=121 type=message api_version=1 connection_handle=1c0b34cf1883e93e record_base64.len=8
+[    3172ms pid=27062] in  len=137 type=start_scan request_id=r8-3vk8np api_version=1
+[    3173ms pid=27062] out len=135 type=scan_state request_id=r8-3vk8np api_version=1 status=started scan_handle=e63edb1c7a07f453
+[    3173ms pid=27062] in  len=141 type=connect request_id=r9-e0746v api_version=1 platform_hint.len=42
+[    3174ms pid=27062] in  len=81 type=shutdown request_id=ra-20q2p9 api_version=1
+[    3174ms pid=27062] out len=140 type=error request_id=r9-e0746v api_version=1 code=internal recoverability=fatal stage=shutdown
+[    3174ms pid=27062] out len=110 type=scan_state api_version=1 status=stopped scan_handle=e63edb1c7a07f453
+[    3174ms pid=27062] out len=99 type=disconnected api_version=1 connection_handle=0eee4b58334062ac
+[    3174ms pid=27062] bluest error at device_lookup: kind=NotFound
+[    3174ms pid=27062] conn 7 setup failed: stage=device_lookup retryable=false
+[    3174ms pid=27062] conn 2 command channel closed
+[    3174ms pid=27062] out len=99 type=disconnected api_version=1 connection_handle=1c0b34cf1883e93e
+[    3174ms pid=27062] out len=90 type=shutdown_complete request_id=ra-20q2p9 api_version=1
+[    3174ms pid=27062] conn 3 command channel closed
+[    3174ms pid=27062] exit code=0 stdout_drained=true

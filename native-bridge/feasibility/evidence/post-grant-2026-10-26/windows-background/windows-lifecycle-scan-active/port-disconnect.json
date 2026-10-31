@@ -1,0 +1,44 @@
+{
+  "id": "LC-port-disconnect",
+  "title": "Chrome port.disconnect with an active scan and two active links",
+  "expected": "owned host and wrapper gone with NO shutdown handshake (stdin EOF path), zero windows/endpoints",
+  "actual": "connect: [{'type': 'error', 'code': 'connect_failed', 'recoverability': 'fatal', 'stage': 'access_denied'}, {'type': 'error', 'code': 'connect_failed', 'recoverability': 'fatal', 'stage': 'access_denied'}]",
+  "status": "BLOCKED",
+  "error_class": "permission_denied",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 0,
+      "network_endpoints": 0
+    },
+    "wrapper_hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 1,
+      "network_endpoints": 0
+    },
+    "integrity": {
+      "chrome": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "wrapper": [
+        {
+          "integrity": "medium",
+          "rid": "0x2000",
+          "token_is_elevated": false
+        }
+      ]
+    },
+    "connect_order": "scan-active",
+    "cleanup_problems": []
+  }
+}

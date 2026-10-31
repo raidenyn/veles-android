@@ -1,0 +1,15 @@
+[       0ms pid=15918] start pid=15918
+[       0ms pid=15918] in  len=81 type=hello request_id=r1-1brwdz
+[       0ms pid=15918] out len=181 type=ready request_id=r1-1brwdz api_version=1
+[      88ms pid=15918] in  len=137 type=start_scan request_id=r2-9s8r0j api_version=1
+[      96ms pid=15918] bluetooth authorization before adapter init: not_determined
+[      97ms pid=15918] adapter init: created=true authorization=not_determined
+[   10103ms pid=15918] adapter wait timed out: authorization=not_determined -> permission_pending
+[   10103ms pid=15918] out len=157 type=error request_id=r2-9s8r0j api_version=1 code=scan_failed recoverability=retryable stage=permission_pending
+[  146714ms pid=15918] in  len=137 type=start_scan request_id=r3-0hnyu7 api_version=1
+[  146714ms pid=15918] out len=135 type=scan_state request_id=r3-0hnyu7 api_version=1 status=started scan_handle=b20901542dc36cce
+[  149728ms pid=15918] in  len=115 type=stop_scan request_id=r4-w7fk42 api_version=1 scan_handle=b20901542dc36cce
+[  149728ms pid=15918] out len=135 type=scan_state request_id=r4-w7fk42 api_version=1 status=stopped scan_handle=b20901542dc36cce
+[  149734ms pid=15918] in  len=81 type=shutdown request_id=r5-pm8vgz api_version=1
+[  149734ms pid=15918] out len=90 type=shutdown_complete request_id=r5-pm8vgz api_version=1
+[  149734ms pid=15918] exit code=0 stdout_drained=true

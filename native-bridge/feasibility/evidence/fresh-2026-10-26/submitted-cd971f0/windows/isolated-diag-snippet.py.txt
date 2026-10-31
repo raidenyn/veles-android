@@ -1,0 +1,164 @@
+"""Throwaway execution snippet (not source): ONE isolated Chrome -> connectNative -> plain Rust host
+scan/connect/GATT roundtrip, using the committed chrome_validate / physical_validate helpers unchanged.
+Usage: python -B isolated_diag.py <feasibility_dir> <out_prefix>
+"""
+import base64
+import hashlib
+import json
+import pathlib
+import sys
+import time
+import traceback
+from datetime import datetime, timezone
+
+feas = pathlib.Path(sys.argv[1])
+prefix = pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(feas / "scripts"))
+import chrome_validate as cv  # noqa: E402
+import physical_validate as pv  # noqa: E402
+
+exe = cv.EXE_NAME["plain"]
+host_name = cv.HOSTS["plain"]
+trace = pathlib.Path(str(prefix) + "-host-trace.log")
+trace.unlink(missing_ok=True)
+SIZES = [4, 4096, 508, 509, 1016, 1017, 4095]
+res = {"flavour": "plain", "scope": "single-phone isolated diagnostic; SUPPORTING only, no two-phone/background/production claim",
+       "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"), "stages": [], "cases": [], "result": "FAIL"}
+
+
+def stage(name, **kw):
+    res["stages"].append({"stage": name, "t_s": round(time.monotonic() - t0, 2), **kw})
+    print("stage", name, kw, flush=True)
+
+
+t0 = time.monotonic()
+chrome = None
+pid = wrapper = None
+pre = host_pids = None
+try:
+    pre = {p["ProcessId"] for p in cv.host_processes(exe)}
+    res["pre_existing_plain_host_pids"] = sorted(pre)
+    cv.expect(not pre, f"pre-existing {exe} processes present, refusing to run: {sorted(pre)}")
+    chrome = cv.ChromeRun({"VELES_OTP23_TRACE": str(trace)}, medium=True)
+    res["chrome_version"] = chrome.version["product"]
+    res["chrome_integrity"] = cv.integrity_of(chrome.proc.pid)
+    res["driver_integrity"] = cv.integrity_of(__import__("os").getpid())
+    ext = chrome.load_extension()["id"]
+    cv.expect(ext == "gmekhgkipjkikmaadaajljinkgfielei", ext)
+    stage("extension_loaded", extension_id=ext)
+    _, session = chrome.open_page(f"chrome-extension://{ext}/connector.html")
+    for _ in range(50):
+        if chrome.js(session, "typeof otp23 === 'object'"):
+            break
+        time.sleep(0.1)
+    js = lambda e, t=70: chrome.js(session, e, timeout=t)  # noqa: E731
+    js(f"otp23.connect({json.dumps(host_name)}); 1")
+    ready = js("otp23.hello()")
+    cv.expect(ready.get("type") == "ready", ready)
+    fresh = [p for p in cv.host_processes(exe) if p["ProcessId"] not in pre]
+    cv.expect(len(fresh) == 1, f"expected exactly one new host, saw {len(fresh)}")
+    proc = fresh[0]
+    pid = proc["ProcessId"]
+    wrapper = cv.wrapper_of(pid)
+    chain = cv.ancestry(pid)
+    res["host"] = {"pid": pid, "wrapper_pid": wrapper, "executable": proc.get("ExecutablePath"),
+                   "sha256": pv.file_sha256(proc.get("ExecutablePath")),
+                   "chrome_browser_pid_is_ancestor": chrome.proc.pid in [c["ProcessId"] for c in chain],
+                   "command_line_origin_ok": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/" in (proc["CommandLine"] or ""),
+                   "integrity": cv.integrity_of(pid),
+                   "ready": {k: ready.get(k) for k in ("bridge_version", "platform", "api_version")}}
+    stage("host_ready", host_pid=pid, only_host=True)
+
+    started = js(f"otp23.startScan({json.dumps(cv.VELES_SERVICE)})")
+    cv.expect(started.get("status") == "started", started)
+    stage("scan_started", scan_handle_len=len(started.get("scan_handle", "")))
+    devices = {}
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline and not devices:
+        for ev in js("otp23.drainEvents()"):
+            m = ev["message"]
+            if m.get("type") == "device_found":
+                devices[m["device_handle"]] = {"label_len": len(m.get("label", "")) if isinstance(m.get("label"), str) else None}
+        time.sleep(0.25)
+    # brief settle so a second advertiser would also show up
+    time.sleep(1.0)
+    for ev in js("otp23.drainEvents()"):
+        m = ev["message"]
+        if m.get("type") == "device_found":
+            devices[m["device_handle"]] = {}
+    stage("scan_result", devices_found=len(devices), waited_s=round(time.monotonic() - (deadline - 45), 2))
+    cv.expect(devices, "no device_found within 45 s with one host / one scan active")
+    cv.expect(len(devices) == 1, f"expected only the 6T fixture, saw {len(devices)} Veles-advertising devices")
+    handle = next(iter(devices))
+    t_conn = time.monotonic()
+    conn = js(f"otp23.connectDevice({{device_handle: {json.dumps(handle)}}})")
+    res["connect_reply"] = {k: conn.get(k) for k in ("type", "code", "stage", "recoverability")}
+    res["connect_ms"] = round((time.monotonic() - t_conn) * 1000)
+    cv.expect(conn.get("type") == "connected", res["connect_reply"])
+    ch = conn["connection_handle"]
+    stage("connected", connect_ms=res["connect_ms"])
+    stopped = js(f"otp23.stopScan({json.dumps(started['scan_handle'])})")
+    cv.expect(stopped.get("status") == "stopped", stopped)
+    stage("scan_stopped")
+
+    for index, size in enumerate(SIZES):
+        js("otp23.drainEvents()")
+        rec = pv.fixture(size, 17 + index)
+        want = pv.echo(rec)
+        want_b64 = base64.b64encode(want).decode()
+        t_send = time.monotonic()
+        sent = js(f"otp23.request('send', {{connection_handle: {json.dumps(ch)}, record_base64: {json.dumps(base64.b64encode(rec).decode())}}})")
+        case = {"size": size, "request_sha256": hashlib.sha256(rec).hexdigest(), "expected_sha256": hashlib.sha256(want).hexdigest(),
+                "sent_type": sent.get("type")}
+        got = None
+        end = time.monotonic() + 12
+        while got is None and time.monotonic() < end:
+            for ev in js("otp23.drainEvents()"):
+                m = ev["message"]
+                if m.get("type") == "disconnected":
+                    case["disconnected"] = {k: m.get(k) for k in ("code", "stage", "status")}
+                if m.get("type") == "message":
+                    got = m
+            time.sleep(0.05)
+        case["roundtrip_ms"] = round((time.monotonic() - t_send) * 1000)
+        if got is not None:
+            raw = base64.b64decode(got["record_base64"])
+            case["received_len"] = len(raw)
+            case["received_sha256"] = hashlib.sha256(raw).hexdigest()
+            case["byte_exact"] = got["record_base64"] == want_b64
+        else:
+            case["received_len"] = None
+            case["byte_exact"] = False
+        case["result"] = "PASS" if sent.get("type") == "sent" and case["byte_exact"] else "FAIL"
+        res["cases"].append(case)
+        stage("size_done", size=size, result=case["result"])
+        cv.expect(case["result"] == "PASS", f"size {size} failed: {case}")
+    d = js(f"otp23.disconnectDevice({json.dumps(ch)})")
+    stage("disconnected", reply=d.get("type"))
+    cv.expect(d.get("type") == "disconnected", d.get("type"))
+    done = js("otp23.shutdown()")
+    cv.expect(done.get("type") == "shutdown_complete", done.get("type"))
+    gone = cv.wait_all_gone([pid, wrapper], 8)
+    stage("shutdown", process_gone_s=gone)
+    cv.expect(gone is not None, "owned host survived shutdown")
+    res["result"] = "PASS"
+except Exception:
+    res["failure"] = traceback.format_exc(limit=4)
+    print(res["failure"], flush=True)
+finally:
+    if chrome:
+        chrome.close()
+    parsed = pv.parse_trace(trace)
+    res["measured_mtu_by_conn"] = parsed["mtu_by_conn"]
+    res["trace_sends"] = len(parsed["sends"])
+    res["trace_replies"] = len(parsed["replies"])
+    left = [p["ProcessId"] for p in cv.host_processes(exe)]
+    res["plain_host_processes_after_run"] = left
+    if pid and pid in left:
+        res["result"] = "FAIL"
+        res["owned_process_survived"] = pid
+    res["finished_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    res["duration_s"] = round(time.monotonic() - t0, 1)
+    pathlib.Path(str(prefix) + ".json").write_text(cv.scrub(json.dumps(res, indent=2)), encoding="utf-8")
+    print("RESULT", res["result"], flush=True)
+raise SystemExit(0 if res["result"] == "PASS" else 1)

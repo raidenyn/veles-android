@@ -1,0 +1,266 @@
+{
+  "what": "OTP-23 M-11 (unsigned developer host, distinct identity) public evidence provenance, 2026-10-29",
+  "status": "raw captures published with original statuses and problems UNCHANGED; manual adjudication is a DRAFT (adjudication-draft.md) awaiting independent review; no matrix row changed",
+  "roles": {
+    "capture_script_implementer": "Claude Code / claude-opus-5-5, session 752e1974-0617-470b-a425-dfbda97ac728 (wrote the M11-1 loop fix; did NOT operate M-11)",
+    "independent_execution_approval": "Claude Code / claude-opus-5-5, session 7b4ee6ca (../mac-integration-2026-10-29/reports/otp23-mac-m11-loop-verification-opus.md)",
+    "controller_operator": "the coordinating parent, opencode gpt-6.1-sol (session ses_e8393db6bffeMzWgsvMaGsH3pI), ran the UNCHANGED reviewed scripts because the fresh Claude Code physical-operator attempt c401a87c hit an API quota (429) BEFORE any tool or device action. Not an Opus operator.",
+    "independent_data_review": "Claude Code / claude-opus-5-5, session e30e474d (../mac-integration-2026-10-29/reports/otp23-mac-final-data-review-opus.md §4-6)",
+    "earlier_prep": "M-11 prep §1-9 by ollama-cloud/glm-5.3-flash; F-M11-1 found by ollama-cloud/kimi-k3"
+  },
+  "controller_source_attestation": {
+    "kind": "ATTESTATION, not measurement: the capture JSONs do not self-record the script sha",
+    "controller_statement": "controller/OPERATOR.md: 'Reviewed capture SHA256: 976f61cf…' and 'executing the unchanged, independently approved scripts'",
+    "as_run_code_published_from_local_prep_copies": {
+      "as-run-code/README-M11-PREP.md": "93514f0b5ebb2eb8dc4f9beb3c22e8b800a4906632243ac5b6fbe2213606722c",
+      "as-run-code/extension/background.js": "2d8a048a914e74328869cd0727f29ed26488aa6d45ba0ae7d204b1ca129deb0b",
+      "as-run-code/extension/connector.html": "d43f1b59c764753d2c9ce4b5fbc47e1ea211420cd83a5d1501fd293e7a42d4aa",
+      "as-run-code/extension/connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+      "as-run-code/extension/manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+      "as-run-code/m11_dev_capture.py": "976f61cf038a3d46543bf03a80e8ae3b55a83b9516519d631e31e50f7a40e02d",
+      "as-run-code/package-dev.sh": "fa6ba4e87febcae219dc46d868deb8e914a04cd0e4e9b7b94f6f93c8a203abb4",
+      "as-run-code/test_m11_prompt_watch.py": "50aa32eba131962738627c198572721c3daa70a4702954df6f5ef0aa38776478"
+    },
+    "matches": {
+      "m11_dev_capture.py": "976f61cf… = the independently approved hash and the Mac stage manifest b1907348… entry staged 2026-10-29T04:51:48Z",
+      "package-dev.sh": "fa6ba4e8… (unchanged since prep; same stage manifest)",
+      "test_m11_prompt_watch.py": "50aa32eb… (offline tests; not executed during M-11)",
+      "extension/*": "byte-equal to the extension_files sha256 the captures recorded (6cc440fe/2d8a048a/c1c33331/d43f1b59) and to the repo HEAD extension"
+    },
+    "info_plist": "Info.plist bytes were generated on the Mac by package-dev.sh and are NOT published; the captures record CFBundleIdentifier/CFBundleName/CFBundleDisplayName/CFBundleExecutable and codesign -dvv (adhoc, linker-signed, TeamIdentifier not set, Info.plist not bound)",
+    "dev_binary": "not published; capture-recorded sha256 c36894dca9d47717410cf833ca4f181894d1144e48bc0f301232a2be307864ea equals the pinned raw unsigned counterpart of the approved cd971f0 fixture build"
+  },
+  "attempts": {
+    "m11-attempt-1": {
+      "capture_sha256": "9f9e33d28d20e965ebfbcf964acea8d815d5b17f94392a8169761edc38b6f533",
+      "started_utc": "2026-10-29T05:26:31+00:00",
+      "finished_utc": "2026-10-29T05:26:32+00:00",
+      "hello_type": "error",
+      "hello_stage": "port_closed",
+      "scan_outcome": null,
+      "classified": null,
+      "prompt_watch_ended_by": null,
+      "prompt_watch_waited_s": null,
+      "accepted_answer": null,
+      "problems": [
+        "RuntimeError: dev host hello failed: {'envelope_version': 1, 'type': 'error', 'request_id': 'r1-vei27e', 'code': 'internal', 'recoverability': 'fatal', 'stage': 'port_closed', 'synthesized': True, 'request_type': 'hello'}"
+      ],
+      "user_scope_manifest_path_field": "target-dev/VelesOtp23Dev.app/Contents/MacOS/otp23-host",
+      "dev_binary_sha256": "c36894dca9d47717410cf833ca4f181894d1144e48bc0f301232a2be307864ea",
+      "dev_info_plist": {
+        "CFBundleIdentifier": "me.nagaev.veles.bridge.dev",
+        "CFBundleName": "VelesOtp23Dev",
+        "CFBundleDisplayName": null,
+        "CFBundleExecutable": "otp23-host"
+      },
+      "approved_before": {
+        "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+        "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "codesign_verify_strict": true
+      },
+      "approved_after": {
+        "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+        "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "codesign_verify_strict": true
+      },
+      "registration_after": {
+        "dir": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts",
+        "dev_manifest_exists": false,
+        "plain_manifest_exists": false,
+        "all_veles_named": []
+      },
+      "disposable_profile_removed": true,
+      "chrome_version": "Chrome/156.0.8078.74",
+      "context": {
+        "uid": 501,
+        "ssh": true
+      }
+    },
+    "m11-attempt-2": {
+      "capture_sha256": "209fe71d4d400258d7f433570d16726e382d703585f3fcc59719d1e4b16e5e94",
+      "started_utc": "2026-10-29T05:29:57+00:00",
+      "finished_utc": "2026-10-29T05:42:00+00:00",
+      "hello_type": "ready",
+      "hello_stage": null,
+      "scan_outcome": {
+        "api_version": 1,
+        "code": "scan_failed",
+        "envelope_version": 1,
+        "recoverability": "retryable",
+        "request_id": "r2-3gdjv6",
+        "stage": "permission_pending",
+        "type": "error"
+      },
+      "classified": {
+        "state": "pending_at_host_budget_not_denial",
+        "post_init_authorization": null,
+        "owner_dialog_observed": null,
+        "ended_by": "deadline"
+      },
+      "prompt_watch_ended_by": "deadline",
+      "prompt_watch_waited_s": 720.9,
+      "accepted_answer": null,
+      "problems": [
+        "prompt watch reached its deadline without the owner's nonce answer and a post-answer scan reply (recorded as observed, not adjudicated)"
+      ],
+      "user_scope_manifest_path_field": "/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app/Contents/MacOS/otp23-host",
+      "dev_binary_sha256": "c36894dca9d47717410cf833ca4f181894d1144e48bc0f301232a2be307864ea",
+      "dev_info_plist": {
+        "CFBundleIdentifier": "me.nagaev.veles.bridge.dev",
+        "CFBundleName": "VelesOtp23Dev",
+        "CFBundleDisplayName": null,
+        "CFBundleExecutable": "otp23-host"
+      },
+      "approved_before": {
+        "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+        "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "codesign_verify_strict": true
+      },
+      "approved_after": {
+        "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+        "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "codesign_verify_strict": true
+      },
+      "registration_after": {
+        "dir": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts",
+        "dev_manifest_exists": false,
+        "plain_manifest_exists": false,
+        "all_veles_named": []
+      },
+      "disposable_profile_removed": true,
+      "chrome_version": "Chrome/156.0.8078.74",
+      "context": {
+        "uid": 501,
+        "ssh": true
+      }
+    },
+    "m11-attempt-3": {
+      "capture_sha256": "f04c9045de668cdddf00866f4aecf2e5b280b8b46b31dbf70b7fcfdbeb31fc72",
+      "started_utc": "2026-10-29T06:21:17+00:00",
+      "finished_utc": "2026-10-29T07:21:19+00:00",
+      "hello_type": "ready",
+      "hello_stage": null,
+      "scan_outcome": {
+        "api_version": 1,
+        "envelope_version": 1,
+        "request_id": "r2-e5v2lw",
+        "scan_handle": "361362adef91c463",
+        "status": "started",
+        "type": "scan_state"
+      },
+      "classified": {
+        "state": "authorized_started",
+        "post_init_authorization": null,
+        "owner_dialog_observed": null,
+        "ended_by": "deadline"
+      },
+      "prompt_watch_ended_by": "deadline",
+      "prompt_watch_waited_s": 3600.3,
+      "accepted_answer": null,
+      "problems": [
+        "prompt watch reached its deadline without the owner's nonce answer and a post-answer scan reply (recorded as observed, not adjudicated)"
+      ],
+      "user_scope_manifest_path_field": "/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app/Contents/MacOS/otp23-host",
+      "dev_binary_sha256": "c36894dca9d47717410cf833ca4f181894d1144e48bc0f301232a2be307864ea",
+      "dev_info_plist": {
+        "CFBundleIdentifier": "me.nagaev.veles.bridge.dev",
+        "CFBundleName": "VelesOtp23Dev",
+        "CFBundleDisplayName": null,
+        "CFBundleExecutable": "otp23-host"
+      },
+      "approved_before": {
+        "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+        "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "codesign_verify_strict": true
+      },
+      "approved_after": {
+        "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+        "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "codesign_verify_strict": true
+      },
+      "registration_after": {
+        "dir": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts",
+        "dev_manifest_exists": false,
+        "plain_manifest_exists": false,
+        "all_veles_named": []
+      },
+      "disposable_profile_removed": true,
+      "chrome_version": "Chrome/156.0.8078.74",
+      "context": {
+        "uid": 501,
+        "ssh": true
+      }
+    }
+  },
+  "post_run_files_NOT_capture_inputs": {
+    "attempts/m11-attempt-2/m11-prompt-ac6b44f7-2857-416d-bc00-75e2aa44139d.answer.json": {
+      "sha256": "0bda401f41df67255fcc3fbf880872a23e7ae18707cf5128aac947c30c686492",
+      "written_utc": "2026-10-29T06:18:28Z (36 min after attempt 2 ended at 05:42:00Z)",
+      "accepted_by_run": false
+    },
+    "attempts/m11-attempt-3/.owner-answer-8a055ccc.tmp": {
+      "sha256": "d003747339506ebb338040dd2714bd067eb730b0609e4a41b5ea108b9a36272e",
+      "written_utc": "about 2026-10-29T10:38Z (3 h 17 min after attempt 3 ended at 07:21:19Z)",
+      "accepted_by_run": false,
+      "why_tmp": "the controller's guard `test ! -e m11-capture.json` refused the rename after the capture had finished"
+    }
+  },
+  "owner_records": {
+    "owner-records/account-class.txt": "a2bdc40c7d6119e01513ae3c3b9b71a287ad910d114ff172883043303050702d",
+    "owner-records/original-grant-owner-check.json": "9d7f1689ac3d347ccc68a3881f5ef4d7719a61468a9e5305604a5a7d7329d28a",
+    "owner-records/otp23-mac-permission-owner-record.json": "0711b3ee41c74e765550dc419b44439d6d54ae16d0cbf86d8e2936a4c39e180a"
+  },
+  "account_class": {
+    "file": "owner-records/account-class.txt",
+    "sha256": "a2bdc40c7d6119e01513ae3c3b9b71a287ad910d114ff172883043303050702d",
+    "captured_utc": "2026-10-29T11:01:19Z",
+    "label": "operator-captured, post-run, read-only, same account as the runs (uid 501 / raiden; captures record context uid 501)",
+    "content_summary": "id -un raiden; id -u 501; id -Gn includes admin; dseditgroup: yes raiden is a member of admin"
+  },
+  "excluded_privately": [
+    {
+      "source": "otp23-m11-controller-20261029/capture-with-listing.invalid-mixed-stream",
+      "sha256": "3dc1f88d9ba94cf71914c2c9990498366616d515c2d4202b9d6386f814b68105",
+      "reason": "invalid mixed stream (directory listing interleaved with tar bytes); never a valid artifact"
+    },
+    {
+      "source": "otp23-m11-controller-20261029/m11-driver-attempt2.log",
+      "sha256": "0cec52b570c60656c7b5df04c13d9d5404135ee59add4a37ec3de9bce0acf690",
+      "reason": "Chrome stderr noise (keychain/password-store/allocator/GPU adapter lines) interleaved with the driver's stdout summary; the structured content is in the published captures"
+    },
+    {
+      "source": "otp23-m11-controller-20261029/m11-driver-attempt3.log",
+      "sha256": "058493a51b05d9acd057f9bde73e099ef81afada7373448796cb047866b34842",
+      "reason": "Chrome stderr noise (keychain/password-store/allocator/GPU adapter lines) interleaved with the driver's stdout summary; the structured content is in the published captures"
+    },
+    {
+      "source": "otp23-m11-controller-20261029/m11-driver.log",
+      "sha256": "16550c0f950e5f9b3441d2118fd3eca453c19375503ae55ed6214dd03baf6fc9",
+      "reason": "Chrome stderr noise (keychain/password-store/allocator/GPU adapter lines) interleaved with the driver's stdout summary; the structured content is in the published captures"
+    }
+  ],
+  "duplicates_not_republished": {
+    "otp23-m11-controller-20261029/all-attempts.tgz": {
+      "sha256": "3245a66466b8e7edd41fc3d7385f4c2338ac8e7c6c1c92bf3628202daa0877ae",
+      "members": "7 files, each byte-equal to the published attempts/ files (verified at curation time)"
+    },
+    "otp23-m11-controller-20261029/capture.tgz": {
+      "sha256": "ab61ad30384b46bb31e7d2feb0e7baf482920a3b0c3f1a7339061f72ce4465dc",
+      "members": "attempt-1 m11-capture.json, byte-equal to the published copy"
+    },
+    "otp23-m11-controller-20261029/owner-answer.json": {
+      "sha256": "0bda401f41df67255fcc3fbf880872a23e7ae18707cf5128aac947c30c686492",
+      "equals": "attempts/m11-attempt-2/…answer.json"
+    },
+    "otp23-m11-controller-20261029/owner-answer-attempt3.json": {
+      "sha256": "d003747339506ebb338040dd2714bd067eb730b0609e4a41b5ea108b9a36272e",
+      "equals": "attempts/m11-attempt-3/.owner-answer-8a055ccc.tmp"
+    },
+    "otp23-m11-controller-20261029/prompt-request.json": {
+      "sha256": "40c875b1fb8a0f03a5a2d78e17c8999f7a2be97b19254e0bc1f14a8e70b0d474",
+      "equals": "attempts/m11-attempt-2/…request.json"
+    }
+  },
+  "private_location": "/tmp/approved-otp23-privacy/mac-m11-dev-2026-10-29",
+  "path_resolution": "../mac-integration-2026-10-29/path-map.json"
+}

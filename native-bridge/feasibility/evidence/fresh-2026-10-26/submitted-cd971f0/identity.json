@@ -1,0 +1,82 @@
+{
+  "source_commit": "cd971f0aaba9f3e49e669d63b06405a02f6cd088",
+  "source_archive_sha256_verified_on_both_desktops": "e34d279b40f1b12a0a45b474c61e32b947a02d1b5135e5fea529f971d9c667cb",
+  "source_archive_contains_git_directory": false,
+  "source_hashes": {
+    "app/src/main/java/me/nagaev/veles/sharing/SharingGattServer.kt": "6408b7c5839adb224688273988c257107362545bf18e55176ecd5ab3414fcab6",
+    "native-bridge/feasibility/src/macos.rs": "b279858bba8d4422f94fd607f9b23442e09f35850687fcab38c44a411e4ac721"
+  },
+  "linux": {
+    "java_home": "/home/dev/.jdk/zulu21",
+    "gradle_launcher_jvm": "21.0.12.1 (Azul Systems, Inc. 21.0.12.1+1-LTS)",
+    "gradle_daemon_jvm": "/home/dev/.jdk/zulu21",
+    "gradle": "9.5.0",
+    "ndk": "29.0.14206865",
+    "required_gates_exit_code": 0,
+    "jvm_tests": {"tests": 316, "failures": 0, "errors": 0, "skipped": 0},
+    "raw_log_guard_source": ".github/workflows/ci.yml lint-check, exact de-indented script text equality verified",
+    "raw_log_guard_script": "ci-log-guards.sh",
+    "raw_log_guard_execution": "ci-log-guards-verbatim.log",
+    "raw_log_guards_exit_code": 0,
+    "raw_log_guards_matches": 0
+  },
+  "windows": {
+    "account": "existing administrator, filtered medium integrity; not a standard-account test",
+    "rust_target": "x86_64-pc-windows-msvc",
+    "native_test_exit_code": 0,
+    "native_clippy_exit_code": 0,
+    "native_build_exit_code": 0,
+    "native_host_sha256": "6cf72ed0d2e9140420cca8167e8b8d7322c6afc74ab73a5a68a5189c7819fcda",
+    "native_host_bytes": 717312,
+    "scan_only_chrome_driver_exit_code": 0,
+    "scan_only_chrome_cases_passed": 12,
+    "mixed_chrome_phone_diagnostic": "CH cases PASS including one discovery in CH-05, PH-01 FAIL: no phone advertised within 30s; not attributed to a cause without isolation",
+    "isolated_single_phone_diagnostic": "PASS with exactly one host and one scan; byte-exact 4, 508, 509, 1016, 1017, 4095 and 4096-byte replies on the 6T",
+    "isolated_measured_att_mtu": 517,
+    "isolated_trace_sends": 7,
+    "isolated_trace_replies": 7,
+    "isolated_disconnect_shutdown_and_no_surviving_host": true,
+    "earlier_mixed_diagnostic_failure_cause": "not proven; non-reproduced with one isolated host is consistent with multi-host scan interference but does not establish causation",
+    "two_phone_or_background_acceptance_proved": false
+  },
+  "macos": {
+    "account": "existing administrator GUI account; not a fresh standard-account test",
+    "rust_target": "aarch64-apple-darwin",
+    "native_test_exit_code": 0,
+    "native_clippy_exit_code": 0,
+    "native_build_exit_code": 0,
+    "unsigned_native_host_sha256": "c36894dca9d47717410cf833ca4f181894d1144e48bc0f301232a2be307864ea",
+    "signed_native_host_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "bundle_identifier": "me.nagaev.veles.bridge",
+    "signing_class": "existing stable Apple Development identity in Aqua; not CI/distribution provenance",
+    "codesign_strict_and_anchor_apple_generic": "PASS in actual packaging command",
+    "scan_driver_exit_code": 1,
+    "scan_result": "headless Chrome hello/ready succeeded; scan failed access_denied, CoreBluetooth denied",
+    "prompt_owner": "not observed",
+    "allow_or_recovery_proved": false,
+    "registration_removed_and_no_host_remaining": true
+  },
+  "android": {
+    "build_host": "Linux only",
+    "source_build_state": "clean committed cd971f0; both debug APK and release APK were built before adding new evidence files",
+    "apk_sha256": "6382bf2863b6a457e262e9be5dec33ae4e657063190d7ea757ca7f2b781bd385",
+    "instrumentation_apk_sha256": "09280790eea40242722bd0fb902e4402f2c5359c810636effa7b209b3f74e0d2",
+    "version_code": 3,
+    "version_name": "0.0.3-27-cd971f0-contract_otp23-desktop-alignment",
+    "installed_apk_readback_hash_matches_on_both_phones": true,
+    "install_mode": "update -r, no -g, no permission bypass and no clearing data",
+    "oneplus_6t": "CONNECT and ADVERTISE granted at observation; mechanism not observed; initial 10-second bounded attempt incomplete, subsequent fixture reached otp23-ready and ended gracefully with OK (1 test) after the isolated Windows exchange",
+    "oneplus_10_pro": "CONNECT and ADVERTISE denied; instrumentation failed PermissionRequired",
+    "two_phone_maximum_record_or_background_acceptance": "BLOCKED"
+  },
+  "release_inspection": {
+    "artifact_sha256": "a424caf74b7813d36a489feb29584cb0b5a589519eba3429f21cc84a3574efb1",
+    "signed": false,
+    "source_commit": "cd971f0aaba9f3e49e669d63b06405a02f6cd088",
+    "forbidden_symbols_checked_in_all_dex_and_r8_mapping": ["SyntheticTransportFixture", "scheduleSyntheticPush", "OTP23_POC"],
+    "forbidden_symbols_found": [],
+    "scan_or_location_permissions_present": false,
+    "real_otp_sharing_delivery_implemented": false
+  },
+  "decision": "NO-GO for OTP-24; only new-account tests are waived"
+}

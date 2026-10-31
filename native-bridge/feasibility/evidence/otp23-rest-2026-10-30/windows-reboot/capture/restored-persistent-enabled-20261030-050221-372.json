@@ -1,0 +1,23 @@
+{
+    "utc":  "2026-10-30T05:02:21.0583841Z",
+    "operation":  "Clear only CONFIGFLAG_DISABLED on approved Bluetooth adapter via SetupAPI",
+    "before_config_flags":  0,
+    "after":  [
+                  {
+                      "KeyName":  "DEVPKEY_Device_ConfigFlags",
+                      "Data":  0
+                  },
+                  {
+                      "KeyName":  "DEVPKEY_Device_ProblemCode",
+                      "Data":  0
+                  },
+                  {
+                      "KeyName":  "DEVPKEY_Device_DevNodeStatus",
+                      "Data":  25190410
+                  }
+              ],
+    "device":  {
+                   "Status":  "OK",
+                   "FriendlyName":  "Qualcomm FastConnect 7800 Dual Bluetooth Adapter"
+               }
+}

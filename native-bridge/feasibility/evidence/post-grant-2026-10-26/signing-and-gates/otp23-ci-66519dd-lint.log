@@ -1,0 +1,493 @@
+﻿2026-10-27T05:29:11.7628519Z Current runner version: '2.338.0'
+2026-10-27T05:29:11.7656952Z ##[group]Runner Image Provisioner
+2026-10-27T05:29:11.7657874Z Hosted Compute Agent
+2026-10-27T05:29:11.7658531Z Version: 20261021.618
+2026-10-27T05:29:11.7659182Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T05:29:11.7659941Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T05:29:11.7660683Z Worker ID: {c227053f-0247-4290-9f40-5fd6e80e3a08}
+2026-10-27T05:29:11.7661389Z Region: westus2
+2026-10-27T05:29:11.7662276Z Cloud: Azure
+2026-10-27T05:29:11.7662936Z ##[endgroup]
+2026-10-27T05:29:11.7664850Z ##[group]Operating System
+2026-10-27T05:29:11.7665634Z Ubuntu
+2026-10-27T05:29:11.7666163Z 24.04.5
+2026-10-27T05:29:11.7666659Z LTS
+2026-10-27T05:29:11.7667242Z ##[endgroup]
+2026-10-27T05:29:11.7667844Z ##[group]Runner Image
+2026-10-27T05:29:11.7668508Z Image: ubuntu-24.04
+2026-10-27T05:29:11.7669093Z Version: 20261012.334.1
+2026-10-27T05:29:11.7670433Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-27T05:29:11.7672352Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+2026-10-27T05:29:11.7673394Z ##[endgroup]
+2026-10-27T05:29:11.7674628Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T05:29:11.7676646Z Contents: read
+2026-10-27T05:29:11.7677310Z Metadata: read
+2026-10-27T05:29:11.7677874Z Packages: read
+2026-10-27T05:29:11.7678482Z ##[endgroup]
+2026-10-27T05:29:11.7680623Z Secret source: Actions
+2026-10-27T05:29:11.7681633Z Cache mode: write
+2026-10-27T05:29:11.7682896Z Prepare workflow directory
+2026-10-27T05:29:11.8087959Z Prepare all required actions
+2026-10-27T05:29:11.8137753Z Getting action download info
+2026-10-27T05:29:12.1568495Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-27T05:29:12.2860300Z Download action repository 'actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961' (SHA:b6effb05e454b25005698d916606bdc6ffcbf961)
+2026-10-27T05:29:12.6109499Z Download action repository 'gradle/actions@4733eaac7c1b0da527e4206b7671e0061de1ce37' (SHA:4733eaac7c1b0da527e4206b7671e0061de1ce37)
+2026-10-27T05:29:16.0745348Z Complete job name: lint-check
+2026-10-27T05:29:16.1729061Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+2026-10-27T05:29:16.1730195Z with:
+2026-10-27T05:29:16.1730664Z   repository: raidenyn/veles-android
+2026-10-27T05:29:16.1734309Z   token: ***
+2026-10-27T05:29:16.1734820Z   ssh-strict: true
+2026-10-27T05:29:16.1735337Z   ssh-user: git
+2026-10-27T05:29:16.1735795Z   persist-credentials: true
+2026-10-27T05:29:16.1736249Z   clean: true
+2026-10-27T05:29:16.1736768Z   sparse-checkout-cone-mode: true
+2026-10-27T05:29:16.1737338Z   fetch-depth: 1
+2026-10-27T05:29:16.1737818Z   fetch-tags: false
+2026-10-27T05:29:16.1738259Z   show-progress: true
+2026-10-27T05:29:16.1738685Z   lfs: false
+2026-10-27T05:29:16.1739190Z   submodules: false
+2026-10-27T05:29:16.1739695Z   set-safe-directory: true
+2026-10-27T05:29:16.1740284Z   allow-unsafe-pr-checkout: false
+2026-10-27T05:29:16.1741239Z ##[endgroup]
+2026-10-27T05:29:16.4745655Z Syncing repository: raidenyn/veles-android
+2026-10-27T05:29:16.4750410Z ##[group]Getting Git version info
+2026-10-27T05:29:16.4751588Z Working directory is '/home/runner/work/veles-android/veles-android'
+2026-10-27T05:29:16.4753523Z [command]/usr/bin/git version
+2026-10-27T05:29:16.4754263Z git version 2.55.0
+2026-10-27T05:29:16.4761296Z ##[endgroup]
+2026-10-27T05:29:16.4773769Z Temporarily overriding HOME='/home/runner/work/_temp/7b246f78-b197-4624-ad2a-6c1f6eed2db3' before making global git config changes
+2026-10-27T05:29:16.4775531Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T05:29:16.4781270Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/veles-android/veles-android
+2026-10-27T05:29:16.4845227Z Deleting the contents of '/home/runner/work/veles-android/veles-android'
+2026-10-27T05:29:16.4848914Z ##[group]Determining repository object format
+2026-10-27T05:29:16.4850574Z ##[endgroup]
+2026-10-27T05:29:16.4851516Z ##[group]Initializing the repository
+2026-10-27T05:29:16.4856477Z [command]/usr/bin/git init /home/runner/work/veles-android/veles-android
+2026-10-27T05:29:16.4962919Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-27T05:29:16.4964301Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-27T05:29:16.4967446Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-27T05:29:16.4968377Z hint: call:
+2026-10-27T05:29:16.4968866Z hint:
+2026-10-27T05:29:16.4969522Z hint: 	git config --global init.defaultBranch <name>
+2026-10-27T05:29:16.4970291Z hint:
+2026-10-27T05:29:16.4971023Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-27T05:29:16.4972452Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-27T05:29:16.4973393Z hint:
+2026-10-27T05:29:16.4973985Z hint: 	git branch -m <name>
+2026-10-27T05:29:16.4974544Z hint:
+2026-10-27T05:29:16.4975294Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-27T05:29:16.4976625Z Initialized empty Git repository in /home/runner/work/veles-android/veles-android/.git/
+2026-10-27T05:29:16.4979076Z [command]/usr/bin/git remote add origin https://github.com/raidenyn/veles-android
+2026-10-27T05:29:16.5029880Z ##[endgroup]
+2026-10-27T05:29:16.5030930Z ##[group]Disabling automatic garbage collection
+2026-10-27T05:29:16.5034792Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-27T05:29:16.5082168Z ##[endgroup]
+2026-10-27T05:29:16.5083583Z ##[group]Setting up auth
+2026-10-27T05:29:16.5084323Z Removing SSH command configuration
+2026-10-27T05:29:16.5092799Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T05:29:16.5130472Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T05:29:16.5514747Z Removing HTTP extra header
+2026-10-27T05:29:16.5520846Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T05:29:16.5561597Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T05:29:16.5785509Z Removing includeIf entries pointing to credentials config files
+2026-10-27T05:29:16.5791723Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T05:29:16.5831561Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T05:29:16.6063370Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-27T05:29:16.6105874Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/veles-android/veles-android/.git.path /home/runner/work/_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:16.6149664Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/veles-android/veles-android/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:16.6191953Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:16.6227871Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:16.6259989Z ##[endgroup]
+2026-10-27T05:29:16.6260657Z ##[group]Fetching the repository
+2026-10-27T05:29:16.6266751Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ac94aafebf74599e0cef6406c93f0b717d5488e0:refs/remotes/pull/123/merge
+2026-10-27T05:29:17.2072255Z From https://github.com/raidenyn/veles-android
+2026-10-27T05:29:17.2073513Z  * [new ref]         ac94aafebf74599e0cef6406c93f0b717d5488e0 -> pull/123/merge
+2026-10-27T05:29:17.2078073Z ##[endgroup]
+2026-10-27T05:29:17.2079131Z ##[group]Determining the checkout info
+2026-10-27T05:29:17.2080067Z ##[endgroup]
+2026-10-27T05:29:17.2085784Z [command]/usr/bin/git sparse-checkout disable
+2026-10-27T05:29:17.2143811Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-27T05:29:17.2179019Z ##[group]Checking out the ref
+2026-10-27T05:29:17.2183857Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/123/merge
+2026-10-27T05:29:17.2979160Z Note: switching to 'refs/remotes/pull/123/merge'.
+2026-10-27T05:29:17.2979890Z 
+2026-10-27T05:29:17.2980381Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-27T05:29:17.2981507Z changes and commit them, and you can discard any commits you make in this
+2026-10-27T05:29:17.2982813Z state without impacting any branches by switching back to a branch.
+2026-10-27T05:29:17.2983391Z 
+2026-10-27T05:29:17.2983771Z If you want to create a new branch to retain commits you create, you may
+2026-10-27T05:29:17.2984645Z do so (now or later) by using -c with the switch command. Example:
+2026-10-27T05:29:17.2985158Z 
+2026-10-27T05:29:17.2985375Z   git switch -c <new-branch-name>
+2026-10-27T05:29:17.2985715Z 
+2026-10-27T05:29:17.2985920Z Or undo this operation with:
+2026-10-27T05:29:17.2986247Z 
+2026-10-27T05:29:17.2986443Z   git switch -
+2026-10-27T05:29:17.2986727Z 
+2026-10-27T05:29:17.2987392Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-27T05:29:17.2988539Z 
+2026-10-27T05:29:17.2989286Z HEAD is now at ac94aaf Merge 66519dd0f5d8057941c71ddc8f07b2948502f146 into 6e083e0ec5cb70d1bc8c5f98abca536e190722e1
+2026-10-27T05:29:17.2993542Z ##[endgroup]
+2026-10-27T05:29:17.3045028Z [command]/usr/bin/git log -1 --format=%H
+2026-10-27T05:29:17.3075348Z ac94aafebf74599e0cef6406c93f0b717d5488e0
+2026-10-27T05:29:17.3408660Z ##[group]Run actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+2026-10-27T05:29:17.3409172Z with:
+2026-10-27T05:29:17.3409430Z   distribution: temurin
+2026-10-27T05:29:17.3409729Z   java-version-file: .java-version
+2026-10-27T05:29:17.3410044Z   java-package: jdk
+2026-10-27T05:29:17.3410308Z   check-latest: false
+2026-10-27T05:29:17.3410571Z   set-default: true
+2026-10-27T05:29:17.3410840Z   verify-signature: false
+2026-10-27T05:29:17.3411116Z   server-id: github
+2026-10-27T05:29:17.3411384Z   server-username: GITHUB_ACTOR
+2026-10-27T05:29:17.3411694Z   server-password: GITHUB_TOKEN
+2026-10-27T05:29:17.3412186Z   overwrite-settings: true
+2026-10-27T05:29:17.3412491Z   job-status: success
+2026-10-27T05:29:17.3415073Z   token: ***
+2026-10-27T05:29:17.3415370Z   show-download-progress: false
+2026-10-27T05:29:17.3415671Z ##[endgroup]
+2026-10-27T05:29:17.4979574Z ##[group]Installed distributions
+2026-10-27T05:29:17.5253201Z Resolved Java 21.0.12+1 from tool-cache
+2026-10-27T05:29:17.5254402Z Setting Java 21.0.12+1 as the default
+2026-10-27T05:29:17.5270699Z Creating toolchains.xml for JDK version 21.0.12 from temurin
+2026-10-27T05:29:17.5392823Z Writing to /home/runner/.m2/toolchains.xml
+2026-10-27T05:29:17.5393583Z 
+2026-10-27T05:29:17.5394084Z Java configuration:
+2026-10-27T05:29:17.5394473Z   Distribution: temurin
+2026-10-27T05:29:17.5394993Z   Version: 21.0.12+1
+2026-10-27T05:29:17.5395481Z   Path: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.12-1/x64
+2026-10-27T05:29:17.5395847Z 
+2026-10-27T05:29:17.5396495Z ##[endgroup]
+2026-10-27T05:29:17.5433470Z Creating settings.xml with server-id: github
+2026-10-27T05:29:17.5434374Z Writing to /home/runner/.m2/settings.xml
+2026-10-27T05:29:17.5435939Z Configured MAVEN_ARGS to include -ntp to suppress Maven transfer progress logs. Set 'show-download-progress: true' to keep the download progress output.
+2026-10-27T05:29:17.5839482Z ##[group]Run gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37
+2026-10-27T05:29:17.5840383Z with:
+2026-10-27T05:29:17.5840747Z   cache-provider: enhanced
+2026-10-27T05:29:17.5841073Z   cache-disabled: false
+2026-10-27T05:29:17.5841376Z   cache-read-only: true
+2026-10-27T05:29:17.5841763Z   cache-write-only: false
+2026-10-27T05:29:17.5842457Z   cache-overwrite-existing: false
+2026-10-27T05:29:17.5842806Z   cache-cleanup: on-success
+2026-10-27T05:29:17.5843163Z   gradle-home-cache-includes: caches
+notifications
+
+2026-10-27T05:29:17.5843551Z   add-job-summary: always
+2026-10-27T05:29:17.5843875Z   add-job-summary-as-pr-comment: never
+2026-10-27T05:29:17.5844217Z   dependency-graph: disabled
+2026-10-27T05:29:17.5844584Z   dependency-graph-report-dir: dependency-graph-reports
+2026-10-27T05:29:17.5845007Z   dependency-graph-continue-on-failure: true
+2026-10-27T05:29:17.5845369Z   build-scan-publish: false
+2026-10-27T05:29:17.5845695Z   validate-wrappers: true
+2026-10-27T05:29:17.5846048Z   allow-snapshot-wrappers: false
+2026-10-27T05:29:17.5846379Z   gradle-home-cache-strict-match: false
+2026-10-27T05:29:17.5846711Z   workflow-job-context: null
+2026-10-27T05:29:17.5849334Z   github-token: ***
+2026-10-27T05:29:17.5849613Z env:
+2026-10-27T05:29:17.5849964Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.12-1/x64
+2026-10-27T05:29:17.5850537Z   JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.12-1/x64
+2026-10-27T05:29:17.5851133Z   MAVEN_ARGS: -ntp
+2026-10-27T05:29:17.5851633Z ##[endgroup]
+2026-10-27T05:29:19.2061899Z Merged default JDK locations into /home/runner/.m2/toolchains.xml
+2026-10-27T05:29:19.2067660Z Enhanced Caching: This build is using the proprietary 'gradle-actions-caching' provider for optimized caching support. See https://github.com/gradle/actions/blob/main/DISTRIBUTION.md for terms of use and opt-out instructions.
+2026-10-27T05:29:19.2949956Z ##[group]Restore Gradle state from cache
+2026-10-27T05:29:19.5419342Z Cache hit for restore-key: gradle-home-v2|Linux-X64|lint-check[b8a35c2f917259958c9abe8f2ff1b5ff]-6e083e0ec5cb70d1bc8c5f98abca536e190722e1
+2026-10-27T05:29:20.8439639Z Received 1188367 of 5382671 (22.1%), 1.1 MBs/sec
+2026-10-27T05:29:21.3711879Z Received 5382671 of 5382671 (100.0%), 3.4 MBs/sec
+2026-10-27T05:29:21.3712868Z Cache Size: ~5 MB (5382671 B)
+2026-10-27T05:29:21.3754967Z [command]/usr/bin/tar -xf /home/runner/work/_temp/4d40160b-5a29-42af-b656-0d38923916c9/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:21.5625776Z Cache restored successfully
+2026-10-27T05:29:21.5632682Z Restored cache entry with key gradle-home-v2|Linux-X64|lint-check[b8a35c2f917259958c9abe8f2ff1b5ff]-ac94aafebf74599e0cef6406c93f0b717d5488e0 in 2267ms
+2026-10-27T05:29:21.8134148Z Cache hit for: gradle-wrapper-zips-v2-1922ac6863145c4cf78b9888f5904620
+2026-10-27T05:29:21.8139492Z Cache hit for: gradle-kotlin-dsl-v2-2fb406d4a4304583e3dfc1cc9e78d3be
+2026-10-27T05:29:21.8146181Z Cache hit for: gradle-instrumented-jars-v2-bb910fcacf708cb42c10c2b5b22b5d19
+2026-10-27T05:29:21.8222697Z Cache hit for: gradle-dependencies-v2-127d33d3f4f7afc193aa7360c019ea62
+2026-10-27T05:29:21.8230473Z Cache hit for: gradle-transforms-v2-2bfaec716edc601ae94afc87e1c00262
+2026-10-27T05:29:21.8236101Z Cache hit for: gradle-generated-gradle-jars-v2-385d131625f54d4dab75422dfcb34a24
+2026-10-27T05:29:21.8239971Z Cache hit for: gradle-groovy-dsl-v2-a1b0f4d084efaae830b48156c1140c44
+2026-10-27T05:29:22.4695560Z Received 60385 of 60385 (100.0%), 0.2 MBs/sec
+2026-10-27T05:29:22.4696338Z Cache Size: ~0 MB (60385 B)
+2026-10-27T05:29:22.4719172Z [command]/usr/bin/tar -xf /home/runner/work/_temp/28dcbbe0-8fba-4993-95d2-a5774203c808/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:22.4828547Z Cache restored successfully
+2026-10-27T05:29:22.4843219Z Restored cache entry with key gradle-instrumented-jars-v2-bb910fcacf708cb42c10c2b5b22b5d19 in 919ms
+2026-10-27T05:29:22.5724953Z Received 91117 of 91117 (100.0%), 0.2 MBs/sec
+2026-10-27T05:29:22.5725618Z Cache Size: ~0 MB (91117 B)
+2026-10-27T05:29:22.5753851Z [command]/usr/bin/tar -xf /home/runner/work/_temp/8b78504a-a5f2-4acc-a04e-6b8d02a17a8f/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:22.5896758Z Cache restored successfully
+2026-10-27T05:29:22.5899460Z Restored cache entry with key gradle-groovy-dsl-v2-a1b0f4d084efaae830b48156c1140c44 in 1023ms
+2026-10-27T05:29:22.6191023Z Received 213312 of 213312 (100.0%), 0.4 MBs/sec
+2026-10-27T05:29:22.6191949Z Cache Size: ~0 MB (213312 B)
+2026-10-27T05:29:22.6213838Z [command]/usr/bin/tar -xf /home/runner/work/_temp/7e9d7e99-72e2-41fc-997b-a9958a2cc692/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:22.6701228Z Cache restored successfully
+2026-10-27T05:29:22.6711247Z Restored cache entry with key gradle-kotlin-dsl-v2-2fb406d4a4304583e3dfc1cc9e78d3be in 1106ms
+2026-10-27T05:29:23.0776507Z Received 0 of 139612526 (0.0%), 0.0 MBs/sec
+2026-10-27T05:29:23.0943044Z Received 0 of 204548981 (0.0%), 0.0 MBs/sec
+2026-10-27T05:29:23.1139560Z Received 0 of 806385516 (0.0%), 0.0 MBs/sec
+2026-10-27T05:29:23.1261430Z Received 0 of 42071661 (0.0%), 0.0 MBs/sec
+2026-10-27T05:29:23.6956013Z Received 42071661 of 42071661 (100.0%), 25.6 MBs/sec
+2026-10-27T05:29:23.6957423Z Cache Size: ~40 MB (42071661 B)
+2026-10-27T05:29:23.7178650Z [command]/usr/bin/tar -xf /home/runner/work/_temp/b403acee-92b5-40f2-a9bb-d22e7a5426cf/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:24.0784558Z Received 100663296 of 139612526 (72.1%), 48.0 MBs/sec
+2026-10-27T05:29:24.0952795Z Received 100663296 of 204548981 (49.2%), 48.0 MBs/sec
+2026-10-27T05:29:24.1167383Z Received 92274688 of 806385516 (11.4%), 43.9 MBs/sec
+2026-10-27T05:29:24.1311241Z Cache restored successfully
+2026-10-27T05:29:24.1360608Z Restored cache entry with key gradle-generated-gradle-jars-v2-385d131625f54d4dab75422dfcb34a24 in 2571ms
+2026-10-27T05:29:25.0236350Z Received 204548981 of 204548981 (100.0%), 66.6 MBs/sec
+2026-10-27T05:29:25.0237381Z Cache Size: ~195 MB (204548981 B)
+2026-10-27T05:29:25.0300677Z [command]/usr/bin/tar -xf /home/runner/work/_temp/f74a3789-3017-4705-a82e-cd1982546c80/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:25.0787910Z Received 130023424 of 139612526 (93.1%), 41.3 MBs/sec
+2026-10-27T05:29:25.1263505Z Received 201326592 of 806385516 (25.0%), 63.7 MBs/sec
+2026-10-27T05:29:26.0790741Z Received 135418222 of 139612526 (97.0%), 32.3 MBs/sec
+2026-10-27T05:29:26.1256270Z Received 327155712 of 806385516 (40.6%), 77.7 MBs/sec
+2026-10-27T05:29:26.4729189Z Received 139612526 of 139612526 (100.0%), 30.3 MBs/sec
+2026-10-27T05:29:26.4754684Z Cache Size: ~133 MB (139612526 B)
+2026-10-27T05:29:26.4935246Z [command]/usr/bin/tar -xf /home/runner/work/_temp/f69176dd-b949-4873-a7cb-d503c90309a1/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:27.0743570Z Cache restored successfully
+2026-10-27T05:29:27.1080404Z Restored cache entry with key gradle-wrapper-zips-v2-1922ac6863145c4cf78b9888f5904620 in 5543ms
+2026-10-27T05:29:27.1313902Z Received 436207616 of 806385516 (54.1%), 83.0 MBs/sec
+2026-10-27T05:29:27.2113251Z Cache restored successfully
+2026-10-27T05:29:27.2228198Z Restored cache entry with key gradle-transforms-v2-2bfaec716edc601ae94afc87e1c00262 in 5656ms
+2026-10-27T05:29:28.1278849Z Received 578813952 of 806385516 (71.8%), 91.8 MBs/sec
+2026-10-27T05:29:29.1286059Z Received 734003200 of 806385516 (91.0%), 99.8 MBs/sec
+2026-10-27T05:29:29.6878852Z Received 806385516 of 806385516 (100.0%), 101.5 MBs/sec
+2026-10-27T05:29:29.6879641Z Cache Size: ~769 MB (806385516 B)
+2026-10-27T05:29:29.6915439Z [command]/usr/bin/tar -xf /home/runner/work/_temp/b4fa18ad-afb5-443a-b332-db9c1dca0364/cache.tzst -P -C /home/runner/work/veles-android/veles-android --use-compress-program unzstd
+2026-10-27T05:29:30.9881662Z Cache restored successfully
+2026-10-27T05:29:31.2128055Z Restored cache entry with key gradle-dependencies-v2-127d33d3f4f7afc193aa7360c019ea62 in 9647ms
+2026-10-27T05:29:31.3069990Z ##[endgroup]
+2026-10-27T05:29:31.3346033Z ##[group]All Gradle Wrapper jars are valid
+2026-10-27T05:29:31.3347398Z ✓ Found known Gradle Wrapper JAR files:
+2026-10-27T05:29:31.3348449Z   497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7 gradle/wrapper/gradle-wrapper.jar
+2026-10-27T05:29:31.3349756Z ##[endgroup]
+2026-10-27T05:29:31.6039720Z ##[group]Run ./gradlew spotlessCheck
+2026-10-27T05:29:31.6040441Z [36;1m./gradlew spotlessCheck[0m
+2026-10-27T05:29:32.8015647Z shell: /usr/bin/bash -e {0}
+2026-10-27T05:29:32.8016044Z env:
+2026-10-27T05:29:32.8016508Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.12-1/x64
+2026-10-27T05:29:32.8017201Z   JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.12-1/x64
+2026-10-27T05:29:32.8017769Z   MAVEN_ARGS: -ntp
+2026-10-27T05:29:32.8018131Z   GRADLE_ACTION_ID: gradle/actions/setup-gradle
+2026-10-27T05:29:32.8018578Z   GRADLE_USER_HOME: /home/runner/.gradle
+2026-10-27T05:29:32.8018999Z   GRADLE_BUILD_ACTION_SETUP_COMPLETED: true
+2026-10-27T05:29:32.8019623Z   DEVELOCITY_INJECTION_INIT_SCRIPT_NAME: gradle-actions.inject-develocity.init.gradle
+2026-10-27T05:29:32.8020287Z   DEVELOCITY_INJECTION_CUSTOM_VALUE: gradle-actions
+2026-10-27T05:29:32.8020768Z   GITHUB_DEPENDENCY_GRAPH_ENABLED: false
+2026-10-27T05:29:32.8021158Z ##[endgroup]
+2026-10-27T05:29:34.8567034Z Starting a Gradle Daemon (subsequent builds will be faster)
+2026-10-27T05:29:51.6584071Z > Task :spotlessInternalRegisterDependencies
+2026-10-27T05:29:57.9561754Z > Task :spotlessKotlin
+2026-10-27T05:29:57.9562963Z > Task :spotlessKotlinCheck FAILED
+2026-10-27T05:29:58.0614158Z 
+2026-10-27T05:29:58.0615387Z gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run-1793078978719.json
+2026-10-27T05:29:58.0643037Z 
+2026-10-27T05:29:58.0644292Z [Incubating] Problems report is available at: file:///home/runner/work/veles-android/veles-android/build/reports/problems/problems-report.html
+2026-10-27T05:29:58.0645827Z FAILURE: Build failed with an exception.
+2026-10-27T05:29:58.0656586Z 
+2026-10-27T05:29:58.0656621Z 
+2026-10-27T05:29:58.0683494Z Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+2026-10-27T05:29:58.0713215Z * What went wrong:
+2026-10-27T05:29:58.0744903Z Execution failed for task ':spotlessKotlinCheck' (registered in build file 'build.gradle.kts').
+2026-10-27T05:29:58.0745820Z 
+2026-10-27T05:29:58.0783253Z > The following files had format violations:
+2026-10-27T05:29:58.0784194Z       app/src/test/java/me/nagaev/veles/sharing/FragmentFixturesTest.kt
+2026-10-27T05:29:58.0785013Z           @@ -52,7 +52,8 @@
+2026-10-27T05:29:58.0786704Z            ········val·committed·=·transactions[0].jsonObject.getValue("fragments").jsonArray.map·{·it.jsonPrimitive.content·}
+2026-10-27T05:29:58.0788656Z            ········//·A·trailing·empty·final·fragment·(8·hex·digits)·is·receiver·tolerance·only;·the·sender·never·emits·it.
+2026-10-27T05:29:58.0790276Z            ········val·canonical·=·expected.getValue("accepted").jsonPrimitive.content·==·"true"·&&
+2026-10-27T05:29:58.0791674Z           -············transactions.size·==·1·&&·committed.last().length·!=·EMPTY_FRAME_HEX
+2026-10-27T05:29:58.0792942Z           +············transactions.size·==·1·&&
+2026-10-27T05:29:58.0793861Z           +············committed.last().length·!=·EMPTY_FRAME_HEX
+2026-10-27T05:29:58.0794687Z            ········if·(canonical·&&·record·!=·null)·{
+2026-10-27T05:29:58.0795898Z            ············Canonical(fixture.getValue("id").jsonPrimitive.content,·mtu(fixture),·record,·committed)
+2026-10-27T05:29:58.0796961Z            ········}·else·{
+2026-10-27T05:29:58.0797577Z   Run './gradlew :spotlessApply' to fix these violations.
+2026-10-27T05:29:58.0798455Z 
+2026-10-27T05:29:58.0798635Z * Try:
+2026-10-27T05:29:58.0799685Z You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+2026-10-27T05:29:58.0801734Z > Run with --stacktrace option to get the stack trace.
+2026-10-27T05:29:58.0802910Z > Run with --info or --debug option to get more log output.
+2026-10-27T05:29:58.0803885Z > Run with --scan to get full insights from a Build Scan (powered by Develocity).
+2026-10-27T05:29:58.0804756Z > Get more help at https://help.gradle.org.
+2026-10-27T05:29:58.0805180Z 
+2026-10-27T05:29:58.0805791Z BUILD FAILED in 25s
+2026-10-27T05:29:58.0806157Z 
+2026-10-27T05:29:58.0823738Z For more on this, please refer to https://docs.gradle.org/9.5.0/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+2026-10-27T05:29:58.0862883Z 3 actionable tasks: 3 executed
+2026-10-27T05:29:58.5363077Z ##[error]Process completed with exit code 1.
+2026-10-27T05:29:58.5597542Z Post job cleanup.
+2026-10-27T05:29:58.8443222Z In post-action step
+2026-10-27T05:29:58.8453102Z Enhanced Caching: This build is using the proprietary 'gradle-actions-caching' provider for optimized caching support. See https://github.com/gradle/actions/blob/main/DISTRIBUTION.md for terms of use and opt-out instructions.
+2026-10-27T05:29:58.9267849Z Cache is read-only: will not save state for use in subsequent builds.
+2026-10-27T05:29:58.9274235Z ##[group]Generating Job Summary
+2026-10-27T05:29:58.9281207Z 
+2026-10-27T05:29:58.9281433Z 
+2026-10-27T05:29:58.9281659Z <table>
+2026-10-27T05:29:58.9282359Z     <tr>
+2026-10-27T05:29:58.9282817Z         <th>Gradle Root Project</th>
+2026-10-27T05:29:58.9283226Z         <th>Requested Tasks</th>
+2026-10-27T05:29:58.9283603Z         <th>Gradle Version</th>
+2026-10-27T05:29:58.9283951Z         <th>Build Outcome</th>
+2026-10-27T05:29:58.9284519Z         <th>Build&nbsp;Scan®</th>
+2026-10-27T05:29:58.9284870Z     </tr>
+2026-10-27T05:29:58.9285204Z     <tr>
+2026-10-27T05:29:58.9285473Z         <td>Veles</td>
+2026-10-27T05:29:58.9285793Z         <td>spotlessCheck</td>
+2026-10-27T05:29:58.9286150Z         <td align='center'>9.5.0</td>
+2026-10-27T05:29:58.9286527Z         <td align='center'>:x:</td>
+2026-10-27T05:29:58.9287712Z         <td><a href="https://scans.gradle.com" rel="nofollow" target="_blank"><img src="https://img.shields.io/badge/Not%20published-lightgrey" alt="Build Scan not published" /></a></td>
+2026-10-27T05:29:58.9288650Z     </tr>
+2026-10-27T05:29:58.9288914Z </table>
+2026-10-27T05:29:58.9289162Z     
+2026-10-27T05:29:58.9289448Z ============================
+2026-10-27T05:29:58.9289939Z <h4>Gradle State Caching - ⚡ Enhanced (read-only)</h4>
+2026-10-27T05:29:58.9290246Z 
+2026-10-27T05:29:58.9291461Z **[Enhanced Caching](https://github.com/gradle/actions/blob/main/docs/setup-gradle.md#enhanced-caching)** uses the proprietary `gradle-actions-caching` provider. See [DISTRIBUTION.md](https://github.com/gradle/actions/blob/main/DISTRIBUTION.md) for terms of use and opt-out instructions.
+2026-10-27T05:29:58.9293250Z 
+2026-10-27T05:29:58.9293374Z <details>
+2026-10-27T05:29:58.9293867Z <summary>Entries: 8 restored (1143Mb), 0 saved (0Mb) - Expand for more details</summary>
+2026-10-27T05:29:58.9294311Z 
+2026-10-27T05:29:58.9295191Z [Cache was read-only](https://github.com/gradle/actions/blob/main/docs/setup-gradle.md#using-the-cache-read-only) — by default, the action only writes to the cache for jobs running on the default branch.
+2026-10-27T05:29:58.9295996Z 
+2026-10-27T05:29:58.9296101Z <table>
+2026-10-27T05:29:58.9296463Z     <tr><td></td><th>Count</th><th>Total Size (Mb)</th><th>Total Time (ms)</th></tr>
+2026-10-27T05:29:58.9296916Z     <tr><td>Entries Restored</td>
+2026-10-27T05:29:58.9297225Z         <td>8</td>
+2026-10-27T05:29:58.9297479Z         <td>1143</td>
+2026-10-27T05:29:58.9297743Z         <td>28732</td>
+2026-10-27T05:29:58.9298009Z     </tr>
+2026-10-27T05:29:58.9298257Z     <tr><td>Entries Saved</td>
+2026-10-27T05:29:58.9298565Z         <td>0</td>
+2026-10-27T05:29:58.9299199Z         <td>0</td>
+2026-10-27T05:29:58.9299651Z         <td>0</td>
+2026-10-27T05:29:58.9300132Z     </tr>
+2026-10-27T05:29:58.9300557Z </table>
+2026-10-27T05:29:58.9300783Z 
+2026-10-27T05:29:58.9300951Z <pre>
+2026-10-27T05:29:58.9301343Z Entry: Gradle User Home
+2026-10-27T05:29:58.9302945Z     Requested Key : gradle-home-v2|Linux-X64|lint-check[b8a35c2f917259958c9abe8f2ff1b5ff]-ac94aafebf74599e0cef6406c93f0b717d5488e0
+2026-10-27T05:29:58.9304730Z     Restored  Key : gradle-home-v2|Linux-X64|lint-check[b8a35c2f917259958c9abe8f2ff1b5ff]-6e083e0ec5cb70d1bc8c5f98abca536e190722e1
+2026-10-27T05:29:58.9305890Z               Size: 5 MB (5382671 B)
+2026-10-27T05:29:58.9306450Z               Time: 2267 ms
+2026-10-27T05:29:58.9306971Z               (Entry restored: partial match found)
+2026-10-27T05:29:58.9317845Z     Saved     Key : 
+2026-10-27T05:29:58.9318411Z               Size: 
+2026-10-27T05:29:58.9318880Z               Time: 
+2026-10-27T05:29:58.9319784Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9320435Z ---
+2026-10-27T05:29:58.9321041Z Entry: caches/9.5.0/generated-gradle-jars/gradle-api-9.5.0.jar
+2026-10-27T05:29:58.9322347Z     Requested Key : gradle-generated-gradle-jars-v2-385d131625f54d4dab75422dfcb34a24
+2026-10-27T05:29:58.9323574Z     Restored  Key : gradle-generated-gradle-jars-v2-385d131625f54d4dab75422dfcb34a24
+2026-10-27T05:29:58.9324524Z               Size: 40 MB (42071661 B)
+2026-10-27T05:29:58.9325126Z               Time: 2571 ms
+2026-10-27T05:29:58.9325700Z               (Entry restored: exact match found)
+2026-10-27T05:29:58.9326330Z     Saved     Key : 
+2026-10-27T05:29:58.9326799Z               Size: 
+2026-10-27T05:29:58.9327255Z               Time: 
+2026-10-27T05:29:58.9327766Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9328371Z ---
+2026-10-27T05:29:58.9328964Z Entry: wrapper/dists/gradle-9.5.0-bin/bvnork1r7n8i6kp5cnkibsc9q
+2026-10-27T05:29:58.9330041Z     Requested Key : gradle-wrapper-zips-v2-1922ac6863145c4cf78b9888f5904620
+2026-10-27T05:29:58.9331095Z     Restored  Key : gradle-wrapper-zips-v2-1922ac6863145c4cf78b9888f5904620
+2026-10-27T05:29:58.9331922Z               Size: 133 MB (139612526 B)
+2026-10-27T05:29:58.9332848Z               Time: 5543 ms
+2026-10-27T05:29:58.9333477Z               (Entry restored: exact match found)
+2026-10-27T05:29:58.9336909Z     Saved     Key : 
+2026-10-27T05:29:58.9337404Z               Size: 
+2026-10-27T05:29:58.9337851Z               Time: 
+2026-10-27T05:29:58.9338369Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9338972Z ---
+2026-10-27T05:29:58.9339320Z Entry: dependencies
+2026-10-27T05:29:58.9339841Z     Requested Key : gradle-dependencies-v2-127d33d3f4f7afc193aa7360c019ea62
+2026-10-27T05:29:58.9340662Z     Restored  Key : gradle-dependencies-v2-127d33d3f4f7afc193aa7360c019ea62
+2026-10-27T05:29:58.9341378Z               Size: 769 MB (806385516 B)
+2026-10-27T05:29:58.9341758Z               Time: 9647 ms
+2026-10-27T05:29:58.9342325Z               (Entry restored: exact match found)
+2026-10-27T05:29:58.9342977Z     Saved     Key : 
+2026-10-27T05:29:58.9343287Z               Size: 
+2026-10-27T05:29:58.9343594Z               Time: 
+2026-10-27T05:29:58.9343901Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9344244Z ---
+2026-10-27T05:29:58.9344657Z Entry: instrumented-jars
+2026-10-27T05:29:58.9345125Z     Requested Key : gradle-instrumented-jars-v2-bb910fcacf708cb42c10c2b5b22b5d19
+2026-10-27T05:29:58.9345935Z     Restored  Key : gradle-instrumented-jars-v2-bb910fcacf708cb42c10c2b5b22b5d19
+2026-10-27T05:29:58.9346422Z               Size: 0 MB (60385 B)
+2026-10-27T05:29:58.9346861Z               Time: 919 ms
+2026-10-27T05:29:58.9347208Z               (Entry restored: exact match found)
+2026-10-27T05:29:58.9347560Z     Saved     Key : 
+2026-10-27T05:29:58.9347830Z               Size: 
+2026-10-27T05:29:58.9348219Z               Time: 
+2026-10-27T05:29:58.9348515Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9349198Z ---
+2026-10-27T05:29:58.9349505Z Entry: kotlin-dsl
+2026-10-27T05:29:58.9349915Z     Requested Key : gradle-kotlin-dsl-v2-2fb406d4a4304583e3dfc1cc9e78d3be
+2026-10-27T05:29:58.9350633Z     Restored  Key : gradle-kotlin-dsl-v2-2fb406d4a4304583e3dfc1cc9e78d3be
+2026-10-27T05:29:58.9351083Z               Size: 0 MB (213312 B)
+2026-10-27T05:29:58.9351449Z               Time: 1106 ms
+2026-10-27T05:29:58.9351858Z               (Entry restored: exact match found)
+2026-10-27T05:29:58.9352328Z     Saved     Key : 
+2026-10-27T05:29:58.9352695Z               Size: 
+2026-10-27T05:29:58.9353161Z               Time: 
+2026-10-27T05:29:58.9353463Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9353809Z ---
+2026-10-27T05:29:58.9354104Z Entry: groovy-dsl
+2026-10-27T05:29:58.9354602Z     Requested Key : gradle-groovy-dsl-v2-a1b0f4d084efaae830b48156c1140c44
+2026-10-27T05:29:58.9355167Z     Restored  Key : gradle-groovy-dsl-v2-a1b0f4d084efaae830b48156c1140c44
+2026-10-27T05:29:58.9355960Z               Size: 0 MB (91117 B)
+2026-10-27T05:29:58.9356291Z               Time: 1023 ms
+2026-10-27T05:29:58.9356771Z               (Entry restored: exact match found)
+2026-10-27T05:29:58.9357136Z     Saved     Key : 
+2026-10-27T05:29:58.9357398Z               Size: 
+2026-10-27T05:29:58.9357730Z               Time: 
+2026-10-27T05:29:58.9358247Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9358628Z ---
+2026-10-27T05:29:58.9358977Z Entry: transforms
+2026-10-27T05:29:58.9359433Z     Requested Key : gradle-transforms-v2-2bfaec716edc601ae94afc87e1c00262
+2026-10-27T05:29:58.9360052Z     Restored  Key : gradle-transforms-v2-2bfaec716edc601ae94afc87e1c00262
+2026-10-27T05:29:58.9360611Z               Size: 195 MB (204548981 B)
+2026-10-27T05:29:58.9360941Z               Time: 5656 ms
+2026-10-27T05:29:58.9361353Z               (Entry restored: exact match found)
+2026-10-27T05:29:58.9361730Z     Saved     Key : 
+2026-10-27T05:29:58.9362112Z               Size: 
+2026-10-27T05:29:58.9362508Z               Time: 
+2026-10-27T05:29:58.9362863Z               (Entry not saved: cache is read-only)
+2026-10-27T05:29:58.9363205Z </pre>
+2026-10-27T05:29:58.9363448Z </details>
+2026-10-27T05:29:58.9363685Z 
+2026-10-27T05:29:58.9364144Z ##[endgroup]
+2026-10-27T05:29:58.9364428Z Completed post-action step
+2026-10-27T05:29:58.9660533Z Post job cleanup.
+2026-10-27T05:29:59.1257947Z Post job cleanup.
+2026-10-27T05:29:59.2328342Z [command]/usr/bin/git version
+2026-10-27T05:29:59.2394597Z git version 2.55.0
+2026-10-27T05:29:59.2444488Z Temporarily overriding HOME='/home/runner/work/_temp/a1a6f376-9fac-43f7-80b8-1a132683ca31' before making global git config changes
+2026-10-27T05:29:59.2447575Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T05:29:59.2450149Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/veles-android/veles-android
+2026-10-27T05:29:59.2495951Z Removing SSH command configuration
+2026-10-27T05:29:59.2504861Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T05:29:59.2580204Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T05:29:59.2949205Z Removing HTTP extra header
+2026-10-27T05:29:59.2955559Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T05:29:59.3007222Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T05:29:59.3295298Z Removing includeIf entries pointing to credentials config files
+2026-10-27T05:29:59.3304796Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T05:29:59.3338732Z includeif.gitdir:/home/runner/work/veles-android/veles-android/.git.path
+2026-10-27T05:29:59.3340464Z includeif.gitdir:/home/runner/work/veles-android/veles-android/.git/worktrees/*.path
+2026-10-27T05:29:59.3341478Z includeif.gitdir:/github/workspace/.git.path
+2026-10-27T05:29:59.3342520Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T05:29:59.3358197Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/veles-android/veles-android/.git.path
+2026-10-27T05:29:59.3378306Z /home/runner/work/_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:59.3389363Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/veles-android/veles-android/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-1d90fe9d\-8742\-4897\-8657\-f464e1636811\.config
+2026-10-27T05:29:59.3444083Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/veles-android/veles-android/.git/worktrees/*.path
+2026-10-27T05:29:59.3473739Z /home/runner/work/_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:59.3483872Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/veles-android/veles-android/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-1d90fe9d\-8742\-4897\-8657\-f464e1636811\.config
+2026-10-27T05:29:59.3525299Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-27T05:29:59.3555925Z /github/runner_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:59.3566384Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-1d90fe9d\-8742\-4897\-8657\-f464e1636811\.config
+2026-10-27T05:29:59.3608505Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T05:29:59.3637546Z /github/runner_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config
+2026-10-27T05:29:59.3647216Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-1d90fe9d\-8742\-4897\-8657\-f464e1636811\.config
+2026-10-27T05:29:59.3687593Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T05:29:59.3927715Z Removing credentials config '/home/runner/work/_temp/git-credentials-1d90fe9d-8742-4897-8657-f464e1636811.config'
+2026-10-27T05:29:59.4096233Z Cleaning up orphan processes
+2026-10-27T05:29:59.4419683Z Terminate orphan process: pid (2704) (java)

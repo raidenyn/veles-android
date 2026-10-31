@@ -1,0 +1,13 @@
+{
+    "pid":  54712,
+    "started_utc":  "2026-10-30T08:20:27.7914549Z",
+    "scope":  "Exclusive access to only the synthetic Veles GATT service; not a Windows privacy-setting denial",
+    "release_method":  "Dedicated process exit releases the held SDK objects; verified separately by process exit and successful native reconnect",
+    "services_status":  "Success",
+    "open_status":  "Success",
+    "sharing_mode":  "Exclusive",
+    "subscription_status":  "Success",
+    "status":  "RELEASING_BY_PROCESS_EXIT",
+    "held_utc":  "2026-10-30T08:20:29.3298086Z",
+    "finished_utc":  "2026-10-30T08:21:20.1243863Z"
+}

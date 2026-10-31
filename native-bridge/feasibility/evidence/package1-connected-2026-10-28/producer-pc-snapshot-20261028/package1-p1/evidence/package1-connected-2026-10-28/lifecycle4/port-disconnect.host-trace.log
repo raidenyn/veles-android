@@ -1,0 +1,9 @@
+[       0ms pid=94384] start pid=94384
+[       0ms pid=94384] in  len=81 type=hello request_id=r1-dn1n1m
+[       0ms pid=94384] out len=183 type=ready request_id=r1-dn1n1m api_version=1
+[    4780ms pid=94384] in  len=137 type=start_scan request_id=r2-d3mmzq api_version=1
+[    4832ms pid=94384] out len=135 type=scan_state request_id=r2-d3mmzq api_version=1 status=started scan_handle=e7214c5c41620758
+[   34923ms pid=94384] in  len=115 type=stop_scan request_id=r3-eh2vcx api_version=1 scan_handle=e7214c5c41620758
+[   34924ms pid=94384] out len=135 type=scan_state request_id=r3-eh2vcx api_version=1 status=stopped scan_handle=e7214c5c41620758
+[   34932ms pid=94384] shutdown joined 0/0 within 0ms
+[   34932ms pid=94384] exit code=0 stdout_drained=true

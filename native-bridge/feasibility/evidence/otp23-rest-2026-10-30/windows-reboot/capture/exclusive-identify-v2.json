@@ -1,0 +1,10 @@
+{
+    "pid":  41636,
+    "started_utc":  "2026-10-30T08:04:39.2319251Z",
+    "scope":  "Only the synthetic Veles GATT service; exclusive service access, not a Windows privacy-setting denial",
+    "release_method":  "Dedicated holder process exits and releases its WinRT references; no explicit Close API claim",
+    "services_status":  "Success",
+    "status":  "ERROR",
+    "error":  "Cannot convert the \"System.__ComObject\" value of type \"System.__ComObject\" to type \"System.Collections.Generic.IReadOnlyList`1[Windows.Devices.Bluetooth.GenericAttributeProfile.GattDeviceService]\".",
+    "finished_utc":  "2026-10-30T08:04:40.6357093Z"
+}

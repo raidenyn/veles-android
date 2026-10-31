@@ -1,0 +1,50 @@
+
+me.nagaev.veles.sharing.SharingFeasibilityTest:INSTRUMENTATION_RESULT: shortMsg=Process crashed.
+INSTRUMENTATION_CODE: 0
+
+me.nagaev.veles.sharing.SharingFeasibilityTest:
+Error in holdSyntheticPeripheralForWindowsCentral(me.nagaev.veles.sharing.SharingFeasibilityTest):
+kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 1800000 ms
+	at kotlinx.coroutines.TimeoutKt.TimeoutCancellationException(Timeout.kt:189)
+	at kotlinx.coroutines.TimeoutCoroutine.run(Timeout.kt:157)
+	at kotlinx.coroutines.EventLoopImplBase$DelayedRunnableTask.run(EventLoop.common.kt:505)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.DefaultExecutor.run(DefaultExecutor.kt:105)
+	at java.lang.Thread.run(Thread.java:1119)
+
+
+Time: 1,807.842
+There was 1 failure:
+1) holdSyntheticPeripheralForWindowsCentral(me.nagaev.veles.sharing.SharingFeasibilityTest)
+kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 1800000 ms
+	at kotlinx.coroutines.TimeoutKt.TimeoutCancellationException(Timeout.kt:189)
+	at kotlinx.coroutines.TimeoutCoroutine.run(Timeout.kt:157)
+	at kotlinx.coroutines.EventLoopImplBase$DelayedRunnableTask.run(EventLoop.common.kt:505)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.DefaultExecutor.run(DefaultExecutor.kt:105)
+	at java.lang.Thread.run(Thread.java:1119)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
+
+me.nagaev.veles.sharing.SharingFeasibilityTest:
+me.nagaev.veles.sharing.SharingFeasibilityTest:
+me.nagaev.veles.sharing.SharingFeasibilityTest:.
+
+Time: 605.726
+
+OK (1 test)
+
+
+
+me.nagaev.veles.sharing.SharingFeasibilityTest:.
+
+Time: 827.261
+
+OK (1 test)
+
+
+
+me.nagaev.veles.sharing.SharingFeasibilityTest:

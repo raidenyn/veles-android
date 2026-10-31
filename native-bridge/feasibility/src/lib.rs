@@ -6,6 +6,7 @@
 
 pub mod backend;
 pub mod base64;
+pub mod closejoin;
 pub mod core;
 pub mod fragment;
 pub mod framing;

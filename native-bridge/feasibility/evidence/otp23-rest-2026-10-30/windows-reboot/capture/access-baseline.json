@@ -1,0 +1,74 @@
+{
+  "phase": "baseline",
+  "started_utc": "2026-10-30T07:56:08.533518+00:00",
+  "host_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+  "chrome": {
+    "pid": 41636,
+    "version": {
+      "protocolVersion": "1.3",
+      "product": "Chrome/156.0.8078.76",
+      "revision": "@93ce6b54af3fee27e384d1f30346e80db47a14da",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+      "jsVersion": "15.6.75.25"
+    },
+    "integrity": {
+      "integrity": "medium",
+      "rid": "0x2000",
+      "token_is_elevated": false
+    }
+  },
+  "hello": {
+    "api_version": 1,
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "capabilities": [
+      "veles_record_v1"
+    ],
+    "envelope_version": 1,
+    "platform": "windows",
+    "request_id": "r1-p962kk",
+    "type": "ready"
+  },
+  "connect_reply": {
+    "api_version": 1,
+    "connection_handle": "b99e1e608397da5d",
+    "envelope_version": 1,
+    "request_id": "r3-fsxnj1",
+    "type": "connected"
+  },
+  "target_hint_sha256": "f5b640eec4d2d54ee4234a77ecc07f5cbcfdf4b6901616c44ae1fb3dfa8fee6b",
+  "sent": {
+    "api_version": 1,
+    "connection_handle": "b99e1e608397da5d",
+    "envelope_version": 1,
+    "request_id": "r4-v631pz",
+    "type": "sent"
+  },
+  "echo": {
+    "bytes": 4,
+    "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+    "byte_exact": true
+  },
+  "disconnect": {
+    "api_version": 1,
+    "connection_handle": "b99e1e608397da5d",
+    "envelope_version": 1,
+    "request_id": "r5-x793t2",
+    "type": "disconnected"
+  },
+  "stop": {
+    "api_version": 1,
+    "envelope_version": 1,
+    "request_id": "r6-bvz7nn",
+    "scan_handle": "d7c6443887d23608",
+    "status": "stopped",
+    "type": "scan_state"
+  },
+  "shutdown": {
+    "api_version": 1,
+    "envelope_version": 1,
+    "request_id": "r7-jli3ma",
+    "type": "shutdown_complete"
+  },
+  "capture_status": "CAPTURED_REQUIRES_ADJUDICATION",
+  "finished_utc": "2026-10-30T07:56:14.197282+00:00"
+}

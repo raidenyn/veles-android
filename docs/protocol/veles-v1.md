@@ -1528,8 +1528,12 @@ framing on behalf of the connector; the connector never sees fragments.
 - **OTP2-GAT-003** — MTU. A bare GATT client MUST operate with a negotiated
   ATT MTU ≥ 185 (RFC). A connection whose negotiated MTU < 185 is refused:
   the phone disconnects it during GATT setup before any protocol record.
-  Rationale: 185 yields 182-byte ATT payload, covering the fragmentation
-  budget below with ≤ 24 fragments for the maximum record.
+  Rationale: 185 yields a 182-byte attribute value, covering the
+  fragmentation budget below with ≤ 24 fragments for the maximum record.
+  The maximum ATT MTU an implementation accepts is 517 (the Android
+  `requestMtu` ceiling); a connection reporting a larger value is refused
+  like one below the floor. Every MTU above 515 yields the same fragment
+  budget (OTP2-GAT-010).
 - **OTP2-GAT-004** — concurrent clients: at most 8 simultaneous GATT clients
   (RFC). The ninth connection is refused during setup. Each peer has an
   independent trust record, session, sequence spaces, queues, and failure
@@ -1552,33 +1556,92 @@ framing on behalf of the connector; the connector never sees fragments.
              record bytes: header+ciphertext+tag)
              fragments 1+: RESERVED — both bytes MUST be 0x00, else reject
   byte 4..   payload (every fragment carries exactly 4 header bytes plus
-             payload; payload_len per fragment is at most MTU − 3 − 4)
+             payload)
   ```
 
-  Size rules (exact): every non-final fragment carries
-  `payload_len = negotiated_MTU − 3 − 4` bytes EXCEPT when fewer bytes
-  remain, in which case the NEXT fragment is the final one; the final
-  fragment carries exactly the remaining bytes of the record
-  (`total_record_length − Σ prior payloads`), which may be as few as 0;
-  the receiver enforces `Σ all payloads == total_record_length` EXACTLY at
-  completion, and a mismatch discards the transaction. Writers MUST send
-  fragments of the same transaction in order with no interleaving of other
-  transactions (GATT preserve write order per characteristic), and a
-  sender keeps at most one incomplete transaction per characteristic.
-  Conservative tested floor (interop): the exact non-final size follows the
-  negotiated MTU, and the contract additionally fixes the values every
-  valid implementation MUST support at the MTU floor 185 (OTP2-GAT-003):
-  `fragment_payload_bytes_at_min_mtu = 178` bytes (`185 − 3 − 4`) for
-  non-final fragments and at most
-  `⌈record_max_bytes / 178⌉ = 24` fragments per record (4096 = 23·178 + 2).
-  The committed fragmentation fixtures are all exercised at MTU 185, the
-  conservative floor; the committed vector
-  `frag-mtu185-max-total-4096` pins the 24-fragment / 178-byte chunking of
-  the largest record at exactly that floor. A sender MAY choose larger
-  non-final fragments at a higher negotiated MTU (same formula) — that
-  choice is the builder's; receivers never assume any size beyond the
-  delivered totals (M1 disposition: policy kept as builder choice, floor
-  made normative + tested).
+  **Attribute budget (profile revision 2, OTP-23).** An ATT attribute value
+  cannot exceed 512 bytes (Bluetooth Core ATT maximum attribute value length;
+  Android's `notifyCharacteristicChanged` throws above it). Both directions
+  therefore use, for the negotiated ATT MTU `M`:
+
+  ```
+  attribute_budget = min(M − 3, 512)     # bytes of one fragment frame (header + payload)
+  payload_budget   = attribute_budget − 4
+  ```
+
+  `M − 3` is the ATT Handle Value Notification / Write Command overhead. At
+  the MTU floor 185 the budget is 182 / 178; it is `M − 3` / `M − 7` for every
+  `M ≤ 515`, and 512 / 508 for `M ∈ {515, 516, 517}`. A platform that cannot
+  report the ATT MTU but reports a maximum write-without-response value
+  length `W` (CoreBluetooth) reports a *backend write limit*: `W ≤ M − 3`, but
+  the platform may cap it, so `W = M − 3` MUST NOT be assumed and an MTU MUST
+  NOT be synthesized from it. Both ends must use the same exact non-final size
+  `min(M − 3, 512) − 4`, which `W` alone determines only when `W ≥ 512`: then
+  `M − 3 ≥ W ≥ 512`, the clamp binds, and the common attribute budget is 512
+  whatever `M` is. For `W < 512` the common budget cannot be established
+  without guessing, and the implementation MUST refuse the link (fail closed)
+  rather than substitute a hardcoded value; 512 is the ATT maximum attribute
+  length, not a tuning constant. The budget is computed in exactly one place per
+  implementation; no transport hardcodes an MTU or a chunk size.
+
+  **Exact size rules (both directions, senders and receivers).** Let
+  `remaining = total_record_length − Σ prior payloads`.
+
+  - A non-final fragment carries `payload_len == payload_budget` exactly, with
+    `payload_len ≤ remaining` and `fragment_index < 127`. A shorter or longer
+    non-final fragment is malformed.
+  - The final fragment carries `payload_len == remaining` exactly
+    (`0 ≤ remaining ≤ payload_budget`).
+  - A fragment frame longer than `attribute_budget` is malformed whatever its
+    flags. This is the over-budget rule that makes the legacy 513/514-byte
+    frames at MTU 516/517 fail closed (see compatibility below).
+  - **Canonical sender:** the record is cut into `⌈len / payload_budget⌉`
+    fragments; every fragment but the last carries `payload_budget` bytes and
+    the last carries the remaining `1..payload_budget` bytes. An exact multiple
+    of the budget therefore ends in a FULL final fragment; a sender MUST NOT
+    append an empty final fragment.
+  - **Receiver tolerance:** a receiver MUST nevertheless accept the
+    non-canonical form in which the last full fragment is non-final and an
+    empty (`payload_len == 0`) final fragment follows, because it satisfies
+    both rules above (committed vector `frag-mtu185-final-zero-payload`).
+  - The receiver enforces `Σ all payloads == total_record_length` exactly at
+    completion; a mismatch discards the transaction. Writers send fragments of
+    the same transaction in order with no interleaving of other transactions
+    (GATT preserves write order per characteristic), and a sender keeps at most
+    one incomplete transaction per characteristic.
+
+  Boundary values (budget 508, i.e. `M ≥ 515`): records of 1..508 bytes are one
+  fragment; 509 bytes is 508 + 1; 1016 bytes is two full fragments (512, 512
+  attribute bytes); 1017 is 508 + 508 + 1; 4096 = 8·508 + 32 is nine fragments
+  (eight of 512 attribute bytes, one of 36). At the floor `M = 185`: 178-byte
+  payloads, `⌈4096 / 178⌉ = 24` fragments (4096 = 23·178 + 2). The committed
+  fixtures pin both extremes and the intermediates (`frag-mtu185-*` and
+  `frag-r2-*`).
+
+  **Compatibility, versioning and rollout (profile revision 2).** The GATT
+  profile (UUIDs, properties) and the record format are unchanged, and the
+  fragment header is unchanged. Revision 1 stated the non-final size as
+  `M − 7` with no 512-byte clamp. That formula is byte-identical to revision 2
+  for every `M ≤ 515`, and for every record whose frames fit in 512 bytes. It
+  differs only at `M = 516, 517`, where revision 1 required 513/514-byte
+  non-final frames. Those frames exceed the ATT maximum and cannot be sent or
+  received by a conforming Android peripheral (the physical failure that
+  motivated this revision, docs/otp-23-windows.md), so no interoperable
+  revision-1 behavior existed at those MTUs and no deployed revision-1 peer is
+  invalidated. Revision 2 is a pre-release correction: no released build
+  exchanges protected records yet (release builds discard completed records),
+  the Veles protocol and record `protocol_version` stay 1 (fragmentation is
+  not covered by the record header or its AAD), and the committed MTU-185
+  vectors are unchanged and still valid. There is no in-band profile
+  negotiation and none is added: a revision-1 sender at `M ≥ 516` is rejected
+  by a revision-2 receiver (frame over the attribute budget) and a revision-2
+  sender at `M ≥ 516` is rejected by a revision-1 receiver (non-final payload
+  508 ≠ `M − 7`); both discard the transaction as transport-only loss (no
+  partial record is ever delivered, never misparsed as another record), which
+  is the intended fail-closed behavior. Once the first release ships, this
+  fragmentation profile is frozen again and any further change requires an
+  explicit profile-version mechanism (for example a new service UUID), not a
+  silent revision.
 - **OTP2-GAT-011** — reassembly rules. A receiver allocates a reassembly
   buffer on fragment 0 after validating: `transaction_id != 0`,
   `total_record_length` in 1..4096, and the peer's reassembly caps. Later
@@ -1592,7 +1655,9 @@ framing on behalf of the connector; the connector never sees fragments.
   (indices 0..127); a record that cannot fit (e.g. 4096 bytes at an MTU
   whose capacity yields more than 128 fragments) is unschedulable and the
   sender refuses it at fragmentation time (the record layer's 4096-byte
-  bound and MTU ≥ 185 keep every valid record within 24 fragments).
+  bound and MTU ≥ 185 keep every valid record within 24 fragments). An empty
+  record and a record above 4096 bytes are refused by the sender and a
+  `total_record_length` of 0 or above 4096 is malformed at the receiver.
   Conflict rule: fragments of a second transaction with a `transaction_id`
   equal to a live incomplete transaction on the same connection are
   ignored; a second conflicting transaction within a rolling 60 s window

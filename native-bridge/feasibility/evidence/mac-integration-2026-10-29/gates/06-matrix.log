@@ -1,0 +1,9 @@
+$ python3 scripts/matrix.py check
+matrix ok: NO-GO
+exit_code=0
+$ python3 scripts/matrix.py decision
+NO-GO: 4 row(s) open: W-10, M-03, M-04, A-01
+approved account-waived (NOT RUN, not PASS): W-01, M-01, M-02
+exit_code=1
+$ python3 scripts/matrix.py render (stdout) | diff - ../../docs/otp-23-requirements-matrix.md
+render_diff_exit_code=0

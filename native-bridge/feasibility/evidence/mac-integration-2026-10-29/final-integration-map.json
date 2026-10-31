@@ -1,0 +1,176 @@
+{
+ "what": "Final-integration curation and path map for files ADDED to mac-integration-2026-10-29 on 2026-10-29 (the curation-as-of files, including curation-map.json and path-map.json, are unchanged)",
+ "curation_as_of_manifest": {
+  "file": "history/SHA256SUMS.curation-as-of-2026-10-29T11-25Z",
+  "sha256": "7bb6af166ab30fae870b408de858f2255f6e5eee9ad2ec1ebde8b884101ead3c",
+  "entries": 26,
+  "note": "byte copy of the 26-entry manifest 7bb6af16… written by the curation session; every one of those 26 files is unchanged and still listed in the refreshed SHA256SUMS"
+ },
+ "exact_copies": {
+  "reports/otp23-mac-safe-attribution-verification-opus.md": {
+   "source": "/tmp/opencode/otp23-mac-safe-attribution-verification-opus.md",
+   "sha256": "40cb23df979279bd2aa0f05fdefdf7b09eab6a0440bc4c7e30d4c2250fa63187",
+   "byte_identical": true
+  },
+  "reports/otp23-mac-final-integrated-opus-review.md": {
+   "source": "/tmp/opencode/otp23-mac-final-integrated-opus-review.md",
+   "sha256": "16152fa7cd6d0d5ed563d58ce4d7bdb08ca9015b72a2fc38fa19774363341e2d",
+   "byte_identical": true
+  },
+  "reports/otp23-mac-closure-review-kimi31.md": {
+   "source": "/tmp/opencode/otp23-mac-closure-review-kimi31.md",
+   "sha256": "ae1da8d69cab12e25071a5a5a1e2ed28eac78608ad0902eac76e8a06d866bc10",
+   "byte_identical": true,
+   "role": "Owner-selected independent bounded closure review; Kimi K3.1 Pro"
+  },
+  "reports/otp23-mac-review-closure-controller-result.md": {
+   "source": "/tmp/opencode/otp23-mac-review-closure-result.md",
+   "sha256": "d17b7402410cda80638151f8b8ead36e986b9338c2dc572841fe2f836e90cd33",
+   "byte_identical": true,
+   "role": "Parent controller's mechanical as-built handoff; not an Opus-authored implementation or review"
+  }
+ },
+ "redacted_public_copies": [
+  {
+   "public": "reports/otp23-mac-publication-curation-result.public.md",
+   "source": "/tmp/opencode/otp23-mac-publication-curation-result.md",
+   "public_sha256": "98a3c3a4445cdc7e4386f024082bd6131c6dfed651d69d5d452332c80360b5dd",
+   "private_original_sha256": "bb2b6cffa2aa35dcdf2f38101b479235cbd7043bcbc2ab137c4bca5ddd5e6fe4",
+   "replaced": "the name-sweep term list (unrelated applications' Native Messaging manifest identifiers on the owner's account) -> <other applications' manifest identifiers>; plus one leading comment line; otherwise byte-identical (NOT claimed byte-identical to the source)"
+  }
+ ],
+ "private_location": "/tmp/approved-otp23-privacy/mac-integration-2026-10-29/otp23-mac-publication-curation-result.md.private-original (700/600, outside Git)",
+ "new_files": {
+  "adjudications/m08-final-adjudication.md": "NEW final M-08 adjudication (integration session)",
+  "adjudications/m11-final-adjudication.md": "NEW final M-11 manual adjudication; supersedes the frozen ../mac-m11-dev-2026-10-29/adjudication-draft.md (kept)",
+  "model-metadata-final.json": "whitelisted model/role metadata for the curation, micro-review and integration sessions",
+  "FINAL-INTEGRATION.md": "index of the final integration",
+  "gates/": "verbatim gate logs, exit codes and source-hash inventory of the integrated working tree"
+ },
+ "path_map_additions": [
+  {
+   "reference": "/tmp/opencode/otp23-mac-safe-attribution-verification-opus.md",
+   "status": "published",
+   "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-safe-attribution-verification-opus.md"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-mac-publication-curation-result.md",
+   "status": "published-redacted",
+   "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-publication-curation-result.public.md"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-mac-final-data-review-opus.md",
+   "status": "published",
+   "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-final-data-review-opus.md (already in path-map.json)"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-m11-controller-20261029/account-class.txt",
+   "status": "published",
+   "resolves_to": "mac-m11-dev-2026-10-29/owner-records/account-class.txt (already in path-map.json)"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-m11-controller-20261029/scoped-tcc-history.ndjson",
+   "status": "published",
+   "resolves_to": "mac-tcc-supplement-2026-10-29/raw/scoped-tcc-history.ndjson"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-m11-controller-20261029/dev-prompt-tcc-chain.ndjson",
+   "status": "published",
+   "resolves_to": "mac-tcc-supplement-2026-10-29/raw/dev-prompt-tcc-chain.ndjson"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-m11-controller-20261029/tcc-log-supplement.json",
+   "status": "published",
+   "resolves_to": "mac-tcc-supplement-2026-10-29/raw/tcc-log-supplement.json"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-m11-controller-20261029/scoped-tcc-history.stderr",
+   "status": "not-published",
+   "resolves_to": "0-byte stderr; sha256 in mac-tcc-supplement-2026-10-29/provenance.json"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-m11-controller-20261029/dev-prompt-tcc-chain.stderr",
+   "status": "not-published",
+   "resolves_to": "0-byte stderr; sha256 in mac-tcc-supplement-2026-10-29/provenance.json"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-mac-integration-opus-result.json",
+   "status": "not-published-private-api-envelope",
+   "resolves_to": "whitelisted fields in mac-integration-2026-10-29/model-metadata-final.json"
+  },
+  {
+   "reference": "/dev/shm/e30rev",
+   "status": "not-published",
+   "resolves_to": "independent reviewer's transient scratch, deleted by the reviewer"
+  },
+  {
+   "reference": "/tmp/opencode",
+   "status": "workspace-root",
+   "resolves_to": "the operator workspace directory itself"
+  },
+  {
+   "reference": "/tmp/approved-otp23-privacy/ (and its mac-integration-2026-10-29/, mac-m11-dev-2026-10-29/ subfolders)",
+   "status": "not-published-private-archive",
+   "resolves_to": "private originals by design; mapped by sha256 here, in curation-map.json and in ../mac-m11-dev-2026-10-29/provenance.json"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-mac-final-integrated-opus-review.md",
+   "status": "published",
+   "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-final-integrated-opus-review.md"
+  },
+  {
+   "reference": "/tmp/opencode/otp23-mac-final-integrated-opus-result.json",
+   "status": "not-published-private-api-envelope",
+   "resolves_to": "whitelisted fields in mac-integration-2026-10-29/model-metadata-final.json"
+  },
+  {
+   "reference": "/dev/shm/otp23rev-*",
+   "status": "not-published",
+   "resolves_to": "final reviewer's transient scratch, deleted by the reviewer"
+  },
+  {
+   "reference": "/tmp/approved-otp23-privacy/mac-resume-2026-10-28/registration-record.json.private-original",
+   "status": "not-published-private-archive",
+   "resolves_to": "private original of mac-resume-2026-10-28/registration/record.json (F1 option (a)); sha256 in mac-resume-2026-10-28/curation/curation-map.json"
+  },
+  {
+   "reference": "/tmp/opencode/",
+   "status": "workspace-root",
+    "resolves_to": "the operator workspace directory itself"
+   },
+   {
+    "reference": "/tmp/opencode/otp23-mac-closure-review-kimi31.md",
+    "status": "published",
+    "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-closure-review-kimi31.md"
+   },
+   {
+    "reference": "/tmp/opencode/otp23-mac-kimi31-reviewer-approval.json",
+    "status": "published",
+    "resolves_to": "mac-integration-2026-10-29/route/otp23-mac-kimi31-reviewer-approval.json"
+   },
+   {
+    "reference": "/tmp/opencode/otp23-mac-review-closure-result.md",
+    "status": "published",
+    "resolves_to": "mac-integration-2026-10-29/reports/otp23-mac-review-closure-controller-result.md"
+   }
+ ],
+ "f1_mac_resume_registration_redaction_2026-10-29": {
+  "folder": "mac-resume-2026-10-28",
+  "manifest_old_sha256": "9e8ed07767a0ed6f6da4094685bd6669d7f9a081f6975d9b8ecafed1917af022",
+  "manifest_old_entries": 35,
+  "manifest_old_copy": "mac-resume-2026-10-28/manifest-history/SHA256SUMS.pre-registration-redaction",
+  "manifest_new_sha256": "e90d3c21a76009c40c7e56c0d06705ef91fc4aef529621672e2796be70212214",
+  "manifest_new_entries": 36,
+  "curation_manifest_old_sha256": "4933dce97d54aa72c44fd6f115969fe0596fd2872762b3d7301c67739ffcd9ce",
+  "curation_manifest_new_sha256": "60dc1017445eb6ccf9e0e6a7fb955836cc3c0fa3afbf396ecf18368f52d29ab5",
+  "record_old_sha256": "a5c405ac18027c75311ff210275387eef8a73fe2641457c6d3f5628be403deac",
+  "record_new_sha256": "61335dc55cf0e48b28a124cfd2dd0b6811552e55726a093c5a83b5158e3f21d6",
+  "changed_entries": [
+   "registration/record.json (4 strings redacted)",
+   "curation/curation-map.json (one redaction entry appended)",
+   "curation/SHA256SUMS (regenerated)",
+   "manifest-history/SHA256SUMS.pre-registration-redaction (added)"
+  ],
+  "note": "copied historical reports citing 9e8ed077 stay byte-unchanged; that digest is their as-of history"
+ }
+}

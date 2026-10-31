@@ -1,0 +1,309 @@
+{
+  "meta": {
+    "platform": "windows",
+    "python": "3.14.3",
+    "os": "Windows-11-10.0.26300-SP0",
+    "started_utc": "2026-10-28T01:13:04+00:00",
+    "source_revision": {
+      "available": false,
+      "stage": "rev-parse",
+      "reason": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "source_sha256": {
+      "scenario_matrix.py": "feaf3a5405605926d20056a2005c90efcb7fff4a500bbb1242db4e9e324f3849",
+      "scenario_matrix_core.py": "b2f417c8d85617a868b50d856575db53d64b3faa00601ffff2d1689d270ae500",
+      "connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+      "manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+      "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f"
+    },
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "foreground_only": true,
+    "no_background_exemption_measured": true,
+    "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+    "pre_existing_host_pids_untouched": [],
+    "finished_utc": "2026-10-28T01:16:03+00:00"
+  },
+  "results": [
+    {
+      "id": "LC-shutdown",
+      "title": "Shutdown with an active scan and two active links",
+      "expected": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, host exits by its own trace line (code 0, never killed by Chrome's lingering-host kill), host gone, zero host windows/endpoints (wrapper chrome-created console recorded for the owner)",
+      "actual": "0 of 2 required phones advertise the service",
+      "status": "BLOCKED",
+      "error_class": "insufficient_phones",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "chrome_version_actual": "Chrome/156.0.8078.73",
+        "trace_env_passed_to_chrome": {
+          "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle4\\shutdown.host-trace.log",
+          "VELES_OTP23_DETACHED_CLOSE": null
+        },
+        "detached_close_env_unset": true,
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 0,
+          "network_endpoints": 0
+        },
+        "wrapper_hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 1,
+          "network_endpoints": 0
+        },
+        "integrity": {
+          "chrome": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "host": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "wrapper": [
+            {
+              "integrity": "medium",
+              "rid": "0x2000",
+              "token_is_elevated": false
+            }
+          ]
+        },
+        "connect_order": "scan-active",
+        "cleanup_problems": []
+      }
+    },
+    {
+      "id": "LC-port-disconnect",
+      "title": "Chrome port.disconnect with an active scan and two active links",
+      "expected": "with two byte-proven links and an active scan, the host exits by its OWN trace line (code 0, stdin-EOF mechanism, NO shutdown handshake, never the ~2 s Chrome kill), host gone; wrapper chrome-created console window recorded for the owner",
+      "actual": "0 of 2 required phones advertise the service",
+      "status": "BLOCKED",
+      "error_class": "insufficient_phones",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "chrome_version_actual": "Chrome/156.0.8078.73",
+        "trace_env_passed_to_chrome": {
+          "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle4\\port-disconnect.host-trace.log",
+          "VELES_OTP23_DETACHED_CLOSE": null
+        },
+        "detached_close_env_unset": true,
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 0,
+          "network_endpoints": 0
+        },
+        "wrapper_hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 1,
+          "network_endpoints": 0
+        },
+        "integrity": {
+          "chrome": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "host": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "wrapper": [
+            {
+              "integrity": "medium",
+              "rid": "0x2000",
+              "token_is_elevated": false
+            }
+          ]
+        },
+        "connect_order": "scan-active",
+        "cleanup_problems": []
+      }
+    },
+    {
+      "id": "LC-tab-close",
+      "title": "Connector tab close with an active scan and two active links",
+      "expected": "owning tab destroyed with two byte-proven links and an active scan: host exits by its OWN trace line (code 0, stdin-EOF mechanism, no shutdown handshake), host gone",
+      "actual": "0 of 2 required phones advertise the service",
+      "status": "BLOCKED",
+      "error_class": "insufficient_phones",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "chrome_version_actual": "Chrome/156.0.8078.73",
+        "trace_env_passed_to_chrome": {
+          "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle4\\tab-close.host-trace.log",
+          "VELES_OTP23_DETACHED_CLOSE": null
+        },
+        "detached_close_env_unset": true,
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 0,
+          "network_endpoints": 0
+        },
+        "wrapper_hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 1,
+          "network_endpoints": 0
+        },
+        "integrity": {
+          "chrome": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "host": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "wrapper": [
+            {
+              "integrity": "medium",
+              "rid": "0x2000",
+              "token_is_elevated": false
+            }
+          ]
+        },
+        "connect_order": "scan-active",
+        "cleanup_problems": []
+      }
+    },
+    {
+      "id": "LC-stdin-eof",
+      "title": "Stdin EOF with an active scan and two active links (direct native-framed process)",
+      "expected": "stdin closed (NOT shutdown): exit 0, stdout reaches EOF on a frame boundary, process gone, trace shows the stdin-closed path with no shutdown_complete",
+      "actual": "0 of 2 required phones advertise the service",
+      "status": "BLOCKED",
+      "error_class": "insufficient_phones",
+      "detail": {
+        "provenance": {
+          "launch": "direct process with pipes",
+          "chrome_provenance": false,
+          "context": "direct launch; Chrome provenance is covered by the Chrome scenarios"
+        },
+        "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+        "host_pid_recorded": true,
+        "integrity": {
+          "host": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "driver": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          }
+        }
+      }
+    },
+    {
+      "id": "LC-stdin-eof-truncated",
+      "title": "Stdin closed inside a frame header (direct native-framed process)",
+      "expected": "host rejects the truncated frame (exit 2), logs the framing stage, stdout ends on a frame boundary, no shutdown credit",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "provenance": {
+          "launch": "direct process with pipes",
+          "chrome_provenance": false,
+          "context": "direct launch; Chrome provenance is covered by the Chrome scenarios"
+        },
+        "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+        "host_pid_recorded": true,
+        "integrity": {
+          "host": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "driver": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          }
+        },
+        "exit_code": 2,
+        "stdout_eof_state": "clean",
+        "trace_exit": {
+          "at_ms": 0,
+          "code": 2,
+          "stdout_drained": true
+        },
+        "trace_mechanism": "stdin_closed",
+        "trace_released": [],
+        "trace_join": {
+          "at_ms": 0,
+          "joined": 0,
+          "total": 0,
+          "within_ms": 0
+        },
+        "frames_after_close": [],
+        "problems": [],
+        "detached_close_env_unset": true,
+        "env_passed_to_host_veles_keys": {
+          "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle4\\stdin-eof-truncated.host-trace.log",
+          "VELES_OTP23_DETACHED_CLOSE": null
+        }
+      }
+    },
+    {
+      "id": "LC-failure-isolation",
+      "title": "Disconnect one link; the survivor keeps exchanging; then clean shutdown",
+      "expected": "stale handle rejected (unknown_handle), survivor exchanges 4096 bytes exactly, shutdown then removes the host by its own exit line",
+      "actual": "0 of 2 required phones advertise the service",
+      "status": "BLOCKED",
+      "error_class": "insufficient_phones",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "chrome_version_actual": "Chrome/156.0.8078.73",
+        "trace_env_passed_to_chrome": {
+          "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle4\\failure-isolation.host-trace.log",
+          "VELES_OTP23_DETACHED_CLOSE": null
+        },
+        "detached_close_env_unset": true,
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 0,
+          "network_endpoints": 0
+        },
+        "wrapper_hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": 1,
+          "network_endpoints": 0
+        },
+        "integrity": {
+          "chrome": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "host": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "wrapper": [
+            {
+              "integrity": "medium",
+              "rid": "0x2000",
+              "token_is_elevated": false
+            }
+          ]
+        },
+        "connect_order": "scan-active",
+        "cleanup_problems": []
+      }
+    }
+  ],
+  "surviving_owned_hosts_after_run": []
+}

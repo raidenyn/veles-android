@@ -1,0 +1,11 @@
+[       0ms pid=91892] start pid=91892
+[       0ms pid=91892] in  len=81 type=hello request_id=r1-awir4m
+[       0ms pid=91892] out len=183 type=ready request_id=r1-awir4m api_version=1
+[     322ms pid=91892] in  len=137 type=start_scan request_id=r2-w7h0ip api_version=1
+[     376ms pid=91892] out len=135 type=scan_state request_id=r2-w7h0ip api_version=1 status=started scan_handle=346ea81837a7f125
+[     378ms pid=91892] in  len=115 type=stop_scan request_id=r3-03shww api_version=1 scan_handle=346ea81837a7f125
+[     378ms pid=91892] out len=135 type=scan_state request_id=r3-03shww api_version=1 status=stopped scan_handle=346ea81837a7f125
+[     379ms pid=91892] in  len=81 type=shutdown request_id=r4-oe8z87 api_version=1
+[     379ms pid=91892] shutdown joined 0/0 within 0ms
+[     379ms pid=91892] out len=90 type=shutdown_complete request_id=r4-oe8z87 api_version=1
+[     379ms pid=91892] exit code=0 stdout_drained=true

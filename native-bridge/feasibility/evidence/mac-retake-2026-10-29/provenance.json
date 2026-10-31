@@ -1,0 +1,47 @@
+{
+  "what": "OTP-23 Mac M-08 retake 2026-10-29: provenance and roles",
+  "date": "2026-10-29",
+  "roles": {
+    "retake_operator_and_curator": {
+      "client": "Claude Code",
+      "model": "claude-opus-5-5",
+      "session": "752e1974-0617-470b-a425-dfbda97ac728",
+      "note": "same session that completed the minimum-fix phase as IMPLEMENTER; no subagents"
+    },
+    "reviewed_code_authors_historical": "ollama-cloud/glm-5.3-flash wrote the M-08 code phase (P0-A gate, lsof classifier, mac_release_bound.py, mac_clock_corroborate.py) and the first minimum fixes; the Opus implementer session above added the real-artifact F-1 test and the Windows-CI gating",
+    "reviews": {
+      "design_preflight": "Opus (otp23-mac-m08-preflight-opus.md)",
+      "code_verification": "ollama-cloud/kimi-k3 (otp23-mac-m08-code-verification-kimi.md)",
+      "fix_micro_verification_and_retake_approval": "fresh independent Opus 5.5 session 7b4ee6ca (otp23-mac-m08-fix-verification-opus.md), not the operator"
+    }
+  },
+  "authorization": "owner route record otp23-mac-opus-continuation-owner-record.json; parent PHYSICAL M08 authorization after the independent approval",
+  "source": "stage/source-provenance.json (HEAD 9c3ddc54\u2026, tracked dirty diff sha256 67bec972\u2026, reviewed working-tree bytes) + stage/stage-expected.sha256 verified on the Mac with shasum -c",
+  "mac_stage_dir": "/Users/raiden/homepc/work/otp23-mac-retake-20261029 (new; not any earlier stage)",
+  "approved_fixture": {
+    "path_resolved": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app (via read-only symlink target/macos-poc)",
+    "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "identifier": "me.nagaev.veles.bridge",
+    "team": "7T39M26Z99",
+    "codesign_verify_strict": "OK before (04:31:38Z) and after (04:43:44Z)"
+  },
+  "chrome": {
+    "version_plist": "156.0.8078.74",
+    "version_driver_reported": "Chrome/156.0.8078.74",
+    "argv": "see <scenario>-1/mac/chrome-argv-samples.txt (live ps samples of the owned browser process)"
+  },
+  "phones": {
+    "2be02e41": "OnePlus 6T",
+    "864a3db0": "NE2215 (10 Pro)",
+    "installed_app_sha256": "063ac7ea719b8b2625690a5be5a9d57a7b3a24bf64242c34a1772b510f677a5e",
+    "installed_test_sha256": "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c",
+    "note": "read on both phones before the runs; no install/uninstall/wipe"
+  },
+  "not_done": [
+    "no TCC action",
+    "no signing/build/package",
+    "no personal Chrome or mount action",
+    "no matrix change",
+    "no commit/push/GitHub"
+  ]
+}

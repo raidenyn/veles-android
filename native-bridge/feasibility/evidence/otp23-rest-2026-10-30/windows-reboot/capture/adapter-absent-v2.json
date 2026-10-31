@@ -1,0 +1,63 @@
+{
+  "phase": "adapter-absent-v2",
+  "started_utc": "2026-10-30T05:03:13.254105+00:00",
+  "operator": "OpenCode parent openai/gpt-6.1-sol",
+  "binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+  "operator_integrity": {
+    "integrity": "medium",
+    "rid": "0x2000",
+    "token_is_elevated": false
+  },
+  "chrome": {
+    "pid": 22976,
+    "version": {
+      "protocolVersion": "1.3",
+      "product": "Chrome/156.0.8078.76",
+      "revision": "@93ce6b54af3fee27e384d1f30346e80db47a14da",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+      "jsVersion": "15.6.75.25"
+    },
+    "integrity": {
+      "integrity": "medium",
+      "rid": "0x2000",
+      "token_is_elevated": false
+    }
+  },
+  "hello": {
+    "api_version": 1,
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "capabilities": [
+      "veles_record_v1"
+    ],
+    "envelope_version": 1,
+    "platform": "windows",
+    "request_id": "r1-mt6j09",
+    "type": "ready"
+  },
+  "host_processes": [
+    {
+      "ProcessId": 44656,
+      "ParentProcessId": 41268,
+      "CommandLine": "\"C:\\Users\\yuriy\\otp23-probe\\rest-reboot-20261030\\host-registration\\plain\\otp23-host.exe\"  chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/ --parent-window=265190 ",
+      "ExecutablePath": "C:\\Users\\yuriy\\otp23-probe\\rest-reboot-20261030\\host-registration\\plain\\otp23-host.exe",
+      "CreationDate": "/Date(1793336594228)/"
+    }
+  ],
+  "scan": {
+    "api_version": 1,
+    "code": "scan_failed",
+    "envelope_version": 1,
+    "recoverability": "fatal",
+    "request_id": "r2-ugnrg8",
+    "stage": "no_adapter",
+    "type": "error"
+  },
+  "shutdown": {
+    "api_version": 1,
+    "envelope_version": 1,
+    "request_id": "r3-rokfdz",
+    "type": "shutdown_complete"
+  },
+  "capture_status": "CAPTURED_REQUIRES_ADJUDICATION",
+  "finished_utc": "2026-10-30T05:03:14.902944+00:00"
+}

@@ -484,10 +484,10 @@ export function validateFragmented(transactions, mtu, layouts) {
   let accepted = true;
   let error = null;
   const fr = layouts.fragmentation;
-  if (!Number.isInteger(mtu) || mtu < fr.mtu_min) {
+  if (!Number.isInteger(mtu) || mtu < fr.mtu_min || mtu > fr.mtu_max) {
     return {
       accepted: false,
-      error: `stage=fragment_header: negotiated MTU ${mtu} below the ${fr.mtu_min}-byte minimum (connection refused at setup)`,
+      error: `stage=fragment_header: negotiated MTU ${mtu} outside ${fr.mtu_min}..${fr.mtu_max} (connection refused at setup)`,
       transactions: [
         {
           transaction_id: null,
@@ -499,7 +499,10 @@ export function validateFragmented(transactions, mtu, layouts) {
       ],
     };
   }
-  const budget = mtu - fr.att_header_bytes - fr.header_bytes;
+  // Profile revision 2 (OTP2-GAT-010): one attribute budget per link, never above the
+  // 512-byte ATT attribute maximum; the payload budget is what remains after the header.
+  const attributeBudget = Math.min(mtu - fr.att_header_bytes, fr.attribute_value_max_bytes);
+  const budget = attributeBudget - fr.header_bytes;
   const openTransactions = new Map();
   for (const tx of transactions) {
     if (openTransactions.size >= fr.reassembly.incomplete_per_peer_max) {
@@ -628,11 +631,19 @@ function reassembleTransaction(tx, budget, fr, openTransactions) {
       }
       const payload = bytes.subarray(fr.header_bytes);
       const remaining = declared - sum;
-      const expected = Math.min(budget, remaining);
-      if (payload.length !== expected) {
+      if (bytes.length > budget + fr.header_bytes) {
         throw new BinaryStageError(
           "fragment_total",
-          `fragment ${index} payload ${payload.length} != expected ${expected} (size rules)`,
+          `fragment ${index} frame ${bytes.length} exceeds the ${budget + fr.header_bytes}-byte attribute budget`,
+        );
+      }
+      // Exact rules: a non-final fragment carries the full budget (and no more than remains);
+      // the final fragment carries exactly what remains (possibly 0 after a full fragment).
+      const expected = isFinal ? remaining : budget;
+      if (payload.length !== expected || (!isFinal && payload.length > remaining)) {
+        throw new BinaryStageError(
+          "fragment_total",
+          `fragment ${index} payload ${payload.length} != expected ${expected} (${isFinal ? "final" : "non-final"} size rule)`,
         );
       }
       buffer.set(payload, sum);

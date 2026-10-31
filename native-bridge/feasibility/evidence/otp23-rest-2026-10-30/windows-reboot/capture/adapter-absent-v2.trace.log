@@ -1,0 +1,10 @@
+[       0ms pid=44656] start pid=44656
+[       0ms pid=44656] in  len=81 type=hello request_id=r1-mt6j09
+[       0ms pid=44656] out len=183 type=ready request_id=r1-mt6j09 api_version=1
+[     321ms pid=44656] in  len=137 type=start_scan request_id=r2-ugnrg8 api_version=1
+[     333ms pid=44656] scan 1 failed: stage=no_adapter
+[     333ms pid=44656] out len=145 type=error request_id=r2-ugnrg8 api_version=1 code=scan_failed recoverability=fatal stage=no_adapter
+[     333ms pid=44656] in  len=81 type=shutdown request_id=r3-rokfdz api_version=1
+[     334ms pid=44656] shutdown joined 0/0 within 0ms
+[     334ms pid=44656] out len=90 type=shutdown_complete request_id=r3-rokfdz api_version=1
+[     334ms pid=44656] exit code=0 stdout_drained=true

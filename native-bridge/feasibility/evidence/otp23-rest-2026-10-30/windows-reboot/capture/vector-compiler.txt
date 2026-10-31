@@ -1,0 +1,2 @@
+c:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.26100.0\Windows.winmd: warning CS1701: Assuming assembly reference 'System.Runtime, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a' matches 'System.Runtime, Version=4.1.2.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a', you may need to supply runtime policy
+c:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2\Facades\System.Runtime.dll: (Location of symbol related to previous warning)

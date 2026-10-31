@@ -1,0 +1,1874 @@
+{
+  "started_utc": "2026-10-27T17:08:25.998+00:00",
+  "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+  "source_sha256": {
+    "backend.rs": "1dad3e3114f52dceec4c444f57d35256d0320d3dac8dbbb34b4728937724e1b1",
+    "base64.rs": "08ac17022fb185b3eb4d34ec241261f4908faa7e5bb71b9908fae537d9dde9b2",
+    "closejoin.rs": "25e44f6db140941cda514b0e5e798785361ec822c6c7e778e0cd40656cc47b5c",
+    "core.rs": "e9acd54b49abfe229b591fd23a8dcffe61c2b9c8e8341a690ab857fd7715c16f",
+    "fragment.rs": "a4ff497defd2f303e55faeffb6c2cbd6f34a89f77cc7a0233f0a689bc936205a",
+    "framing.rs": "f962964841c189346fcbbcdef3234cb4931faa37e8cd94d8aa4ac7eef25ad611",
+    "host.rs": "0e00cff68f21c8c3f589b2af9dc96766665e24e2fb40085dbd37f0e11c336045",
+    "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f",
+    "lib.rs": "79bbf21fdd28b28b8f60667be6d3d1f60e060633f8edc29a7fb06828f58b0265",
+    "macos.rs": "b279858bba8d4422f94fd607f9b23442e09f35850687fcab38c44a411e4ac721",
+    "macos_map.rs": "89a07d54de43248c6fdc10ede90e42c4c040265bb22e83f343ee14c518637e97",
+    "outqueue.rs": "fbf7a6067613c55de56f0b168c7d6e420a007fa9dca1205d8e7307b6df3cbd3e",
+    "protocol.rs": "e66aac39b80f0dc52b4c5bf6daeaaae8d43d33666db90d5de0840f83ad550e9c",
+    "runtime.rs": "157b62855a1fcb70a8acabfcfb1e71e6f2f32ac6c647af33fa9b926c2ef150ae",
+    "sim.rs": "dc75a1e89bee4f625ee9711be6f849986bd14dbc8beb0ef6f7be367f4ec51085",
+    "strict_json.rs": "7ee3100e164efc7889939ca4f5431067243bc3594e20ef79d7c89b9a61ebd0c4",
+    "trace.rs": "437ffb611a33728094e6dbd6d63f2e6bf4eb5bcc717acbd95994d71cbffeee63",
+    "unsupported.rs": "fd09df80567917905028249486134a555a2263a5cc13f81cd42608551090bcda",
+    "winrt.rs": "2ef50ec18fd96907c945136d82dda0796989d5e74fdecdb005d47ee027f61e6a",
+    "winrt_map.rs": "73c2f29426307b6e72f0570012544f600bd6ea88b98b43407ec0222bafc80a02"
+  },
+  "args": {
+    "host_binary": "target\\release\\otp23-host.exe",
+    "out_dir": "evidence\\compare-2",
+    "discover": false,
+    "runs": 6,
+    "order": "awaited,legacy,legacy,awaited,awaited,legacy",
+    "target_gap_from_close_begin_ms": 1500,
+    "gap_s": 0.0,
+    "min_quiescent_s": 12.0,
+    "discover_s": 30.0,
+    "adb_serials": ""
+  },
+  "runs": [
+    {
+      "index": 1,
+      "arm": "awaited",
+      "dir": "run-1-awaited",
+      "quiescent": {
+        "host_procs": 0,
+        "waited_s": 0.128,
+        "satisfied": true,
+        "at_utc": "2026-10-27T17:08:26.127+00:00"
+      },
+      "first": {
+        "phase": "first",
+        "arm": "awaited",
+        "started_utc": "2026-10-27T17:08:26.127+00:00",
+        "host_pid": 92792,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:08:30.169+00:00"
+          },
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:08:30.169+00:00"
+          }
+        ],
+        "trace": "first.host-trace.log",
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:08:27.347+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connect_started_utc": "2026-10-27T17:08:27.348+00:00",
+        "connect_started_epoch_ms": 1793120907348,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:08:30.189+00:00",
+        "exited_epoch_ms": 1793120910189,
+        "finished_utc": "2026-10-27T17:08:30.189+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "2": [
+              1793120910169
+            ],
+            "3": [
+              1793120910169
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120907348
+            ],
+            "3": [
+              1793120907348
+            ]
+          },
+          "close_begin_rel": {
+            "2": 4034,
+            "3": 4034
+          },
+          "close_steps": {
+            "2": [
+              [
+                4034,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                4034,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                4035,
+                "service_close",
+                "ok"
+              ],
+              [
+                4035,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                4035,
+                "session_close",
+                "ok"
+              ],
+              [
+                4036,
+                "device_close",
+                "ok"
+              ]
+            ],
+            "3": [
+              [
+                4034,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                4034,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                4035,
+                "service_close",
+                "ok"
+              ],
+              [
+                4035,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                4035,
+                "session_close",
+                "ok"
+              ],
+              [
+                4036,
+                "device_close",
+                "ok"
+              ]
+            ]
+          },
+          "released": {
+            "2": 53,
+            "3": 54
+          },
+          "detached": [],
+          "shutdown_joined": [
+            2,
+            2,
+            10
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 4045,
+          "exit_index": 56,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "second": {
+        "phase": "second",
+        "arm": "awaited",
+        "started_utc": "2026-10-27T17:08:30.189+00:00",
+        "host_pid": 100108,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:08:32.426+00:00"
+          },
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:08:32.426+00:00"
+          }
+        ],
+        "trace": "second.host-trace.log",
+        "gate": {
+          "anchor_epoch_ms": 1793120910169,
+          "target_gap_ms": 1500
+        },
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:08:31.090+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "gate_wait_s": 0.578,
+        "gate_met": true,
+        "connect_started_utc": "2026-10-27T17:08:31.669+00:00",
+        "connect_started_epoch_ms": 1793120911669,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:08:32.445+00:00",
+        "exited_epoch_ms": 1793120912445,
+        "finished_utc": "2026-10-27T17:08:32.445+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "3": [
+              1793120912426
+            ],
+            "2": [
+              1793120912426
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120911669
+            ],
+            "3": [
+              1793120911669
+            ]
+          },
+          "close_begin_rel": {
+            "3": 2230,
+            "2": 2230
+          },
+          "close_steps": {
+            "2": [
+              [
+                2230,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2230,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2230,
+                "service_close",
+                "ok"
+              ],
+              [
+                2230,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2231,
+                "session_close",
+                "ok"
+              ],
+              [
+                2231,
+                "device_close",
+                "ok"
+              ]
+            ],
+            "3": [
+              [
+                2230,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2230,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2230,
+                "service_close",
+                "ok"
+              ],
+              [
+                2230,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2231,
+                "session_close",
+                "ok"
+              ],
+              [
+                2231,
+                "device_close",
+                "ok"
+              ]
+            ]
+          },
+          "released": {
+            "2": 53,
+            "3": 54
+          },
+          "detached": [],
+          "shutdown_joined": [
+            2,
+            2,
+            10
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 2240,
+          "exit_index": 56,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "anchor_epoch_ms": 1793120910169,
+      "connect_epoch_ms": 1793120911669,
+      "gap_ms": 1500,
+      "gap_target_ms": 1500,
+      "close_durations_ms": {
+        "2": 2,
+        "3": 2
+      },
+      "denial_replies": [],
+      "validity": "valid",
+      "validity_reason": null
+    },
+    {
+      "index": 2,
+      "arm": "legacy",
+      "dir": "run-2-legacy",
+      "quiescent": {
+        "host_procs": 0,
+        "waited_s": 12.017,
+        "satisfied": true,
+        "at_utc": "2026-10-27T17:08:44.462+00:00",
+        "since_previous_exit_s": 12.017
+      },
+      "first": {
+        "phase": "first",
+        "arm": "legacy",
+        "started_utc": "2026-10-27T17:08:44.462+00:00",
+        "host_pid": 98420,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:08:47.967+00:00"
+          },
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:08:48.350+00:00"
+          }
+        ],
+        "trace": "first.host-trace.log",
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:08:46.395+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connect_started_utc": "2026-10-27T17:08:46.395+00:00",
+        "connect_started_epoch_ms": 1793120926395,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:08:48.358+00:00",
+        "exited_epoch_ms": 1793120928358,
+        "finished_utc": "2026-10-27T17:08:48.358+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "3": [
+              1793120928350
+            ],
+            "2": [
+              1793120928350
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120926396
+            ],
+            "3": [
+              1793120926396
+            ]
+          },
+          "close_begin_rel": {
+            "3": 3880,
+            "2": 3881
+          },
+          "close_steps": {
+            "2": [
+              [
+                3881,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                3881,
+                "remove_status_changed",
+                "ok"
+              ]
+            ],
+            "3": [
+              [
+                3881,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                3881,
+                "remove_status_changed",
+                "ok"
+              ]
+            ]
+          },
+          "released": {},
+          "detached": [
+            "3",
+            "2"
+          ],
+          "shutdown_joined": [
+            0,
+            0,
+            0
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 3881,
+          "exit_index": 48,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "second": {
+        "phase": "second",
+        "arm": "legacy",
+        "started_utc": "2026-10-27T17:08:48.358+00:00",
+        "host_pid": 16468,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "error",
+              "code": "connect_failed",
+              "recoverability": "fatal",
+              "stage": "access_denied"
+            },
+            "at_utc": "2026-10-27T17:08:49.987+00:00"
+          },
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "error",
+              "code": "connect_failed",
+              "recoverability": "fatal",
+              "stage": "access_denied"
+            },
+            "at_utc": "2026-10-27T17:08:50.018+00:00"
+          }
+        ],
+        "trace": "second.host-trace.log",
+        "gate": {
+          "anchor_epoch_ms": 1793120928350,
+          "target_gap_ms": 1500
+        },
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:08:49.029+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "gate_wait_s": 0.82,
+        "gate_met": true,
+        "connect_started_utc": "2026-10-27T17:08:49.850+00:00",
+        "connect_started_epoch_ms": 1793120929850,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:08:50.026+00:00",
+        "exited_epoch_ms": 1793120930026,
+        "finished_utc": "2026-10-27T17:08:50.026+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "2": [
+              1793120929987
+            ],
+            "3": [
+              1793120930018
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120929850
+            ],
+            "3": [
+              1793120929850
+            ]
+          },
+          "close_begin_rel": {},
+          "close_steps": {},
+          "released": {},
+          "detached": [],
+          "shutdown_joined": [
+            0,
+            0,
+            0
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [
+            {
+              "conn": "2",
+              "stage": "access_denied",
+              "retryable": "false"
+            },
+            {
+              "conn": "3",
+              "stage": "access_denied",
+              "retryable": "false"
+            }
+          ],
+          "exit_rel": 1654,
+          "exit_index": 32,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable",
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "anchor_epoch_ms": 1793120928350,
+      "connect_epoch_ms": 1793120929850,
+      "gap_ms": 1500,
+      "gap_target_ms": 1500,
+      "close_durations_ms": {
+        "3": 1,
+        "2": 0
+      },
+      "denial_replies": [
+        {
+          "label_hash8": "03dcc1bc",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T17:08:49.987+00:00"
+        },
+        {
+          "label_hash8": "a25859af",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T17:08:50.018+00:00"
+        }
+      ],
+      "validity": "valid",
+      "validity_reason": null
+    },
+    {
+      "index": 3,
+      "arm": "legacy",
+      "dir": "run-3-legacy",
+      "quiescent": {
+        "host_procs": 0,
+        "waited_s": 12.047,
+        "satisfied": true,
+        "at_utc": "2026-10-27T17:09:02.074+00:00",
+        "since_previous_exit_s": 12.048
+      },
+      "first": {
+        "phase": "first",
+        "arm": "legacy",
+        "started_utc": "2026-10-27T17:09:02.074+00:00",
+        "host_pid": 44116,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:04.878+00:00"
+          },
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:04.878+00:00"
+          }
+        ],
+        "trace": "first.host-trace.log",
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:02.875+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connect_started_utc": "2026-10-27T17:09:02.875+00:00",
+        "connect_started_epoch_ms": 1793120942876,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:04.886+00:00",
+        "exited_epoch_ms": 1793120944886,
+        "finished_utc": "2026-10-27T17:09:04.886+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "2": [
+              1793120944878
+            ],
+            "3": [
+              1793120944878
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120942876
+            ],
+            "3": [
+              1793120942876
+            ]
+          },
+          "close_begin_rel": {
+            "2": 2797,
+            "3": 2797
+          },
+          "close_steps": {
+            "3": [
+              [
+                2797,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2797,
+                "remove_status_changed",
+                "ok"
+              ]
+            ],
+            "2": [
+              [
+                2797,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2797,
+                "remove_status_changed",
+                "ok"
+              ]
+            ]
+          },
+          "released": {},
+          "detached": [
+            "2",
+            "3"
+          ],
+          "shutdown_joined": [
+            0,
+            0,
+            0
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 2797,
+          "exit_index": 46,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "second": {
+        "phase": "second",
+        "arm": "legacy",
+        "started_utc": "2026-10-27T17:09:04.886+00:00",
+        "host_pid": 101648,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "error",
+              "code": "connect_failed",
+              "recoverability": "fatal",
+              "stage": "access_denied"
+            },
+            "at_utc": "2026-10-27T17:09:06.515+00:00"
+          },
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "error",
+              "code": "connect_failed",
+              "recoverability": "fatal",
+              "stage": "access_denied"
+            },
+            "at_utc": "2026-10-27T17:09:06.546+00:00"
+          }
+        ],
+        "trace": "second.host-trace.log",
+        "gate": {
+          "anchor_epoch_ms": 1793120944878,
+          "target_gap_ms": 1500
+        },
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:05.458+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "gate_wait_s": 0.919,
+        "gate_met": true,
+        "connect_started_utc": "2026-10-27T17:09:06.378+00:00",
+        "connect_started_epoch_ms": 1793120946378,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:06.552+00:00",
+        "exited_epoch_ms": 1793120946552,
+        "finished_utc": "2026-10-27T17:09:06.552+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "2": [
+              1793120946515
+            ],
+            "3": [
+              1793120946545
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120946378
+            ],
+            "3": [
+              1793120946378
+            ]
+          },
+          "close_begin_rel": {},
+          "close_steps": {},
+          "released": {},
+          "detached": [],
+          "shutdown_joined": [
+            0,
+            0,
+            0
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [
+            {
+              "conn": "2",
+              "stage": "access_denied",
+              "retryable": "false"
+            },
+            {
+              "conn": "3",
+              "stage": "access_denied",
+              "retryable": "false"
+            }
+          ],
+          "exit_rel": 1652,
+          "exit_index": 32,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable",
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "anchor_epoch_ms": 1793120944878,
+      "connect_epoch_ms": 1793120946378,
+      "gap_ms": 1500,
+      "gap_target_ms": 1500,
+      "close_durations_ms": {
+        "2": 0,
+        "3": 0
+      },
+      "denial_replies": [
+        {
+          "label_hash8": "03dcc1bc",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T17:09:06.515+00:00"
+        },
+        {
+          "label_hash8": "a25859af",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T17:09:06.546+00:00"
+        }
+      ],
+      "validity": "valid",
+      "validity_reason": null
+    },
+    {
+      "index": 4,
+      "arm": "awaited",
+      "dir": "run-4-awaited",
+      "quiescent": {
+        "host_procs": 0,
+        "waited_s": 12.042,
+        "satisfied": true,
+        "at_utc": "2026-10-27T17:09:18.595+00:00",
+        "since_previous_exit_s": 12.043
+      },
+      "first": {
+        "phase": "first",
+        "arm": "awaited",
+        "started_utc": "2026-10-27T17:09:18.595+00:00",
+        "host_pid": 73652,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:21.807+00:00"
+          },
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:21.807+00:00"
+          }
+        ],
+        "trace": "first.host-trace.log",
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:19.261+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connect_started_utc": "2026-10-27T17:09:19.262+00:00",
+        "connect_started_epoch_ms": 1793120959262,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:21.825+00:00",
+        "exited_epoch_ms": 1793120961825,
+        "finished_utc": "2026-10-27T17:09:21.825+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "3": [
+              1793120961807
+            ],
+            "2": [
+              1793120961807
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120959262
+            ],
+            "3": [
+              1793120959262
+            ]
+          },
+          "close_begin_rel": {
+            "3": 3206,
+            "2": 3206
+          },
+          "close_steps": {
+            "3": [
+              [
+                3206,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                3206,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                3207,
+                "service_close",
+                "ok"
+              ],
+              [
+                3207,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                3207,
+                "session_close",
+                "ok"
+              ],
+              [
+                3208,
+                "device_close",
+                "ok"
+              ]
+            ],
+            "2": [
+              [
+                3206,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                3206,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                3207,
+                "service_close",
+                "ok"
+              ],
+              [
+                3207,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                3207,
+                "session_close",
+                "ok"
+              ],
+              [
+                3207,
+                "device_close",
+                "ok"
+              ]
+            ]
+          },
+          "released": {
+            "2": 53,
+            "3": 54
+          },
+          "detached": [],
+          "shutdown_joined": [
+            2,
+            2,
+            10
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 3216,
+          "exit_index": 56,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "second": {
+        "phase": "second",
+        "arm": "awaited",
+        "started_utc": "2026-10-27T17:09:21.825+00:00",
+        "host_pid": 14080,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:24.065+00:00"
+          },
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:24.065+00:00"
+          }
+        ],
+        "trace": "second.host-trace.log",
+        "gate": {
+          "anchor_epoch_ms": 1793120961807,
+          "target_gap_ms": 1500
+        },
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:22.383+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "gate_wait_s": 0.924,
+        "gate_met": true,
+        "connect_started_utc": "2026-10-27T17:09:23.308+00:00",
+        "connect_started_epoch_ms": 1793120963308,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:24.083+00:00",
+        "exited_epoch_ms": 1793120964083,
+        "finished_utc": "2026-10-27T17:09:24.083+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "3": [
+              1793120964065
+            ],
+            "2": [
+              1793120964065
+            ]
+          },
+          "connects": {
+            "3": [
+              1793120963308
+            ],
+            "2": [
+              1793120963308
+            ]
+          },
+          "close_begin_rel": {
+            "3": 2234,
+            "2": 2234
+          },
+          "close_steps": {
+            "3": [
+              [
+                2234,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2234,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2235,
+                "service_close",
+                "ok"
+              ],
+              [
+                2235,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2235,
+                "session_close",
+                "ok"
+              ],
+              [
+                2235,
+                "device_close",
+                "ok"
+              ]
+            ],
+            "2": [
+              [
+                2234,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2234,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2234,
+                "service_close",
+                "ok"
+              ],
+              [
+                2234,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2235,
+                "session_close",
+                "ok"
+              ],
+              [
+                2235,
+                "device_close",
+                "ok"
+              ]
+            ]
+          },
+          "released": {
+            "2": 53,
+            "3": 54
+          },
+          "detached": [],
+          "shutdown_joined": [
+            2,
+            2,
+            10
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 2244,
+          "exit_index": 56,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "anchor_epoch_ms": 1793120961807,
+      "connect_epoch_ms": 1793120963308,
+      "gap_ms": 1501,
+      "gap_target_ms": 1500,
+      "close_durations_ms": {
+        "3": 2,
+        "2": 1
+      },
+      "denial_replies": [],
+      "validity": "valid",
+      "validity_reason": null
+    },
+    {
+      "index": 5,
+      "arm": "awaited",
+      "dir": "run-5-awaited",
+      "quiescent": {
+        "host_procs": 0,
+        "waited_s": 12.065,
+        "satisfied": true,
+        "at_utc": "2026-10-27T17:09:36.150+00:00",
+        "since_previous_exit_s": 12.067
+      },
+      "first": {
+        "phase": "first",
+        "arm": "awaited",
+        "started_utc": "2026-10-27T17:09:36.150+00:00",
+        "host_pid": 40920,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:38.928+00:00"
+          },
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:38.928+00:00"
+          }
+        ],
+        "trace": "first.host-trace.log",
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:37.135+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connect_started_utc": "2026-10-27T17:09:37.135+00:00",
+        "connect_started_epoch_ms": 1793120977135,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:38.947+00:00",
+        "exited_epoch_ms": 1793120978947,
+        "finished_utc": "2026-10-27T17:09:38.947+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "2": [
+              1793120978928
+            ],
+            "3": [
+              1793120978928
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120977136
+            ],
+            "3": [
+              1793120977136
+            ]
+          },
+          "close_begin_rel": {
+            "2": 2772,
+            "3": 2772
+          },
+          "close_steps": {
+            "2": [
+              [
+                2772,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2772,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2772,
+                "service_close",
+                "ok"
+              ],
+              [
+                2772,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2773,
+                "session_close",
+                "ok"
+              ],
+              [
+                2773,
+                "device_close",
+                "ok"
+              ]
+            ],
+            "3": [
+              [
+                2772,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2772,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2772,
+                "service_close",
+                "ok"
+              ],
+              [
+                2773,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2773,
+                "session_close",
+                "ok"
+              ],
+              [
+                2773,
+                "device_close",
+                "ok"
+              ]
+            ]
+          },
+          "released": {
+            "2": 53,
+            "3": 54
+          },
+          "detached": [],
+          "shutdown_joined": [
+            2,
+            2,
+            10
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 2782,
+          "exit_index": 56,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "second": {
+        "phase": "second",
+        "arm": "awaited",
+        "started_utc": "2026-10-27T17:09:38.947+00:00",
+        "host_pid": 83732,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:41.163+00:00"
+          },
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:41.191+00:00"
+          }
+        ],
+        "trace": "second.host-trace.log",
+        "gate": {
+          "anchor_epoch_ms": 1793120978928,
+          "target_gap_ms": 1500
+        },
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:39.870+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "gate_wait_s": 0.558,
+        "gate_met": true,
+        "connect_started_utc": "2026-10-27T17:09:40.428+00:00",
+        "connect_started_epoch_ms": 1793120980428,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:41.209+00:00",
+        "exited_epoch_ms": 1793120981209,
+        "finished_utc": "2026-10-27T17:09:41.209+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "2": [
+              1793120981191
+            ],
+            "3": [
+              1793120981191
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120980429
+            ],
+            "3": [
+              1793120980429
+            ]
+          },
+          "close_begin_rel": {
+            "2": 2237,
+            "3": 2237
+          },
+          "close_steps": {
+            "2": [
+              [
+                2237,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2237,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2237,
+                "service_close",
+                "ok"
+              ],
+              [
+                2237,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2238,
+                "session_close",
+                "ok"
+              ],
+              [
+                2238,
+                "device_close",
+                "ok"
+              ]
+            ],
+            "3": [
+              [
+                2237,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2237,
+                "remove_status_changed",
+                "ok"
+              ],
+              [
+                2237,
+                "service_close",
+                "ok"
+              ],
+              [
+                2238,
+                "maintain_false",
+                "ok"
+              ],
+              [
+                2238,
+                "session_close",
+                "ok"
+              ],
+              [
+                2238,
+                "device_close",
+                "ok"
+              ]
+            ]
+          },
+          "released": {
+            "2": 53,
+            "3": 54
+          },
+          "detached": [],
+          "shutdown_joined": [
+            2,
+            2,
+            10
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 2247,
+          "exit_index": 56,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "anchor_epoch_ms": 1793120978928,
+      "connect_epoch_ms": 1793120980429,
+      "gap_ms": 1501,
+      "gap_target_ms": 1500,
+      "close_durations_ms": {
+        "2": 1,
+        "3": 1
+      },
+      "denial_replies": [],
+      "validity": "valid",
+      "validity_reason": null
+    },
+    {
+      "index": 6,
+      "arm": "legacy",
+      "dir": "run-6-legacy",
+      "quiescent": {
+        "host_procs": 0,
+        "waited_s": 12.034,
+        "satisfied": true,
+        "at_utc": "2026-10-27T17:09:53.243+00:00",
+        "since_previous_exit_s": 12.034
+      },
+      "first": {
+        "phase": "first",
+        "arm": "legacy",
+        "started_utc": "2026-10-27T17:09:53.243+00:00",
+        "host_pid": 80980,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:55.918+00:00"
+          },
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "connected"
+            },
+            "at_utc": "2026-10-27T17:09:55.918+00:00"
+          }
+        ],
+        "trace": "first.host-trace.log",
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:53.995+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connect_started_utc": "2026-10-27T17:09:53.995+00:00",
+        "connect_started_epoch_ms": 1793120993995,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:55.926+00:00",
+        "exited_epoch_ms": 1793120995926,
+        "finished_utc": "2026-10-27T17:09:55.926+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "2": [
+              1793120995918
+            ],
+            "3": [
+              1793120995918
+            ]
+          },
+          "connects": {
+            "2": [
+              1793120993996
+            ],
+            "3": [
+              1793120993996
+            ]
+          },
+          "close_begin_rel": {
+            "2": 2668,
+            "3": 2668
+          },
+          "close_steps": {
+            "2": [
+              [
+                2668,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2668,
+                "remove_status_changed",
+                "ok"
+              ]
+            ],
+            "3": [
+              [
+                2668,
+                "remove_value_changed",
+                "ok"
+              ],
+              [
+                2668,
+                "remove_status_changed",
+                "ok"
+              ]
+            ]
+          },
+          "released": {},
+          "detached": [
+            "2",
+            "3"
+          ],
+          "shutdown_joined": [
+            0,
+            0,
+            0
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": 2668,
+          "exit_index": 47,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "second": {
+        "phase": "second",
+        "arm": "legacy",
+        "started_utc": "2026-10-27T17:09:55.926+00:00",
+        "host_pid": 23212,
+        "wanted": [
+          "all"
+        ],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [
+          {
+            "label_hash8": "03dcc1bc",
+            "reply": {
+              "type": "error",
+              "code": "connect_failed",
+              "recoverability": "fatal",
+              "stage": "access_denied"
+            },
+            "at_utc": "2026-10-27T17:09:57.575+00:00"
+          },
+          {
+            "label_hash8": "a25859af",
+            "reply": {
+              "type": "error",
+              "code": "connect_failed",
+              "recoverability": "fatal",
+              "stage": "access_denied"
+            },
+            "at_utc": "2026-10-27T17:09:57.575+00:00"
+          }
+        ],
+        "trace": "second.host-trace.log",
+        "gate": {
+          "anchor_epoch_ms": 1793120995918,
+          "target_gap_ms": 1500
+        },
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:09:57.320+00:00",
+        "wanted_resolved": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "gate_wait_s": 0.097,
+        "gate_met": true,
+        "connect_started_utc": "2026-10-27T17:09:57.418+00:00",
+        "connect_started_epoch_ms": 1793120997418,
+        "missing_wanted": [],
+        "exit_code": 0,
+        "exited_utc": "2026-10-27T17:09:57.584+00:00",
+        "exited_epoch_ms": 1793120997584,
+        "finished_utc": "2026-10-27T17:09:57.584+00:00",
+        "trace_parsed": {
+          "disconnects": {
+            "3": [
+              1793120997546
+            ],
+            "2": [
+              1793120997575
+            ]
+          },
+          "connects": {
+            "3": [
+              1793120997418
+            ],
+            "2": [
+              1793120997418
+            ]
+          },
+          "close_begin_rel": {},
+          "close_steps": {},
+          "released": {},
+          "detached": [],
+          "shutdown_joined": [
+            0,
+            0,
+            0
+          ],
+          "shutdown_budget_exceeded": false,
+          "setups": [
+            {
+              "conn": "3",
+              "stage": "access_denied",
+              "retryable": "false"
+            },
+            {
+              "conn": "2",
+              "stage": "access_denied",
+              "retryable": "false"
+            }
+          ],
+          "exit_rel": 1643,
+          "exit_index": 32,
+          "exit_code": "0",
+          "status_lines": [
+            "conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 3 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable",
+            "conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable",
+            "conn 2 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable"
+          ]
+        }
+      },
+      "anchor_epoch_ms": 1793120995918,
+      "connect_epoch_ms": 1793120997418,
+      "gap_ms": 1500,
+      "gap_target_ms": 1500,
+      "close_durations_ms": {
+        "2": 0,
+        "3": 0
+      },
+      "denial_replies": [
+        {
+          "label_hash8": "03dcc1bc",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T17:09:57.575+00:00"
+        },
+        {
+          "label_hash8": "a25859af",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T17:09:57.575+00:00"
+        }
+      ],
+      "validity": "valid",
+      "validity_reason": null
+    }
+  ],
+  "dumpsys_raw": {},
+  "finished_utc": "2026-10-27T17:09:57.585+00:00"
+}

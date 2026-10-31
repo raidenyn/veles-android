@@ -1,0 +1,34 @@
+{
+  "what": "OTP-23 Mac-resume 2026-10-28 scoped user-level native-messaging registration (created for this run, removed after)",
+  "scope_rule": "user only: /Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts — nothing machine-wide, no TCC change, no app rebuild, no key export",
+  "before_2026-10-28T15:41Z": {
+    "native_messaging_hosts_dir_listing": [
+      "<other application's manifest>",
+      "<other application's manifest>",
+      "<other application's manifest>",
+      "<other application's manifest>"
+    ],
+    "veles_manifest_present": false,
+    "otp23_processes": "none (ps -axo pid,comm grep otp23)"
+  },
+  "register_output_verbatim_2026-10-28T15:42Z": {
+    "registered": true,
+    "host_name": "me.nagaev.veles.otp23.plain",
+    "manifest": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+    "executable": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+    "executable_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+    "scope": "user only (/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts)",
+    "backup": null,
+    "note": "created new manifest"
+  },
+  "register_command": "./scripts/macos-register.sh --app /Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+  "manifest_sha256_during_run": "17a196cdeb758c17c9e4e7329a416ea898d21d94f8837ac052b0625dc0c54fca",
+  "unregister_output_verbatim_2026-10-28T15:58Z": {
+    "unregistered": true,
+    "manifest": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+    "note": "removed only this owned manifest; the PoC app bundle under target/macos-poc and any Bluetooth (TCC) grants were not touched"
+  },
+  "after_match_before": true,
+  "no_backup_restoration_needed": "no unrelated manifest existed; nothing owned by other runs was touched"
+}

@@ -1,0 +1,17 @@
+Chrome Chrome/155.0.8059.85 pid 90256 profile C:\Users\yuriy\AppData\Local\Temp\veles-otp23-profile-p6zr57q2
+[PASS ] CH-01 Load unpacked MV3 extension with fixed key/id
+[PASS ] CH-02 Chrome launches the host on demand via runtime.connectNative; hello -> ready
+[PASS ] CH-03 Host creates no window, no console child, no listener socket
+[PASS ] CH-04 Schema and handle errors are correlated and the session survives
+[PASS ] CH-05 Extension-owned scan for the Veles service: started, bounded events, stopped
+[PASS ] CH-07 Connect to an absent device fails closed with a classified error
+[PASS ] CH-08 shutdown: scan stopped, shutdown_complete last, stdout closed, process exits (stdin still open)
+[PASS ] CH-09 Chrome port closure (stdin EOF) while scanning: scan released, process exits
+[PASS ] CH-10 Closing the connector tab while scanning: process exits
+[PASS ] CH-11 Missing registration is reported by Chrome before any hello
+[PASS ] CH-12 Two ports get two independent host processes; closing one leaves the other
+[PASS ] CH-13 Host running with an active scan when Chrome exits
+[FAIL ] PH-01 Physical phone round trip (OTP-06 synthetic fixture)
+         no phone advertised the Veles service within 30 s
+[PASS ] CH-13 (after Browser.close)
+12/13 cases passed; survivors=0; evidence -> evidence\submitted-cd971f0\windows-single-phone.json

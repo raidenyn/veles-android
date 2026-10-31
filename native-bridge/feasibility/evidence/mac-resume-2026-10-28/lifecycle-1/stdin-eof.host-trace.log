@@ -1,0 +1,8 @@
+[       0ms pid=55185] start pid=55185
+[       0ms pid=55185] in  len=74 type=hello request_id=d1
+[       0ms pid=55185] out len=174 type=ready request_id=d1 api_version=1
+[       0ms pid=55185] in  len=130 type=start_scan request_id=d2 api_version=1
+[      12ms pid=55185] bluetooth authorization before adapter init: not_determined
+[      31ms pid=55185] adapter init: created=true authorization=not_determined
+[   10062ms pid=55185] adapter wait timed out: authorization=not_determined -> permission_pending
+[   10062ms pid=55185] out len=150 type=error request_id=d2 api_version=1 code=scan_failed recoverability=retryable stage=permission_pending

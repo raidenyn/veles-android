@@ -7,11 +7,12 @@
 //! per scan and per link; every OS wait is bounded; a setup that got the connection up always
 //! releases it again, including on cancel.
 //!
-//! The negotiated ATT MTU is **inferred** on macOS: CoreBluetooth only reports
-//! `maxWriteValueLengthForType(WithoutResponse)` (`max_write = mtu - 3`), so
-//! `macos_map::effective_mtu` derives `min(max_write + 3, 517)` and refuses anything implying less
-//! than the 185 floor; nothing is hardcoded. A reported 512 yields an effective MTU of 515 and a
-//! capped fragment payload of 508, byte-identical to an Android phone that negotiated 517.
+//! The negotiated ATT MTU is **never observed or derived** on macOS: CoreBluetooth only reports
+//! `maxWriteValueLengthForType(WithoutResponse)` (`W`), a backend write limit that is at most
+//! `MTU - 3` and may be platform-capped. The host reports it as
+//! `LinkCapacity::MaxWriteWithoutResponse(W)`; a common fragment budget exists only for `W >= 512`
+//! (attribute 512, payload 508, identical to an Android phone that negotiated 515..517) and a
+//! smaller `W` is refused as `budget_undetermined` (fail closed). Nothing is guessed or hardcoded.
 //!
 //! Two bluest/CoreBluetooth facts shape the link loop: `Adapter::device_connection_events` emits
 //! nothing on macOS (iOS only), so link loss is detected through the notify stream's
@@ -32,9 +33,9 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant as TokioInstant;
 
 use crate::backend::{Backend, BackendEvent, Discovered, Failure, Target, Token};
-use crate::fragment::MAX_MTU;
+use crate::fragment::LinkCapacity;
 use crate::macos_map::{
-    Authorization, BoundedSet, GateState, ScanGate, effective_mtu, fallback_label, format_hint,
+    Authorization, BoundedSet, GateState, ScanGate, fallback_label, format_hint, link_budget,
     parse_hint, unavailable_timeout,
 };
 use crate::runtime::BackendEvents;
@@ -265,7 +266,6 @@ struct Link {
     write: Characteristic,
     notify: Characteristic,
     max_write: usize,
-    mtu: usize,
 }
 
 /// A setup that already established an OS connection cannot just drop it: failures carry the
@@ -404,15 +404,18 @@ async fn set_up_link(
         return Err(live(Failure::new("gatt_profile", false)));
     }
 
-    // CoreBluetooth hides the negotiated ATT MTU; infer it from the measured maximum
-    // write-without-response payload. The inferred value is traced, never hardcoded.
+    // CoreBluetooth hides the negotiated ATT MTU and reports only the maximum
+    // write-without-response value length, which is the attribute budget before the 512 clamp.
+    // No MTU is invented from it; the core derives the shared link budget from this capacity.
     let max_write = write
         .max_write_len()
         .map_err(|_| live(Failure::new("mtu_unknown", false)))?;
-    let mtu = effective_mtu(max_write).map_err(|_| live(Failure::new("mtu_too_small", false)))?;
+    let budget =
+        link_budget(max_write).map_err(|_| live(Failure::new("budget_undetermined", false)))?;
     trace!(
-        "conn {conn} max_write_without_response={max_write} inferred effective att mtu={mtu} \
-         (max write + 3, capped {MAX_MTU})"
+        "conn {conn} max_write_without_response={max_write} attribute_budget={} payload_budget={}",
+        budget.attribute(),
+        budget.payload()
     );
     Ok(Link {
         device,
@@ -420,7 +423,6 @@ async fn set_up_link(
         write,
         notify,
         max_write,
-        mtu,
     })
 }
 
@@ -496,7 +498,7 @@ async fn link_main(
     trace!("conn {conn} subscribed; hint={}", redact_hint(&hint));
     events.emit(BackendEvent::Connected {
         conn,
-        mtu: link.mtu,
+        capacity: LinkCapacity::MaxWriteWithoutResponse(link.max_write),
         platform_hint: Some(hint.clone()),
     });
     let mut lost = false;

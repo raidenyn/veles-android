@@ -6,15 +6,15 @@ mod common;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{hex_decode, synthetic};
+use common::{budget as link, hex_decode, synthetic};
 use veles_otp23_feasibility::fragment::{
-    ATTRIBUTE_LIMIT, DiscardReason, FragmentError, GlobalBudget, MAX_MTU, MIN_MTU, PushOutcome,
-    Reassembler, fragment,
+    ATTRIBUTE_VALUE_MAX, BudgetError, DiscardReason, FragmentError, GlobalBudget, LinkBudget,
+    LinkCapacity, MAX_MTU, MIN_MTU, PushOutcome, Reassembler, fragment,
 };
 
 fn reassembler(mtu: usize) -> (Reassembler, Arc<GlobalBudget>) {
     let budget = GlobalBudget::new();
-    (Reassembler::new(mtu, budget.clone()), budget)
+    (Reassembler::new(link(mtu), budget.clone()), budget)
 }
 
 fn feed_all(frames: &[Vec<u8>], mtu: usize) -> PushOutcome {
@@ -38,32 +38,38 @@ fn feed_all(frames: &[Vec<u8>], mtu: usize) -> PushOutcome {
 
 #[test]
 fn record_length_zero_and_above_4096_are_refused_at_fragmentation_time() {
-    assert_eq!(fragment(&[], MIN_MTU, 1), Err(FragmentError::EmptyRecord));
     assert_eq!(
-        fragment(&synthetic(4097, 1), MIN_MTU, 1),
+        fragment(&[], link(MIN_MTU), 1),
+        Err(FragmentError::EmptyRecord)
+    );
+    assert_eq!(
+        fragment(&synthetic(4097, 1), link(MIN_MTU), 1),
         Err(FragmentError::OversizeRecord)
     );
-    assert!(fragment(&synthetic(1, 1), MIN_MTU, 1).is_ok());
-    assert!(fragment(&synthetic(4096, 1), MIN_MTU, 1).is_ok());
+    assert!(fragment(&synthetic(1, 1), link(MIN_MTU), 1).is_ok());
+    assert!(fragment(&synthetic(4096, 1), link(MIN_MTU), 1).is_ok());
 }
 
 #[test]
-fn mtu_and_transaction_id_domains_are_enforced() {
+fn transaction_id_domain_and_link_capacity_domains_are_enforced() {
     let record = synthetic(10, 1);
     assert_eq!(
-        fragment(&record, MIN_MTU - 1, 1),
-        Err(FragmentError::BadMtu)
-    );
-    assert_eq!(
-        fragment(&record, MAX_MTU + 1, 1),
-        Err(FragmentError::BadMtu)
-    );
-    assert!(fragment(&record, MAX_MTU, 1).is_ok());
-    assert_eq!(
-        fragment(&record, MIN_MTU, 0),
+        fragment(&record, link(MIN_MTU), 0),
         Err(FragmentError::BadTransactionId)
     );
-    assert!(fragment(&record, MIN_MTU, 255).is_ok());
+    assert!(fragment(&record, link(MIN_MTU), 255).is_ok());
+    assert!(fragment(&record, link(MAX_MTU), 1).is_ok());
+    // The ATT MTU range is enforced once, where the budget is derived.
+    for mtu in [0, 23, MIN_MTU - 1] {
+        assert_eq!(LinkBudget::from_att_mtu(mtu), Err(BudgetError::TooSmall));
+    }
+    for mtu in [MAX_MTU + 1, 1000, usize::MAX] {
+        assert_eq!(LinkBudget::from_att_mtu(mtu), Err(BudgetError::TooLarge));
+    }
+    assert_eq!(
+        LinkBudget::from_capacity(LinkCapacity::AttMtu(MIN_MTU - 1)),
+        Err(BudgetError::TooSmall)
+    );
 }
 
 #[test]
@@ -82,7 +88,7 @@ fn chunking_at_the_mtu_floor_matches_the_frozen_boundaries() {
     ];
     for (len, fragments) in cases {
         let record = synthetic(len, 3);
-        let frames = fragment(&record, MIN_MTU, 7).unwrap();
+        let frames = fragment(&record, link(MIN_MTU), 7).unwrap();
         assert_eq!(frames.len(), fragments, "record length {len}");
         for (index, frame) in frames.iter().enumerate() {
             let last = index == frames.len() - 1;
@@ -114,7 +120,7 @@ fn chunking_at_the_mtu_floor_matches_the_frozen_boundaries() {
 
 #[test]
 fn max_record_is_23_full_fragments_plus_two_bytes_at_mtu_185() {
-    let frames = fragment(&synthetic(4096, 9), MIN_MTU, 24).unwrap();
+    let frames = fragment(&synthetic(4096, 9), link(MIN_MTU), 24).unwrap();
     assert_eq!(frames.len(), 24);
     assert!(frames[..23].iter().all(|f| f.len() == 182));
     assert_eq!(frames[23].len(), 4 + 2);
@@ -123,7 +129,7 @@ fn max_record_is_23_full_fragments_plus_two_bytes_at_mtu_185() {
 #[test]
 fn max_mtu_uses_the_capped_non_final_fragments() {
     // OTP-23 PoC: the 512-byte attribute cap shrinks the 517-MTU non-final payload to 508.
-    let frames = fragment(&synthetic(4096, 9), MAX_MTU, 1).unwrap();
+    let frames = fragment(&synthetic(4096, 9), link(MAX_MTU), 1).unwrap();
     assert_eq!(frames.len(), 9); // ceil(4096 / 508)
     assert!(frames[..8].iter().all(|f| f.len() == 4 + 508));
     assert_eq!(frames[8].len(), 4 + 32);
@@ -132,7 +138,7 @@ fn max_mtu_uses_the_capped_non_final_fragments() {
 #[test]
 fn round_trip_every_boundary_length_at_floor_and_ceiling_mtu() {
     for mtu in [MIN_MTU, 247, MAX_MTU] {
-        let payload = (mtu - 3).min(ATTRIBUTE_LIMIT) - 4;
+        let payload = (mtu - 3).min(ATTRIBUTE_VALUE_MAX) - 4;
         let mut lengths = vec![
             1,
             2,
@@ -146,7 +152,7 @@ fn round_trip_every_boundary_length_at_floor_and_ceiling_mtu() {
         lengths.extend([4095, 4096]);
         for len in lengths {
             let record = synthetic(len, len as u8);
-            let frames = fragment(&record, mtu, 200).unwrap();
+            let frames = fragment(&record, link(mtu), 200).unwrap();
             match feed_all(&frames, mtu) {
                 PushOutcome::Complete(bytes) => assert_eq!(bytes, record, "mtu {mtu} len {len}"),
                 other => panic!("mtu {mtu} len {len}: {other:?}"),
@@ -161,7 +167,7 @@ fn round_trip_every_boundary_length_at_floor_and_ceiling_mtu() {
 fn zero_length_final_fragment_is_accepted_when_the_record_is_an_exact_multiple() {
     // Fixture style: two full non-final fragments then an empty final one (356 bytes).
     let record = synthetic(356, 5);
-    let mut frames = fragment(&record, MIN_MTU, 25).unwrap();
+    let mut frames = fragment(&record, link(MIN_MTU), 25).unwrap();
     let last = frames.pop().unwrap();
     let mut non_final = last.clone();
     non_final[0] &= 0x7f; // the sender's last chunk becomes non-final...
@@ -328,7 +334,7 @@ fn global_caps_apply_across_peers_before_allocation() {
     let budget = GlobalBudget::new();
     let now = Instant::now();
     let mut peers: Vec<Reassembler> = (0..9)
-        .map(|_| Reassembler::new(MIN_MTU, budget.clone()))
+        .map(|_| Reassembler::new(link(MIN_MTU), budget.clone()))
         .collect();
     for (p, peer) in peers.iter_mut().enumerate().take(8) {
         for tx in [1u8, 2] {
@@ -450,14 +456,6 @@ fn clear_wipes_everything() {
 
 // ---- committed protocol fixtures --------------------------------------------------------------
 
-/// FINDING (OTP-23): the committed fixture expects `incomplete` for a first fragment that is
-/// non-final yet carries 1 payload byte (total 1). The production Android receiver
-/// (`GattTransport.validPayload`) requires non-final payloads of exactly MTU-7 bytes and discards
-/// it; `FragmentFixturesTest.kt` only asserts that no record was delivered, so it cannot see the
-/// difference. This receiver mirrors Android and therefore discards it. The fixture/spec should
-/// either encode that fragment as final or state that short non-final fragments are legal.
-const KNOWN_FIXTURE_DIVERGENCE: &[&str] = &["frag-live-transaction-duplicate-ignored"];
-
 #[test]
 fn committed_fragmentation_fixtures_behave_as_specified() {
     let path = concat!(
@@ -467,7 +465,10 @@ fn committed_fragmentation_fixtures_behave_as_specified() {
     let document: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path).expect("fixture file")).unwrap();
     let fixtures = document["fixtures"].as_array().unwrap();
-    assert!(fixtures.len() >= 21);
+    assert!(
+        fixtures.iter().any(|f| f["id"] == "frag-r2-mtu517-len4096"),
+        "r2 vectors must be present"
+    );
     for fixture in fixtures {
         let id = fixture["id"].as_str().unwrap();
         let mtu = fixture["input"]["mtu"].as_u64().unwrap() as usize;
@@ -488,14 +489,6 @@ fn committed_fragmentation_fixtures_behave_as_specified() {
             }
             let want = &expected[index];
             let label = format!("{id} transaction {index}");
-            if KNOWN_FIXTURE_DIVERGENCE.contains(&id) {
-                assert_eq!(
-                    outcome,
-                    PushOutcome::Discarded(DiscardReason::Payload),
-                    "{label}"
-                );
-                continue;
-            }
             if want["completed"] == true {
                 let bytes = hex_decode(want["reassembled"].as_str().unwrap());
                 assert_eq!(outcome, PushOutcome::Complete(bytes), "{label}");
@@ -549,7 +542,7 @@ fn sender_output_matches_the_committed_max_record_vector() {
     assert_eq!(
         fragment(
             &record,
-            185,
+            link(185),
             transaction["transaction_id"].as_u64().unwrap() as u8
         )
         .unwrap(),
@@ -557,12 +550,12 @@ fn sender_output_matches_the_committed_max_record_vector() {
     );
 }
 
-// ---- OTP-23 PoC attribute cap (experimental wire behavior; capped 512 by default) ---------------
+// ---- OTP2-GAT-010 profile revision 2: min(MTU - 3, 512) attribute budget ------------------------
 
 #[test]
-fn poc_mtu_517_capped_non_final_payloads_are_exactly_508_bytes() {
+fn r2_mtu_517_capped_non_final_payloads_are_exactly_508_bytes() {
     let record = synthetic(4096, 9);
-    let frames = fragment(&record, MAX_MTU, 1).unwrap();
+    let frames = fragment(&record, link(MAX_MTU), 1).unwrap();
     assert_eq!(frames.len(), 9, "ceil(4096 / 508)");
     assert!(
         frames[..8].iter().all(|f| f.len() == 4 + 508),
@@ -578,11 +571,11 @@ fn poc_mtu_517_capped_non_final_payloads_are_exactly_508_bytes() {
 }
 
 #[test]
-fn poc_mtu_517_payload_boundary_508_fits_and_509_needs_two_fragments() {
-    let fits = fragment(&synthetic(508, 1), MAX_MTU, 1).unwrap();
+fn r2_mtu_517_payload_boundary_508_fits_and_509_needs_two_fragments() {
+    let fits = fragment(&synthetic(508, 1), link(MAX_MTU), 1).unwrap();
     assert_eq!(fits.len(), 1, "508 payload fits one capped fragment");
     assert_eq!(fits[0][0], 0x80, "single fragment is final");
-    let split = fragment(&synthetic(509, 1), MAX_MTU, 1).unwrap();
+    let split = fragment(&synthetic(509, 1), link(MAX_MTU), 1).unwrap();
     assert_eq!(split.len(), 2, "509 payload needs a second fragment");
     assert_eq!(split[0].len(), 4 + 508);
     assert_eq!(split[1].len(), 4 + 1);
@@ -593,7 +586,7 @@ fn poc_mtu_517_payload_boundary_508_fits_and_509_needs_two_fragments() {
 }
 
 #[test]
-fn poc_mtu_517_rejects_inbound_frames_above_the_512_attribute_cap() {
+fn r2_mtu_517_rejects_inbound_frames_above_the_512_attribute_cap() {
     let now = Instant::now();
     // Frame sizes 513..516 (payloads 509..512) all exceed min(MTU-3, 512) = 512.
     for payload in [509usize, 510, 511, 512] {
@@ -618,7 +611,7 @@ fn poc_mtu_517_rejects_inbound_frames_above_the_512_attribute_cap() {
 }
 
 #[test]
-fn poc_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries() {
+fn r2_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries() {
     let chunk = 508usize; // min(517 - 3, 512) - 4
     for len in [
         1,
@@ -631,7 +624,7 @@ fn poc_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries() {
         4096,
     ] {
         let record = synthetic(len, len as u8);
-        let frames = fragment(&record, MAX_MTU, 200).unwrap();
+        let frames = fragment(&record, link(MAX_MTU), 200).unwrap();
         match feed_all(&frames, MAX_MTU) {
             PushOutcome::Complete(bytes) => assert_eq!(bytes, record, "len {len}"),
             other => panic!("len {len}: {other:?}"),
@@ -640,9 +633,9 @@ fn poc_mtu_517_round_trip_byte_exact_at_the_capped_chunk_boundaries() {
 }
 
 #[test]
-fn poc_cap_preserves_frozen_mtu_185_vectors() {
+fn r2_preserves_the_mtu_185_vectors() {
     let record = synthetic(4096, 9);
-    let frames = fragment(&record, MIN_MTU, 24).unwrap();
+    let frames = fragment(&record, link(MIN_MTU), 24).unwrap();
     assert_eq!(frames.len(), 24);
     assert!(frames[..23].iter().all(|f| f.len() == 182));
     assert_eq!(frames[23].len(), 4 + 2);
@@ -650,4 +643,230 @@ fn poc_cap_preserves_frozen_mtu_185_vectors() {
         PushOutcome::Complete(bytes) => assert_eq!(bytes, record),
         other => panic!("{other:?}"),
     }
+}
+
+// Literal, independent statement of the payload budget: unclamped up to ATT MTU 515, 508 above.
+fn literal_payload(mtu: usize) -> usize {
+    if mtu <= 515 { mtu - 7 } else { 508 }
+}
+
+#[test]
+fn r2_budget_matches_the_literal_table_for_every_mtu() {
+    for mtu in MIN_MTU..=MAX_MTU {
+        let budget = link(mtu);
+        assert_eq!(budget.payload(), literal_payload(mtu), "mtu {mtu}");
+        assert_eq!(budget.attribute(), literal_payload(mtu) + 4, "mtu {mtu}");
+        assert!(budget.attribute() <= ATTRIBUTE_VALUE_MAX);
+    }
+}
+
+#[test]
+fn r2_sender_and_receiver_agree_at_every_boundary_of_every_mtu() {
+    for mtu in MIN_MTU..=MAX_MTU {
+        let p = literal_payload(mtu);
+        for len in [
+            1,
+            2,
+            p - 1,
+            p,
+            p + 1,
+            2 * p - 1,
+            2 * p,
+            2 * p + 1,
+            4095,
+            4096,
+        ] {
+            let record = synthetic(len, (mtu % 251) as u8);
+            let frames = fragment(&record, link(mtu), 77).unwrap();
+            assert_eq!(frames.len(), len.div_ceil(p), "mtu {mtu} len {len}");
+            for (index, frame) in frames.iter().enumerate() {
+                let last = index + 1 == frames.len();
+                assert!(frame.len() <= (mtu - 3).min(512), "mtu {mtu} len {len}");
+                assert_eq!(frame[0] & 0x80 != 0, last);
+                if !last || len % p == 0 {
+                    assert_eq!(frame.len() - 4, p, "mtu {mtu} len {len} frame {index}");
+                } else {
+                    assert_eq!(frame.len() - 4, len % p, "mtu {mtu} len {len}");
+                }
+            }
+            match feed_all(&frames, mtu) {
+                PushOutcome::Complete(bytes) => assert_eq!(bytes, record, "mtu {mtu} len {len}"),
+                other => panic!("mtu {mtu} len {len}: {other:?}"),
+            }
+        }
+    }
+}
+
+fn frame(index: u8, last: bool, tid: u8, total: usize, payload: usize) -> Vec<u8> {
+    let mut frame = vec![
+        index | if last { 0x80 } else { 0 },
+        tid,
+        (total >> 8) as u8,
+        total as u8,
+    ];
+    frame.extend(synthetic(payload, index));
+    frame
+}
+
+fn accepts(mtu: usize, frames: &[Vec<u8>]) -> bool {
+    let (mut r, _) = reassembler(mtu);
+    let now = Instant::now();
+    matches!(
+        frames.iter().map(|f| r.push(f, now)).last(),
+        Some(PushOutcome::Complete(_))
+    )
+}
+
+#[test]
+fn r2_receiver_accepts_an_empty_final_only_after_an_exact_multiple() {
+    for mtu in [MIN_MTU, 514, 516, MAX_MTU] {
+        let p = literal_payload(mtu);
+        let tolerated = [
+            frame(0, false, 9, 2 * p, p),
+            frame(1, false, 9, 0, p),
+            frame(2, true, 9, 0, 0),
+        ];
+        assert!(accepts(mtu, &tolerated), "mtu {mtu}");
+        // Not an exact multiple: the same empty final is a length mismatch.
+        let short = [
+            frame(0, false, 9, 2 * p + 1, p),
+            frame(1, false, 9, 0, p),
+            frame(2, true, 9, 0, 0),
+        ];
+        assert!(!accepts(mtu, &short), "mtu {mtu}");
+    }
+}
+
+#[test]
+fn r2_exact_size_rules_reject_every_off_by_one_at_mtu_517() {
+    let p = 508;
+    let m = MAX_MTU;
+    // non-final short by one, with a final that would otherwise make the total match
+    assert!(!accepts(
+        m,
+        &[frame(0, false, 5, 1016, p - 1), frame(1, true, 5, 0, p + 1)]
+    ));
+    // non-final carrying more than remains
+    assert!(!accepts(m, &[frame(0, false, 5, 507, p)]));
+    // final short of / beyond the declared total
+    assert!(!accepts(
+        m,
+        &[frame(0, false, 5, 1000, p), frame(1, true, 5, 0, 491)]
+    ));
+    assert!(!accepts(
+        m,
+        &[frame(0, false, 5, 1000, p), frame(1, true, 5, 0, 493)]
+    ));
+    // empty final while bytes remain
+    assert!(!accepts(
+        m,
+        &[frame(0, false, 5, 1000, p), frame(1, true, 5, 0, 0)]
+    ));
+    // total 0 and 4097
+    assert!(!accepts(m, &[frame(0, true, 5, 0, 0)]));
+    assert!(!accepts(m, &[frame(0, false, 5, 4097, p)]));
+    // gap and duplicate indices
+    assert!(!accepts(
+        m,
+        &[frame(0, false, 5, 1017, p), frame(2, true, 5, 0, 509 - 1)]
+    ));
+    assert!(!accepts(
+        m,
+        &[frame(0, false, 5, 1017, p), frame(0, false, 5, 0, p)]
+    ));
+    // the exact forms are accepted
+    assert!(accepts(
+        m,
+        &[frame(0, false, 5, 1016, p), frame(1, true, 5, 0, p)]
+    ));
+    assert!(accepts(m, &[frame(0, true, 5, p, p)]));
+    // nothing may follow a final fragment
+    let (mut r, _) = reassembler(m);
+    let now = Instant::now();
+    assert!(matches!(
+        r.push(&frame(0, true, 5, p, p), now),
+        PushOutcome::Complete(_)
+    ));
+    assert!(!matches!(
+        r.push(&frame(1, true, 5, 0, 0), now),
+        PushOutcome::Complete(_)
+    ));
+}
+
+#[test]
+fn r2_revision_1_frames_at_mtu_516_and_517_fail_closed() {
+    for mtu in [516usize, MAX_MTU] {
+        let legacy = mtu - 7; // revision 1: 509 / 510 payload, 513 / 514-byte attribute values
+        let record = synthetic(4096, 1);
+        let frames: Vec<Vec<u8>> = record
+            .chunks(legacy)
+            .enumerate()
+            .map(|(i, chunk)| {
+                let mut f = vec![
+                    i as u8
+                        | if (i + 1) * legacy >= record.len() {
+                            0x80
+                        } else {
+                            0
+                        },
+                    9,
+                    if i == 0 { 0x10 } else { 0 },
+                    0,
+                ];
+                f.extend_from_slice(chunk);
+                f
+            })
+            .collect();
+        let (mut r, budget) = reassembler(mtu);
+        assert_eq!(
+            r.push(&frames[0], Instant::now()),
+            PushOutcome::Discarded(DiscardReason::FrameSize),
+            "mtu {mtu}"
+        );
+        assert_eq!(budget.usage(), (0, 0), "nothing was retained");
+    }
+}
+
+/// Byte-exact cross-consumer agreement: the Rust sender reproduces every canonical accepted
+/// committed vector (including its transaction id), and the receiver reassembles all of them.
+#[test]
+fn r2_sender_reproduces_every_canonical_accepted_fixture_byte_for_byte() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../protocol/v1/fixtures/fragmentation.json"
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let mut compared = 0;
+    for fixture in document["fixtures"].as_array().unwrap() {
+        let id = fixture["id"].as_str().unwrap();
+        let transactions = fixture["input"]["transactions"].as_array().unwrap();
+        let expected = &fixture["expected"]["transactions"][0];
+        if fixture["expected"]["accepted"] != true
+            || transactions.len() != 1
+            || expected["completed"] != true
+        {
+            continue;
+        }
+        let committed: Vec<Vec<u8>> = transactions[0]["fragments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| hex_decode(f.as_str().unwrap()))
+            .collect();
+        // A trailing empty final is receiver tolerance only; the sender never emits it.
+        if committed.last().unwrap().len() == 4 {
+            continue;
+        }
+        let mtu = fixture["input"]["mtu"].as_u64().unwrap() as usize;
+        let record = hex_decode(expected["reassembled"].as_str().unwrap());
+        let tid = transactions[0]["transaction_id"].as_u64().unwrap() as u8;
+        assert_eq!(
+            fragment(&record, link(mtu), tid).unwrap(),
+            committed,
+            "{id}"
+        );
+        compared += 1;
+    }
+    assert!(compared >= 40, "compared only {compared} canonical vectors");
 }

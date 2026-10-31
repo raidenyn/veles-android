@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-29",
+  "operator": "OpenCode parent gpt-6.1-sol, read-only SSH log queries",
+  "purpose": "Check retained original signed-host prompt records without resetting TCC; corroborate the distinct developer-host observation",
+  "queries": [
+    "log show --last 4d --style ndjson --predicate 'process == \"tccd\" AND eventMessage CONTAINS \"me.nagaev.veles.bridge\"' --info",
+    "log show --last 4d --style ndjson --predicate 'process == \"tccd\" AND eventMessage CONTAINS \"95540.2\"' --info"
+  ],
+  "scoped_history_sha256": "a71f932dc7c27bfa06b99fa3044d0416fcb1cc3a283ed695c0de7ff4d4bd91c6",
+  "dev_prompt_chain_sha256": "09d680b6a683a3c42281f05103557a8e653313f71e8cad4e63e25f5a219196b4",
+  "scoped_history_events": 90,
+  "first_matching_timestamp_local": "2026-10-28 22:44:17.275569+0700",
+  "last_matching_timestamp_local": "2026-10-29 13:21:18.668078+0700",
+  "dev_request": {
+    "msg_id": "95540.2",
+    "service": "kTCCServiceBluetoothAlways",
+    "requesting_code_identifier": "otp23_host-b86638eeb61c91b4",
+    "subject": "me.nagaev.veles.bridge.dev",
+    "requesting_pid": 95540,
+    "uid": 501,
+    "prompting_timestamp_local": "2026-10-29 12:29:58.733307+0700",
+    "prompting_timestamp_utc": "2026-10-29T05:29:58.733307Z",
+    "result_timestamp_local": "2026-10-29 13:17:25.367351+0700",
+    "result_timestamp_utc": "2026-10-29T06:17:25.367351Z",
+    "authValue_observed": 2,
+    "authReason_observed": 2,
+    "authVersion_observed": 1,
+    "error_observed": "(null)",
+    "interpretation": "Corroborates the actual developer-subject prompt and an OS authorization decision consistent with the owner's Allow report; preserve numeric values and distinguish this OS log from the absent host trace."
+  },
+  "signed_original_prompt": {
+    "matching_prompt_record_found": false,
+    "current_signed_authorization_subject_records_found": true,
+    "scope": "No original signed-host PROMPTING record was found in this query's returned data. Current authorization-subject records are not observation of the original prompt. Do not infer M-03/M-04 satisfaction or make a universal log-retention claim."
+  },
+  "raw_capture_statuses_unchanged": true,
+  "tcc_reset_or_permission_toggle_performed_by_query": false
+}

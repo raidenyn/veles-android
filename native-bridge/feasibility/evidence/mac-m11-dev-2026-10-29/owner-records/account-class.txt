@@ -1,0 +1,5 @@
+2026-10-29T11:01:19Z
+raiden
+501
+staff everyone localaccounts _appserverusr admin _appserveradm _lpadmin com.apple.access_ssh com.apple.sharepoint.group.2 com.apple.sharepoint.group.3 _appstore _lpoperator _developer _analyticsusers com.apple.access_ftp com.apple.access_screensharing com.apple.access_remote_ae com.apple.sharepoint.group.1
+yes raiden is a member of admin

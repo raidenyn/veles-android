@@ -1,0 +1,39 @@
+{
+  "captured_utc": "2026-10-30T09:22:30.753190+00:00",
+  "source": "Read-only OpenCode database selected actual metadata; no message bodies, API headers/errors or raw event logs exported",
+  "owner_selection_verbatim": "Use kimi k3.1 pro for review.",
+  "operator": "Parent openai/gpt-6.1-sol; distinct from both independent reviewers",
+  "focused_reviews": [
+    {
+      "role": "Independent focused code reviewer, not implementation/physical operator",
+      "session_id": "ses_e73f8ef68ffeVYUX8uh219t6M2",
+      "provider": "kimi-code-plan-global",
+      "model": "k3.1-pro",
+      "tool_agent": "build",
+      "variant": null,
+      "assistant_records_at_capture": 21,
+      "task_tool_delegation_observed": false,
+      "report": "kimi31-code-review.md",
+      "report_sha256": "3cfc4dd2e19a49859440d0869e8f99988e76185017bdd6402f98b503fcf9bdef"
+    },
+    {
+      "role": "Independent focused evidence reviewer, not implementation/physical operator",
+      "session_id": "ses_e73f8ef5fffe3PFMdKshg41FjF",
+      "provider": "kimi-code-plan-global",
+      "model": "k3.1-pro",
+      "tool_agent": "build",
+      "variant": null,
+      "assistant_records_at_capture": 57,
+      "task_tool_delegation_observed": false,
+      "report": "kimi31-evidence-review.md",
+      "report_sha256": "4fb39ba06b49f77f1c9820b2ed175a205e4e79e37267de9342fbd8f0b6f43bf8"
+    }
+  ],
+  "earlier_interrupted_review": {
+    "session_id": "ses_e740b968bffe54ZU0ey6hYW01w",
+    "provider": "kimi-code-plan-global",
+    "model": "k3.1-pro",
+    "status": "Interrupted before a verdict by provider plan large-context restriction (HTTP403); NOT approval",
+    "handling": "Fresh bounded code/evidence reviews on SAME user-selected model; no model substitution; no raw API error/headers exported"
+  }
+}

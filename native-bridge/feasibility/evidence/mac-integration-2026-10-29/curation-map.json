@@ -1,0 +1,42 @@
+{
+  "what": "Curation record for mac-integration-2026-10-29",
+  "policy": "reports are byte-exact copies of the operator-workspace files except where another local user's name, a foreign app's name, or unrelated applications' manifest names occur; those are published as *.public.md with placeholders and a leading comment, originals kept privately (sha256 below). Prior frozen evidence is not rewritten and no repository-wide privacy-absence claim is made.",
+  "exact_copies": {
+    "reports/otp23-mac-final-data-review-opus.md": "a7f6f3ca13ae069ae5babbabca4e33b2a95ba102fd85ee284b05f2f265349614",
+    "reports/otp23-mac-m08-attribution-result.md": "5ff12cf6f41e721568af0bda48b3f2fd371b23b091e4b8f9a506f2a79eb8b36f",
+    "reports/otp23-mac-m08-code-result.md": "9690849264c95ba251b603480c78d95180095728d42e54ff1df03f5cce561577",
+    "reports/otp23-mac-m08-fix-opus-implementer-metadata.json": "edb62df17a91df077e9374cea3436144c1bb284a74444f7519cb2ec5b2d22580",
+    "reports/otp23-mac-m08-fix-result.md": "84d5c108c0f4492ef79a72d02ad29bc4a4a49bca61b47b7b003f57cd413fc2ba",
+    "reports/otp23-mac-m08-fix-verification-opus.md": "349352209a0fe8633f769af86dbe18e66ca9fd893430d544cd3ba720026f5a7c",
+    "reports/otp23-mac-m08-parent-preflight-decision.json": "32623fdc326b33a8c7a2395e7ffea7c165864f4b9d013eabe1440ab51fe1ac0f",
+    "reports/otp23-mac-m08-physical-review-opus.md": "0a4275a2f147d8f824abe00dc5a67bdd73053472b6782c54fb23d99191114423",
+    "reports/otp23-mac-m08-preflight-opus.md": "56f7d6a8c9a7d5eea98656b968c7a465362fd7cabea6c729fdfa78ca88c866f3",
+    "reports/otp23-mac-m08-retake-result.md": "9715522dc82f5e57e78f7ec61457ac111c671c12672771db520d9a3d186bed7d",
+    "reports/otp23-mac-m11-loop-fix-result.md": "3d8f5f21187d16bd757ff05f527f0a8bbd3929e4b8d143cafea21693dfd77970",
+    "reports/otp23-mac-m11-loop-verification-opus.md": "ee5cf425c51c173767b029fc60cc7f93eaec5c021c20c112530b16c5d1c5706b",
+    "reports/otp23-mac-m11-preparation.md": "93b26cbcbb98a51c8d868b06bb21e027441e7755ef1bbedb739124ba5eb07800",
+    "reports/otp23-mac-safe-analysis-parent-decision.json": "6e68fc0ede576897b8d91c7b18c4d90ffd057fdb0d0272887f6e82607221e283",
+    "reports/otp23-mac-safe-attribution-result.md": "b92dba90676fab869e2fbff9e070ed2aeae905e4cf88e4ebce20a132020c32e1"
+  },
+  "redacted_public_copies": [
+    {
+      "public": "reports/otp23-mac-resume-result.public.md",
+      "public_sha256": "3aad04ca08a078545fc2e6a26adc8f3ce9dc9cb3ddca10dfbad27d48c1e980fc",
+      "private_original_sha256": "a9ec52c7efb0b9b1a8aea4d1def05c169b0becb1abfe494b668dd16851067c7f",
+      "replaced": "another local user's account name -> <another-local-user>; a foreign app name -> <foreign-app>"
+    },
+    {
+      "public": "reports/otp23-mac-resume-human-action.public.md",
+      "public_sha256": "a7fce0e78110a8185d38a9f3e7fc88cce09c7ca197d4b765529ea102bb43f8f7",
+      "private_original_sha256": "c41d0d2a296f13e96f5350d77cfb878abde9af2b1e4ad7063b90d15bfdf8469f",
+      "replaced": "another local user's account name -> <another-local-user>; a foreign app name -> <foreign-app>"
+    },
+    {
+      "public": "reports/otp23-mac-m08-code-verification-kimi.public.md",
+      "public_sha256": "229a9a6fb0920299091acef8f112d98b499245dd53a6430572c4bc5fdd30ff97",
+      "private_original_sha256": "288dcd7f5f2ed1abadc1f9fd82a0aecb024ae181d4f1c46f5d7f096b9c0073bd",
+      "replaced": "names of unrelated applications' Native Messaging manifests on the owner's account -> <other applications' manifests>"
+    }
+  ],
+  "private_location": "/tmp/approved-otp23-privacy/mac-integration-2026-10-29"
+}

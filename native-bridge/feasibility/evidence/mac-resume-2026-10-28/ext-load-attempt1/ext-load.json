@@ -1,0 +1,52 @@
+{
+  "what": "OTP-23 Mac-resume extension load + host-ready probe (unchanged driver flow, diagnostics)",
+  "started_utc": "2026-10-28T15:43:01+00:00",
+  "identity": {
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "origin": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+    "host_name": "me.nagaev.veles.otp23.plain"
+  },
+  "manifest": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+  "manifest_sha256": "17a196cdeb758c17c9e4e7329a416ea898d21d94f8837ac052b0625dc0c54fca",
+  "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "python": "3.9.6",
+  "os": "macOS-26.5.2-arm64-arm-64bit",
+  "context": {
+    "launchctl_managername": "Background",
+    "uid": 501,
+    "ssh_connection_present": true
+  },
+  "chrome_version": "Chrome/156.0.8078.74",
+  "chrome_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+  "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-2_2lds8s",
+  "cdp_port": 63200,
+  "predicted_chrome_argv": [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "--user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-2_2lds8s",
+    "--remote-debugging-port=0",
+    "--enable-unsafe-extension-debugging",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-sync",
+    "--window-size=1000,700",
+    "about:blank"
+  ],
+  "load_unpacked_seconds": 0.006,
+  "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+  "connector_target": "E7C7AD953BD29BAEAE3798B87CF25FB2",
+  "otp23_object_seconds": 0.297,
+  "hello": {
+    "api_version": 1,
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "capabilities": [
+      "veles_record_v1"
+    ],
+    "envelope_version": 1,
+    "platform": "macos",
+    "request_id": "r1-mwchnd",
+    "type": "ready"
+  },
+  "result": "PASS",
+  "chrome_close": "clean",
+  "finished_utc": "2026-10-28T15:43:03+00:00"
+}

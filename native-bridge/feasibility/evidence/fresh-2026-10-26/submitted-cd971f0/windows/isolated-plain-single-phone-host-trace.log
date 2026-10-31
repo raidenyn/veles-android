@@ -1,0 +1,44 @@
+[       0ms pid=98928] start pid=98928
+[       0ms pid=98928] in  len=81 type=hello request_id=r1-b9txck
+[       0ms pid=98928] out len=183 type=ready request_id=r1-b9txck api_version=1
+[    3292ms pid=98928] in  len=137 type=start_scan request_id=r2-2gkcxp api_version=1
+[    3345ms pid=98928] out len=135 type=scan_state request_id=r2-2gkcxp api_version=1 status=started scan_handle=b4aae27252fc95e2
+[    3440ms pid=98928] out len=195 type=device_found api_version=1 scan_handle=b4aae27252fc95e2 device_handle=c875ba38d671f4de label.len=17 platform_hint.len=20
+[    4850ms pid=98928] in  len=115 type=connect request_id=r3-7bgkw7 api_version=1 device_handle=c875ba38d671f4de
+[    4880ms pid=98928] conn 2 device at 30ms
+[    4902ms pid=98928] conn 2 session at 51ms
+[    7167ms pid=98928] conn 2 service at 2317ms
+[    7167ms pid=98928] conn 2 mtu=517 at 2317ms
+[    7233ms pid=98928] conn 2 write properties=0x4
+[    7296ms pid=98928] conn 2 notify properties=0x10
+[    7296ms pid=98928] conn 2 characteristics at 2446ms
+[    7390ms pid=98928] conn 2 subscribed at 2539ms
+[    7390ms pid=98928] out len=160 type=connected request_id=r3-7bgkw7 api_version=1 connection_handle=b6f476d814876f53 platform_hint.len=20
+[    7391ms pid=98928] in  len=115 type=stop_scan request_id=r4-l8go1t api_version=1 scan_handle=b4aae27252fc95e2
+[    7391ms pid=98928] out len=135 type=scan_state request_id=r4-l8go1t api_version=1 status=stopped scan_handle=b4aae27252fc95e2
+[    7392ms pid=98928] in  len=143 type=send request_id=r5-kpjkb2 api_version=1 connection_handle=b6f476d814876f53 record_base64.len=8
+[    7403ms pid=98928] out len=116 type=sent request_id=r5-kpjkb2 api_version=1 connection_handle=b6f476d814876f53
+[    7432ms pid=98928] out len=121 type=message api_version=1 connection_handle=b6f476d814876f53 record_base64.len=8
+[    7506ms pid=98928] in  len=5599 type=send request_id=r6-2c2a1u api_version=1 connection_handle=b6f476d814876f53 record_base64.len=5464
+[    7598ms pid=98928] out len=116 type=sent request_id=r6-2c2a1u api_version=1 connection_handle=b6f476d814876f53
+[    7667ms pid=98928] out len=5577 type=message api_version=1 connection_handle=b6f476d814876f53 record_base64.len=5464
+[    7751ms pid=98928] in  len=815 type=send request_id=r7-u4mmp8 api_version=1 connection_handle=b6f476d814876f53 record_base64.len=680
+[    7761ms pid=98928] out len=116 type=sent request_id=r7-u4mmp8 api_version=1 connection_handle=b6f476d814876f53
+[    7779ms pid=98928] out len=793 type=message api_version=1 connection_handle=b6f476d814876f53 record_base64.len=680
+[    7864ms pid=98928] in  len=815 type=send request_id=r8-5lv65e api_version=1 connection_handle=b6f476d814876f53 record_base64.len=680
+[    7884ms pid=98928] out len=116 type=sent request_id=r8-5lv65e api_version=1 connection_handle=b6f476d814876f53
+[    7900ms pid=98928] out len=793 type=message api_version=1 connection_handle=b6f476d814876f53 record_base64.len=680
+[    7987ms pid=98928] in  len=1491 type=send request_id=r9-ewymg5 api_version=1 connection_handle=b6f476d814876f53 record_base64.len=1356
+[    8007ms pid=98928] out len=116 type=sent request_id=r9-ewymg5 api_version=1 connection_handle=b6f476d814876f53
+[    8038ms pid=98928] out len=1469 type=message api_version=1 connection_handle=b6f476d814876f53 record_base64.len=1356
+[    8110ms pid=98928] in  len=1491 type=send request_id=ra-uxjg7s api_version=1 connection_handle=b6f476d814876f53 record_base64.len=1356
+[    8141ms pid=98928] out len=116 type=sent request_id=ra-uxjg7s api_version=1 connection_handle=b6f476d814876f53
+[    8173ms pid=98928] out len=1469 type=message api_version=1 connection_handle=b6f476d814876f53 record_base64.len=1356
+[    8244ms pid=98928] in  len=5595 type=send request_id=rb-nvjnd0 api_version=1 connection_handle=b6f476d814876f53 record_base64.len=5460
+[    8337ms pid=98928] out len=116 type=sent request_id=rb-nvjnd0 api_version=1 connection_handle=b6f476d814876f53
+[    8403ms pid=98928] out len=5573 type=message api_version=1 connection_handle=b6f476d814876f53 record_base64.len=5460
+[    8489ms pid=98928] in  len=122 type=disconnect request_id=rc-f6sc0k api_version=1 connection_handle=b6f476d814876f53
+[    8489ms pid=98928] out len=124 type=disconnected request_id=rc-f6sc0k api_version=1 connection_handle=b6f476d814876f53
+[    8489ms pid=98928] in  len=81 type=shutdown request_id=rd-xt7imh api_version=1
+[    8489ms pid=98928] out len=90 type=shutdown_complete request_id=rd-xt7imh api_version=1
+[    8489ms pid=98928] exit code=0 stdout_drained=true

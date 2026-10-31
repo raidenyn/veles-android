@@ -1,0 +1,105 @@
+{
+  "scenario": "m6-adjudication",
+  "verdict": "FAIL",
+  "desktop_concurrency": "FAIL",
+  "checks": [
+    {
+      "name": "both_centrals_present",
+      "expected": "one windows and one mac result",
+      "actual": [
+        "mac",
+        "windows"
+      ],
+      "status": "PASS"
+    },
+    {
+      "name": "same_pair_run_id",
+      "expected": "identical non-empty id",
+      "actual": "match",
+      "status": "PASS"
+    },
+    {
+      "name": "same_phone_identity",
+      "expected": "equal operator phone label AND equal non-empty advertised-label hashes from both centrals (a label alone is an operator claim, never proof)",
+      "actual": {
+        "labels_equal": true,
+        "both_hashes_present": true,
+        "hashes_equal": false
+      },
+      "status": "FAIL"
+    },
+    {
+      "name": "windows_central_clean",
+      "expected": "20+ exact 4096-byte exchanges, no errors, one link",
+      "actual": "ok",
+      "status": "PASS"
+    },
+    {
+      "name": "mac_central_clean",
+      "expected": "20+ exact 4096-byte exchanges, no errors, one link",
+      "actual": "ok",
+      "status": "PASS"
+    },
+    {
+      "name": "clock_measured",
+      "expected": "offset, non-negative uncertainty and measurement provenance supplied by the parent",
+      "actual": {
+        "offset": true,
+        "uncertainty": true,
+        "provenance": true
+      },
+      "status": "PASS"
+    },
+    {
+      "name": "windows_barrier_staged_and_released",
+      "expected": "nonce-file release after its READY stage",
+      "actual": "ok",
+      "status": "PASS"
+    },
+    {
+      "name": "mac_barrier_staged_and_released",
+      "expected": "nonce-file release after its READY stage",
+      "actual": "ok",
+      "status": "PASS"
+    },
+    {
+      "name": "same_barrier_nonce",
+      "expected": "identical non-empty nonce hash on both centrals",
+      "actual": true,
+      "status": "PASS"
+    },
+    {
+      "name": "barrier_release_simultaneous",
+      "expected": "|win - offset - mac| <= uncertainty + tolerance (5154.105 ms)",
+      "actual": {
+        "skew_ms": 4756.2
+      },
+      "status": "PASS"
+    },
+    {
+      "name": "real_io_intervals_overlap",
+      "expected": ">= 1000 + 2x3154.105 ms and >= 3 exchange pairs overlapping by > 2x uncertainty",
+      "actual": {
+        "overlap_ms": 40178,
+        "overlapping_exchange_pairs": 0
+      },
+      "status": "FAIL"
+    }
+  ],
+  "requirements": [
+    {
+      "name": "android_notify_return_codes",
+      "status": "BLOCKED",
+      "expected": "per-notification return codes from the phone",
+      "actual": "phone transport evidence (otp23-transport-evidence.json) is collected separately and is not adjudicated here; this requirement stays BLOCKED in this adjudicator"
+    }
+  ],
+  "notes": [],
+  "clock": {
+    "offset_ms": 1314.211,
+    "uncertainty_ms": 3154.105,
+    "provenance": "SSH-midpoint-7samples-20261026T2325Z-plus-drift"
+  },
+  "m6_discharged": false,
+  "disclaimer": "driver adjudication only; the parent records matrix rows. PARTIAL = desktop concurrency clean while the Android notify return codes stay BLOCKED (no override exists)."
+}

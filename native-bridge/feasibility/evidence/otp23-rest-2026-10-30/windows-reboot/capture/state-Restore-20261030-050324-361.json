@@ -1,0 +1,19 @@
+{
+    "action":  "Restore",
+    "before":  {
+                   "utc":  "2026-10-30T05:03:16.4272393Z",
+                   "adapter":  "Qualcomm FastConnect 7800 Dual Bluetooth Adapter",
+                   "instance_id":  "USB\\VID_0489\u0026PID_E10A\\8\u0026FAD588D\u00260\u002616",
+                   "adapter_status":  "Error",
+                   "radio_state":  null,
+                   "radio_error":  "Expected exactly one Bluetooth radio, saw 0"
+               },
+    "after":  {
+                  "utc":  "2026-10-30T05:03:24.3588997Z",
+                  "adapter":  "Qualcomm FastConnect 7800 Dual Bluetooth Adapter",
+                  "instance_id":  "USB\\VID_0489\u0026PID_E10A\\8\u0026FAD588D\u00260\u002616",
+                  "adapter_status":  "OK",
+                  "radio_state":  "On",
+                  "radio_error":  null
+              }
+}

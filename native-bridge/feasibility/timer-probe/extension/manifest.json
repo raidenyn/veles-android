@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "OTP-23 timer probe (disposable, no Bluetooth)",
+  "version": "0.0.1",
+  "description": "Measures whether an open Native Messaging port changes timer throttling of a hidden extension tab.",
+  "permissions": ["nativeMessaging"]
+}

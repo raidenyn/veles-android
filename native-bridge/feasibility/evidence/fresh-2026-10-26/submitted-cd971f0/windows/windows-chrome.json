@@ -1,0 +1,293 @@
+{
+  "meta": {
+    "chrome_version": "Chrome/155.0.8059.85",
+    "chrome_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+    "chrome_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "chrome_browser_pid": 97388,
+    "disposable_profile": "%USERPROFILE%\\AppData\\Local\\Temp\\veles-otp23-profile-30cbe8qn",
+    "host_name": "me.nagaev.veles.otp23.plain",
+    "flavour": "plain",
+    "diag_scan_any": false,
+    "driver_integrity": {
+      "integrity": "medium",
+      "rid": "0x2000",
+      "token_is_elevated": false
+    },
+    "chrome_integrity": {
+      "integrity": "medium",
+      "rid": "0x2000",
+      "token_is_elevated": false
+    },
+    "launch_mode": "inherited from driver; see measured integrity (not proof of a standard non-admin account)",
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "surviving_host_processes_after_run": [],
+    "real_profile_local_state_mtime_unchanged": true,
+    "real_profile_path_never_used": "%USERPROFILE%\\AppData\\Local\\Google\\Chrome\\User Data"
+  },
+  "cases": [
+    {
+      "id": "CH-01",
+      "title": "Load unpacked MV3 extension with fixed key/id",
+      "expected": "id equals the fixed id",
+      "actual": {
+        "loaded_extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+        "via": "Extensions.loadUnpacked over CDP websocket"
+      },
+      "result": "PASS",
+      "seconds": 0.61
+    },
+    {
+      "id": "CH-02",
+      "title": "Chrome launches the host on demand via runtime.connectNative; hello -> ready",
+      "expected": "one new host process, parent = Chrome browser, exact origin argument, ready reply",
+      "actual": {
+        "launched_on_demand_by_runtime.connectNative": true,
+        "integrity": {
+          "chrome": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "cmd_wrapper": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          },
+          "host": {
+            "integrity": "medium",
+            "rid": "0x2000",
+            "token_is_elevated": false
+          }
+        },
+        "host_pid": 98016,
+        "parent_pid": 69744,
+        "ancestry": [
+          {
+            "ProcessId": 69744,
+            "Name": "cmd.exe",
+            "CommandLine": "C:\\WINDOWS\\system32\\cmd.exe /d /s /c \"\"%USERPROFILE%\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe\" chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/ --parent-window=2431232\" < \\\\.\\pipe\\chrome.nativeMessaging.in.78c3b13481fed2ed > \\\\.\\pipe\\chrome.nativeMessaging.out.78c3b13481fed2ed"
+          },
+          {
+            "ProcessId": 97388,
+            "Name": "chrome.exe",
+            "CommandLine": "\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" --user-data-dir=%USERPROFILE%\\AppData\\Local\\Temp\\veles-otp23-profile-30cbe8qn --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+          },
+          {
+            "ProcessId": 77172,
+            "Name": "python.exe",
+            "CommandLine": "python  scripts/chrome_validate.py --flavour plain --medium --out evidence\\submitted-cd971f0\\windows-chrome.json "
+          },
+          {
+            "ProcessId": 84272,
+            "Name": "cmd.exe",
+            "CommandLine": "\"C:\\WINDOWS\\system32\\cmd.exe\" /d /c \"python scripts/chrome_validate.py --flavour plain --medium --out evidence\\submitted-cd971f0\\windows-chrome.json > evidence\\submitted-cd971f0\\windows-chrome-driver.log 2>&1\""
+          },
+          {
+            "ProcessId": 10224,
+            "Name": "powershell.exe",
+            "CommandLine": "\"powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File %USERPROFILE%\\repos\\otp23-cd971f0\\submitted-windows-smoke.ps1"
+          }
+        ],
+        "command_line": "\"%USERPROFILE%\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe\"  chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/ --parent-window=2431232 ",
+        "executable": "%USERPROFILE%\\AppData\\Local\\Veles\\Otp23Feasibility\\plain\\otp23-host.exe",
+        "hello_to_ready_ms": 1386,
+        "ready": {
+          "api_version": 1,
+          "bridge_version": "otp23-feasibility/0.1.0 plain",
+          "capabilities": [
+            "veles_record_v1"
+          ],
+          "envelope_version": 1,
+          "platform": "windows",
+          "request_id": "r1-fvmmq7",
+          "type": "ready"
+        }
+      },
+      "result": "PASS",
+      "seconds": 4.62
+    },
+    {
+      "id": "CH-03",
+      "title": "Host creates no window, no console child, no listener socket",
+      "expected": "plain host: 0 windows of any kind; Tauri host: 0 visible windows (hidden event-loop helper windows are reported); Chrome's cmd wrapper: 0 visible windows; no host children; 0 TCP/UDP endpoints",
+      "actual": {
+        "host_pid": 98016,
+        "chrome_cmd_wrapper_pid": 69744,
+        "host_top_level_windows_visible": 0,
+        "host_top_level_windows_hidden": [],
+        "wrapper_visible_windows": 0,
+        "wrapper_hidden_windows": 1,
+        "host_child_processes": 0,
+        "tcp_udp_endpoints": 0,
+        "wrapper_children": [
+          "conhost.exe",
+          "otp23-host.exe"
+        ],
+        "note": "Chrome starts the host through a hidden cmd.exe wrapper that redirects stdin/stdout to Chrome-owned named pipes"
+      },
+      "result": "PASS",
+      "seconds": 2.34
+    },
+    {
+      "id": "CH-04",
+      "title": "Schema and handle errors are correlated and the session survives",
+      "expected": "invalid_request / unknown_handle with request ids; port stays open",
+      "actual": {
+        "invalid_uuid": {
+          "api_version": 1,
+          "code": "invalid_request",
+          "envelope_version": 1,
+          "recoverability": "fatal",
+          "request_id": "r2-ybo89q",
+          "stage": "schema",
+          "type": "error"
+        },
+        "unknown_connection_handle": {
+          "api_version": 1,
+          "code": "unknown_handle",
+          "envelope_version": 1,
+          "recoverability": "fatal",
+          "request_id": "r3-tsnpfz",
+          "stage": "connection_handle",
+          "type": "error"
+        },
+        "unknown_scan_handle": {
+          "api_version": 1,
+          "code": "unknown_handle",
+          "envelope_version": 1,
+          "recoverability": "fatal",
+          "request_id": "r4-46a9l8",
+          "stage": "scan_handle",
+          "type": "error"
+        }
+      },
+      "result": "PASS",
+      "seconds": 0.0
+    },
+    {
+      "id": "CH-05",
+      "title": "Extension-owned scan for the Veles service: started, bounded events, stopped",
+      "expected": "scan_state started (scan handle), device events only for that scan, scan_state stopped",
+      "actual": {
+        "scan_started": {
+          "request_id": "r5-ihx99w",
+          "scan_handle": "3f57369d682000e9",
+          "status": "started"
+        },
+        "veles_service_devices_found_in_4s": 0,
+        "scan_stopped_request_id": "r6-u6gwfq",
+        "note": "0 means no phone is advertising the Veles service right now"
+      },
+      "result": "PASS",
+      "seconds": 4.06
+    },
+    {
+      "id": "CH-07",
+      "title": "Connect to an absent device fails closed with a classified error",
+      "expected": "correlated connect_failed with stage and recoverability",
+      "actual": {
+        "reply": {
+          "code": "connect_failed",
+          "recoverability": "retryable",
+          "stage": "device_lookup",
+          "request_id": "r7-y6lp5v"
+        }
+      },
+      "result": "PASS",
+      "seconds": 0.01
+    },
+    {
+      "id": "CH-08",
+      "title": "shutdown: scan stopped, shutdown_complete last, stdout closed, process exits (stdin still open)",
+      "expected": "unsolicited scan stop, correlated shutdown_complete, port closes, host process gone",
+      "actual": {
+        "shutdown_complete": true,
+        "unsolicited_before_complete": [
+          "scan_state:stopped"
+        ],
+        "process_gone_after_s": 0.715,
+        "request_to_gone_s": 0.718,
+        "port_state": {
+          "at": 11229,
+          "message": "Native host has exited."
+        }
+      },
+      "result": "PASS",
+      "seconds": 0.76
+    },
+    {
+      "id": "CH-09",
+      "title": "Chrome port closure (stdin EOF) while scanning: scan released, process exits",
+      "expected": "host process gone shortly after port.disconnect(); relaunch on next connect works",
+      "actual": {
+        "relaunched_pid": 48292,
+        "hello_to_ready_ms": 49,
+        "port_closed_to_process_gone_s": 0.625
+      },
+      "result": "PASS",
+      "seconds": 2.05
+    },
+    {
+      "id": "CH-10",
+      "title": "Closing the connector tab while scanning: process exits",
+      "expected": "host process gone after the owning page is destroyed",
+      "actual": {
+        "host_pid": 98864,
+        "tab_closed_to_process_gone_s": 0.637
+      },
+      "result": "PASS",
+      "seconds": 2.23
+    },
+    {
+      "id": "CH-11",
+      "title": "Missing registration is reported by Chrome before any hello",
+      "expected": "onDisconnect with a native-host-not-found message; requests synthesize port_closed",
+      "actual": {
+        "port_disconnect": {
+          "at": 122,
+          "message": "Specified native messaging host not found."
+        },
+        "synthesized_hello_reply": {
+          "envelope_version": 1,
+          "type": "error",
+          "request_id": "r1-z8dzgw",
+          "code": "internal",
+          "recoverability": "fatal",
+          "stage": "port_closed",
+          "synthesized": true,
+          "request_type": "hello"
+        }
+      },
+      "result": "PASS",
+      "seconds": 1.62
+    },
+    {
+      "id": "CH-12",
+      "title": "Two ports get two independent host processes; closing one leaves the other",
+      "expected": "distinct pids; independent cleanup",
+      "actual": {
+        "processes": [
+          85628,
+          97492
+        ],
+        "closing_one_port_leaves_the_other": true,
+        "note": "each port owns its own host process; the product design uses a single connector tab"
+      },
+      "result": "PASS",
+      "seconds": 2.58
+    },
+    {
+      "id": "CH-13",
+      "title": "Host running with an active scan when Chrome exits",
+      "expected": "host process gone after Browser.close",
+      "actual": {
+        "host_pid": 25808,
+        "cmd_wrapper_pid": 66244,
+        "scan": "running; Chrome will now be closed",
+        "chrome_exit_to_host_gone_s": 0.842
+      },
+      "result": "PASS",
+      "seconds": 1.54
+    }
+  ]
+}

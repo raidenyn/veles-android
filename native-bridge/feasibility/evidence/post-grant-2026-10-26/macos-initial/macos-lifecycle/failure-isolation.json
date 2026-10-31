@@ -1,0 +1,65 @@
+{
+  "id": "LC-failure-isolation",
+  "title": "Disconnect one link; the survivor keeps exchanging; then clean shutdown",
+  "expected": "stale handle rejected (unknown_handle), survivor exchanges 4096 bytes exactly, shutdown then removes the host",
+  "actual": "all checks held; see detail",
+  "status": "PASS",
+  "error_class": "none",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": "unavailable",
+      "network_endpoints": 0
+    },
+    "link_proof": [
+      {
+        "size": 4,
+        "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "status": "PASS"
+      },
+      {
+        "size": 4,
+        "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "status": "PASS"
+      }
+    ],
+    "stale_send": {
+      "type": "error",
+      "code": "unknown_handle",
+      "recoverability": "fatal",
+      "stage": "connection_handle"
+    },
+    "survivor": {
+      "size": 4096,
+      "request_sha256": "0f42e7d0184f8e5c7cf736437b5ad1a778df396de939f83eb45650464151e4d3",
+      "received_sha256": "8486416497d4fa0333f18c2fb361945b6c39ffdbc7de4b8a5a35046696bfdc2f",
+      "status": "PASS"
+    },
+    "teardown": {
+      "owned_gone_after_s": 0.005,
+      "trace_mechanism": "shutdown",
+      "trace_exit": {
+        "at_ms": 3989,
+        "code": 0,
+        "stdout_drained": true
+      },
+      "host_output_order": [
+        "disconnected",
+        "error",
+        "sent",
+        "device_found",
+        "message",
+        "scan_state:stopped",
+        "disconnected",
+        "shutdown_complete"
+      ],
+      "problems": []
+    },
+    "cleanup_problems": []
+  }
+}

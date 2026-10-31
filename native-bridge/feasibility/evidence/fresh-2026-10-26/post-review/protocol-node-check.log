@@ -1,0 +1,26 @@
+== node protocol/checks/check.mjs
+✔ committed state fixtures load through the shared loader (591.663363ms)
+✔ positive state fixtures are independently recomputed: final state and effects must match (143.245663ms)
+✔ fixture-invalid state fixtures are rejected at their declared stage (190.464118ms)
+✔ mutating one declared effect of a state fixture is detected (declaration independence) (25.386202ms)
+✔ mutating one declared final state of a state fixture is detected (24.543854ms)
+✔ 8 clients reach the GATT cap; the 9th is refused before allocation; disconnect releases and the 9th then fits (3.442025ms)
+✔ per-peer reassembly caps are enforced before allocation (2 transactions, 8 KiB) (0.926543ms)
+✔ global reassembly caps accept the exact 16 tx / 64 KiB bound and refuse anything beyond (1.873118ms)
+✔ per-peer delivery queues respect both the message and byte ceiling with bounds before allocation (2.422367ms)
+✔ global delivery queues accept exactly 8 x 16 KiB (128 msgs / 128 KiB) and refuse a 129th message (2.628748ms)
+✔ peer isolation: a saturated or torn-down peer never consumes another peer's capacity (1.220515ms)
+✔ release accounting: disconnect frees reassembly and queue allocations back to the global pools (1.431411ms)
+✔ resource traces reject structurally impossible steps at stage=resource (0.994531ms)
+✔ I5: no continuity/expiry deletion may touch the durable active-mirror record (0.62812ms)
+✔ fixtures cover the brief's required behavioral families (95.961899ms)
+✔ heartbeat-threshold literals in the descriptor are pinned to the normative sentence (OTP2-REC-034) (0.623219ms)
+ℹ tests 165
+ℹ suites 0
+ℹ pass 165
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19485.777638
+check-contract-text: PASS (25 label claims, 4 layout blocks, 41 anchors, 133 requirement IDs, 156 manifest entries, 64 limits)

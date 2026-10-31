@@ -1,0 +1,340 @@
+{
+  "what": "OTP-23 Mac M-08 phone-side release proof with per-handle causal attribution (Option A)",
+  "scenario": "shutdown",
+  "quantum_ms": 1,
+  "declared_bound_ms": 30000.0,
+  "hull_result": {
+    "verdict": "PASS",
+    "problems": [],
+    "target_teardown_scenario": true,
+    "creditability": "target_evidence",
+    "run_id": "mac-m08-shutdown-20261029T043432Z"
+  },
+  "hull_phones": [
+    {
+      "serial_hint": "2be02e41",
+      "origin_interval": {
+        "lo": 1793248498080,
+        "hi": 1793248498205,
+        "width_ms": 125,
+        "midpoint": 1793248498142.5,
+        "uncertainty_ms": 63.5,
+        "brackets": {
+          "proof16": [
+            1793248498080,
+            1793248498205
+          ],
+          "probe4096": [
+            1793248497887,
+            1793248498950
+          ]
+        }
+      },
+      "dis_trace_interval": [
+        4080,
+        4205
+      ],
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    },
+    {
+      "serial_hint": "864a3db0",
+      "origin_interval": {
+        "lo": 1793248496811,
+        "hi": 1793248496936,
+        "width_ms": 125,
+        "midpoint": 1793248496873.5,
+        "uncertainty_ms": 63.5,
+        "brackets": {
+          "proof16": [
+            1793248496811,
+            1793248496936
+          ],
+          "probe4096": [
+            1793248496130,
+            1793248497193
+          ]
+        }
+      },
+      "dis_trace_interval": [
+        4153,
+        4278
+      ],
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    }
+  ],
+  "target_teardown_scenario": true,
+  "preconditions": {
+    "problems": [],
+    "met": true
+  },
+  "handles": {
+    "053544add3f3ad4d": {
+      "p16": [
+        [
+          2796,
+          2847
+        ]
+      ],
+      "p4096": [
+        [
+          2996,
+          3509
+        ]
+      ]
+    },
+    "e7b2832a8828839e": {
+      "p16": [
+        [
+          2860,
+          2921
+        ]
+      ],
+      "p4096": [
+        [
+          3557,
+          4059
+        ]
+      ]
+    }
+  },
+  "candidates": {
+    "2be02e41": {
+      "053544add3f3ad4d": {
+        "bracket16": [
+          1793248498153,
+          1793248498206
+        ],
+        "bracket4096": [
+          1793248498436,
+          1793248498951
+        ],
+        "lo": 1793248498436,
+        "hi": 1793248498206,
+        "feasible": false,
+        "width_ms": -230,
+        "own_last_exchange_message_at_ms": 3509
+      },
+      "e7b2832a8828839e": {
+        "bracket16": [
+          1793248498079,
+          1793248498142
+        ],
+        "bracket4096": [
+          1793248497886,
+          1793248498390
+        ],
+        "lo": 1793248498079,
+        "hi": 1793248498142,
+        "feasible": true,
+        "width_ms": 63,
+        "own_last_exchange_message_at_ms": 4059
+      }
+    },
+    "864a3db0": {
+      "053544add3f3ad4d": {
+        "bracket16": [
+          1793248496884,
+          1793248496937
+        ],
+        "bracket4096": [
+          1793248496679,
+          1793248497194
+        ],
+        "lo": 1793248496884,
+        "hi": 1793248496937,
+        "feasible": true,
+        "width_ms": 53,
+        "own_last_exchange_message_at_ms": 3509
+      },
+      "e7b2832a8828839e": {
+        "bracket16": [
+          1793248496810,
+          1793248496873
+        ],
+        "bracket4096": [
+          1793248496129,
+          1793248496633
+        ],
+        "lo": 1793248496810,
+        "hi": 1793248496633,
+        "feasible": false,
+        "width_ms": -177,
+        "own_last_exchange_message_at_ms": 4059
+      }
+    }
+  },
+  "mappings": [
+    {
+      "mapping": {
+        "2be02e41": "053544add3f3ad4d",
+        "864a3db0": "e7b2832a8828839e"
+      },
+      "feasible": false
+    },
+    {
+      "mapping": {
+        "2be02e41": "e7b2832a8828839e",
+        "864a3db0": "053544add3f3ad4d"
+      },
+      "feasible": true
+    }
+  ],
+  "global_last_exchange_message_at_ms": 4059,
+  "exit_at_ms": 4139,
+  "attribution_status": "unique_mapping",
+  "assignments": {
+    "2be02e41": {
+      "handle": "e7b2832a8828839e",
+      "origin_interval": {
+        "bracket16": [
+          1793248498079,
+          1793248498142
+        ],
+        "bracket4096": [
+          1793248497886,
+          1793248498390
+        ],
+        "lo": 1793248498079,
+        "hi": 1793248498142,
+        "feasible": true,
+        "width_ms": 63,
+        "own_last_exchange_message_at_ms": 4059
+      },
+      "dis_trace_interval": [
+        4143,
+        4206
+      ],
+      "global_last_exchange_message_at_ms": 4059,
+      "margin_vs_global_last_ms": 84,
+      "own_last_exchange_message_at_ms": 4059,
+      "release_after_own_link_last_recorded_only": true,
+      "exit_at_ms": 4139,
+      "exit_plus_bound_ms": 34139.0,
+      "margin_vs_exit_plus_bound_ms": 29933.0,
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      },
+      "stop_guard_with_hull_hi_recorded": {
+        "hull_hi": 1793248498205,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    },
+    "864a3db0": {
+      "handle": "053544add3f3ad4d",
+      "origin_interval": {
+        "bracket16": [
+          1793248496884,
+          1793248496937
+        ],
+        "bracket4096": [
+          1793248496679,
+          1793248497194
+        ],
+        "lo": 1793248496884,
+        "hi": 1793248496937,
+        "feasible": true,
+        "width_ms": 53,
+        "own_last_exchange_message_at_ms": 3509
+      },
+      "dis_trace_interval": [
+        4152,
+        4205
+      ],
+      "global_last_exchange_message_at_ms": 4059,
+      "margin_vs_global_last_ms": 93,
+      "own_last_exchange_message_at_ms": 3509,
+      "release_after_own_link_last_recorded_only": true,
+      "exit_at_ms": 4139,
+      "exit_plus_bound_ms": 34139.0,
+      "margin_vs_exit_plus_bound_ms": 29934.0,
+      "checks": {
+        "release_after_last_exchange": true,
+        "within_bound_of_own_exit": true,
+        "stop_after_disconnect": true,
+        "stop_after_bound_plus_uncertainty": true
+      },
+      "stop_guard_with_hull_hi_recorded": {
+        "hull_hi": 1793248496936,
+        "stop_after_bound_plus_uncertainty": true
+      }
+    }
+  },
+  "verdict": "PASS",
+  "problems": [],
+  "upgraded_from_hull_fail": false,
+  "m08_creditable": true,
+  "m08_creditable_rule": "verdict == PASS and target_teardown_scenario (hull flag, unchanged)",
+  "inputs": {
+    "lifecycle_dir": "evidence/mac-retake-2026-10-29/shutdown-1/mac",
+    "trace_sha256": "b81ddd853a32b60cd34d9c1d97a07d4e65d3cea08dac7feaf1b39a57fed39dbe",
+    "scenario_json_sha256": "bd49b4a2baa2b82f0d9caad3685bd4b43aded3faddd691f320435668a0e72331",
+    "transports": [
+      {
+        "path": "transport-2be02e41.json",
+        "sha256": "74d7f84a02c9b015979188efa30dd5e7f45783ae34598633dd7d0df2f217eb15"
+      },
+      {
+        "path": "transport-864a3db0.json",
+        "sha256": "0d0a2d75d5df80efce56e059c98a555c1d4bb5e14d7f5e7af60560d0fbe245c6"
+      }
+    ],
+    "stops": [
+      {
+        "serial": "2be02e41",
+        "phone": "6T",
+        "stop_min_phone_ms": 1793248577791,
+        "stop_max_phone_ms": 1793248577833,
+        "phone_adb_before_ms": 1793248576003,
+        "phone_adb_after_ms": 1793248580613,
+        "mac_ms_bracket": [
+          1793248573607,
+          1793248583046
+        ],
+        "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+      },
+      {
+        "serial": "864a3db0",
+        "phone": "10Pro",
+        "stop_min_phone_ms": 1793248588427,
+        "stop_max_phone_ms": 1793248588488,
+        "phone_adb_before_ms": 1793248586675,
+        "phone_adb_after_ms": 1793248590171,
+        "mac_ms_bracket": [
+          1793248586152,
+          1793248593801
+        ],
+        "method": "phone `date +%s%3N` inside the same run-as shell immediately before and after `touch files/otp23-stop`; outer adb phone dates and Mac ms (ssh python3) recorded around it"
+      }
+    ],
+    "hull_release_bound_frozen": {
+      "path": "release-bound.json",
+      "sha256": "9cd2169318d223b136d131729c7ce0010f442c1172f58a2c3ed137599b0eb7aa",
+      "verdict": "PASS",
+      "helper_self_sha256": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560"
+    }
+  },
+  "helper_self_sha256": "69546ee581bed37977304c4cf65cc93e6765959c21a5e249553e2ea1b150be0c",
+  "imported_analyzer_sha256": "a49b3450d6d984c24e87ae60b4ffd00f4ca661beb92ec56b9b5410fc6bc26560",
+  "imported_core_sha256": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+  "imported_driver_sha256": "f8bbf2d6ea158d2bd30bee35b97a655c727a7ca7fc677a5c9a3a53eafe6b7f28",
+  "absolute_mac_anchor": "none (host trace's own timeline; per-phone clocks never compared)",
+  "engineered_utc": "2026-10-29T05:06:14+00:00",
+  "source_binding": {
+    "available": true,
+    "head": "9c3ddc54a3721eced84e49f02ed76ef156f0baed",
+    "tracked_dirty_diff_sha256": "2376ca99bb9ddc9eac0aa16bbc864f2b358e050e1f9762eb84d97b54e11da4d9"
+  }
+}

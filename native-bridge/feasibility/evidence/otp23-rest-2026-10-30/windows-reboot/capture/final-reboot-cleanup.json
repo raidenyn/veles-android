@@ -1,0 +1,38 @@
+{
+    "utc":  "2026-10-30T08:25:18.2389360Z",
+    "registration_absent":  true,
+    "own_processes_left":  [
+
+                           ],
+    "holder_process_left":  [
+
+                            ],
+    "tasks_removed":  [
+                          "VelesOtp23W10Access-holder-20261030",
+                          "VelesOtp23W10Access-holder-direct-20261030",
+                          "VelesOtp23W10Access-holder-process-20261030",
+                          "VelesOtp23W10Access-holder-retake1-20261030",
+                          "VelesOtp23W10Access-identify-20261030",
+                          "VelesOtp23W10Access-identify-v2-20261030",
+                          "VelesOtp23W10Access-identify-v3-20261030",
+                          "VelesOtp23W10Access-identify-v4-20261030"
+                      ],
+    "own_tasks_left":  [
+
+                       ],
+    "adapter_properties":  [
+                               {
+                                   "KeyName":  "DEVPKEY_Device_ConfigFlags",
+                                   "Data":  0
+                               },
+                               {
+                                   "KeyName":  "DEVPKEY_Device_ProblemCode",
+                                   "Data":  0
+                               },
+                               {
+                                   "KeyName":  "DEVPKEY_Device_DevNodeStatus",
+                                   "Data":  25190410
+                               }
+                           ],
+    "os":  "Microsoft Windows NT 10.0.26300.0"
+}

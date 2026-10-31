@@ -3,12 +3,21 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
 
-test('isolated debug APK keeps the .otp23 suffix and gets BuildConfig.OTP23_POC=true', () => {
+test('isolated init script only adds the .otp23 suffix to the debug build type', () => {
     const script = readFileSync(new URL('./isolated-device.gradle', import.meta.url), 'utf8');
-    assert.match(script, /\.applicationIdSuffix = '\.otp23'/);
-    assert.match(script, /\.buildConfigField\('boolean', 'OTP23_POC', 'true'\)/);
-    // The opt-in flag must stay out of release builds.
-    assert.doesNotMatch(script, /release/);
+    const code = script.replace(/^\s*\/\/.*$/gm, '');
+    assert.match(code, /getByName\('debug'\)\.applicationIdSuffix = '\.otp23'/);
+    // No wire behavior or feature flag may hang off the isolated package any more.
+    assert.doesNotMatch(code, /buildConfigField|OTP23_POC/);
+    // The opt-in script must stay out of release builds.
+    assert.doesNotMatch(code, /release/);
+});
+
+test('app no longer defines or reads a cap-only OTP23_POC flag', () => {
+    const root = new URL('../../../', import.meta.url);
+    for (const file of ['app/build.gradle.kts', 'app/src/main/java/me/nagaev/veles/sharing/SharingGattServer.kt', 'app/src/main/java/me/nagaev/veles/sharing/GattTransport.kt']) {
+        assert.doesNotMatch(readFileSync(new URL(file, root), 'utf8'), /OTP23_POC/, file);
+    }
 });
 
 test('physical driver only calls methods exported by the real connector', () => {

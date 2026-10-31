@@ -1,0 +1,3 @@
+[       0ms pid=4632] start pid=4632
+[       0ms pid=4632] in  framing violation: TruncatedHeader { got: 2 }
+[       0ms pid=4632] exit code=2 stdout_drained=true

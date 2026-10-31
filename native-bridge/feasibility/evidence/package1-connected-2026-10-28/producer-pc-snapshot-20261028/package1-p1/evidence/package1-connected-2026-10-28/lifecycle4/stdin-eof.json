@@ -1,0 +1,29 @@
+{
+  "id": "LC-stdin-eof",
+  "title": "Stdin EOF with an active scan and two active links (direct native-framed process)",
+  "expected": "stdin closed (NOT shutdown): exit 0, stdout reaches EOF on a frame boundary, process gone, trace shows the stdin-closed path with no shutdown_complete",
+  "actual": "0 of 2 required phones advertise the service",
+  "status": "BLOCKED",
+  "error_class": "insufficient_phones",
+  "detail": {
+    "provenance": {
+      "launch": "direct process with pipes",
+      "chrome_provenance": false,
+      "context": "direct launch; Chrome provenance is covered by the Chrome scenarios"
+    },
+    "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+    "host_pid_recorded": true,
+    "integrity": {
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "driver": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      }
+    }
+  }
+}

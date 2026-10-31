@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-29",
+  "record_type": "operator_captured_owner_readonly_settings_observation",
+  "question": "In System Settings → Privacy & Security → Bluetooth, is the original VelesOtp23PoC entry still enabled and unchanged? Please only read its state.",
+  "owner_answer_verbatim": "Still enabled, unchanged",
+  "entry": "VelesOtp23PoC",
+  "is_original_prompt_owner_observation": false,
+  "permission_toggle_performed": false,
+  "related_post_allow_nonce": "8a055ccc-6665-4c96-9eff-81b1d000de65"
+}

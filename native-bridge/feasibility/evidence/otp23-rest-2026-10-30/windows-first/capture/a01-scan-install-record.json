@@ -1,0 +1,42 @@
+[
+    {
+        "serial":  "2be02e41",
+        "kind":  "main",
+        "sha256":  "0e32c572bbf1d72249a888b7401cce91097b9a459deac6352a2583019157649b",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "installed_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "new_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "scope":  "Only the existing isolated .otp23 fixture and test package; same key and update -r, no uninstall/data clearing"
+    },
+    {
+        "serial":  "2be02e41",
+        "kind":  "test",
+        "sha256":  "5a8e9e30e798e33c7577dccf542dfbbd2ba4058a8b4dc8f2b82c31ef17bd1b41",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "installed_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "new_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "scope":  "Only the existing isolated .otp23 fixture and test package; same key and update -r, no uninstall/data clearing"
+    },
+    {
+        "serial":  "864a3db0",
+        "kind":  "main",
+        "sha256":  "0e32c572bbf1d72249a888b7401cce91097b9a459deac6352a2583019157649b",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "installed_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "new_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "scope":  "Only the existing isolated .otp23 fixture and test package; same key and update -r, no uninstall/data clearing"
+    },
+    {
+        "serial":  "864a3db0",
+        "kind":  "test",
+        "sha256":  "5a8e9e30e798e33c7577dccf542dfbbd2ba4058a8b4dc8f2b82c31ef17bd1b41",
+        "signer_sha256":  "2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e",
+        "installed_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "new_certificate":  "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\nV2 Signer: certificate SHA-256 digest: 2081d17da5ec1a400e710720eba4a16939db774da54cdce936be30f4a848506e\nV2 Signer: certificate SHA-1 digest: d1fda5ba8fa951ba541559eac327a379094a9cd9\nV2 Signer: certificate MD5 digest: 2a0fb9dd87f2e5da2583214e2f320a5c",
+        "install_output":  "Performing Streamed Install\nSuccess",
+        "scope":  "Only the existing isolated .otp23 fixture and test package; same key and update -r, no uninstall/data clearing"
+    }
+]

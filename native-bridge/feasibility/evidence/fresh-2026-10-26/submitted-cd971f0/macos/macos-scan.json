@@ -1,0 +1,82 @@
+{
+  "host_name": "me.nagaev.veles.otp23.plain",
+  "manifest": "%HOME%/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.plain.json",
+  "host_binary": "%HOME%/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "sizes": [
+    4,
+    178,
+    179,
+    180,
+    505,
+    506,
+    507,
+    508,
+    509,
+    510,
+    511,
+    1015,
+    1016,
+    1017,
+    4095,
+    4096
+  ],
+  "repeat_4096": 3,
+  "diag_scan_only": true,
+  "started_utc": "2026-10-26T06:40:29+00:00",
+  "source_revision": {
+    "available": false,
+    "stage": "rev-parse",
+    "reason": "fatal: not a git repository (or any of the parent directories): .git"
+  },
+  "macos_version": "26.5.2",
+  "python_version": "3.9.6",
+  "results": [
+    {
+      "case": "host-launched-headless",
+      "pid": 25241,
+      "ancestor_chain": [
+        {
+          "pid": 25216,
+          "comm": "Google",
+          "args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-pnoxfptm --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank"
+        },
+        {
+          "pid": 25212,
+          "comm": "Python",
+          "args": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python scripts/macos_poc.py --diag-scan-only --out evidence/submitted-cd971f0/macos-scan.json"
+        },
+        {
+          "pid": 25207,
+          "comm": "zsh",
+          "args": "/bin/zsh /opt/homepc/bin/runner"
+        },
+        {
+          "pid": 50208,
+          "comm": "zsh",
+          "args": "/bin/zsh /opt/homepc/bin/runner"
+        },
+        {
+          "pid": 1,
+          "comm": "launchd",
+          "args": "/sbin/launchd"
+        }
+      ],
+      "on_screen_windows": []
+    }
+  ],
+  "result": "FAIL",
+  "pre_existing_host_processes_untouched": [],
+  "chrome_version": "Chrome/155.0.8059.86",
+  "chrome_pid": 25216,
+  "ready": {
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "platform": "macos",
+    "api_version": 1
+  },
+  "host_pid": 25241,
+  "permission_denied": true,
+  "failure": "startScan(veles): {\"api_version\": 1, \"code\": \"scan_failed\", \"envelope_version\": 1, \"recoverability\": \"retryable\", \"request_id\": \"r2-s9h5na\", \"stage\": \"access_denied\", \"type\": \"error\"}; stages ['denied']; fix: Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth and allow 'Google Chrome' (and/or the VelesOtp23PoC app), then re-run this command. This driver never bypasses or resets TCC.",
+  "finished_utc": "2026-10-26T06:40:41+00:00"
+}

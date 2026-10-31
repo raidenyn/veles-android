@@ -1,0 +1,11 @@
+{
+    "started_utc":  "2026-10-30T07:56:47.2955291Z",
+    "scope":  "Exclusive access to only the synthetic Veles GATT service on the one test phone; not a Windows privacy-setting denial",
+    "services_status":  "Success",
+    "status":  "ERROR",
+    "error":  "Method invocation failed because [Windows.Devices.Bluetooth.GenericAttributeProfile.GattDeviceService] does not contain a method named \u0027Close\u0027.",
+    "close_errors":  [
+                         "Method invocation failed because [Windows.Devices.Bluetooth.GenericAttributeProfile.GattDeviceService] does not contain a method named \u0027Close\u0027."
+                     ],
+    "finished_utc":  "2026-10-30T07:56:48.4984501Z"
+}

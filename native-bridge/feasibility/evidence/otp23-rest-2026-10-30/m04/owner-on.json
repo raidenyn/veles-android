@@ -1,0 +1,13 @@
+{
+  "answer_verbatim": "Saw guidance; switched ON",
+  "guidance_observed": true,
+  "recorded_utc": "2026-10-30T03:23:02.004828+00:00",
+  "ack": {
+    "nonce": "59f99c1876724a26b870f78b7ad3b848",
+    "ready": "human_enable_needed",
+    "toggled": "on",
+    "entry_label": "VelesOtp23PoC",
+    "prompt": "unknown",
+    "note": "Owner selected Saw guidance; switched ON; no new popup observation supplied"
+  }
+}

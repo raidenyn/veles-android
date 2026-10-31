@@ -1,0 +1,71 @@
+{
+  "source": "Claude Code session transcripts read from disk (assistant message.model as returned by the API); not self-report",
+  "captured_utc": "2026-10-27T14:29:25Z",
+  "sessions": [
+    {
+      "transcript": "52694ac4-1255-4eea-8273-bb7ff12298f0.jsonl",
+      "project_dir": "-home-dev-repos-veles-android--claude-worktrees-otp23-investigations",
+      "sha256_at_capture": "11234f19ad30cae58b668fc73e954c8f5bb0db6737612051ca34b2ea4c0aa2bc",
+      "bytes": 2988941,
+      "assistant_message_model_counts": {
+        "claude-sonnet-5-5": 283
+      },
+      "claude_code_versions": {
+        "2.1.310": 783
+      },
+      "session_ids": {
+        "52694ac4-1255-4eea-8273-bb7ff12298f0": 1508
+      }
+    },
+    {
+      "transcript": "0631948e-7532-471d-a4b2-9a9889c7c16d.jsonl",
+      "project_dir": "-home-dev-repos-veles-android",
+      "sha256_at_capture": "fe981daa8650a0f7d4abe9ad1044c47d77fc972e3e7e8d61aad8a9c4dac3e2af",
+      "bytes": 6046723,
+      "assistant_message_model_counts": {
+        "claude-sonnet-5-5": 692,
+        "<synthetic>": 2
+      },
+      "claude_code_versions": {
+        "2.1.310": 651,
+        "2.1.311": 955
+      },
+      "session_ids": {
+        "0631948e-7532-471d-a4b2-9a9889c7c16d": 2453
+      }
+    },
+    {
+      "transcript": "b0c43fcb-5ccc-44f8-8c62-6d72bafc330b.jsonl",
+      "project_dir": "-home-dev-repos-veles-android",
+      "sha256_at_capture": "314ac6fdea206a78482fcb74aa220e5c0b911f5348f16105e5d940cef5ecf39f",
+      "bytes": 6535931,
+      "assistant_message_model_counts": {
+        "claude-sonnet-5-5": 783,
+        "<synthetic>": 2
+      },
+      "claude_code_versions": {
+        "2.1.310": 651,
+        "2.1.311": 1063
+      },
+      "session_ids": {
+        "b0c43fcb-5ccc-44f8-8c62-6d72bafc330b": 2171
+      }
+    },
+    {
+      "transcript": "2fe20385-5ef1-4622-bf94-00b8c0c6477e.jsonl",
+      "project_dir": "-home-dev-repos-veles-android",
+      "sha256_at_capture": "718012d9105acf8858be3705477896dac7e7551cb5c366caee05708f015dff61",
+      "bytes": 3451738,
+      "assistant_message_model_counts": {
+        "claude-opus-5-5": 265
+      },
+      "claude_code_versions": {
+        "2.1.311": 701
+      },
+      "session_ids": {
+        "2fe20385-5ef1-4622-bf94-00b8c0c6477e": 1158
+      }
+    }
+  ],
+  "note": "52694ac4 = first investigation session; 0631948e = its continuation; b0c43fcb = the later continuation that made the commits (this file was refreshed to include it; the earlier followup record omitted it); 2fe20385 = the independent reviewer, shown for contrast. \"<synthetic>\" entries are harness-generated, not model output. The 2.1.310 entry count (651) is identical in 0631948e and b0c43fcb, so the later transcript appears to carry the earlier session's history: do not add counts across sessions. Transcripts keep growing; counts and hashes describe the bytes read at capture time."
+}

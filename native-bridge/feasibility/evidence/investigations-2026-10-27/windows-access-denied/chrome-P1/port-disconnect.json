@@ -1,0 +1,11 @@
+{
+  "id": "LC-port-disconnect",
+  "title": "Chrome port.disconnect with an active scan and two active links",
+  "expected": "owned host and wrapper gone with NO shutdown handshake (stdin EOF path), zero windows/endpoints",
+  "actual": "Traceback (most recent call last):\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 426, in scenario_chrome\n    detail[\"ready\"] = session.start()\n                      ~~~~~~~~~~~~~^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 239, in start\n    self.chrome = self.adapter.chrome_run({\"VELES_OTP23_TRACE\": str(self.trace_path)})\n                  ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 120, in chrome_run\n    return self.cv.ChromeRun(env, medium=True)\n           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\nRuntimeError: Chrome did not publish DevToolsActivePort\n",
+  "status": "FAIL",
+  "error_class": "environment",
+  "detail": {
+    "cleanup_problems": []
+  }
+}

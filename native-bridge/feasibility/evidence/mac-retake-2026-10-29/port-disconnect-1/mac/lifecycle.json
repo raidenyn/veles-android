@@ -1,0 +1,855 @@
+{
+  "meta": {
+    "platform": "mac",
+    "python": "3.9.6",
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "started_utc": "2026-10-29T04:38:18+00:00",
+    "source_revision": {
+      "available": false,
+      "stage": "rev-parse",
+      "reason": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "source_sha256": {
+      "scenario_matrix.py": "f8bbf2d6ea158d2bd30bee35b97a655c727a7ca7fc677a5c9a3a53eafe6b7f28",
+      "scenario_matrix_core.py": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+      "connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+      "manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+      "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f",
+      "platform_observer_sha256": {
+        "macos_poc.py": "e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0",
+        "macos_background_support.py": "e02062c3edfca461cf8c0002c1df190ba4044d1c76af014d6cb4049a7ad395e3",
+        "macos_cdp.py": "e962bcc94123faa67a9f1097da2835a8fabe3cce3bc8fe3ac1a68dc29926375f",
+        "macos_install.py": "fcc8604afc0c8662a7a3589248b2a22b34ed014e4d175c57dfb9c47befcf5fd5"
+      },
+      "observer_modules_missing": []
+    },
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "foreground_only": true,
+    "no_background_exemption_measured": true,
+    "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "pre_existing_host_pids_untouched": [],
+    "finished_utc": "2026-10-29T04:38:26+00:00"
+  },
+  "results": [
+    {
+      "id": "LC-port-disconnect",
+      "title": "Chrome port.disconnect with an active scan and two active links",
+      "expected": "with two byte-proven links and an active scan, the host exits by its OWN trace line (code 0, stdin-EOF mechanism, NO shutdown handshake, never the ~2 s Chrome kill), host gone; wrapper chrome-created console window recorded for the owner",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "chrome_version_actual": "Chrome/156.0.8078.74",
+        "trace_env_passed_to_chrome": {
+          "VELES_OTP23_TRACE": "%HOME%/homepc/work/otp23-mac-retake-20261029/evidence/mac-retake-2026-10-29/port-disconnect-1/port-disconnect.host-trace.log",
+          "VELES_OTP23_DETACHED_CLOSE": null
+        },
+        "detached_close_env_unset": true,
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": "unavailable",
+          "network_endpoints": 0
+        },
+        "integrity": {
+          "chrome": null,
+          "host": null,
+          "wrapper": []
+        },
+        "connect_order": "scan-active",
+        "link_proof": [
+          {
+            "size": 16,
+            "request_sha256": "af5973a60315832b08783a073100454cb555d4f67675c5ad66d057348eb9437a",
+            "received_sha256": "8d191539bf6937852e054776cf3306df1a7b73b68e05d5c848f520de01eec15c",
+            "status": "PASS"
+          },
+          {
+            "size": 16,
+            "request_sha256": "fa09a5dfcb8f56a16dc53e8c3d68f7ef6820ddf18cbf06dbdbc085a466e0a479",
+            "received_sha256": "4a67b0e9741bca55a7e6d21cedc5a25a37cd3bb08f2d4fef45314cdbe81845f3",
+            "status": "PASS"
+          }
+        ],
+        "probe_during": [
+          {
+            "label": "linked-idle-active-scan",
+            "wall_ms": 1793248704519,
+            "trace_offset_ms_estimate": 4806,
+            "probe": {
+              "mode": "sampled",
+              "per_pid": {
+                "86238": {
+                  "top_visible": 0,
+                  "all_layers": 0,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                },
+                "86210": {
+                  "top_visible": 14,
+                  "all_layers": 14,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [
+                    {
+                      "local_port": 52814,
+                      "remote_port": null,
+                      "state": "LISTEN"
+                    },
+                    {
+                      "local_port": 52814,
+                      "remote_port": 52815,
+                      "state": "ESTABLISHED"
+                    }
+                  ],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                }
+              },
+              "observer": {
+                "pid": 86203,
+                "session": {
+                  "launchctl_managername": "Background",
+                  "uid": 501,
+                  "ssh_connection_present": true
+                }
+              },
+              "active_console_session": "unavailable",
+              "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              }
+            },
+            "summary": {
+              "problems": [],
+              "host_windows": {
+                "top_visible": 0,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable"
+              },
+              "wrapper_windows": {},
+              "host_endpoints": {
+                "tcp4": [],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable"
+              },
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              },
+              "usable": true,
+              "context_audit": {
+                "problems": [],
+                "usable": true,
+                "launchctl_managername": "Background",
+                "uid": 501,
+                "ssh_connection_present": true
+              }
+            },
+            "trace_origin_calibration": null,
+            "trace_bracket": {
+              "after": {
+                "at_ms": 4799,
+                "type": "scan_state",
+                "dir": "out",
+                "status": "started"
+              },
+              "before": {
+                "at_ms": 4851,
+                "type": "send",
+                "dir": "in",
+                "status": null
+              },
+              "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start); launch-based estimate \u2014 the trace carries no absolute anchor to correct against"
+            }
+          },
+          {
+            "label": "send-in-flight",
+            "wall_ms": 1793248704571,
+            "trace_offset_ms_estimate": 4858,
+            "exchange": {
+              "handle": "17b6c7c267ac",
+              "seed": 173
+            },
+            "probe": {
+              "mode": "sampled",
+              "per_pid": {
+                "86238": {
+                  "top_visible": 0,
+                  "all_layers": 0,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                },
+                "86210": {
+                  "top_visible": 14,
+                  "all_layers": 14,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [
+                    {
+                      "local_port": 52814,
+                      "remote_port": null,
+                      "state": "LISTEN"
+                    },
+                    {
+                      "local_port": 52814,
+                      "remote_port": 52815,
+                      "state": "ESTABLISHED"
+                    }
+                  ],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                }
+              },
+              "observer": {
+                "pid": 86203,
+                "session": {
+                  "launchctl_managername": "Background",
+                  "uid": 501,
+                  "ssh_connection_present": true
+                }
+              },
+              "active_console_session": "unavailable",
+              "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              }
+            },
+            "summary": {
+              "problems": [],
+              "host_windows": {
+                "top_visible": 0,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable"
+              },
+              "wrapper_windows": {},
+              "host_endpoints": {
+                "tcp4": [],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable"
+              },
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              },
+              "usable": true,
+              "context_audit": {
+                "problems": [],
+                "usable": true,
+                "launchctl_managername": "Background",
+                "uid": 501,
+                "ssh_connection_present": true
+              }
+            },
+            "trace_origin_calibration": null,
+            "trace_bracket": {
+              "after": {
+                "at_ms": 4852,
+                "type": "sent",
+                "dir": "out",
+                "status": null
+              },
+              "before": {
+                "at_ms": 5373,
+                "type": "message",
+                "dir": "out",
+                "status": null
+              },
+              "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start); launch-based estimate \u2014 the trace carries no absolute anchor to correct against"
+            }
+          },
+          {
+            "label": "echo-verified",
+            "wall_ms": 1793248705112,
+            "trace_offset_ms_estimate": 5399,
+            "exchange": {
+              "handle": "17b6c7c267ac",
+              "seed": 173
+            },
+            "probe": {
+              "mode": "sampled",
+              "per_pid": {
+                "86238": {
+                  "top_visible": 0,
+                  "all_layers": 0,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                },
+                "86210": {
+                  "top_visible": 14,
+                  "all_layers": 14,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [
+                    {
+                      "local_port": 52814,
+                      "remote_port": null,
+                      "state": "LISTEN"
+                    },
+                    {
+                      "local_port": 52814,
+                      "remote_port": 52815,
+                      "state": "ESTABLISHED"
+                    }
+                  ],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                }
+              },
+              "observer": {
+                "pid": 86203,
+                "session": {
+                  "launchctl_managername": "Background",
+                  "uid": 501,
+                  "ssh_connection_present": true
+                }
+              },
+              "active_console_session": "unavailable",
+              "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              }
+            },
+            "summary": {
+              "problems": [],
+              "host_windows": {
+                "top_visible": 0,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable"
+              },
+              "wrapper_windows": {},
+              "host_endpoints": {
+                "tcp4": [],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable"
+              },
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              },
+              "usable": true,
+              "context_audit": {
+                "problems": [],
+                "usable": true,
+                "launchctl_managername": "Background",
+                "uid": 501,
+                "ssh_connection_present": true
+              }
+            },
+            "trace_origin_calibration": null,
+            "trace_bracket": {
+              "after": {
+                "at_ms": 5373,
+                "type": "message",
+                "dir": "out",
+                "status": null
+              },
+              "before": {
+                "at_ms": 5420,
+                "type": "send",
+                "dir": "in",
+                "status": null
+              },
+              "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start); launch-based estimate \u2014 the trace carries no absolute anchor to correct against"
+            }
+          },
+          {
+            "label": "send-in-flight",
+            "wall_ms": 1793248705141,
+            "trace_offset_ms_estimate": 5428,
+            "exchange": {
+              "handle": "ff4a21879202",
+              "seed": 186
+            },
+            "probe": {
+              "mode": "sampled",
+              "per_pid": {
+                "86238": {
+                  "top_visible": 0,
+                  "all_layers": 0,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                },
+                "86210": {
+                  "top_visible": 14,
+                  "all_layers": 14,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [
+                    {
+                      "local_port": 52814,
+                      "remote_port": null,
+                      "state": "LISTEN"
+                    },
+                    {
+                      "local_port": 52814,
+                      "remote_port": 52815,
+                      "state": "ESTABLISHED"
+                    }
+                  ],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                }
+              },
+              "observer": {
+                "pid": 86203,
+                "session": {
+                  "launchctl_managername": "Background",
+                  "uid": 501,
+                  "ssh_connection_present": true
+                }
+              },
+              "active_console_session": "unavailable",
+              "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              }
+            },
+            "summary": {
+              "problems": [],
+              "host_windows": {
+                "top_visible": 0,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable"
+              },
+              "wrapper_windows": {},
+              "host_endpoints": {
+                "tcp4": [],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable"
+              },
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              },
+              "usable": true,
+              "context_audit": {
+                "problems": [],
+                "usable": true,
+                "launchctl_managername": "Background",
+                "uid": 501,
+                "ssh_connection_present": true
+              }
+            },
+            "trace_origin_calibration": null,
+            "trace_bracket": {
+              "after": {
+                "at_ms": 5421,
+                "type": "sent",
+                "dir": "out",
+                "status": null
+              },
+              "before": {
+                "at_ms": 5797,
+                "type": "device_found",
+                "dir": "out",
+                "status": null
+              },
+              "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start); launch-based estimate \u2014 the trace carries no absolute anchor to correct against"
+            }
+          },
+          {
+            "label": "echo-verified",
+            "wall_ms": 1793248705699,
+            "trace_offset_ms_estimate": 5986,
+            "exchange": {
+              "handle": "ff4a21879202",
+              "seed": 186
+            },
+            "probe": {
+              "mode": "sampled",
+              "per_pid": {
+                "86238": {
+                  "top_visible": 0,
+                  "all_layers": 0,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                },
+                "86210": {
+                  "top_visible": 14,
+                  "all_layers": 14,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [
+                    {
+                      "local_port": 52814,
+                      "remote_port": null,
+                      "state": "LISTEN"
+                    },
+                    {
+                      "local_port": 52814,
+                      "remote_port": 52815,
+                      "state": "ESTABLISHED"
+                    }
+                  ],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                }
+              },
+              "observer": {
+                "pid": 86203,
+                "session": {
+                  "launchctl_managername": "Background",
+                  "uid": 501,
+                  "ssh_connection_present": true
+                }
+              },
+              "active_console_session": "unavailable",
+              "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              }
+            },
+            "summary": {
+              "problems": [],
+              "host_windows": {
+                "top_visible": 0,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable"
+              },
+              "wrapper_windows": {},
+              "host_endpoints": {
+                "tcp4": [],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable"
+              },
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              },
+              "usable": true,
+              "context_audit": {
+                "problems": [],
+                "usable": true,
+                "launchctl_managername": "Background",
+                "uid": 501,
+                "ssh_connection_present": true
+              }
+            },
+            "trace_origin_calibration": null,
+            "trace_bracket": {
+              "after": {
+                "at_ms": 5951,
+                "type": "message",
+                "dir": "out",
+                "status": null
+              },
+              "before": null,
+              "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start); launch-based estimate \u2014 the trace carries no absolute anchor to correct against"
+            }
+          },
+          {
+            "label": "after-probes-active-scan",
+            "wall_ms": 1793248705724,
+            "trace_offset_ms_estimate": 6011,
+            "probe": {
+              "mode": "sampled",
+              "per_pid": {
+                "86238": {
+                  "top_visible": 0,
+                  "all_layers": 0,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                },
+                "86210": {
+                  "top_visible": 14,
+                  "all_layers": 14,
+                  "top_hidden": "unavailable",
+                  "message_only": "unavailable",
+                  "children": "unavailable",
+                  "tcp4": [
+                    {
+                      "local_port": 52814,
+                      "remote_port": null,
+                      "state": "LISTEN"
+                    },
+                    {
+                      "local_port": 52814,
+                      "remote_port": 52815,
+                      "state": "ESTABLISHED"
+                    }
+                  ],
+                  "tcp6": "unavailable",
+                  "udp4": "unavailable",
+                  "udp6": "unavailable",
+                  "pid_alive": true,
+                  "session": null
+                }
+              },
+              "observer": {
+                "pid": 86203,
+                "session": {
+                  "launchctl_managername": "Background",
+                  "uid": 501,
+                  "ssh_connection_present": true
+                }
+              },
+              "active_console_session": "unavailable",
+              "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              }
+            },
+            "summary": {
+              "problems": [],
+              "host_windows": {
+                "top_visible": 0,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable"
+              },
+              "wrapper_windows": {},
+              "host_endpoints": {
+                "tcp4": [],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable"
+              },
+              "controls": {
+                "chrome_visible_top_level": 14,
+                "chrome_cdp_listener_present": true,
+                "chrome_cdp_listener": null
+              },
+              "usable": true,
+              "context_audit": {
+                "problems": [],
+                "usable": true,
+                "launchctl_managername": "Background",
+                "uid": 501,
+                "ssh_connection_present": true
+              }
+            },
+            "trace_origin_calibration": null,
+            "trace_bracket": {
+              "after": {
+                "at_ms": 5951,
+                "type": "message",
+                "dir": "out",
+                "status": null
+              },
+              "before": null,
+              "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start); launch-based estimate \u2014 the trace carries no absolute anchor to correct against"
+            }
+          }
+        ],
+        "probe_labels": [
+          "linked-idle-active-scan",
+          "send-in-flight",
+          "echo-verified",
+          "send-in-flight",
+          "echo-verified",
+          "after-probes-active-scan"
+        ],
+        "probe_during_usable": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "w02_wrapper_hidden_window_max": 0,
+        "teardown": {
+          "owned_gone_after_s": 0.004,
+          "trace_mechanism": "stdin_closed",
+          "trace_exit": {
+            "at_ms": 6032,
+            "code": 0,
+            "stdout_drained": true
+          },
+          "host_output_order": [
+            "sent",
+            "message",
+            "scan_state:started",
+            "sent",
+            "message",
+            "sent",
+            "device_found",
+            "message"
+          ],
+          "trace_released_count": 0,
+          "trace_disconnect_requested_count": 0,
+          "trace_join": null,
+          "problems": []
+        },
+        "probe_after": {
+          "label": "after-teardown-host-exited",
+          "wall_ms": 1793248705834,
+          "trace_offset_ms_estimate": 6121,
+          "probe": {
+            "mode": "sampled",
+            "per_pid": {
+              "86238": {
+                "top_visible": 0,
+                "all_layers": 0,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable",
+                "tcp4": [],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable",
+                "pid_alive": false,
+                "session": null
+              },
+              "86210": {
+                "top_visible": 14,
+                "all_layers": 14,
+                "top_hidden": "unavailable",
+                "message_only": "unavailable",
+                "children": "unavailable",
+                "tcp4": [
+                  {
+                    "local_port": 52814,
+                    "remote_port": null,
+                    "state": "LISTEN"
+                  },
+                  {
+                    "local_port": 52814,
+                    "remote_port": 52815,
+                    "state": "ESTABLISHED"
+                  }
+                ],
+                "tcp6": "unavailable",
+                "udp4": "unavailable",
+                "udp6": "unavailable",
+                "pid_alive": true,
+                "session": null
+              }
+            },
+            "observer": {
+              "pid": 86203,
+              "session": {
+                "launchctl_managername": "Background",
+                "uid": 501,
+                "ssh_connection_present": true
+              }
+            },
+            "active_console_session": "unavailable",
+            "required_host_fields_note": "macOS criterion: any-layer census + lsof endpoints + live pid; a window kind split beyond CGWindowList is structurally unavailable (recorded, never zero)",
+            "controls": {
+              "chrome_visible_top_level": 14,
+              "chrome_cdp_listener_present": true,
+              "chrome_cdp_listener": null
+            }
+          },
+          "summary": {
+            "problems": [],
+            "host_windows": {
+              "top_visible": 0,
+              "top_hidden": "unavailable",
+              "message_only": "unavailable",
+              "children": "unavailable"
+            },
+            "wrapper_windows": {},
+            "host_endpoints": {
+              "tcp4": [],
+              "tcp6": "unavailable",
+              "udp4": "unavailable",
+              "udp6": "unavailable"
+            },
+            "controls": {
+              "chrome_visible_top_level": 14,
+              "chrome_cdp_listener_present": true,
+              "chrome_cdp_listener": null
+            },
+            "usable": true
+          }
+        },
+        "cleanup_problems": []
+      }
+    }
+  ],
+  "surviving_owned_hosts_after_run": []
+}

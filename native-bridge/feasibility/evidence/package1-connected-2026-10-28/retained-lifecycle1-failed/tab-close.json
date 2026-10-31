@@ -1,0 +1,64 @@
+{
+  "id": "LC-tab-close",
+  "title": "Connector tab close with an active scan and two active links",
+  "expected": "owning tab destroyed with two byte-proven links and an active scan: host exits by its OWN trace line (code 0, stdin-EOF mechanism, no shutdown handshake), host gone",
+  "actual": "\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 565, in scenario_chrome\n    detail[\"probe_during\"] = probe_connected(session, handles)\n                             ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 496, in probe_connected\n    sample(\"linked-idle-active-scan\")\n    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\package1-p1\\scripts\\scenario_matrix.py\", line 479, in sample\n    document[\"probe\"] = adapter.hygiene_probe([session.host_pid] + list(session.wrappers),\n                        ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                                              session.chrome.proc.pid, session.chrome.port)\n                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nNameError: name 'class_of' is not defined\n",
+  "status": "FAIL",
+  "error_class": "environment",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "chrome_version_actual": "Chrome/156.0.8078.73",
+    "trace_env_passed_to_chrome": {
+      "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\lifecycle1\\tab-close.host-trace.log",
+      "VELES_OTP23_DETACHED_CLOSE": null
+    },
+    "detached_close_env_unset": true,
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 0,
+      "network_endpoints": 0
+    },
+    "wrapper_hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 1,
+      "network_endpoints": 0
+    },
+    "integrity": {
+      "chrome": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "wrapper": [
+        {
+          "integrity": "medium",
+          "rid": "0x2000",
+          "token_is_elevated": false
+        }
+      ]
+    },
+    "connect_order": "scan-active",
+    "link_proof": [
+      {
+        "size": 16,
+        "request_sha256": "c0b02f7f88737848a5e94d5ca1cb5dcf18ad3e209275f61fb93dabbac43cb36e",
+        "received_sha256": "aa0bc6a8ddc48d1eed2576bf21f90caafdef5804c06d4296babf74682fabbe0b",
+        "status": "PASS"
+      },
+      {
+        "size": 16,
+        "request_sha256": "024fa050e1842ba63278ac97947e6d64159d62c6ee2552acdfe57ffdf2b0ebd7",
+        "received_sha256": "2a830c34889629f76917050abad349592bf3147289629395996c7a1065d6c3b4",
+        "status": "PASS"
+      }
+    ],
+    "cleanup_problems": []
+  }
+}

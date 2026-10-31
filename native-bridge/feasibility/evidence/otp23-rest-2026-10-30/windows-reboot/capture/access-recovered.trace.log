@@ -1,0 +1,35 @@
+[       0ms pid=26928] start pid=26928
+[       1ms pid=26928] in  len=81 type=hello request_id=r1-jb9w74
+[       1ms pid=26928] out len=183 type=ready request_id=r1-jb9w74 api_version=1
+[       2ms pid=26928] in  len=119 type=connect request_id=r2-valxu3 api_version=1 platform_hint.len=20
+[       2ms pid=26928] conn 1 connect worker started epoch_ms=1793348489217 hint=winrt:..91f3:1
+[      44ms pid=26928] conn 1 device at 42ms
+[      66ms pid=26928] conn 1 session at 63ms
+[    1476ms pid=26928] conn 1 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1477ms pid=26928] conn 1 service at 1474ms
+[    1477ms pid=26928] conn 1 mtu=517 at 1474ms
+[    1635ms pid=26928] conn 1 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1635ms pid=26928] conn 1 write properties=0x4
+[    1708ms pid=26928] conn 1 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1708ms pid=26928] conn 1 notify properties=0x10
+[    1708ms pid=26928] conn 1 characteristics at 1705ms
+[    1749ms pid=26928] conn 1 subscribed at 1747ms
+[    1749ms pid=26928] out len=160 type=connected request_id=r2-valxu3 api_version=1 connection_handle=557e4fc5a082f3cd platform_hint.len=20
+[    1750ms pid=26928] in  len=143 type=send request_id=r3-vg40wy api_version=1 connection_handle=557e4fc5a082f3cd record_base64.len=8
+[    1761ms pid=26928] out len=116 type=sent request_id=r3-vg40wy api_version=1 connection_handle=557e4fc5a082f3cd
+[    1773ms pid=26928] out len=121 type=message api_version=1 connection_handle=557e4fc5a082f3cd record_base64.len=8
+[    1863ms pid=26928] in  len=122 type=disconnect request_id=r4-27sopi api_version=1 connection_handle=557e4fc5a082f3cd
+[    1863ms pid=26928] conn 1 disconnect requested epoch_ms=1793348491078
+[    1863ms pid=26928] conn 1 close begin
+[    1863ms pid=26928] out len=124 type=disconnected request_id=r4-27sopi api_version=1 connection_handle=557e4fc5a082f3cd
+[    1863ms pid=26928] conn 1 close step remove_value_changed at 0ms ok
+[    1863ms pid=26928] conn 1 close step remove_status_changed at 0ms ok
+[    1864ms pid=26928] conn 1 close step service_close at 1ms ok
+[    1864ms pid=26928] in  len=81 type=shutdown request_id=r5-1v9p19 api_version=1
+[    1864ms pid=26928] conn 1 close step maintain_false at 1ms ok
+[    1865ms pid=26928] conn 1 close step session_close at 2ms ok
+[    1866ms pid=26928] conn 1 close step device_close at 2ms ok
+[    1867ms pid=26928] conn 1 released (objects closed; link-down unconfirmed)
+[    1875ms pid=26928] shutdown joined 1/1 within 10ms
+[    1875ms pid=26928] out len=90 type=shutdown_complete request_id=r5-1v9p19 api_version=1
+[    1875ms pid=26928] exit code=0 stdout_drained=true

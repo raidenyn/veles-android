@@ -1,0 +1,181 @@
+{
+  "chrome_version_from_cdp": "Chrome/156.0.8078.48",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+  "profile": "C:\\Users\\yuriy\\otp23-probe\\tp-out-smoke\\profile",
+  "browser_pid": 95576,
+  "hidden_s": 20,
+  "debug_port": 13194,
+  "platform": "win32",
+  "launch_flags_as_passed": [
+    "--user-data-dir=C:\\Users\\yuriy\\otp23-probe\\tp-out-smoke\\profile",
+    "--remote-debugging-port=0",
+    "--enable-unsafe-extension-debugging",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "about:blank"
+  ],
+  "launch_command_flags": null,
+  "extension_id": "bfbejdficnbalinkfakhcbelelbnellh",
+  "registry_key_created": "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.timerprobe",
+  "setup_check": {
+    "port": {
+      "vis": "hidden",
+      "timers": 13,
+      "messages": 3
+    },
+    "control": {
+      "vis": "hidden",
+      "timers": 13,
+      "messages": 0
+    }
+  },
+  "hidden_start_epoch_ms": 1793107719870,
+  "targets": {
+    "port": "D1FC306421906AE03D4C1079684E5E6B",
+    "control": "5468A4063FE85282D189FE4834748A32",
+    "ordinary": "DBFD1D7288F42062389990B8630D1C4F"
+  },
+  "read_back_epoch_ms": 1793107764876,
+  "raw_logs": {
+    "port": {
+      "mode": "port",
+      "started_epoch_ms": 1793107719911,
+      "timers": [
+        161.80000007152557,
+        1801.2000000476837,
+        3801.899999976158,
+        5803.300000071526,
+        7799.800000071526,
+        9810.800000071526,
+        11808.5,
+        13801.899999976158,
+        15800.5,
+        17798.700000047684,
+        19806.600000023842,
+        21811.399999976158,
+        23805.700000047684,
+        25804.300000071526,
+        27803.300000071526,
+        29809.5,
+        31805,
+        33800.300000071526,
+        35801.39999997616,
+        37810.5,
+        39799.89999997616,
+        41800.10000002384,
+        43813
+      ],
+      "messages": [
+        {
+          "recv_perf": 1258.3000000715256,
+          "recv_epoch_ms": 1793107721007,
+          "seq": 1,
+          "host_epoch_ms": 1793107721007
+        },
+        {
+          "recv_perf": 11263.100000023842,
+          "recv_epoch_ms": 1793107731012,
+          "seq": 2,
+          "host_epoch_ms": 1793107731012
+        },
+        {
+          "recv_perf": 21268.399999976158,
+          "recv_epoch_ms": 1793107741018,
+          "seq": 3,
+          "host_epoch_ms": 1793107741017
+        },
+        {
+          "recv_perf": 31278.300000071526,
+          "recv_epoch_ms": 1793107751027,
+          "seq": 4,
+          "host_epoch_ms": 1793107751027
+        },
+        {
+          "recv_perf": 41283.60000002384,
+          "recv_epoch_ms": 1793107761033,
+          "seq": 5,
+          "host_epoch_ms": 1793107761032
+        }
+      ],
+      "visibility": [
+        {
+          "perf": 161.80000007152557,
+          "state": "hidden",
+          "focus": false
+        }
+      ],
+      "disconnects": []
+    },
+    "control": {
+      "mode": "control",
+      "started_epoch_ms": 1793107719909,
+      "timers": [
+        153.29999995231628,
+        1794.1000000238419,
+        3794.7999999523163,
+        5796.100000023842,
+        7792.600000023842,
+        9803.700000047684,
+        11801.399999976158,
+        13794.700000047684,
+        15793.399999976158,
+        17791.5,
+        19799.5,
+        21804.200000047684,
+        23798.600000023842,
+        25797.200000047684,
+        27796.200000047684,
+        29802.399999976158,
+        31797.899999976158,
+        33793.200000047684,
+        35794.299999952316,
+        37803.39999997616,
+        39792.799999952316,
+        41792.89999997616,
+        43805.89999997616
+      ],
+      "messages": [],
+      "visibility": [
+        {
+          "perf": 153.29999995231628,
+          "state": "hidden",
+          "focus": false
+        }
+      ],
+      "disconnects": []
+    }
+  },
+  "host_send_log_lines": [
+    "{\"seq\": 1, \"t\": 1793107721007}",
+    "{\"seq\": 2, \"t\": 1793107731012}",
+    "{\"seq\": 3, \"t\": 1793107741017}",
+    "{\"seq\": 4, \"t\": 1793107751027}",
+    "{\"seq\": 5, \"t\": 1793107761032}"
+  ],
+  "analysis": {
+    "port": {
+      "timers": {
+        "samples": 0,
+        "median_gap_ms": null,
+        "max_gap_ms": null,
+        "verdict": "inconclusive"
+      },
+      "messages": {
+        "received": 5,
+        "expected": 5,
+        "missing_seqs": [],
+        "max_lag_ms": 1,
+        "median_lag_ms": 0
+      }
+    },
+    "control": {
+      "timers": {
+        "samples": 0,
+        "median_gap_ms": null,
+        "max_gap_ms": null,
+        "verdict": "inconclusive"
+      }
+    }
+  },
+  "registry_key_removed": true
+}

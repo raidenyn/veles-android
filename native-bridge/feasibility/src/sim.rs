@@ -9,11 +9,16 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::backend::{Backend, BackendEvent, Discovered, Failure, Target, Token};
-use crate::fragment::{GlobalBudget, PushOutcome, Reassembler, fragment};
+use crate::fragment::{GlobalBudget, LinkBudget, LinkCapacity, PushOutcome, Reassembler, fragment};
 use crate::runtime::BackendEvents;
 
 pub const PHONE_HINTS: [&str; 2] = ["sim:phone-1", "sim:phone-2"];
-const MTU: usize = 185;
+/// The simulated phones negotiate the MTU floor, so the simulation exercises the narrowest budget.
+const CAPACITY: LinkCapacity = LinkCapacity::AttMtu(185);
+
+fn sim_budget() -> LinkBudget {
+    LinkBudget::from_capacity(CAPACITY).expect("the simulated capacity is within range")
+}
 
 struct Link {
     hint: String,
@@ -61,13 +66,13 @@ impl Backend for SimBackend {
                 conn,
                 Link {
                     hint: hint.clone(),
-                    reassembler: Reassembler::new(MTU, self.budget.clone()),
+                    reassembler: Reassembler::new(sim_budget(), self.budget.clone()),
                     next_transaction: 1,
                 },
             );
             self.events.emit(BackendEvent::Connected {
                 conn,
-                mtu: MTU,
+                capacity: CAPACITY,
                 platform_hint: Some(hint.clone()),
             });
         } else {
@@ -121,7 +126,9 @@ impl Backend for SimBackend {
         if let Some(response) = response {
             let transaction = link.next_transaction;
             link.next_transaction = link.next_transaction % 255 + 1;
-            for frame in fragment(&response, MTU, transaction).expect("synthetic response fits") {
+            for frame in
+                fragment(&response, sim_budget(), transaction).expect("synthetic response fits")
+            {
                 self.events
                     .emit(BackendEvent::Fragment { conn, bytes: frame });
             }

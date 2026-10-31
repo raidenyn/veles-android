@@ -1,0 +1,57 @@
+[       0ms pid=73652] start pid=73652
+[       0ms pid=73652] in  len=74 type=hello request_id=d1
+[       0ms pid=73652] out len=176 type=ready request_id=d1 api_version=1
+[       1ms pid=73652] in  len=130 type=start_scan request_id=d2 api_version=1
+[      52ms pid=73652] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=f5abaaf211ac9a61
+[     546ms pid=73652] out len=195 type=device_found api_version=1 scan_handle=f5abaaf211ac9a61 device_handle=92e3e0feb52198d2 label.len=17 platform_hint.len=20
+[     659ms pid=73652] out len=195 type=device_found api_version=1 scan_handle=f5abaaf211ac9a61 device_handle=20bd6c84a42606ec label.len=17 platform_hint.len=20
+[     660ms pid=73652] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=f5abaaf211ac9a61
+[     660ms pid=73652] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=f5abaaf211ac9a61
+[     660ms pid=73652] in  len=108 type=connect request_id=d4 api_version=1 device_handle=92e3e0feb52198d2
+[     660ms pid=73652] in  len=108 type=connect request_id=d5 api_version=1 device_handle=20bd6c84a42606ec
+[     661ms pid=73652] conn 2 connect worker started epoch_ms=1793120959262 hint=winrt:..b39d:1
+[     661ms pid=73652] conn 3 connect worker started epoch_ms=1793120959262 hint=winrt:..5656:1
+[     692ms pid=73652] conn 3 device at 30ms
+[     692ms pid=73652] conn 2 device at 30ms
+[     713ms pid=73652] conn 3 session at 51ms
+[     713ms pid=73652] conn 2 session at 51ms
+[    2304ms pid=73652] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    2304ms pid=73652] conn 3 service at 1642ms
+[    2304ms pid=73652] conn 3 mtu=517 at 1643ms
+[    2461ms pid=73652] conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    2461ms pid=73652] conn 3 write properties=0x4
+[    2523ms pid=73652] conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    2523ms pid=73652] conn 3 notify properties=0x10
+[    2523ms pid=73652] conn 3 characteristics at 1862ms
+[    2564ms pid=73652] conn 3 subscribed at 1903ms
+[    2564ms pid=73652] out len=153 type=connected request_id=d5 api_version=1 connection_handle=b7707e7e0e281003 platform_hint.len=20
+[    2811ms pid=73652] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    2811ms pid=73652] conn 2 service at 2149ms
+[    2811ms pid=73652] conn 2 mtu=517 at 2149ms
+[    3051ms pid=73652] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    3051ms pid=73652] conn 2 write properties=0x4
+[    3165ms pid=73652] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    3165ms pid=73652] conn 2 notify properties=0x10
+[    3165ms pid=73652] conn 2 characteristics at 2504ms
+[    3206ms pid=73652] conn 2 subscribed at 2544ms
+[    3206ms pid=73652] out len=153 type=connected request_id=d4 api_version=1 connection_handle=1aa43d17026ca00c platform_hint.len=20
+[    3206ms pid=73652] conn 3 disconnect requested epoch_ms=1793120961807
+[    3206ms pid=73652] conn 2 disconnect requested epoch_ms=1793120961807
+[    3206ms pid=73652] conn 3 close begin
+[    3206ms pid=73652] conn 2 close begin
+[    3206ms pid=73652] conn 3 close step remove_value_changed at 0ms ok
+[    3206ms pid=73652] conn 2 close step remove_value_changed at 0ms ok
+[    3206ms pid=73652] conn 3 close step remove_status_changed at 0ms ok
+[    3206ms pid=73652] conn 2 close step remove_status_changed at 0ms ok
+[    3207ms pid=73652] conn 2 close step service_close at 0ms ok
+[    3207ms pid=73652] conn 3 close step service_close at 0ms ok
+[    3207ms pid=73652] conn 2 close step maintain_false at 0ms ok
+[    3207ms pid=73652] conn 3 close step maintain_false at 0ms ok
+[    3207ms pid=73652] conn 3 close step session_close at 1ms ok
+[    3207ms pid=73652] conn 2 close step session_close at 1ms ok
+[    3207ms pid=73652] conn 2 close step device_close at 1ms ok
+[    3208ms pid=73652] conn 3 close step device_close at 1ms ok
+[    3208ms pid=73652] conn 2 released (objects closed; link-down unconfirmed)
+[    3208ms pid=73652] conn 3 released (objects closed; link-down unconfirmed)
+[    3216ms pid=73652] shutdown joined 2/2 within 10ms
+[    3216ms pid=73652] exit code=0 stdout_drained=true

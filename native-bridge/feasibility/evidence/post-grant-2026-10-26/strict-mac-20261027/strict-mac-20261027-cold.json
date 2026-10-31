@@ -1,0 +1,506 @@
+{
+  "platform": "macos",
+  "scenario": "cold",
+  "formal_otp23_acceptance": false,
+  "meta": {
+    "started_utc": "2026-10-27T16:11:53Z",
+    "host_trace_log": "%HOME%/homepc/work/otp23-glm-dc5d127-cal/run/evidence/strict-mac-20261027-cold.trace.log",
+    "phone_delay_s": 690,
+    "min_background_s": 600,
+    "diagnostic_short": false,
+    "browser_version": "Chrome/156.0.8078.48",
+    "foreground_ready_file": "%HOME%/homepc/work/otp23-glm-dc5d127-cal/run/evidence/strict-mac-20261027-cold.foreground-ready.json",
+    "cdp_closed_utc": "2026-10-27T16:11:59Z",
+    "planned_idle_until_utc_offset_s": 719.7,
+    "finished_utc": "2026-10-27T16:23:59Z"
+  },
+  "cases": [
+    {
+      "id": "ST-ENV",
+      "title": "Chrome, fixed-id extension, connector page, exemption scan",
+      "result": "PASS",
+      "detail": {
+        "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+        "exemption_findings": []
+      },
+      "seconds": 1.36
+    },
+    {
+      "id": "ST-FG",
+      "title": "human click: owned Chrome is the OS foreground before any BLE work",
+      "result": "PASS",
+      "detail": {
+        "foreground_pid": 90368,
+        "waited_s": 0.149
+      },
+      "seconds": 0.15
+    },
+    {
+      "id": "ST-HELLO",
+      "title": "hello over the registered plain host",
+      "result": "PASS",
+      "detail": {
+        "host_pid": 90406
+      },
+      "seconds": 0.19
+    },
+    {
+      "id": "ST-PHONES",
+      "title": "two physical phones scanned and connected",
+      "result": "PASS",
+      "detail": {
+        "phones": 2
+      },
+      "seconds": 4.31
+    },
+    {
+      "id": "ST-BG",
+      "title": "ordinary tab focused, connector hidden, every DevTools client closed",
+      "result": "PASS",
+      "detail": {
+        "connector_visibility": "hidden",
+        "ordinary_tab_visibility": "visible",
+        "ordinary_tab_focused": true
+      },
+      "seconds": 0.26
+    },
+    {
+      "id": "ST-IDLE",
+      "title": "idle with no DevTools client until each phone's unsolicited push is due",
+      "result": "PASS",
+      "detail": {
+        "slept_s": 719.7
+      },
+      "seconds": 719.74
+    },
+    {
+      "id": "ST-REATTACH",
+      "title": "HTTP target list, re-attach, read page receipts",
+      "result": "PASS",
+      "detail": {
+        "messages": 2,
+        "title": "otp23 messages=2 last=1793118209440"
+      },
+      "seconds": 0.01
+    },
+    {
+      "id": "ST-SHUTDOWN",
+      "title": "shutdown; host gone",
+      "result": "PASS",
+      "detail": {
+        "shutdown": "complete"
+      },
+      "seconds": 0.02
+    }
+  ],
+  "strict_result": "BLOCKED",
+  "checks": {
+    "ST-01": {
+      "status": "PASS",
+      "expected": "connector hidden and another ordinary tab visible and focused before the last DevTools client closes",
+      "actual": {
+        "connector_visibility": "hidden",
+        "ordinary_tab_visibility": "visible",
+        "ordinary_tab_focused": true
+      }
+    },
+    "ST-02": {
+      "status": "PASS",
+      "expected": "no DevTools client (target session or browser-level) for >= 600 s, 0 CDP calls",
+      "actual": {
+        "idle_seconds": 719.757,
+        "cdp_calls_during_idle": 0,
+        "browser_level_connection_closed": true,
+        "connector_session_detached_by_close": true
+      }
+    },
+    "ST-03": {
+      "status": "PASS",
+      "expected": "no audio / WebRTC / socket / interval / lock / keepalive API in the loaded extension files",
+      "actual": {
+        "files": [
+          "background.js",
+          "connector.html",
+          "connector.js",
+          "manifest.json"
+        ],
+        "findings": []
+      }
+    },
+    "ST-04": {
+      "status": "PASS",
+      "expected": "each of two phones delivers exactly one byte-exact unsolicited 4096-byte record, page hidden",
+      "actual": {
+        "per_handle": {
+          "c186d6c9": {
+            "events": 1,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+            "visibility": "hidden",
+            "focused": false
+          },
+          "1164de01": {
+            "events": 1,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+            "visibility": "hidden",
+            "focused": false
+          }
+        },
+        "problems": []
+      }
+    },
+    "ST-05": {
+      "status": "PASS",
+      "expected": "page receipt >= 600 s after the last DevTools client closed and before it re-attached",
+      "actual": {
+        "seconds_in_background_at_receipt": {
+          "c186d6c9": 687.893,
+          "1164de01": 689.916
+        },
+        "receipts_before_reattach": true
+      }
+    },
+    "ST-06": {
+      "status": "PASS",
+      "expected": "host trace independently places both message emissions before the driver re-attached",
+      "actual": {
+        "message_count": 2,
+        "wall_estimates": [
+          1793118207.413,
+          1793118209.433
+        ],
+        "reattach_wall": 1793118239.276202
+      }
+    },
+    "ST-07": {
+      "status": "PASS",
+      "expected": "DevTools HTTP target list (no CDP session) shows the connector received both messages before attach",
+      "actual": {
+        "title": "otp23 messages=2 last=1793118209440"
+      }
+    },
+    "ST-08": {
+      "status": "BLOCKED",
+      "expected": "two distinct current-run phone evidence files, validated after the idle interval",
+      "actual": {
+        "problems": [
+          "phone->desktop clock offset, uncertainty and measurement source not supplied (receipt matching cannot be judged; perfect clocks are never assumed)",
+          "missing phone evidence: 0 file(s) for 2 phones"
+        ]
+      }
+    },
+    "ST-09": {
+      "status": "PASS",
+      "expected": "cold idle: no desktop->phone record was ever sent in this run",
+      "actual": {
+        "sends_in_host_trace": 0,
+        "warmup": false
+      }
+    },
+    "ST-10": {
+      "status": "PASS",
+      "expected": "shutdown_complete, Chrome closed, and no surviving host process counted AFTER Chrome closed",
+      "actual": {
+        "shutdown_complete": true,
+        "chrome_closed": true,
+        "surviving_hosts": [],
+        "errors": []
+      }
+    },
+    "ST-11": {
+      "status": "PASS",
+      "expected": "preconfigured history shows the connector page hidden and unfocused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [],
+        "interval_seconds": 719.752,
+        "interruptions": [],
+        "events_in_interval": [],
+        "events_after_cut_ignored": 0,
+        "lifecycle_notes": [],
+        "initial": {
+          "wall": 1793117514348,
+          "visibility": "visible",
+          "focused": true
+        },
+        "token": "mvqvvcz0-ptsim5op"
+      }
+    },
+    "ST-12": {
+      "status": "PASS",
+      "expected": "preconfigured history shows the ordinary tab visible and focused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [],
+        "interval_seconds": 719.752,
+        "interruptions": [],
+        "events_in_interval": [],
+        "events_after_cut_ignored": 0,
+        "lifecycle_notes": [],
+        "initial": {
+          "wall": 1793117519331,
+          "visibility": "visible",
+          "focused": true
+        },
+        "token": "mvqvvgtf-ljl9bv3q"
+      }
+    },
+    "ST-13": {
+      "status": "PASS",
+      "expected": "recorded Chrome command line carries no throttling/backgrounding/freezing exemption flag",
+      "actual": {
+        "findings": [],
+        "arg_count": 9,
+        "args_source": "proc.args",
+        "native_messaging_port": "not a timer-throttling exemption (owner-approved RFC clarification, 2026-10-27): event delivery through the Native Messaging port is not an exemption; ordinary timers and the port itself are permitted",
+        "scope": "flags only; this check does not measure Chrome-internal behaviour, and the same-build port-escape comparison lives in separate probe evidence"
+      }
+    },
+    "ST-15": {
+      "status": "PASS",
+      "expected": "OS foreground owned by the run's own Chrome PID (directly or through its ancestry) before any BLE work and again after the ordinary-tab switch, before every DevTools client closes",
+      "actual": {
+        "gate_state": "confirmed",
+        "gate_pid": 90368,
+        "chrome_pid": 90368,
+        "after_switch": {
+          "verified": true,
+          "pid": 90368,
+          "owned": true,
+          "name": "Google Chrome",
+          "bundle": "com.google.Chrome",
+          "session": {
+            "verified": true,
+            "on_console": true,
+            "screen_locked": false
+          },
+          "ps_args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank",
+          "page_state": {
+            "ok": true,
+            "visibility_state": "visible",
+            "has_focus": true,
+            "page": "C0BEAF010ACE4196D70885AAAB0BB026"
+          }
+        },
+        "reader": "osascript -l JavaScript: AppKit.NSWorkspace.sharedWorkspace.frontmostApplication",
+        "platform": "macos",
+        "page_required": true,
+        "session_guard": "ctypes CGSessionCopyCurrentDictionary via CFPropertyListCreateXMLData (kCGSSessionOnConsoleKey true, CGSSessionScreenIsLocked absent/false); the JXA ObjC bridge cannot call this C function on macOS 26 (it returns the bridge function object itself and wraps NULL truthy - recorded in the 2026-10-27 pre-measurement calibration), so the query is native or nothing",
+        "gate_confirmed_mono": 1.650815,
+        "ble_start_mono": 1.839796208
+      }
+    },
+    "ST-14": {
+      "status": "PASS",
+      "expected": "formal strict run: min_background_s >= 600 and not a diagnostic short run",
+      "actual": {
+        "min_background_s": 600,
+        "diagnostic_short": false
+      }
+    }
+  },
+  "evidence": {
+    "scenario": "cold",
+    "min_background_s": 600,
+    "timeline": {
+      "background_started_wall": 1793117519.524124,
+      "cdp_closed_wall": 1793117519.524124,
+      "cdp_closed_mono": 6.414576666,
+      "cdp_reopened_wall": 1793118239.276202,
+      "cdp_reopened_mono": 726.171911041
+    },
+    "handles": [
+      "c186d6c9",
+      "1164de01"
+    ],
+    "events": [
+      {
+        "handle": "c186d6c9",
+        "at": 693193,
+        "wall": 1793118207417,
+        "visibility": "hidden",
+        "focused": false,
+        "record_sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+        "len": 4096
+      },
+      {
+        "handle": "1164de01",
+        "at": 695216,
+        "wall": 1793118209440,
+        "visibility": "hidden",
+        "focused": false,
+        "record_sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+        "len": 4096
+      }
+    ],
+    "warmup": null,
+    "diagnostic_short": false,
+    "history": {
+      "connector": {
+        "token": "mvqvvcz0-ptsim5op",
+        "installed_wall": 1793117514348,
+        "initial": {
+          "wall": 1793117514348,
+          "visibility": "visible",
+          "focused": true
+        },
+        "events": [
+          {
+            "seq": 0,
+            "kind": "blur",
+            "wall": 1793117519270,
+            "visibility": "visible",
+            "focused": false
+          },
+          {
+            "seq": 1,
+            "kind": "visibilitychange",
+            "wall": 1793117519270,
+            "visibility": "hidden",
+            "focused": false
+          }
+        ],
+        "truncated": false,
+        "limit": 2000
+      },
+      "ordinary_tab": {
+        "token": "mvqvvgtf-ljl9bv3q",
+        "installed_wall": 1793117519331,
+        "initial": {
+          "wall": 1793117519331,
+          "visibility": "visible",
+          "focused": true
+        },
+        "events": [],
+        "truncated": false,
+        "limit": 2000
+      }
+    },
+    "history_tokens": {
+      "connector": "mvqvvcz0-ptsim5op",
+      "ordinary_tab": "mvqvvgtf-ljl9bv3q"
+    },
+    "chrome": {
+      "args": [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "--user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd",
+        "--remote-debugging-port=0",
+        "--enable-unsafe-extension-debugging",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-sync",
+        "--window-size=1000,700",
+        "about:blank"
+      ],
+      "args_source": "proc.args"
+    },
+    "exemption_scan": {
+      "files": [
+        "background.js",
+        "connector.html",
+        "connector.js",
+        "manifest.json"
+      ],
+      "findings": []
+    },
+    "os_foreground": {
+      "required": true,
+      "chrome_pid": 90368,
+      "reader": "osascript -l JavaScript: AppKit.NSWorkspace.sharedWorkspace.frontmostApplication",
+      "platform": "macos",
+      "page_state_guard": "controller CDP read of the connector page at sample time: document.visibilityState must be 'visible' (hasFocus recorded) - a locked console makes Chrome pages hidden, so an owned pid read during a lock cannot look unlocked",
+      "session_guard": "ctypes CGSessionCopyCurrentDictionary via CFPropertyListCreateXMLData (kCGSSessionOnConsoleKey true, CGSSessionScreenIsLocked absent/false); the JXA ObjC bridge cannot call this C function on macOS 26 (it returns the bridge function object itself and wraps NULL truthy - recorded in the 2026-10-27 pre-measurement calibration), so the query is native or nothing",
+      "gate": {
+        "state": "confirmed",
+        "polls": 1,
+        "waited_s": 0.149,
+        "last": {
+          "verified": true,
+          "pid": 90368,
+          "owned": true,
+          "name": "Google Chrome",
+          "bundle": "com.google.Chrome",
+          "session": {
+            "verified": true,
+            "on_console": true,
+            "screen_locked": false
+          },
+          "ps_args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank",
+          "page_state": {
+            "ok": true,
+            "visibility_state": "visible",
+            "has_focus": true,
+            "page": "96C1BCBEEBF8EC0538E1FDE44D64CED7"
+          }
+        }
+      },
+      "gate_confirmed_mono": 1.650815,
+      "ble_start_mono": 1.839796208,
+      "after_switch": {
+        "verified": true,
+        "pid": 90368,
+        "owned": true,
+        "name": "Google Chrome",
+        "bundle": "com.google.Chrome",
+        "session": {
+          "verified": true,
+          "on_console": true,
+          "screen_locked": false
+        },
+        "ps_args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank",
+        "page_state": {
+          "ok": true,
+          "visibility_state": "visible",
+          "has_focus": true,
+          "page": "C0BEAF010ACE4196D70885AAAB0BB026"
+        }
+      }
+    },
+    "same_window_binding": {
+      "chrome_tabs": {
+        "connector_tab_id": 1014451676,
+        "connector_window_id": 1014451674,
+        "ordinary_tab_id": 1014451677,
+        "ordinary_window_id": 1014451674
+      },
+      "cdp_window_ids_equal": true,
+      "created_by": "chrome.tabs.create(windowId=connector window, active)"
+    },
+    "pre_close_probe": {
+      "connector_visibility": "hidden",
+      "ordinary_tab_visibility": "visible",
+      "ordinary_tab_focused": true
+    },
+    "browser_level_connection_closed": true,
+    "connector_session_detached_by_close": true,
+    "cdp_calls_during_idle": 0,
+    "title_probe": {
+      "title_before_attach": "otp23 messages=2 last=1793118209440"
+    },
+    "cleanup": {
+      "shutdown_complete": true,
+      "chrome_closed": true,
+      "surviving_hosts": [],
+      "errors": []
+    },
+    "host_trace": {
+      "message_count": 2,
+      "sends_in_trace": 0,
+      "message_wall_estimates": [
+        1793118207.413,
+        1793118209.433
+      ],
+      "method": "driver wall time at hello + host trace ms offset since its hello line (approximate)"
+    },
+    "phone_evidence": null,
+    "phone_evidence_errors": [],
+    "phone_validation": {
+      "status": "BLOCKED",
+      "problems": [
+        "phone->desktop clock offset, uncertainty and measurement source not supplied (receipt matching cannot be judged; perfect clocks are never assumed)",
+        "missing phone evidence: 0 file(s) for 2 phones"
+      ],
+      "files": [],
+      "clock": null,
+      "central_peer_prefixes_informational": []
+    },
+    "phone_clock": null
+  }
+}

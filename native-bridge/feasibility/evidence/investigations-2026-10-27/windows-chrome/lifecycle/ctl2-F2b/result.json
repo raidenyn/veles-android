@@ -1,0 +1,93 @@
+{
+  "host_binary_sha256": "e36328d2337774f28ef72d181f998a0e98e044db42fa72f6b815ef02c0572f4d",
+  "args": {
+    "host_binary": "C:\\Users\\yuriy\\otp23-probe\\diag-src2\\target\\release\\otp23-host.exe",
+    "out_dir": "C:\\Users\\yuriy\\otp23-probe\\ctl2-F2b",
+    "discover": false,
+    "first": "all",
+    "second": "all",
+    "gap_s": 1.0,
+    "discover_s": 30.0
+  },
+  "phases": [
+    {
+      "phase": "first",
+      "started_utc": "2026-10-27T13:59:55.637+00:00",
+      "wanted": [
+        "all"
+      ],
+      "devices": [
+        "5d8dd647",
+        "c7de8e9c"
+      ],
+      "connects": [
+        {
+          "label_hash8": "c7de8e9c",
+          "reply": {
+            "type": "connected"
+          },
+          "at_utc": "2026-10-27T13:59:58.221+00:00"
+        },
+        {
+          "label_hash8": "5d8dd647",
+          "reply": {
+            "type": "connected"
+          },
+          "at_utc": "2026-10-27T13:59:58.222+00:00"
+        }
+      ],
+      "scan": {
+        "type": "scan_state",
+        "status": "started"
+      },
+      "connect_started_utc": "2026-10-27T13:59:56.381+00:00",
+      "missing_wanted": [],
+      "exit_code": 0,
+      "exited_utc": "2026-10-27T13:59:58.231+00:00",
+      "finished_utc": "2026-10-27T13:59:58.231+00:00"
+    },
+    {
+      "phase": "second",
+      "started_utc": "2026-10-27T13:59:59.231+00:00",
+      "wanted": [
+        "all"
+      ],
+      "devices": [
+        "5d8dd647",
+        "c7de8e9c"
+      ],
+      "connects": [
+        {
+          "label_hash8": "c7de8e9c",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T14:00:00.451+00:00"
+        },
+        {
+          "label_hash8": "5d8dd647",
+          "reply": {
+            "type": "error",
+            "code": "connect_failed",
+            "recoverability": "fatal",
+            "stage": "access_denied"
+          },
+          "at_utc": "2026-10-27T14:00:00.451+00:00"
+        }
+      ],
+      "scan": {
+        "type": "scan_state",
+        "status": "started"
+      },
+      "connect_started_utc": "2026-10-27T14:00:00.261+00:00",
+      "missing_wanted": [],
+      "exit_code": 0,
+      "exited_utc": "2026-10-27T14:00:00.461+00:00",
+      "finished_utc": "2026-10-27T14:00:00.461+00:00"
+    }
+  ],
+  "first_exited_utc": "2026-10-27T13:59:58.231+00:00"
+}

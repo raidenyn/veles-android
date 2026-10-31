@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="154" font-family="Segoe UI,Arial" font-size="13">
+<rect width="760" height="154" fill="#ffffff"/>
+<text x="12" y="26" font-size="16" font-weight="600">Clean release build time</text>
+<text x="12" y="69">baseline</text>
+<rect x="190" y="50" width="101.4" height="28" fill="#2f6f4f"/>
+<text x="299.4" y="69">9.6 s</text>
+<text x="12" y="111">tauri-linked</text>
+<rect x="190" y="92" width="450.0" height="28" fill="#b58a1b"/>
+<text x="648.0" y="111">42.6 s</text>
+</svg>

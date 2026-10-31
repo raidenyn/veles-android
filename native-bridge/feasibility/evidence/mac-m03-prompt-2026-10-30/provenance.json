@@ -1,0 +1,170 @@
+{
+  "operator": "OpenCode parent controller openai/gpt-6.1-sol; no delegated implementation/operator",
+  "account": "existing admin account uid 501, read back in restart1/final-readback.json",
+  "capture_note": "Raw capture statuses, interrupted error, pending reply and owner spelling retained unchanged. No phone fixtures or discovery proof claimed.",
+  "transport": "SSH/scp; trace and protocol captures written by operational source copies; read-only own-subject and request-ID-filtered unified-log queries",
+  "copies": [
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/capture/host.trace.log",
+      "published": "interrupted/host.trace.log",
+      "sha256": "39ed5733d89f44d2c478577bf5f7f02808a069c07fdd8db591669158cbd2a78f",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/capture/owner-answer.json",
+      "published": "interrupted/owner-answer.json",
+      "sha256": "bf0f16c623abf6a98900674f8ebfe9dfd321cc02b4131128d2cecc596427fd98",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/capture/result.json",
+      "published": "interrupted/result.json",
+      "sha256": "2163294e87f33386232e300d27333481c5ae650f28bf4a48afa24848c753e3a2",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/bundle-info.json",
+      "published": "restart1/bundle-info.json",
+      "sha256": "a87e6fcfc98f5aafde867d75227f8915eeacda649611ae2d76c4839b5915692f",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/final-readback.json",
+      "published": "restart1/final-readback.json",
+      "sha256": "28e4737370772f146d791284d49a532da3eeb5d1add742a2c82547f9fd0bc36b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/host.trace.log",
+      "published": "restart1/host.trace.log",
+      "sha256": "6dca245a5fb0caa5fcc44f5692655f6c30bbf83d0c54ab2b7808a6402fee0b07",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/owner-answer.json",
+      "published": "restart1/owner-answer.json",
+      "sha256": "40421347ad96e9bb49e3c50519c86beccec1893a44fa6c5ff77d1a760e44b8db",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/prompt-chain-query.json",
+      "published": "restart1/prompt-chain-query.json",
+      "sha256": "b85256c1061a18c721843f48c274afd3aa7f7c282b0cd702d7cdf8b4cf934875",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/result.json",
+      "published": "restart1/result.json",
+      "sha256": "90564c5c0966f26281cfa6c848e4f798c1d0d217a43be949b1818ebab7a011b6",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/signed-prompt-chain.ndjson",
+      "published": "restart1/signed-prompt-chain.ndjson",
+      "sha256": "a878acb55e4d0b9dc394624dd210618ffd75dcd39d13fb3af5f62cb124654fd8",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/signed-prompt-chain.stderr",
+      "published": "restart1/signed-prompt-chain.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/signed-tcc-subject.ndjson",
+      "published": "restart1/signed-tcc-subject.ndjson",
+      "sha256": "bb59f853fd831bdb5544486144814e0fb347d2b060d12d3f025feb9183859d7b",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/signed-tcc-subject.stderr",
+      "published": "restart1/signed-tcc-subject.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/tcc-query.json",
+      "published": "restart1/tcc-query.json",
+      "sha256": "c05a495878a09d9311155a428ed17e69d882a34540154e38d43d6b56fee86409",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/verify-grant.json",
+      "published": "restart1/verify-grant.json",
+      "sha256": "5d272d849abc57bc91be5b1b60c7f9044131d5d58d9e0b9b11cdf30c9857a408",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/restart1/capture/verify-grant.trace.log",
+      "published": "restart1/verify-grant.trace.log",
+      "sha256": "fccb4e1ef5bad1204355b6e49e2370e7c7ced34aef49ee45585f644c9a5b6054",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/observe_prompt.py",
+      "published": "source/observe_prompt.py",
+      "sha256": "76538f7bc848f16804ee6aafba42f46ed3bb8d445514ddc8445cab55c398b136",
+      "byte_identical": true
+    },
+    {
+      "source": "/tmp/opencode/otp23-m03-20261030/verify_grant.py",
+      "published": "source/verify_grant.py",
+      "sha256": "cc4d406d33f1d92feb7e4daf85a8fe862136ce5959a9a2fefddc1371b31f649b",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_poc.py",
+      "published": "source/scripts/macos_poc.py",
+      "sha256": "e2131ad32a8488cebbdc6646954c968b4f56593d8a9287f78677386ba44734e0",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_install.py",
+      "published": "source/scripts/macos_install.py",
+      "sha256": "fcc8604afc0c8662a7a3589248b2a22b34ed014e4d175c57dfb9c47befcf5fd5",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/scripts/macos_cdp.py",
+      "published": "source/scripts/macos_cdp.py",
+      "sha256": "e962bcc94123faa67a9f1097da2835a8fabe3cce3bc8fe3ac1a68dc29926375f",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/src/identity.rs",
+      "published": "source/src/identity.rs",
+      "sha256": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/extension/background.js",
+      "published": "source/extension/background.js",
+      "sha256": "2d8a048a914e74328869cd0727f29ed26488aa6d45ba0ae7d204b1ca129deb0b",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/extension/connector.html",
+      "published": "source/extension/connector.html",
+      "sha256": "d43f1b59c764753d2c9ce4b5fbc47e1ea211420cd83a5d1501fd293e7a42d4aa",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/extension/connector.js",
+      "published": "source/extension/connector.js",
+      "sha256": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+      "byte_identical": true
+    },
+    {
+      "source": "/home/dev/repos/veles-android/native-bridge/feasibility/extension/manifest.json",
+      "published": "source/extension/manifest.json",
+      "sha256": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+      "byte_identical": true
+    }
+  ],
+  "limits": [
+    "Fresh owner-approved scoped reset, not recovery of the original historical prompt.",
+    "User typed ValesOtp23PoC; bundle CFBundleName is VelesOtp23PoC. Neither is silently rewritten.",
+    "M-04 no-reset controlled denial/guidance/recovery was not exercised or waived.",
+    "No new signing, key export, new account, broad TCC reset, production UX or OTP-24 authorization."
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "what": "Pre-curation archive record (supersedes the original 32-entry capture manifest as the ACTIVE cover; kept honest for git archive/export verification)",
+  "date": "2026-10-28",
+  "why": "The raw FINDING.md and the original curation-map.json were NARRATIVE files containing another local user's account name and a foreign app name. They are preserved OUTSIDE the workspace in the pre-curation private archive; the published narrative/map are their redacted counterparts (see ../curation/curation-map.json).",
+  "private_archive": {
+    "note": "outside the repository by review decision; its CONTENTS hashes are recorded in the archive itself (PRIVATE-ARCHIVE-CONTENTS.sha256)",
+    "path": "/tmp/approved-otp23-privacy/mac-resume-privacy-archive-2026-10-28.tgz",
+    "sha256": "6564c38e9bbf3d7c87065b0b1a60551d1b213da94d9498a21c53b536ac4b1936",
+    "members": {
+      "FINDING.raw-original.md": "2518c1637fb20ff765c5df88579ecbbd23007f2d0077b6468ff81dd5fd63e5d1",
+      "SHA256SUMS.pre-curation-32entry": "0bb704d51649bb2da5ba0ab0c7dbe5a8afa240bfbae3bd2407468cc162be1fb2",
+      "curation-map.raw-original.json": "50831d4d11c2507abf9b03980a75648190f982ed176890f19182e1a264013012",
+      "FINDING.public-original.md": "821ce855efd12c9509fa3c2b331e768e10d64f2f8ee199d0a4b35327a78aeedf"
+    }
+  },
+  "superseded_manifest": {
+    "what": "the original 32-entry SHA256SUMS captured at measurement time",
+    "sha256": "0bb704d51649bb2da5ba0ab0c7dbe5a8afa240bfbae3bd2407468cc162be1fb2",
+    "status": "historical, NOT active (it covered the private FINDING.md bytes); do NOT verify the workspace against it after this redaction",
+    "exclusions_from_active": [
+      {
+        "path": "FINDING.md",
+        "reason": "narrative with private names; published here in redacted form (821ce855efd12c9509fa3c2b331e768e10d64f2f8ee199d0a4b35327a78aeedf)"
+      },
+      {
+        "path": "curation/FINDING.public.md",
+        "reason": "NOT covered by the superseded manifest (it was added with the later curation step); identical to the newly published FINDING.md; archived copy kept, workspace copy removed"
+      },
+      {
+        "path": "curation/curation-map.json",
+        "reason": "NOT covered by the superseded manifest (added with the later curation step); its original version quoted the private names in original_text and is archived privately; a redacted version without original_text IS published and covered by the active manifest"
+      },
+      {
+        "path": "SHA256SUMS",
+        "reason": "superseded by the new active manifest; archived"
+      }
+    ],
+    "unchanged_raw_measurements": "every raw-measurement entry of the old 32-manifest (ext-load, lifecycle-1, phones, registration, stage, helpers) is byte-identical and carries the SAME hash in the new active SHA256SUMS \u2014 verify by hash comparison, not by re-derivation",
+    "exact_accounting": {
+      "lines": 32,
+      "distinct_paths": 31,
+      "duplicate_line": ".gitattributes is listed twice (as './.gitattributes' and '.gitattributes', same sha256 e97602ab9cac70102245345c5ab0fc9830df8b17f1072b188265a662a3a547ae)",
+      "narrative_paths_excluded": [
+        "FINDING.md"
+      ],
+      "byte_identical_in_active": 30,
+      "byte_identical_note": "the 30 non-narrative distinct paths (.gitattributes + 29 measurement/helper/stage files) carry the SAME sha256 in the active SHA256SUMS",
+      "verified_by": "hash comparison of the archived manifest against the active SHA256SUMS, 2026-10-29, Opus 5.5 implementer continuation session"
+    }
+  },
+  "active_manifest": "../SHA256SUMS (new; covers exactly the published files)",
+  "no_blanket_claim": "there is NO blanket '32 raw files unchanged' claim after redaction: the active manifest is the single source of truth for published bytes, and the exclusions above are explicit"
+}

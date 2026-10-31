@@ -1,0 +1,22 @@
+[       0ms pid=96692] start pid=96692
+[       0ms pid=96692] in  len=74 type=hello request_id=d1
+[       1ms pid=96692] out len=176 type=ready request_id=d1 api_version=1
+[       1ms pid=96692] in  len=130 type=start_scan request_id=d2 api_version=1
+[      53ms pid=96692] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=9f8496751a073014
+[     502ms pid=96692] out len=195 type=device_found api_version=1 scan_handle=9f8496751a073014 device_handle=0f22c4c559ef57b2 label.len=17 platform_hint.len=20
+[     502ms pid=96692] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=9f8496751a073014
+[     503ms pid=96692] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=9f8496751a073014
+[     503ms pid=96692] in  len=108 type=connect request_id=d4 api_version=1 device_handle=0f22c4c559ef57b2
+[     534ms pid=96692] conn 2 device at 30ms
+[     555ms pid=96692] conn 2 session at 51ms
+[    1575ms pid=96692] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1575ms pid=96692] conn 2 service at 1072ms
+[    1576ms pid=96692] conn 2 mtu=517 at 1072ms
+[    1726ms pid=96692] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1726ms pid=96692] conn 2 write properties=0x4
+[    1789ms pid=96692] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1789ms pid=96692] conn 2 notify properties=0x10
+[    1789ms pid=96692] conn 2 characteristics at 1285ms
+[    1830ms pid=96692] conn 2 subscribed at 1327ms
+[    1830ms pid=96692] out len=153 type=connected request_id=d4 api_version=1 connection_handle=c7421fa6ab20eb5c platform_hint.len=20
+[    1830ms pid=96692] exit code=0 stdout_drained=true

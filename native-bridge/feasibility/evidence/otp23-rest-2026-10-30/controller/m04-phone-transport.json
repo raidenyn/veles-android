@@ -1,0 +1,15 @@
+{
+  "kind": "otp23-transport-evidence",
+  "run_id": "m04-20261030",
+  "started_at_epoch_ms": 1793330086037,
+  "finished_at_epoch_ms": 1793330666669,
+  "final": true,
+  "final_after_service_stopped": true,
+  "clean": true,
+  "source_package": "me.nagaev.veles.otp23",
+  "source_version_name": "0.0.3-35-3dbe3db-contract_otp23-desktop-alignment",
+  "source_version_code": 3,
+  "truncated": false,
+  "peers_dropped": 0,
+  "peers": []
+}

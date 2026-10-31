@@ -1,0 +1,33 @@
+[       0ms pid=23212] start pid=23212
+[       0ms pid=23212] in  len=74 type=hello request_id=d1
+[       0ms pid=23212] out len=176 type=ready request_id=d1 api_version=1
+[       0ms pid=23212] in  len=130 type=start_scan request_id=d2 api_version=1
+[      51ms pid=23212] out len=128 type=scan_state request_id=d2 api_version=1 status=started scan_handle=412a6c7c1e1961b0
+[      70ms pid=23212] out len=195 type=device_found api_version=1 scan_handle=412a6c7c1e1961b0 device_handle=474d71b191b158cc label.len=17 platform_hint.len=20
+[    1387ms pid=23212] out len=195 type=device_found api_version=1 scan_handle=412a6c7c1e1961b0 device_handle=a24ad644192591a3 label.len=17 platform_hint.len=20
+[    1388ms pid=23212] in  len=108 type=stop_scan request_id=d3 api_version=1 scan_handle=412a6c7c1e1961b0
+[    1388ms pid=23212] out len=128 type=scan_state request_id=d3 api_version=1 status=stopped scan_handle=412a6c7c1e1961b0
+[    1485ms pid=23212] in  len=108 type=connect request_id=d4 api_version=1 device_handle=474d71b191b158cc
+[    1485ms pid=23212] in  len=108 type=connect request_id=d5 api_version=1 device_handle=a24ad644192591a3
+[    1486ms pid=23212] conn 3 connect worker started epoch_ms=1793120997418 hint=winrt:..5656:1
+[    1486ms pid=23212] conn 2 connect worker started epoch_ms=1793120997418 hint=winrt:..b39d:1
+[    1517ms pid=23212] conn 2 device at 31ms
+[    1517ms pid=23212] conn 3 device at 31ms
+[    1538ms pid=23212] conn 3 session at 51ms
+[    1538ms pid=23212] conn 2 session at 51ms
+[    1611ms pid=23212] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1611ms pid=23212] conn 3 service at 125ms
+[    1611ms pid=23212] conn 3 mtu=517 at 125ms
+[    1612ms pid=23212] conn 3 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable
+[    1613ms pid=23212] conn 3 setup failed: stage=access_denied retryable=false
+[    1613ms pid=23212] conn 3 disconnect requested epoch_ms=1793120997546
+[    1613ms pid=23212] out len=144 type=error request_id=d5 api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    1640ms pid=23212] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    1641ms pid=23212] conn 2 service at 154ms
+[    1641ms pid=23212] conn 2 mtu=517 at 154ms
+[    1641ms pid=23212] conn 2 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable
+[    1642ms pid=23212] conn 2 setup failed: stage=access_denied retryable=false
+[    1642ms pid=23212] conn 2 disconnect requested epoch_ms=1793120997575
+[    1642ms pid=23212] out len=144 type=error request_id=d4 api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[    1643ms pid=23212] shutdown joined 0/0 within 0ms
+[    1643ms pid=23212] exit code=0 stdout_drained=true

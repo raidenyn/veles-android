@@ -1,0 +1,7 @@
+ USERNAME              SESSIONNAME        ID  STATE   IDLE TIME  LOGON TIME
+ yuriy                 console             1  Active      none   19/10/2026 21:34
+--- 
+ SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE 
+>services                                            0  Disc                        
+ console                   yuriy                     1  Active                      
+ rdp-tcp                                         65536  Listen                      

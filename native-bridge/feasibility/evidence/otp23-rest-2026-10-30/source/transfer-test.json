@@ -1,0 +1,7 @@
+{
+  "base_sha256": "8ca89381dcc8573aba500e65ba4746e698ebdfa0bf3793345ddc4645712ede1c",
+  "target_sha256": "5a8e9e30e798e33c7577dccf542dfbbd2ba4058a8b4dc8f2b82c31ef17bd1b41",
+  "patch_sha256": "72926e6143f133ed156a9bba4750d0e889a2e011af5137d584da2a63db5865fd",
+  "target_bytes": 15180573,
+  "patch_bytes": 38592
+}

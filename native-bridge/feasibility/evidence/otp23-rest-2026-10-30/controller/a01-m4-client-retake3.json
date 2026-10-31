@@ -1,0 +1,98 @@
+{
+  "run_id": "a01-m4-retake3-20261030",
+  "status": "PASS",
+  "error": null,
+  "events": [
+    {
+      "kind": "connection",
+      "code": 0,
+      "extra": 2,
+      "epoch_ms": 1793334656228,
+      "elapsed_ms": 747432891,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "services",
+      "code": 0,
+      "extra": 0,
+      "epoch_ms": 1793334656915,
+      "elapsed_ms": 747433579,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "cccd",
+      "code": 6,
+      "extra": 0,
+      "epoch_ms": 1793334656956,
+      "elapsed_ms": 747433620,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "write",
+      "code": 0,
+      "extra": 0,
+      "epoch_ms": 1793334656960,
+      "elapsed_ms": 747433624,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "negative_phase_complete",
+      "code": 0,
+      "extra": 0,
+      "epoch_ms": 1793334657261,
+      "elapsed_ms": 747433925,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "mtu",
+      "code": 0,
+      "extra": 517,
+      "epoch_ms": 1793334657330,
+      "elapsed_ms": 747433994,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "cccd",
+      "code": 0,
+      "extra": 0,
+      "epoch_ms": 1793334657392,
+      "elapsed_ms": 747434056,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "write",
+      "code": 0,
+      "extra": 0,
+      "epoch_ms": 1793334657403,
+      "elapsed_ms": 747434067,
+      "bytes": 0,
+      "sha256": null
+    },
+    {
+      "kind": "notification",
+      "code": 0,
+      "extra": 0,
+      "epoch_ms": 1793334657452,
+      "elapsed_ms": 747434116,
+      "bytes": 8,
+      "sha256": "889650c096efd4fae457ca822f1712ca748cf1733c062c0b5e8c18b73c82afb1"
+    },
+    {
+      "kind": "positive_phase_complete",
+      "code": 0,
+      "extra": 0,
+      "epoch_ms": 1793334657452,
+      "elapsed_ms": 747434116,
+      "bytes": 0,
+      "sha256": null
+    }
+  ],
+  "permission_scope": "SCAN declared only by opt-in fixture manifest; ordinary runtime permission request, no shell identity adoption"
+}

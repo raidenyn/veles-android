@@ -1,0 +1,87 @@
+{
+  "started_utc": "2026-10-27T17:06:07.700+00:00",
+  "host_binary_sha256": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33",
+  "source_sha256": {
+    "backend.rs": "1dad3e3114f52dceec4c444f57d35256d0320d3dac8dbbb34b4728937724e1b1",
+    "base64.rs": "08ac17022fb185b3eb4d34ec241261f4908faa7e5bb71b9908fae537d9dde9b2",
+    "closejoin.rs": "25e44f6db140941cda514b0e5e798785361ec822c6c7e778e0cd40656cc47b5c",
+    "core.rs": "e9acd54b49abfe229b591fd23a8dcffe61c2b9c8e8341a690ab857fd7715c16f",
+    "fragment.rs": "a4ff497defd2f303e55faeffb6c2cbd6f34a89f77cc7a0233f0a689bc936205a",
+    "framing.rs": "f962964841c189346fcbbcdef3234cb4931faa37e8cd94d8aa4ac7eef25ad611",
+    "host.rs": "0e00cff68f21c8c3f589b2af9dc96766665e24e2fb40085dbd37f0e11c336045",
+    "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f",
+    "lib.rs": "79bbf21fdd28b28b8f60667be6d3d1f60e060633f8edc29a7fb06828f58b0265",
+    "macos.rs": "b279858bba8d4422f94fd607f9b23442e09f35850687fcab38c44a411e4ac721",
+    "macos_map.rs": "89a07d54de43248c6fdc10ede90e42c4c040265bb22e83f343ee14c518637e97",
+    "outqueue.rs": "fbf7a6067613c55de56f0b168c7d6e420a007fa9dca1205d8e7307b6df3cbd3e",
+    "protocol.rs": "e66aac39b80f0dc52b4c5bf6daeaaae8d43d33666db90d5de0840f83ad550e9c",
+    "runtime.rs": "157b62855a1fcb70a8acabfcfb1e71e6f2f32ac6c647af33fa9b926c2ef150ae",
+    "sim.rs": "dc75a1e89bee4f625ee9711be6f849986bd14dbc8beb0ef6f7be367f4ec51085",
+    "strict_json.rs": "7ee3100e164efc7889939ca4f5431067243bc3594e20ef79d7c89b9a61ebd0c4",
+    "trace.rs": "437ffb611a33728094e6dbd6d63f2e6bf4eb5bcc717acbd95994d71cbffeee63",
+    "unsupported.rs": "fd09df80567917905028249486134a555a2263a5cc13f81cd42608551090bcda",
+    "winrt.rs": "2ef50ec18fd96907c945136d82dda0796989d5e74fdecdb005d47ee027f61e6a",
+    "winrt_map.rs": "73c2f29426307b6e72f0570012544f600bd6ea88b98b43407ec0222bafc80a02"
+  },
+  "args": {
+    "host_binary": "target\\release\\otp23-host.exe",
+    "out_dir": "evidence\\discover-1",
+    "discover": true,
+    "runs": 6,
+    "order": "awaited,legacy,legacy,awaited,awaited,legacy",
+    "target_gap_from_close_begin_ms": 1500,
+    "gap_s": 0.0,
+    "min_quiescent_s": 12.0,
+    "discover_s": 25.0,
+    "adb_serials": ""
+  },
+  "runs": [
+    {
+      "index": 1,
+      "arm": "awaited",
+      "dir": "run-1-awaited",
+      "quiescent": {
+        "host_procs": 0,
+        "waited_s": 0.13,
+        "satisfied": true,
+        "at_utc": "2026-10-27T17:06:07.831+00:00"
+      },
+      "first": {
+        "phase": "first",
+        "arm": "awaited",
+        "started_utc": "2026-10-27T17:06:07.831+00:00",
+        "host_pid": 96152,
+        "wanted": [],
+        "devices": [
+          "03dcc1bc",
+          "a25859af"
+        ],
+        "connects": [],
+        "trace": "first.host-trace.log",
+        "scan": {
+          "type": "scan_state",
+          "status": "started"
+        },
+        "devices_found_utc": "2026-10-27T17:06:10.301+00:00",
+        "finished_utc": "2026-10-27T17:06:10.303+00:00",
+        "trace_parsed": {
+          "disconnects": {},
+          "connects": {},
+          "close_begin_rel": {},
+          "close_steps": {},
+          "released": {},
+          "detached": [],
+          "shutdown_joined": null,
+          "shutdown_budget_exceeded": false,
+          "setups": [],
+          "exit_rel": null,
+          "exit_index": null,
+          "exit_code": null,
+          "status_lines": []
+        }
+      }
+    }
+  ],
+  "dumpsys_raw": {},
+  "finished_utc": "2026-10-27T17:06:10.308+00:00"
+}

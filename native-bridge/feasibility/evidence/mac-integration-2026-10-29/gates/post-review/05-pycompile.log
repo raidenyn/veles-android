@@ -1,0 +1,5 @@
+$ python3 -B -c "import glob; fs=sorted(glob.glob('scripts/*.py')); [compile(open(f, encoding='utf-8').read(), f, 'exec') for f in fs]; print('compiled', len(fs), 'files OK')"
+cwd=/home/dev/repos/veles-android/native-bridge/feasibility started_utc=2026-10-29T16:21:31Z head=9c3ddc54a3721eced84e49f02ed76ef156f0baed
+compiled 50 files OK
+exit_code=0
+finished_utc=2026-10-29T16:21:31Z

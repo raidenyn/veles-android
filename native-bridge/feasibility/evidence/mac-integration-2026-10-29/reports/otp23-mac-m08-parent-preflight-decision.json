@@ -1,0 +1,14 @@
+{
+  "date": "2026-10-28",
+  "role": "coordinating_parent_implementation_decision",
+  "review": "/tmp/opencode/otp23-mac-m08-preflight-opus.md",
+  "p0_selected_option": "A",
+  "p0_scope": "Allow scenario_matrix.py to gate min_released=2 on Windows only; Mac acceptance additionally requires independent phone-side release proof for every accepted scenario",
+  "windows_behavior_unchanged": true,
+  "historical_v4_pin": "scenario_matrix.py f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1 remains the source at commit 9c3ddc54a3721eced84e49f02ed76ef156f0baed; immutable v4 artifacts will not be rewritten",
+  "lsof_design": "Approve Opus precise foreign-nullfs warning classifier with mandatory recorded diagnostics; reject global -w suppression, unknown-warning filtering, or foreign mount changes",
+  "m08_eof_scope": "Use existing W-08 Chrome-owned port-disconnect/tab-close stdin_closed interpretation; retain direct SSH permission_pending as a separate unexecuted comparison, not a PASS or waiver",
+  "release_proof": "Implement reviewed in-band causal trace/phone anchor with conservative full intervals and fixture-stop guards; preflight source/tests before new physical acceptance capture",
+  "not_an_owner_gate_amendment": true,
+  "not_an_otp24_authorization": true
+}

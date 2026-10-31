@@ -1,0 +1,14 @@
+{
+  "captured_utc": "2026-10-30T13:49:02.623329+00:00",
+  "session_id": "ses_e72f627f5ffeM3inw1tWTXSfxG",
+  "provider": "kimi-code-plan-global",
+  "model": "k3.1-pro",
+  "agent": "build",
+  "variant": null,
+  "assistant_records": 12,
+  "source": "Read-only OpenCode database selected metadata; no message bodies or API errors",
+  "role": "Independent committed-tree reviewer",
+  "reviewed_commit": "54386fddc26c510af53e56b78c8ff52ec7161678",
+  "reviewed_tree": "4eb098734ab86231e2d40f6d27384d871ea7bbb5",
+  "report_sha256": "33ef5fdc8cea23a7c6956d2f3ec55f92be6536e9c65b982b05609077218d54cc"
+}

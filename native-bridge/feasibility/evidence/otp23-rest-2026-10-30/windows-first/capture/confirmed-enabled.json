@@ -1,0 +1,45 @@
+{
+    "utc":  "2026-10-30T03:39:51.7747520Z",
+    "before":  [
+                   {
+                       "KeyName":  "DEVPKEY_Device_ProblemCode",
+                       "Data":  0
+                   },
+                   {
+                       "KeyName":  "DEVPKEY_Device_DevNodeStatus",
+                       "Data":  25190666
+                   },
+                   {
+                       "KeyName":  "DEVPKEY_Device_ConfigFlags",
+                       "Data":  1
+                   },
+                   {
+                       "KeyName":  "DEVPKEY_Device_InstallState",
+                       "Data":  0
+                   }
+               ],
+    "enable_exit_code":  50,
+    "enable_output":  "Microsoft PnP Utility\n\nFailed to enable device:  USB\\VID_0489\u0026PID_E10A\\8\u0026fad588d\u00260\u002616\nDevice is pending system reboot to complete a previous operation.\n\nThis command is not supported on this OS product.",
+    "after":  [
+                  {
+                      "KeyName":  "DEVPKEY_Device_ProblemCode",
+                      "Data":  0
+                  },
+                  {
+                      "KeyName":  "DEVPKEY_Device_DevNodeStatus",
+                      "Data":  25190666
+                  },
+                  {
+                      "KeyName":  "DEVPKEY_Device_ConfigFlags",
+                      "Data":  1
+                  },
+                  {
+                      "KeyName":  "DEVPKEY_Device_InstallState",
+                      "Data":  0
+                  }
+              ],
+    "device":  {
+                   "Status":  "OK",
+                   "FriendlyName":  "Qualcomm FastConnect 7800 Dual Bluetooth Adapter"
+               }
+}

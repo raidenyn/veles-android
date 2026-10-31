@@ -1,0 +1,65 @@
+{
+  "what": "OTP-23 Mac-resume 2026-10-28 staging manifest (NEW work dir, not otp23-p2)",
+  "work_dir": "/Users/raiden/homepc/work/otp23-mac-resume",
+  "source_tree": "repo /home/dev/repos/veles-android at branch contract/otp23-desktop-alignment, clean HEAD 9c3ddc54a3721eced84e49f02ed76ef156f0baed (staged bytes == HEAD bytes, verified file-by-file)",
+  "staged_files_sha256": {
+    "scripts/scenario_matrix.py": "f8284c98b9dc200bf8ec83e09b4d040643a725e4ca637d5854b09494fc31ffc1",
+    "scripts/scenario_matrix_core.py": "cb512418375417a89578b7b89d79a0c19dc1cd4f4a20ca95959682ba64d9c3b3",
+    "scripts/macos_poc.py": "c2a6a20c738720da3bd683c2a1eaf77839d410266f067dd52ee29ba1d3a35cd7",
+    "scripts/macos_background_support.py": "e02062c3edfca461cf8c0002c1df190ba4044d1c76af014d6cb4049a7ad395e3",
+    "scripts/macos_cdp.py": "e962bcc94123faa67a9f1097da2835a8fabe3cce3bc8fe3ac1a68dc29926375f",
+    "scripts/macos_install.py": "fcc8604afc0c8662a7a3589248b2a22b34ed014e4d175c57dfb9c47befcf5fd5",
+    "scripts/macos-register.sh": "2032348e010f6a9bf95911f3bbed7d7468f7059548b9152692ddaa800ed3adb6",
+    "scripts/macos-unregister.sh": "864ba535e31f871a9dd5a4cf52e4bde8e238b392cb48a8e000ca937e208c4b4b",
+    "extension/manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+    "extension/background.js": "2d8a048a914e74328869cd0727f29ed26488aa6d45ba0ae7d204b1ca129deb0b",
+    "extension/connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+    "extension/connector.html": "d43f1b59c764753d2c9ce4b5fbc47e1ea211420cd83a5d1501fd293e7a42d4aa",
+    "src/identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f"
+  },
+  "hash_comparison": "all 13 staged files byte-identical to the local repo tree (re-read on the Mac via shasum -a 256 before any run; no mismatches)",
+  "approved_app_symlink": {
+    "path": "/Users/raiden/homepc/work/otp23-mac-resume/target/macos-poc",
+    "target": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc",
+    "resolved_bundle": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+    "resolved_binary": "..../VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+    "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "codesign_verify_strict": "success (re-verified before and after the run)",
+    "bundle_identifier": "me.nagaev.veles.bridge",
+    "team_identifier": "7T39M26Z99"
+  },
+  "helper_diag_files_pinned": {
+    "mac_ext_load_probe.py": "staged into the work dir for the load/driver-flow feasibility probe only (diagnostics, not acceptance evidence); sha256 a5febeccccaaa83813417ca029cfdb9cb36693a6a1be2962a9a18ddc064a519c",
+    "note": "the lifecycle driver itself was run unmodified; the probe imports its own ChromeRun/registered_manifest code paths"
+  },
+  "chrome": {
+    "path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "bundle": "com.google.Chrome",
+    "version_after_owner_update_relaunch": "156.0.8078.74",
+    "argv_used_by_driver": [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "--user-data-dir=<disposable mkdtemp profile>",
+      "--remote-debugging-port=0",
+      "--enable-unsafe-extension-debugging",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-sync",
+      "--window-size=1000,700",
+      "about:blank"
+    ],
+    "no_launch_flags_beyond_driver": true,
+    "personal_chrome": "NOT launched, restarted, updated or controlled"
+  },
+  "environment": {
+    "python": "3.9.6",
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "launch_context": "ssh session (launchctl managername Background, uid 501, SSH_CONNECTION set)",
+    "VELES_OTP23_DETACHED_CLOSE": "unset (asserted by the driver itself for every Chrome scenario)",
+    "VELES_OTP23_TRACE": "set by the driver per-scenario to the scenario host-trace path"
+  },
+  "evidence_dirs": {
+    "ext_load_attempt": "evidence/mac-resume-2026-10-28/ext-load-attempt1/ (unique, never overwritten)",
+    "lifecycle_attempt": "evidence/mac-resume-2026-10-28/lifecycle-1/ (unique, never overwritten; --overwrite never passed)"
+  },
+  "run_id": "mac-m08-resume-20261028T1546Z"
+}

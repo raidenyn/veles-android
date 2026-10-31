@@ -1,0 +1,11 @@
+{
+  "id": "LC-port-disconnect",
+  "title": "Chrome port.disconnect with an active scan and two active links",
+  "expected": "owned host and wrapper gone with NO shutdown handshake (stdin EOF path), zero windows/endpoints",
+  "actual": "Traceback (most recent call last):\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 426, in scenario_chrome\n    detail[\"ready\"] = session.start()\n                      ~~~~~~~~~~~~~^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\scenario_matrix.py\", line 240, in start\n    ext = self.chrome.load_extension()[\"id\"]\n          ~~~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"C:\\Users\\yuriy\\otp23-probe\\fixed\\scripts\\chrome_validate.py\", line 396, in load_extension\n    return self.cdp.call(\"Extensions.loadUnpacked\", {\"path\": str(EXT_DIR)})\n           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: Extensions.loadUnpacked: {'code': -32600, 'message': 'File path cannot be resolved.'}\n",
+  "status": "FAIL",
+  "error_class": "environment",
+  "detail": {
+    "cleanup_problems": []
+  }
+}

@@ -1,0 +1,1212 @@
+{
+  "id": "LC-tab-close",
+  "title": "Connector tab close with an active scan and two active links",
+  "expected": "owning tab destroyed with two byte-proven links and an active scan: host exits by its OWN trace line (code 0, stdin-EOF mechanism, no shutdown handshake), host gone",
+  "actual": "trace/teardown checks held, but the Chrome default-launch cmd.exe wrapper owns 1 never-visible console window(s) in the connected-phase samples; W-02-style window wording is an owner decision (see evidence PLAN.md)",
+  "status": "BLOCKED",
+  "error_class": "criterion_conflict",
+  "detail": {
+    "ready": {
+      "type": "ready"
+    },
+    "chrome_version_actual": "Chrome/156.0.8078.73",
+    "trace_env_passed_to_chrome": {
+      "VELES_OTP23_TRACE": "C:\\Users\\yuriy\\otp23-probe\\package1-p1\\evidence\\package1-connected-2026-10-28\\run-tab-close-2\\tab-close.host-trace.log",
+      "VELES_OTP23_DETACHED_CLOSE": null
+    },
+    "detached_close_env_unset": true,
+    "hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 0,
+      "network_endpoints": 0
+    },
+    "wrapper_hygiene_before": {
+      "visible_windows": 0,
+      "top_level_windows": 1,
+      "network_endpoints": 0
+    },
+    "integrity": {
+      "chrome": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "host": {
+        "integrity": "medium",
+        "rid": "0x2000",
+        "token_is_elevated": false
+      },
+      "wrapper": [
+        {
+          "integrity": "medium",
+          "rid": "0x2000",
+          "token_is_elevated": false
+        }
+      ]
+    },
+    "connect_order": "scan-active",
+    "link_proof": [
+      {
+        "size": 16,
+        "request_sha256": "c0b02f7f88737848a5e94d5ca1cb5dcf18ad3e209275f61fb93dabbac43cb36e",
+        "received_sha256": "aa0bc6a8ddc48d1eed2576bf21f90caafdef5804c06d4296babf74682fabbe0b",
+        "status": "PASS"
+      },
+      {
+        "size": 16,
+        "request_sha256": "024fa050e1842ba63278ac97947e6d64159d62c6ee2552acdfe57ffdf2b0ebd7",
+        "received_sha256": "2a830c34889629f76917050abad349592bf3147289629395996c7a1065d6c3b4",
+        "status": "PASS"
+      }
+    ],
+    "probe_during": [
+      {
+        "label": "linked-idle-active-scan",
+        "wall_ms": 1793152477895,
+        "trace_offset_ms_estimate": 8965,
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "78148": {
+              "top_visible": 0,
+              "top_hidden": 0,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [
+                "ConsoleWindowClass"
+              ],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "46660": {
+              "top_visible": 1,
+              "top_hidden": 5,
+              "message_only": 10,
+              "children": 4,
+              "tcp4": [
+                [
+                  6151,
+                  0,
+                  2
+                ],
+                [
+                  6151,
+                  6152,
+                  5
+                ]
+              ],
+              "tcp6": [],
+              "udp4": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "udp6": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "session": 1,
+              "pid_alive": true
+            }
+          },
+          "observer": {
+            "pid": 14572,
+            "session": 1
+          },
+          "active_console_session": 1,
+          "endpoint_families_available": {
+            "tcp4": true,
+            "tcp6": true,
+            "udp4": true,
+            "udp6": true
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          }
+        },
+        "summary": {
+          "problems": [],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "children": 0
+          },
+          "wrapper_windows": {
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "children": 0,
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": []
+            }
+          },
+          "host_endpoints": {
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": []
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          },
+          "usable": true,
+          "session_problems": []
+        },
+        "trace_bracket": {
+          "after": {
+            "at_ms": 8925,
+            "type": "send",
+            "dir": "in",
+            "status": null
+          },
+          "before": {
+            "at_ms": 9018,
+            "type": "sent",
+            "dir": "out",
+            "status": null
+          },
+          "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start)"
+        }
+      },
+      {
+        "label": "send-in-flight",
+        "wall_ms": 1793152478001,
+        "trace_offset_ms_estimate": 9071,
+        "exchange": {
+          "handle": "99c693167efe",
+          "seed": 41
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "78148": {
+              "top_visible": 0,
+              "top_hidden": 0,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [
+                "ConsoleWindowClass"
+              ],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "46660": {
+              "top_visible": 1,
+              "top_hidden": 5,
+              "message_only": 10,
+              "children": 4,
+              "tcp4": [
+                [
+                  6151,
+                  0,
+                  2
+                ],
+                [
+                  6151,
+                  6152,
+                  5
+                ]
+              ],
+              "tcp6": [],
+              "udp4": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "udp6": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "session": 1,
+              "pid_alive": true
+            }
+          },
+          "observer": {
+            "pid": 14572,
+            "session": 1
+          },
+          "active_console_session": 1,
+          "endpoint_families_available": {
+            "tcp4": true,
+            "tcp6": true,
+            "udp4": true,
+            "udp6": true
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          }
+        },
+        "summary": {
+          "problems": [],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "children": 0
+          },
+          "wrapper_windows": {
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "children": 0,
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": []
+            }
+          },
+          "host_endpoints": {
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": []
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          },
+          "usable": true,
+          "session_problems": []
+        },
+        "trace_bracket": {
+          "after": {
+            "at_ms": 9018,
+            "type": "sent",
+            "dir": "out",
+            "status": null
+          },
+          "before": {
+            "at_ms": 9127,
+            "type": "message",
+            "dir": "out",
+            "status": null
+          },
+          "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start)"
+        }
+      },
+      {
+        "label": "echo-verified",
+        "wall_ms": 1793152478118,
+        "trace_offset_ms_estimate": 9188,
+        "exchange": {
+          "handle": "99c693167efe",
+          "seed": 41
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "78148": {
+              "top_visible": 0,
+              "top_hidden": 0,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [
+                "ConsoleWindowClass"
+              ],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "46660": {
+              "top_visible": 1,
+              "top_hidden": 5,
+              "message_only": 10,
+              "children": 4,
+              "tcp4": [
+                [
+                  6151,
+                  0,
+                  2
+                ],
+                [
+                  6151,
+                  6152,
+                  5
+                ]
+              ],
+              "tcp6": [],
+              "udp4": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "udp6": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "session": 1,
+              "pid_alive": true
+            }
+          },
+          "observer": {
+            "pid": 14572,
+            "session": 1
+          },
+          "active_console_session": 1,
+          "endpoint_families_available": {
+            "tcp4": true,
+            "tcp6": true,
+            "udp4": true,
+            "udp6": true
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          }
+        },
+        "summary": {
+          "problems": [],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "children": 0
+          },
+          "wrapper_windows": {
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "children": 0,
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": []
+            }
+          },
+          "host_endpoints": {
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": []
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          },
+          "usable": true,
+          "session_problems": []
+        },
+        "trace_bracket": {
+          "after": {
+            "at_ms": 9146,
+            "type": "send",
+            "dir": "in",
+            "status": null
+          },
+          "before": {
+            "at_ms": 9239,
+            "type": "sent",
+            "dir": "out",
+            "status": null
+          },
+          "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start)"
+        }
+      },
+      {
+        "label": "send-in-flight",
+        "wall_ms": 1793152478223,
+        "trace_offset_ms_estimate": 9293,
+        "exchange": {
+          "handle": "1e0df5713555",
+          "seed": 54
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "78148": {
+              "top_visible": 0,
+              "top_hidden": 0,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [
+                "ConsoleWindowClass"
+              ],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "46660": {
+              "top_visible": 1,
+              "top_hidden": 5,
+              "message_only": 10,
+              "children": 4,
+              "tcp4": [
+                [
+                  6151,
+                  0,
+                  2
+                ],
+                [
+                  6151,
+                  6152,
+                  5
+                ]
+              ],
+              "tcp6": [],
+              "udp4": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "udp6": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "session": 1,
+              "pid_alive": true
+            }
+          },
+          "observer": {
+            "pid": 14572,
+            "session": 1
+          },
+          "active_console_session": 1,
+          "endpoint_families_available": {
+            "tcp4": true,
+            "tcp6": true,
+            "udp4": true,
+            "udp6": true
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          }
+        },
+        "summary": {
+          "problems": [],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "children": 0
+          },
+          "wrapper_windows": {
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "children": 0,
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": []
+            }
+          },
+          "host_endpoints": {
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": []
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          },
+          "usable": true,
+          "session_problems": []
+        },
+        "trace_bracket": {
+          "after": {
+            "at_ms": 9239,
+            "type": "sent",
+            "dir": "out",
+            "status": null
+          },
+          "before": {
+            "at_ms": 9334,
+            "type": "message",
+            "dir": "out",
+            "status": null
+          },
+          "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start)"
+        }
+      },
+      {
+        "label": "echo-verified",
+        "wall_ms": 1793152478336,
+        "trace_offset_ms_estimate": 9406,
+        "exchange": {
+          "handle": "1e0df5713555",
+          "seed": 54
+        },
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "78148": {
+              "top_visible": 0,
+              "top_hidden": 0,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [
+                "ConsoleWindowClass"
+              ],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "46660": {
+              "top_visible": 1,
+              "top_hidden": 5,
+              "message_only": 10,
+              "children": 4,
+              "tcp4": [
+                [
+                  6151,
+                  0,
+                  2
+                ],
+                [
+                  6151,
+                  6152,
+                  5
+                ]
+              ],
+              "tcp6": [],
+              "udp4": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "udp6": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "session": 1,
+              "pid_alive": true
+            }
+          },
+          "observer": {
+            "pid": 14572,
+            "session": 1
+          },
+          "active_console_session": 1,
+          "endpoint_families_available": {
+            "tcp4": true,
+            "tcp6": true,
+            "udp4": true,
+            "udp6": true
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          }
+        },
+        "summary": {
+          "problems": [],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "children": 0
+          },
+          "wrapper_windows": {
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "children": 0,
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": []
+            }
+          },
+          "host_endpoints": {
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": []
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          },
+          "usable": true,
+          "session_problems": []
+        },
+        "trace_bracket": {
+          "after": {
+            "at_ms": 9334,
+            "type": "message",
+            "dir": "out",
+            "status": null
+          },
+          "before": null,
+          "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start)"
+        }
+      },
+      {
+        "label": "after-probes-active-scan",
+        "wall_ms": 1793152478347,
+        "trace_offset_ms_estimate": 9417,
+        "probe": {
+          "mode": "sampled",
+          "per_pid": {
+            "78148": {
+              "top_visible": 0,
+              "top_hidden": 0,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "message_only_truncated": false,
+              "children": 0,
+              "top_hidden_classes": [
+                "ConsoleWindowClass"
+              ],
+              "message_only_classes": [],
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": [],
+              "session": 1,
+              "pid_alive": true
+            },
+            "46660": {
+              "top_visible": 1,
+              "top_hidden": 5,
+              "message_only": 10,
+              "children": 4,
+              "tcp4": [
+                [
+                  6151,
+                  0,
+                  2
+                ],
+                [
+                  6151,
+                  6152,
+                  5
+                ]
+              ],
+              "tcp6": [],
+              "udp4": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "udp6": [
+                [
+                  5353
+                ],
+                [
+                  5353
+                ]
+              ],
+              "session": 1,
+              "pid_alive": true
+            }
+          },
+          "observer": {
+            "pid": 14572,
+            "session": 1
+          },
+          "active_console_session": 1,
+          "endpoint_families_available": {
+            "tcp4": true,
+            "tcp6": true,
+            "udp4": true,
+            "udp6": true
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          }
+        },
+        "summary": {
+          "problems": [],
+          "host_windows": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "children": 0
+          },
+          "wrapper_windows": {
+            "100672": {
+              "top_visible": 0,
+              "top_hidden": 1,
+              "message_only": 0,
+              "children": 0,
+              "tcp4": [],
+              "tcp6": [],
+              "udp4": [],
+              "udp6": []
+            }
+          },
+          "host_endpoints": {
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": []
+          },
+          "controls": {
+            "chrome_visible_top_level": 1,
+            "chrome_cdp_listener_present": true,
+            "chrome_cdp_listener": {
+              "family": "tcp4",
+              "local_port": 6151
+            }
+          },
+          "usable": true,
+          "session_problems": []
+        },
+        "trace_bracket": {
+          "after": {
+            "at_ms": 9334,
+            "type": "message",
+            "dir": "out",
+            "status": null
+          },
+          "before": null,
+          "estimate_basis": "sample wall_ms minus recorded host-launch wall_ms (host trace offsets count from its own start)"
+        }
+      }
+    ],
+    "probe_labels": [
+      "linked-idle-active-scan",
+      "send-in-flight",
+      "echo-verified",
+      "send-in-flight",
+      "echo-verified",
+      "after-probes-active-scan"
+    ],
+    "probe_during_usable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "w02_wrapper_hidden_window_max": 1,
+    "teardown": {
+      "owned_gone_after_s": 0.574,
+      "trace_mechanism": "stdin_closed",
+      "trace_exit": {
+        "at_ms": 9392,
+        "code": 0,
+        "stdout_drained": true
+      },
+      "host_output_order": [
+        "message",
+        "sent",
+        "message",
+        "scan_state:started",
+        "sent",
+        "message",
+        "sent",
+        "message"
+      ],
+      "trace_released_count": 2,
+      "trace_disconnect_requested_count": 2,
+      "trace_join": {
+        "at_ms": 9392,
+        "joined": 2,
+        "total": 2,
+        "within_ms": 10
+      },
+      "problems": []
+    },
+    "probe_after": {
+      "label": "after-teardown-host-exited",
+      "wall_ms": 1793152479207,
+      "trace_offset_ms_estimate": 10277,
+      "probe": {
+        "mode": "sampled",
+        "per_pid": {
+          "78148": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "message_only_truncated": false,
+            "children": 0,
+            "top_hidden_classes": [],
+            "message_only_classes": [],
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": [],
+            "session": null,
+            "pid_alive": false
+          },
+          "100672": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "message_only_truncated": false,
+            "children": 0,
+            "top_hidden_classes": [],
+            "message_only_classes": [],
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": [],
+            "session": 1,
+            "pid_alive": true
+          },
+          "46660": {
+            "top_visible": 1,
+            "top_hidden": 5,
+            "message_only": 10,
+            "children": 3,
+            "tcp4": [
+              [
+                6151,
+                0,
+                2
+              ],
+              [
+                6151,
+                6152,
+                5
+              ]
+            ],
+            "tcp6": [],
+            "udp4": [
+              [
+                5353
+              ],
+              [
+                5353
+              ],
+              [
+                5353
+              ],
+              [
+                5353
+              ],
+              [
+                5353
+              ]
+            ],
+            "udp6": [
+              [
+                5353
+              ],
+              [
+                5353
+              ]
+            ],
+            "session": 1,
+            "pid_alive": true
+          }
+        },
+        "observer": {
+          "pid": 14572,
+          "session": 1
+        },
+        "active_console_session": 1,
+        "endpoint_families_available": {
+          "tcp4": true,
+          "tcp6": true,
+          "udp4": true,
+          "udp6": true
+        },
+        "controls": {
+          "chrome_visible_top_level": 1,
+          "chrome_cdp_listener_present": true,
+          "chrome_cdp_listener": {
+            "family": "tcp4",
+            "local_port": 6151
+          }
+        }
+      },
+      "summary": {
+        "problems": [],
+        "host_windows": {
+          "top_visible": 0,
+          "top_hidden": 0,
+          "message_only": 0,
+          "children": 0
+        },
+        "wrapper_windows": {
+          "100672": {
+            "top_visible": 0,
+            "top_hidden": 0,
+            "message_only": 0,
+            "children": 0,
+            "tcp4": [],
+            "tcp6": [],
+            "udp4": [],
+            "udp6": []
+          }
+        },
+        "host_endpoints": {
+          "tcp4": [],
+          "tcp6": [],
+          "udp4": [],
+          "udp6": []
+        },
+        "controls": {
+          "chrome_visible_top_level": 1,
+          "chrome_cdp_listener_present": true,
+          "chrome_cdp_listener": {
+            "family": "tcp4",
+            "local_port": 6151
+          }
+        },
+        "usable": true
+      }
+    },
+    "cleanup_problems": []
+  }
+}

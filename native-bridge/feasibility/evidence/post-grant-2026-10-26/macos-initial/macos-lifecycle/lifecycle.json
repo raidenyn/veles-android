@@ -1,0 +1,331 @@
+{
+  "meta": {
+    "platform": "mac",
+    "python": "3.9.6",
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "started_utc": "2026-10-26T16:45:18+00:00",
+    "source_revision": {
+      "available": false,
+      "stage": "rev-parse",
+      "reason": "fatal: not a git repository (or any of the parent directories): .git"
+    },
+    "source_sha256": {
+      "scenario_matrix.py": "23e92a4b7ce6c541539c43a7a4a3ad94d4dcc9857cea57f72b0917ce1470c4b2",
+      "scenario_matrix_core.py": "9483b5fa608d7b89ba2513afd7eee7990cd00089d823ad232b1c426b77c54c5f",
+      "connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+      "manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04",
+      "identity.rs": "c6d5ee243c5285efa4cf960c7fe31f814d2a790e6763a437ecc63783f6be929f"
+    },
+    "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "foreground_only": true,
+    "no_background_exemption_measured": true,
+    "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "pre_existing_host_pids_untouched": [],
+    "finished_utc": "2026-10-26T16:45:40+00:00"
+  },
+  "results": [
+    {
+      "id": "LC-shutdown",
+      "title": "Shutdown with an active scan and two active links",
+      "expected": "pending request resolved, scan stopped, shutdown_complete is the last host output, stdout closed, host and wrapper gone, zero windows/endpoints",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": "unavailable",
+          "network_endpoints": 0
+        },
+        "link_proof": [
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          },
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          }
+        ],
+        "pending_request_result": {
+          "type": "error",
+          "code": "internal",
+          "recoverability": "fatal",
+          "stage": "shutdown"
+        },
+        "port_state": false,
+        "teardown": {
+          "owned_gone_after_s": 0.005,
+          "trace_mechanism": "shutdown",
+          "trace_exit": {
+            "at_ms": 3174,
+            "code": 0,
+            "stdout_drained": true
+          },
+          "host_output_order": [
+            "sent",
+            "message",
+            "scan_state:started",
+            "error",
+            "scan_state:stopped",
+            "disconnected",
+            "disconnected",
+            "shutdown_complete"
+          ],
+          "problems": []
+        },
+        "cleanup_problems": []
+      }
+    },
+    {
+      "id": "LC-port-disconnect",
+      "title": "Chrome port.disconnect with an active scan and two active links",
+      "expected": "owned host and wrapper gone with NO shutdown handshake (stdin EOF path), zero windows/endpoints",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": "unavailable",
+          "network_endpoints": 0
+        },
+        "link_proof": [
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          },
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          }
+        ],
+        "teardown": {
+          "owned_gone_after_s": 0.005,
+          "trace_mechanism": "stdin_closed",
+          "trace_exit": {
+            "at_ms": 3392,
+            "code": 0,
+            "stdout_drained": true
+          },
+          "host_output_order": [
+            "scan_state:stopped",
+            "connected",
+            "connected",
+            "sent",
+            "message",
+            "sent",
+            "message",
+            "scan_state:started"
+          ],
+          "problems": []
+        },
+        "cleanup_problems": []
+      }
+    },
+    {
+      "id": "LC-tab-close",
+      "title": "Connector tab close with an active scan and two active links",
+      "expected": "owned host and wrapper gone with NO shutdown handshake after the owning tab is destroyed",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": "unavailable",
+          "network_endpoints": 0
+        },
+        "link_proof": [
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          },
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          }
+        ],
+        "teardown": {
+          "owned_gone_after_s": 0.124,
+          "trace_mechanism": "stdin_closed",
+          "trace_exit": {
+            "at_ms": 2926,
+            "code": 0,
+            "stdout_drained": true
+          },
+          "host_output_order": [
+            "scan_state:stopped",
+            "connected",
+            "connected",
+            "sent",
+            "message",
+            "sent",
+            "message",
+            "scan_state:started"
+          ],
+          "problems": []
+        },
+        "cleanup_problems": []
+      }
+    },
+    {
+      "id": "LC-stdin-eof",
+      "title": "Stdin EOF with an active scan and two active links (direct native-framed process)",
+      "expected": "stdin closed (NOT shutdown): exit 0, stdout reaches EOF on a frame boundary, process gone, trace shows the stdin-closed path with no shutdown_complete",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "provenance": {
+          "launch": "direct process with pipes",
+          "chrome_provenance": false,
+          "context": "direct launch: Bluetooth TCC is attributed to the launching process (terminal/driver), not to Google Chrome; this context is NOT Chrome-provenance evidence"
+        },
+        "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "host_pid_recorded": true,
+        "link_proof": [
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd"
+          },
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd"
+          }
+        ],
+        "exit_code": 0,
+        "stdout_eof_state": "clean",
+        "trace_exit": {
+          "at_ms": 2408,
+          "code": 0,
+          "stdout_drained": true
+        },
+        "trace_mechanism": "stdin_closed",
+        "frames_after_close": [
+          "connected",
+          "device_found",
+          "message",
+          "ready",
+          "scan_state",
+          "sent"
+        ],
+        "problems": []
+      }
+    },
+    {
+      "id": "LC-stdin-eof-truncated",
+      "title": "Stdin closed inside a frame header (direct native-framed process)",
+      "expected": "host rejects the truncated frame (exit 2), logs the framing stage, stdout ends on a frame boundary, no shutdown credit",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "provenance": {
+          "launch": "direct process with pipes",
+          "chrome_provenance": false,
+          "context": "direct launch: Bluetooth TCC is attributed to the launching process (terminal/driver), not to Google Chrome; this context is NOT Chrome-provenance evidence"
+        },
+        "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+        "host_pid_recorded": true,
+        "exit_code": 2,
+        "stdout_eof_state": "clean",
+        "trace_exit": {
+          "at_ms": 0,
+          "code": 2,
+          "stdout_drained": true
+        },
+        "trace_mechanism": "stdin_closed",
+        "frames_after_close": [],
+        "problems": []
+      }
+    },
+    {
+      "id": "LC-failure-isolation",
+      "title": "Disconnect one link; the survivor keeps exchanging; then clean shutdown",
+      "expected": "stale handle rejected (unknown_handle), survivor exchanges 4096 bytes exactly, shutdown then removes the host",
+      "actual": "all checks held; see detail",
+      "status": "PASS",
+      "error_class": "none",
+      "detail": {
+        "ready": {
+          "type": "ready"
+        },
+        "hygiene_before": {
+          "visible_windows": 0,
+          "top_level_windows": "unavailable",
+          "network_endpoints": 0
+        },
+        "link_proof": [
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          },
+          {
+            "size": 4,
+            "request_sha256": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+            "received_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+            "status": "PASS"
+          }
+        ],
+        "stale_send": {
+          "type": "error",
+          "code": "unknown_handle",
+          "recoverability": "fatal",
+          "stage": "connection_handle"
+        },
+        "survivor": {
+          "size": 4096,
+          "request_sha256": "0f42e7d0184f8e5c7cf736437b5ad1a778df396de939f83eb45650464151e4d3",
+          "received_sha256": "8486416497d4fa0333f18c2fb361945b6c39ffdbc7de4b8a5a35046696bfdc2f",
+          "status": "PASS"
+        },
+        "teardown": {
+          "owned_gone_after_s": 0.005,
+          "trace_mechanism": "shutdown",
+          "trace_exit": {
+            "at_ms": 3989,
+            "code": 0,
+            "stdout_drained": true
+          },
+          "host_output_order": [
+            "disconnected",
+            "error",
+            "sent",
+            "device_found",
+            "message",
+            "scan_state:stopped",
+            "disconnected",
+            "shutdown_complete"
+          ],
+          "problems": []
+        },
+        "cleanup_problems": []
+      }
+    }
+  ],
+  "surviving_owned_hosts_after_run": []
+}

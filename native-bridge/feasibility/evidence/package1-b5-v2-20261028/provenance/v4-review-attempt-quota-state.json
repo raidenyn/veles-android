@@ -1,0 +1,27 @@
+{
+  "what": "v4 independent review attempt state (safe record; NOT an archive of the failed request)",
+  "recorded_utc": "2026-10-28T12:01:37Z",
+  "target": "focused recheck of the v4 increment (package1-b5-v4-20261028) by the authorized reviewer",
+  "request_events_source": "/tmp/opencode/otp23-package1-p2-gpt-v4-events.jsonl",
+  "archived": "NOTHING from the failed request is archived here by policy: no error bodies, no response headers, no transcript/part content, no cookies or auth state. The ONLY facts retained are the safe quota reason and the parent-communicated reset time.",
+  "reviewer_session": {
+    "session_id": "ses_e7e49d2cbffepV653zHccm8N62",
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "variant": "high",
+    "agent": "build",
+    "opencode_version": "1.19.4",
+    "capture": "safe envelope fields only (sessionID/type); this is the SAME authorized review session that produced the earlier P2/B5 and fix-verification reports"
+  },
+  "safe_quota_facts": {
+    "error_name": "APIError",
+    "safe_message": "The usage limit has been reached",
+    "error_type": "usage_limit_reached",
+    "http_status": 429,
+    "is_retryable": true,
+    "resets_utc": "2026-10-28T11:42:29Z",
+    "report_created": false
+  },
+  "consequence": "the v4 focused recheck could NOT be produced now; per the parent steering: hold W-02/W-07/W-08 canonical promotions until the parent obtains the v4 approval after the quota reset; the parent handles the review. No error content was archived and none may be quoted beyond the safe reason above.",
+  "labels": "this record and all phase reports label the independent reviewers as GPT (openai gpt-5.6-sol), never Opus; the only Opus sessions on this branch are the earlier 2026-10-27 review/preflight roles (see integration-2026-10-27 provenance and the OTP-23 investigation records)."
+}

@@ -1,0 +1,9 @@
+[       0ms pid=11270] start pid=11270
+[       0ms pid=11270] in  len=81 type=hello request_id=r1-wfc2hi
+[       0ms pid=11270] out len=181 type=ready request_id=r1-wfc2hi api_version=1
+[      83ms pid=11270] in  len=137 type=start_scan request_id=r2-ney7su api_version=1
+[      90ms pid=11270] bluetooth authorization before adapter init: not_determined
+[      91ms pid=11270] adapter init: created=true authorization=not_determined
+[   10100ms pid=11270] adapter wait timed out: authorization=denied -> access_denied
+[   10100ms pid=11270] out len=152 type=error request_id=r2-ney7su api_version=1 code=scan_failed recoverability=retryable stage=access_denied
+[ 1329224ms pid=11270] exit code=0 stdout_drained=true

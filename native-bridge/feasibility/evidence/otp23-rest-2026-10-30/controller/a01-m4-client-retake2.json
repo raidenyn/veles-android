@@ -1,0 +1,7 @@
+{
+  "run_id": "a01-m4-retake2-20261030",
+  "status": "FAIL",
+  "error": "IllegalStateException",
+  "events": [],
+  "permission_scope": "SCAN declared only by opt-in fixture manifest; ordinary runtime permission request, no shell identity adoption"
+}

@@ -1,0 +1,38 @@
+{
+  "id": "LC-stdin-eof-truncated",
+  "title": "Stdin closed inside a frame header (direct native-framed process)",
+  "expected": "host rejects the truncated frame (exit 2), logs the framing stage, stdout ends on a frame boundary, no shutdown credit",
+  "actual": "all checks held; see detail",
+  "status": "PASS",
+  "error_class": "none",
+  "detail": {
+    "provenance": {
+      "launch": "direct process with pipes",
+      "chrome_provenance": false,
+      "context": "direct launch: Bluetooth TCC is attributed to the launching process (terminal/driver), not to Google Chrome; this context is NOT Chrome-provenance evidence"
+    },
+    "host_binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "host_pid_recorded": true,
+    "integrity": {
+      "host": null,
+      "driver": null
+    },
+    "exit_code": 2,
+    "stdout_eof_state": "clean",
+    "trace_exit": {
+      "at_ms": 0,
+      "code": 2,
+      "stdout_drained": true
+    },
+    "trace_mechanism": "stdin_closed",
+    "trace_released": [],
+    "trace_join": null,
+    "frames_after_close": [],
+    "problems": [],
+    "detached_close_env_unset": true,
+    "env_passed_to_host_veles_keys": {
+      "VELES_OTP23_TRACE": "%HOME%/homepc/work/otp23-mac-resume/evidence/mac-resume-2026-10-28/lifecycle-1/stdin-eof-truncated.host-trace.log",
+      "VELES_OTP23_DETACHED_CLOSE": null
+    }
+  }
+}

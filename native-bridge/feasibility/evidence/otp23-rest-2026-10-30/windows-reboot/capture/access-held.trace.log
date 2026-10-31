@@ -1,0 +1,18 @@
+[       0ms pid=52348] start pid=52348
+[       1ms pid=52348] in  len=81 type=hello request_id=r1-siyj2i
+[       1ms pid=52348] out len=183 type=ready request_id=r1-siyj2i api_version=1
+[       6ms pid=52348] in  len=119 type=connect request_id=r2-7fobje api_version=1 platform_hint.len=20
+[       6ms pid=52348] conn 1 connect worker started epoch_ms=1793348456003 hint=winrt:..91f3:1
+[      49ms pid=52348] conn 1 device at 42ms
+[      70ms pid=52348] conn 1 session at 63ms
+[     264ms pid=52348] conn 1 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[     265ms pid=52348] conn 1 service at 258ms
+[     296ms pid=52348] conn 1 mtu=517 at 289ms
+[     297ms pid=52348] conn 1 write characteristics GattCommunicationStatus=3 protocol_error=none_or_unavailable
+[     298ms pid=52348] conn 1 setup failed: stage=access_denied retryable=false
+[     298ms pid=52348] conn 1 disconnect requested epoch_ms=1793348456295
+[     299ms pid=52348] out len=151 type=error request_id=r2-7fobje api_version=1 code=connect_failed recoverability=fatal stage=access_denied
+[     299ms pid=52348] in  len=81 type=shutdown request_id=r3-i21chl api_version=1
+[     299ms pid=52348] shutdown joined 0/0 within 0ms
+[     299ms pid=52348] out len=90 type=shutdown_complete request_id=r3-i21chl api_version=1
+[     299ms pid=52348] exit code=0 stdout_drained=true

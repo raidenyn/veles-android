@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-29",
+  "record_type": "operator_captured_owner_model_route_selection",
+  "question": "Ollama Cloud has exhausted its usage quota, so the selected GLM-5.3-flash implementer and Kimi K3 reviewer cannot continue. Opus is also quota-blocked until 04:00 UTC. How would you like to proceed?",
+  "owner_answer_verbatim": "Use Opus 5.5 via Claude code",
+  "authorized_route": "Claude Code with claude-opus-5-5 for remaining implementation and independent review in separate sessions",
+  "fresh_availability_check": {
+    "result": "READY",
+    "is_error": false,
+    "terminal_reason": "completed",
+    "actual_model_usage_key": "claude-opus-5-5",
+    "source_file_private": "/tmp/opencode/otp23-opus-availability-retry.json"
+  },
+  "earlier_role_attributions_unchanged": "GLM implemented the preceding fixes; Opus authored the design preflight; Kimi authored the completed code verification; the interrupted Opus verification did not approve code",
+  "not_a_waiver_or_gate_amendment": true,
+  "not_a_github_approval": true
+}

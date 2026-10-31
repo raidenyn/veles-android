@@ -1,0 +1,26 @@
+{
+  "captured_at_utc": "2026-10-27T23:13:07Z",
+  "capture_method": "opencode db query (message table, role=assistant; modelID/providerID from message JSON data; counts from the DB, not self-report)",
+  "session_id": "ses_e8061b402ffeVie5DWcDyfZ48B",
+  "session_title": "OTP23 follow-up review fixes and integration",
+  "session_directory": "/home/dev/repos/veles-android",
+  "modelID": "glm-5.3-flash",
+  "providerID": "ollama-cloud",
+  "assistant_messages": 79,
+  "first_msg_utc": "2026-10-27T23:07:24Z",
+  "last_msg_utc": "2026-10-27T23:13:07Z",
+  "distinct_models_in_session": [
+    {
+      "modelID": "glm-5.3-flash",
+      "providerID": "ollama-cloud"
+    }
+  ],
+  "parent_session": {
+    "session_id": "ses_e8393db6bffeMzWgsvMaGsH3pI",
+    "title": "Veles OTP-23 architecture investigations",
+    "model": "{\"id\":\"gpt-6.1-sol\",\"providerID\":\"openai\",\"variant\":\"low\"}",
+    "note": "the coordinating parent session is NOT the implementer; the Opus fix/duplicate reviews ran as separate local Claude Code sessions (2fe20385-5ef1-4622-bf94-00b8c0c6477e, claude-opus-5-5, see the review reports)",
+    "implementation_model": "glm-5.3-flash (ollama-cloud), per the owner's explicit change"
+  },
+  "note": "counts grow with this live session's turns; this file records the capture-time values. Prior GLM implementer sessions are recorded in the copied metadata files in this folder."
+}

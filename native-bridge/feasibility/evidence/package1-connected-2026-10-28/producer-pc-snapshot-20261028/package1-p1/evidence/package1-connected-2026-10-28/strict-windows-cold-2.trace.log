@@ -1,0 +1,63 @@
+[       0ms pid=41852] start pid=41852
+[       0ms pid=41852] in  len=81 type=hello request_id=r1-0jm873
+[       1ms pid=41852] out len=183 type=ready request_id=r1-0jm873 api_version=1
+[     329ms pid=41852] in  len=137 type=start_scan request_id=r2-msr7mv api_version=1
+[     383ms pid=41852] out len=135 type=scan_state request_id=r2-msr7mv api_version=1 status=started scan_handle=02d6a08b7698b3eb
+[     948ms pid=41852] out len=195 type=device_found api_version=1 scan_handle=02d6a08b7698b3eb device_handle=22c8cd2787da65b1 label.len=17 platform_hint.len=20
+[    1783ms pid=41852] out len=195 type=device_found api_version=1 scan_handle=02d6a08b7698b3eb device_handle=1b8bba3540f2a6be label.len=17 platform_hint.len=20
+[    2388ms pid=41852] in  len=115 type=connect request_id=r3-ra04i1 api_version=1 device_handle=1b8bba3540f2a6be
+[    2388ms pid=41852] conn 2 connect worker started epoch_ms=1793161898398 hint=winrt:..e1b7:1
+[    2420ms pid=41852] conn 2 device at 31ms
+[    2440ms pid=41852] conn 2 session at 52ms
+[    4480ms pid=41852] conn 2 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    4480ms pid=41852] conn 2 service at 2092ms
+[    4480ms pid=41852] conn 2 mtu=517 at 2092ms
+[    4557ms pid=41852] conn 2 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    4557ms pid=41852] conn 2 write properties=0x4
+[    4630ms pid=41852] conn 2 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    4630ms pid=41852] conn 2 notify properties=0x10
+[    4630ms pid=41852] conn 2 characteristics at 2241ms
+[    4712ms pid=41852] conn 2 subscribed at 2324ms
+[    4713ms pid=41852] out len=160 type=connected request_id=r3-ra04i1 api_version=1 connection_handle=df3866d1f324baa6 platform_hint.len=20
+[    4714ms pid=41852] in  len=115 type=connect request_id=r4-kok8z8 api_version=1 device_handle=22c8cd2787da65b1
+[    4714ms pid=41852] conn 3 connect worker started epoch_ms=1793161900723 hint=winrt:..39d6:1
+[    4734ms pid=41852] conn 3 device at 20ms
+[    4755ms pid=41852] conn 3 session at 41ms
+[    6986ms pid=41852] conn 3 services GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    6986ms pid=41852] conn 3 service at 2271ms
+[    6986ms pid=41852] conn 3 mtu=517 at 2272ms
+[    7061ms pid=41852] conn 3 write characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7061ms pid=41852] conn 3 write properties=0x4
+[    7123ms pid=41852] conn 3 notify characteristics GattCommunicationStatus=0 protocol_error=none_or_unavailable
+[    7123ms pid=41852] conn 3 notify properties=0x10
+[    7123ms pid=41852] conn 3 characteristics at 2409ms
+[    7236ms pid=41852] conn 3 subscribed at 2522ms
+[    7236ms pid=41852] out len=160 type=connected request_id=r4-kok8z8 api_version=1 connection_handle=68e6ef3e857e4b64 platform_hint.len=20
+[    7237ms pid=41852] in  len=115 type=stop_scan request_id=r5-6irs3e api_version=1 scan_handle=02d6a08b7698b3eb
+[    7237ms pid=41852] out len=135 type=scan_state request_id=r5-6irs3e api_version=1 status=stopped scan_handle=02d6a08b7698b3eb
+[  694941ms pid=41852] out len=5577 type=message api_version=1 connection_handle=df3866d1f324baa6 record_base64.len=5464
+[  697392ms pid=41852] out len=5577 type=message api_version=1 connection_handle=68e6ef3e857e4b64 record_base64.len=5464
+[  727256ms pid=41852] in  len=81 type=shutdown request_id=r6-ifs2zi api_version=1
+[  727256ms pid=41852] out len=99 type=disconnected api_version=1 connection_handle=df3866d1f324baa6
+[  727256ms pid=41852] conn 2 disconnect requested epoch_ms=1793162623265
+[  727256ms pid=41852] conn 3 disconnect requested epoch_ms=1793162623265
+[  727256ms pid=41852] out len=99 type=disconnected api_version=1 connection_handle=68e6ef3e857e4b64
+[  727256ms pid=41852] conn 2 close begin
+[  727256ms pid=41852] conn 3 close begin
+[  727256ms pid=41852] conn 2 close step remove_value_changed at 0ms ok
+[  727256ms pid=41852] conn 2 close step remove_status_changed at 0ms ok
+[  727256ms pid=41852] conn 3 close step remove_value_changed at 0ms ok
+[  727256ms pid=41852] conn 3 close step remove_status_changed at 0ms ok
+[  727257ms pid=41852] conn 3 close step service_close at 1ms ok
+[  727257ms pid=41852] conn 2 close step service_close at 1ms ok
+[  727257ms pid=41852] conn 3 close step maintain_false at 1ms ok
+[  727257ms pid=41852] conn 2 close step maintain_false at 1ms ok
+[  727257ms pid=41852] conn 2 close step session_close at 1ms ok
+[  727257ms pid=41852] conn 3 close step session_close at 1ms ok
+[  727258ms pid=41852] conn 3 close step device_close at 2ms ok
+[  727258ms pid=41852] conn 2 close step device_close at 2ms ok
+[  727258ms pid=41852] conn 3 released (objects closed; link-down unconfirmed)
+[  727258ms pid=41852] conn 2 released (objects closed; link-down unconfirmed)
+[  727266ms pid=41852] shutdown joined 2/2 within 10ms
+[  727266ms pid=41852] out len=90 type=shutdown_complete request_id=r6-ifs2zi api_version=1
+[  727266ms pid=41852] exit code=0 stdout_drained=true

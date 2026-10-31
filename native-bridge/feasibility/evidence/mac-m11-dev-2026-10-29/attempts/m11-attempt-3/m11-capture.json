@@ -1,0 +1,199 @@
+{
+  "what": "OTP-23 M-11 dev capture (distinct unsigned identity, existing admin account)",
+  "started_utc": "2026-10-29T06:21:17+00:00",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "python": "3.9.6",
+  "approved_fixture_before": {
+    "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+    "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "codesign_verify_strict": true
+  },
+  "registration_state_before": {
+    "dir": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts",
+    "dev_manifest_exists": false,
+    "plain_manifest_exists": false,
+    "all_veles_named": []
+  },
+  "extension_files": {
+    "background.js": "2d8a048a914e74328869cd0727f29ed26488aa6d45ba0ae7d204b1ca129deb0b",
+    "connector.html": "d43f1b59c764753d2c9ce4b5fbc47e1ea211420cd83a5d1501fd293e7a42d4aa",
+    "connector.js": "c1c33331611a24ca95405b305ee80a69beb3904e228056d6c268e9d4f3b7e2ac",
+    "manifest.json": "6cc440fe2a2b58f0e0de31192607636bd7d89ce653f0dd4c7e4435a3e8605c04"
+  },
+  "dev_bundle": {
+    "path": "/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app",
+    "binary_sha256": "c36894dca9d47717410cf833ca4f181894d1144e48bc0f301232a2be307864ea",
+    "codesign_dvv_recorded": {
+      "rc": 0,
+      "stderr": "Executable=/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app/Contents/MacOS/otp23-host\nIdentifier=otp23_host-b86638eeb61c91b4\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=13464 flags=0x20002(adhoc,linker-signed) hashes=417+0 location=embedded\nSignature=adhoc\nInfo.plist=not bound\nTeamIdentifier=not set\nSealed Resources=none\nInternal requirements=none\n",
+      "stdout": ""
+    },
+    "expected": {
+      "bundle_id": "me.nagaev.veles.bridge.dev",
+      "label": "VelesOtp23Dev",
+      "origin_allowed": "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/",
+      "host_name": "me.nagaev.veles.otp23.dev"
+    },
+    "info_plist": {
+      "CFBundleIdentifier": "me.nagaev.veles.bridge.dev",
+      "CFBundleName": "VelesOtp23Dev",
+      "CFBundleDisplayName": null,
+      "CFBundleExecutable": "otp23-host"
+    }
+  },
+  "profile_manifest_profile_local": {
+    "path": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-m11-dev-profile-q0g6a2ho/NativeMessagingHosts/me.nagaev.veles.otp23.dev.json",
+    "sha256": "ae3992a40c34af6a501d2ac20ef457ef358b6b37a7e6f0bfa67ba63f7d56418f",
+    "document": {
+      "name": "me.nagaev.veles.otp23.dev",
+      "description": "Veles OTP-23 M-11 dev host; synthetic bytes only",
+      "path": "/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app/Contents/MacOS/otp23-host",
+      "type": "stdio",
+      "allowed_origins": [
+        "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/"
+      ]
+    },
+    "layer": "profile-dir copy: recorded for completeness, NOT the relied-upon layer (dies with the profile)"
+  },
+  "user_scope_manifest": {
+    "path": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.dev.json",
+    "sha256": "ae3992a40c34af6a501d2ac20ef457ef358b6b37a7e6f0bfa67ba63f7d56418f",
+    "document": {
+      "name": "me.nagaev.veles.otp23.dev",
+      "description": "Veles OTP-23 M-11 dev host; synthetic bytes only",
+      "path": "/Users/raiden/homepc/work/otp23-m11-dev/target-dev/VelesOtp23Dev.app/Contents/MacOS/otp23-host",
+      "type": "stdio",
+      "allowed_origins": [
+        "chrome-extension://gmekhgkipjkikmaadaajljinkgfielei/"
+      ]
+    },
+    "layer": "user-scope distinct-name manifest (own; removed/recorded at end)"
+  },
+  "chrome": {
+    "argv": [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "--user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-m11-dev-profile-q0g6a2ho",
+      "--remote-debugging-port=0",
+      "--enable-unsafe-extension-debugging",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-sync",
+      "--window-size=1000,700",
+      "about:blank"
+    ],
+    "env_veles_keys": {},
+    "pid": 4911,
+    "context": {
+      "uid": 501,
+      "ssh": true
+    },
+    "cdp_port": 60418,
+    "version": "Chrome/156.0.8078.74"
+  },
+  "extension_loaded": {
+    "id": "gmekhgkipjkikmaadaajljinkgfielei",
+    "matches_expected": true
+  },
+  "hello": {
+    "api_version": 1,
+    "bridge_version": "otp23-feasibility/0.1.0 plain",
+    "capabilities": [
+      "veles_record_v1"
+    ],
+    "envelope_version": 1,
+    "platform": "macos",
+    "request_id": "r1-kaceht",
+    "type": "ready"
+  },
+  "human_prompt_request": {
+    "nonce": "8a055ccc-6665-4c96-9eff-81b1d000de65",
+    "issued_utc": "2026-10-29T06:21:18+00:00",
+    "human_step": "Do NOT click yet. Read the EXACT name this Bluetooth permission dialog shows (which app is asking), reply it verbatim to the parent, and only then click your Allow/Deny choice.",
+    "expected_dialog": "the Bluetooth permission prompt naming the app asking for Bluetooth access (the M-11 observation: Chrome vs the dev binary)",
+    "answer_file": "capture/m11-attempt-3/m11-prompt-8a055ccc-6665-4c96-9eff-81b1d000de65.answer.json",
+    "answer_format": {
+      "nonce": "8a055ccc-6665-4c96-9eff-81b1d000de65",
+      "answered_by": "owner",
+      "dialog_observed": "true|false (owner's own observation)",
+      "prompt_name_shown": "<exact verbatim text, only if a dialog was seen>",
+      "choice": "allow|deny (only if a dialog was seen)"
+    }
+  },
+  "prompt_watch": {
+    "ended_by": "deadline",
+    "waited_s": 3600.3,
+    "observations": [],
+    "replies": [
+      {
+        "t_s": 1.0,
+        "reply": {
+          "api_version": 1,
+          "envelope_version": 1,
+          "request_id": "r2-e5v2lw",
+          "scan_handle": "361362adef91c463",
+          "status": "started",
+          "type": "scan_state"
+        },
+        "after_answer": false
+      }
+    ],
+    "answer": null,
+    "answer_t_s": null,
+    "answer_problems": [],
+    "rescans": 0,
+    "final_reply": {
+      "api_version": 1,
+      "envelope_version": 1,
+      "request_id": "r2-e5v2lw",
+      "scan_handle": "361362adef91c463",
+      "status": "started",
+      "type": "scan_state"
+    }
+  },
+  "human_prompt_answer": null,
+  "scan_outcome": {
+    "api_version": 1,
+    "envelope_version": 1,
+    "request_id": "r2-e5v2lw",
+    "scan_handle": "361362adef91c463",
+    "status": "started",
+    "type": "scan_state"
+  },
+  "authorized_state_classified": {
+    "state": "authorized_started",
+    "post_init_authorization": null,
+    "owner_dialog_observed": null,
+    "ended_by": "deadline"
+  },
+  "problems_classified_denial_possible": "a denied/pending outcome is a VALID M-11 observation (recorded as-is); the reviewer adjudicates; no fabricated unsigned PASS",
+  "scans_stopped_after_capture": [
+    "361362adef91c463"
+  ],
+  "shutdown_reply": {
+    "api_version": 1,
+    "envelope_version": 1,
+    "request_id": "r4-jc2jr7",
+    "type": "shutdown_complete"
+  },
+  "disposable_profile_removed": true,
+  "user_scope_manifest_removed": {
+    "path": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.otp23.dev.json",
+    "note": "only this harness's own dev manifest; nothing else touched"
+  },
+  "approved_fixture_after": {
+    "path": "/Users/raiden/homepc/work/otp23-cd971f0/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app",
+    "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+    "codesign_verify_strict": true
+  },
+  "registration_state_after": {
+    "dir": "/Users/raiden/Library/Application Support/Google/Chrome/NativeMessagingHosts",
+    "dev_manifest_exists": false,
+    "plain_manifest_exists": false,
+    "all_veles_named": []
+  },
+  "settings_read_only_owner_check": "re-request the read-only System Settings Bluetooth entry check after the run (VelesOtp23PoC unchanged; any NEW VelesOtp23Dev entry = recorded fact, never removed)",
+  "problems": [
+    "prompt watch reached its deadline without the owner's nonce answer and a post-answer scan reply (recorded as observed, not adjudicated)"
+  ],
+  "finished_utc": "2026-10-29T07:21:19+00:00"
+}

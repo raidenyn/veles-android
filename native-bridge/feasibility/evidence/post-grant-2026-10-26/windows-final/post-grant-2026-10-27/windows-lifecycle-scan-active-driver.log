@@ -1,0 +1,7 @@
+[PASS   ] LC-shutdown none
+[BLOCKED] LC-port-disconnect permission_denied
+[PASS   ] LC-tab-close none
+[BLOCKED] LC-stdin-eof permission_denied
+[PASS   ] LC-stdin-eof-truncated none
+[PASS   ] LC-failure-isolation none
+lifecycle: NOT PASS (6 scenario(s)) -> C:\Users\yuriy\repos\otp23-scenarios-3dbe3db\native-bridge\feasibility\evidence\post-grant-2026-10-27\windows-lifecycle-scan-active

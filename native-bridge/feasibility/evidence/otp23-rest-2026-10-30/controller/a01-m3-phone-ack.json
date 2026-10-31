@@ -1,0 +1,403 @@
+{
+  "run_id": "a01-m3-20261030",
+  "nonce": "8cd53675fbdb490284cf09cead77fe08",
+  "origin": "instrumentation injection into the real callback on a live physical link; not a naturally repeated OS callback",
+  "before": {
+    "epoch_ms": 1793335146730,
+    "elapsed_ms": 593690987,
+    "peers": [
+      "c3a3dc8495dd5bc2"
+    ],
+    "ready_count": 1,
+    "subscribed_count": 1,
+    "connected_at_elapsed_ms": [
+      593636371
+    ],
+    "records": 2,
+    "transport_events": [
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "connected",
+        "epoch_ms": 1793335092113,
+        "elapsed_ms": 593636371,
+        "code": null,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "mtu",
+        "epoch_ms": 1793335092147,
+        "elapsed_ms": 593636404,
+        "code": 517,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "subscribed",
+        "epoch_ms": 1793335094110,
+        "elapsed_ms": 593638367,
+        "code": null,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094155,
+        "elapsed_ms": 593638413,
+        "code": 0,
+        "bytes": 20
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094178,
+        "elapsed_ms": 593638436,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094332,
+        "elapsed_ms": 593638590,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094346,
+        "elapsed_ms": 593638603,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094350,
+        "elapsed_ms": 593638608,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094354,
+        "elapsed_ms": 593638612,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094357,
+        "elapsed_ms": 593638615,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094361,
+        "elapsed_ms": 593638619,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094364,
+        "elapsed_ms": 593638622,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094378,
+        "elapsed_ms": 593638636,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094381,
+        "elapsed_ms": 593638639,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094385,
+        "elapsed_ms": 593638643,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094388,
+        "elapsed_ms": 593638646,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094392,
+        "elapsed_ms": 593638650,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094395,
+        "elapsed_ms": 593638653,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094411,
+        "elapsed_ms": 593638669,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094414,
+        "elapsed_ms": 593638672,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094417,
+        "elapsed_ms": 593638675,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094420,
+        "elapsed_ms": 593638678,
+        "code": 0,
+        "bytes": 36
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094424,
+        "elapsed_ms": 593638681,
+        "code": 0,
+        "bytes": 0
+      }
+    ]
+  },
+  "after": {
+    "epoch_ms": 1793335146732,
+    "elapsed_ms": 593690990,
+    "peers": [
+      "c3a3dc8495dd5bc2"
+    ],
+    "ready_count": 1,
+    "subscribed_count": 1,
+    "connected_at_elapsed_ms": [
+      593636371
+    ],
+    "records": 2,
+    "transport_events": [
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "connected",
+        "epoch_ms": 1793335092113,
+        "elapsed_ms": 593636371,
+        "code": null,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "mtu",
+        "epoch_ms": 1793335092147,
+        "elapsed_ms": 593636404,
+        "code": 517,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "subscribed",
+        "epoch_ms": 1793335094110,
+        "elapsed_ms": 593638367,
+        "code": null,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094155,
+        "elapsed_ms": 593638413,
+        "code": 0,
+        "bytes": 20
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094178,
+        "elapsed_ms": 593638436,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094332,
+        "elapsed_ms": 593638590,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094346,
+        "elapsed_ms": 593638603,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094350,
+        "elapsed_ms": 593638608,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094354,
+        "elapsed_ms": 593638612,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094357,
+        "elapsed_ms": 593638615,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094361,
+        "elapsed_ms": 593638619,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094364,
+        "elapsed_ms": 593638622,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094378,
+        "elapsed_ms": 593638636,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094381,
+        "elapsed_ms": 593638639,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094385,
+        "elapsed_ms": 593638643,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094388,
+        "elapsed_ms": 593638646,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094392,
+        "elapsed_ms": 593638650,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094395,
+        "elapsed_ms": 593638653,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094411,
+        "elapsed_ms": 593638669,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094414,
+        "elapsed_ms": 593638672,
+        "code": 0,
+        "bytes": 512
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094417,
+        "elapsed_ms": 593638675,
+        "code": 0,
+        "bytes": 0
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_api",
+        "epoch_ms": 1793335094420,
+        "elapsed_ms": 593638678,
+        "code": 0,
+        "bytes": 36
+      },
+      {
+        "peer": "c3a3dc8495dd5bc2",
+        "kind": "notify_callback",
+        "epoch_ms": 1793335094424,
+        "elapsed_ms": 593638681,
+        "code": 0,
+        "bytes": 0
+      }
+    ]
+  }
+}

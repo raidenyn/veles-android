@@ -1,0 +1,11 @@
+{
+  "stage": "READY",
+  "pair_run_id": "m6-pair-20261027-a",
+  "role": "windows",
+  "phone_label": "OnePlus6T",
+  "links_connected": 1,
+  "target_label_sha256": "d45eb96d72b87cbe",
+  "exchanges_planned": 100,
+  "plan_sha256": "f3168c7877077a5e1b41d16266e8177798e5f145b8a061a17e844461953a8e0e",
+  "at_wall_ms": 1793075053511
+}

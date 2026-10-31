@@ -7,21 +7,81 @@ const state = {
     port: null,
     hostName: null,
     apiVersion: null,
+    platform: null,
     counter: 0,
     pending: new Map(), // request_id -> { resolve, timer, type }
     events: [], // unsolicited host events
     completions: [], // every correlated reply, in arrival order
     disconnect: null, // { at, message } once the port closed
     opened: null,
+    received: 0, // unsolicited message events seen
+    eventSeq: 0, // receipt sequence number (strict background validation)
 };
+
+// Visibility/focus history of THIS page, preconfigured at load so it needs no DevTools client while
+// the strict background measurement runs (listeners only: no timers, intervals, audio or sockets).
+// Bounded: once full it stops recording and says so (truncated), it never drops silently.
+const HISTORY_LIMIT = 2000;
+const history = {
+    token: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    installed_wall: Date.now(),
+    initial: null,
+    events: [],
+    truncated: false,
+};
+
+function historyState() {
+    const focused = typeof document.hasFocus === "function" ? document.hasFocus() : null;
+    return { wall: Date.now(), visibility: document.visibilityState ?? null, focused };
+}
+
+function recordHistory(kind) {
+    if (history.events.length >= HISTORY_LIMIT) {
+        history.truncated = true;
+        return;
+    }
+    history.events.push({ seq: history.events.length, kind, ...historyState() });
+}
 
 function now() {
     return Math.round(performance.now());
 }
 
+// Receipt context of one unsolicited host event: page clock, wall clock and the page's own
+// visibility/focus at the instant the event was delivered (a frozen page would deliver late and
+// show a late wall time). Used by the strict background validation; carries no record contents.
+function receipt(message) {
+    return {
+        at: now(),
+        wall: Date.now(),
+        visibility: document.visibilityState,
+        focused: document.hasFocus(),
+        seq: state.eventSeq++,
+        message,
+    };
+}
+
 function setStatus(text) {
     const node = document.getElementById("status");
     if (node) node.textContent = text;
+}
+
+const MAC_PERMISSION_GUIDANCE = "Bluetooth access was denied. Open System Settings -> Privacy & Security -> Bluetooth, enable VelesOtp23PoC, return to this connector, and retry the scan. Keep this extension loaded; no reinstall or permission reset is needed.";
+
+function updatePermissionGuidance(message) {
+    const panel = document.getElementById("permission-guidance");
+    const text = document.getElementById("permission-guidance-text");
+    if (!panel || !text) return;
+    if (state.platform && state.platform !== "macos") {
+        text.textContent = "";
+        panel.hidden = true;
+    } else if (state.platform === "macos" && message.type === "error" && message.stage === "access_denied") {
+        text.textContent = MAC_PERMISSION_GUIDANCE;
+        panel.hidden = false;
+    } else if (message.type === "scan_state" && message.status === "started") {
+        text.textContent = "";
+        panel.hidden = true;
+    }
 }
 
 function toBase64(bytes) {
@@ -45,6 +105,7 @@ function synthesizePortClosed(type, request_id) {
 }
 
 function onMessage(message) {
+    updatePermissionGuidance(message);
     const entry = { at: now(), message };
     if (typeof message.request_id === "string" && state.pending.has(message.request_id)) {
         const { resolve, timer } = state.pending.get(message.request_id);
@@ -54,9 +115,14 @@ function onMessage(message) {
         resolve(message);
     } else if (typeof message.request_id === "string") {
         // Correlated message nobody is waiting for: a duplicate terminal event is a defect.
-        state.events.push({ at: now(), message, orphan_correlated: true });
+        state.events.push({ ...receipt(message), orphan_correlated: true });
     } else {
-        state.events.push(entry);
+        state.events.push(receipt(message));
+        if (message.type === "message") {
+            // Readable through the DevTools HTTP target list without attaching any CDP session.
+            state.received += 1;
+            document.title = `otp23 messages=${state.received} last=${Date.now()}`;
+        }
     }
 }
 
@@ -77,6 +143,7 @@ function connect(hostName) {
     state.hostName = hostName;
     state.disconnect = null;
     state.apiVersion = null;
+    state.platform = null;
     state.opened = now();
     state.port = chrome.runtime.connectNative(hostName);
     state.port.onMessage.addListener(onMessage);
@@ -111,7 +178,11 @@ function request(type, fields = {}, timeoutMs = 40000) {
 
 async function hello() {
     const reply = await request("hello", { api_versions: [1] });
-    if (reply.type === "ready") state.apiVersion = reply.api_version;
+    if (reply.type === "ready") {
+        state.apiVersion = reply.api_version;
+        state.platform = reply.platform;
+        updatePermissionGuidance(reply);
+    }
     return reply;
 }
 
@@ -156,4 +227,20 @@ window.otp23 = {
             orphan_correlated: !!orphan_correlated,
         })),
 };
+history.initial = historyState();
+if (typeof document.addEventListener === "function" && typeof window.addEventListener === "function") {
+    document.addEventListener("visibilitychange", () => recordHistory("visibilitychange"));
+    window.addEventListener("focus", () => recordHistory("focus"));
+    window.addEventListener("blur", () => recordHistory("blur"));
+    document.addEventListener("freeze", () => recordHistory("freeze"));
+    document.addEventListener("resume", () => recordHistory("resume"));
+}
+window.otp23.visibilityHistory = () => ({
+    token: history.token,
+    installed_wall: history.installed_wall,
+    initial: history.initial,
+    events: history.events.map((e) => ({ ...e })),
+    truncated: history.truncated,
+    limit: HISTORY_LIMIT,
+});
 setStatus("ready");

@@ -1,0 +1,11 @@
+{
+  "stage": "READY",
+  "pair_run_id": "m6-pair-20261027-a",
+  "role": "mac",
+  "phone_label": "OnePlus6T",
+  "links_connected": 1,
+  "target_label_sha256": "6cc2803e90ca7d87",
+  "exchanges_planned": 100,
+  "plan_sha256": "e586ecd846007a3545cfa7fe8c5e7e293f65c0419bc32fbfb536dd9f7bcab220",
+  "at_wall_ms": 1793075046242
+}

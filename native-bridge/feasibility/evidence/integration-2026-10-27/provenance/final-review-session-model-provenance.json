@@ -1,0 +1,38 @@
+{
+  "captured_at_utc": "2026-10-27T23:25:13Z",
+  "source": "claude code transcript on disk: /home/dev/.claude/projects/-home-dev-repos-veles-android/2fe20385-5ef1-4622-bf94-00b8c0c6477e.jsonl (sha256 86da634a587c47fe2722616b1491daaef728212adb5f9f5b4573817e80571813)",
+  "session_id": "2fe20385-5ef1-4622-bf94-00b8c0c6477e",
+  "assistant_model_per_message": {
+    "claude-opus-5-5": 418
+  },
+  "assistant_messages_total": 418,
+  "distinct_assistant_models": [
+    "claude-opus-5-5"
+  ],
+  "harness_synthetic_entries": 0,
+  "cli_versions_observed": [
+    "2.1.311",
+    "2.1.312"
+  ],
+  "entry_types": {
+    "ai-title": 104,
+    "agent-name": 104,
+    "mode": 91,
+    "permission-mode": 91,
+    "atis-latch": 91,
+    "tools-used": 13,
+    "file-history-snapshot": 25,
+    "attachment": 337,
+    "user": 236,
+    "assistant": 418,
+    "system": 13,
+    "api-request-shape": 1,
+    "api-request-blob": 360,
+    "api-request": 158,
+    "last-prompt": 101,
+    "cost-state": 20,
+    "file-history-delta": 11
+  },
+  "review_report_copy": "native-bridge/feasibility/evidence/integration-2026-10-27/reports/otp23-followup-final-opus-review.md",
+  "note": "actual metadata read from the transcript on disk (not self-report); canonical model for model-produced assistant messages; counts grow if the reviewer session continues."
+}

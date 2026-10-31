@@ -1,0 +1,134 @@
+{
+  "driver": "macos_permission_recovery",
+  "started_utc": "2026-10-26T16:58:45+00:00",
+  "commands": [
+    "scripts/macos_permission_recovery.py --out evidence/post-grant-2026-10-26/macos-permission-recovery.json --state-dir %HOME%/homepc/work/otp23-scenarios-0d75bb2/native-bridge/feasibility/evidence/post-grant-2026-10-26/permission-state --expect-binary-sha-prefix e7c716 --human-note I enabled VelesOtp23PoC Bluetooth permission. Chrome permission was enabled before that."
+  ],
+  "result": "FAIL",
+  "macos_version": "26.5.2",
+  "python_version": "3.9.6",
+  "abort": null,
+  "human_settings_observation": {
+    "text": "I enabled VelesOtp23PoC Bluetooth permission. Chrome permission was enabled before that.",
+    "source": "user report",
+    "kind": "Settings entry observation; not a TCC database attribution"
+  },
+  "waivers": [
+    "fresh new-account first prompt: not observed (already granted account); non-blocking"
+  ],
+  "unsigned_dev_matrix": "unmet unless the parent supplies a separate explicit unsigned app via --app; nothing is created here",
+  "provenance_note": "Apple Development signing is not CI/distribution provenance",
+  "host_binary": "%HOME%/homepc/work/otp23-scenarios-0d75bb2/native-bridge/feasibility/target/macos-poc/VelesOtp23PoC.app/Contents/MacOS/otp23-host",
+  "host_binary_sha256_start": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "source_revision": {
+    "available": false,
+    "stage": "rev-parse",
+    "reason": "fatal: not a git repository (or any of the parent directories): .git"
+  },
+  "run": {
+    "baseline": {
+      "sentinel_sha256": "20f6a5d88dd504172220f8260dbf42624e56ead20b8e2f8c1182f1b7da3cf0ec",
+      "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+      "chrome_pid": 29673,
+      "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-yvcveds1",
+      "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+      "signature": {
+        "available": true,
+        "identifier": "me.nagaev.veles.bridge",
+        "team": "7T39M26Z99",
+        "signature": null,
+        "authority": "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)",
+        "cdhash": null
+      },
+      "load_unpacked_calls": 1,
+      "utc": "2026-10-26T16:58:47+00:00",
+      "hello_type": "ready",
+      "scan_class": "started",
+      "devices": 1,
+      "host_gone": true
+    },
+    "denied": {
+      "sentinel_sha256": "20f6a5d88dd504172220f8260dbf42624e56ead20b8e2f8c1182f1b7da3cf0ec",
+      "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+      "chrome_pid": 29673,
+      "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-yvcveds1",
+      "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+      "signature": {
+        "available": true,
+        "identifier": "me.nagaev.veles.bridge",
+        "team": "7T39M26Z99",
+        "signature": null,
+        "authority": "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)",
+        "cdhash": null
+      },
+      "load_unpacked_calls": 1,
+      "utc": "2026-10-26T17:03:18+00:00",
+      "hello_type": "ready",
+      "scan_class": "started",
+      "scan_reply_code": [
+        null,
+        null
+      ],
+      "host_gone": true,
+      "ack": null,
+      "ack_error": "ack_missing"
+    },
+    "recovered": {
+      "sentinel_sha256": "20f6a5d88dd504172220f8260dbf42624e56ead20b8e2f8c1182f1b7da3cf0ec",
+      "extension_id": "gmekhgkipjkikmaadaajljinkgfielei",
+      "chrome_pid": 29673,
+      "profile": "/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-yvcveds1",
+      "binary_sha256": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+      "signature": {
+        "available": true,
+        "identifier": "me.nagaev.veles.bridge",
+        "team": "7T39M26Z99",
+        "signature": null,
+        "authority": "Apple Development: yuriy@nagaev.me (ZWYYS8X98S)",
+        "cdhash": null
+      },
+      "load_unpacked_calls": 1,
+      "utc": "2026-10-26T17:07:52+00:00",
+      "hello_type": "ready",
+      "scan_class": "started",
+      "devices": 1,
+      "stop_status": "stopped",
+      "shutdown_type": "shutdown_complete",
+      "host_gone": true,
+      "ack": null,
+      "ack_error": "ack_missing"
+    },
+    "profile_removed": true
+  },
+  "native_trace_safe_summary": {
+    "conn_observations": 0,
+    "sends": 0,
+    "replies": 0,
+    "payloads_recorded": false
+  },
+  "host_binary_sha256_end": "e7c716c5d8c9c05ac8aaa838d5bdbdcc0918f352c270cb330d8edb5befeeb91c",
+  "failures": [
+    "denied:ack_missing",
+    "denied:deny_not_observed",
+    "recovered:ack_missing"
+  ],
+  "phases": {
+    "baseline": {
+      "ok": true
+    },
+    "denied": {
+      "ok": false
+    },
+    "recovered": {
+      "ok": false
+    }
+  },
+  "same_state_recovery": true,
+  "prompt_observation": {
+    "value": "unknown",
+    "source": "human via ack file",
+    "popup_owner": "not inferred"
+  },
+  "fresh_first_prompt": "not_observed; waived non-blocking for new accounts (this account was already granted)",
+  "finished_utc": "2026-10-26T17:07:52+00:00"
+}

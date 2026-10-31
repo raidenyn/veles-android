@@ -1,0 +1,543 @@
+{
+  "kind": "otp23-strict-adjudication",
+  "formal_otp23_acceptance": false,
+  "note": "Pure re-evaluation of an immutable raw strict result plus offline phone evidence; the requirements matrix, not this file, adjudicates OTP-23 acceptance.",
+  "evaluator_provenance": {
+    "git_revision": "dc5d127819a8f5fc1fc554479190fee2c9808521",
+    "git_available": true,
+    "evaluator_files_dirty": true,
+    "evaluator_files_modified": [
+      "native-bridge/feasibility/scripts/strict_background_core.py",
+      "native-bridge/feasibility/scripts/strict_background_finalize.py"
+    ],
+    "sha256": {
+      "strict_background_core.py": "e44f616c04054707beac175c5dd61c03e5741a5bdfa3405361342ebd8f232ce2",
+      "strict_phone_validation.py": "93057ec40c89529437c3ea3f81d6160324f6c1780770903c71f0dcef90fb9e11",
+      "strict_background_finalize.py": "5a1638808759a31b3f0020c75a2e7b66e3376d2138d0588c6d4664e7ccf73c47"
+    }
+  },
+  "adjudicated_utc": "2026-10-27T17:23:26Z",
+  "strict_result": "PASS",
+  "scenario": "cold",
+  "platform": "macos",
+  "checks": {
+    "ST-01": {
+      "status": "PASS",
+      "expected": "connector hidden and another ordinary tab visible and focused before the last DevTools client closes",
+      "actual": {
+        "connector_visibility": "hidden",
+        "ordinary_tab_visibility": "visible",
+        "ordinary_tab_focused": true
+      }
+    },
+    "ST-02": {
+      "status": "PASS",
+      "expected": "no DevTools client (target session or browser-level) for >= 600 s, 0 CDP calls",
+      "actual": {
+        "idle_seconds": 719.757,
+        "cdp_calls_during_idle": 0,
+        "browser_level_connection_closed": true,
+        "connector_session_detached_by_close": true
+      }
+    },
+    "ST-03": {
+      "status": "PASS",
+      "expected": "no audio / WebRTC / socket / interval / lock / keepalive API in the loaded extension files",
+      "actual": {
+        "files": [
+          "background.js",
+          "connector.html",
+          "connector.js",
+          "manifest.json"
+        ],
+        "findings": []
+      }
+    },
+    "ST-04": {
+      "status": "PASS",
+      "expected": "each of two phones delivers exactly one byte-exact unsolicited 4096-byte record, page hidden",
+      "actual": {
+        "per_handle": {
+          "c186d6c9": {
+            "events": 1,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+            "visibility": "hidden",
+            "focused": false
+          },
+          "1164de01": {
+            "events": 1,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+            "visibility": "hidden",
+            "focused": false
+          }
+        },
+        "problems": []
+      }
+    },
+    "ST-05": {
+      "status": "PASS",
+      "expected": "page receipt >= 600 s after the last DevTools client closed and before it re-attached",
+      "actual": {
+        "seconds_in_background_at_receipt": {
+          "c186d6c9": 687.893,
+          "1164de01": 689.916
+        },
+        "receipts_before_reattach": true
+      }
+    },
+    "ST-06": {
+      "status": "PASS",
+      "expected": "host trace independently places both message emissions before the driver re-attached",
+      "actual": {
+        "message_count": 2,
+        "wall_estimates": [
+          1793118207.413,
+          1793118209.433
+        ],
+        "reattach_wall": 1793118239.276202
+      }
+    },
+    "ST-07": {
+      "status": "PASS",
+      "expected": "DevTools HTTP target list (no CDP session) shows the connector received both messages before attach",
+      "actual": {
+        "title": "otp23 messages=2 last=1793118209440"
+      }
+    },
+    "ST-08": {
+      "status": "PASS",
+      "expected": "each phone pushed the expected hash once, queued, after its configured delay",
+      "actual": {
+        "pushes": 2,
+        "validation": "PASS"
+      }
+    },
+    "ST-09": {
+      "status": "PASS",
+      "expected": "cold idle: no desktop->phone record was ever sent in this run",
+      "actual": {
+        "sends_in_host_trace": 0,
+        "warmup": false
+      }
+    },
+    "ST-10": {
+      "status": "PASS",
+      "expected": "shutdown_complete, Chrome closed, and no surviving host process counted AFTER Chrome closed",
+      "actual": {
+        "shutdown_complete": true,
+        "chrome_closed": true,
+        "surviving_hosts": [],
+        "errors": []
+      }
+    },
+    "ST-11": {
+      "status": "PASS",
+      "expected": "preconfigured history shows the connector page hidden and unfocused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [],
+        "interval_seconds": 719.752,
+        "interruptions": [],
+        "events_in_interval": [],
+        "events_after_cut_ignored": 0,
+        "lifecycle_notes": [],
+        "initial": {
+          "wall": 1793117514348,
+          "visibility": "visible",
+          "focused": true
+        },
+        "token": "mvqvvcz0-ptsim5op"
+      }
+    },
+    "ST-12": {
+      "status": "PASS",
+      "expected": "preconfigured history shows the ordinary tab visible and focused for >= 600 s with no interruption (events after the pre-attach cut ignored)",
+      "actual": {
+        "problems": [],
+        "interval_seconds": 719.752,
+        "interruptions": [],
+        "events_in_interval": [],
+        "events_after_cut_ignored": 0,
+        "lifecycle_notes": [],
+        "initial": {
+          "wall": 1793117519331,
+          "visibility": "visible",
+          "focused": true
+        },
+        "token": "mvqvvgtf-ljl9bv3q"
+      }
+    },
+    "ST-13": {
+      "status": "PASS",
+      "expected": "recorded Chrome command line carries no throttling/backgrounding/freezing exemption flag",
+      "actual": {
+        "findings": [],
+        "arg_count": 9,
+        "args_source": "proc.args",
+        "native_messaging_port": "not a timer-throttling exemption (owner-approved RFC clarification, 2026-10-27): event delivery through the Native Messaging port is not an exemption; ordinary timers and the port itself are permitted",
+        "scope": "flags only; this check does not measure Chrome-internal behaviour, and the same-build port-escape comparison lives in separate probe evidence"
+      }
+    },
+    "ST-15": {
+      "status": "PASS",
+      "expected": "OS foreground owned by the run's own Chrome PID (directly or through its ancestry) before any BLE work and again after the ordinary-tab switch, before every DevTools client closes",
+      "actual": {
+        "gate_state": "confirmed",
+        "gate_pid": 90368,
+        "chrome_pid": 90368,
+        "after_switch": {
+          "verified": true,
+          "pid": 90368,
+          "owned": true,
+          "name": "Google Chrome",
+          "bundle": "com.google.Chrome",
+          "session": {
+            "verified": true,
+            "on_console": true,
+            "screen_locked": false
+          },
+          "ps_args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank",
+          "page_state": {
+            "ok": true,
+            "visibility_state": "visible",
+            "has_focus": true,
+            "page": "C0BEAF010ACE4196D70885AAAB0BB026"
+          }
+        },
+        "reader": "osascript -l JavaScript: AppKit.NSWorkspace.sharedWorkspace.frontmostApplication",
+        "platform": "macos",
+        "page_required": true,
+        "session_guard": "ctypes CGSessionCopyCurrentDictionary via CFPropertyListCreateXMLData (kCGSSessionOnConsoleKey true, CGSSessionScreenIsLocked absent/false); the JXA ObjC bridge cannot call this C function on macOS 26 (it returns the bridge function object itself and wraps NULL truthy - recorded in the 2026-10-27 pre-measurement calibration), so the query is native or nothing",
+        "gate_confirmed_mono": 1.650815,
+        "ble_start_mono": 1.839796208
+      }
+    },
+    "ST-14": {
+      "status": "PASS",
+      "expected": "formal strict run: min_background_s >= 600 and not a diagnostic short run",
+      "actual": {
+        "min_background_s": 600,
+        "diagnostic_short": false
+      }
+    }
+  },
+  "raw_consistency": {
+    "checks_in_raw_that_disagree_with_recomputation": []
+  },
+  "inputs": {
+    "raw": {
+      "path": "../evidence/post-grant-2026-10-26/strict-mac-20261027/strict-mac-20261027-cold.json",
+      "sha256": "18a258f582eaf595b39aed9537a4b75c55a48f7d04e3f54da82916ab6d0ca5af",
+      "size": 17171,
+      "strict_result_in_raw": "BLOCKED",
+      "raw_had_phone_evidence": false
+    },
+    "phone_files": [
+      {
+        "path": "/tmp/opencode/otp23-latest-mac-cold-6t-phone.json",
+        "source_hash": "c049779ebb347937c1e811616b0d63268b874b6425fff380cf98e5ee3c88a729",
+        "sha256": "733368474be1c3204d999c94e505a2f858ca6ef87cb47713c2dd64de8bcf8fa1",
+        "size": 365,
+        "mtime_epoch": 1793118345.0513797
+      },
+      {
+        "path": "/tmp/opencode/otp23-latest-mac-cold-10pro-phone.json",
+        "source_hash": "dd63603cd0cdb86d8f0b984739b92bb91f01f0b4ee5c48421b46fa77c2ee168a",
+        "sha256": "7d24c3eed312789bf0ad4e3d067846801c1a0436c9688bf414148e1b7dec0e00",
+        "size": 365,
+        "mtime_epoch": 1793118349.2153902
+      }
+    ]
+  },
+  "phone_validation": {
+    "status": "PASS",
+    "problems": [],
+    "files": [
+      {
+        "index": 1,
+        "source_hash": "c049779ebb347937c1e811616b0d63268b874b6425fff380cf98e5ee3c88a729",
+        "sha256": "733368474be1c3204d999c94e505a2f858ca6ef87cb47713c2dd64de8bcf8fa1",
+        "size": 365,
+        "mtime_utc": "2026-10-27T16:25:45Z",
+        "problems": []
+      },
+      {
+        "index": 2,
+        "source_hash": "dd63603cd0cdb86d8f0b984739b92bb91f01f0b4ee5c48421b46fa77c2ee168a",
+        "sha256": "7d24c3eed312789bf0ad4e3d067846801c1a0436c9688bf414148e1b7dec0e00",
+        "size": 365,
+        "mtime_utc": "2026-10-27T16:25:49Z",
+        "problems": []
+      }
+    ],
+    "clock": {
+      "offset_ms": 550.906,
+      "uncertainty_ms": 2390.0,
+      "source": "measured 2026-10-27T16:52:33Z and 16:59:16Z (two rounds, 7 samples/clock, min-RTT, midpoint-of-SSH/adb-RTT vs dev container reference); desktop(Mac)-phone offset = mean of round-2 pairwise per-phone offsets (raw values in clock-round JSONs), uncertainty = max pair half-RTT bound (2314.44) + half-spread across the two phones (43.185) + relative-drift extrapolation over the evidence span (31.679; pairwise drift 4.44 ms over 403 s), rounded up to 2390 ms; unchanged from the v1 adjudication that used the same measurement"
+    },
+    "central_peer_prefixes_informational": [
+      "576d2120",
+      "576d2120"
+    ]
+  },
+  "evidence": {
+    "scenario": "cold",
+    "min_background_s": 600,
+    "timeline": {
+      "background_started_wall": 1793117519.524124,
+      "cdp_closed_wall": 1793117519.524124,
+      "cdp_closed_mono": 6.414576666,
+      "cdp_reopened_wall": 1793118239.276202,
+      "cdp_reopened_mono": 726.171911041
+    },
+    "handles": [
+      "c186d6c9",
+      "1164de01"
+    ],
+    "events": [
+      {
+        "handle": "c186d6c9",
+        "at": 693193,
+        "wall": 1793118207417,
+        "visibility": "hidden",
+        "focused": false,
+        "record_sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+        "len": 4096
+      },
+      {
+        "handle": "1164de01",
+        "at": 695216,
+        "wall": 1793118209440,
+        "visibility": "hidden",
+        "focused": false,
+        "record_sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6",
+        "len": 4096
+      }
+    ],
+    "warmup": null,
+    "diagnostic_short": false,
+    "history": {
+      "connector": {
+        "token": "mvqvvcz0-ptsim5op",
+        "installed_wall": 1793117514348,
+        "initial": {
+          "wall": 1793117514348,
+          "visibility": "visible",
+          "focused": true
+        },
+        "events": [
+          {
+            "seq": 0,
+            "kind": "blur",
+            "wall": 1793117519270,
+            "visibility": "visible",
+            "focused": false
+          },
+          {
+            "seq": 1,
+            "kind": "visibilitychange",
+            "wall": 1793117519270,
+            "visibility": "hidden",
+            "focused": false
+          }
+        ],
+        "truncated": false,
+        "limit": 2000
+      },
+      "ordinary_tab": {
+        "token": "mvqvvgtf-ljl9bv3q",
+        "installed_wall": 1793117519331,
+        "initial": {
+          "wall": 1793117519331,
+          "visibility": "visible",
+          "focused": true
+        },
+        "events": [],
+        "truncated": false,
+        "limit": 2000
+      }
+    },
+    "history_tokens": {
+      "connector": "mvqvvcz0-ptsim5op",
+      "ordinary_tab": "mvqvvgtf-ljl9bv3q"
+    },
+    "chrome": {
+      "args": [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "--user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd",
+        "--remote-debugging-port=0",
+        "--enable-unsafe-extension-debugging",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-sync",
+        "--window-size=1000,700",
+        "about:blank"
+      ],
+      "args_source": "proc.args"
+    },
+    "exemption_scan": {
+      "files": [
+        "background.js",
+        "connector.html",
+        "connector.js",
+        "manifest.json"
+      ],
+      "findings": []
+    },
+    "os_foreground": {
+      "required": true,
+      "chrome_pid": 90368,
+      "reader": "osascript -l JavaScript: AppKit.NSWorkspace.sharedWorkspace.frontmostApplication",
+      "platform": "macos",
+      "page_state_guard": "controller CDP read of the connector page at sample time: document.visibilityState must be 'visible' (hasFocus recorded) - a locked console makes Chrome pages hidden, so an owned pid read during a lock cannot look unlocked",
+      "session_guard": "ctypes CGSessionCopyCurrentDictionary via CFPropertyListCreateXMLData (kCGSSessionOnConsoleKey true, CGSSessionScreenIsLocked absent/false); the JXA ObjC bridge cannot call this C function on macOS 26 (it returns the bridge function object itself and wraps NULL truthy - recorded in the 2026-10-27 pre-measurement calibration), so the query is native or nothing",
+      "gate": {
+        "state": "confirmed",
+        "polls": 1,
+        "waited_s": 0.149,
+        "last": {
+          "verified": true,
+          "pid": 90368,
+          "owned": true,
+          "name": "Google Chrome",
+          "bundle": "com.google.Chrome",
+          "session": {
+            "verified": true,
+            "on_console": true,
+            "screen_locked": false
+          },
+          "ps_args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank",
+          "page_state": {
+            "ok": true,
+            "visibility_state": "visible",
+            "has_focus": true,
+            "page": "96C1BCBEEBF8EC0538E1FDE44D64CED7"
+          }
+        }
+      },
+      "gate_confirmed_mono": 1.650815,
+      "ble_start_mono": 1.839796208,
+      "after_switch": {
+        "verified": true,
+        "pid": 90368,
+        "owned": true,
+        "name": "Google Chrome",
+        "bundle": "com.google.Chrome",
+        "session": {
+          "verified": true,
+          "on_console": true,
+          "screen_locked": false
+        },
+        "ps_args": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/var/folders/qy/swjxw_6s30l74n9p8vlxhk1m0000gn/T/veles-otp23-macos-profile-zpx00edd --remote-debugging-port=0 --enable-unsafe-extension-debugging --no-first-run --no-default-browser-check --disable-sync --window-size=1000,700 about:blank",
+        "page_state": {
+          "ok": true,
+          "visibility_state": "visible",
+          "has_focus": true,
+          "page": "C0BEAF010ACE4196D70885AAAB0BB026"
+        }
+      }
+    },
+    "same_window_binding": {
+      "chrome_tabs": {
+        "connector_tab_id": 1014451676,
+        "connector_window_id": 1014451674,
+        "ordinary_tab_id": 1014451677,
+        "ordinary_window_id": 1014451674
+      },
+      "cdp_window_ids_equal": true,
+      "created_by": "chrome.tabs.create(windowId=connector window, active)"
+    },
+    "pre_close_probe": {
+      "connector_visibility": "hidden",
+      "ordinary_tab_visibility": "visible",
+      "ordinary_tab_focused": true
+    },
+    "browser_level_connection_closed": true,
+    "connector_session_detached_by_close": true,
+    "cdp_calls_during_idle": 0,
+    "title_probe": {
+      "title_before_attach": "otp23 messages=2 last=1793118209440"
+    },
+    "cleanup": {
+      "shutdown_complete": true,
+      "chrome_closed": true,
+      "surviving_hosts": [],
+      "errors": []
+    },
+    "host_trace": {
+      "message_count": 2,
+      "sends_in_trace": 0,
+      "message_wall_estimates": [
+        1793118207.413,
+        1793118209.433
+      ],
+      "method": "driver wall time at hello + host trace ms offset since its hello line (approximate)"
+    },
+    "phone_evidence": [
+      {
+        "kind": "otp23-unsolicited-evidence",
+        "pushes": [
+          {
+            "peer_sha256_prefix": "576d2120",
+            "subscribed_at_epoch_ms": 1793117517231,
+            "fired_at_epoch_ms": 1793118207264,
+            "configured_delay_ms": 690000,
+            "queued": true,
+            "bytes": 4096,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6"
+          }
+        ]
+      },
+      {
+        "kind": "otp23-unsolicited-evidence",
+        "pushes": [
+          {
+            "peer_sha256_prefix": "576d2120",
+            "subscribed_at_epoch_ms": 1793117519248,
+            "fired_at_epoch_ms": 1793118209256,
+            "configured_delay_ms": 690000,
+            "queued": true,
+            "bytes": 4096,
+            "sha256": "bacb3ac9a8a06263791fa5d9e33d1493d9d6a60165739b2f4c84ea25356e9ef6"
+          }
+        ]
+      }
+    ],
+    "phone_evidence_errors": [],
+    "phone_validation": {
+      "status": "PASS",
+      "problems": [],
+      "files": [
+        {
+          "index": 1,
+          "source_hash": "c049779ebb347937c1e811616b0d63268b874b6425fff380cf98e5ee3c88a729",
+          "sha256": "733368474be1c3204d999c94e505a2f858ca6ef87cb47713c2dd64de8bcf8fa1",
+          "size": 365,
+          "mtime_utc": "2026-10-27T16:25:45Z",
+          "problems": []
+        },
+        {
+          "index": 2,
+          "source_hash": "dd63603cd0cdb86d8f0b984739b92bb91f01f0b4ee5c48421b46fa77c2ee168a",
+          "sha256": "7d24c3eed312789bf0ad4e3d067846801c1a0436c9688bf414148e1b7dec0e00",
+          "size": 365,
+          "mtime_utc": "2026-10-27T16:25:49Z",
+          "problems": []
+        }
+      ],
+      "clock": {
+        "offset_ms": 550.906,
+        "uncertainty_ms": 2390.0,
+        "source": "measured 2026-10-27T16:52:33Z and 16:59:16Z (two rounds, 7 samples/clock, min-RTT, midpoint-of-SSH/adb-RTT vs dev container reference); desktop(Mac)-phone offset = mean of round-2 pairwise per-phone offsets (raw values in clock-round JSONs), uncertainty = max pair half-RTT bound (2314.44) + half-spread across the two phones (43.185) + relative-drift extrapolation over the evidence span (31.679; pairwise drift 4.44 ms over 403 s), rounded up to 2390 ms; unchanged from the v1 adjudication that used the same measurement"
+      },
+      "central_peer_prefixes_informational": [
+        "576d2120",
+        "576d2120"
+      ]
+    },
+    "phone_clock": {
+      "offset_ms": 550.906,
+      "uncertainty_ms": 2390.0,
+      "source": "measured 2026-10-27T16:52:33Z and 16:59:16Z (two rounds, 7 samples/clock, min-RTT, midpoint-of-SSH/adb-RTT vs dev container reference); desktop(Mac)-phone offset = mean of round-2 pairwise per-phone offsets (raw values in clock-round JSONs), uncertainty = max pair half-RTT bound (2314.44) + half-spread across the two phones (43.185) + relative-drift extrapolation over the evidence span (31.679; pairwise drift 4.44 ms over 403 s), rounded up to 2390 ms; unchanged from the v1 adjudication that used the same measurement"
+    }
+  }
+}

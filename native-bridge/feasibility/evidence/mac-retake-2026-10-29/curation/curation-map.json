@@ -1,0 +1,68 @@
+{
+  "what": "Curation record for evidence/mac-retake-2026-10-29 (publication set vs privately kept captures)",
+  "policy": "every captured file is either published here (covered by ../SHA256SUMS) or kept privately outside the workspace with its sha256 listed below; no captured measurement is altered; exclusions are named by path and reason without quoting their contents",
+  "private_location": "/tmp/approved-otp23-privacy/mac-retake-2026-10-29 (outside the repository; parent to move to durable private storage)",
+  "excluded": [
+    {
+      "path_private": "nm-dir-after-register.txt",
+      "sha256": "07a5355023061c4ac351074d8c55884c80949976731a4da2d87fe8d610eb7840",
+      "reason": "raw NativeMessagingHosts directory listing: names other applications' manifests (not relevant); represented by registration/record.json"
+    },
+    {
+      "path_private": "nm-dir-after-unregister.txt",
+      "sha256": "64828a75649ffd10e8b7dd378d9445af9269e9a02757431e6ee872d0ba934ec6",
+      "reason": "raw NativeMessagingHosts directory listing: names other applications' manifests (not relevant); represented by registration/record.json"
+    },
+    {
+      "path_private": "nm-dir-before.txt",
+      "sha256": "a00c12527a40ed60bee0771b4234fa97dfdcb1d98ae76fa21a57a6e6824bab66",
+      "reason": "raw NativeMessagingHosts directory listing: names other applications' manifests (not relevant); represented by registration/record.json"
+    },
+    {
+      "path_private": "port-disconnect-1/driver-stderr.txt",
+      "sha256": "bb2acb4da0ce7b22adbcb3cf84e9635de90babeeb27093ea9fbea57cb6037103",
+      "reason": "Chrome's own stderr log noise (6 lines per run: keychain/password-store/allocator/DevTools lines; no driver output)"
+    },
+    {
+      "path_private": "port-disconnect-1/fixture-10Pro.adb-client.pid",
+      "sha256": "dee1e2e4684d23f0c50e84c17b240e878ccaca35dcf0175d6f97747088b7b299",
+      "reason": "local adb client pid (operator bookkeeping, not evidence)"
+    },
+    {
+      "path_private": "port-disconnect-1/fixture-6T.adb-client.pid",
+      "sha256": "3b3153704d6abf7d25b60a04d44a62e30ef67ff694a4ae18d1e4994b2bdaf539",
+      "reason": "local adb client pid (operator bookkeeping, not evidence)"
+    },
+    {
+      "path_private": "shutdown-1/driver-stderr.txt",
+      "sha256": "129739c3e08e979cd42a33347eab68a4a5979aec004dfa1513f604dfbca5857e",
+      "reason": "Chrome's own stderr log noise (6 lines per run: keychain/password-store/allocator/DevTools lines; no driver output)"
+    },
+    {
+      "path_private": "shutdown-1/fixture-10Pro.adb-client.pid",
+      "sha256": "d6be4429f9cc126ca427e0f1f1bdac0e3211008761771ef72dd203225312880b",
+      "reason": "local adb client pid (operator bookkeeping, not evidence)"
+    },
+    {
+      "path_private": "shutdown-1/fixture-6T.adb-client.pid",
+      "sha256": "1e28e462a655f9c47d86a49218e15043449c2d9e5b3fa5b9ee52149c5fe878f5",
+      "reason": "local adb client pid (operator bookkeeping, not evidence)"
+    },
+    {
+      "path_private": "tab-close-1/driver-stderr.txt",
+      "sha256": "89fe5112a32a3db76db81782241fdf289a57a47549534d228779fa7e35c57fae",
+      "reason": "Chrome's own stderr log noise (6 lines per run: keychain/password-store/allocator/DevTools lines; no driver output)"
+    },
+    {
+      "path_private": "tab-close-1/fixture-10Pro.adb-client.pid",
+      "sha256": "f92303a418f827fa0c32b007147782cc91b63b329a8ec3ea51a0ae126813e3b7",
+      "reason": "local adb client pid (operator bookkeeping, not evidence)"
+    },
+    {
+      "path_private": "tab-close-1/fixture-6T.adb-client.pid",
+      "sha256": "e4ad06b9bb425fc215b565ba98fd4b13bd116bdc6b1d9953ef46af24cc29476d",
+      "reason": "local adb client pid (operator bookkeeping, not evidence)"
+    }
+  ],
+  "not_published_duplicates": "the per-attempt tarballs pulled from the Mac (mac-<scenario>-1.tgz) are byte-transport copies of the published mac/ files"
+}

@@ -1,0 +1,213 @@
+{
+  "artifact": "derived re-evaluation of the saved compare raws with the strengthened run-validity rule",
+  "generated_utc": "2026-10-27T23:10:15.285+00:00",
+  "why": "Opus windows-final review finding I-A: the saved raws were re-judged by the stricter protocol rule (exactly two first-phase connections, both second-phone attempts with nothing unresolved, measured gap within +/-500 ms of the target); no raw file was rewritten and nothing was re-run physically.",
+  "rule": "scripts/windows_closejoin_compare.py run_validity (tolerance_ms=500, expected_conns=2)",
+  "tool": {
+    "driver_sha256": "9d2595d46b24aff6463aecd31d964f20429d64fb41adf1a0b07b7f7d12a8b919",
+    "driver_source": "native-bridge/feasibility/scripts/windows_closejoin_compare.py",
+    "tests": "native-bridge/feasibility/scripts/test_windows_closejoin_compare.py"
+  },
+  "inputs": {
+    "compare-1/result.json": "a5feae9c5d0788cf3fda2fff685a13dbfc789ee5202d7b5d3e7bd2554c88cd6c",
+    "compare-2/result.json": "cbc50653c50091a060370bdd1d86f26547cb8406ef2213993a62ebf4f18ffaa4",
+    "host_binary_sha256_as_recorded_in_both": "8521de4d58bdba0858e717e3dca3bcc0850b272ba3c1544bda158afb9e60ae33"
+  },
+  "commands": [
+    "python3 scripts/windows_closejoin_compare.py --recheck-dir evidence/windows-cleanup-2026-10-27/compare-1 --gap-tolerance-ms 500",
+    "python3 scripts/windows_closejoin_compare.py --recheck-dir evidence/windows-cleanup-2026-10-27/compare-2 --gap-tolerance-ms 500"
+  ],
+  "recheck": {
+    "compare-1": {
+      "dir": "compare-1",
+      "target_gap_ms": 1500,
+      "tolerance_ms": 500,
+      "runs": [
+        {
+          "index": 1,
+          "arm": "awaited",
+          "dir": "run-1-awaited",
+          "validity_as_stored": "invalid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [],
+          "measured_gap_ms": null,
+          "verdict": "invalid",
+          "reason": "first-phase connections [] != exactly 2 expected"
+        },
+        {
+          "index": 2,
+          "arm": "legacy",
+          "dir": "run-2-legacy",
+          "validity_as_stored": "invalid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [],
+          "measured_gap_ms": null,
+          "verdict": "invalid",
+          "reason": "first-phase connections [] != exactly 2 expected"
+        },
+        {
+          "index": 3,
+          "arm": "legacy",
+          "dir": "run-3-legacy",
+          "validity_as_stored": "invalid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [],
+          "measured_gap_ms": null,
+          "verdict": "invalid",
+          "reason": "first-phase connections [] != exactly 2 expected"
+        },
+        {
+          "index": 4,
+          "arm": "awaited",
+          "dir": "run-4-awaited",
+          "validity_as_stored": "invalid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [],
+          "measured_gap_ms": null,
+          "verdict": "invalid",
+          "reason": "first-phase connections [] != exactly 2 expected"
+        },
+        {
+          "index": 5,
+          "arm": "awaited",
+          "dir": "run-5-awaited",
+          "validity_as_stored": "invalid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [],
+          "measured_gap_ms": null,
+          "verdict": "invalid",
+          "reason": "first-phase connections [] != exactly 2 expected"
+        },
+        {
+          "index": 6,
+          "arm": "legacy",
+          "dir": "run-6-legacy",
+          "validity_as_stored": "invalid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [],
+          "measured_gap_ms": null,
+          "verdict": "invalid",
+          "reason": "first-phase connections [] != exactly 2 expected"
+        }
+      ],
+      "counts": {
+        "valid": 0,
+        "invalid": 6,
+        "not-completed": 0
+      }
+    },
+    "compare-2": {
+      "dir": "compare-2",
+      "target_gap_ms": 1500,
+      "tolerance_ms": 500,
+      "runs": [
+        {
+          "index": 1,
+          "arm": "awaited",
+          "dir": "run-1-awaited",
+          "validity_as_stored": "valid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [
+            "2",
+            "3"
+          ],
+          "measured_gap_ms": 1500,
+          "verdict": "valid",
+          "reason": null
+        },
+        {
+          "index": 2,
+          "arm": "legacy",
+          "dir": "run-2-legacy",
+          "validity_as_stored": "valid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [
+            "2",
+            "3"
+          ],
+          "measured_gap_ms": 1500,
+          "verdict": "valid",
+          "reason": null
+        },
+        {
+          "index": 3,
+          "arm": "legacy",
+          "dir": "run-3-legacy",
+          "validity_as_stored": "valid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [
+            "2",
+            "3"
+          ],
+          "measured_gap_ms": 1500,
+          "verdict": "valid",
+          "reason": null
+        },
+        {
+          "index": 4,
+          "arm": "awaited",
+          "dir": "run-4-awaited",
+          "validity_as_stored": "valid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [
+            "2",
+            "3"
+          ],
+          "measured_gap_ms": 1501,
+          "verdict": "valid",
+          "reason": null
+        },
+        {
+          "index": 5,
+          "arm": "awaited",
+          "dir": "run-5-awaited",
+          "validity_as_stored": "valid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [
+            "2",
+            "3"
+          ],
+          "measured_gap_ms": 1501,
+          "verdict": "valid",
+          "reason": null
+        },
+        {
+          "index": 6,
+          "arm": "legacy",
+          "dir": "run-6-legacy",
+          "validity_as_stored": "valid",
+          "stored_parse_matches": true,
+          "gap_matches_stored": true,
+          "first_phase_conns": [
+            "2",
+            "3"
+          ],
+          "measured_gap_ms": 1500,
+          "verdict": "valid",
+          "reason": null
+        }
+      ],
+      "counts": {
+        "valid": 6,
+        "invalid": 0,
+        "not-completed": 0
+      }
+    }
+  },
+  "conclusion": {
+    "compare-1": "6/6 runs INVALID (zero first-phase links; the unresolved 'all' token selection defect); retained as a failure record",
+    "compare-2": "6/6 runs VALID under the stricter rule; awaited 3/3 clean, legacy 3/3 denied; measured gaps 1500/1501 ms within tolerance; stored parse and gap consistent for every run",
+    "claim_scope": "unchanged: supported at the tested 1.5 s anchor-matched point only; no threshold, no retries/delay claim, W-07/W-08 stay BLOCKED"
+  }
+}
