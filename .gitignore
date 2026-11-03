@@ -20,3 +20,5 @@ local.properties
 # documented `npm ci --prefix verify` prerequisite. Never committed or removed;
 # ignored so verify-all.sh's clean-checkout contract stays satisfiable locally.
 /verify/node_modules/
+# Local Android fixture signing material, never commit keys or passwords.
+/config/android_keys/

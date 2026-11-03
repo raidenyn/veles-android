@@ -33,6 +33,13 @@ cross-platform key: Android and macOS identities are separate.
   fingerprints of the new APK and the installed one before `adb install -r`. Do not
   regenerate the key, uninstall the app, or clear data as a routine workaround; if the
   original key is unavailable, stop and ask.
+- **OTP-23 fixture migration (user-authorized 2026-11-02):** the replacement debug fixture key
+  is `config/android_keys/otp23-fixture.keystore`, with local Gradle init script
+  `config/android_keys/fixture-signing.gradle`. The directory is git-ignored and must be
+  retained and backed up securely. Build the existing isolated fixture and its test APK with
+  `./gradlew --init-script config/android_keys/fixture-signing.gradle assembleDebug assembleDebugAndroidTest`.
+  This debug-only identity does not authorize changing production signing; keep comparing APK
+  certificates before future updates and never commit the key or its credentials.
 - **macOS:** reuse the exact approved signing identity/team and bundle ID. No ad-hoc
   substitution, key export, or TCC reset; use the Aqua keychain context when required.
 - Different production signing is a separately planned migration with revalidation. Do not
@@ -104,6 +111,16 @@ npm run package                 # vite build + deterministic zip + sha256 sideca
 # Platform-specific deterministic packaging into build/native-bridge/
 ./gradlew bridgePackage
 
+# OTP-24 production Native Messaging host (native-bridge/host, crate veles-ble-host) — plain Rust,
+# NO Tauri/Node/npm; distinct from the scaffold tasks above. Locked cargo, toolchain pinned to
+# 1.98.0 by native-bridge/host/rust-toolchain.toml, cargo target under build/native-bridge/host-target.
+./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest
+# Build ONLY veles-native-host (locked, release, no features; the test-driver bin is feature-gated and
+# never built). Emits build/native-bridge/host/veles-native-host[.exe] + SHA256SUMS. Windows and macOS
+# runners compile the real adapters; Linux only runs the portable checks.
+./gradlew bridgeHostBuild
+python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py'   # static build-contract checks
+
 # OTP-01 sub-project 1d — verification & supply chain
 # Local aggregate verifier (NOT used by CI). Runs all six component verifiers
 # in order and stops on the first failure. Exit 0 = all matched, 1 = mismatch,
@@ -158,7 +175,8 @@ or requires a Docker reference build:
 | `build-rust.yml` | `rust-jni-wasm` package |
 | `build-native-windows.yml` | Windows bridge executable + NSIS/MSI installers, packaged once via `bridgePackage` (`native-windows`); provisions the pinned WiX/NSIS cache and exports its absolute `NSIS_PATH` |
 | `build-native-macos.yml` | macOS bridge executable + `.app`/DMG, packaged once via `bridgePackage` (`native-macos`) |
-| `build-supply-chain.yml` | SBOM/license/audit reports (`supply-chain-reports`); report validation + policy enforcement |
+| `build-supply-chain.yml` | SBOM/license/audit reports (`supply-chain-reports`); report validation + policy enforcement (five SBOMs incl. `native-host.cdx.json`; vendored `bluest` patch provenance via `verify/check-vendored-patches.mjs`) |
+| `build-native-host.yml` | OTP-24 production host (called from `ci.yml`, not `release-build.yml`): Linux portable checks, `windows-2025`/`macos-26` compile + test + `bridgeHostBuild`; artifacts `native-host-windows` (exe + `SHA256SUMS`) / `native-host-macos` (mode-preserving tar of the executable + `SHA256SUMS`, plus archive sidecar; upload drops bare exec bits) (no installer, no Tauri). Not the scaffold's `native-windows`/`native-macos` archives |
 
 `release-build.yml` composes these with the neutral names, and its manual
 prerelease publisher depends on the guard plus every producer/policy job;

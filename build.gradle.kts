@@ -1086,6 +1086,111 @@ val bridgePackage = tasks.register<Exec>("bridgePackage") {
     commandLine("node", "scripts/package.mjs")
 }
 
+// ---- OTP-24 production host (begin) ----
+// OTP-24 production Native Messaging host (`native-bridge/host`, crate veles-ble-host).
+//
+// This is NOT the Tauri scaffold above. It is a plain Rust executable (`veles-native-host`)
+// built by a locked cargo invocation with the host's own pinned 1.98.0 toolchain
+// (native-bridge/host/rust-toolchain.toml). Nothing here uses Node, npm or Tauri, and the
+// graph is deliberately disjoint from bridgeInstall/bridgeBuild/bridgeBundle/bridgePackage:
+// the old scaffold installers keep their `native-windows`/`native-macos` ownership and are not
+// relabeled. Every product lands under build/ (never in the source tree):
+//   build/native-bridge/host-target/        cargo target dir (CARGO_TARGET_DIR)
+//   build/native-bridge/host/               veles-native-host[.exe] + SHA256SUMS
+// The test-driver binary is gated behind the non-default `test-driver` feature and is never
+// built here: bridgeHostBuild names `--bin veles-native-host` and enables no feature.
+val productionHostDir = layout.projectDirectory.dir("native-bridge/host")
+val productionHostTargetDir = layout.buildDirectory.dir("native-bridge/host-target")
+val productionHostOutputDir = layout.buildDirectory.dir("native-bridge/host")
+val productionHostExecutable = "veles-native-host$windowsExecutableSuffix"
+
+fun Exec.productionHostEnvironment() {
+    workingDir(productionHostDir)
+    environment("CARGO_TARGET_DIR", productionHostTargetDir.get().asFile)
+    // The origin allowlist is compiled in through option_env!("VELES_ALLOWED_ORIGINS"), so the variable is a
+    // real build input: changing only it must re-run cargo instead of leaving a stale staged binary.
+    inputs.property("VELES_ALLOWED_ORIGINS", providers.environmentVariable("VELES_ALLOWED_ORIGINS").orElse(""))
+}
+
+val bridgeHostSources = productionHostDir.let { host ->
+    fileTree(host) {
+        include("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", "src/**", "tests/**", "examples/**", "vendor/**")
+    }
+}
+
+val bridgeHostToolchainCheck = tasks.register("bridgeHostToolchainCheck") {
+    group = "native-bridge"
+    description = "Asserts the native-bridge/host crate resolves to its pinned Rust 1.98.0 toolchain."
+    inputs.file(productionHostDir.file("rust-toolchain.toml"))
+    doLast {
+        val hint = "Install rustup and run `rustup show active-toolchain` in native-bridge/host/ to install the pinned toolchain"
+        requireOnPath("rustup", "Rust 1.98.0", hint)
+        requireOnPath("cargo", "Rust 1.98.0", hint)
+        val rustc = providers.exec {
+            workingDir(productionHostDir)
+            commandLine("rustc", "--version")
+        }.standardOutput.asText.get().trim()
+        check(rustc.startsWith("rustc 1.98.0 ")) {
+            "native-bridge/host/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '$rustc'"
+        }
+    }
+}
+
+val bridgeHostFormat = tasks.register<Exec>("bridgeHostFormat") {
+    group = "native-bridge"
+    description = "Checks cargo fmt formatting for the production host crate."
+    dependsOn(bridgeHostToolchainCheck)
+    inputs.files(bridgeHostSources)
+    productionHostEnvironment()
+    commandLine("cargo", "fmt", "--all", "--", "--check")
+}
+
+val bridgeHostLint = tasks.register<Exec>("bridgeHostLint") {
+    group = "native-bridge"
+    description = "Runs locked cargo clippy with -D warnings for the production host crate."
+    dependsOn(bridgeHostToolchainCheck)
+    inputs.files(bridgeHostSources)
+    productionHostEnvironment()
+    commandLine("cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings")
+}
+
+val bridgeHostTest = tasks.register<Exec>("bridgeHostTest") {
+    group = "native-bridge"
+    description = "Runs locked cargo test for the production host crate (portable plus current-OS adapter tests)."
+    dependsOn(bridgeHostToolchainCheck)
+    inputs.files(bridgeHostSources)
+    productionHostEnvironment()
+    commandLine("cargo", "test", "--locked")
+}
+
+val bridgeHostBuild = tasks.register<Exec>("bridgeHostBuild") {
+    group = "native-bridge"
+    description = "Builds only veles-native-host (locked, release, no features) and writes build/native-bridge/host/{exe,SHA256SUMS}."
+    dependsOn(bridgeHostToolchainCheck)
+    inputs.files(bridgeHostSources)
+    outputs.dir(productionHostOutputDir)
+    productionHostEnvironment()
+    doFirst {
+        // A stale executable or checksum must never be mistaken for this build's product.
+        delete(productionHostOutputDir)
+    }
+    commandLine("cargo", "build", "--locked", "--release", "--bin", "veles-native-host")
+    doLast {
+        val built = productionHostTargetDir.get().asFile.resolve("release/$productionHostExecutable")
+        // Only the production executable is accepted: no fallback to the Tauri scaffold output.
+        check(built.isFile) { "bridgeHostBuild: production executable missing at $built" }
+        val outputDir = productionHostOutputDir.get().asFile
+        outputDir.mkdirs()
+        val staged = outputDir.resolve(productionHostExecutable)
+        built.copyTo(staged, overwrite = true)
+        staged.setExecutable(true, false)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(staged.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        outputDir.resolve("SHA256SUMS").writeText("$digest  $productionHostExecutable\n")
+    }
+}
+// ---- OTP-24 production host (end) ----
+
 tasks.named("check") {
     dependsOn(
         rustFormat,
@@ -1095,6 +1200,9 @@ tasks.named("check") {
         bridgeLint,
         bridgeTypecheck,
         bridgeTest,
+        bridgeHostFormat,
+        bridgeHostLint,
+        bridgeHostTest,
         "protocolCheck",
     )
 }
@@ -1117,6 +1225,10 @@ tasks.named<Delete>("clean") {
         wasmPackageDir,
         layout.projectDirectory.dir("native-bridge/src-tauri/target"),
         layout.projectDirectory.dir("native-bridge/dist"),
+        // OTP-24 production host: cargo targets live under build/native-bridge; these
+        // source-tree paths are removed defensively in case a cargo run ignored CARGO_TARGET_DIR.
+        layout.projectDirectory.dir("native-bridge/host/target"),
+        layout.projectDirectory.dir("native-bridge/host/build"),
         layout.buildDirectory.dir("native-bridge"),
         // Rust JNI/WASM staged package (rustPackage producer).
         rustPackageDir,

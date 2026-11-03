@@ -4,3 +4,5 @@ src-tauri/gen/
 dist/
 # Disposable OTP-23 experiment has its own Rust/connector checks and raw evidence.
 feasibility/
+# The production Rust host and its acceptance tooling have their own checks.
+host/

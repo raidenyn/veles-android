@@ -250,8 +250,10 @@ impl Reassembler {
             return self.discard(DiscardReason::ZeroTransaction);
         }
         self.expire(now);
-        if index == 0 && self.partials.iter().any(|p| p.id == id) {
-            return self.conflict(now);
+        if index == 0
+            && let Some(live) = self.partials.iter().position(|p| p.id == id)
+        {
+            return self.conflict(live, now);
         }
         if index == 0 {
             if !(1..=MAX_RECORD).contains(&length) {
@@ -305,7 +307,11 @@ impl Reassembler {
             && self.budget.try_reserve(length)
     }
 
-    fn conflict(&mut self, now: Instant) -> PushOutcome {
+    /// OTP2-GAT-011 conflict rule (owner ruling, kept in step with the production host): a start
+    /// for a live id erases that partial, releases its budget and is itself rejected.
+    fn conflict(&mut self, live: usize, now: Instant) -> PushOutcome {
+        let erased = self.partials.remove(live);
+        self.budget.release(erased.total);
         while self
             .conflicts
             .front()

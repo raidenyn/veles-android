@@ -10,8 +10,9 @@ package me.nagaev.veles.sharing
  * value. Every non-final fragment carries exactly `attributeBudget - 4` payload bytes, the final one
  * exactly what remains. [attributeBudget] is the only place that formula is written.
  */
+@Suppress("TooManyFunctions") // Includes an opt-in diagnostic snapshot of queue refusal causes.
 internal class GattTransport(private val clock: () -> Long) {
-    data class Received(val record: ByteArray? = null, val disconnect: Boolean = false)
+    data class Received(val record: ByteArray? = null, val disconnect: Boolean = false, val diagnostic: String = "unknown")
     private class Partial(val id: Int, val total: Int, var touched: Long) {
         val bytes = ByteArray(total)
         var used = 0
@@ -88,36 +89,36 @@ internal class GattTransport(private val clock: () -> Long) {
     @Suppress("ReturnCount") // Parser rejects invalid input before allocation/copy.
     @Synchronized
     fun receive(id: String, frame: ByteArray): Received {
-        val peer = peers[id] ?: return Received()
-        if (peer.mtu == 0) return Received()
-        if (frame.size !in HEADER..attributeBudget(peer.mtu)) return reject(peer)
+        val peer = peers[id] ?: return Received(diagnostic = "unknown_peer")
+        if (peer.mtu == 0) return Received(diagnostic = "missing_mtu")
+        if (frame.size !in HEADER..attributeBudget(peer.mtu)) return reject(peer, "invalid_frame_size")
         val index = frame[0].toInt() and 127
         val final = frame[0].toInt() and 128 != 0
         val transaction = frame[1].toInt() and 255
         val length = ((frame[2].toInt() and 255) shl 8) or (frame[3].toInt() and 255)
-        if (transaction == 0) return reject(peer)
+        if (transaction == 0) return reject(peer, "invalid_transaction")
         peers.values.forEach(::expirePartials)
-        if (index == 0 && transaction in peer.partials) return conflict(id, peer)
+        if (index == 0 && transaction in peer.partials) return conflict(id, peer, transaction)
         if (index == 0) {
-            if (length !in 1..4096) return reject(peer)
-            if (!canAllocate(peer, length)) return Received()
+            if (length !in 1..4096) return reject(peer, "invalid_length")
+            if (!canAllocate(peer, length)) return Received(diagnostic = "allocation_limit")
             peer.partials[transaction] = Partial(transaction, length, clock())
         }
-        val partial = peer.partials[transaction] ?: return Received()
+        val partial = peer.partials[transaction] ?: return Received(diagnostic = "missing_partial")
         val size = frame.size - HEADER
         val ordered = partial.id == transaction && partial.index == index && (index == 0 || length == 0)
         val remaining = partial.total - partial.used
         val validSize = validPayload(final, size, remaining, payloadBudget(peer.mtu), index)
         if (!ordered || !validSize) {
-            return reject(peer)
+            return reject(peer, if (!ordered) "invalid_order" else "invalid_payload_size")
         }
         frame.copyInto(partial.bytes, partial.used, HEADER)
         partial.used += size
         partial.index++
         partial.touched = clock()
-        if (!final) return Received()
+        if (!final) return Received(diagnostic = "partial")
         peer.partials.remove(transaction)
-        return Received(record = partial.bytes)
+        return Received(record = partial.bytes, diagnostic = "complete")
     }
 
     private fun validPayload(
@@ -138,14 +139,22 @@ internal class GattTransport(private val clock: () -> Long) {
         expired.toList().forEach { peer.partials.remove(it)?.bytes?.fill(0) }
     }
 
-    private fun conflict(id: String, peer: Peer): Received {
+    /**
+     * Conflict rule (OTP2-GAT-011): a start for an id that is already live erases that partial
+     * (zeroing its bytes, which releases its peer and global budget since both are derived from
+     * live partials) and is itself rejected, so a live prefix can never be completed by a foreign
+     * suffix. Later nonzero continuations find no partial and are ignored; a fresh index 0 may
+     * start. A second conflicting start inside the rolling 60 s window disconnects the peer.
+     */
+    private fun conflict(id: String, peer: Peer, transaction: Int): Received {
+        peer.partials.remove(transaction)?.bytes?.fill(0)
         while (peer.conflicts.firstOrNull()?.let { clock() - it >= 60000 } == true) {
             peer.conflicts.removeFirst()
         }
         peer.conflicts.addLast(clock())
         val disconnect = peer.conflicts.size >= 2
         if (disconnect) disconnect(id)
-        return Received(disconnect = disconnect)
+        return Received(disconnect = disconnect, diagnostic = "conflict")
     }
 
     @Suppress("ReturnCount") // Independent per-peer and global ceilings.
@@ -161,6 +170,20 @@ internal class GattTransport(private val clock: () -> Long) {
         }
         peer.queue.addLast(record.copyOf())
         return true
+    }
+
+    /** Snapshot for opt-in debug evidence, called immediately after an enqueue refusal. */
+    @Suppress("ReturnCount") // Report the first independently enforced limit.
+    @Synchronized
+    fun enqueueRefusalReason(id: String, recordSize: Int): String {
+        val peer = peers[id] ?: return "unknown_peer"
+        if (peer.mtu == 0) return "missing_mtu"
+        if (recordSize !in 1..4096) return "invalid_record_size"
+        if (peer.queue.size >= 16) return "peer_count_limit"
+        if (peer.queue.sumOf { it.size } + recordSize > 16384) return "peer_byte_limit"
+        if (peers.values.sumOf { it.queue.size } >= 128) return "global_count_limit"
+        if (peers.values.sumOf { p -> p.queue.sumOf { it.size } } + recordSize > 131072) return "global_byte_limit"
+        return "unknown"
     }
 
     @Synchronized fun nextFragment(id: String): ByteArray? {
@@ -200,9 +223,9 @@ internal class GattTransport(private val clock: () -> Long) {
         }
     }
 
-    private fun reject(peer: Peer): Received {
+    private fun reject(peer: Peer, diagnostic: String): Received {
         peer.partials.values.forEach { it.bytes.fill(0) }
         peer.partials.clear()
-        return Received()
+        return Received(diagnostic = diagnostic)
     }
 }

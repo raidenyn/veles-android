@@ -19,6 +19,22 @@ class TransportTelemetryTest {
         assertNull(SyntheticTransportFixture.telemetry)
     }
 
+    @Test fun inboundEvidenceIsBoundedAndDoesNotRetainAddressOrPayload() {
+        val t = telemetry()
+        val method = t.javaClass.methods.firstOrNull { it.name == "inbound" }
+        assertTrue("inbound diagnostics method missing", method != null)
+        method!!.invoke(t, "AA:BB", "fragment_received", "index=0;transaction=9", 7, "record-hash")
+        val event = t.snapshot().peers.single().events.single()
+        assertEquals("fragment_received", event.kind)
+        assertEquals("index=0;transaction=9", event.label)
+        assertEquals(7, event.bytes)
+        assertFalse(t.snapshot().toString().contains("AA:BB"))
+        repeat(TransportTelemetry.MAX_EVENTS_PER_PEER) {
+            method.invoke(t, "AA:BB", "fragment_received", "index=0;transaction=9", 7, "record-hash")
+        }
+        assertTrue(t.snapshot().truncated)
+    }
+
     @Test fun nonZeroApiCodeAndCallbackStatusArePreservedAndCountedSeparately() {
         val t = telemetry()
         t.notifyResult("AA:BB", 100, 0)

@@ -1,0 +1,76 @@
+[package]
+name = "veles-ble-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+autoexamples = false
+description = "OTP-24 production Native Messaging BLE bridge (portable control plane, process runtime and host entry; 2026-10-31-otp24-production-bridge)"
+
+# Standalone workspace: portable control-plane essentials (serde/serde_json at the exact
+# reviewed pins) plus, on Windows only, the reviewed WinRT stack (below). No Tauri, no
+# feasibility-crate dependency; the macOS stack (Task 7) is below.
+[workspace]
+
+[lib]
+name = "veles_ble_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "veles-native-host"
+path = "src/bin/veles-native-host.rs"
+
+# Test-only simulator driver. It is NOT part of the production artifact: it is gated behind the
+# non-default `test-driver` feature, so `cargo build`/`cargo build --release`/packaging builds
+# never produce it (a plain `cargo build --bin host-test-driver` is refused by cargo). The
+# process-contract tests get it through the self dev-dependency below, which enables the
+# feature for `cargo test` only; the tests locate it via `CARGO_BIN_EXE_host-test-driver`.
+[[bin]]
+name = "host-test-driver"
+path = "examples/host_test_driver.rs"
+required-features = ["test-driver"]
+
+[features]
+default = []
+test-driver = []
+
+[dev-dependencies]
+veles-ble-host = { path = ".", features = ["test-driver"] }
+# Paused-time tests of the portable release logic (`tests/macos_link.rs`).
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "time", "macros", "test-util"] }
+
+[dependencies]
+serde = "=1.0.228"
+serde_json = "=1.0.140"
+
+# Windows-only WinRT BLE stack for the Task 6 adapter (`src/winrt.rs`). Exact pins reviewed in
+# the feasibility harness; no other platform links them.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Enumeration",
+    "Devices_Radios",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams",
+    "Win32_System_WinRT",
+] }
+windows-future = "=0.3.2"
+
+# macOS-only CoreBluetooth stack for the Task 7 adapter (`src/macos.rs`). Exact pins reviewed in
+# the feasibility harness (the same versions bluest 0.6.9 resolves, so one crate instance of
+# each is linked); no other platform links them. `serde` is required because bluest's opaque
+# `DeviceId` only round-trips through its uuid-string serde form.
+[target.'cfg(target_os = "macos")'.dependencies]
+bluest = { version = "=0.6.9", features = ["serde"] }
+objc2-core-bluetooth = { version = "=0.3.2" }
+futures-lite = "=1.13.0"
+tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "time", "sync", "macros"] }
+
+# Reviewed, pinned patch of bluest 0.6.9 (`vendor/bluest/VELES-PATCH.md`): loss-aware notification
+# stream (a dropped notification is an `Err`, never skipped) and an exact `is_disconnected` state
+# read. Only macOS links it.
+[patch.crates-io]
+bluest = { path = "vendor/bluest" }

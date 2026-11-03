@@ -137,7 +137,7 @@
       "name": "record_max_bytes",
       "value": 4096,
       "unit": "bytes",
-      "scope": "total protected record size (header+ciphertext+tag); also reassembled record total",
+      "scope": "total protected record size (header+ciphertext+tag); also reassembled record total, and the GATT send ceiling of decoded `send` records: after envelope admission (bridge_record_max_bytes), the bridge's GATT send path refuses 4097..5120 with correlated oversize_record before any fragment is created or written \u2014 the envelope parser never refuses that range",
       "origin": "builder_choice",
       "source_anchor": "veles-v1.md#sec-record-format"
     },
@@ -362,7 +362,7 @@
       "name": "bridge_record_max_bytes",
       "value": 5120,
       "unit": "bytes",
-      "scope": "record_base64 decoded bytes, per bridge send/message",
+      "scope": "record_base64 decoded bytes, per bridge send/message; the envelope admission ceiling only \u2014 a send decoding above record_max_bytes (4096) is refused by the bridge's GATT send layer with correlated oversize_record before any fragment is created or written",
       "origin": "builder_choice",
       "source_anchor": "veles-v1.md#sec-bridge-bounds"
     },
@@ -517,6 +517,142 @@
       "scope": "maximum enroll_identity body size (label included; minimum 132)",
       "origin": "builder_choice",
       "source_anchor": "veles-v1.md#sec-identity-record"
+    },
+    {
+      "name": "bridge_input_frame_queue_max",
+      "value": 64,
+      "unit": "frames",
+      "scope": "bridge process, reader-side staged Native Messaging input frames (the deterministic core's backpressure queue before the strict parser)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_input_frame_queue_bytes_max",
+      "value": 262144,
+      "unit": "bytes",
+      "scope": "reader-side staged input frames' total bytes, per process",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_data_events_max",
+      "value": 1536,
+      "unit": "events",
+      "scope": "bridge process, staged backend fragment data events (OS callback ingress, each at most the 512-byte fragment-frame ceiling; committed plus in-transit deferred fragments; exactly 32 links x the per-link ceiling, so every link can sit at its own cap at once). Ingress staging only - unrelated to the frozen reassembly (2 / 8 KiB per peer, 16 / 64 KiB global) and delivery caps",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_data_events_bytes_max",
+      "value": 524288,
+      "unit": "bytes",
+      "scope": "staged backend fragment data events' total bytes, per process (32 links x 16 KiB); independent of the 1536-event ceiling",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_data_events_per_link_max",
+      "value": 48,
+      "unit": "events",
+      "scope": "staged backend fragment data events, per connection stream (its bounded ingress FIFO); 48 = two maximum 4096-byte records at the 185-byte MTU floor (2 x 24 fragments)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_data_events_bytes_per_link_max",
+      "value": 16384,
+      "unit": "bytes",
+      "scope": "staged backend fragment data events' bytes, per connection stream; independent of the event ceiling (48 x 512 = 24576 > 16384, so 512-byte fragments reach this cap at 32 events)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_gate_staged_data_events_max",
+      "value": 48,
+      "unit": "events",
+      "scope": "per link/scan callback admission gate: fragment/advertisement events staged before the opening event and queued in the gate's in-transit lane; equal to the per-link ingress ceiling so a burst the ingress accepts is never refused earlier",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_gate_staged_data_bytes_max",
+      "value": 16384,
+      "unit": "bytes",
+      "scope": "per link/scan callback admission gate: staged fragment bytes (same bound as the per-link ingress byte ceiling)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_deferred_controls_max",
+      "value": 256,
+      "unit": "events",
+      "scope": "process-wide control/terminal slots of the ingress in-transit lane (events emitted while the ingress state lock is busy); data can never occupy them; exhausting them latches the control-overflow host failure",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_controls_per_scan_max",
+      "value": 8,
+      "unit": "events",
+      "scope": "reserved control FIFO slots, per scan (start/failed/ended lifecycle)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_controls_per_link_max",
+      "value": 32,
+      "unit": "events",
+      "scope": "reserved control FIFO slots, per connection stream (connected/connect_failed/capacity_changed/link_lost/link_released); a control beyond the cap latches the process-level control-overflow exit (host failure)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_send_completions_per_link_max",
+      "value": 64,
+      "unit": "events",
+      "scope": "guaranteed per-link send-completion staging (WriteDone/WriteFailed), one per admitted outstanding request so a completion is never displaced by ordinary traffic",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_send_storage_records_per_link",
+      "value": 16,
+      "unit": "records",
+      "scope": "bridge send storage (pending + in-flight records), per connection",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_send_storage_bytes_per_link",
+      "value": 16384,
+      "unit": "bytes",
+      "scope": "bridge send storage bytes, per connection",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_send_storage_records_global",
+      "value": 128,
+      "unit": "records",
+      "scope": "bridge send storage records, process-wide",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_send_storage_bytes_global",
+      "value": 131072,
+      "unit": "bytes",
+      "scope": "bridge send storage bytes, process-wide",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
+    },
+    {
+      "name": "bridge_discovery_staging_max",
+      "value": 64,
+      "unit": "devices",
+      "scope": "bounded latest-wins advertisement staging set per scan (distinct devices; duplicates coalesce in place)",
+      "origin": "builder_choice",
+      "source_anchor": "veles-v1.md#sec-bridge-bounds"
     }
   ]
 }

@@ -1658,10 +1658,39 @@ framing on behalf of the connector; the connector never sees fragments.
   bound and MTU ≥ 185 keep every valid record within 24 fragments). An empty
   record and a record above 4096 bytes are refused by the sender and a
   `total_record_length` of 0 or above 4096 is malformed at the receiver.
-  Conflict rule: fragments of a second transaction with a `transaction_id`
-  equal to a live incomplete transaction on the same connection are
-  ignored; a second conflicting transaction within a rolling 60 s window
-  disconnects the peer (bounded hostile behavior). When the final fragment
+  Conflict rule: a start (`fragment_index` 0) whose `transaction_id` equals
+  a live incomplete transaction on the same connection discards and erases
+  that existing partial, releases its per-peer and global reassembly
+  reservation, and is itself rejected (transport-only loss; no session
+  effect by itself). Later fragments with `fragment_index` ≥ 1 for an id
+  with no live partial are ignored, so a rejected conflicting transaction
+  can never be completed onto, or splice with, the discarded prefix. A
+  later fresh `fragment_index` 0 for that id starts a new transaction. Each
+  conflicting start (including the one that erased a partial) enters the
+  rolling 60 s window; the second conflicting start within that window
+  disconnects the peer (bounded hostile behavior). A start for an id with
+  no live partial is not a conflict, so reaching the second conflict after
+  a discard requires starting that id again as a live transaction first. Precedence: for a
+  syntactically valid header (nonzero id, index 0, frame within the attribute
+  budget) a start of a live id is a
+  conflict before its declared `total_record_length` is validated, so a
+  duplicate start declaring 0 or more than 4096 bytes still erases the live
+  partial and is counted in the window. A frame above the attribute budget
+  is malformed and is rejected before this rule: it is not a conflict, is
+  not counted in the window, and discards every partial transaction of the
+  peer like any malformed frame; the per-peer transaction cap applies only to
+  a new start, after the conflict check. A bare continuation (index ≥ 1)
+  injected into a live partial without any conflicting start remains
+  indistinguishable from the peer's own fragment on this unauthenticated
+  transport; this rule neither detects nor prevents it. What happens to the
+  reassembled bytes is decided above the transport and is not established
+  by this rule or its transport-level tests: protected records are expected
+  to be rejected by their own authentication and sequence checks
+  (OTP2-REC-032), and pre-auth frames by their strict frame validation and
+  the pairing confirmation steps; neither outcome is verified end to end
+  here. This conflict rule was settled
+  before the first release (git tags 0.0.1–0.0.3 contain no fragmentation
+  code), so it is part of the profile as first shipped. When the final fragment
   completes a buffer and the exact-length rule passes, the reassembled
   1..4096-byte record is delivered to the record layer and the fragment
   state is erased.
@@ -1924,9 +1953,14 @@ a disagreement is a defect that fails the executable checks.
   4. Asynchronous link loss: first correlated `error` for each affected
      in-flight request, then exactly one unsolicited `disconnected`; no later
      `sent` or `message` may use that handle.
-  5. A `sent` confirms only completed GATT writes — never an application
-     acknowledgement and never a guarantee of Android-side processing
-     (OTP2-REC-032; OTP2-GAT-013).
+  5. A `sent` confirms only that every native write-without-response
+     submission of the fragment batch returned successfully at the local OS
+     API boundary (Windows: the WinRT result; macOS: each reviewed bluest
+     `write_without_response` operation) — local completion only. It is
+     never an application acknowledgement, never an over-air delivery
+     acknowledgement, and never a guarantee of Android-side processing or
+     authenticated delivery: OS-owned transmission may still be in flight
+     after `sent` (OTP2-REC-032; OTP2-GAT-013).
   6. `shutdown`: every other pending request gets a correlated `error`, then
      remaining unsolicited lifecycle events (no request IDs), then
      `shutdown_complete` is the FINAL JSON message before stdout closes.
@@ -1977,9 +2011,13 @@ a disagreement is a defect that fails the executable checks.
   (no misreporting). The overflow exit is its own exit code (`4`,
   OTP2-BRD-032).
 - **OTP2-BRD-031** — limits echo the Veles record bound: `record_base64`
-  decodes to 1..5120 bytes (an independent transport bound; the Veles record
-  layer separately enforces its own 4096-byte maximum and rejects larger
-  records at the record layer without involving the bridge). 5120 bytes
+  decodes to 1..5120 bytes — the envelope admission ceiling at the bridge's
+  Native Messaging boundary. It is NOT the GATT send limit: the bridge's
+  fragment/send path additionally enforces the Veles record maximum
+  (`record_max_bytes`, 4096) and answers a `send` that decodes to
+  4097..5120 bytes with a correlated `error` (`oversize_record`) before any
+  fragment is created or written (OTP2-GAT-011); a send decoding to 0 bytes
+  stays `invalid_base64` (OTP2-BRD-002). 5120 bytes
   base64-encode to at most 6828 characters (+ field/framing overhead) — well
   inside the 65536-byte message cap.
 - **OTP2-BRD-032** — exit codes, complete and explicit:

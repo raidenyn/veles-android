@@ -846,12 +846,14 @@ fn repeated_conflicting_transaction_starts_disconnect_only_that_peer() {
     let (handle_b, conn_b) = rig.connect_hint("cb", HINT_B, 185);
     let mut start = vec![0x00, 5, 0x01, 0x90];
     start.extend(common::synthetic(178, 1));
-    for _ in 0..2 {
+    // live start, conflict one (erases it), fresh start (live again): none of these disconnects
+    for _ in 0..3 {
         rig.backend(BackendEvent::Fragment {
             conn: conn_a,
             bytes: start.clone(),
         });
     }
+    assert!(rig.events().is_empty());
     rig.backend(BackendEvent::Fragment {
         conn: conn_a,
         bytes: start.clone(),

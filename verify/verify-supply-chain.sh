@@ -41,4 +41,5 @@ node verify/verify-sboms.mjs
 node verify/check-npm-licenses.mjs
 node verify/check-npm-install-scripts.mjs
 node verify/check-cargo-build-scripts.mjs
+node verify/check-vendored-patches.mjs
 node verify/check-remote-code.mjs

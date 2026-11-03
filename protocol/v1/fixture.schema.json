@@ -1431,6 +1431,48 @@
           }
         },
         {
+          "description": "Malformed frame rejected at a stage that discards every partial transaction of the peer (transport-only loss), e.g. an over-budget frame, which is rejected before any live-id conflict handling and counts no conflict.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "completed",
+            "stage",
+            "peer_partials_discarded"
+          ],
+          "properties": {
+            "completed": {
+              "const": false
+            },
+            "stage": {
+              "$ref": "#/$defs/stage"
+            },
+            "peer_partials_discarded": {
+              "const": true
+            }
+          }
+        },
+        {
+          "description": "Conflicting start (index 0) of a live transaction id (OTP2-GAT-011): the live partial is erased and its reservation released, and the start itself is rejected.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "completed",
+            "ignored",
+            "live_partial_erased"
+          ],
+          "properties": {
+            "completed": {
+              "const": false
+            },
+            "ignored": {
+              "const": true
+            },
+            "live_partial_erased": {
+              "const": true
+            }
+          }
+        },
+        {
           "type": "object",
           "additionalProperties": false,
           "required": [

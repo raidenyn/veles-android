@@ -688,6 +688,13 @@
             "fragments": [
               "003300c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
             ]
+          },
+          {
+            "transaction_id": 51,
+            "fragments": [
+              "003300c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+              "81330000cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            ]
           }
         ]
       },
@@ -702,7 +709,11 @@
           {
             "completed": false,
             "ignored": true,
-            "no_state_mutation": true
+            "live_partial_erased": true
+          },
+          {
+            "completed": true,
+            "reassembled": "ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
           }
         ]
       }
@@ -2638,6 +2649,174 @@
             "completed": false,
             "stage": "fragment_final",
             "no_state_mutation": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "frag-r2-live-duplicate-start-length-0-erases",
+      "fixture_version": 1,
+      "category": "fragmentation",
+      "requirement_ids": [
+        "OTP2-GAT-011",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "mtu": 185,
+        "transactions": [
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "003400c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+            ]
+          },
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "00340000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            ]
+          },
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "003400c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+              "81340000cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "transactions": [
+          {
+            "completed": false,
+            "incomplete": true,
+            "no_state_mutation": true
+          },
+          {
+            "completed": false,
+            "ignored": true,
+            "live_partial_erased": true
+          },
+          {
+            "completed": true,
+            "reassembled": "ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          }
+        ]
+      }
+    },
+    {
+      "id": "frag-r2-live-duplicate-start-length-4097-erases",
+      "fixture_version": 1,
+      "category": "fragmentation",
+      "requirement_ids": [
+        "OTP2-GAT-011",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "mtu": 185,
+        "transactions": [
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "003400c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+            ]
+          },
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "00341001eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            ]
+          },
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "003400c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+              "81340000cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "accepted": true,
+        "transactions": [
+          {
+            "completed": false,
+            "incomplete": true,
+            "no_state_mutation": true
+          },
+          {
+            "completed": false,
+            "ignored": true,
+            "live_partial_erased": true
+          },
+          {
+            "completed": true,
+            "reassembled": "ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          }
+        ]
+      }
+    },
+    {
+      "id": "frag-r2-over-budget-duplicate-start-discards-peer-state",
+      "fixture_version": 1,
+      "category": "fragmentation",
+      "requirement_ids": [
+        "OTP2-GAT-010",
+        "OTP2-GAT-011",
+        "OTP2-FIX-004"
+      ],
+      "input": {
+        "mtu": 185,
+        "transactions": [
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "003400c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+            ]
+          },
+          {
+            "transaction_id": 53,
+            "fragments": [
+              "003500c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+            ]
+          },
+          {
+            "transaction_id": 52,
+            "fragments": [
+              "003400c8eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            ]
+          },
+          {
+            "transaction_id": 53,
+            "fragments": [
+              "003500c8abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+              "81350000cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "transactions": [
+          {
+            "completed": false,
+            "incomplete": true,
+            "no_state_mutation": true
+          },
+          {
+            "completed": false,
+            "incomplete": true,
+            "no_state_mutation": true
+          },
+          {
+            "completed": false,
+            "stage": "fragment_total",
+            "peer_partials_discarded": true
+          },
+          {
+            "completed": true,
+            "reassembled": "ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
           }
         ]
       }
