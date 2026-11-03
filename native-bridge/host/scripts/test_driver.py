@@ -1661,6 +1661,13 @@ def fake_clock(step=1.0):
     return clock
 
 
+MAC_ADAPTER_OUTPUT = json.dumps({"SPBluetoothDataType": [{"controller_properties": {
+    "controller_address": "10:20:30:40:50:60", "controller_chipset": "BCM_4387", "controller_transport": "PCIe"}}]})
+WINDOWS_ADAPTER_OUTPUT = json.dumps([{
+    "Status": "OK", "FriendlyName": "Intel(R) Wireless Bluetooth(R)",
+    "InstanceId": "USB\\VID_8087&PID_0026\\5&2A1B3C4D&0&10"}])
+
+
 class RunnerTests(Tmp):
     def anchor(self, host):
         return {**FAKE_ANCHOR, "binary_path": str(host)}
@@ -1735,6 +1742,8 @@ class RunnerTests(Tmp):
                 return 0, "", ""
             if argv[:2] == ["codesign", "-d"]:
                 Path(argv[2].split("=", 1)[1] + "0").write_bytes(b"cert")
+            if argv[:2] == ["system_profiler", "SPBluetoothDataType"]:
+                return 0, MAC_ADAPTER_OUTPUT, ""
             return 0, "", ""
         self.fake_run = run_extra or fake_run
         self.Sess = Sess
@@ -1746,6 +1755,31 @@ class RunnerTests(Tmp):
                                   env=kw.pop("env", {"PATH": "/bin"}), sleep=lambda s: None, temp_root=str(self.tmp / "tmp"),
                                   clock=fake_clock(), **kw)
         return doc, out
+
+    def run_direct_mac(self, case):
+        script = self.tmp / "direct-host.py"
+        script.write_text(FAKE_HOST)
+
+        def popen(argv, **kw):
+            return subprocess.Popen([sys.executable, "-I", str(script), argv[1], "good"], **kw)
+        out = self.tmp / f"d{len(list(self.tmp.iterdir()))}"
+        doc = runner.execute_case(case, self.host, "", out, self.anchor(self.host), family="macos", run=self.fake_run, popen=popen,
+                                  home=str(self.home), system_root=str(self.sysroot), env={"PATH": "/bin"},
+                                  temp_root=str(self.tmp / "tmp"), sleep=lambda s: None, clock=fake_clock(0.001))
+        return doc, out
+
+    def test_macos_direct_launch_records_a_hashed_adapter_identity(self):
+        self.mac_env()
+        doc, _ = self.run_direct_mac(CASES["macos.none.direct-eof-clean"])
+        self.assertEqual(doc["adapter"]["kind"], "bluetooth")
+        self.assertRegex(doc["adapter"]["id_sha256"], r"^[0-9a-f]{64}$")
+        self.assertNotIn("10:20:30:40:50:60", json.dumps(doc))
+
+    def test_macos_direct_launch_reads_the_approved_signing_identity_regardless_of_the_case_flag(self):
+        self.mac_env()
+        doc, _ = self.run_direct_mac(dict(CASES["macos.none.direct-eof-clean"], requires_signing=False))
+        self.assertEqual(doc["signing"]["identity"], macid.APPROVED_AUTHORITY)
+        self.assertEqual(doc["signing"]["bundle_kind"], "test_vehicle")
 
     def setUp(self):
         super().setUp()
@@ -1877,6 +1911,8 @@ class RunnerTests(Tmp):
         def fake_run(argv):
             if argv[0] == "powershell" and "Authenticode" in argv[-1]:
                 return 0, "NotSigned\n", ""
+            if argv[0] == "powershell" and "Get-PnpDevice" in argv[-1]:
+                return 0, WINDOWS_ADAPTER_OUTPUT, ""
             return 0, "", ""
         out = self.tmp / f"w{len(list(self.tmp.iterdir()))}"
         self.registry.journal = self.state / reg.JOURNAL_NAME
@@ -2003,6 +2039,8 @@ class RunnerTests(Tmp):
         self.env = {"PATH": "x"}
         out = self.tmp / "nolocal"
         def fake_run(argv):
+            if argv[0] == "powershell" and "Get-PnpDevice" in argv[-1]:
+                return 0, WINDOWS_ADAPTER_OUTPUT, ""
             return 0, "NotSigned", ""
         doc = runner.execute_case(CASES["windows.none.ready-hygiene"], self.host, "C:\\c.exe", out, self.anchor(self.host), family="windows",
                                   run=fake_run, backend_factory=lambda: self.registry, session_factory=self.Sess, env=self.env,

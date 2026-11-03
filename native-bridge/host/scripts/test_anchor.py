@@ -563,6 +563,8 @@ class BinaryBindingTests(AnchorFixture):
                 return 0, "", self.td.GOOD_CODESIGN
             if "--verify" in argv:
                 return 0, "", ""
+            if argv[:2] == ["system_profiler", "SPBluetoothDataType"]:
+                return 0, self.td.MAC_ADAPTER_OUTPUT, ""
             Path(argv[2].split("=", 1)[1] + "0").write_bytes(b"LEAF")
             return 0, "", ""
 

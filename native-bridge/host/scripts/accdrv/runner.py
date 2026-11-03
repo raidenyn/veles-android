@@ -15,7 +15,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import anchor as anchor_mod, ids, macid, observers, registration as reg
+from . import anchor as anchor_mod, ids, macid, observers, probes, registration as reg
 from . import chrome as chrome_mod
 from .chrome import ChromeSession
 from .errors import Blocked, Refused
@@ -81,13 +81,19 @@ def _rehash_check(host, expected):
     return check
 
 
-def execute_case(case, host, chrome_path, out, anchor, *, family=None, attest=False, run=default_run, backend_factory=None,
+def execute_case(case, host, chrome_path, out, anchor, *, family=None, attest=False, run=None, backend_factory=None,
                  session_factory=ChromeSession, popen=subprocess.Popen, rig=None, pipe_tap=None, windows_census=None,
                  home=None, env=None, extension_dir=EXT_DIR, clock=None, sleep=None, rec_clock=None, state_dir=None,
-                 system_root="/", temp_root=None):
+                 system_root="/", temp_root=None, adapter=None):
     """Returns the finalized run.json dict (never PASS). Anything that goes wrong after the output directory exists
-    still yields a BLOCKED record (unexpected exceptions are flagged `driver_errors`)."""
+    still yields a BLOCKED record (unexpected exceptions are flagged `driver_errors`).
+
+    `run` is the read-only OS command runner (tests inject a fake; production uses the bounded default_run).
+    `adapter(family, run) -> dict` is injectable; when omitted the real, read-only platform probe is used with the
+    probe's own bounded runner unless a run was injected."""
     family = family or host_family()
+    adapter_run = run
+    run = run or default_run
     home = home or str(Path.home())
     env = dict(os.environ if env is None else env)
     out = Path(out)
@@ -123,7 +129,7 @@ def execute_case(case, host, chrome_path, out, anchor, *, family=None, attest=Fa
         rec.fields["chrome_extension"] = {"id": ext_id, "origin": origin}
         try:
             work = Path(tempfile.mkdtemp(prefix=reg.WORK_PREFIX, dir=temp_root))
-            if case["requires_signing"]:
+            if case["requires_signing"] or family == "macos":
                 rec.fields["signing"] = macid.read_signing(host, run, work / "certs")
                 guard("after codesign")  # the signature read must describe the bytes that were anchored
             elif family == "windows":
@@ -131,6 +137,11 @@ def execute_case(case, host, chrome_path, out, anchor, *, family=None, attest=Fa
                 guard("after Authenticode")
         except (Blocked, Refused) as e:
             rec.block(f"signing identity: {e}")
+            return rec.finalize()
+        try:
+            rec.fields["adapter"] = (adapter or probes.adapter_context)(family, adapter_run)
+        except Blocked as e:
+            rec.block(f"adapter identity: {e}")
             return rec.finalize()
         observer = observers.Observer("windows" if family == "windows" else "macos", run, windows_census)
         chrome = registration = None
