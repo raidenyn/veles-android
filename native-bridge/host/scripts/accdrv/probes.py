@@ -20,7 +20,7 @@ WINDOWS_PNP_COMMAND = [
 ]
 MACOS_BLUETOOTH_COMMAND = ["system_profiler", "SPBluetoothDataType", "-json"]
 _MAC_ADDRESS = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
-_NON_DEVICE_PREFIXES = ("BTHENUM\\", "BTHLE\\", "BTH\\")
+_NON_DEVICE_PREFIXES = ("BTHLEDEVICE\\", "BTHENUM\\", "BTHLE\\", "BTH\\")
 
 
 def bounded_run(argv, timeout=PROBE_TIMEOUT_S):

@@ -20,6 +20,16 @@ WINDOWS_PNP = [
     {"Status": "Error", "FriendlyName": "Removed radio", "InstanceId": "USB\\VID_0A12&PID_0001\\5&DEADBEEF&0&1"},
     {"Status": "OK", "FriendlyName": "Phone", "InstanceId": "BTHENUM\\DEV_001122334455\\7&ABCDEF&0&0000"},
 ]
+WINDOWS_PERIPHERAL_PNP = [
+    {"Status": "OK", "FriendlyName": "Intel(R) Wireless Bluetooth(R)", "InstanceId": WINDOWS_RADIO_ID},
+    {"Status": "OK", "FriendlyName": "Bluetooth LE Device",
+     "InstanceId": "BTHLEDEVICE\\{00001812-0000-1000-8000-00805F9B34FB}"
+                  "_DEV_VID&02045E_PID&4000_REV&0001_001122334455\\7&2F3A4B5C&0&0003"},
+    {"Status": "OK", "FriendlyName": "Bluetooth Device (Personal Area Network)",
+     "InstanceId": "BTH\\MS_BTHPAN\\7&1F2E3D4C&0&2"},
+    {"Status": "OK", "FriendlyName": "Phone", "InstanceId": "BTHENUM\\DEV_001122334455\\7&ABCDEF&0&0000"},
+    {"Status": "OK", "FriendlyName": "LE Phone", "InstanceId": "BTHLE\\DEV_001122334455\\7&ABCDEF&0&0000"},
+]
 MAC_ADDRESS = "10:20:30:40:50:60"
 MAC_BT = {
     "SPBluetoothDataType": [
@@ -66,6 +76,14 @@ class WindowsAdapterProbeTests(unittest.TestCase):
     def test_only_paired_device_nodes_is_no_adapter(self):
         with self.assertRaisesRegex(Blocked, "no enabled Bluetooth adapter"):
             probes.parse_windows_pnp(dumps([WINDOWS_PNP[3]]))
+
+    def test_peripheral_inventory_selects_the_single_usb_controller(self):
+        out = probes.parse_windows_pnp(dumps(WINDOWS_PERIPHERAL_PNP))
+        self.assertEqual(out, probes.parse_windows_pnp(dumps(WINDOWS_PERIPHERAL_PNP[0])))
+        self.assertEqual(out["name"], "Intel(R) Wireless Bluetooth(R)")
+        text = json.dumps(out)
+        self.assertNotIn("BTHLEDEVICE", text)
+        self.assertNotIn("001122334455", text)
 
     def test_two_radios_are_ambiguous(self):
         rows = [WINDOWS_PNP[0], {**WINDOWS_PNP[0], "InstanceId": "USB\\VID_0BDA&PID_8771\\9&1&0&2"}]
