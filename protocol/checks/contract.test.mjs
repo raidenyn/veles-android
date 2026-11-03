@@ -581,7 +581,7 @@ test("every committed rejected fixture names absence of state mutation", () => {
     }
     if (f.category === "fragmentation") {
       for (const tx of f.expected.transactions) {
-        if (tx.completed === false) {
+        if (tx.completed === false && tx.live_partial_erased !== true && tx.peer_partials_discarded !== true) {
           assert.equal(tx.no_state_mutation, true, f.id);
         }
       }
@@ -608,12 +608,22 @@ test("every committed fragmentation fixture: outcomes, reassembly bytes, chained
       } else if (expect.ignored) {
         assert.equal(got.ignored, true, `${f.id} tx[${i}] expected ignored`);
         assert.equal(got.completed, false);
+        if (expect.live_partial_erased === true) {
+          assert.equal(got.erasedLive, true, `${f.id} tx[${i}] must erase the live partial`);
+        }
       } else if (expect.incomplete) {
         assert.equal(got.completed, false, `${f.id} tx[${i}]`);
         assert.equal(got.stage, null, `${f.id} tx[${i}]`);
       } else {
         assert.equal(got.completed, false, `${f.id} tx[${i}]`);
         assert.equal(got.stage, expect.stage, `${f.id} tx[${i}] stage mismatch: ${got.stage}`);
+        if (expect.peer_partials_discarded === true) {
+          // Exact state semantics: rejected before conflict handling, so no conflict is fabricated
+          // (not ignored, no live partial "erased" as a conflict) and every reservation is released.
+          assert.equal(got.ignored, false, `${f.id} tx[${i}] must not be a conflict`);
+          assert.equal(got.erasedLive, false, `${f.id} tx[${i}] must not count as a conflict erase`);
+          assert.equal(got.openAfter, 0, `${f.id} tx[${i}] all peer reservations released`);
+        }
       }
     }
   }
@@ -1129,4 +1139,28 @@ test("OTP2-GAT-010 exact final handling: empty final only closes a fully receive
   const res = validateFragmented([{ transaction_id: 5, fragments: trailing }], 517, L);
   assert.equal(res.accepted, false);
   assert.equal(res.transactions[0].stage, "fragment_final");
+});
+
+test("OTP2-GAT-011 a duplicate start at the per-peer cap is a conflict, not a cap hit; over-budget frames are not conflicts", () => {
+  const hexFrame = (idx, fin, tid, total, n, fill) =>
+    Buffer.from([(fin ? 0x80 : 0) | idx, tid, total >> 8, total & 0xff, ...new Array(n).fill(fill)]).toString("hex");
+  const live = (tid) => ({ transaction_id: tid, fragments: [hexFrame(0, false, tid, 200, 178, 0xab)] });
+  const res = validateFragmented(
+    [live(1), live(2), live(1), { transaction_id: 3, fragments: [hexFrame(0, false, 3, 200, 178, 0xab)] }],
+    185,
+    layouts(),
+  );
+  assert.equal(res.transactions[2].ignored, true, "duplicate at the cap is a conflict");
+  assert.equal(res.transactions[2].erasedLive, true);
+  assert.equal(res.transactions[2].stage, null);
+  assert.equal(res.transactions[3].stage, null, "the erased slot is free for a new start");
+  const over = validateFragmented(
+    [live(1), live(2), { transaction_id: 1, fragments: [hexFrame(0, false, 1, 200, 179, 0xee)] }],
+    185,
+    layouts(),
+  );
+  assert.equal(over.transactions[2].stage, "fragment_total");
+  assert.equal(over.transactions[2].ignored, false);
+  assert.equal(over.transactions[2].erasedLive, false);
+  assert.equal(over.transactions[2].openAfter, 0);
 });

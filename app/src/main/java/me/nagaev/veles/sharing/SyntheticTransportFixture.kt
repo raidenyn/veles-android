@@ -3,6 +3,8 @@
 package me.nagaev.veles.sharing
 
 import android.os.SystemClock
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -95,6 +97,7 @@ internal class TransportTelemetry(
         val label: String?,
         val bytes: Int,
         val boundOp: Long?,
+        val sha256: String? = null,
     )
 
     data class Peer(
@@ -167,6 +170,17 @@ internal class TransportTelemetry(
     private var seq = 0L
     private var changes = 0L
     private var peersDropped = 0
+
+    /** Debug fixture evidence only: caller supplies metadata and a digest, never raw values. */
+    @Synchronized fun inbound(address: String, kind: String, label: String?, bytes: Int, sha256: String?) {
+        val p = peerFor(address) ?: return
+        changes++
+        if (p.events.size >= MAX_EVENTS_PER_PEER) {
+            p.truncated = true
+            return
+        }
+        p.events.add(Event(++seq, kind, epochMillis(), elapsedMillis(), null, label, bytes, null, sha256))
+    }
 
     /** Call when the notify API returned [code] for a fragment of [bytes] bytes. */
     @Synchronized fun notifyResult(address: String, bytes: Int, code: Int) {
@@ -272,5 +286,67 @@ internal class TransportTelemetry(
         const val MAX_EVENTS_PER_PEER = 4096
         const val MAX_PENDING = 16
         const val PEER_KEY_CHARS = 16
+    }
+}
+
+/**
+ * JSON projection of the opt-in transport evidence. Kept beside the telemetry so the physical fixture writes
+ * exactly what these functions produce; callers supply only hashes, sizes and timestamps, never payloads or
+ * raw addresses.
+ */
+internal object TransportTelemetryJson {
+    fun events(snapshot: TransportTelemetry.Snapshot): JSONArray = JSONArray(
+        snapshot.peers.flatMap { peer ->
+            peer.events.map { event ->
+                JSONObject().put("peer", peer.peer).put("kind", event.kind)
+                    .put("epoch_ms", event.epochMs).put("elapsed_ms", event.elapsedMs)
+                    .put("code", event.code ?: JSONObject.NULL).put("bytes", event.bytes)
+                    .put("label", event.label ?: JSONObject.NULL).put("sha256", event.sha256 ?: JSONObject.NULL)
+            }
+        },
+    )
+
+    fun peers(snapshot: TransportTelemetry.Snapshot): JSONArray = JSONArray(
+        snapshot.peers.map { peer ->
+            JSONObject().put("peer", peer.peer)
+                .put("pending_unresolved", peer.pendingUnresolved)
+                .put("pending_dropped", peer.pendingDropped)
+                .put("callbacks_seen", peer.callbacksSeen)
+                .put("callbacks", peer.callbacks)
+                .put("callbacks_after_close", peer.callbacksAfterClose)
+                .put("truncated", peer.truncated)
+        },
+    )
+
+    /** Attach the final capture (taken after close) to the last live state sample. */
+    fun attachFinalState(state: JSONObject, snapshot: TransportTelemetry.Snapshot) {
+        state.put("transport_events", events(snapshot))
+            .put("telemetry_truncated", snapshot.truncated)
+            .put("telemetry_peers_dropped", snapshot.peersDropped)
+    }
+
+    /**
+     * Final fixture document. The full post-close capture is always written at top level, even when failure
+     * happened before the first live state sample; a live sample, when present, keeps its attached copy too.
+     */
+    fun finalOutput(
+        runId: String,
+        status: String,
+        error: String?,
+        states: JSONArray,
+        records: JSONArray,
+        injections: JSONArray,
+        snapshot: TransportTelemetry.Snapshot,
+    ): JSONObject {
+        if (states.length() > 0) attachFinalState(states.getJSONObject(states.length() - 1), snapshot)
+        return JSONObject().put("run_id", runId).put("status", status)
+            .put("error", error ?: JSONObject.NULL)
+            .put("states", states).put("records", records).put("injections", injections)
+            .put("server_closed", true)
+            .put("telemetry_clean", snapshot.clean)
+            .put("telemetry_peers", peers(snapshot))
+            .put("transport_events", events(snapshot))
+            .put("telemetry_truncated", snapshot.truncated)
+            .put("telemetry_peers_dropped", snapshot.peersDropped)
     }
 }

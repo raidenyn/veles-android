@@ -40,10 +40,12 @@ jobs:
             build/sbom/protocol.cdx.json
             build/sbom/rust.cdx.json
             build/sbom/native-bridge.cdx.json
+            build/sbom/native-host.cdx.json
             build/verification/supply-chain/npm-licenses.txt
             build/verification/supply-chain/cargo-licenses.txt
             build/verification/supply-chain/npm-install-scripts.txt
             build/verification/supply-chain/cargo-build-scripts.txt
+            build/verification/supply-chain/vendored-patches.txt
             build/verification/supply-chain/remote-code.txt
           if-no-files-found: error
           retention-days: 14

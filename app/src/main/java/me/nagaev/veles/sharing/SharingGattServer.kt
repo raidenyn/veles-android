@@ -35,6 +35,12 @@ internal class SharingGattServer(
     private val ingress = IngressBudget()
     private val admitted = ConcurrentHashMap.newKeySet<String>()
 
+    /** Inbound frames accepted but not yet processed; close() must report them as dropped, never silently. */
+    private data class QueuedInbound(val id: String, val bytes: Int)
+    private val inboundLock = Any()
+    private val queuedInbound = LinkedHashMap<Long, QueuedInbound>()
+    private var queuedSeq = 0L
+
     /** Peers whose malformed frame could not be queued (ingress saturated); one queued disconnect each. */
     private val overflowed = ConcurrentHashMap.newKeySet<String>()
     private val devices = mutableMapOf<String, BluetoothDevice>()
@@ -110,6 +116,20 @@ internal class SharingGattServer(
             offset: Int,
             value: ByteArray,
         ) {
+            if (BuildConfig.DEBUG) {
+                SyntheticTransportFixture.telemetry?.let { telemetry ->
+                    val header = if (value.size >= GattTransport.HEADER) {
+                        val index = value[0].toInt() and FRAME_INDEX_MASK
+                        val final = value[0].toInt() and FRAME_FINAL_FLAG != 0
+                        val transaction = value[1].toInt() and BYTE_MASK
+                        "index=$index;final=$final;transaction=$transaction"
+                    } else {
+                        "short"
+                    }
+                    val hash = if (value.size <= GattTransport.ATTRIBUTE_VALUE_MAX) SyntheticTransportFixture.sha256Hex(value) else null
+                    telemetry.inbound(device.address, "fragment_received", header, value.size, hash)
+                }
+            }
             // Never copy an oversized value. On the write characteristic it is a malformed frame
             // (OTP2-GAT-010) and must discard the peer's partial transactions in arrival order; any other
             // operation is rejected exactly like a normal invalid operation, without touching the transport.
@@ -118,19 +138,64 @@ internal class SharingGattServer(
                 if (valid) postMalformed(device) else postUnsupported(device, requestId, responseNeeded)
                 return
             }
-            postValue(device, value) { copy ->
+            postValue(device, value, trackReceived = BuildConfig.DEBUG && SyntheticTransportFixture.telemetry != null) { copy ->
                 val id = device.address
                 val validOperation = characteristic.uuid == WRITE_UUID && !preparedWrite && !responseNeeded && offset == 0
                 if (!validOperation || id !in ready || id !in subscribed) {
+                    if (BuildConfig.DEBUG) {
+                        SyntheticTransportFixture.telemetry?.inbound(
+                            id,
+                            "fragment_rejected",
+                            "invalid_operation_or_not_ready",
+                            copy.size,
+                            SyntheticTransportFixture.sha256Hex(copy),
+                        )
+                    }
                     if (responseNeeded) server?.sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, 0, null)
                 } else {
                     val result = transport.receive(id, copy)
+                    if (BuildConfig.DEBUG) {
+                        SyntheticTransportFixture.telemetry?.inbound(
+                            id,
+                            "fragment_processed",
+                            result.diagnostic,
+                            copy.size,
+                            SyntheticTransportFixture.sha256Hex(copy),
+                        )
+                    }
                     if (result.disconnect) disconnect(id)
                     result.record?.let { record ->
+                        if (BuildConfig.DEBUG) {
+                            SyntheticTransportFixture.telemetry?.inbound(
+                                id,
+                                "record_complete",
+                                null,
+                                record.size,
+                                SyntheticTransportFixture.sha256Hex(record),
+                            )
+                        }
                         val response = onRecord(id, record)
+                        if (BuildConfig.DEBUG) {
+                            SyntheticTransportFixture.telemetry?.inbound(
+                                id,
+                                "reply_generated",
+                                if (response == null) "none" else "produced",
+                                record.size,
+                                SyntheticTransportFixture.sha256Hex(record),
+                            )
+                        }
                         record.fill(0)
                         if (response != null) {
-                            transport.enqueue(id, response)
+                            val queued = transport.enqueue(id, response)
+                            if (BuildConfig.DEBUG) {
+                                SyntheticTransportFixture.telemetry?.inbound(
+                                    id,
+                                    "reply_queue",
+                                    if (queued) "accepted" else transport.enqueueRefusalReason(id, response.size),
+                                    response.size,
+                                    SyntheticTransportFixture.sha256Hex(response),
+                                )
+                            }
                             response.fill(0)
                             pump(id)
                         }
@@ -320,10 +385,33 @@ internal class SharingGattServer(
         }
     }
 
-    private fun postValue(device: BluetoothDevice, value: ByteArray, block: (ByteArray) -> Unit) {
+    private fun postValue(
+        device: BluetoothDevice,
+        value: ByteArray,
+        trackReceived: Boolean = false,
+        block: (ByteArray) -> Unit,
+    ) {
         val id = device.address
-        if (id !in admitted || id in overflowed) return
+        if (closed) {
+            if (BuildConfig.DEBUG && trackReceived) {
+                SyntheticTransportFixture.telemetry?.inbound(id, "fragment_dropped", "server_closed", value.size, null)
+            }
+            return
+        }
+        if (id !in admitted || id in overflowed) {
+            if (BuildConfig.DEBUG) {
+                SyntheticTransportFixture.telemetry?.inbound(
+                    id,
+                    "fragment_dropped",
+                    "not_admitted_or_overflowed",
+                    value.size,
+                    null,
+                )
+            }
+            return
+        }
         if (!ingress.acquire(id)) {
+            if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.inbound(id, "fragment_dropped", "ingress_limit", value.size, null)
             // The refused frame might be malformed (e.g. 183 bytes at MTU 185, or under 4 bytes); dropping it
             // silently would let an old partial complete across it. Fail the peer closed instead. A dropped
             // VALID frame loses its record and the session anyway (OTP2-ENC-004), so this only turns that
@@ -332,7 +420,14 @@ internal class SharingGattServer(
             return
         }
         val copy = value.copyOf()
+        val token = if (trackReceived) trackQueuedInbound(id, value.size) else null
+        if (trackReceived && token == null) {
+            copy.fill(0)
+            ingress.release(id)
+            return
+        }
         post {
+            if (token != null) untrackQueuedInbound(token)
             try {
                 block(copy)
             } finally {
@@ -340,6 +435,23 @@ internal class SharingGattServer(
                 ingress.release(id)
             }
         }
+    }
+
+    private fun trackQueuedInbound(id: String, bytes: Int): Long? = synchronized(inboundLock) {
+        if (closed) {
+            if (BuildConfig.DEBUG) {
+                SyntheticTransportFixture.telemetry?.inbound(id, "fragment_dropped", "server_closed", bytes, null)
+            }
+            null
+        } else {
+            val token = ++queuedSeq
+            queuedInbound[token] = QueuedInbound(id, bytes)
+            token
+        }
+    }
+
+    private fun untrackQueuedInbound(token: Long) {
+        synchronized(inboundLock) { queuedInbound.remove(token) }
     }
 
     /**
@@ -350,6 +462,7 @@ internal class SharingGattServer(
      */
     private fun postMalformed(device: BluetoothDevice) {
         val id = device.address
+        if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.inbound(id, "fragment_rejected", "oversized", 0, null)
         if (id !in admitted || id in overflowed) return
         if (!ingress.acquire(id)) {
             failClosed(id)
@@ -400,7 +513,27 @@ internal class SharingGattServer(
         if (device != null) server?.cancelConnection(device)
     }
     fun close() {
-        closed = true
+        val dropped = if (BuildConfig.DEBUG) {
+            synchronized(inboundLock) {
+                closed = true
+                queuedInbound.values.toList().also { queuedInbound.clear() }
+            }
+        } else {
+            closed = true
+            emptyList()
+        }
+        handler.removeCallbacksAndMessages(null)
+        if (BuildConfig.DEBUG) {
+            dropped.forEach { queued ->
+                SyntheticTransportFixture.telemetry?.inbound(
+                    queued.id,
+                    "fragment_dropped",
+                    "server_closed",
+                    queued.bytes,
+                    null,
+                )
+            }
+        }
         ingress.close()
         admitted.clear()
         overflowed.clear()
@@ -424,6 +557,9 @@ internal class SharingGattServer(
     }
 
     companion object {
+        private const val FRAME_INDEX_MASK = 127
+        private const val FRAME_FINAL_FLAG = 128
+        private const val BYTE_MASK = 255
         val SERVICE_UUID: UUID = UUID.fromString("8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51")
         val WRITE_UUID: UUID = UUID.fromString("8e400001-8f3c-4d1a-b64a-8e3c9b0d2a51")
         val NOTIFY_UUID: UUID = UUID.fromString("8e400002-8f3c-4d1a-b64a-8e3c9b0d2a51")

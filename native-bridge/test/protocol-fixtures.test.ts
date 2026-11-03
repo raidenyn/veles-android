@@ -126,3 +126,48 @@ describe('OTP-02 shared protocol fixtures (native bridge consumer)', () => {
         );
     });
 });
+
+describe('OTP-24 shared record boundary shapes (native bridge consumer)', () => {
+    const limits = JSON.parse(readFileSync(resolve(PROTOCOL_ROOT, 'limits.json'), 'utf8')) as {
+        limits: { name: string; value: number }[];
+    };
+    const named = (name: string): number => {
+        const entry = limits.limits.find((limit) => limit.name === name);
+        if (entry === undefined) throw new Error(`missing shared limit ${name}`);
+        return Number(entry.value);
+    };
+    // Envelope admission ceiling vs the GATT send ceiling the host enforces after admission
+    // (OTP2-BRD-031 vs OTP2-CRY-016c/OTP2-GAT-011). Frame byte-limit shapes (1..65536, zero/
+    // oversize/truncated-vs-clean-EOF) are executable Rust framing tests only
+    // (native-bridge/host/tests/protocol.rs); byte-limits beyond the record ceilings belong to
+    // that implementation, not to a helper mirrored in test code.
+    const RECORD_MAX = named('bridge_record_max_bytes');
+    const GATT_RECORD_MAX = named('record_max_bytes');
+
+    it('keeps the two record ceilings distinct in the shared limits inventory', () => {
+        expect(RECORD_MAX).toBe(5120);
+        expect(GATT_RECORD_MAX).toBe(4096);
+    });
+
+    it('size-boundary send fixtures keep the shared envelope/GATT verdicts', () => {
+        const sizes = [
+            ['brd-req-send-record-5119-below-limit', true, 5119],
+            ['brd-req-send-record-5120-at-limit', true, 5120],
+            ['brd-req-send-record-5121-over-limit', false, 5121],
+            ['brd-req-send-record-empty', false, 0],
+        ] as const;
+        for (const [id, accepted, decodedLength] of sizes) {
+            const entry = fixture(id, 'bridge.json');
+            expect(entry.expected.accepted).toBe(accepted);
+            const parsed = JSON.parse(entry.input.text as string) as { record_base64: string };
+            const decoded = decodeBase64(parsed.record_base64);
+            expect(Array.from(decoded).length).toBe(decodedLength);
+            if (accepted) {
+                expect(decodedLength).toBeGreaterThanOrEqual(GATT_RECORD_MAX);
+                expect(decodedLength).toBeLessThanOrEqual(RECORD_MAX);
+            } else {
+                expect(decodedLength === 0 || decodedLength > RECORD_MAX).toBe(true);
+            }
+        }
+    });
+});

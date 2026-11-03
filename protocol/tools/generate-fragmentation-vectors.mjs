@@ -251,6 +251,77 @@ export function buildManagedFixtures() {
       "fragment_final",
     ),
   );
+  // Conflict precedence (OTP2-GAT-011): for a syntactically valid header (nonzero id, index 0,
+  // frame within the attribute budget) a start whose id is LIVE is a conflict BEFORE its declared
+  // total_record_length is validated. A malformed declared length (0 or 4097) therefore still
+  // erases the live partial, releases its reservation and is rejected as a conflict; it is not a
+  // fragment_header rejection that leaves the old partial alive. A fresh start then proceeds.
+  for (const [suffix, badTotal] of [["length-0", 0], ["length-4097", 4097]]) {
+    const id = `frag-r2-live-duplicate-start-${suffix}-erases`;
+    const tidLive = 52;
+    const live = hex(frame({ index: 0, final: false, tid: tidLive, total: 200, payload: pad(178, 0xab) }));
+    const malformedDuplicate = hex(
+      frame({ index: 0, final: false, tid: tidLive, total: badTotal, payload: pad(178, 0xee) }),
+    );
+    const freshTail = hex(frame({ index: 1, final: true, tid: tidLive, payload: pad(22, 0xcd) }));
+    out.push({
+      id,
+      fixture_version: 1,
+      category: "fragmentation",
+      requirement_ids: ["OTP2-GAT-011", "OTP2-FIX-004"],
+      input: {
+        mtu: 185,
+        transactions: [
+          { transaction_id: tidLive, fragments: [live] },
+          { transaction_id: tidLive, fragments: [malformedDuplicate] },
+          { transaction_id: tidLive, fragments: [live, freshTail] },
+        ],
+      },
+      expected: {
+        accepted: true,
+        transactions: [
+          { completed: false, incomplete: true, no_state_mutation: true },
+          { completed: false, ignored: true, live_partial_erased: true },
+          { completed: true, reassembled: hex(new Uint8Array([...pad(178, 0xab), ...pad(22, 0xcd)])) },
+        ],
+      },
+    });
+  }
+  // Attribute-budget precedence (OTP2-GAT-011/010): a frame above the attribute budget is a
+  // malformed frame and is rejected BEFORE any conflict handling, even when its id is live. It is
+  // NOT a conflict (no conflict is counted) and, like every malformed frame, it discards ALL of
+  // the peer's partial transactions (transport-only loss). Here ids 52 and 53 are both live; the
+  // over-budget duplicate start of 52 discards both, so a fresh start of 53 afterwards is a plain
+  // start (completes), not a conflict that would be ignored.
+  {
+    const live = (tid) => hex(frame({ index: 0, final: false, tid, total: 200, payload: pad(178, 0xab) }));
+    const overBudget = hex(frame({ index: 0, final: false, tid: 52, total: 200, payload: pad(179, 0xee) }));
+    const freshTail = hex(frame({ index: 1, final: true, tid: 53, payload: pad(22, 0xcd) }));
+    out.push({
+      id: "frag-r2-over-budget-duplicate-start-discards-peer-state",
+      fixture_version: 1,
+      category: "fragmentation",
+      requirement_ids: ["OTP2-GAT-010", "OTP2-GAT-011", "OTP2-FIX-004"],
+      input: {
+        mtu: 185,
+        transactions: [
+          { transaction_id: 52, fragments: [live(52)] },
+          { transaction_id: 53, fragments: [live(53)] },
+          { transaction_id: 52, fragments: [overBudget] },
+          { transaction_id: 53, fragments: [live(53), freshTail] },
+        ],
+      },
+      expected: {
+        accepted: false,
+        transactions: [
+          { completed: false, incomplete: true, no_state_mutation: true },
+          { completed: false, incomplete: true, no_state_mutation: true },
+          { completed: false, stage: "fragment_total", peer_partials_discarded: true },
+          { completed: true, reassembled: hex(new Uint8Array([...pad(178, 0xab), ...pad(22, 0xcd)])) },
+        ],
+      },
+    });
+  }
   return out;
 }
 
@@ -262,6 +333,9 @@ export function buildManagedFixtures() {
  */
 function amendments() {
   const live = hex(frame({ index: 0, final: false, tid: 51, total: 200, payload: pad(178, 0xab) }));
+  // A fresh transaction with the same id, started after the conflict erased the live partial.
+  const freshTail = hex(frame({ index: 1, final: true, tid: 51, payload: pad(22, 0xcd) }));
+  const freshRecord = hex(new Uint8Array([...pad(178, 0xab), ...pad(22, 0xcd)]));
   return new Map([
     [
       "frag-reserved-nonzero",
@@ -285,13 +359,18 @@ function amendments() {
           transactions: [
             { transaction_id: 51, fragments: [live] },
             { transaction_id: 51, fragments: [live] },
+            { transaction_id: 51, fragments: [live, freshTail] },
           ],
         },
+        // OTP2-GAT-011 conflict rule: the second start of live id 51 erases the live partial and is
+        // rejected (no later suffix can complete the old prefix); a fresh start of id 51 then
+        // begins again and completes with only its own bytes.
         expected: {
           accepted: true,
           transactions: [
             { completed: false, incomplete: true, no_state_mutation: true },
-            { completed: false, ignored: true, no_state_mutation: true },
+            { completed: false, ignored: true, live_partial_erased: true },
+            { completed: true, reassembled: freshRecord },
           ],
         },
       },

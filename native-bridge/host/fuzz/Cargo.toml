@@ -1,0 +1,55 @@
+[package]
+name = "veles-ble-host-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+autobins = false
+autotests = false
+description = "VERIFICATION ONLY (OTP-24 Task 9): fuzz/property drivers over the public parser, fragment and core seams. Never a release dependency."
+
+# Separate workspace: this crate (and libfuzzer-sys) is not a member of, and is never in the
+# dependency graph of, the shipping `veles-ble-host` workspace/binary.
+[workspace]
+
+[lib]
+name = "veles_fuzz"
+path = "src/lib.rs"
+
+[dependencies]
+veles-ble-host = { path = "..", features = [] }
+# Same exact pin as the host (the shared adversarial model builds JSON fixtures with it).
+serde_json = "=1.0.140"
+# Only for the libFuzzer targets; needs a nightly toolchain + cargo-fuzz, see ../README.md.
+libfuzzer-sys = { version = "=0.4.13", optional = true }
+
+[features]
+default = []
+libfuzzer = ["dep:libfuzzer-sys"]
+
+# Stable-toolchain bounded smoke driver (seeded mutation over the same targets). Runs on the
+# pinned 1.98.0 toolchain; NOT coverage guided and NOT libFuzzer.
+[[bin]]
+name = "smoke"
+path = "src/bin/smoke.rs"
+
+[[bin]]
+name = "strict_envelope"
+path = "fuzz_targets/strict_envelope.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+
+[[bin]]
+name = "fragment_stream"
+path = "fuzz_targets/fragment_stream.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+
+[[bin]]
+name = "core_sequence"
+path = "fuzz_targets/core_sequence.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false

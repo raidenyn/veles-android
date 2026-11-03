@@ -25,6 +25,8 @@ const ACTION_PINS = {
   'actions/cache': { sha: 'caa296126883cff596d87d8935842f9db880ef25', version: 'v5' },
   'actions/upload-artifact': { sha: '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', version: 'v7' },
   'actions/download-artifact': { sha: '37930b1c2abaa49bbe596cd826c3c89aef350131', version: 'v7' },
+  // Verified against the upstream v6 tag (git/ref/tags/v6 -> this commit) on 2026-11-01; used by otp23-feasibility.yml.
+  'actions/setup-python': { sha: 'ece7cb06caefa5fff74198d8649806c4678c61a1', version: 'v6' },
   'actions/setup-node': { sha: '249970729cb0ef3589644e2896645e5dc5ba9c38', version: 'v6' },
   'actions/attest-build-provenance': { sha: '43d14bc2b83dec42d39ecae14e916627a18bb661', version: 'v3' },
   'reactivecircus/android-emulator-runner': { sha: '4c44018e59b437e86cdfc41da381398f93ed8808', version: 'v2' },
@@ -382,7 +384,7 @@ test('Rust workflow packages rust-jni-wasm without a reference rebuild', async (
   assert.doesNotMatch(source, /secrets:/, 'Rust workflow must not accept signing secrets');
 });
 
-test('supply-chain workflow enforces reports before uploading exactly four SBOMs', async () => {
+test('supply-chain workflow enforces reports before uploading exactly five SBOMs', async () => {
   const source = await workflow('build-supply-chain.yml');
   assertReusableWorkflow(source, 'build-supply-chain.yml');
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
@@ -396,10 +398,12 @@ test('supply-chain workflow enforces reports before uploading exactly four SBOMs
     'build/sbom/protocol.cdx.json',
     'build/sbom/rust.cdx.json',
     'build/sbom/native-bridge.cdx.json',
+    'build/sbom/native-host.cdx.json',
     'build/verification/supply-chain/npm-licenses.txt',
     'build/verification/supply-chain/cargo-licenses.txt',
     'build/verification/supply-chain/npm-install-scripts.txt',
     'build/verification/supply-chain/cargo-build-scripts.txt',
+    'build/verification/supply-chain/vendored-patches.txt',
     'build/verification/supply-chain/remote-code.txt',
   ]);
   assert.doesNotMatch(source, /secrets:/, 'Supply-chain workflow must not accept signing secrets');
@@ -798,6 +802,13 @@ test('every workflow pins external actions to the reviewed SHA plus version comm
     const source = await workflow(name);
     assertActionsPinned(source, name);
   }
+});
+
+test('a wrong SHA or version comment for setup-python is still rejected by the pin snapshot', () => {
+  const good = 'jobs:\n  a:\n    steps:\n      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6\n';
+  assert.doesNotThrow(() => assertActionsPinned(good, 'x.yml'));
+  assert.throws(() => assertActionsPinned(good.replace('ece7cb06', 'aaaaaaaa'), 'x.yml'), /reviewed SHA/);
+  assert.throws(() => assertActionsPinned(good.replace('# v6', '# v5'), 'x.yml'), /must carry/);
 });
 
 test('artifact actions declare only their known inputs', async () => {

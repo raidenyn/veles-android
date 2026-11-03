@@ -20,9 +20,12 @@ generate_cargo() {
   "$root/gradlew" verifyCargoCyclonedx >/dev/null
   "$root/build/verify-tools/cargo-cyclonedx/bin/cargo-cyclonedx" cyclonedx --manifest-path "$root/$manifest" --format json --target all --all-features --override-filename "$prefix"
   mv -f "$root/$package_directory/$prefix.json" "$output/$destination"
+  # Strip the local checkout path (path-package bom-refs such as the vendored bluest).
+  node "$root/verify/normalize-sbom-paths.mjs" "$root" "$output/$destination"
 }
 
 generate_npm web-extension web-extension.cdx.json
 generate_npm protocol protocol.cdx.json
 generate_cargo rust/Cargo.toml rust/veles-crypto rust.cdx.json
 generate_cargo native-bridge/src-tauri/Cargo.toml native-bridge/src-tauri native-bridge.cdx.json
+generate_cargo native-bridge/host/Cargo.toml native-bridge/host native-host.cdx.json

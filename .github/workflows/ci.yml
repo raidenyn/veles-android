@@ -216,3 +216,11 @@ jobs:
         working-directory: native-bridge/src-tauri
         run: rustup show active-toolchain
       - run: ./gradlew bridgeFormat bridgeLint bridgeTypecheck bridgeNpmTest bridgeRustFormat bridgeRustLint bridgeRustTest
+
+  # OTP-24 production host (plain Rust, no Tauri/Node). Distinct from the `native-bridge`
+  # scaffold job above; its artifacts are native-host-windows / native-host-macos.
+  native-host:
+    name: native-host
+    uses: ./.github/workflows/build-native-host.yml
+    with:
+      commit-sha: ${{ github.sha }}

@@ -1,0 +1,16 @@
+{
+    "manifest_version": 3,
+    "name": "Veles OTP-24 acceptance connector (disposable)",
+    "description": "Synthetic Native Messaging acceptance connector. Not the product connector; carries no Veles cryptography, trust or OTP data.",
+    "version": "0.0.1",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA443yg0P3n2BiQOXtqCxp2SxlPbjCG+AUL63Kw/aCXPTysXWbHvcUEsKsbTy5hA3MpceuCEYmKdGoqgExf5D0dAfBSBpIDNIS7OUqKLCMPiRp98peYAYnlikdlF68WRZMbimKRGOT3t3xXC2KMY2TNNCr6/6fFZOQWLB9V6+YV3nmYABsiXAa+VyLfSo1QU30EhO4qKpFDnIVzfjTQgVbXibJSaurO6mpARU8ssJoS5SoBgyNC2FdK98W6GN7xwhH0UEDKPPhcV5A+Ik4r9aE5tmI7mMJXmzKmuhksUgDF3EDb5+yMtEwNj7g0bGUeDtOZpZ+xoAofTSYb/lKrHaIAQIDAQAB",
+    "permissions": [
+        "nativeMessaging"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "action": {
+        "default_title": "Open the OTP-24 acceptance connector"
+    }
+}

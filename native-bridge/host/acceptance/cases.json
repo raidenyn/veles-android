@@ -1,0 +1,1346 @@
+{
+  "version": 1,
+  "schema": "veles.otp24.acceptance.cases",
+  "binary_kinds": {
+    "production": "veles-native-host built by bridgeHostBuild (locked, release, no features); never the scaffold (otp23-host, Tauri) nor host-test-driver",
+    "test_manifest": "narrowly scoped native-messaging manifest pointing at the exact production executable; not a production registration (OTP-25)"
+  },
+  "cases": [
+    {
+      "id": "windows.none.ready-hygiene",
+      "platform": "windows",
+      "phones": "none",
+      "action": "ready-hygiene",
+      "kind": "chrome",
+      "description": "Chrome-launched host at ready: window/endpoint/filesystem/registry-or-LaunchServices observations",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "baseline_observation_before_launch"
+      ],
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      }
+    },
+    {
+      "id": "windows.A.scanning-hygiene",
+      "platform": "windows",
+      "phones": "A",
+      "action": "scanning-hygiene",
+      "kind": "chrome",
+      "description": "Active scan finds the synthetic phone; hygiene observations while scanning",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "observe_device_found",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "baseline_observation_before_launch",
+        "unrelated_advertiser_not_reported"
+      ],
+      "min_links": 0,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      }
+    },
+    {
+      "id": "windows.AB.transfer-boundaries",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "transfer-boundaries",
+      "kind": "chrome",
+      "description": "Two-phone byte-exact transfers at boundary sizes plus 0/4097/5120 rejection; connector never sees fragments",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "connect_phone_A",
+        "connect_phone_B",
+        "send_boundary_sizes",
+        "send_rejected_sizes",
+        "observe_phone_receipts",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "per_phone_expected_digest_differs",
+        "rejected_sizes_produce_no_gatt_writes",
+        "connector_sees_no_fragments"
+      ],
+      "sizes": {
+        "accept": [
+          1,
+          "chunk-1",
+          "chunk",
+          "chunk+1",
+          "multiple-of-chunk",
+          4095,
+          4096
+        ],
+        "reject_without_writes": [
+          0,
+          4097,
+          5120
+        ]
+      },
+      "min_links": 2,
+      "active_scans": false,
+      "per_phone_receipts": true,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      }
+    },
+    {
+      "id": "windows.AB.teardown-hygiene",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "teardown-hygiene",
+      "kind": "chrome",
+      "description": "Orderly shutdown from ready+scanning+two links; hygiene and OS link release",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "shutdown_request",
+        "observe_process_exit",
+        "observe_link_release",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "baseline_observation_before_launch",
+        "release_measured_independently_of_process_exit"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      }
+    },
+    {
+      "id": "windows.AB.lifecycle-port-disconnect",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-port-disconnect",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (literal_port_disconnect) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "literal_port_disconnect",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "record_pending_disposition"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      },
+      "pending_request_handling": {
+        "mode": "eof_unobservable",
+        "trigger": "literal_port_disconnect",
+        "per_request_outcome": "unknown",
+        "host_correlated_cancellation_claim": "forbidden",
+        "synthesized_port_closed": "local_only_never_host_proof",
+        "rationale": "Option 2 (user decision 2026-11-02): an abrupt EOF on the Native Messaging pipe (literal port.disconnect(), connector tab close, Chrome-owned pipe closure) leaves no channel on which the host's per-request terminal events can be observed: the connector is detached and Chrome owns the pipe. The individual pending request's outcome is therefore recorded as unknown / not observable. The connector's own synthesized internal/port_closed is local only and is never evidence that the host cancelled anything. This case verifies process exit and OS BLE link release for both phones only."
+      }
+    },
+    {
+      "id": "windows.AB.lifecycle-tab-close",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-tab-close",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (close_connector_tab) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "close_connector_tab",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "record_pending_disposition"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      },
+      "pending_request_handling": {
+        "mode": "eof_unobservable",
+        "trigger": "close_connector_tab",
+        "per_request_outcome": "unknown",
+        "host_correlated_cancellation_claim": "forbidden",
+        "synthesized_port_closed": "local_only_never_host_proof",
+        "rationale": "Option 2 (user decision 2026-11-02): an abrupt EOF on the Native Messaging pipe (literal port.disconnect(), connector tab close, Chrome-owned pipe closure) leaves no channel on which the host's per-request terminal events can be observed: the connector is detached and Chrome owns the pipe. The individual pending request's outcome is therefore recorded as unknown / not observable. The connector's own synthesized internal/port_closed is local only and is never evidence that the host cancelled anything. This case verifies process exit and OS BLE link release for both phones only."
+      }
+    },
+    {
+      "id": "windows.AB.lifecycle-pipe-closure",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-pipe-closure",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (chrome_owned_pipe_closure) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "chrome_owned_pipe_closure",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "record_pending_disposition"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      },
+      "pending_request_handling": {
+        "mode": "eof_unobservable",
+        "trigger": "chrome_owned_pipe_closure",
+        "per_request_outcome": "unknown",
+        "host_correlated_cancellation_claim": "forbidden",
+        "synthesized_port_closed": "local_only_never_host_proof",
+        "rationale": "Option 2 (user decision 2026-11-02): an abrupt EOF on the Native Messaging pipe (literal port.disconnect(), connector tab close, Chrome-owned pipe closure) leaves no channel on which the host's per-request terminal events can be observed: the connector is detached and Chrome owns the pipe. The individual pending request's outcome is therefore recorded as unknown / not observable. The connector's own synthesized internal/port_closed is local only and is never evidence that the host cancelled anything. This case verifies process exit and OS BLE link release for both phones only."
+      }
+    },
+    {
+      "id": "windows.AB.lifecycle-explicit-shutdown",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-explicit-shutdown",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (shutdown_request) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "shutdown_request",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "observe_pending_cancellation"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      },
+      "pending_request_handling": {
+        "mode": "host_correlated_cancellation",
+        "trigger": "shutdown_request",
+        "terminal_error": [
+          [
+            "internal",
+            "shutdown"
+          ]
+        ],
+        "synthesized": false,
+        "ordering": "terminal_error_before_shutdown_complete"
+      }
+    },
+    {
+      "id": "windows.AB.per-phone-failure",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "per-phone-failure",
+      "kind": "chrome",
+      "description": "One phone fails; survivor makes progress; pending requests for failed link cancelled",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "fail_phone_A_link",
+        "observe_pending_cancellation",
+        "survivor_transfer_phone_B",
+        "observe_link_release"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "survivor_progress_after_failure"
+      ],
+      "min_links": 2,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      },
+      "pending_request_handling": {
+        "mode": "host_correlated_cancellation",
+        "trigger": "fail_phone_A_link",
+        "terminal_error": [
+          [
+            "send_failed",
+            "link_lost"
+          ]
+        ],
+        "synthesized": false,
+        "ordering": "none"
+      }
+    },
+    {
+      "id": "windows.none.direct-eof-clean",
+      "platform": "windows",
+      "phones": "none",
+      "action": "direct-eof-clean",
+      "kind": "direct",
+      "description": "Direct-launch diagnostic (NOT Chrome-owned): clean stdin EOF",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "direct_launch",
+        "negotiate_ready",
+        "close_stdin_clean",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit"
+      ],
+      "required_controls": [
+        "not_chrome_owned_lifecycle"
+      ],
+      "expected_exit_codes": [
+        0
+      ],
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": false,
+      "requires_signing": false,
+      "requires_test_manifest": false,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": []
+    },
+    {
+      "id": "windows.none.direct-eof-truncated",
+      "platform": "windows",
+      "phones": "none",
+      "action": "direct-eof-truncated",
+      "kind": "direct",
+      "description": "Direct-launch diagnostic (NOT Chrome-owned): truncated frame then EOF",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "direct_launch",
+        "negotiate_ready",
+        "send_truncated_frame_then_eof",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit"
+      ],
+      "required_controls": [
+        "not_chrome_owned_lifecycle"
+      ],
+      "expected_exit_codes": [
+        2
+      ],
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": false,
+      "requires_signing": false,
+      "requires_test_manifest": false,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": []
+    },
+    {
+      "id": "windows.A.error-radio-off",
+      "platform": "windows",
+      "phones": "A",
+      "action": "error-radio-off",
+      "kind": "chrome",
+      "description": "Deliberate condition (radio_off); safe classification; restore and fresh request recovers",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "radio_off",
+        "observe_error_event",
+        "restore_condition",
+        "fresh_request_after_restore",
+        "observe_recovery"
+      ],
+      "required_controls": [
+        "baseline_works_before_condition",
+        "condition_restored_verified",
+        "not_reinterpreting_historical_accessdenied"
+      ],
+      "required_callbacks": {
+        "any_of_codes": [
+          "scan_failed",
+          "connect_failed"
+        ],
+        "require_native_code": true,
+        "require_classification": true,
+        "require_recoverability": true
+      },
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      }
+    },
+    {
+      "id": "windows.A.error-no-adapter",
+      "platform": "windows",
+      "phones": "A",
+      "action": "error-no-adapter",
+      "kind": "chrome",
+      "description": "Deliberate condition (adapter_absent); safe classification; restore and fresh request recovers",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "adapter_absent",
+        "observe_error_event",
+        "restore_condition",
+        "fresh_request_after_restore",
+        "observe_recovery"
+      ],
+      "required_controls": [
+        "baseline_works_before_condition",
+        "condition_restored_verified",
+        "not_reinterpreting_historical_accessdenied"
+      ],
+      "required_callbacks": {
+        "any_of_codes": [
+          "scan_failed",
+          "connect_failed"
+        ],
+        "require_native_code": true,
+        "require_classification": true,
+        "require_recoverability": true
+      },
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      }
+    },
+    {
+      "id": "windows.A.error-service-denial",
+      "platform": "windows",
+      "phones": "A",
+      "action": "error-service-denial",
+      "kind": "chrome",
+      "description": "Deliberate condition (synthetic_service_denial); safe classification; restore and fresh request recovers",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "synthetic_service_denial",
+        "observe_error_event",
+        "restore_condition",
+        "fresh_request_after_restore",
+        "observe_recovery"
+      ],
+      "required_controls": [
+        "baseline_works_before_condition",
+        "condition_restored_verified",
+        "not_reinterpreting_historical_accessdenied"
+      ],
+      "required_callbacks": {
+        "any_of_codes": [
+          "connect_failed",
+          "send_failed"
+        ],
+        "require_native_code": true,
+        "require_classification": true,
+        "require_recoverability": true
+      },
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": false,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_registry_write_outside_test_manifest"
+      ],
+      "wrapper_exception": {
+        "allowed": true,
+        "scope": "windows_chrome_never_visible_wrapper_only",
+        "requires_record": true
+      }
+    },
+    {
+      "id": "macos.none.ready-hygiene",
+      "platform": "macos",
+      "phones": "none",
+      "action": "ready-hygiene",
+      "kind": "chrome",
+      "description": "Chrome-launched host at ready: window/endpoint/filesystem/registry-or-LaunchServices observations",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "baseline_observation_before_launch"
+      ],
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ]
+    },
+    {
+      "id": "macos.A.scanning-hygiene",
+      "platform": "macos",
+      "phones": "A",
+      "action": "scanning-hygiene",
+      "kind": "chrome",
+      "description": "Active scan finds the synthetic phone; hygiene observations while scanning",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "observe_device_found",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "baseline_observation_before_launch",
+        "unrelated_advertiser_not_reported"
+      ],
+      "min_links": 0,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ]
+    },
+    {
+      "id": "macos.AB.transfer-boundaries",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "transfer-boundaries",
+      "kind": "chrome",
+      "description": "Two-phone byte-exact transfers at boundary sizes plus 0/4097/5120 rejection; connector never sees fragments",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "connect_phone_A",
+        "connect_phone_B",
+        "send_boundary_sizes",
+        "send_rejected_sizes",
+        "observe_phone_receipts",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "per_phone_expected_digest_differs",
+        "rejected_sizes_produce_no_gatt_writes",
+        "connector_sees_no_fragments"
+      ],
+      "sizes": {
+        "accept": [
+          1,
+          "chunk-1",
+          "chunk",
+          "chunk+1",
+          "multiple-of-chunk",
+          4095,
+          4096
+        ],
+        "reject_without_writes": [
+          0,
+          4097,
+          5120
+        ]
+      },
+      "min_links": 2,
+      "active_scans": false,
+      "per_phone_receipts": true,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ]
+    },
+    {
+      "id": "macos.AB.teardown-hygiene",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "teardown-hygiene",
+      "kind": "chrome",
+      "description": "Orderly shutdown from ready+scanning+two links; hygiene and OS link release",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "shutdown_request",
+        "observe_process_exit",
+        "observe_link_release",
+        "observe_hygiene"
+      ],
+      "required_controls": [
+        "baseline_observation_before_launch",
+        "release_measured_independently_of_process_exit"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ]
+    },
+    {
+      "id": "macos.AB.lifecycle-port-disconnect",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-port-disconnect",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (literal_port_disconnect) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "literal_port_disconnect",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "record_pending_disposition"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ],
+      "pending_request_handling": {
+        "mode": "eof_unobservable",
+        "trigger": "literal_port_disconnect",
+        "per_request_outcome": "unknown",
+        "host_correlated_cancellation_claim": "forbidden",
+        "synthesized_port_closed": "local_only_never_host_proof",
+        "rationale": "Option 2 (user decision 2026-11-02): an abrupt EOF on the Native Messaging pipe (literal port.disconnect(), connector tab close, Chrome-owned pipe closure) leaves no channel on which the host's per-request terminal events can be observed: the connector is detached and Chrome owns the pipe. The individual pending request's outcome is therefore recorded as unknown / not observable. The connector's own synthesized internal/port_closed is local only and is never evidence that the host cancelled anything. This case verifies process exit and OS BLE link release for both phones only."
+      }
+    },
+    {
+      "id": "macos.AB.lifecycle-tab-close",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-tab-close",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (close_connector_tab) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "close_connector_tab",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "record_pending_disposition"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ],
+      "pending_request_handling": {
+        "mode": "eof_unobservable",
+        "trigger": "close_connector_tab",
+        "per_request_outcome": "unknown",
+        "host_correlated_cancellation_claim": "forbidden",
+        "synthesized_port_closed": "local_only_never_host_proof",
+        "rationale": "Option 2 (user decision 2026-11-02): an abrupt EOF on the Native Messaging pipe (literal port.disconnect(), connector tab close, Chrome-owned pipe closure) leaves no channel on which the host's per-request terminal events can be observed: the connector is detached and Chrome owns the pipe. The individual pending request's outcome is therefore recorded as unknown / not observable. The connector's own synthesized internal/port_closed is local only and is never evidence that the host cancelled anything. This case verifies process exit and OS BLE link release for both phones only."
+      }
+    },
+    {
+      "id": "macos.AB.lifecycle-pipe-closure",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-pipe-closure",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (chrome_owned_pipe_closure) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "chrome_owned_pipe_closure",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "record_pending_disposition"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ],
+      "pending_request_handling": {
+        "mode": "eof_unobservable",
+        "trigger": "chrome_owned_pipe_closure",
+        "per_request_outcome": "unknown",
+        "host_correlated_cancellation_claim": "forbidden",
+        "synthesized_port_closed": "local_only_never_host_proof",
+        "rationale": "Option 2 (user decision 2026-11-02): an abrupt EOF on the Native Messaging pipe (literal port.disconnect(), connector tab close, Chrome-owned pipe closure) leaves no channel on which the host's per-request terminal events can be observed: the connector is detached and Chrome owns the pipe. The individual pending request's outcome is therefore recorded as unknown / not observable. The connector's own synthesized internal/port_closed is local only and is never evidence that the host cancelled anything. This case verifies process exit and OS BLE link release for both phones only."
+      }
+    },
+    {
+      "id": "macos.AB.lifecycle-explicit-shutdown",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-explicit-shutdown",
+      "kind": "chrome",
+      "description": "Separate Chrome-owned lifecycle case (shutdown_request) with active scan and two byte-proven links",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "start_scan",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "shutdown_request",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit",
+        "observe_link_release",
+        "observe_pending_cancellation"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "release_measured_independently_of_process_exit",
+        "survivor_progress_not_applicable_for_global_trigger"
+      ],
+      "min_links": 2,
+      "active_scans": true,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ],
+      "pending_request_handling": {
+        "mode": "host_correlated_cancellation",
+        "trigger": "shutdown_request",
+        "terminal_error": [
+          [
+            "internal",
+            "shutdown"
+          ]
+        ],
+        "synthesized": false,
+        "ordering": "terminal_error_before_shutdown_complete"
+      }
+    },
+    {
+      "id": "macos.AB.per-phone-failure",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "per-phone-failure",
+      "kind": "chrome",
+      "description": "One phone fails; survivor makes progress; pending requests for failed link cancelled",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "connect_phone_A",
+        "connect_phone_B",
+        "prove_bytes_both_links",
+        "fail_phone_A_link",
+        "observe_pending_cancellation",
+        "survivor_transfer_phone_B",
+        "observe_link_release"
+      ],
+      "required_controls": [
+        "bytes_proven_before_trigger",
+        "survivor_progress_after_failure"
+      ],
+      "min_links": 2,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ],
+      "pending_request_handling": {
+        "mode": "host_correlated_cancellation",
+        "trigger": "fail_phone_A_link",
+        "terminal_error": [
+          [
+            "send_failed",
+            "link_lost"
+          ]
+        ],
+        "synthesized": false,
+        "ordering": "none"
+      }
+    },
+    {
+      "id": "macos.none.direct-eof-clean",
+      "platform": "macos",
+      "phones": "none",
+      "action": "direct-eof-clean",
+      "kind": "direct",
+      "description": "Direct-launch diagnostic (NOT Chrome-owned): clean stdin EOF",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "direct_launch",
+        "negotiate_ready",
+        "close_stdin_clean",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit"
+      ],
+      "required_controls": [
+        "not_chrome_owned_lifecycle"
+      ],
+      "expected_exit_codes": [
+        0
+      ],
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": false,
+      "requires_signing": true,
+      "requires_test_manifest": false,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": []
+    },
+    {
+      "id": "macos.none.direct-eof-truncated",
+      "platform": "macos",
+      "phones": "none",
+      "action": "direct-eof-truncated",
+      "kind": "direct",
+      "description": "Direct-launch diagnostic (NOT Chrome-owned): truncated frame then EOF",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "direct_launch",
+        "negotiate_ready",
+        "send_truncated_frame_then_eof",
+        "observe_last_json",
+        "observe_stdout_close",
+        "observe_process_exit"
+      ],
+      "required_controls": [
+        "not_chrome_owned_lifecycle"
+      ],
+      "expected_exit_codes": [
+        2
+      ],
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": false,
+      "requires_signing": true,
+      "requires_test_manifest": false,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": []
+    },
+    {
+      "id": "macos.A.error-radio-off",
+      "platform": "macos",
+      "phones": "A",
+      "action": "error-radio-off",
+      "kind": "chrome",
+      "description": "Deliberate condition (radio_off); safe classification; restore and fresh request recovers",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "radio_off",
+        "observe_error_event",
+        "restore_condition",
+        "fresh_request_after_restore",
+        "observe_recovery"
+      ],
+      "required_controls": [
+        "baseline_works_before_condition",
+        "condition_restored_verified",
+        "not_reinterpreting_historical_accessdenied"
+      ],
+      "required_callbacks": {
+        "any_of_codes": [
+          "scan_failed",
+          "connect_failed"
+        ],
+        "require_native_code": true,
+        "require_classification": true,
+        "require_recoverability": true
+      },
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ]
+    },
+    {
+      "id": "macos.A.error-no-adapter",
+      "platform": "macos",
+      "phones": "A",
+      "action": "error-no-adapter",
+      "kind": "chrome",
+      "description": "Deliberate condition (adapter_absent); safe classification; restore and fresh request recovers",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "adapter_absent",
+        "observe_error_event",
+        "restore_condition",
+        "fresh_request_after_restore",
+        "observe_recovery"
+      ],
+      "required_controls": [
+        "baseline_works_before_condition",
+        "condition_restored_verified",
+        "not_reinterpreting_historical_accessdenied"
+      ],
+      "required_callbacks": {
+        "any_of_codes": [
+          "scan_failed",
+          "connect_failed"
+        ],
+        "require_native_code": true,
+        "require_classification": true,
+        "require_recoverability": true
+      },
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ]
+    },
+    {
+      "id": "macos.A.error-service-denial",
+      "platform": "macos",
+      "phones": "A",
+      "action": "error-service-denial",
+      "kind": "chrome",
+      "description": "Deliberate condition (synthetic_service_denial); safe classification; restore and fresh request recovers",
+      "binary": "production",
+      "default_status": "NOT RUN",
+      "required_actions": [
+        "launch_chrome_disposable",
+        "load_extension",
+        "connect_native",
+        "negotiate_ready",
+        "synthetic_service_denial",
+        "observe_error_event",
+        "restore_condition",
+        "fresh_request_after_restore",
+        "observe_recovery"
+      ],
+      "required_controls": [
+        "baseline_works_before_condition",
+        "condition_restored_verified",
+        "not_reinterpreting_historical_accessdenied"
+      ],
+      "required_callbacks": {
+        "any_of_codes": [
+          "connect_failed",
+          "send_failed"
+        ],
+        "require_native_code": true,
+        "require_classification": true,
+        "require_recoverability": true
+      },
+      "min_links": 0,
+      "active_scans": false,
+      "requires_chrome": true,
+      "requires_signing": true,
+      "requires_test_manifest": true,
+      "requires_os_context": true,
+      "requires_adapter_context": true,
+      "observations": [
+        "no_top_level_window",
+        "no_network_endpoint",
+        "no_filesystem_write_outside_test_dirs",
+        "no_launchservices_registration_change"
+      ]
+    }
+  ]
+}

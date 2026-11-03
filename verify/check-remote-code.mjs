@@ -97,6 +97,8 @@ async function main() {
   const scopes = [
     'web-extension/src', 'web-extension/scripts', 'web-extension/manifest.json',
     'native-bridge/src-tauri', 'native-bridge/scripts', 'native-bridge/package.json',
+    'native-bridge/host/src', 'native-bridge/host/scripts', 'native-bridge/host/Cargo.toml',
+    '.github/workflows/build-native-host.yml',
     'build.gradle.kts', 'verify',
   ];
   const paths = [];

@@ -1,0 +1,101 @@
+--- a/src/corebluetooth/characteristic.rs
++++ b/src/corebluetooth/characteristic.rs
+@@ -316,37 +316,53 @@
+             }
+         }
+ 
+-        let updates = receiver
+-            .filter_map(move |x| {
+-                let _guard = &guard;
+-                match x {
+-                    PeripheralEvent::CharacteristicValueUpdate {
+-                        characteristic,
+-                        data,
+-                        error,
+-                    } if characteristic == self.inner => match error {
+-                        Some(err) => Some(Err(Error::from_nserror(err))),
+-                        None => Some(Ok(data)),
+-                    },
+-                    PeripheralEvent::Disconnected { error } => {
+-                        Some(Err(Error::from_kind_and_nserror(ErrorKind::NotConnected, error)))
+-                    }
+-                    PeripheralEvent::ServicesChanged { invalidated_services }
+-                        if invalidated_services.contains(&service) =>
+-                    {
+-                        Some(Err(ErrorKind::ServiceChanged.into()))
+-                    }
+-                    _ => None,
++        // VELES PATCH (see VELES-PATCH.md): the peripheral event channel is an overflow-dropping
++        // broadcast. Upstream consumed it as a plain `Stream`, which silently skips an
++        // `Overflowed` gap; here the gap is surfaced as an `Err` item so a consumer can fail the
++        // link instead of continuing past lost notifications.
++        let events = futures_lite::stream::unfold(receiver, |mut receiver| async move {
++            match receiver.recv().await {
++                Ok(event) => Some((Ok(event), receiver)),
++                Err(async_broadcast::RecvError::Overflowed(_)) => Some((
++                    Err(Error::new(
++                        ErrorKind::Internal,
++                        None,
++                        "peripheral event queue overflowed; notifications may have been lost",
++                    )),
++                    receiver,
++                )),
++                Err(async_broadcast::RecvError::Closed) => None,
++            }
++        });
++        let updates = events.filter_map(move |x| {
++            let _guard = &guard;
++            match x {
++                Err(err) => Some(Err(err)),
++                Ok(PeripheralEvent::CharacteristicValueUpdate {
++                    characteristic,
++                    data,
++                    error,
++                }) if characteristic == self.inner => match error {
++                    Some(err) => Some(Err(Error::from_nserror(err))),
++                    None => Some(Ok(data)),
++                },
++                // VELES PATCH: the peripheral delegate's `didDisconnectPeripheral` event, marked
++                // so a consumer can tell this authoritative native disconnect from any other
++                // `NotConnected`-kinded error.
++                Ok(PeripheralEvent::Disconnected { error: _ }) => Some(Err(Error::new(
++                    ErrorKind::NotConnected,
++                    None,
++                    crate::DID_DISCONNECT_PERIPHERAL,
++                ))),
++                Ok(PeripheralEvent::ServicesChanged { invalidated_services })
++                    if invalidated_services.contains(&service) =>
++                {
++                    Some(Err(ErrorKind::ServiceChanged.into()))
+                 }
+-            })
+-            .then(move |x| {
+-                Box::pin(async move {
+-                    match x {
+-                        Ok(data) => Ok(data),
+-                        Err(err) => Err(err),
+-                    }
+-                })
+-            });
++                Ok(_) => None,
++            }
++        });
++        let updates = Box::pin(updates);
+ 
+         Ok(updates)
+     }
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -113,6 +113,12 @@
+ //!
+ //! [examples folder]: https://github.com/alexmoon/bluest/tree/master/bluest/examples
+ 
++/// VELES PATCH (see VELES-PATCH.md): the message of the error a notification stream yields for the
++/// peripheral delegate's `didDisconnectPeripheral` event (kind `NotConnected`). It identifies an
++/// authoritative native disconnect, unlike other `NotConnected`-kinded errors.
++#[cfg(any(target_os = "macos", target_os = "ios"))]
++pub const DID_DISCONNECT_PERIPHERAL: &str = "veles:didDisconnectPeripheral";
++
+ mod adapter;
+ pub mod btuuid;
+ mod characteristic;

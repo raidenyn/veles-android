@@ -399,21 +399,27 @@ fn fragment_activity_refreshes_the_inactivity_timer() {
 }
 
 #[test]
-fn live_duplicate_start_is_ignored_and_a_repeat_within_sixty_seconds_disconnects() {
+fn live_duplicate_start_erases_the_partial_and_a_second_conflict_within_sixty_seconds_disconnects()
+{
     let (mut r, budget, t0) = started(400);
     let mut again = vec![0x00, 5, 0x01, 0x90];
     again.extend(synthetic(178, 1));
     assert_eq!(
         r.push(&again, t0),
         PushOutcome::Ignored,
-        "first conflict is ignored"
+        "first conflict is rejected"
     );
     assert_eq!(
         budget.usage(),
-        (1, 400),
-        "the live transaction is untouched"
+        (0, 0),
+        "the conflict erased the live partial and released its budget"
     );
-    // Still inside both the 5 s inactivity window of the live transaction and the 60 s conflict window.
+    // A fresh start of the id is live again (not a conflict); the next start is the second conflict
+    // inside the 60 s window.
+    assert_eq!(
+        r.push(&again, t0 + Duration::from_secs(1)),
+        PushOutcome::Incomplete
+    );
     assert_eq!(
         r.push(&again, t0 + Duration::from_secs(3)),
         PushOutcome::Disconnect
@@ -426,7 +432,7 @@ fn conflicts_older_than_sixty_seconds_are_forgotten() {
     let mut again = vec![0x00, 5, 0x01, 0x90];
     again.extend(synthetic(178, 1));
     assert_eq!(r.push(&again, t0), PushOutcome::Ignored);
-    // The original transaction times out; a fresh one with the same id starts at +57 s and is
+    // The conflict erased the partial; a fresh one with the same id starts at +57 s and is
     // refreshed at +60 s so that a repeated start at +61 s is a genuine conflict again.
     let mut fresh = vec![0x00, 5, 0x01, 0x90];
     fresh.extend(synthetic(178, 1));

@@ -40,6 +40,10 @@ generated_paths=(
   # Native-bridge source-tree build output (Tauri target and dist).
   native-bridge/src-tauri/target
   native-bridge/dist
+  # OTP-24 production host: cargo target/output must live under build/native-bridge
+  # (asserted above); these source-tree paths must never survive.
+  native-bridge/host/target
+  native-bridge/host/build
 )
 
 for relative in "${generated_paths[@]}"; do

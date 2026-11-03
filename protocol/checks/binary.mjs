@@ -505,19 +505,6 @@ export function validateFragmented(transactions, mtu, layouts) {
   const budget = attributeBudget - fr.header_bytes;
   const openTransactions = new Map();
   for (const tx of transactions) {
-    if (openTransactions.size >= fr.reassembly.incomplete_per_peer_max) {
-      results.push({
-        transaction_id: tx.transaction_id,
-        completed: false,
-        reassembled: null,
-        stage: "fragment_caps",
-        ignored: false,
-      });
-      accepted = false;
-      error ??=
-        `stage=fragment_caps: reassembly cap of ${fr.reassembly.incomplete_per_peer_max} incomplete transactions per peer exceeded before transaction ${tx.transaction_id}`;
-      continue;
-    }
     const result = reassembleTransaction(tx, budget, fr, openTransactions);
     results.push({
       transaction_id: tx.transaction_id,
@@ -525,6 +512,8 @@ export function validateFragmented(transactions, mtu, layouts) {
       reassembled: result.bytes === null ? null : result.bytes,
       stage: result.stage === null ? null : result.stage.stage,
       ignored: result.ignored,
+      erasedLive: result.erasedLive === true,
+      openAfter: openTransactions.size,
     });
     if (result.stage) {
       accepted = false;
@@ -594,15 +583,42 @@ function reassembleTransaction(tx, budget, fr, openTransactions) {
             `first fragment has index ${index}; transactions start at 0 without gaps`,
           );
         }
+        if (bytes.length > budget + fr.header_bytes) {
+          // Attribute-budget rejection precedes conflict handling (as in Android/Rust): an
+          // over-budget frame is malformed, counts NO conflict, and discards every partial
+          // transaction of the peer (transport-only loss).
+          openTransactions.clear();
+          throw new BinaryStageError(
+            "fragment_total",
+            `fragment ${index} frame ${bytes.length} exceeds the ${budget + fr.header_bytes}-byte attribute budget`,
+          );
+        }
         declared = readU16(bytes, 2);
+        if (openTransactions.has(tidByte)) {
+          // Conflict rule (OTP2-GAT-011, owner ruling): for a syntactically valid header (nonzero
+          // id, index 0) a start for a live id is a conflict BEFORE its declared total is
+          // validated, exactly as in the Android and Rust receivers: it erases that live partial
+          // (releasing its reservation) and is itself rejected, whatever length it declares, so
+          // a live prefix can never be completed by a conflicting transaction's suffix. A later
+          // fresh start of the id may begin again. This reference has no clock, so the rolling
+          // 60 s window (second conflicting start disconnects) is not representable here; it is
+          // verified in the Kotlin and Rust tests.
+          openTransactions.delete(tidByte);
+          return { done: false, bytes: null, stage: null, ignored: true, erasedLive: true };
+        }
         if (declared < fr.total_min_bytes || declared > fr.total_max_bytes) {
           throw new BinaryStageError(
             "fragment_header",
             `fragment 0: total_record_length ${declared} outside ${fr.total_min_bytes}..${fr.total_max_bytes}`,
           );
         }
-        if (openTransactions.has(tidByte)) {
-          return { done: false, bytes: null, stage: null, ignored: true };
+        if (openTransactions.size >= fr.reassembly.incomplete_per_peer_max) {
+          // Receivers apply the per-peer transaction cap to a NEW start only, after the frame-size
+          // and live-id conflict checks (a duplicate start at the cap is a conflict, not a cap hit).
+          throw new BinaryStageError(
+            "fragment_caps",
+            `reassembly cap of ${fr.reassembly.incomplete_per_peer_max} incomplete transactions per peer exceeded before transaction ${tid}`,
+          );
         }
         const openBytes = [...openTransactions.values()].reduce((acc, n) => acc + n, 0);
         if (openBytes + declared > fr.reassembly.bytes_per_peer_max) {

@@ -65,7 +65,7 @@ async function main() {
 
   const cargoDeny = join(repository, 'build', 'verify-tools', 'cargo-deny', 'bin', 'cargo-deny');
   const cargoReports = [];
-  for (const manifest of ['rust/Cargo.toml', 'native-bridge/src-tauri/Cargo.toml']) {
+  for (const manifest of ['rust/Cargo.toml', 'native-bridge/src-tauri/Cargo.toml', 'native-bridge/host/Cargo.toml']) {
     const output = runCargoDeny(cargoDeny, ['deny', '--manifest-path', join(repository, manifest), '--config', join(repository, 'licenses.toml'), 'check', 'licenses'], {
       cwd: repository, env: { ...process.env, CARGO_NET_OFFLINE: 'true' },
     });

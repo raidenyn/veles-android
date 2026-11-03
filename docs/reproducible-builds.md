@@ -224,7 +224,9 @@ outputs (plus the ordinary producer trees every build creates):
 | `build/verification/native-bridge/{windows,macos}/` | verified native product bytes, `METADATA.native-bridge.jsonl`, `SHA256SUMS.native-bridge` |
 | `build/sbom/web-extension.cdx.json` | CycloneDX SBOM (web, incl. dev deps) |
 | `build/sbom/rust.cdx.json` | CycloneDX SBOM (`rust/Cargo.lock`) |
-| `build/sbom/native-bridge.cdx.json` | CycloneDX SBOM (`native-bridge/src-tauri/Cargo.lock`) |
+| `build/sbom/native-bridge.cdx.json` | CycloneDX SBOM (`native-bridge/src-tauri/Cargo.lock`, Tauri scaffold) |
+| `build/sbom/native-host.cdx.json` | CycloneDX SBOM (`native-bridge/host/Cargo.lock`, OTP-24 production host; includes the vendored `bluest` 0.6.9) |
+| `build/verification/supply-chain/vendored-patches.txt` | vendored-patch provenance report (`vendor/bluest`) |
 | `build/verification/supply-chain/npm-licenses.txt` | npm license decisions (both trees) |
 | `build/verification/supply-chain/cargo-licenses.txt` | cargo-deny license decisions (both lockfiles) |
 | `build/verification/supply-chain/npm-install-scripts.txt` | npm lifecycle-script audit |
@@ -232,7 +234,9 @@ outputs (plus the ordinary producer trees every build creates):
 | `build/verification/supply-chain/remote-code.txt` | repository remote-origin/CSP/updater scan |
 | `build/rust-package/` | staged `jni/<abi>/libveles_crypto.so`, `wasm/`, `SHA256SUMS` |
 | `build/web-extension/` | extension ZIP + sidecar + `SHA256SUMS` |
-| `build/native-bridge/{windows,macos}/` | packaged product + sidecar + `SHA256SUMS` |
+| `build/native-bridge/{windows,macos}/` | packaged product + sidecar + `SHA256SUMS` (Tauri scaffold) |
+| `build/native-bridge/host/` | OTP-24 production host: `veles-native-host[.exe]` + `SHA256SUMS` (`bridgeHostBuild`) |
+| `build/native-bridge/host-target/` | cargo target dir of the production host (never `native-bridge/host/target`) |
 | `build/verify-tools/` | `cargo-cyclonedx` and `cargo-deny` install roots (verification-only) |
 
 SBOMs, license/script/remote-code reports, component checksum manifests, signed
@@ -381,6 +385,7 @@ build/verify-tools          build/web-extension       build/native-bridge
 build/rust                  build/rust-tools
 web-extension/dist          web-extension/rust-wasm/pkg
 native-bridge/src-tauri/target   native-bridge/dist
+native-bridge/host/target        native-bridge/host/build
 app/build/generated/jniLibs      app/build/outputs/apk
 ```
 
@@ -467,6 +472,51 @@ Windows and macOS builds run on pinned GitHub-hosted runners (`windows-2025`,
 target runner rather than via a Linux cross-toolchain), and the optional local
 `verify-native.sh` two-run comparison is what checks the stable payload across
 independent runs.
+
+### OTP-24 production host (`native-bridge/host`)
+
+The production Native Messaging host is a **plain Rust executable** (`veles-native-host`, crate
+`veles-ble-host`); it never starts the Tauri event loop and its build has no Node, npm, Tauri or
+installer step. It is a separate pipeline from the scaffold above and does not relabel or replace the
+scaffold's `native-windows` / `native-macos` installer artifacts (no installer registration migration
+is part of this work; packaging remains OTP-25).
+
+| Gradle task | What it does |
+|---|---|
+| `bridgeHostToolchainCheck` | asserts `rustc 1.98.0` resolves in `native-bridge/host` (its own `rust-toolchain.toml`) |
+| `bridgeHostFormat` / `bridgeHostLint` / `bridgeHostTest` | `cargo fmt --check`, `cargo clippy --all-targets --locked -D warnings`, `cargo test --locked` |
+| `bridgeHostBuild` | `cargo build --locked --release --bin veles-native-host` (no features) → `build/native-bridge/host/veles-native-host[.exe]` + `SHA256SUMS`; fails if the executable is missing and never falls back to the scaffold binary |
+
+The compile-time origin allowlist `VELES_ALLOWED_ORIGINS` is declared as a Gradle task input of the host
+lint/test/build tasks, so changing only that variable re-runs cargo (regression: `GradleIncremental` in
+`test_build_contract.py` runs real Gradle builds). `CARGO_TARGET_DIR` is `build/native-bridge/host-target`, so `native-bridge/host/target` must never
+appear; the `host-test-driver` binary is behind the non-default `test-driver` feature and is neither
+built nor staged. `build-native-host.yml` (called from `ci.yml`) runs the portable checks on Linux and
+compiles/tests the real WinRT / CoreBluetooth adapters on `windows-2025` and `macos-26` (job-level
+`DEVELOPER_DIR=/Applications/Xcode_26.6.app`, build `17F113`), uploading `native-host-windows` (exe + `SHA256SUMS`) and
+`native-host-macos` (`build/native-bridge/host-archive/veles-native-host-macos.tar.gz` + `.sha256`, made by
+`native-bridge/host/scripts/package-macos-artifact.sh`: a mode-preserving tar of only the executable and its
+`SHA256SUMS`, because `actions/upload-artifact` drops the executable bit of bare files; consumers extract with `tar -xzf`). These jobs prove compilation and the unit/process tests only; they do not exercise
+BLE hardware, and the host binary is unsigned. `python3 -m unittest discover -s native-bridge/host/scripts -p
+'test_build_contract.py'` statically guards the task graph, workflow, SBOM consumers and vendored patch.
+
+**Supply chain.** `verify/generate-sboms.sh` emits `build/sbom/native-host.cdx.json` from
+`native-bridge/host/Cargo.toml` (root `veles-ble-host@0.1.0`); `verify-sboms.mjs` requires every package
+in `native-bridge/host/Cargo.lock`. The cargo-deny licence check, the cargo build-script scan and the
+remote-code scan include the host manifest and sources. The host links a **vendored, patched
+`bluest` 0.6.9** (`native-bridge/host/vendor/bluest`, wired through `[patch.crates-io]`, macOS only,
+licence `BSD-2-Clause OR Apache-2.0`, no build script). Because a path package has no registry checksum,
+`verify/check-vendored-patches.mjs` proves its provenance offline: the two patched files match
+`VELES-PATCH.md`, reverse-applying `VELES-PATCH.diff` reproduces the recorded pristine hashes, the
+recorded upstream crate checksum equals the one pinned by `native-bridge/feasibility/Cargo.lock`, the
+licence files ship with the crate, and `Cargo.lock` still treats `bluest` as a source-less path package.
+`VELES-MANIFEST.sha256` additionally lists every vendored file with its hash (the unpatched ones equal the crates.io
+0.6.9 sources); any edit to an ordinary file, any added file of any kind and any deletion fails the gate. Only the
+provenance metadata (`VELES-MANIFEST.sha256`, `VELES-PATCH.md`, `VELES-PATCH.diff`) is outside the manifest.
+Upgrading `bluest` means redoing that review and updating `VELES-PATCH.md` and the manifest.
+
+Cargo SBOMs are normalized by `verify/normalize-sbom-paths.mjs` (checkout path → `/repo-root`) so path-package
+refs such as the vendored `bluest` carry no local path; `verify-sboms.mjs` rejects an SBOM containing the checkout.
 
 The Play "dependency metadata" block (`dependenciesInfo`) is disabled — it is
 encrypted with a Google key and inherently non-reproducible.

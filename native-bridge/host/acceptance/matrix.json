@@ -1,0 +1,389 @@
+{
+  "version": 1,
+  "schema": "veles.otp24.acceptance.matrix",
+  "title": "OTP-24 production physical/lifecycle acceptance matrix",
+  "default_status": "NOT RUN",
+  "decision": "OPEN",
+  "physical_acceptance_complete": false,
+  "statement": "Every physical case is BLOCKED/NOT RUN: Task 10 produced local evidence tooling only. No Windows, macOS, Chrome or phone run happened, no signature was made, and no OTP-23 waiver or historical PASS is inherited. OTP-24 is not complete.",
+  "identity_distinctions": {
+    "production_binary": "veles-native-host[.exe] built by ./gradlew bridgeHostBuild (locked, release, no features); its sha256 is recorded per run",
+    "test_manifest": "narrowly scoped native-messaging manifest pointing at that exact executable with one exact extension origin; test-only, not the OTP-25 production registration",
+    "test_driver": "host-test-driver (feature-gated example) is never acceptance evidence",
+    "scaffold": "otp23-host / Tauri scaffold are never OTP-24 production evidence",
+    "macos_signing": "approved PoC signed .app is a labelled test vehicle only; final production identity (me.nagaev.veles.bridge) and TCC acceptance are explicitly deferred to OTP-25 packaging; production identity is not claimed",
+    "wrapper_exception": "Windows only: the never-visible Chrome wrapper, recorded per Windows Chrome case as wrapper_exception with a capture; it excuses nothing else (no visible window of the host, no endpoint, no registry/filesystem write)"
+  },
+  "required_per_verdict": [
+    "source revision",
+    "evaluator revision and file hashes",
+    "binary/package hashes",
+    "signing identity",
+    "OS/Chrome/account/adapter context",
+    "source/phone binding with clock allowance",
+    "controlled actions with timestamps",
+    "callback codes",
+    "raw captures",
+    "checksum catalog",
+    "separate adjudication"
+  ],
+  "failed_setups": [
+    {
+      "path": "native-bridge/feasibility/evidence/windows-cleanup-2026-10-27",
+      "description": "Windows OTP-23 cleanup run (historical)",
+      "historical": true,
+      "reinterpret": false
+    },
+    {
+      "path": "native-bridge/feasibility/evidence/poc-background-initial-failure.json",
+      "description": "Initial failed Windows background PoC setup (historical)",
+      "historical": true,
+      "reinterpret": false
+    },
+    {
+      "path": "native-bridge/feasibility/evidence/physical-plain.json",
+      "description": "OTP-23 plain-host physical run with failures at the superseded MTU-517 fragmentation rule (historical)",
+      "historical": true,
+      "reinterpret": false
+    },
+    {
+      "path": "native-bridge/feasibility/evidence/mac-m03-prompt-2026-10-30",
+      "description": "macOS permission-prompt attempt (historical)",
+      "historical": true,
+      "reinterpret": false
+    },
+    {
+      "path": "native-bridge/feasibility/evidence/otp23-rest-2026-10-30",
+      "description": "Frozen OTP-23 remaining-case evidence incl. incidental and deliberately induced Windows AccessDenied (historical; causes differ and must not be conflated)",
+      "historical": true,
+      "reinterpret": false
+    }
+  ],
+  "rows": [
+    {
+      "id": "windows.none.ready-hygiene",
+      "platform": "windows",
+      "phones": "none",
+      "action": "ready-hygiene",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.A.scanning-hygiene",
+      "platform": "windows",
+      "phones": "A",
+      "action": "scanning-hygiene",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.AB.transfer-boundaries",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "transfer-boundaries",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.AB.teardown-hygiene",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "teardown-hygiene",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.AB.lifecycle-port-disconnect",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-port-disconnect",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task.",
+      "pending_request_handling": "eof_unobservable (option 2, user decision 2026-11-02): the individual pending request's outcome is recorded unknown; no host cancellation is claimed; process exit and two-phone BLE link release are the evidence"
+    },
+    {
+      "id": "windows.AB.lifecycle-tab-close",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-tab-close",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task.",
+      "pending_request_handling": "eof_unobservable (option 2, user decision 2026-11-02): the individual pending request's outcome is recorded unknown; no host cancellation is claimed; process exit and two-phone BLE link release are the evidence"
+    },
+    {
+      "id": "windows.AB.lifecycle-pipe-closure",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-pipe-closure",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task.",
+      "pending_request_handling": "eof_unobservable (option 2, user decision 2026-11-02): the individual pending request's outcome is recorded unknown; no host cancellation is claimed; process exit and two-phone BLE link release are the evidence"
+    },
+    {
+      "id": "windows.AB.lifecycle-explicit-shutdown",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "lifecycle-explicit-shutdown",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task.",
+      "pending_request_handling": "host_correlated_cancellation (strict): armed request proven pending, correlated non-synthesized host error specific to the trigger; before shutdown_complete"
+    },
+    {
+      "id": "windows.AB.per-phone-failure",
+      "platform": "windows",
+      "phones": "AB",
+      "action": "per-phone-failure",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task.",
+      "pending_request_handling": "host_correlated_cancellation (strict): armed request proven pending, correlated non-synthesized host error specific to the trigger"
+    },
+    {
+      "id": "windows.none.direct-eof-clean",
+      "platform": "windows",
+      "phones": "none",
+      "action": "direct-eof-clean",
+      "kind": "direct",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.none.direct-eof-truncated",
+      "platform": "windows",
+      "phones": "none",
+      "action": "direct-eof-truncated",
+      "kind": "direct",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.A.error-radio-off",
+      "platform": "windows",
+      "phones": "A",
+      "action": "error-radio-off",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.A.error-no-adapter",
+      "platform": "windows",
+      "phones": "A",
+      "action": "error-no-adapter",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "windows.A.error-service-denial",
+      "platform": "windows",
+      "phones": "A",
+      "action": "error-service-denial",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for windows (see physical-matrix.py DRIVERS gaps) and no authorized physical Windows PC/phone session was run for this task."
+    },
+    {
+      "id": "macos.none.ready-hygiene",
+      "platform": "macos",
+      "phones": "none",
+      "action": "ready-hygiene",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.A.scanning-hygiene",
+      "platform": "macos",
+      "phones": "A",
+      "action": "scanning-hygiene",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.AB.transfer-boundaries",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "transfer-boundaries",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.AB.teardown-hygiene",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "teardown-hygiene",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.AB.lifecycle-port-disconnect",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-port-disconnect",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task.",
+      "pending_request_handling": "eof_unobservable (option 2, user decision 2026-11-02): the individual pending request's outcome is recorded unknown; no host cancellation is claimed; process exit and two-phone BLE link release are the evidence"
+    },
+    {
+      "id": "macos.AB.lifecycle-tab-close",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-tab-close",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task.",
+      "pending_request_handling": "eof_unobservable (option 2, user decision 2026-11-02): the individual pending request's outcome is recorded unknown; no host cancellation is claimed; process exit and two-phone BLE link release are the evidence"
+    },
+    {
+      "id": "macos.AB.lifecycle-pipe-closure",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-pipe-closure",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task.",
+      "pending_request_handling": "eof_unobservable (option 2, user decision 2026-11-02): the individual pending request's outcome is recorded unknown; no host cancellation is claimed; process exit and two-phone BLE link release are the evidence"
+    },
+    {
+      "id": "macos.AB.lifecycle-explicit-shutdown",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "lifecycle-explicit-shutdown",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task.",
+      "pending_request_handling": "host_correlated_cancellation (strict): armed request proven pending, correlated non-synthesized host error specific to the trigger; before shutdown_complete"
+    },
+    {
+      "id": "macos.AB.per-phone-failure",
+      "platform": "macos",
+      "phones": "AB",
+      "action": "per-phone-failure",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task.",
+      "pending_request_handling": "host_correlated_cancellation (strict): armed request proven pending, correlated non-synthesized host error specific to the trigger"
+    },
+    {
+      "id": "macos.none.direct-eof-clean",
+      "platform": "macos",
+      "phones": "none",
+      "action": "direct-eof-clean",
+      "kind": "direct",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.none.direct-eof-truncated",
+      "platform": "macos",
+      "phones": "none",
+      "action": "direct-eof-truncated",
+      "kind": "direct",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.A.error-radio-off",
+      "platform": "macos",
+      "phones": "A",
+      "action": "error-radio-off",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.A.error-no-adapter",
+      "platform": "macos",
+      "phones": "A",
+      "action": "error-no-adapter",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    },
+    {
+      "id": "macos.A.error-service-denial",
+      "platform": "macos",
+      "phones": "A",
+      "action": "error-service-denial",
+      "kind": "chrome",
+      "status": "BLOCKED",
+      "evidence": [],
+      "binary": "production veles-native-host (bridgeHostBuild); NOT scaffold otp23-host, NOT host-test-driver",
+      "blocker": "No validated fresh evidence: no executable production Chrome/phone driver for macos (see physical-matrix.py DRIVERS gaps) and no authorized physical Mac/phone session was run for this task."
+    }
+  ],
+  "validator_pass_is_acceptance": false,
+  "acceptance_requires": [
+    "validate-evidence.py PASS against an external provenance anchor (actual checkout incl. untracked bytes, evaluator files, actual executable) - necessary, not sufficient",
+    "a separate authenticated review of the raw captures by a party independent of the operator, on a system the operator does not control (e.g. a signed review record) - NOT performed or verifiable by the tooling; adjudication.json fields are self-attested",
+    "comparison of recorded phone identity and clock claims against the phones' own telemetry by that reviewer",
+    "final production identity/TCC acceptance remains deferred to OTP-25"
+  ]
+}

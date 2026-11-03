@@ -435,9 +435,12 @@ function checkFixture(fixture, name, requirementIds, layouts, keySchemaCache) {
         if (
           outcome.completed === false &&
           outcome.stage !== undefined &&
-          outcome.no_state_mutation !== true
+          outcome.no_state_mutation !== true &&
+          outcome.peer_partials_discarded !== true
         ) {
-          errors.push("rejected fragment outcomes must carry no_state_mutation: true");
+          errors.push(
+            "rejected fragment outcomes must carry no_state_mutation: true (or the explicit peer_partials_discarded: true for frames that discard every partial)",
+          );
         }
       }
     }

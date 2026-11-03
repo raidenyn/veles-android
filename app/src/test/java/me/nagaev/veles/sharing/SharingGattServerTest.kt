@@ -18,6 +18,8 @@ import io.mockk.slot
 import io.mockk.verify
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -40,6 +42,7 @@ class SharingGattServerTest {
     private val states = mutableListOf<SharingAvailability>()
     private var records = 0
     private var response = byteArrayOf(7)
+    private var suppressReply = false
     private lateinit var subject: SharingGattServer
 
     @Before fun setup() {
@@ -50,7 +53,7 @@ class SharingGattServerTest {
         every { platform.addService(capture(service)) } returns true
         subject = SharingGattServer(context, states::add) { _, _ ->
             records++
-            response.copyOf()
+            if (suppressReply) null else response.copyOf()
         }
         subject.start()
     }
@@ -74,6 +77,76 @@ class SharingGattServerTest {
             BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE,
         )
         flush()
+    }
+
+    @Test fun inboundEvidenceRecordsReceiptCompletionAndReplyQueue() {
+        val telemetry = TransportTelemetry("test", { 1L }, { 2L })
+        SyntheticTransportFixture.telemetry = telemetry
+        try {
+            val peer = device("a")
+            subscribe(peer)
+            val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+            callback.captured.onCharacteristicWriteRequest(peer, 0, write, false, false, 0, byteArrayOf(0x80.toByte(), 1, 0, 1, 5))
+            flush()
+            val events = telemetry.snapshot().peers.single().events
+            assertTrue(events.any { it.kind == "fragment_received" })
+            assertTrue(events.any { it.kind == "fragment_processed" && it.label == "complete" })
+            assertTrue(events.any { it.kind == "record_complete" && it.sha256 == SyntheticTransportFixture.sha256Hex(byteArrayOf(5)) })
+            assertTrue(events.any { it.kind == "reply_queue" && it.label == "accepted" })
+        } finally {
+            subject.close()
+            SyntheticTransportFixture.telemetry = null
+        }
+    }
+
+    @Test fun replyQueueEvidenceNamesPeerByteLimit() {
+        val telemetry = TransportTelemetry("test", { 1L }, { 2L })
+        SyntheticTransportFixture.telemetry = telemetry
+        try {
+            response = ByteArray(4096)
+            val peer = device("a")
+            subscribe(peer)
+            val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+            repeat(5) {
+                callback.captured.onCharacteristicWriteRequest(
+                    peer,
+                    0,
+                    write,
+                    false,
+                    false,
+                    0,
+                    byteArrayOf(0x80.toByte(), (it + 1).toByte(), 0, 1, 5),
+                )
+                flush()
+            }
+            val queueEvents = telemetry.snapshot().peers.single().events.filter { it.kind == "reply_queue" }
+            assertEquals(listOf("accepted", "accepted", "accepted", "accepted", "peer_byte_limit"), queueEvents.map { it.label })
+        } finally {
+            subject.close()
+            SyntheticTransportFixture.telemetry = null
+        }
+    }
+
+    @Test fun inboundEvidenceDistinguishesNullReplyAndInvalidOperation() {
+        val telemetry = TransportTelemetry("test", { 1L }, { 2L })
+        SyntheticTransportFixture.telemetry = telemetry
+        try {
+            suppressReply = true
+            val peer = device("a")
+            subscribe(peer)
+            val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+            val frame = byteArrayOf(0x80.toByte(), 1, 0, 1, 5)
+            callback.captured.onCharacteristicWriteRequest(peer, 0, write, false, false, 0, frame)
+            callback.captured.onCharacteristicWriteRequest(peer, 1, write, true, false, 0, frame)
+            flush()
+            val events = telemetry.snapshot().peers.single().events
+            assertTrue(events.any { it.kind == "reply_generated" && it.label == "none" })
+            assertTrue(events.none { it.kind == "reply_queue" })
+            assertTrue(events.any { it.kind == "fragment_rejected" && it.label == "invalid_operation_or_not_ready" })
+        } finally {
+            subject.close()
+            SyntheticTransportFixture.telemetry = null
+        }
     }
 
     @Test fun refusedAddressesCannotStarveSubscribedClient() {
@@ -459,5 +532,155 @@ class SharingGattServerTest {
         flush()
         assertEquals(1, records)
         subject.close()
+    }
+
+    private fun TransportTelemetry.events() = snapshot().peers.flatMap { it.events }
+    private fun TransportTelemetry.processedLabels() = events().filter { it.kind == "fragment_processed" }.map { it.label }
+    private fun TransportTelemetry.eventLabels(kind: String) = events().filter { it.kind == kind }.map { it.label }
+
+    private fun withTelemetry(block: (TransportTelemetry) -> Unit) {
+        val telemetry = TransportTelemetry("test", { 1L }, { 2L })
+        SyntheticTransportFixture.telemetry = telemetry
+        try {
+            block(telemetry)
+        } finally {
+            subject.close()
+            SyntheticTransportFixture.telemetry = null
+        }
+    }
+
+    private fun writeFrame(device: BluetoothDevice, frame: ByteArray) {
+        write(device, frame)
+        flush()
+    }
+
+    @Test fun inboundEvidenceDistinguishesEveryNegativeTransportOutcome() = withTelemetry { telemetry ->
+        val a = device("a")
+        subscribe(a, 185)
+        writeFrame(a, ByteArray(183)) // above the MTU 185 attribute budget, below the 512 cap
+        writeFrame(a, byteArrayOf(0x80.toByte(), 0, 0, 1, 5)) // transaction 0
+        writeFrame(a, byteArrayOf(0, 2, 0, 0, 5)) // declared length 0
+        writeFrame(a, byteArrayOf(0x81.toByte(), 3, 0, 0, 5)) // continuation without a partial
+        writeFrame(a, byteArrayOf(0, 4, 0, 179.toByte()) + ByteArray(178)) // live partial
+        writeFrame(a, byteArrayOf(0x82.toByte(), 4, 0, 0, 9)) // out of order
+        writeFrame(a, byteArrayOf(0, 5, 0, 179.toByte()) + ByteArray(100)) // short non-final payload
+        writeFrame(a, byteArrayOf(0, 6, 0, 179.toByte()) + ByteArray(178)) // live partial
+        writeFrame(a, byteArrayOf(0, 6, 0, 179.toByte()) + ByteArray(178)) // duplicate start
+
+        assertEquals(
+            listOf(
+                "invalid_frame_size",
+                "invalid_transaction",
+                "invalid_length",
+                "missing_partial",
+                "partial",
+                "invalid_order",
+                "invalid_payload_size",
+                "partial",
+                "conflict",
+            ),
+            telemetry.processedLabels(),
+        )
+        val events = telemetry.events()
+        assertTrue("rejected frames never complete a record", events.none { it.kind == "record_complete" })
+        assertTrue("rejected frames never generate a reply", events.none { it.kind == "reply_generated" })
+        assertEquals(0, records)
+        verify(exactly = 0) { platform.cancelConnection(a) }
+    }
+
+    @Test fun allocationRefusalIsReportedWhileLivePartialsStillComplete() = withTelemetry { telemetry ->
+        val a = device("a")
+        subscribe(a, 185)
+        writeFrame(a, byteArrayOf(0, 1, 0, 200.toByte()) + ByteArray(178))
+        writeFrame(a, byteArrayOf(0, 2, 0, 200.toByte()) + ByteArray(178))
+        writeFrame(a, byteArrayOf(0, 3, 0, 200.toByte()) + ByteArray(178))
+        assertEquals(listOf("partial", "partial", "allocation_limit"), telemetry.processedLabels())
+        assertEquals("a refused start is not a delivery", 0, records)
+        assertEquals(0, telemetry.eventLabels("record_complete").size)
+        verify(exactly = 0) { platform.cancelConnection(a) }
+
+        writeFrame(a, byteArrayOf(0x81.toByte(), 1, 0, 0) + ByteArray(22))
+        writeFrame(a, byteArrayOf(0x81.toByte(), 2, 0, 0) + ByteArray(22))
+        assertEquals("both live partials survived the refused third start", 2, records)
+        assertEquals(listOf("accepted", "accepted"), telemetry.eventLabels("reply_queue"))
+    }
+
+    @Test fun inboundEvidenceSeparatesUnadmittedAndOversizedValues() = withTelemetry { telemetry ->
+        val a = device("a")
+        subscribe(a, 517)
+        val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+        callback.captured.onCharacteristicWriteRequest(
+            device("stranger"),
+            0,
+            write,
+            false,
+            false,
+            0,
+            byteArrayOf(0x80.toByte(), 1, 0, 1, 5),
+        )
+        flush()
+        callback.captured.onCharacteristicWriteRequest(a, 0, write, false, false, 0, ByteArray(513) { 7 })
+        flush()
+
+        assertEquals(listOf("not_admitted_or_overflowed"), telemetry.eventLabels("fragment_dropped"))
+        assertEquals(listOf("oversized"), telemetry.eventLabels("fragment_rejected"))
+        val oversized = telemetry.events().single { it.kind == "fragment_received" && it.bytes == 513 }
+        assertNull("an oversized value is never hashed or retained", oversized.sha256)
+        assertEquals(0, records)
+    }
+
+    @Test fun ingressSaturationIsReportedAtTheDroppedFrameBoundary() = withTelemetry { telemetry ->
+        val a = device("a")
+        val b = device("b")
+        subscribe(a, 185)
+        subscribe(b, 185)
+        write(a, frame(0, false, 179, 178))
+        repeat(15) { write(a, stray()) }
+        write(a, ByteArray(183)) // no ingress slot left: the frame cannot be copied or processed
+        flush()
+        assertEquals(listOf("ingress_limit"), telemetry.eventLabels("fragment_dropped"))
+        verify(exactly = 1) { platform.cancelConnection(a) }
+        verify(exactly = 0) { platform.cancelConnection(b) }
+    }
+
+    @Test fun closeReportsQueuedInboundWorkAsDroppedInsteadOfSilentlyRemovingIt() = withTelemetry { telemetry ->
+        val a = device("a")
+        subscribe(a)
+        write(a, byteArrayOf(0x80.toByte(), 1, 0, 1, 5))
+        assertEquals("frame stays queued until the looper runs", 0, records)
+
+        subject.close()
+
+        val events = telemetry.events()
+        assertTrue(events.any { it.kind == "fragment_received" })
+        assertTrue("queued work must not be reported as processed", events.none { it.kind == "fragment_processed" })
+        val dropped = events.single { it.kind == "fragment_dropped" }
+        assertEquals("server_closed", dropped.label)
+        assertEquals(5, dropped.bytes)
+        assertEquals(0, records)
+    }
+
+    @Test fun finalSnapshotAfterCloseKeepsIncompleteAndLateCallbackEvidence() = withTelemetry { telemetry ->
+        val a = device("a")
+        subscribe(a)
+        writeFrame(a, byteArrayOf(0x80.toByte(), 1, 0, 1, 5))
+        assertEquals(1, telemetry.snapshot().peers.single().pendingUnresolved)
+        assertEquals(1, records)
+
+        subject.close()
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+
+        val snapshot = telemetry.snapshot()
+        val peer = snapshot.peers.single()
+        assertEquals("the pending callback is incomplete evidence, not a loss", 1, peer.pendingUnresolved)
+        assertEquals(1, peer.callbacksAfterClose)
+        assertEquals(0, peer.callbacks)
+        assertFalse(snapshot.clean)
+        assertTrue(telemetry.events().any { it.kind == "callback_after_close" })
+        assertTrue(
+            "the main-looper hop was closed, so it must not be reported as processed",
+            telemetry.events().none { it.kind == "notify_callback" },
+        )
     }
 }

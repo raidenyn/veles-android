@@ -84,7 +84,6 @@ class SharingInteropPhysicalTest {
         fun snapshot(): JSONObject {
             val own = requireNotNull(server)
             val peers = (field(own, "devices") as Map<*, *>).values.filterIsInstance<BluetoothDevice>()
-            val telemetry = requireNotNull(SyntheticTransportFixture.telemetry).snapshot()
             return JSONObject()
                 .put("epoch_ms", System.currentTimeMillis()).put("elapsed_ms", SystemClock.elapsedRealtime())
                 .put("peers", JSONArray(peers.map { SyntheticTransportFixture.sha256Hex(it.address.toByteArray()).take(16) }))
@@ -92,18 +91,6 @@ class SharingInteropPhysicalTest {
                 .put("subscribed_count", (field(own, "subscribed") as Set<*>).size)
                 .put("connected_at_elapsed_ms", JSONArray((field(own, "connectedAt") as Map<*, *>).values.toList()))
                 .put("records", records.length())
-                .put(
-                    "transport_events",
-                    JSONArray(
-                        telemetry.peers.flatMap { p ->
-                            p.events.map { e ->
-                                JSONObject().put("peer", p.peer).put("kind", e.kind)
-                                    .put("epoch_ms", e.epochMs).put("elapsed_ms", e.elapsedMs)
-                                    .put("code", e.code ?: JSONObject.NULL).put("bytes", e.bytes)
-                            }
-                        },
-                    ),
-                )
         }
 
         try {
@@ -155,6 +142,7 @@ class SharingInteropPhysicalTest {
                             handledNonce = nonce
                         }
                     }
+                    var liveOutput = ""
                     instrumentation.runOnMainSync {
                         val state = snapshot()
                         // Keep only state/event changes, with the actual sample time retained.
@@ -164,13 +152,11 @@ class SharingInteropPhysicalTest {
                             states.put(state)
                             previousState = key
                         }
-                        write(
-                            output,
-                            JSONObject().put("run_id", id).put("status", "RUNNING")
-                                .put("states", states).put("records", records).put("injections", injections),
-                        )
+                        liveOutput = JSONObject().put("run_id", id).put("status", "RUNNING")
+                            .put("states", states).put("records", records).put("injections", injections).toString()
                     }
-                    Thread.sleep(20)
+                    write(output, JSONObject(liveOutput))
+                    Thread.sleep(100)
                 }
             }
         } catch (error: Throwable) {
@@ -179,11 +165,18 @@ class SharingInteropPhysicalTest {
         } finally {
             instrumentation.runOnMainSync { server?.close() }
             Thread.sleep(750)
+            val telemetry = requireNotNull(SyntheticTransportFixture.telemetry).snapshot()
             write(
                 output,
-                JSONObject().put("run_id", id).put("status", if (failure == null) "CAPTURED" else "ERROR")
-                    .put("error", failure?.javaClass?.simpleName ?: JSONObject.NULL)
-                    .put("states", states).put("records", records).put("injections", injections).put("server_closed", true),
+                TransportTelemetryJson.finalOutput(
+                    runId = id,
+                    status = if (failure == null) "CAPTURED" else "ERROR",
+                    error = failure?.javaClass?.simpleName,
+                    states = states,
+                    records = records,
+                    injections = injections,
+                    snapshot = telemetry,
+                ),
             )
             SyntheticTransportFixture.telemetry = null
             readyFile.delete()
