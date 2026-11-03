@@ -23,6 +23,7 @@ from .registration import RestoreFailed
 
 SERVICE_UUID = "8e400000-8f3c-4d1a-b64a-8e3c9b0d2a51"
 EXIT_WAIT_S = 10.0  # the host's own bound is 5 s (README); double it so only a genuine hang fails
+CONNECTOR_READY_S = 5.0  # extension page load budget before the native connect is attempted
 
 
 class UnattachedRig:
@@ -85,6 +86,14 @@ def load_extension(ctx, st):
 def connect_native(ctx, st):
     target, session = ctx.chrome.open_page(f"chrome-extension://{ctx.ext_id}/connector.html")
     st.update(target=target, session=session)
+    # Target.createTarget/attach returns before connector.js necessarily runs; evaluating connect() earlier
+    # raises a ReferenceError for an undefined `velesAcceptance` and aborts the case as a driver error.
+    deadline = ctx.clock() + CONNECTOR_READY_S
+    while ctx.js(st, "typeof window.velesAcceptance === 'object'") is not True:
+        if ctx.clock() >= deadline:
+            raise Blocked(f"the connector page did not expose window.velesAcceptance within {CONNECTOR_READY_S:g}s; "
+                          "native connect was not attempted")
+        ctx.sleep(0.1)
     ctx.js(st, f"velesAcceptance.connect({json.dumps(ctx.host_name)})")
 
 

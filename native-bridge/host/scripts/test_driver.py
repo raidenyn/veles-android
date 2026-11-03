@@ -1190,6 +1190,8 @@ class FakeChrome:
 
     def js(self, session, expr, timeout=60):
         self.calls.append(("js", expr))
+        if expr == "typeof window.velesAcceptance === 'object'":
+            return True
         if "connect(" in expr:
             return {"opened_at": "x"}
         if "hello()" in expr:
@@ -1418,6 +1420,41 @@ class LifecycleTests(Tmp):
         doc = lifecycle.run_case(ctx, RecordingRegistration())
         self.assertIn("not the keyed id", doc["blocker"])
         self.assertNotIn("connect_native", [a["name"] for a in doc["actions"]])
+
+    def test_connect_native_waits_for_the_connector_page_api_before_connecting(self):
+        class LatePage(FakeChrome):
+            def __init__(self):
+                super().__init__()
+                self.ready_polls = 0
+
+            def js(self, session, expr, timeout=60):
+                if expr == "typeof window.velesAcceptance === 'object'":
+                    self.ready_polls += 1
+                    if self.ready_polls < 3:
+                        self.calls.append(("js", expr))
+                        return False
+                return super().js(session, expr, timeout)
+
+        chrome = LatePage()
+        lifecycle.connect_native(self.ctx("macos.none.ready-hygiene", chrome=chrome), {})
+        connect_calls = [i for i, c in enumerate(chrome.calls)
+                         if isinstance(c, tuple) and "velesAcceptance.connect(" in c[1]]
+        self.assertEqual(len(connect_calls), 1)
+        self.assertEqual(chrome.ready_polls, 3)
+        self.assertGreater(connect_calls[0], 2, "connect must not run before the connector page defines its API")
+
+    def test_connect_native_blocks_without_connecting_when_the_connector_api_never_appears(self):
+        class NeverReady(FakeChrome):
+            def js(self, session, expr, timeout=60):
+                if expr == "typeof window.velesAcceptance === 'object'":
+                    self.calls.append(("js", expr))
+                    return False
+                return super().js(session, expr, timeout)
+
+        chrome = NeverReady()
+        with self.assertRaisesRegex(Blocked, "native connect was not attempted"):
+            lifecycle.connect_native(self.ctx("macos.none.ready-hygiene", chrome=chrome), {})
+        self.assertFalse([c for c in chrome.calls if isinstance(c, tuple) and "velesAcceptance.connect(" in c[1]])
 
     def test_preexisting_host_process_refuses_ambiguous_baseline(self):
         obs = ScriptedObserver("h")

@@ -624,13 +624,15 @@ class BinaryBindingTests(AnchorFixture):
 
             def js(self, session, expression, timeout=60):
                 calls.append(expression)
+                return True if expression == "typeof window.velesAcceptance === 'object'" else None
 
         ctx = lifecycle.Ctx(CASES["macos.none.ready-hygiene"], mock.Mock(), chrome=Chrome(), ext_id="e", host_name="h",
                             guard=anc.host_guard(self.mac, self.good))
         self.swap()
         with self.assertRaises(Blocked):
             lifecycle.connect_native(ctx, {})
-        self.assertEqual(calls, [])
+        self.assertFalse([c for c in calls if "velesAcceptance.connect(" in c],
+                         "Chrome must never be asked to connect (and so exec the host) after a swap")
         self.assertIn("guard=guard", (HERE / "accdrv" / "runner.py").read_text())
 
     def test_guarded_popen_refuses_to_start_a_swapped_executable(self):
