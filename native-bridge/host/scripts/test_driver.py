@@ -1140,6 +1140,68 @@ class RecorderTests(Tmp):
         for needle in ("required actions not completed", "observations not measured", "controls not measured"):
             self.assertIn(needle, doc["blocker"])
 
+    def test_capture_bytes_match_manifest_under_windows_text_mode(self):
+        from unittest import mock
+
+        real_open, real_write, real_close = os.open, os.write, os.close
+        native_binary = getattr(os, "O_BINARY", 0)
+        text_flag = 0x8000
+        synthetic = text_flag & ~native_binary
+
+        def fake_open(path, flags, mode=0o777):
+            binary = bool(flags & text_flag)
+            fd = real_open(path, (flags & ~synthetic) | native_binary, mode)
+            return fd if binary else ("text", fd)
+
+        def fake_write(fd, data):
+            if isinstance(fd, tuple):
+                return real_write(fd[1], data.replace(b"\n", b"\r\n"))
+            return real_write(fd, data)
+
+        def fake_close(fd):
+            return real_close(fd[1] if isinstance(fd, tuple) else fd)
+
+        with mock.patch.object(os, "O_BINARY", text_flag, create=True), \
+                mock.patch.object(os, "open", fake_open), \
+                mock.patch.object(os, "write", fake_write), \
+                mock.patch.object(os, "close", fake_close):
+            r = self.rec()
+            r.capture("text.json", "process", {"a": 1, "b": 2})
+            r.capture("text.txt", "process", "one\ntwo\n")
+
+        for c in r.captures:
+            actual = (self.tmp / "r" / c["path"]).read_bytes()
+            self.assertEqual(hashlib.sha256(actual).hexdigest(), c["sha256"], c["name"])
+            self.assertEqual(len(actual), c["size"], c["name"])
+            self.assertNotIn(b"\r\n", actual, c["name"])
+
+    def test_finalize_hashes_and_writes_the_same_lf_bytes_under_windows_text_mode(self):
+        from unittest import mock
+
+        real_write_text = Path.write_text
+
+        def windows_write_text(path, data, encoding=None, errors=None, newline=None):
+            if newline is None:
+                data = data.replace("\n", "\r\n")
+                newline = ""
+            return real_write_text(path, data, encoding=encoding, errors=errors, newline=newline)
+
+        with mock.patch.object(Path, "write_text", windows_write_text):
+            r = self.rec()
+            r.capture("one", "process", "1")
+            r.capture("two", "hygiene", {"a": 2})
+            doc = r.finalize()
+
+        out = self.tmp / "r"
+        sums = (out / "SHA256SUMS").read_bytes()
+        run = (out / "run.json").read_bytes()
+        self.assertNotIn(b"\r\n", sums)
+        self.assertNotIn(b"\r\n", run)
+        self.assertEqual(doc["checksum_catalog"]["sha256"], hashlib.sha256(sums).hexdigest())
+        for line in sums.decode("utf-8").splitlines():
+            digest, rel = line.split("  ")
+            self.assertEqual(digest, hashlib.sha256((out / rel).read_bytes()).hexdigest(), rel)
+
     def test_catalog_matches_files_and_validator_never_passes_it(self):
         r = self.rec()
         r.capture("one", "process", "1")

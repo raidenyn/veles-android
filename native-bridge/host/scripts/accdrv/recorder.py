@@ -42,11 +42,11 @@ class Recorder:
         if not NAME_RE.match(name) or name in {c["name"] for c in self.captures}:
             raise ValueError(f"bad or duplicate capture name {name!r}")
         if isinstance(data, (dict, list)):
-            data = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode()
+            data = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
         elif isinstance(data, str):
-            data = data.encode()
+            data = data.encode("utf-8")
         rel = f"captures/{name}"
-        fd = os.open(self.out / rel, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(self.out / rel, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
         try:
             os.write(fd, data)
         finally:
@@ -117,18 +117,19 @@ class Recorder:
         for rel in extra:
             lines.append(f"{hashlib.sha256((self.out / rel).read_bytes()).hexdigest()}  {rel}")
         catalog = ("\n".join(sorted(lines, key=lambda l: l.split("  ", 1)[1])) + "\n") if lines else ""
-        (self.out / "SHA256SUMS").write_text(catalog)
+        catalog_bytes = catalog.encode("utf-8")
+        (self.out / "SHA256SUMS").write_bytes(catalog_bytes)
         doc = {"schema": SCHEMA, "case_id": self.case["id"], "declared_status": status, "recorded_at": self.clock(),
                **self.fields, "actions": self.actions, "captures": self.captures, "observations": self.observations,
                "controls": self.controls, "callbacks": self.callbacks, "failed_setups": self.failed_setups,
-               "checksum_catalog": {"path": "SHA256SUMS", "sha256": hashlib.sha256(catalog.encode()).hexdigest()}}
+               "checksum_catalog": {"path": "SHA256SUMS", "sha256": hashlib.sha256(catalog_bytes).hexdigest()}}
         if blocker:
             doc["blocker"] = blocker
         if self.failures:
             doc["failures"] = self.failures
         if self.driver_errors:
             doc["driver_errors"] = self.driver_errors
-        (self.out / "run.json").write_text(json.dumps(doc, indent=2) + "\n")
+        (self.out / "run.json").write_bytes((json.dumps(doc, indent=2) + "\n").encode("utf-8"))
         return doc
 
     def _files(self):
