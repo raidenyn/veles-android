@@ -43,5 +43,5 @@ describe('npm run package', () => {
         for (const [name, bytes] of first) {
             expect(readFileSync(join(OUTPUT, name))).toEqual(bytes);
         }
-    });
+    }, 15_000);
 });

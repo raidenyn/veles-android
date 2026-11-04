@@ -1888,6 +1888,20 @@ version matrix, missing/incompatible-host install/update UX tests, manifest
 permission review, and physical search/connect/reconnect smoke tests on Windows
 and macOS.
 
+**Owner-approved verification handoff (2026-11-04):** OTP-07 implementation may
+proceed through review, merge, and implementation closeout without completing
+the expanded failure/recovery matrix. The remaining connector checks (permission
+denial/recovery, actual-host error recovery, pending-operation/closure cleanup,
+unexpected-loss/hint reconnect, delayed inbound generations, and literal
+toolbar/worker launch), together with the two non-blocking review follow-ups,
+are owned by [standalone follow-up #127](https://github.com/raidenyn/veles-android/issues/127).
+Schedule it at implementation order **22.5**, Hardening, after OTP-19 and before
+OTP-20 / Gate C; it depends on #88/#89/#90/#101 and must be resolved or explicitly
+dispositioned before #102 closes. Implementation closeout is not a full-matrix
+or Gate B/C/D pass. Preserve the bounded Windows/macOS smoke and all earlier
+blocked/not-run evidence as recorded; other tasks retain their own acceptance
+criteria. Native-host acceptance remains coordinated with #125, not duplicated.
+
 **Project fields:** Implementation order 9; Phase Transport; Area Chrome;
 Release scope Stable release; Gate Blocks protected transport; initial Status
 Backlog.

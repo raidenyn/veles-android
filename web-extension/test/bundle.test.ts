@@ -24,7 +24,10 @@ describe('dist/ contents (post-build artifact)', () => {
         expect(files).toEqual([
             'background.js',
             'chunks/modulepreload-polyfill-DaKOjhqt.js',
+            'chunks/ownership-BOcJ26Iv.js',
             'chunks/storage-DOMCF8BZ.js',
+            'connector.html',
+            'connector.js',
             'content.js',
             'manifest.json',
             'options.html',
@@ -38,5 +41,15 @@ describe('dist/ contents (post-build artifact)', () => {
     it('dist/manifest.json matches the canonical generator exactly', () => {
         const emitted = JSON.parse(readFileSync(join(DIST, 'manifest.json'), 'utf8'));
         expect(emitted).toEqual(JSON.parse(JSON.stringify(buildExtensionManifest())));
+    });
+
+    it('ships the production connector without the test-only browser harness', () => {
+        const files = walk(DIST);
+        expect(files.filter((file) => /harness|fixture|browser-connector/.test(file))).toEqual([]);
+
+        const connector = readFileSync(join(DIST, 'connector.js'), 'utf8');
+        expect(connector).toContain('connectNative');
+        expect(connector).not.toContain('__velesConnectorHarness');
+        expect(connector).not.toContain('SimulatedNativePort');
     });
 });

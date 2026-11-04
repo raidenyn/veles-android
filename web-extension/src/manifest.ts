@@ -16,8 +16,10 @@ export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
         version: pkg.version,
         description:
             'Delivers one-time passcodes from the Veles Android app to this browser over an authenticated local channel.',
-        permissions: ['storage'],
-        action: { default_popup: 'popup.html' },
+        permissions: ['storage', 'nativeMessaging'],
+        // No default_popup: chrome.action.onClicked must fire so the service
+        // worker can focus or create the single connector tab.
+        action: { default_title: 'Veles OTP' },
         options_ui: { page: 'options.html' },
         background: { service_worker: 'background.js', type: 'module' },
         content_scripts: [

@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="color-scheme" content="light dark" />
+        <title>Veles OTP Connector</title>
+        <style>
+            :root {
+                color-scheme: light dark;
+                --veles-bg: #f5f7f2;
+                --veles-surface: #ffffff;
+                --veles-text: #17231b;
+                --veles-muted: #4b5c50;
+                --veles-accent: #146c43;
+                --veles-accent-strong: #0c4f30;
+                --veles-gold: #8a6400;
+                --veles-border: #c8d4cb;
+                --veles-error: #9f1d20;
+                --veles-on-accent: #ffffff;
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    'Segoe UI',
+                    Roboto,
+                    sans-serif;
+                line-height: 1.5;
+            }
+            @media (prefers-color-scheme: dark) {
+                :root {
+                    --veles-bg: #101813;
+                    --veles-surface: #17231b;
+                    --veles-text: #e9f2eb;
+                    --veles-muted: #b6c7ba;
+                    --veles-accent: #7ed6a4;
+                    --veles-accent-strong: #a6e8bd;
+                    --veles-gold: #f3cf6b;
+                    --veles-border: #375043;
+                    --veles-error: #ffb4ab;
+                    --veles-on-accent: #102016;
+                }
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                min-height: 100vh;
+                background: var(--veles-bg);
+                color: var(--veles-text);
+            }
+            main {
+                width: min(100%, 56rem);
+                margin: 0 auto;
+                padding: clamp(1rem, 4vw, 2.5rem);
+                display: grid;
+                gap: 1rem;
+            }
+            header,
+            section,
+            #error-banner,
+            #host-guidance {
+                background: var(--veles-surface);
+                border: 1px solid var(--veles-border);
+                border-radius: 0.75rem;
+                padding: clamp(0.9rem, 3vw, 1.4rem);
+            }
+            h1,
+            h2 {
+                margin: 0 0 0.5rem;
+                line-height: 1.2;
+                color: var(--veles-accent-strong);
+            }
+            h1 {
+                font-size: clamp(1.5rem, 5vw, 2rem);
+            }
+            h2 {
+                font-size: clamp(1.15rem, 3.5vw, 1.35rem);
+            }
+            p {
+                margin: 0.35rem 0;
+            }
+            #status {
+                font-weight: 600;
+            }
+            #host-status,
+            #scan-status,
+            #reconnect-status,
+            [data-role='hint'] {
+                color: var(--veles-muted);
+            }
+            #host-guidance,
+            #error-banner {
+                border-color: var(--veles-gold);
+            }
+            #error-banner {
+                color: var(--veles-error);
+                font-weight: 600;
+            }
+            #error-banner:empty {
+                display: none;
+            }
+            .controls,
+            section {
+                display: grid;
+                gap: 0.75rem;
+            }
+            .button-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.6rem;
+            }
+            button {
+                appearance: none;
+                border: 1px solid var(--veles-accent);
+                border-radius: 0.55rem;
+                background: var(--veles-accent);
+                color: var(--veles-on-accent);
+                font: inherit;
+                font-weight: 600;
+                padding: 0.55rem 1rem;
+                min-height: 2.75rem;
+                cursor: pointer;
+            }
+            button:hover:not(:disabled) {
+                background: var(--veles-accent-strong);
+            }
+            button:focus-visible,
+            summary:focus-visible {
+                outline: 3px solid var(--veles-gold);
+                outline-offset: 2px;
+            }
+            button:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+            ul {
+                list-style: none;
+                margin: 0;
+                padding: 0;
+                display: grid;
+                gap: 0.6rem;
+            }
+            li {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 0.5rem 0.9rem;
+                border-top: 1px solid var(--veles-border);
+                padding-top: 0.6rem;
+            }
+            li:first-child {
+                border-top: 0;
+                padding-top: 0;
+            }
+            li > span:first-child {
+                font-weight: 600;
+            }
+            li > button {
+                margin-left: auto;
+            }
+            details {
+                background: var(--veles-surface);
+                border: 1px solid var(--veles-border);
+                border-radius: 0.75rem;
+                padding: 0.9rem 1.2rem;
+            }
+            summary {
+                cursor: pointer;
+                font-weight: 600;
+            }
+            #diagnostics-list {
+                margin-top: 0.75rem;
+                max-height: 18rem;
+                overflow: auto;
+                padding-left: 1.5rem;
+                list-style: decimal;
+            }
+            #diagnostics-list li {
+                display: list-item;
+                border: 0;
+                padding: 0.15rem 0;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                font-size: 0.85rem;
+                overflow-wrap: anywhere;
+            }
+            [hidden] {
+                display: none !important;
+            }
+            @media (max-width: 30rem) {
+                main {
+                    padding: 0.75rem;
+                }
+                li > button {
+                    margin-left: 0;
+                    width: 100%;
+                }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                * {
+                    scroll-behavior: auto !important;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main>
+            <header>
+                <h1>Veles OTP</h1>
+                <p id="status" role="status" aria-live="polite">Starting connector…</p>
+                <p id="host-status"></p>
+                <p id="host-guidance" role="note" hidden></p>
+            </header>
+
+            <section aria-labelledby="search-heading">
+                <h2 id="search-heading">Phones</h2>
+                <div class="button-row">
+                    <button id="search-button" type="button">Search for phones</button>
+                    <button id="stop-scan-button" type="button" hidden>Stop search</button>
+                </div>
+                <p id="scan-status" role="status" aria-live="polite"></p>
+                <ul id="device-list" aria-label="Discovered phones" aria-live="polite"></ul>
+            </section>
+
+            <section aria-labelledby="connections-heading">
+                <h2 id="connections-heading">Connections</h2>
+                <ul id="connection-list" aria-label="Phone connections" aria-live="polite"></ul>
+            </section>
+
+            <div id="error-banner" role="alert" hidden></div>
+
+            <section aria-label="Connection controls" class="controls">
+                <div class="button-row">
+                    <button id="reconnect-button" type="button">Reconnect</button>
+                    <button id="shutdown-button" type="button">Shut down</button>
+                </div>
+                <p id="reconnect-status" role="status" aria-live="polite" hidden></p>
+            </section>
+
+            <details id="diagnostics">
+                <summary>Diagnostics (Latest 50 entries)</summary>
+                <ol id="diagnostics-list"></ol>
+            </details>
+        </main>
+        <script type="module" src="./src/connector.ts"></script>
+    </body>
+</html>
