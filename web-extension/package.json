@@ -12,11 +12,12 @@
         "format:check": "prettier --check .",
         "lint": "eslint .",
         "typecheck": "tsc --noEmit",
-        "test": "vitest run test/smoke.test.ts test/manifest-guard.test.ts test/package-output.test.ts test/protocol-fixtures.test.ts test/trust.test.ts",
+        "test": "vitest run test/smoke.test.ts test/manifest-guard.test.ts test/launcher.test.ts test/connector/protocol.test.ts test/connector/port.test.ts test/connector/limits.test.ts test/connector/state.test.ts test/connector/controller.test.ts test/package-output.test.ts test/protocol-fixtures.test.ts test/trust.test.ts test/connector/hints-reconnect.test.ts test/connector/view-model.test.ts test/connector/connector-app.test.ts test/connector/ownership.test.ts test/connector/integration.test.ts",
         "test:browser": "node scripts/test-browser.mjs",
         "test:bundle": "vitest run test/bundle.test.ts",
         "build": "vite build",
-        "package": "vite build && node scripts/package.mjs"
+        "package": "vite build && node scripts/package.mjs",
+        "test:connector-browser": "node scripts/test-connector-browser.mjs"
     },
     "devDependencies": {
         "@eslint/js": "9.39.2",

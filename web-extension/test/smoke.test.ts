@@ -1,18 +1,21 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildExtensionManifest } from '../src/manifest';
 import pkg from '../package.json';
 
 describe('extension manifest', () => {
-    it('is a valid MV3 manifest at the locked-down baseline', () => {
+    it('is a valid MV3 manifest with the connector permissions', () => {
         const m = buildExtensionManifest();
         expect(m.manifest_version).toBe(3);
         expect(m.name).toBe('Veles OTP');
         expect(m.version).toBe(pkg.version);
-        expect(m.permissions).toEqual(['storage']);
+        expect(m.permissions).toEqual(['storage', 'nativeMessaging']);
         expect(m).not.toHaveProperty('host_permissions');
+        expect(m).not.toHaveProperty('web_accessible_resources');
         expect(m.background?.service_worker).toBe('background.js');
         expect(m.content_scripts?.[0]?.js).toEqual(['content.js']);
-        expect(m.action?.default_popup).toBe('popup.html');
+        expect(m.action).toEqual({ default_title: 'Veles OTP' });
         expect(m.options_ui?.page).toBe('options.html');
     });
 
@@ -25,10 +28,32 @@ describe('extension manifest', () => {
 });
 
 describe('entry-point modules', () => {
-    it('background.ts, content.ts, options.ts and popup.ts compile and export', async () => {
+    it('background.ts, content.ts, options.ts, popup.ts and connector.ts compile and export', async () => {
         await expect(import('../src/background')).resolves.toBeDefined();
         await expect(import('../src/content')).resolves.toBeDefined();
         await expect(import('../src/options')).resolves.toBeDefined();
         await expect(import('../src/popup')).resolves.toBeDefined();
+        await expect(import('../src/connector')).resolves.toBeDefined();
+    });
+});
+
+describe('root connector page', () => {
+    it('contains the required static element ids and module entry', () => {
+        const html = readFileSync(join(__dirname, '..', 'connector.html'), 'utf8');
+        for (const id of [
+            'status',
+            'host-guidance',
+            'search-button',
+            'scan-status',
+            'device-list',
+            'connection-list',
+            'error-banner',
+            'reconnect-button',
+            'shutdown-button',
+            'diagnostics',
+        ]) {
+            expect(html).toContain(`id="${id}"`);
+        }
+        expect(html).toContain('./src/connector.ts');
     });
 });
