@@ -1,0 +1,849 @@
+{
+  "schema": "veles.otp07.windows-public-evidence.v1",
+  "published_as": "docs/evidence/otp07/windows-2026-11-04/summary.json",
+  "last_updated": "2026-11-04",
+  "status": {
+    "overall": "APPROVED_SCOPED_NARROW_FOREGROUND_SMOKE_WITH_LIMITS",
+    "windows_bounded_records": "RECONCILED",
+    "physical_evidence_acceptance": "REVIEWED_SCOPED_PASS_WITH_LIMITS",
+    "external_android_signer_chain": "RESOLVED_PASS",
+    "environment_metadata": "POST_RUN_CORROBORATED_NOT_CONTEMPORANEOUS",
+    "contemporaneous_environment_capture": false,
+    "macos": "NOT_RUN",
+    "full_otp07_closed": false,
+    "installer_acceptance": false,
+    "strict_lifecycle_acceptance": false,
+    "authenticated_or_background_transport": false,
+    "literal_toolbar_invocation": false,
+    "no_gatt_writes_proven": false
+  },
+  "source": {
+    "commit": "58b243d4a55ed18d6b3e3bd0dee05b2f505d7c24",
+    "tree": "aa5331e1b4f8a0874b5b877ca0838b1ac7d96c90",
+    "original_commit_immutable": true,
+    "followup_changes": "evidence/docs publication only; no source recomposition"
+  },
+  "extension": {
+    "zip_sha256": "4b317ec8a5aa3c54035f35bfc2cc8215f02e141102790ad9527a86d0d42f029f",
+    "catalog_sha256": "440b1c6dff6156f06c7993658726d440c093bba36b97acb9ad49c73fe084ec21",
+    "catalog_entry_count": 13,
+    "catalog": [
+      {
+        "path": "background.js",
+        "sha256": "8e3258a970d5726470625bd9bf8fa11f9d5139df92e0ca709cbcf1756a7b5b1c",
+        "size": 7430
+      },
+      {
+        "path": "chunks/modulepreload-polyfill-DaKOjhqt.js",
+        "sha256": "2fdd90ba476b7bc7abebdbf9ff722920758b79b7404e41225159ab266fefd76b",
+        "size": 1261
+      },
+      {
+        "path": "chunks/ownership-BOcJ26Iv.js",
+        "sha256": "02835422b3b0205f65b08d30ba3f2621b0d9f85530b58b72965b2ec2e6d6eccc",
+        "size": 12804
+      },
+      {
+        "path": "chunks/storage-DOMCF8BZ.js",
+        "sha256": "1d885a1ab61f8f69e1aa96c8bb041bd38f39804c62080f894a41b9bcecd21bb1",
+        "size": 606
+      },
+      {
+        "path": "connector.html",
+        "sha256": "ec4478422db840af4038d73e8c217f88a86d553c660da30c7725864dd73df88b",
+        "size": 8616
+      },
+      {
+        "path": "connector.js",
+        "sha256": "5596b03cf4c67868ec1e610664b566a967a82e510032b38a593b9fd32b784661",
+        "size": 128070
+      },
+      {
+        "path": "content.js",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+        "size": 1
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "3d40a58066f2d77f8e2c03de4790e7df171c543141232eac53cbcc5e61282718",
+        "size": 765
+      },
+      {
+        "path": "options.html",
+        "sha256": "ad78d2fba0f494f24dd6e99d6120cc12bcabeedf6f1abb5f82e5f20b5cb06b80",
+        "size": 440
+      },
+      {
+        "path": "options.js",
+        "sha256": "e430e60fa218b8f117fd62c7a985f220ae30441deb0a16d22167d9262e3e02df",
+        "size": 100
+      },
+      {
+        "path": "popup.html",
+        "sha256": "5497eb59e4383f15a43ba7172eba0126cff287516b402828f4cdecaab3bebe12",
+        "size": 422
+      },
+      {
+        "path": "popup.js",
+        "sha256": "409c28edc57e908005d29a289e60a7202d58b3690974602c2485f7e16cb21d30",
+        "size": 93
+      },
+      {
+        "path": "trust.js",
+        "sha256": "d0b56177039da4d3b3e4f076f5b2436a90bb020f2151077067d5c52c35383bfd",
+        "size": 13038
+      }
+    ],
+    "served": {
+      "connectorScript": {
+        "sha256": "5596b03cf4c67868ec1e610664b566a967a82e510032b38a593b9fd32b784661",
+        "bytes": 128070,
+        "matches_staged_catalog": true
+      },
+      "connectorHtml": {
+        "sha256": "ec4478422db840af4038d73e8c217f88a86d553c660da30c7725864dd73df88b",
+        "bytes": 8616,
+        "matches_staged_catalog": true
+      },
+      "backgroundScript": {
+        "sha256": "8e3258a970d5726470625bd9bf8fa11f9d5139df92e0ca709cbcf1756a7b5b1c",
+        "bytes": 7430,
+        "matches_staged_catalog": true
+      }
+    }
+  },
+  "host": {
+    "name": "me.nagaev.veles.bridge",
+    "platform": "windows",
+    "sha256": "36a9fcda38d63292b720b7f3c84fa29e5dc6bcc0ef45b1e0cc13a5a55a5d91af",
+    "bytes": 767488,
+    "unsigned_development_binary": true,
+    "authenticode_status": "NotSigned",
+    "authenticode_source": "post-run environment supplement",
+    "documented_build_command_without_test_driver_features": true,
+    "build_command_metadata": "operator-reported build command without test-driver features; not independently feature-attested",
+    "installer_or_authenticode_acceptance": false
+  },
+  "environment_postrun": {
+    "artifact_sha256": "d318faeeca58725cc8293c8c429f4bc976cd4177d8213e247fb459b9b0959582",
+    "bytes": 12498,
+    "observed_at": "2026-11-04T13:50:30.2396875+07:00",
+    "supplemental": true,
+    "contemporaneous_with_run": false,
+    "status": "POST_RUN_CORROBORATED_NOT_CONTEMPORANEOUS",
+    "original_capture_available": {
+      "os_version": false,
+      "chrome_process_and_flags": false,
+      "chrome_cdp_browser_version": true,
+      "chrome_launch_bat_and_load_unpacked": true
+    },
+    "os": {
+      "caption": "Microsoft Windows 11 Pro",
+      "version": "10.0.26300",
+      "build_number": "26300",
+      "architecture": "64-bit",
+      "last_boot_up_time": "2026-11-02T21:35:14.5000000+07:00"
+    },
+    "chrome_current": {
+      "product_version": "156.0.8078.80",
+      "sha256": "46461accbdc87dc88a5bdd6d611be095dd6147db009863d794f742ca90662efa",
+      "authenticode_status": "Valid",
+      "matches_original_cdp_browser_version": true,
+      "live_process_capture_available": false
+    },
+    "original_cdp_browser_version": "156.0.8078.80",
+    "host_authenticode_status": "NotSigned",
+    "cleanup_readback": {
+      "hkcu_registration_present": false,
+      "hklm_registration_present": false,
+      "owned_host_process_count": 0,
+      "cdp_port_listening": false,
+      "scheduled_task_present": false
+    },
+    "note": "explicitly observed after the run and cleanup; not contemporaneous environment attestation"
+  },
+  "evaluator": {
+    "windows_smoke_sha256": "7e03aa8867b051be0ffe01416b155ad03c71deeceae2d90dbd001ddc2fe9676d",
+    "retained_private_not_public_reproducer": true
+  },
+  "android_fixture": {
+    "app_apk_sha256": "3e2a6c41bb0eb6d3ef9b07f478d29b0fe417dcf7df1915c0b6482a754c059f08",
+    "test_apk_sha256": "afadd554b475013f62102c72b62c0badc46706d6f9f3e26dfe52ede4687fac84",
+    "signing_certificate_sha256": "9ef3104b934a37b111726ff91c7cb5ec5affc0e8b6a90742ed0bc55501969df9",
+    "signer_evidence": {
+      "available": true,
+      "sha256": "c06806c8d32cdd4f617614a94e36079d5618672349c97d14ccb815860ceb2ef8",
+      "bytes": 1977,
+      "kind": "apksigner Android-fixture identity record",
+      "windows_executable_signing": false,
+      "semantic_external_signer_acceptance": "PASS",
+      "chain_resolved": true,
+      "pre_install_copies_sha256": "5013c6b04f6d0ad041cb0b1d2e645c4ac81e9fc9ae08c1d6c1360f96835a6313",
+      "adb_install_results_sha256": "c8f87f03473de0c40321fa219386a51f737642ccc6a56c76c09775d0315a239e",
+      "same_certificate_sha256": "9ef3104b934a37b111726ff91c7cb5ec5affc0e8b6a90742ed0bc55501969df9",
+      "install_updates_recorded": 2
+    },
+    "installed_and_candidate_certificates_recorded": true,
+    "install_success_and_first_install_preservation": "documented in retained install output; not re-observed in this publication"
+  },
+  "run": {
+    "run_id": "otp07-win-20261104-b",
+    "main": {
+      "status": "PASS",
+      "started_at": "2026-11-04T06:32:49.585Z",
+      "finished_at": "2026-11-04T06:33:05.698Z"
+    },
+    "reopen": {
+      "status": "PASS",
+      "started_at": "2026-11-04T06:33:29.182Z",
+      "finished_at": "2026-11-04T06:33:37.032Z"
+    },
+    "registration": {
+      "temporary_hkcu": true,
+      "hklm_absent": true,
+      "manifest_sha256": "e1db322de6b3d07b5778842e4d9d5c160a4c394b2407467aa97a6add23a9dd91",
+      "manifest_bytes": 443,
+      "host_manifest_origin_match": true,
+      "cleanup_recorded": true
+    }
+  },
+  "transfers": {
+    "note": "13 bounded synthetic request/reply exchanges. Request hashes are reconstructed from the approved generator; reply hashes match actual receipts. A 4-byte exchange is a fixed-prefix boundary case only, not peer-content isolation. sent is transport/GATT write completion, not an application reply or acknowledgement.",
+    "exchanges": [
+      {
+        "phase": "main",
+        "ref": "A:4",
+        "phone_ref": "A",
+        "length": 4,
+        "seed": 11,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 4,
+          "at": "2026-11-04T06:32:58.167Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "A:508",
+        "phone_ref": "A",
+        "length": 508,
+        "seed": 12,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "959b66d65288fd0a1b7611bea6677ca6c9b22f93c4652751bf26fea6da0fc338",
+        "reply_sha256": "e6db9ab8f6d978b117bef957043e07aa03fd4cc1dba9fecb5665fd2ce0f9642e",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 5,
+          "at": "2026-11-04T06:32:58.173Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "A:509",
+        "phone_ref": "A",
+        "length": 509,
+        "seed": 13,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "6715e8fba97860570419007968d1509e5a94e1beba032cadfb29642375c5d8b5",
+        "reply_sha256": "9997934c64c7f86be8537dd5ee95b35a0e1781c85d1bbe5de3e61be43ad77ec7",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 6,
+          "at": "2026-11-04T06:32:58.231Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "A:4096",
+        "phone_ref": "A",
+        "length": 4096,
+        "seed": 14,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "8afade9cf3187460039b8fb239bfe85a16bc00f4fb09f05a074b0fb604f9d709",
+        "reply_sha256": "1d950f4310d43563745b3dd679cb3518f4d804b7f033c6759686ff540a8ef42d",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 8,
+          "at": "2026-11-04T06:32:58.773Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:4",
+        "phone_ref": "B",
+        "length": 4,
+        "seed": 31,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 1,
+          "at": "2026-11-04T06:32:58.069Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:508",
+        "phone_ref": "B",
+        "length": 508,
+        "seed": 32,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "bab31e09ea297b9cd526ce12cd53140541aa9f4f4ca545910e40a4d616107b83",
+        "reply_sha256": "aede72517606dc1a8a6ea8dfde06e39c841f0f4bce57f9298c4615e45df7fb49",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 2,
+          "at": "2026-11-04T06:32:58.103Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:509",
+        "phone_ref": "B",
+        "length": 509,
+        "seed": 33,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "911903c80de67f2db927acec3135024afebd9f8653d0e872a01563d6f1392f0b",
+        "reply_sha256": "6b6812c719e9a6ac34582ec33978efc0478277d65d62a225a5eba7b377be2aeb",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 3,
+          "at": "2026-11-04T06:32:58.130Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:4096",
+        "phone_ref": "B",
+        "length": 4096,
+        "seed": 34,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "6148421167608edbc3466f4442bf377021ad0cba3d8699e77f8e170732798158",
+        "reply_sha256": "80144c4497d35f36467c8b776e77a579f53e3241f43d834bcc6ec1403e30a7b6",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 7,
+          "at": "2026-11-04T06:32:58.406Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:survivor:4096",
+        "phone_ref": "B",
+        "length": 4096,
+        "seed": 131,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "1b35de2f3607bfab002105abd52a495fa7392bffd193a5b75f1c3cc8d74d4e1f",
+        "reply_sha256": "9f6f48e68a848e2230161389d366186af25e9b2e213ef857d0ecba37b57cab8a",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 9,
+          "at": "2026-11-04T06:33:05.038Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:A:4",
+        "phone_ref": "A",
+        "length": 4,
+        "seed": 201,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 3,
+          "at": "2026-11-04T06:33:36.350Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:A:508",
+        "phone_ref": "A",
+        "length": 508,
+        "seed": 211,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "d018ba4ba75c852e168d84d2beb2a5a32de144debaf07d5990f2db640725b273",
+        "reply_sha256": "b2dc37b0b0551b340e3c82330dd3125109aebeddb13aa242c9dfa01dd34c4cf1",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 4,
+          "at": "2026-11-04T06:33:36.472Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:B:4",
+        "phone_ref": "B",
+        "length": 4,
+        "seed": 202,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 1,
+          "at": "2026-11-04T06:33:36.313Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:B:508",
+        "phone_ref": "B",
+        "length": 508,
+        "seed": 212,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "a40cec322b1fc2644398839d807e141a960a89a8e49389a1e15566309cfd1b6f",
+        "reply_sha256": "37cd2b7fcc50612344b4ba702a2a699afa50fde87fae51f8deb0d03122e7bfec",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 2,
+          "at": "2026-11-04T06:33:36.349Z"
+        }
+      }
+    ],
+    "receipts": [
+      {
+        "seq": 1,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T06:32:58.069Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 2,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:508",
+        "length": 508,
+        "sha256": "aede72517606dc1a8a6ea8dfde06e39c841f0f4bce57f9298c4615e45df7fb49",
+        "at": "2026-11-04T06:32:58.103Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 3,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:509",
+        "length": 509,
+        "sha256": "6b6812c719e9a6ac34582ec33978efc0478277d65d62a225a5eba7b377be2aeb",
+        "at": "2026-11-04T06:32:58.130Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 4,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T06:32:58.167Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 5,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:508",
+        "length": 508,
+        "sha256": "e6db9ab8f6d978b117bef957043e07aa03fd4cc1dba9fecb5665fd2ce0f9642e",
+        "at": "2026-11-04T06:32:58.173Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 6,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:509",
+        "length": 509,
+        "sha256": "9997934c64c7f86be8537dd5ee95b35a0e1781c85d1bbe5de3e61be43ad77ec7",
+        "at": "2026-11-04T06:32:58.231Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 7,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:4096",
+        "length": 4096,
+        "sha256": "80144c4497d35f36467c8b776e77a579f53e3241f43d834bcc6ec1403e30a7b6",
+        "at": "2026-11-04T06:32:58.406Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 8,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:4096",
+        "length": 4096,
+        "sha256": "1d950f4310d43563745b3dd679cb3518f4d804b7f033c6759686ff540a8ef42d",
+        "at": "2026-11-04T06:32:58.773Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 9,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:survivor:4096",
+        "length": 4096,
+        "sha256": "9f6f48e68a848e2230161389d366186af25e9b2e213ef857d0ecba37b57cab8a",
+        "at": "2026-11-04T06:33:05.038Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 1,
+        "phase": "reopen",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "R:B:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T06:33:36.313Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 2,
+        "phase": "reopen",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "R:B:508",
+        "length": 508,
+        "sha256": "37cd2b7fcc50612344b4ba702a2a699afa50fde87fae51f8deb0d03122e7bfec",
+        "at": "2026-11-04T06:33:36.349Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 3,
+        "phase": "reopen",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "R:A:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T06:33:36.350Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 4,
+        "phase": "reopen",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "R:A:508",
+        "length": 508,
+        "sha256": "b2dc37b0b0551b340e3c82330dd3125109aebeddb13aa242c9dfa01dd34c4cf1",
+        "at": "2026-11-04T06:33:36.472Z",
+        "classification": "exchange_matched"
+      }
+    ],
+    "protocol_rejection_4097": {
+      "length": 4097,
+      "send_status": "rejected",
+      "source": "wire",
+      "code": "oversize_record",
+      "stage": "record",
+      "settled": true,
+      "no_record_after_rejection": true,
+      "connection_still_connected": true,
+      "gatt_write_absence_proven": false
+    }
+  },
+  "phone_telemetry": {
+    "A": {
+      "fixture_window_utc": [
+        "2026-11-04T06:31:13.828Z",
+        "2026-11-04T06:34:03.805Z"
+      ],
+      "record_complete": 6,
+      "reply_generated": 6,
+      "notify_calls": 15,
+      "api_success": 15,
+      "attempted_bytes": 5689,
+      "callbacks": 15,
+      "callback_success": 15,
+      "connects": 2,
+      "subscribes": 2,
+      "disconnects": 2,
+      "notify_api_nonzero": 0,
+      "notify_callback_seen": 15,
+      "notify_callback_nonzero": 0,
+      "unbound_callbacks": 0,
+      "callbacks_after_close": 0,
+      "pending_unresolved": 0,
+      "pending_dropped": 0,
+      "mtu": 517,
+      "clean": true,
+      "final": true,
+      "final_after_service_stopped": true,
+      "peers_dropped": 0,
+      "truncated": false,
+      "content_digests_present": false,
+      "wall_clock_calibrated_with_windows": false
+    },
+    "B": {
+      "fixture_window_utc": [
+        "2026-11-04T06:31:48.409Z",
+        "2026-11-04T06:34:02.858Z"
+      ],
+      "record_complete": 7,
+      "reply_generated": 7,
+      "notify_calls": 24,
+      "api_success": 24,
+      "attempted_bytes": 9821,
+      "callbacks": 24,
+      "callback_success": 24,
+      "connects": 2,
+      "subscribes": 2,
+      "disconnects": 2,
+      "notify_api_nonzero": 0,
+      "notify_callback_seen": 24,
+      "notify_callback_nonzero": 0,
+      "unbound_callbacks": 0,
+      "callbacks_after_close": 0,
+      "pending_unresolved": 0,
+      "pending_dropped": 0,
+      "mtu": 517,
+      "clean": true,
+      "final": true,
+      "final_after_service_stopped": true,
+      "peers_dropped": 0,
+      "truncated": false,
+      "content_digests_present": false,
+      "wall_clock_calibrated_with_windows": false
+    }
+  },
+  "bounded_observations": {
+    "explicit_disconnect": {
+      "disconnected_phone_ref": "A",
+      "survivor_phone_ref": "B",
+      "observation_window_ms": 5000,
+      "reconnect_observed": false,
+      "records_during_window": 0,
+      "policy_cancel_observed": true,
+      "bounded_attached_foreground_only": true
+    },
+    "tab_close": {
+      "connector_pages_before": 1,
+      "connector_pages_after": 0,
+      "post_audit_records": 0
+    },
+    "stale_local_refusals": [
+      {
+        "old_handle_ref": "conn-A",
+        "source": "local",
+        "code": "unknown_handle",
+        "stage": "connection_handle",
+        "exercise": "controller.send old handle; no inbound stale event injected"
+      },
+      {
+        "old_handle_ref": "conn-B",
+        "source": "local",
+        "code": "unknown_handle",
+        "stage": "connection_handle",
+        "exercise": "controller.send old handle; no inbound stale event injected"
+      }
+    ],
+    "reopen_handle_observation": {
+      "previous_and_new_connection_handles_differ": true,
+      "records_match_fresh_handles": true,
+      "injected_stale_event": false
+    }
+  },
+  "lifecycle_observations": {
+    "host_processes_before_main": {
+      "count": 0,
+      "sampled_at": "2026-11-04T13:32:49.5393646+07:00"
+    },
+    "host_processes_after_main": {
+      "count": 0,
+      "sampled_at": "2026-11-04T13:33:08.8226313+07:00"
+    },
+    "reopen_process_poll": {
+      "sample_label_seen_at": "2026-11-04T13:33:30.2716554+07:00",
+      "returned_creation_time": "2026-11-04T13:33:30.3013930+07:00",
+      "creation_minus_seen_ms": 29.7376,
+      "transcribed_source_sha256": "434f38bb9841026e2e7c79108afafc93964bade244d6cd1971b6c1b1ae3ffeab",
+      "original_source_retained": false,
+      "mechanism": "post-run transcription says sample time was taken before the Win32_Process query; plausible explanation, not proof of the original inline job semantics",
+      "gone_line_missing": true,
+      "limitation": "preserved discrepancy; transcription is not the original retained source; no proof of existence at the earlier sample-begin time or exact launch latency"
+    },
+    "reopen_external_close": {
+      "tab_closed_at": "2026-11-04T13:33:48.0123055+07:00",
+      "host_gone_reported_at": "2026-11-04T13:33:48.5880177+07:00",
+      "closed_to_host_gone_ms": 575.7122
+    },
+    "main_process_id_recorded": false,
+    "strict_exit_timing": false,
+    "continuous_absence_proven": false,
+    "note": "sampled external process observations only; no main PID and no strict lifecycle/EOF width"
+  },
+  "launcher_observation": {
+    "invocation_context": "controlled-extension-page-module-invocation",
+    "probes": 3,
+    "native_port_calls_during_probe": 0,
+    "literal_toolbar_click": false,
+    "worker_module_instance": false,
+    "browser_wide_native_port_audit": false,
+    "worker_dynamic_import_ok": false
+  },
+  "attempt_a": {
+    "blocked_bom": {
+      "artifact_sha256": "1cd7d03d80ca224a83747575d67e41a002668d08445a730928cd26093fb82ce7",
+      "status": "BLOCKED",
+      "reason": "identity manifest contained a UTF-8 BOM and could not be parsed before transport work"
+    },
+    "blocked_binding": {
+      "artifact_sha256": "f701586fbccb204b82898f4b6b715c3043903f8011ac1e3c70f62be46e52de7a",
+      "status": "BLOCKED",
+      "reason": "bound fixtures were not uniquely discovered; the run was restarted before attempt-b"
+    },
+    "promoted_to_success": false
+  },
+  "original_file_hashes": {
+    "attempt_b/identity.json": "101ce790f4ae38459d8eeb7ce2a724f8ae264931b5d6a450ed3dc201e5c24e5a",
+    "attempt_b/phone-bindings.json": "a6f2a8fd055788f2ab78841233f1e184054f30ab6c9534d168a22da1143ac829",
+    "attempt_b/main.json": "9a2c9b39be1ad6e0f81c5dac8194abac40ffcd1f7711d2b15e69f60e438712da",
+    "attempt_b/main.private.json": "68740afca7367fb28c9d5694a69eb25a83611eec285187a8d65f78a4c2293e9f",
+    "attempt_b/reopen.json": "45c4d2c219ae965182c52fd8d5acc8cada12cde0f017e20d9eb1e20a4a96dd4a",
+    "attempt_b/reopen.private.json": "3dd4e47ebe1df3250beabaad33350f587a3359a0fa4d605bf16e05e6187b31ca",
+    "attempt_b/evidence/bind-A-solo.private.json": "89c8304a1b74084286f5a4740bd788e363ca903818bbce3855f4e86770a4a361",
+    "attempt_b/evidence/bind-AB-after-B-start.private.json": "6f68f8150f9fd1cef945a3b36534095dcb734cbd5679f155c08f3f269d195245",
+    "attempt_b/evidence/phone-binding.txt": "9789e6db3b046c72eb1d9f89a1c502f478c81528d7d11defd1ea35be877f34d2",
+    "attempt_b/evidence/phone-A.txt": "4be97164bcb6dfb4cc286e5e548058f12c51b49f7446876f109eb458bd8d5de9",
+    "attempt_b/evidence/phone-B.txt": "fa058d375dd4bf253bc6c405f918236d71798a590afe0f7aca2863399000408a",
+    "attempt_b/fixture/A-b-otp23-transport-evidence.private.json": "c4597798c89d022dd72801dd07b642b510a3375563f107c59ae1ce37444036db",
+    "attempt_b/fixture/B-b-otp23-transport-evidence.private.json": "f9f93fd2582635008a91472fb0d39adb6258d3cad733e3151ed539723608f0e3",
+    "registration/registration-evidence.json": "7ddc54f6a6023708599abd7148476f84e00b95a95d584e9af18a5ec96ce7bbfc",
+    "registration/journal.json": "06ce1b7641841c4e798ac63788b91ae8f3856bb6cb2f38dd0817f606e117f014",
+    "registration/manifest-at-cleanup.copy.json": "e1db322de6b3d07b5778842e4d9d5c160a4c394b2407467aa97a6add23a9dd91",
+    "registration/cleanup-record.json": "b1caef457579c8a5c21819626afb7bfb900873f0ef141c045aaddf1b5df0a377",
+    "attempt_a_blocked_bom.json": "1cd7d03d80ca224a83747575d67e41a002668d08445a730928cd26093fb82ce7",
+    "attempt_a_blocked_binding.json": "f701586fbccb204b82898f4b6b715c3043903f8011ac1e3c70f62be46e52de7a",
+    "evaluator/windows-smoke.mjs": "7e03aa8867b051be0ffe01416b155ad03c71deeceae2d90dbd001ddc2fe9676d",
+    "signer/evidence/signer-evidence.txt": "c06806c8d32cdd4f617614a94e36079d5618672349c97d14ccb815860ceb2ef8",
+    "signer/pre-install-copies.json": "5013c6b04f6d0ad041cb0b1d2e645c4ac81e9fc9ae08c1d6c1360f96835a6313",
+    "signer/adb-install-results.txt": "c8f87f03473de0c40321fa219386a51f737642ccc6a56c76c09775d0315a239e",
+    "launch/launch-chrome.bat": "3b9761b30fa17a4b35c651eec24a18fbf28d11cfe08942895483af01109bece8",
+    "launch/load-unpacked.json.txt": "b80538050b9d58c2dae7cd06d066437b960ca2ac74e2a056d60818bd472acb4d",
+    "supplemental/environment-postrun.json": "d318faeeca58725cc8293c8c429f4bc976cd4177d8213e247fb459b9b0959582",
+    "supplemental/process-poller-source.ps1": "434f38bb9841026e2e7c79108afafc93964bade244d6cd1971b6c1b1ae3ffeab"
+  },
+  "review": {
+    "independent_reviewer": "separate GPT-based reviewer adjudication",
+    "final_disposition": "APPROVED_SCOPED_NARROW_FOREGROUND_SMOKE_WITH_LIMITS",
+    "narrow_transfer_reconciliation": "independently verified",
+    "verdict": "narrow Windows foreground smoke approved with limits; not full physical-evidence or OTP-07 acceptance",
+    "external_signer_acceptance": "RESOLVED_PASS",
+    "environment_metadata": "POST_RUN_CORROBORATED_NOT_CONTEMPORANEOUS",
+    "contemporaneous_environment_capture": false,
+    "last_updated": "2026-11-04"
+  },
+  "limitations": [
+    "not full OTP-07 closure, installer acceptance, or Windows executable signing acceptance",
+    "no macOS physical run; macOS remains NOT RUN pending a GUI host",
+    "foreground CDP-attached synthetic smoke only; no background liveness, strict lifecycle, authentication, or Gate acceptance",
+    "launcher probes invoke the production export from a controlled extension page; this is not a literal toolbar click or the worker module instance",
+    "protocol-level 4097-byte rejection only; no GATT write-absence proof",
+    "four-byte exchanges establish boundary handling, not content-based peer isolation; longer seeded payloads are distinct per peer",
+    "sent terminal means transport/GATT write completion, not an application reply or acknowledgement",
+    "phone-side JSON lacks per-record content digests; endpoint association is operational, not cryptographic",
+    "phone and Windows wall clocks are not calibrated; no subsecond end-to-end latency is inferred",
+    "reopen process chronology is sampled: the 29.7376 ms creation-minus-seen discrepancy is preserved; the poller source is a post-run transcription, not an original retained source; no main PID and no strict exit timing are claimed",
+    "environment evidence is an explicit post-run supplement; contemporaneous OS and live Chrome process/profile attestation were not retained",
+    "documented build command metadata is operator-reported and is not independent test-driver-feature attestation or Windows signing"
+  ]
+}
