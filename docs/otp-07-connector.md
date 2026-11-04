@@ -9,8 +9,27 @@ explicitly post-run, not contemporaneous; macOS environment observations are
 contemporaneous before/phase records. The Android fixture signer/update chain is
 resolved (Windows executed it; macOS references the same original witness
 without re-execution). The macOS host is the existing approved OTP23 signed
-test vehicle, not a production distribution identity. This is not full OTP-07
-closure.
+test vehicle, not a production distribution identity. These observations do not
+establish the full failure/recovery matrix.
+
+## Owner-approved verification handoff (2026-11-04)
+
+The owner authorized OTP-07 implementation to proceed without the full testing
+matrix. The remaining six connector verification families and both non-blocking
+review follow-ups are transferred to the standalone
+[OTP-07 follow-up #127](https://github.com/raidenyn/veles-android/issues/127).
+They no longer block implementation review, merge, or closeout of #88 after
+PR #126 merges.
+
+The follow-up is Backlog, Hardening, implementation order **22.5**: after
+OTP-19 (#101) and before OTP-20 / Gate C (#102). It depends on #88, the installed
+host work (#89), background/lifecycle integration (#90), and #101. Gate C must
+resolve its per-item ledger or obtain an explicit owner disposition before
+closing. Shared native-host cases remain coordinated with #125.
+
+This transfers verification ownership; it does not turn NOT RUN or BLOCKED into
+PASS, declare a full-matrix or Gate B/C/D pass, or waive other tasks' own
+acceptance criteria. Historical platform evidence remains unchanged.
 
 Plan: `docs/superpowers/plans/2026-11-04-otp07-chrome-connector.md`
 Worktree during implementation: `.worktrees/otp07-chrome-connector`
@@ -174,7 +193,8 @@ native-host registration, OS permissions, or real phone interoperability.
 
 ## Remaining review follow-ups
 
-The final scoped review approved the fixes with two minor residuals:
+The final scoped review approved the fixes with two minor residuals, now owned
+by [#127](https://github.com/raidenyn/veles-android/issues/127):
 
 - After a service-worker restart, a duplicate connector page still cannot open
   another native port, but its focus request may fail because the worker's
