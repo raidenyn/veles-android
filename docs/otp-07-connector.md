@@ -1,11 +1,15 @@
 # OTP-07 Chrome Native-Bridge Connector
 
 Status: implementation and automated evidence complete for Tasks 1–5 and the
-final fix wave. The final independent disposition approves the **narrow,
-bounded Windows foreground smoke only, with limits**, recorded below and in
-`docs/evidence/otp07/windows-2026-11-04/`. Environment evidence is explicitly
-post-run, not contemporaneous; the Android fixture signer/update chain is
-resolved. macOS physical testing remains **NOT RUN**. This is not full OTP-07
+final fix wave. Separate independent dispositions approve the **narrow, bounded
+foreground synthetic smoke only, with limits**, on both Windows and macOS,
+recorded in `docs/evidence/otp07/windows-2026-11-04/` and
+`docs/evidence/otp07/macos-2026-11-04/`. Windows environment evidence is
+explicitly post-run, not contemporaneous; macOS environment observations are
+contemporaneous before/phase records. The Android fixture signer/update chain is
+resolved (Windows executed it; macOS references the same original witness
+without re-execution). The macOS host is the existing approved OTP23 signed
+test vehicle, not a production distribution identity. This is not full OTP-07
 closure.
 
 Plan: `docs/superpowers/plans/2026-11-04-otp07-chrome-connector.md`
@@ -179,34 +183,46 @@ The final scoped review approved the fixes with two minor residuals:
 - Independent outgoing-envelope auditing currently covers one happy-path flow;
   it does not yet audit all posts or independently track negotiation phase.
 
-## Physical Windows/macOS smoke checklist — Windows bounded smoke; macOS NOT RUN
+## Physical Windows/macOS smoke checklist — bounded foreground smoke on both platforms, with limits
 
 Prerequisites for each platform: an actual Windows or macOS machine, the OTP-25
 development native host registered as `me.nagaev.veles.bridge`, two physical
 phones running the Veles app, and the extension package built from this commit
 (or an equivalent reviewed build). Record the native-host build hash, extension
-package hash, and phone labels. The final disposition accepts the narrow
+package hash, and phone labels. The Windows disposition accepts the narrow
 bounded smoke with environment evidence explicitly post-run; original
-contemporaneous OS/live-browser capture was not retained.
+contemporaneous OS/live-browser capture was not retained there. The macOS record
+has contemporaneous before/phase environment observations. Both are bounded
+foreground smoke, not full hardware passes.
 
 | Step | Windows | macOS |
 | --- | --- | --- |
-| Register the OTP-25 dev host and confirm the manifest points at the built host | PARTIAL — temporary HKCU registration of the unsigned dev host; manifest readback, HKLM absence, and cleanup recorded; not installer acceptance | NOT RUN |
-| Load the extension and open the connector from the action; confirm exactly one connector tab is focused | PARTIAL — controlled extension-page production-export invocation, not a literal action/toolbar click; one owner tab | NOT RUN |
-| Search and confirm both phones are listed from one scan | OBSERVED — one scan found two phones in the same fixture session | NOT RUN |
-| Connect both phones; confirm independent connection rows | OBSERVED — two independent connection rows | NOT RUN |
-| Send a synthetic whole record on each connection; observe the corresponding `sent` event | OBSERVED (bounded) — 9 main + 4 reopen synthetic replies; `sent` is transport/GATT write completion, not an application acknowledgement | NOT RUN |
-| Disconnect explicitly; confirm no automatic reconnect and no send replay | OBSERVED (bounded) — no reconnect in the 5 s attached foreground window; not a strict lifecycle proof | NOT RUN |
-| Close the connector tab; reopen by hint or search and repeat a search | OBSERVED (bounded) — external close, then a new page with a repeated scan and fresh handles; not a hint-based reopen; process observations are sampled | NOT RUN |
-| On macOS, exercise the Bluetooth permission denial/retry guidance and record the exact observed text | N/A | NOT RUN |
-| Record pass/fail, OS, host build hash, extension package hash, phone labels, and any defects | REVIEWED SCOPED PASS — bounded foreground smoke approved with limits; host/extension hashes recorded; environment is post-run corroboration only; phone labels kept private | NOT RUN |
+| Register the OTP-25 dev host and confirm the manifest points at the built host | PARTIAL — temporary HKCU registration of the unsigned dev host; manifest readback, HKLM absence, and cleanup recorded; not installer acceptance | PARTIAL — per-profile manifest only; signed OTP23 test-vehicle executable readback and cleanup recorded; global NMH unchanged; not installer acceptance |
+| Load the extension and open the connector from the action; confirm exactly one connector tab is focused | PARTIAL — controlled extension-page production-export invocation, not a literal action/toolbar click; one owner tab | PARTIAL — controlled extension-page production-export invocation, not a literal toolbar click; one owner tab |
+| Search and confirm both phones are listed from one scan | OBSERVED — one scan found two phones in the same fixture session | OBSERVED — one scan found two phones in the same fixture session |
+| Connect both phones; confirm independent connection rows | OBSERVED — two independent connection rows | OBSERVED — two independent connection rows |
+| Send a synthetic whole record on each connection; observe the corresponding `sent` event | OBSERVED (bounded) — 9 main + 4 reopen synthetic replies; `sent` is transport/GATT write completion, not an application acknowledgement | OBSERVED (bounded) — 9 main + 4 reopen synthetic replies; `sent` is transport/GATT write completion, not an application acknowledgement |
+| Disconnect explicitly; confirm no automatic reconnect and no send replay | OBSERVED (bounded) — no reconnect in the 5 s attached foreground window; not a strict lifecycle proof | OBSERVED (bounded) — no reconnect in the 5 s attached foreground window; not a strict lifecycle proof |
+| Close the connector tab; reopen by hint or search and repeat a search | OBSERVED (bounded) — external close, then a new page with a repeated scan and fresh handles; not a hint-based reopen; process observations are sampled | OBSERVED (bounded) — external close, then a new page with a repeated scan and fresh handles; not a hint-based reopen; process observations are sampled |
+| On macOS, exercise the Bluetooth permission denial/retry guidance and record the exact observed text | N/A | NOT RUN — no prompt/denial, TCC reset, grant, or revocation performed; denial recovery not exercised |
+| Record pass/fail, OS, host build hash, extension package hash, phone labels, and any defects | REVIEWED SCOPED PASS — bounded foreground smoke approved with limits; host/extension hashes recorded; environment is post-run corroboration only; phone labels kept private | REVIEWED SCOPED PASS — bounded foreground/CDP smoke approved with limits; signed test-vehicle and extension hashes recorded; environment contemporaneous; 0 critical / 1 minor (stale catalog self-entry preserved); phone labels private |
 
 The Windows entries summarize the bounded foreground smoke in
 `docs/evidence/otp07/windows-2026-11-04/summary.json`; the detailed sanitized
-review is in that directory's `evidence-review.md`. No full hardware pass is
-claimed from the simulated-browser run. The recorded smoke is not full OTP-07
-closure, installer acceptance, strict lifecycle acceptance, background
+review is in that directory's [`evidence-review.md`](evidence/otp07/windows-2026-11-04/evidence-review.md).
+The macOS entries summarize the bounded foreground/CDP smoke in
+`docs/evidence/otp07/macos-2026-11-04/summary.json`; its detailed sanitized
+review is in [`evidence-review.md`](evidence/otp07/macos-2026-11-04/evidence-review.md).
+No full hardware pass is claimed from the simulated-browser run. Neither
+recorded smoke is full OTP-07 closure, installer acceptance,
+notarization/production distribution, strict lifecycle acceptance, background
 liveness, authenticated transport, a literal toolbar invocation, or a
 no-GATT-write proof. The Windows host is recorded as Authenticode **NotSigned**
-in the post-run environment supplement. The Android fixture signer/update chain
-is resolved. macOS remains **NOT RUN** pending a foreground test-account desktop session.
+in the post-run environment supplement; the macOS host is recorded as the
+existing approved OTP23 Apple Development-signed test vehicle with the same
+designated requirement, not a production distribution identity. The Android
+fixture signer/update chain is resolved (Windows executed it; macOS references
+the same original witness without re-execution). The macOS Bluetooth
+denial/retry guidance was not exercised. The Windows record is unchanged as of
+its own adjudication; the macOS record is the sibling bounded foreground/CDP
+result.

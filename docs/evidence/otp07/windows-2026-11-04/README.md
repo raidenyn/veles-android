@@ -17,6 +17,14 @@ lifecycle acceptance, authenticated/background transport, a literal toolbar
 invocation, or a no-GATT-write proof. macOS physical testing remains
 **NOT RUN** pending a foreground test-account desktop session.
 
+> **Historical scope (clarified after the Windows adjudication).** This Windows
+> record and its `summary.json` are unchanged. The `status.macos: "NOT_RUN"`
+> field and the macOS sentence above describe the state **as of the Windows
+> adjudication**, not a later claim about macOS. A separate, later macOS
+> bounded foreground/CDP record is published at
+> [`../macos-2026-11-04/`](../macos-2026-11-04/) with its own scoped review. It
+> does not retroactively change this Windows result.
+
 The source commit/tree remain the original immutable
 `58b243d4a55ed18d6b3e3bd0dee05b2f505d7c24` /
 `aa5331e1b4f8a0874b5b877ca0838b1ac7d96c90`. All follow-up changes for this

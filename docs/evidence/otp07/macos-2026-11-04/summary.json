@@ -1,0 +1,970 @@
+{
+  "schema": "veles.otp07.macos-public-evidence.v1",
+  "published_as": "docs/evidence/otp07/macos-2026-11-04/summary.json",
+  "last_updated": "2026-11-04",
+  "status": {
+    "overall": "APPROVED_SCOPED_NARROW_FOREGROUND_CDP_SMOKE_WITH_LIMITS",
+    "macos_bounded_records": "RECONCILED",
+    "physical_evidence_acceptance": "REVIEWED_SCOPED_PASS_WITH_LIMITS",
+    "review_findings": {
+      "critical": 0,
+      "minor": 1,
+      "minor_ids": [
+        "catalog_self_entry_stale"
+      ]
+    },
+    "mac_test_vehicle_signing": "PASS_AT_RETAINED_READBACK_BOUNDARY",
+    "environment_metadata": "CONTEMPORANEOUS_BEFORE_AND_PHASE_OBSERVATIONS",
+    "contemporaneous_environment_capture": true,
+    "external_android_signer_chain": "REFERENCED_PASS_NOT_REEXECUTED_ON_MAC",
+    "full_otp07_closed": false,
+    "installer_acceptance": false,
+    "notarization": false,
+    "production_identity_migration": false,
+    "strict_lifecycle_acceptance": false,
+    "authenticated_or_background_transport": false,
+    "literal_toolbar_invocation": false,
+    "no_gatt_writes_proven": false,
+    "bt_permission_denial_recovery": "NOT_RUN",
+    "windows_prior_result_unchanged": true
+  },
+  "source": {
+    "commit": "58b243d4a55ed18d6b3e3bd0dee05b2f505d7c24",
+    "tree": "aa5331e1b4f8a0874b5b877ca0838b1ac7d96c90",
+    "original_commit_immutable": true,
+    "followup_changes": "evidence/docs publication only; no source recomposition"
+  },
+  "extension": {
+    "zip_sha256": "4b317ec8a5aa3c54035f35bfc2cc8215f02e141102790ad9527a86d0d42f029f",
+    "catalog_sha256": "440b1c6dff6156f06c7993658726d440c093bba36b97acb9ad49c73fe084ec21",
+    "catalog_entry_count": 13,
+    "catalog_identical_to_windows": true,
+    "catalog": [
+      {
+        "path": "background.js",
+        "sha256": "8e3258a970d5726470625bd9bf8fa11f9d5139df92e0ca709cbcf1756a7b5b1c",
+        "size": 7430
+      },
+      {
+        "path": "chunks/modulepreload-polyfill-DaKOjhqt.js",
+        "sha256": "2fdd90ba476b7bc7abebdbf9ff722920758b79b7404e41225159ab266fefd76b",
+        "size": 1261
+      },
+      {
+        "path": "chunks/ownership-BOcJ26Iv.js",
+        "sha256": "02835422b3b0205f65b08d30ba3f2621b0d9f85530b58b72965b2ec2e6d6eccc",
+        "size": 12804
+      },
+      {
+        "path": "chunks/storage-DOMCF8BZ.js",
+        "sha256": "1d885a1ab61f8f69e1aa96c8bb041bd38f39804c62080f894a41b9bcecd21bb1",
+        "size": 606
+      },
+      {
+        "path": "connector.html",
+        "sha256": "ec4478422db840af4038d73e8c217f88a86d553c660da30c7725864dd73df88b",
+        "size": 8616
+      },
+      {
+        "path": "connector.js",
+        "sha256": "5596b03cf4c67868ec1e610664b566a967a82e510032b38a593b9fd32b784661",
+        "size": 128070
+      },
+      {
+        "path": "content.js",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+        "size": 1
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "3d40a58066f2d77f8e2c03de4790e7df171c543141232eac53cbcc5e61282718",
+        "size": 765
+      },
+      {
+        "path": "options.html",
+        "sha256": "ad78d2fba0f494f24dd6e99d6120cc12bcabeedf6f1abb5f82e5f20b5cb06b80",
+        "size": 440
+      },
+      {
+        "path": "options.js",
+        "sha256": "e430e60fa218b8f117fd62c7a985f220ae30441deb0a16d22167d9262e3e02df",
+        "size": 100
+      },
+      {
+        "path": "popup.html",
+        "sha256": "5497eb59e4383f15a43ba7172eba0126cff287516b402828f4cdecaab3bebe12",
+        "size": 422
+      },
+      {
+        "path": "popup.js",
+        "sha256": "409c28edc57e908005d29a289e60a7202d58b3690974602c2485f7e16cb21d30",
+        "size": 93
+      },
+      {
+        "path": "trust.js",
+        "sha256": "d0b56177039da4d3b3e4f076f5b2436a90bb020f2151077067d5c52c35383bfd",
+        "size": 13038
+      }
+    ],
+    "served": {
+      "connectorScript": {
+        "sha256": "5596b03cf4c67868ec1e610664b566a967a82e510032b38a593b9fd32b784661",
+        "bytes": 128070,
+        "matches_staged_catalog": true
+      },
+      "connectorHtml": {
+        "sha256": "ec4478422db840af4038d73e8c217f88a86d553c660da30c7725864dd73df88b",
+        "bytes": 8616,
+        "matches_staged_catalog": true
+      },
+      "backgroundScript": {
+        "sha256": "8e3258a970d5726470625bd9bf8fa11f9d5139df92e0ca709cbcf1756a7b5b1c",
+        "bytes": 7430,
+        "matches_staged_catalog": true
+      }
+    },
+    "loaded_unpacked": true
+  },
+  "host": {
+    "name": "me.nagaev.veles.bridge",
+    "platform": "macos",
+    "signed_executable_sha256": "05655ed8d4e962df808191c1e7bfb9906c5bdb6bb4b4355a146a4915baeca3e3",
+    "unsigned_source_executable_sha256": "25f6ab2ef872bff8512a7c1bce496f5151a7ae0fb0f6d13d070c2223bdc82fa9",
+    "signed_executable_bytes": 1881264,
+    "test_vehicle": true,
+    "bundle_identifier": "me.nagaev.veles.otp23.poc",
+    "team_identifier": "7T39M26Z99",
+    "signature_kind": "Apple Development",
+    "anchor": "apple generic",
+    "valid_on_disk": true,
+    "satisfies_designated_requirement": true,
+    "ad_hoc": false,
+    "designated_requirement_old_and_new_identical": true,
+    "production_distribution": false,
+    "notarized": false,
+    "installer": false
+  },
+  "environment": {
+    "status": "CONTEMPORANEOUS_BEFORE_AND_PHASE_OBSERVATIONS",
+    "contemporaneous_with_run": true,
+    "prep_observed_at": "2026-11-04T10:49:06Z",
+    "pre_main_observed_at": "2026-11-04T11:02:07Z",
+    "os": {
+      "product_name": "macOS",
+      "product_version": "26.5.2",
+      "build_version": "25F84",
+      "architecture": "arm64",
+      "gui_session": "Aqua"
+    },
+    "chrome": {
+      "product_version": "156.0.8078.81",
+      "cdp_browser": "Chrome/156.0.8078.81",
+      "cdp_protocol_version": "1.3",
+      "matches_pre_main": true
+    },
+    "original_capture_available": {
+      "os_version": true,
+      "chrome_process_and_flags": true,
+      "chrome_cdp_browser_version": true,
+      "extension_load_unpacked": true
+    },
+    "note": "actual before/phase Mac observations, unlike the Windows post-run supplement"
+  },
+  "evaluator": {
+    "macos_smoke_sha256": "2afe92dc9ac8cad774f565e419c40557b5f72b55c544f224aec490d90936845f",
+    "windows_baseline_sha256": "7e03aa8867b051be0ffe01416b155ad03c71deeceae2d90dbd001ddc2fe9676d",
+    "diff_added_lines": 17,
+    "diff_removed_lines": 15,
+    "retained_private_not_public_reproducer": true
+  },
+  "android_fixture": {
+    "app_apk_sha256": "3e2a6c41bb0eb6d3ef9b07f478d29b0fe417dcf7df1915c0b6482a754c059f08",
+    "test_apk_sha256": "afadd554b475013f62102c72b62c0badc46706d6f9f3e26dfe52ede4687fac84",
+    "signing_certificate_sha256": "9ef3104b934a37b111726ff91c7cb5ec5affc0e8b6a90742ed0bc55501969df9",
+    "signer_evidence": {
+      "sha256": "c06806c8d32cdd4f617614a94e36079d5618672349c97d14ccb815860ceb2ef8",
+      "bytes": 1977,
+      "kind": "original Windows apksigner Android-fixture identity record transferred to macOS",
+      "same_certificate_sha256": "9ef3104b934a37b111726ff91c7cb5ec5affc0e8b6a90742ed0bc55501969df9",
+      "reexecuted_on_mac": false,
+      "install_or_clear_on_mac": false,
+      "installed_bytes_unchanged_controller_observation": true,
+      "semantic_reference": "PASS"
+    }
+  },
+  "run": {
+    "run_id": "otp07-mac-20261104-a",
+    "main": {
+      "status": "PASS",
+      "started_at": "2026-11-04T11:02:07.964Z",
+      "finished_at": "2026-11-04T11:02:23.246Z",
+      "complete": true,
+      "final": true,
+      "failures": 0,
+      "timeouts": 0,
+      "unmatched_records": 0,
+      "record_audit": {
+        "total": 9,
+        "exchange_matched": 9,
+        "exchange_failed": 0,
+        "unknown": 0,
+        "digest_issues": 0,
+        "unexpected": 0,
+        "send_count": 10,
+        "unsettled_sends": 0
+      }
+    },
+    "reopen": {
+      "status": "PASS",
+      "started_at": "2026-11-04T11:02:36.319Z",
+      "finished_at": "2026-11-04T11:02:43.123Z",
+      "complete": true,
+      "final": true,
+      "failures": 0,
+      "timeouts": 0,
+      "unmatched_records": 0,
+      "record_audit": {
+        "total": 4,
+        "exchange_matched": 4,
+        "exchange_failed": 0,
+        "unknown": 0,
+        "digest_issues": 0,
+        "unexpected": 0,
+        "send_count": 6,
+        "unsettled_sends": 0
+      }
+    }
+  },
+  "registration": {
+    "scope": "Chrome per-profile NativeMessagingHosts only",
+    "per_profile_only": true,
+    "global_registration": false,
+    "manifest_sha256": "1eed352fe25edad7c44b9775fa847ba1d065cc26d1b39efc4e351c5ea2c7abb3",
+    "manifest_bytes": 344,
+    "host_manifest_origin_match": true,
+    "allowed_origin_matches_loaded_extension": true,
+    "cleanup_recorded": true,
+    "cleanup_observed_at": "2026-11-04T11:05:17Z",
+    "profile_manifest_removed": true,
+    "copy_byte_identical": true,
+    "global_nmh_before_after_identical": true,
+    "owned_chrome_closed_via_browser_close": true,
+    "owned_host_processes_after_close": 0,
+    "remaining_hosts_in_test_profile": 0
+  },
+  "transfers": {
+    "note": "13 bounded synthetic request/reply exchanges: 9 main and 4 reopen. Request hashes are reconstructed from the approved fixture algorithm (binary prefix 56 45 4c 01, remaining byte (i + seed) & 255; reply changes only byte index 3 to 0x02); reply hashes match actual recorded receipts. A 4-byte exchange is a fixed-prefix boundary case only, not peer-content isolation. sent is transport/GATT write completion, not an application reply or acknowledgement.",
+    "exchanges": [
+      {
+        "phase": "main",
+        "ref": "A:4",
+        "phone_ref": "A",
+        "length": 4,
+        "seed": 11,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 3,
+          "at": "2026-11-04T11:02:15.434Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "A:508",
+        "phone_ref": "A",
+        "length": 508,
+        "seed": 12,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "959b66d65288fd0a1b7611bea6677ca6c9b22f93c4652751bf26fea6da0fc338",
+        "reply_sha256": "e6db9ab8f6d978b117bef957043e07aa03fd4cc1dba9fecb5665fd2ce0f9642e",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 5,
+          "at": "2026-11-04T11:02:15.496Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "A:509",
+        "phone_ref": "A",
+        "length": 509,
+        "seed": 13,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "6715e8fba97860570419007968d1509e5a94e1beba032cadfb29642375c5d8b5",
+        "reply_sha256": "9997934c64c7f86be8537dd5ee95b35a0e1781c85d1bbe5de3e61be43ad77ec7",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 6,
+          "at": "2026-11-04T11:02:15.525Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "A:4096",
+        "phone_ref": "A",
+        "length": 4096,
+        "seed": 14,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "8afade9cf3187460039b8fb239bfe85a16bc00f4fb09f05a074b0fb604f9d709",
+        "reply_sha256": "1d950f4310d43563745b3dd679cb3518f4d804b7f033c6759686ff540a8ef42d",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 8,
+          "at": "2026-11-04T11:02:15.853Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:4",
+        "phone_ref": "B",
+        "length": 4,
+        "seed": 31,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 1,
+          "at": "2026-11-04T11:02:15.390Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:508",
+        "phone_ref": "B",
+        "length": 508,
+        "seed": 32,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "bab31e09ea297b9cd526ce12cd53140541aa9f4f4ca545910e40a4d616107b83",
+        "reply_sha256": "aede72517606dc1a8a6ea8dfde06e39c841f0f4bce57f9298c4615e45df7fb49",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 2,
+          "at": "2026-11-04T11:02:15.423Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:509",
+        "phone_ref": "B",
+        "length": 509,
+        "seed": 33,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "911903c80de67f2db927acec3135024afebd9f8653d0e872a01563d6f1392f0b",
+        "reply_sha256": "6b6812c719e9a6ac34582ec33978efc0478277d65d62a225a5eba7b377be2aeb",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 4,
+          "at": "2026-11-04T11:02:15.478Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:4096",
+        "phone_ref": "B",
+        "length": 4096,
+        "seed": 34,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "6148421167608edbc3466f4442bf377021ad0cba3d8699e77f8e170732798158",
+        "reply_sha256": "80144c4497d35f36467c8b776e77a579f53e3241f43d834bcc6ec1403e30a7b6",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 7,
+          "at": "2026-11-04T11:02:15.781Z"
+        }
+      },
+      {
+        "phase": "main",
+        "ref": "B:survivor:4096",
+        "phone_ref": "B",
+        "length": 4096,
+        "seed": 131,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "1b35de2f3607bfab002105abd52a495fa7392bffd193a5b75f1c3cc8d74d4e1f",
+        "reply_sha256": "9f6f48e68a848e2230161389d366186af25e9b2e213ef857d0ecba37b57cab8a",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 9,
+          "at": "2026-11-04T11:02:22.479Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:A:4",
+        "phone_ref": "A",
+        "length": 4,
+        "seed": 201,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 3,
+          "at": "2026-11-04T11:02:42.462Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:A:508",
+        "phone_ref": "A",
+        "length": 508,
+        "seed": 211,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "d018ba4ba75c852e168d84d2beb2a5a32de144debaf07d5990f2db640725b273",
+        "reply_sha256": "b2dc37b0b0551b340e3c82330dd3125109aebeddb13aa242c9dfa01dd34c4cf1",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 4,
+          "at": "2026-11-04T11:02:42.465Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:B:4",
+        "phone_ref": "B",
+        "length": 4,
+        "seed": 202,
+        "four_byte_boundary_only": true,
+        "request_sha256_reconstructed": "70848327e00df6dd9b45a88b6219523cd35c7379070d89bfa978407fa07229bd",
+        "reply_sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 1,
+          "at": "2026-11-04T11:02:42.419Z"
+        }
+      },
+      {
+        "phase": "reopen",
+        "ref": "R:B:508",
+        "phone_ref": "B",
+        "length": 508,
+        "seed": 212,
+        "four_byte_boundary_only": false,
+        "request_sha256_reconstructed": "a40cec322b1fc2644398839d807e141a960a89a8e49389a1e15566309cfd1b6f",
+        "reply_sha256": "37cd2b7fcc50612344b4ba702a2a699afa50fde87fae51f8deb0d03122e7bfec",
+        "reply_matched": true,
+        "send_terminal": {
+          "status": "ok",
+          "source": "wire",
+          "settled": true,
+          "semantics": "host sent event = transport/GATT write completion; not an application acknowledgement or reply"
+        },
+        "receipt": {
+          "seq": 2,
+          "at": "2026-11-04T11:02:42.448Z"
+        }
+      }
+    ],
+    "receipts": [
+      {
+        "seq": 1,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T11:02:15.390Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 2,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:508",
+        "length": 508,
+        "sha256": "aede72517606dc1a8a6ea8dfde06e39c841f0f4bce57f9298c4615e45df7fb49",
+        "at": "2026-11-04T11:02:15.423Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 3,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T11:02:15.434Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 4,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:509",
+        "length": 509,
+        "sha256": "6b6812c719e9a6ac34582ec33978efc0478277d65d62a225a5eba7b377be2aeb",
+        "at": "2026-11-04T11:02:15.478Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 5,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:508",
+        "length": 508,
+        "sha256": "e6db9ab8f6d978b117bef957043e07aa03fd4cc1dba9fecb5665fd2ce0f9642e",
+        "at": "2026-11-04T11:02:15.496Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 6,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:509",
+        "length": 509,
+        "sha256": "9997934c64c7f86be8537dd5ee95b35a0e1781c85d1bbe5de3e61be43ad77ec7",
+        "at": "2026-11-04T11:02:15.525Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 7,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:4096",
+        "length": 4096,
+        "sha256": "80144c4497d35f36467c8b776e77a579f53e3241f43d834bcc6ec1403e30a7b6",
+        "at": "2026-11-04T11:02:15.781Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 8,
+        "phase": "main",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "A:4096",
+        "length": 4096,
+        "sha256": "1d950f4310d43563745b3dd679cb3518f4d804b7f033c6759686ff540a8ef42d",
+        "at": "2026-11-04T11:02:15.853Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 9,
+        "phase": "main",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "B:survivor:4096",
+        "length": 4096,
+        "sha256": "9f6f48e68a848e2230161389d366186af25e9b2e213ef857d0ecba37b57cab8a",
+        "at": "2026-11-04T11:02:22.479Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 1,
+        "phase": "reopen",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "R:B:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T11:02:42.419Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 2,
+        "phase": "reopen",
+        "connection_ref": "conn-B",
+        "phone_ref": "B",
+        "exchange_ref": "R:B:508",
+        "length": 508,
+        "sha256": "37cd2b7fcc50612344b4ba702a2a699afa50fde87fae51f8deb0d03122e7bfec",
+        "at": "2026-11-04T11:02:42.448Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 3,
+        "phase": "reopen",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "R:A:4",
+        "length": 4,
+        "sha256": "3c261d9e6dc0bae7b24919c80c749c05f71bbf3455b8ecfe79d4595e277d01ff",
+        "at": "2026-11-04T11:02:42.462Z",
+        "classification": "exchange_matched"
+      },
+      {
+        "seq": 4,
+        "phase": "reopen",
+        "connection_ref": "conn-A",
+        "phone_ref": "A",
+        "exchange_ref": "R:A:508",
+        "length": 508,
+        "sha256": "b2dc37b0b0551b340e3c82330dd3125109aebeddb13aa242c9dfa01dd34c4cf1",
+        "at": "2026-11-04T11:02:42.465Z",
+        "classification": "exchange_matched"
+      }
+    ],
+    "protocol_rejection_4097": {
+      "length": 4097,
+      "send_status": "rejected",
+      "source": "wire",
+      "code": "oversize_record",
+      "stage": "record",
+      "settled": true,
+      "no_record_after_rejection": true,
+      "connection_still_connected": true,
+      "gatt_write_absence_proven": false
+    }
+  },
+  "phone_telemetry": {
+    "A": {
+      "fixture_window_utc": [
+        "2026-11-04T10:56:14.910Z",
+        "2026-11-04T11:03:49.804Z"
+      ],
+      "record_complete": 6,
+      "reply_generated": 6,
+      "notify_calls": 15,
+      "api_success": 15,
+      "attempted_bytes": 5689,
+      "callbacks": 15,
+      "callback_success": 15,
+      "connects": 2,
+      "subscribes": 2,
+      "disconnects": 2,
+      "notify_api_nonzero": 0,
+      "notify_callback_seen": 15,
+      "notify_callback_nonzero": 0,
+      "unbound_callbacks": 0,
+      "callbacks_after_close": 0,
+      "pending_unresolved": 0,
+      "pending_dropped": 0,
+      "mtu": 517,
+      "clean": true,
+      "final": true,
+      "final_after_service_stopped": true,
+      "peers_dropped": 0,
+      "truncated": false,
+      "content_digests_present": false,
+      "wall_clock_calibrated_with_mac": false
+    },
+    "B": {
+      "fixture_window_utc": [
+        "2026-11-04T10:59:05.872Z",
+        "2026-11-04T11:03:50.248Z"
+      ],
+      "record_complete": 7,
+      "reply_generated": 7,
+      "notify_calls": 24,
+      "api_success": 24,
+      "attempted_bytes": 9821,
+      "callbacks": 24,
+      "callback_success": 24,
+      "connects": 2,
+      "subscribes": 2,
+      "disconnects": 2,
+      "notify_api_nonzero": 0,
+      "notify_callback_seen": 24,
+      "notify_callback_nonzero": 0,
+      "unbound_callbacks": 0,
+      "callbacks_after_close": 0,
+      "pending_unresolved": 0,
+      "pending_dropped": 0,
+      "mtu": 517,
+      "clean": true,
+      "final": true,
+      "final_after_service_stopped": true,
+      "peers_dropped": 0,
+      "truncated": false,
+      "content_digests_present": false,
+      "wall_clock_calibrated_with_mac": false
+    }
+  },
+  "phone_telemetry_note": "A and B report 15/15 and 24/24 notification API/callback events with every status 0 at MTU 517; the 39 fragments/callbacks are not 39 application records, and the complete/generated totals are 6 A + 7 B = 13. Phone-side JSON has no per-record content digests, and the phone and Mac wall clocks are not calibrated; endpoint association is operational, not cryptographic.",
+  "fixture_runner_witness": {
+    "A": {
+      "instrument_stdout_has_final_junit": false,
+      "instrument_stdout_ends_at_test_class_heading": true,
+      "instrument_stderr_bytes": 0,
+      "separate_postrun_testrunner_log_available": true,
+      "testrunner_run_started": true,
+      "testrunner_method_started": true,
+      "testrunner_method_finished": true,
+      "testrunner_run_finished": true,
+      "tests": 1,
+      "failed": 0,
+      "ignored": 0,
+      "synthesized_ok_into_stdout": false
+    },
+    "B": {
+      "instrument_stdout_has_final_junit": true,
+      "instrument_stdout_value": "OK (1 test)",
+      "instrument_stderr_bytes": 0
+    },
+    "note": "A's missing final JUnit stdout summary is a distinct witness boundary. The separate actual post-run TestRunner log records 1 test, 0 failed, 0 ignored; it is not substituted into A stdout, and B's JUnit result is not used to fill A stdout."
+  },
+  "bounded_observations": {
+    "explicit_disconnect": {
+      "disconnected_phone_ref": "A",
+      "survivor_phone_ref": "B",
+      "observation_window_ms": 5000,
+      "reconnect_observed": false,
+      "records_during_window": 0,
+      "policy_cancel_observed": true,
+      "bounded_attached_foreground_only": true
+    },
+    "tab_close": {
+      "connector_pages_before": 1,
+      "connector_pages_after": 0,
+      "post_audit_records": 0
+    },
+    "stale_local_refusals": [
+      {
+        "old_handle_ref": "conn-A",
+        "source": "local",
+        "code": "unknown_handle",
+        "stage": "connection_handle",
+        "exercise": "controller.send old handle; no inbound stale event injected"
+      },
+      {
+        "old_handle_ref": "conn-B",
+        "source": "local",
+        "code": "unknown_handle",
+        "stage": "connection_handle",
+        "exercise": "controller.send old handle; no inbound stale event injected"
+      }
+    ],
+    "reopen_integrity": {
+      "previous_main_sha256": "16aa5727b3a21dfbb50cebdbd59c05ec406176e536cd5296a3fc77773cc9be2d",
+      "previous_private_sha256": "b7ab7ec126ffeebbf95efc6205ba08fb41f20f2aada1e0f87a7c80b6beb2d0f8",
+      "identity_and_bindings_unchanged": true,
+      "initial_connection_count": 0,
+      "initial_record_count": 0,
+      "previous_and_new_connection_handles_differ": true,
+      "records_match_fresh_handles": true,
+      "injected_stale_event": false
+    }
+  },
+  "lifecycle_observations": {
+    "main_process": {
+      "observation_begin_at": "2026-11-04T11:02:07.929Z",
+      "exact_executable_process_observed_from": "2026-11-04T11:02:09Z",
+      "observed_through": "2026-11-04T11:02:22Z",
+      "after_main_observed_at": "2026-11-04T11:02:26Z",
+      "after_main_count": 0
+    },
+    "reopen_process": {
+      "observation_begin_at": "2026-11-04T11:02:36.279Z",
+      "different_process_observed_from": "2026-11-04T11:02:38Z",
+      "present_with_open_connector_at": "2026-11-04T11:02:43Z",
+      "present_through": "2026-11-04T11:02:55Z",
+      "after_close_observed_at": "2026-11-04T11:02:59Z",
+      "after_close_count": 0
+    },
+    "sampling": {
+      "interval_approx_ms": 1000,
+      "max_gap_approx_ms": 2000,
+      "ticks": 101
+    },
+    "superseded_observer_v1": {
+      "original_source_retained": false,
+      "superseded_output_sha256": "6f42d85c6939baf280df9a2c45e80226ddd5382670998c64c1202b8d9a6125f8",
+      "output_matches_observer_and_awk_command_lines": true,
+      "count_as_multiple_host_processes": false
+    },
+    "main_process_id_published": false,
+    "exact_exit_latency_proven": false,
+    "stdin_eof_proven": false,
+    "stdout_framing_proven": false,
+    "continuous_process_trace": false,
+    "note": "sampled external process observations only; raw PIDs are not published, the superseded observer-v1 source was edited in place and is unavailable, and no strict exit/EOF/stdout framing is claimed"
+  },
+  "launcher_observation": {
+    "invocation_context": "controlled-extension-page-module-invocation",
+    "probes": 3,
+    "native_port_calls_during_probe": 0,
+    "literal_toolbar_click": false,
+    "worker_module_instance": false,
+    "browser_wide_native_port_audit": false,
+    "worker_dynamic_import_ok": false,
+    "fallback_note": "ServiceWorkerGlobalScope disallows import(); launcher probes use a short-lived extension page importing the production background.js export. This is not a literal toolbar click and not the worker module instance."
+  },
+  "permissions": {
+    "bt_scan_succeeded_without_prompt": true,
+    "prompt_or_denial_observed": false,
+    "tcc_reset_or_grant_or_revocation_performed": false,
+    "permission_db_retained": false,
+    "denial_recovery_experiment": "NOT_RUN",
+    "note": "successful access in the already-authorized signed identity/context demonstrates usable access; it is not proof of denial recovery"
+  },
+  "integrity": {
+    "archive_sha256": "d19cad4f51d2a6247756425edead48249b131c241c5aa1f314569e5b8458e10f",
+    "archive_bytes": 61003,
+    "archive_regular_file_members": 73,
+    "mirror_files": 74,
+    "uncatalogued_local_note_not_archived": true,
+    "catalog": {
+      "entries": 73,
+      "entries_verified_excluding_self": 72,
+      "self_entry": {
+        "recorded_sha256": "06c28889f6fbff36ef982de168866e78bc8769a23a0a14dfe4e2d7b4d3701d21",
+        "actual_sha256": "4a9509ddeb2b4db529426d21fc19ab1ac28b347d5d8313c3edce8c00a59c882f",
+        "status": "STALE_SELF_ENTRY_PRESERVED",
+        "blocks_smoke": false
+      },
+      "all_73_archive_members_match_mirror": true,
+      "preserve_original": true,
+      "published_checker_self_hash_loop": false
+    },
+    "note": "The preserved original catalog's own line is stale; 72 other entries and all 73 archive members match. This minor finding does not invalidate the external archive anchor. The published checker verifies the published accounting only and does not add a self-hash loop."
+  },
+  "preserved_originals": {
+    "pre_launch_original_sha256": "a030249e2f1c18a7e19cceeef65d5c4feeee8e16d9b4d167720cc3f5b7122432",
+    "pre_launch_original_retained_locally": true,
+    "pre_launch_original_archived": false,
+    "pre_launch_redacted_derivative_sha256": "91184d0e360e3268b77c009b525b7b85b2ae0a66a3d353b506d76fafabe019b4",
+    "pre_launch_redaction_removed_lines": 1,
+    "pre_launch_redaction_completeness_verified": false,
+    "sampler_v1_original_source_retained": false,
+    "sampler_v1_superseded_output_sha256": "6f42d85c6939baf280df9a2c45e80226ddd5382670998c64c1202b8d9a6125f8",
+    "sampler_v2_source_sha256": "0f37708b4ce8ae44eb6a9bbf47403d5b324333647701a97cc965dc5556dea28b",
+    "note": "the pre-launch original remains only in the private tree; the archived file is a redacted derivative, and completeness of that redaction is not verified"
+  },
+  "original_file_hashes": {
+    "remote/main.json": "16aa5727b3a21dfbb50cebdbd59c05ec406176e536cd5296a3fc77773cc9be2d",
+    "remote/reopen.json": "22ded06ff27c5788f680dd433271df2016be79863e566e3db00588a9f6f70924",
+    "remote/main.private.json": "b7ab7ec126ffeebbf95efc6205ba08fb41f20f2aada1e0f87a7c80b6beb2d0f8",
+    "remote/reopen.private.json": "6578308b61a62858be350866cba5091377cc3c329d8d7a54ff5251e485fb5337",
+    "remote/identity.json": "4acfb9f61184c2347bb599fca192dbdf2c5c61c962f43d57451df27adb42a224",
+    "remote/phone-bindings.json": "8b5322d2bdccf07bf2674185dd02fa1d8aacf10fccb77e0edac4811b0f257d5e",
+    "remote/04-cdp-version.json": "4038c635889376a6bd868d17bd78f60ce1d029b37c2c05fdeb5177bf0061e12f",
+    "remote/05-load-unpacked.json": "ad92b4c7dbe9cee6dcd5cd3f16ca969a945a974634b78493b8da026c5fecb7b7",
+    "remote/11-process-state.txt": "874ebfd2966fb4b98a2e24ffa5c32ad320878418966c38b48163c7a5688761bf",
+    "remote/21-pre-main-state.txt": "68804ccd768d52be1462862eee52db52dc5c227e5b154fa9fcd562ff225c8a76",
+    "remote/00-prep-env.txt": "4ae167be062e5105d69fd3f16332f82dcb64dfa825cce3d898a160df560c44c4",
+    "remote/08-codesign-readback.txt": "60480be3eb4b11bb4e232a4917760863e305ad3b58497295057ccf9935435230",
+    "remote/08b-old-vs-new-codesign.txt": "7b72a6a60c7373e17e7603c54d911e28a10a86bfaa6e1421c42feacbc88ce5fa",
+    "remote/07-unsigned-exe.sha256": "f238f608677ba568291a979de92bc2b35feca477000ff12c31bd74649254ee98",
+    "remote/08-signed-exe.sha256": "b00dfa9e1ccd619b0857f24ac16621d495de07a843e1fc02fa9924dca6415509",
+    "remote/09-nmh-manifest.json": "1eed352fe25edad7c44b9775fa847ba1d065cc26d1b39efc4e351c5ea2c7abb3",
+    "remote/15-registration-evidence.json": "aa585ee0b6b6233ab09e7c0fa2c781619852ec9aed20aa6b424a109c9ff15ea3",
+    "remote/15-signer-evidence.txt": "009378b332ed54a19a6b66075d466d6a57be4a13b2e8978ef91e4d908b1c6140",
+    "remote/android-fixture-signer-evidence.txt": "c06806c8d32cdd4f617614a94e36079d5618672349c97d14ccb815860ceb2ef8",
+    "remote/cleanup/cleanup-record.txt": "39783c8da4f08a00270afc2b34e12e0427ec1d44514f0be708fa2cf977c30189",
+    "remote/cleanup/nmh-global-before.txt": "0a5feb601829e50a804f55bbf2c02a9bf0c0684bd1728d9a22ca0f4befac38a9",
+    "remote/cleanup/nmh-global-after.txt": "abe6a509c1c300c81f858ce3e0810f624197745300d5e7cf3c5d8d21316e828d",
+    "remote/cleanup/03-pre-launch.redacted.txt": "91184d0e360e3268b77c009b525b7b85b2ae0a66a3d353b506d76fafabe019b4",
+    "remote/cleanup/03-pre-launch.redaction-note.txt": "e601cdd4cff8174a892dd0b10be3eda50353d955720552218ad2135bad5cd102",
+    "remote/20-host-process-samples.log": "a15a4fe846af5d07736fbbde17cd5b2ab12ecdf3d350bd724e79107f41b9710f",
+    "remote/20-host-process-samples.log.ticks": "8f72facab899c178f64acce1afb2ffb0d97c413817b9e67da0c45e2611c9109d",
+    "remote/20-superseded-sampler-v1.log": "6f42d85c6939baf280df9a2c45e80226ddd5382670998c64c1202b8d9a6125f8",
+    "remote/scripts/sampler.sh": "0f37708b4ce8ae44eb6a9bbf47403d5b324333647701a97cc965dc5556dea28b",
+    "fixture/A-transport.private.json": "10064a55549690c62a0b8d9165a4dcfc15ead6cb97b9267ebe37d1fae94807d0",
+    "fixture/B-transport.private.json": "490355e75c596f41fc17f58fde50676d6b3c0d33369141c72025b11c6a3e7e13",
+    "fixture/A-runner-observation.txt": "b56a1cd81a23b6f00363d6198c14d3f4d3a729dfc600a16f578d49d41e6edaa3",
+    "fixture/A-instrument.txt": "a35383a1f472e0e4c1fcd52647c951563854fac59128d42749298f941b7b4f96",
+    "fixture/B-instrument.txt": "f2cecb371b98f708a1710639ab2b2a5efcb904289efc29aa8794dce93610f48d",
+    "macos-smoke.mjs": "2afe92dc9ac8cad774f565e419c40557b5f72b55c544f224aec490d90936845f",
+    "remote/SHA256-CATALOG.txt": "4a9509ddeb2b4db529426d21fc19ab1ac28b347d5d8313c3edce8c00a59c882f",
+    "archive/mac-evidence.tar.gz": "d19cad4f51d2a6247756425edead48249b131c241c5aa1f314569e5b8458e10f"
+  },
+  "review": {
+    "independent_reviewer": "separate GPT-based reviewer adjudication",
+    "final_disposition": "APPROVED_SCOPED_NARROW_FOREGROUND_CDP_SMOKE_WITH_LIMITS",
+    "verdict": "bounded foreground/CDP macOS smoke approved with limits; not full physical-evidence or OTP-07 acceptance",
+    "critical_findings": 0,
+    "minor_findings": 1,
+    "minor_finding": "catalog self-entry stale; 72 other entries and all 73 archive members match",
+    "narrow_transfer_reconciliation": "independently verified",
+    "mac_test_vehicle_registration": "PASS_AT_RETAINED_READBACK_BOUNDARY",
+    "environment_metadata": "CONTEMPORANEOUS_BEFORE_AND_PHASE_OBSERVATIONS",
+    "last_updated": "2026-11-04"
+  },
+  "limitations": [
+    "not full OTP-07 closure, installer acceptance, notarization, production distribution, or production identity migration",
+    "no macOS production-signing acceptance: the signed bundle is the existing approved OTP23 test vehicle, not a production distribution identity",
+    "foreground CDP-attached synthetic smoke only; no background liveness, strict lifecycle, authentication, or Gate acceptance",
+    "launcher probes invoke the production export from a controlled extension page; this is not a literal toolbar click or the worker module instance",
+    "protocol-level 4097-byte rejection only; no GATT write-absence proof",
+    "four-byte exchanges establish boundary handling, not content-based peer isolation; longer seeded payloads are distinct per peer",
+    "sent terminal means transport/GATT write completion, not an application reply or acknowledgement",
+    "phone-side JSON lacks per-record content digests; endpoint association is operational, not cryptographic",
+    "phone and Mac wall clocks are not calibrated; no subsecond end-to-end latency is inferred",
+    "host lifecycle is sampled at about one-second intervals with gaps up to two seconds; no main PID is published, the superseded observer-v1 source is unavailable, and strict EOF/stdout framing is not established",
+    "Bluetooth denial/recovery was not run; successful access in the already-authorized signed identity is not proof of denial recovery",
+    "the preserved original catalog has one stale self-entry; 72 other entries and all 73 archive members match, and the published checker does not add a self-hash loop",
+    "A's stdout lacks a final JUnit summary; the separate post-run actual TestRunner log is a distinct witness and is not substituted into A's stdout",
+    "the original pre-launch file is retained only privately and is not archived; redaction completeness of the archived derivative is not verified",
+    "the Windows public record is unchanged as of its own adjudication and is not retroactively altered by this macOS record"
+  ]
+}
