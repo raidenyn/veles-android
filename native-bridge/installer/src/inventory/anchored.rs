@@ -38,9 +38,25 @@ pub(super) fn open_regular_below(
     imp::open_regular_below(root, parts, between)
 }
 
+// The `open(2)`/`errno` constants below are written out per target because this
+// crate takes no `libc` dependency. They are listed only for the Linux
+// architectures whose values were checked (the asm-generic set, plus the 32/64-bit
+// ARM set that differs for `O_DIRECTORY`/`O_NOFOLLOW`); mips, powerpc, sparc and
+// alpha use different numbers and take the pathname fallback below instead of a
+// silently wrong flag.
 #[cfg(any(
-    target_os = "linux",
-    target_os = "android",
+    all(
+        any(target_os = "linux", target_os = "android"),
+        any(
+            target_arch = "x86",
+            target_arch = "x86_64",
+            target_arch = "arm",
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64",
+            target_arch = "s390x",
+        )
+    ),
     target_os = "macos",
     target_os = "ios"
 ))]
@@ -182,13 +198,24 @@ mod imp {
     }
 }
 
-/// Any other target has no audited handle-relative open here. It keeps the
+/// Any other target (including a Linux architecture whose `open(2)` constants were
+/// not checked) has no audited handle-relative open here. It keeps the
 /// component-by-component pathname check (a link at any level is refused when it is
 /// *observed*), which does not defend against a swap after the check.
 #[cfg(not(any(
     windows,
-    target_os = "linux",
-    target_os = "android",
+    all(
+        any(target_os = "linux", target_os = "android"),
+        any(
+            target_arch = "x86",
+            target_arch = "x86_64",
+            target_arch = "arm",
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64",
+            target_arch = "s390x",
+        )
+    ),
     target_os = "macos",
     target_os = "ios"
 )))]
