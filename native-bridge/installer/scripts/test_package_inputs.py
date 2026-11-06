@@ -1181,6 +1181,67 @@ class Round2TarAccountingTests(Round2ArchiveCase):
         self.assert_refused("short-padding.tar", blob[:520], "malformed-archive", "padding")
 
 
+class Round2NodeBoundTests(Round2ArchiveCase):
+    """Re-review N9: implied archive parent directories count toward the node bound like real ones."""
+
+    def forms(self, names, *, explicit_dirs):
+        """The same tree as a directory, a ZIP and a TAR; ``names`` are file paths, parents optional-explicit."""
+        zip_members, tar_members, modes = [], [], {}
+        directories = set()
+        if explicit_dirs:
+            for name in names:
+                parts = name.split("/")[:-1]
+                directories |= {"/".join(parts[:i]) for i in range(1, len(parts) + 1)}
+        for directory in sorted(directories):
+            zip_members.append((directory + "/", b""))
+            modes[directory + "/"] = 0o040755
+            tar_members.append(("dir", directory, b"", 0o755))
+        for name in names:
+            zip_members.append((name, b"f"))
+            tar_members.append(("file", name, b"f", 0o644))
+        tree = self.base / f"tree-{len(list(self.base.iterdir()))}"
+        materialize(tree, files={name: (b"f", 0o644) for name in names}, empty_dirs=())
+        return {
+            "directory": tree,
+            "zip": self.put(f"nodes-{tree.name}.zip", make_zip(zip_members, unix_modes=modes)),
+            "tar": self.put(f"nodes-{tree.name}.tar", make_tar(tar_members)),
+        }
+
+    def inventory(self, kind, path):
+        return package_inputs.build_inventory(path) if kind == "directory" else package_inputs.build_archive_inventory(path)
+
+    def test_n9_implied_parent_directories_are_nodes_in_every_input_form(self):
+        # a/b/c/f is four nodes (a, a/b, a/b/c, a/b/c/f); the node budget is 2 * MAX_ENTRIES.
+        for limit, names, accepted in (
+            (1, ["a/b/c/f"], False),  # the review's reproduction: four nodes against a limit of two
+            (2, ["a/b/c/f"], True),  # exactly at the bound
+            (2, ["a/b/c/d/f"], False),  # one node beyond the bound
+            (3, ["a/b/c/d/f"], True),
+            (2, ["a/f", "b/f"], True),  # a, a/f, b, b/f: four nodes
+        ):
+            for explicit in (False, True):
+                forms = self.forms(names, explicit_dirs=explicit)
+                for kind, path in forms.items():
+                    with self.subTest(limit=limit, names=names, explicit=explicit, kind=kind):
+                        with mock.patch.object(package_inputs, "MAX_ENTRIES", limit):
+                            if accepted:
+                                self.assertEqual([e["path"] for e in self.inventory(kind, path)["entries"]], names)
+                            else:
+                                with self.assertRaises(package_inputs.InventoryError) as caught:
+                                    self.inventory(kind, path)
+                                self.assertEqual(caught.exception.code, "bound-exceeded", str(caught.exception))
+
+    def test_n9_an_explicit_parent_is_not_counted_twice_and_omitted_parents_are_counted_once(self):
+        # Shared prefixes: a/b/f and a/b/g share a, a/b -> 4 nodes, not 6.
+        names = ["a/b/f", "a/b/g"]
+        for kind, path in self.forms(names, explicit_dirs=True).items():
+            with self.subTest(kind=kind, explicit=True), mock.patch.object(package_inputs, "MAX_ENTRIES", 2):
+                self.assertEqual(len(self.inventory(kind, path)["entries"]), 2)
+        for kind, path in self.forms(names, explicit_dirs=False).items():
+            with self.subTest(kind=kind, explicit=False), mock.patch.object(package_inputs, "MAX_ENTRIES", 2):
+                self.assertEqual(len(self.inventory(kind, path)["entries"]), 2)
+
+
 class CommandLineTests(Scratch):
     def test_inventory_and_compare_exit_codes_and_reports(self):
         left = materialize(self.base / "left")

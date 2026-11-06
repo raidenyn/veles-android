@@ -662,7 +662,8 @@ def build_archive_inventory(path: Path) -> dict:
     entries: list[dict] = []
     empty_directories: list[str] = []
     directories: list[str] = []
-    seen: set[str] = set()
+    seen: set[str] = set()  # explicit members, for duplicate detection
+    nodes: set[str] = set()  # every distinct path: explicit members *and* the parents they imply
     total = 0
 
     def admit(name: str, size: int, digest_reader, executable: bool) -> None:
@@ -670,10 +671,14 @@ def build_archive_inventory(path: Path) -> dict:
         directory = name.endswith("/")
         normalized = normalize_relative_path(name.rstrip("/"))
         check_depth(normalized, directory=directory)
-        if len(seen) >= MAX_ENTRIES * 2:
-            raise InventoryError(f"more than {MAX_ENTRIES * 2} archive members", "bound-exceeded")
         if normalized in seen:
             raise InventoryError(f"duplicate archive member: {normalized!r}", "duplicate-archive-member")
+        # The same node bound a directory walk enforces: an archive that omits its directory records
+        # describes the same tree, so its implied parents (counted once, never again when also explicit) count.
+        # Decided here, before the alias/prefix structures of ``_finish`` are built (depth is bounded).
+        nodes.update((*_parents(normalized), normalized))
+        if len(nodes) > MAX_ENTRIES * 2:
+            raise InventoryError(f"more than {MAX_ENTRIES * 2} files and directories", "bound-exceeded")
         seen.add(normalized)
         if directory:
             directories.append(normalized + "/")
