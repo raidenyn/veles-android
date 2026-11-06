@@ -432,8 +432,12 @@ impl Fixture {
     }
 
     fn platform(&self) -> FakePlatform {
+        // An install over a prior release authenticates that release's installed
+        // carrier in place, so the fake OS must be able to vouch for every release
+        // this fixture has built (it still vouches for nothing else).
         FakePlatform::with_faults(Faults {
             host_state: HostState::Quiescent,
+            trust_by_carrier: self.proofs.borrow().clone(),
             ..Faults::default()
         })
     }
@@ -902,9 +906,16 @@ struct HookedPlatform {
 
 impl HookedPlatform {
     fn new(hook: Hook) -> Self {
+        Self::trusting(hook, Vec::new())
+    }
+
+    /// As `new`, with an OS that vouches for the installed carriers of `proofs`: an
+    /// install over a prior release authenticates that release in place.
+    fn trusting(hook: Hook, proofs: Vec<TrustProof>) -> Self {
         Self {
             inner: FakePlatform::with_faults(Faults {
                 host_state: HostState::Quiescent,
+                trust_by_carrier: proofs,
                 ..Faults::default()
             }),
             hook,
@@ -1293,6 +1304,87 @@ fn same_version_repairs_missing_files_not_trust() {
         fs::read(&profile).expect("profile untouched"),
         PROFILE_SENTINEL
     );
+}
+
+/// Residual (a), investigated end to end: can a restriction that ONLY a repair
+/// package's signed policy carries reach the persisted state - and so be lost,
+/// because no retained signed evidence would back it?
+///
+/// It cannot be reached. A repair package for the installed version and payload
+/// whose signed policy differs (here: one extra denial, same epoch, so it is a pure
+/// tightening that `effective_policy(Repair)` would accept) has a different
+/// descriptor and therefore a different retained document and carrier digest than
+/// the installation claims. The repair plan refuses that as foreign state before any
+/// write, on an undamaged and on a damaged installation, through both the Repair
+/// operation and the same-version Install route. The refusal is pre-existing
+/// repair-tightening behaviour, not something added to make this test pass.
+#[test]
+fn a_repair_package_carrying_a_new_restriction_is_refused_before_any_write() {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let newly_denied = Digest::of(b"a payload only the repair package denies");
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), vec![p1]),
+    );
+    // The same release identity, signed with one more denial at the same epoch.
+    let tighter = fixture.package(
+        "v1-tighter",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, vec![newly_denied], vec![p1]),
+    );
+    assert_eq!(tighter.descriptor.payload_id, v1.descriptor.payload_id);
+    assert_ne!(
+        Digest::of(tighter.proof.carrier()),
+        Digest::of(v1.proof.carrier())
+    );
+    fixture.install(&v1);
+    let installed_dir = version_dir(paths, "1.0.0", p1);
+
+    for damaged in [false, true] {
+        if damaged {
+            fs::remove_file(installed_dir.join("licenses/NOTICE")).expect("remove owned notice");
+        }
+        for operation in [Operation::Repair, Operation::Install] {
+            let context = format!("damaged={damaged} {operation:?}");
+            let before = snapshot(fixture.temp.path());
+            let saved = receipt(paths).expect("receipt");
+            let platform = fixture.platform();
+            let outcome = run_operation(&platform, paths, operation, Some(authenticate(&tighter)));
+            let failure = outcome.expect_err(&format!(
+                "{context}: the repair-only restriction must not be accepted"
+            ));
+            assert!(
+                failure.code == FailureCode::ForeignState,
+                "{context}: refused as {:?}",
+                failure.code
+            );
+            assert!(
+                platform.mutations().is_empty(),
+                "{context}: nothing is written: {:?}",
+                platform.mutations()
+            );
+            assert_eq!(
+                snapshot(fixture.temp.path()),
+                before,
+                "{context}: byte-identical tree"
+            );
+            assert_eq!(receipt(paths).expect("receipt"), saved, "{context}");
+            assert!(
+                !receipt(paths)
+                    .expect("receipt")
+                    .release_policy
+                    .denies(&newly_denied),
+                "{context}: the restriction was neither persisted nor half-applied"
+            );
+        }
+    }
 }
 
 #[test]
@@ -2661,6 +2753,321 @@ fn a_rollback_target_cannot_be_rewritten_as_the_release_it_replaced() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// Residual (b): an install over a prior release, and a repair, used to compose
+/// against the policy stored in the editable receipt. They now compose only against a
+/// policy that the prior release's AUTHENTICATED signed carrier bounds, and refuse with
+/// `RecoveryRequired` - nothing written - when it does not.
+///
+/// Two erasures are covered, each editing nothing but the receipt policy:
+/// * a denial the INSTALLED release signs (the receipt is broader than its own
+///   signed carrier); and
+/// * a denial only the release a rollback REPLACED signs (the receipt is within the
+///   installed release's signed policy, so only the replaced release's retained
+///   carrier can show the denial is gone).
+#[test]
+fn install_and_repair_refuse_a_receipt_policy_the_signed_carrier_does_not_bound() {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let denied = Digest::of(b"a payload some signed release denies");
+
+    // --- installed release's own denial ---------------------------------------
+    {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, vec![denied], vec![p1]),
+        );
+        // At the same epoch with the denial gone: acceptable ONLY if the receipt's
+        // (forged) policy is believed to be what the installation enforces.
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V2,
+            NOTICE_V2,
+            policy(1, Vec::new(), vec![p1]),
+        );
+        fixture.install(&v1);
+        let mut forged = receipt(paths).expect("receipt");
+        forged.release_policy.denied_payloads.clear();
+        forged.write(&fixture.platform(), paths).expect("forged");
+        fs::remove_file(version_dir(paths, "1.0.0", p1).join("licenses/NOTICE"))
+            .expect("damage the installed release");
+
+        for (operation, package) in [(Operation::Install, &v2), (Operation::Repair, &v1)] {
+            let before = snapshot(fixture.temp.path());
+            let platform = fixture.platform();
+            let outcome = run_operation(&platform, paths, operation, Some(authenticate(package)));
+            let context = format!("installed denial dropped, {operation:?}");
+            assert_eq!(
+                failure_code(outcome),
+                FailureCode::RecoveryRequired,
+                "{context}"
+            );
+            assert!(platform.mutations().is_empty(), "{context}");
+            assert_eq!(snapshot(fixture.temp.path()), before, "{context}");
+        }
+    }
+
+    // --- a denial only the replaced release signs -----------------------------
+    {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), vec![p1]),
+        );
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V2,
+            NOTICE_V2,
+            policy(2, vec![denied], vec![p1]),
+        );
+        // Same epoch as the rollback receipt, denial absent: believed only if the
+        // receipt is.
+        let v3 = fixture.package(
+            "v3",
+            "3.0.0",
+            HOST_V3,
+            NOTICE_V3,
+            policy(2, Vec::new(), vec![p1]),
+        );
+        fixture.install(&v1);
+        fixture.install(&v2);
+        run_operation(
+            &fixture.platform_trusting(&v1.proof),
+            paths,
+            Operation::Rollback,
+            Some(authenticate(&v1)),
+        )
+        .expect("the honest rollback completes");
+        let mut forged = receipt(paths).expect("receipt");
+        assert!(forged.release_policy.denies(&denied), "rollback kept it");
+        forged
+            .release_policy
+            .denied_payloads
+            .retain(|d| *d != denied);
+        forged.write(&fixture.platform(), paths).expect("forged");
+        fs::remove_file(version_dir(paths, "1.0.0", p1).join("licenses/NOTICE"))
+            .expect("damage the installed release");
+
+        // Install: the receipt keeps the rolled-back epoch and only the denial is gone.
+        let before = snapshot(fixture.temp.path());
+        let platform = fixture.platform();
+        let outcome = run_operation(
+            &platform,
+            paths,
+            Operation::Install,
+            Some(authenticate(&v3)),
+        );
+        assert_eq!(
+            failure_code(outcome),
+            FailureCode::RecoveryRequired,
+            "replaced denial dropped, Install"
+        );
+        assert!(platform.mutations().is_empty());
+        assert_eq!(snapshot(fixture.temp.path()), before);
+
+        // Repair: a rolled-back release can only be repaired against a receipt at its
+        // own (lower) epoch, so the edit lowers the epoch with the denial. Without the
+        // replaced release's retained carrier nothing refuses this.
+        forged.release_policy.epoch = v1.descriptor.policy.epoch;
+        forged.policy.epoch = v1.descriptor.policy.epoch;
+        forged.write(&fixture.platform(), paths).expect("forged");
+        let before = snapshot(fixture.temp.path());
+        let platform = fixture.platform();
+        let outcome = run_operation(&platform, paths, Operation::Repair, Some(authenticate(&v1)));
+        assert_eq!(
+            failure_code(outcome),
+            FailureCode::RecoveryRequired,
+            "replaced denial dropped, Repair"
+        );
+        assert!(platform.mutations().is_empty());
+        assert_eq!(snapshot(fixture.temp.path()), before);
+    }
+}
+
+/// Residual (b), the recorded consequence: when the prior release cannot be
+/// authenticated at all, an upgrade is refused with nothing written instead of
+/// composing against receipt state. Here every claimed byte is intact (the older
+/// claim check passes) but the OS cannot vouch for the installed carrier.
+#[test]
+fn an_install_over_a_prior_the_os_cannot_authenticate_is_refused_untouched() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let before = snapshot(fixture.temp.path());
+
+    for (label, faults) in [
+        (
+            "no assessment can be formed",
+            Faults {
+                host_state: HostState::Quiescent,
+                trust_by_carrier: vec![v2.proof.clone()],
+                ..Faults::default()
+            },
+        ),
+        (
+            "the OS denies the installed carrier",
+            Faults {
+                host_state: HostState::Quiescent,
+                trust_denied: true,
+                ..Faults::default()
+            },
+        ),
+    ] {
+        let platform = FakePlatform::with_faults(faults);
+        let outcome = run_operation(
+            &platform,
+            paths,
+            Operation::Install,
+            Some(authenticate(&v2)),
+        );
+        let code = failure_code(outcome);
+        assert!(
+            matches!(
+                code,
+                FailureCode::TrustUnavailable | FailureCode::TrustDenied
+            ),
+            "{label}: the OS verdict is reported unchanged: {code:?}"
+        );
+        assert!(platform.mutations().is_empty(), "{label}");
+        assert_eq!(snapshot(fixture.temp.path()), before, "{label}");
+    }
+    // Once the OS can vouch for it again, the same upgrade proceeds.
+    fixture.install(&v2);
+    assert_eq!(
+        receipt(paths).expect("receipt").version,
+        "2.0.0",
+        "the refusal was availability-only: nothing was damaged"
+    );
+}
+
+/// Residual (b) in recovery: an interrupted upgrade recomposes its policy against the
+/// previous receipt, so it first authenticates the previous release too. A previous
+/// release the OS can no longer vouch for leaves the journal pending, untouched.
+#[test]
+fn recovering_an_interrupted_upgrade_authenticates_the_previous_release() {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let build = |fixture: &Fixture| {
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), vec![p1]),
+        );
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V2,
+            NOTICE_V2,
+            policy(2, Vec::new(), vec![p1]),
+        );
+        (v1, v2)
+    };
+    let probe = Fixture::windows();
+    let (probe_v1, probe_v2) = build(&probe);
+    probe.install(&probe_v1);
+    let counting = probe.platform();
+    run_operation(
+        &counting,
+        &probe.paths,
+        Operation::Install,
+        Some(authenticate(&probe_v2)),
+    )
+    .expect("the unedited upgrade completes");
+    let total = counting.mutations().len();
+
+    let mut exercised = 0;
+    let mut wrong: Vec<String> = Vec::new();
+    for attempt in 1..=total {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let (v1, v2) = build(&fixture);
+        fixture.install(&v1);
+        let crashing = FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+            panic_at_mutation: Some(attempt),
+            ..Faults::default()
+        });
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            run_operation(
+                &crashing,
+                paths,
+                Operation::Install,
+                Some(authenticate(&v2)),
+            )
+        }));
+        assert!(outcome.is_err(), "attempt {attempt}: the death interrupts");
+        let JournalState::Pending(journal) = journal_state(paths) else {
+            continue;
+        };
+        let committed = receipt(paths).expect("receipt").payload_id == v2.descriptor.payload_id;
+        let activated =
+            !committed && Digest::of(&fixture.registration()) == journal.manifest.sha256();
+        if !activated {
+            continue;
+        }
+        let before = snapshot(fixture.temp.path());
+        // The OS vouches for the staged v2 but not for the previous release.
+        let recovering = FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust_by_carrier: vec![v2.proof.clone()],
+            ..Faults::default()
+        });
+        match recover(&recovering, paths) {
+            Ok(report) => wrong.push(format!(
+                "attempt {attempt}: recovered over an unauthenticated previous release: {:?}",
+                report.state
+            )),
+            Err(_) => {
+                if !recovering.mutations().is_empty() || snapshot(fixture.temp.path()) != before {
+                    wrong.push(format!(
+                        "attempt {attempt}: a refused recovery changed state"
+                    ));
+                }
+            }
+        }
+        // Control: with the previous release vouched for, the same state recovers.
+        let honest = FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+            ..Faults::default()
+        });
+        if let Err(failure) = recover(&honest, paths) {
+            wrong.push(format!(
+                "attempt {attempt}: honest recovery was refused: {:?}",
+                failure.code
+            ));
+        }
+        exercised += 1;
+    }
+    assert!(exercised >= 1, "the activated, pre-receipt window was hit");
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// N2, no crash needed: editing the one committed receipt must not let an ordinary
 /// rollback compose against a policy that forgot the current release's signed denial.
 #[test]
@@ -3163,7 +3570,8 @@ fn late_host_launch_before_activation_aborts_the_install_and_preserves_the_live_
     let receipt_before = receipt(paths).expect("v1 is committed");
     let retained_v1 = version_dir(paths, "1.0.0", p1);
 
-    let platform = HookedPlatform::new(Hook::LaunchAfterStaging);
+    let platform =
+        HookedPlatform::trusting(Hook::LaunchAfterStaging, fixture.proofs.borrow().clone());
     let failure = run_operation(
         &platform,
         paths,
@@ -3850,13 +4258,16 @@ fn pruning_rechecks_the_live_registration_before_deleting() {
     // v1 executable, as a launcher re-activating the old release would.
     let retained_v1 = version_dir(paths, "1.0.0", p1);
     let replacement = manifest_selecting(paths, &retained_v1.join("host.exe"));
-    let platform = HookedPlatform::new(Hook::Reregister {
-        when_executable_under: version_dir(paths, "3.0.0", p3)
-            .to_str()
-            .expect("UTF-8 fixture path")
-            .to_owned(),
-        replacement,
-    });
+    let platform = HookedPlatform::trusting(
+        Hook::Reregister {
+            when_executable_under: version_dir(paths, "3.0.0", p3)
+                .to_str()
+                .expect("UTF-8 fixture path")
+                .to_owned(),
+            replacement,
+        },
+        fixture.proofs.borrow().clone(),
+    );
     let failure = run_operation(
         &platform,
         paths,
@@ -3925,9 +4336,12 @@ fn recovery_prunes_superseded_versions_before_it_commits() {
     fixture.install(&v2);
     let superseded = version_dir(paths, "1.0.0", p1);
 
-    let crashing = HookedPlatform::new(Hook::CrashBeforeRemoval {
-        prefix: format!("versions/1.0.0-{}", p1.to_hex()),
-    });
+    let crashing = HookedPlatform::trusting(
+        Hook::CrashBeforeRemoval {
+            prefix: format!("versions/1.0.0-{}", p1.to_hex()),
+        },
+        fixture.proofs.borrow().clone(),
+    );
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         run_operation(
             &crashing,

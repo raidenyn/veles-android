@@ -59,11 +59,11 @@ use crate::platform::{
     OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration, StateDocument,
     ValidatedPath, read_no_follow, registration_is_owned, require_quiescent_within,
 };
-use crate::policy::authorize_package_policy;
+use crate::policy::{authorize_package_policy, is_no_broader_than};
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
 use crate::transaction::{
-    STATE_INSTALLED, activate_retained, install, manifest_for, release_is_usable,
-    verify_installed_host,
+    STATE_INSTALLED, activate_retained, bound_by_replaced_release, install, manifest_for,
+    release_is_usable, verify_installed_host,
 };
 
 /// Nothing of this product is installed.
@@ -374,6 +374,20 @@ fn repair(
     // Validate every claim this repair may touch before the first mutation, so a
     // package path the receipt does not own can never be written.
     let plan = RepairPlan::prepare(paths, package, &receipt, &version_relative)?;
+
+    // The policy this repair composed against is an editable receipt field. The
+    // plan has just proven the package carries the installed release's own
+    // descriptor (it must match the retained document the receipt claims and the
+    // carrier digest it records), and that descriptor was authenticated through the
+    // package: it is the installed release's signed policy, so it bounds the
+    // receipt's. A rollback-produced receipt is additionally bounded by the replaced
+    // release, authenticated in place. Neither being shown is `RecoveryRequired`
+    // with nothing written; repair never persists a policy it composed against
+    // unauthenticated state.
+    if !is_no_broader_than(&receipt.release_policy, &descriptor.policy) {
+        return Err(recovery_required());
+    }
+    bound_by_replaced_release(platform, paths, &receipt)?;
 
     // A repair mutates the installed tree, so it requires quiescence first.
     require_quiescent_within(platform, paths, quiescence)?;

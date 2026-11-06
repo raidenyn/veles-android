@@ -347,7 +347,14 @@ fn rollback_reassesses_the_retained_host() {
     let v1_id = v1.descriptor.payload_id;
     let v2 = build_release(&temp, "v2", "2.0.0", 2, vec![v1_id], false);
     for package in [&v1, &v2] {
-        let fake = platform(package, Faults::default());
+        // Installing v2 over v1 authenticates v1's installed carrier in place.
+        let fake = platform(
+            package,
+            Faults {
+                trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+                ..Faults::default()
+            },
+        );
         install(
             &fake,
             &paths,

@@ -597,12 +597,16 @@ pub(crate) fn activate_retained(
 /// carries.
 ///
 /// The recorded policy is installer state, never evidence: it is the operand every
-/// rollback composes against. The release's own signed descriptor (covered by the
-/// OS-verified carrier) is the evidence that bounds it, because every composition of
-/// a committed policy only tightens what the installed release signed. State that
-/// has lost a signed restriction, or whose release cannot be authenticated, fails
-/// closed.
-fn authenticate_enforced_policy(
+/// rollback, upgrade and recovery composes against. The release's own signed
+/// descriptor (covered by the OS-verified carrier) is the evidence that bounds it,
+/// because every composition of a committed policy only tightens what the installed
+/// release signed; a rollback-produced receipt is bounded by the replaced release as
+/// well (see [`bound_by_replaced_release`]). State that has lost a signed
+/// restriction, or whose release cannot be authenticated, fails closed with
+/// `RecoveryRequired` (an explicit OS denial or unavailability is reported as such).
+/// A receipt policy that passes may still be TIGHTER than the signed evidence - that
+/// only ever refuses more - but never looser.
+pub(crate) fn authenticate_enforced_policy(
     platform: &impl Platform,
     paths: &InstallPaths,
     receipt: &Receipt,
@@ -613,7 +617,52 @@ fn authenticate_enforced_policy(
         &receipt.ownership,
         &receipt.version,
         receipt.payload_id,
+        Some(receipt.policy.carrier_sha256),
         None,
+        None,
+        FailureCode::RecoveryRequired,
+    )?;
+    if !is_no_broader_than(
+        &receipt.release_policy,
+        &evidence.contents.descriptor.policy,
+    ) {
+        return Err(recovery_required());
+    }
+    bound_by_replaced_release(platform, paths, receipt)
+}
+
+/// Bound a rollback-produced receipt policy by the signed policy of the release that
+/// rollback replaced.
+///
+/// A rollback composes the target's policy with the replaced release's, so the
+/// committed policy carries denials the now-installed (older) release never signed.
+/// They are backed only by the replaced release, which stays retained as the
+/// receipt's prior, and the receipt's own policy is no evidence of them. Any other
+/// receipt has nothing to add: an install adopts the installed release's policy.
+/// The replaced release must be strictly newer than the installed one and must be
+/// authenticated in place; when it cannot be, the policy is unproven.
+pub(crate) fn bound_by_replaced_release(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    receipt: &Receipt,
+) -> InstallResult<()> {
+    if receipt.operation != Operation::Rollback {
+        return Ok(());
+    }
+    let replaced = receipt.prior.as_ref().ok_or_else(recovery_required)?;
+    if parse_version(&replaced.version)? <= parse_version(&receipt.version)?
+        || replaced.payload_id == receipt.payload_id
+        || replaced.carrier_sha256 == receipt.policy.carrier_sha256
+    {
+        return Err(recovery_required());
+    }
+    let evidence = authenticate_release_in_place(
+        platform,
+        paths,
+        &receipt.ownership,
+        &replaced.version,
+        replaced.payload_id,
+        Some(replaced.carrier_sha256),
         None,
         None,
         FailureCode::RecoveryRequired,
@@ -1225,11 +1274,14 @@ fn authenticate_for_completion(
         // the previous receipt is still present, the epoch rules of the ordinary
         // install are re-applied as well.
         (Operation::Install, Some(_), _) => descriptor.policy.clone(),
-        (Operation::Install, None, ReceiptState::Committed(prior)) => effective_policy(
-            &prior.release_policy,
-            &descriptor.policy,
-            Operation::Install,
-        )?,
+        (Operation::Install, None, ReceiptState::Committed(prior)) => {
+            authenticate_enforced_policy(platform, paths, prior)?;
+            effective_policy(
+                &prior.release_policy,
+                &descriptor.policy,
+                Operation::Install,
+            )?
+        }
         (Operation::Install, None, ReceiptState::None | ReceiptState::Unreadable)
             if journal.old_payload_id.is_none() =>
         {
@@ -1683,6 +1735,12 @@ impl Plan {
                 if descriptor.parsed_version()? < parse_version(&prior.version)? {
                     return Err(InstallFailure::new(FailureCode::PolicyDenied));
                 }
+                // The operand is installer state in an editable receipt: it only
+                // counts once the installed release's own signed carrier (and, for
+                // a rollback-produced receipt, the replaced release's) has been
+                // authenticated and shown to bound it. A prior that cannot be
+                // authenticated is `RecoveryRequired`, never composed against.
+                authenticate_enforced_policy(platform, paths, prior)?;
                 authorize_package_policy(package, &prior.release_policy, Operation::Install)?
             }
             None => descriptor.policy.clone(),

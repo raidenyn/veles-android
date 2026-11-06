@@ -233,6 +233,9 @@ struct Fixture {
     paths: InstallPaths,
     package: veles_bridge_installer::AuthenticatedPackage,
     proof: TrustProof,
+    /// Every release this fixture installed: an install over a prior release
+    /// authenticates that release's installed carrier in place.
+    proofs: Vec<TrustProof>,
     prior_version_dir: Option<PathBuf>,
     prior_payload_id: Option<Digest>,
     new_version_dir: PathBuf,
@@ -266,6 +269,7 @@ impl Fixture {
         Self {
             package: authenticate(&v2),
             proof: v2.proof.clone(),
+            proofs: vec![v1.proof.clone(), v2.proof.clone()],
             temp,
             paths,
             prior_version_dir,
@@ -282,6 +286,7 @@ impl Fixture {
         FakePlatform::with_faults(Faults {
             host_state: HostState::Quiescent,
             trust: Some(self.proof.clone()),
+            trust_by_carrier: self.proofs.clone(),
             ..faults
         })
     }

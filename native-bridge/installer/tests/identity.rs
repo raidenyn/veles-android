@@ -412,8 +412,15 @@ fn rollback_reverifies_a_sealed_release_across_both_identities() {
         authenticate(&v1).expect("v1 authenticates"),
     )
     .expect("v1 installs");
+    // Installing v2 over v1 authenticates v1's installed carrier in place.
+    let over_v1 = FakePlatform::with_faults(Faults {
+        trust: Some(v2.proof.clone()),
+        trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+        host_state: HostState::Quiescent,
+        ..Faults::default()
+    });
     install(
-        &platform_for(&v2),
+        &over_v1,
         &paths,
         authenticate(&v2).expect("v2 authenticates"),
     )
