@@ -29,13 +29,21 @@
 //! cleanup-pending. It never rolls a committed install back and never reports the
 //! previous installation as unusable once the new host is live.
 //!
-//! [`recover`] never trusts a phase marker. It compares the journal with the
+//! [`recover`] never trusts a phase marker, and never trusts the journal, the
+//! receipt or the files they claim as authority. It compares the journal with the
 //! verified live registration and the verified staged inventory, then either
-//! completes the authenticated staged activation or restores the journaled
-//! preimage. A live registration that is not ours, or live bytes that match
-//! neither recorded manifest, fails closed with guidance instead of guessing. A
-//! journal that cannot be interpreted is reconciled against verified live state
-//! and quarantined, so a torn write cannot block every later run.
+//! completes the staged activation - only after re-authenticating the installed
+//! signed carrier with the OS, re-deriving the effective policy and the manifest
+//! from the authenticated descriptor, re-verifying the complete installed
+//! inventory and re-assessing the installed host (`authenticate_for_completion`;
+//! `TrustDenied` / `TrustUnavailable` are returned unchanged and nothing is
+//! mutated) - or restores the journaled preimage, and only when the previous
+//! release verifies as whole. A live registration that is not ours, or live bytes
+//! that match neither recorded manifest, fails closed with guidance instead of
+//! guessing. A journal of a format this engine does not know is refused
+//! (`UnsupportedState`) and left untouched. A journal that is merely corrupt is
+//! reconciled against verified live state and quarantined, so a torn write cannot
+//! block every later run - but never while transaction assets are outstanding.
 //!
 //! Retained inputs: the previous version's files and the previous manifest bytes
 //! are verified (and journaled) before the first mutation, and the previous
