@@ -217,6 +217,7 @@ CSMAGIC_EMBEDDED_SIGNATURE = 0xFADE0CC0
 CSMAGIC_CODEDIRECTORY = 0xFADE0C02
 CSMAGIC_REQUIREMENTS = 0xFADE0C01
 CSMAGIC_ENTITLEMENTS = 0xFADE7171
+CSMAGIC_DER_ENTITLEMENTS = 0xFADE7172
 CSMAGIC_BLOBWRAPPER = 0xFADE0B01
 SIG_DATASIZE = 0x800
 
@@ -259,6 +260,7 @@ def build_macho(
     slack=None,
     low_slack=None,
     pad_fill=None,
+    linkedit_sections=(),
 ):
     """Build one thin Mach-O. ``signature`` is the exact bytes of the signature region
     (already padded to its allocated size) or ``None`` for an image without
@@ -290,7 +292,7 @@ def build_macho(
     cmds = [
         segment("__PAGEZERO", 0, 0x100000000, 0, 0, 0, 0),
         segment("__TEXT", 0x100000000, page, 0, page, 5, 5, text_sections),
-        segment("__LINKEDIT", 0x100000000 + page, vmsize, link_base, linkedit_filesize, 1, 1),
+        segment("__LINKEDIT", 0x100000000 + page, vmsize, link_base, linkedit_filesize, 1, 1, tuple(linkedit_sections)),
         struct.pack("<IIIIII", LC_SYMTAB, 24, sym_off, 2, str_off, len(symbols)),
         struct.pack("<II", LC_UUID, 24) + uuid,
         struct.pack("<IIIIII", LC_BUILD_VERSION, 24, 1, 0x00100000, 0x00100000, 0),
@@ -333,7 +335,9 @@ def _hash_pages(data, code_limit, log2):
     return b"".join(hashlib.sha256(data[i : i + size]).digest() for i in range(0, code_limit, size))
 
 
-def build_signature_blob(prefix, *, entitlements=None, tamper_slot=False, bad_magic=False, omit_cms=False, cd_flags=0x10000):
+def build_signature_blob(
+    prefix, *, entitlements=None, tamper_slot=False, bad_magic=False, omit_cms=False, cd_flags=0x10000, der_entitlements=None
+):
     """A SuperBlob with a real CodeDirectory over ``prefix`` (the bytes before the
     signature), an empty requirements set, optional entitlements and a CMS wrapper
     stand-in. Padded to SIG_DATASIZE."""
@@ -349,6 +353,10 @@ def build_signature_blob(prefix, *, entitlements=None, tamper_slot=False, bad_ma
     special = {2: hashlib.sha256(requirements).digest()}
     if ent_blob is not None:
         special[5] = hashlib.sha256(ent_blob).digest()
+    der_blob = None
+    if der_entitlements is not None:  # correctly hashed slot 7, arbitrary payload
+        der_blob = struct.pack(">II", CSMAGIC_DER_ENTITLEMENTS, 8 + len(der_entitlements)) + der_entitlements
+        special[7] = hashlib.sha256(der_blob).digest()
     n_special = max(special)
     hash_size = 32
     fixed = 48  # CodeDirectory v0x20100: through scatterOffset
@@ -371,6 +379,8 @@ def build_signature_blob(prefix, *, entitlements=None, tamper_slot=False, bad_ma
     blobs = [(0, directory), (2, requirements)]
     if ent_blob is not None:
         blobs.append((5, ent_blob))
+    if der_blob is not None:
+        blobs.append((7, der_blob))
     if not omit_cms:
         blobs.append((0x10000, cms))
     index_len = 12 + 8 * len(blobs)
@@ -387,13 +397,21 @@ def build_signature_blob(prefix, *, entitlements=None, tamper_slot=False, bad_ma
     return superblob.ljust(SIG_DATASIZE, b"\0")
 
 
-def build_signed_macho(*, entitlements=None, tamper_slot=False, bad_magic=False, omit_cms=False, cd_flags=0x10000, **kwargs):
+def build_signed_macho(
+    *, entitlements=None, tamper_slot=False, bad_magic=False, omit_cms=False, cd_flags=0x10000, der_entitlements=None, **kwargs
+):
     kwargs = dict(kwargs)
     placeholder, meta = build_macho(signature=b"\0" * SIG_DATASIZE, **kwargs)
     prefix = placeholder[: meta["sig_off"]]
     # The prefix includes the load commands, which already carry dataoff/datasize.
     blob = build_signature_blob(
-        prefix, entitlements=entitlements, tamper_slot=tamper_slot, bad_magic=bad_magic, omit_cms=omit_cms, cd_flags=cd_flags
+        prefix,
+        entitlements=entitlements,
+        tamper_slot=tamper_slot,
+        bad_magic=bad_magic,
+        omit_cms=omit_cms,
+        cd_flags=cd_flags,
+        der_entitlements=der_entitlements,
     )
     return build_macho(signature=blob, **kwargs)
 
@@ -1448,6 +1466,144 @@ class RealImageCorrespondenceTests(WorkDir):
         report = correspondence.compare(trees["u"], trees["s"], "tree")
         self.assertEqual(report["verdict"], "FAIL")
         self.assertIn(("tree-content-changed", "Contents/Info.plist"), [(d["code"], d.get("path")) for d in report["differences"]])
+
+
+def superblob_blobs(image, sig_off):
+    """(slot, absolute offset, magic, length, index entry offset) of every blob in a SuperBlob."""
+    _magic, _length, count = struct.unpack_from(">III", image, sig_off)
+    out = []
+    for position in range(count):
+        entry = sig_off + 12 + 8 * position
+        slot, offset = struct.unpack_from(">II", image, entry)
+        blob_magic, blob_length = struct.unpack_from(">II", image, sig_off + offset)
+        out.append({"slot": slot, "offset": sig_off + offset, "magic": blob_magic, "length": blob_length, "entry": entry})
+    return out
+
+
+def linker_signed(**blob_kwargs):
+    """An unsigned input carrying a (possibly unusual) linker-style signature without a CMS wrapper."""
+    placeholder, meta = build_macho(signature=b"\0" * SIG_DATASIZE)
+    blob = build_signature_blob(placeholder[: meta["sig_off"]], omit_cms=True, **blob_kwargs)
+    return build_macho(signature=blob)
+
+
+def raw_linkedit_section(**override):
+    fields = dict(
+        sectname="__original", segname="__LINKEDIT", addr=0x100000000 + 0x4000, size=16, offset=0x4000,
+        align=2, reloff=0, nreloc=0, flags=0, r1=0, r2=0, r3=0,
+    )
+    fields.update(override)
+    return struct.pack(
+        "<16s16sQQIIIIIIII",
+        fields["sectname"].encode().ljust(16, b"\0"), fields["segname"].encode().ljust(16, b"\0"),
+        fields["addr"], fields["size"], fields["offset"], fields["align"], fields["reloff"], fields["nreloc"],
+        fields["flags"], fields["r1"], fields["r2"], fields["r3"],
+    )
+
+
+class MachoReviewFindingTests(WorkDir):
+    """Regression tests for review findings F1-F6 and F16 (Mach-O)."""
+
+    def expect_fail(self, unsigned, signed, code=None, **kwargs):
+        report = self.compare_bytes("macho", unsigned, signed, **kwargs)
+        self.assertEqual(report["verdict"], "FAIL", report["allowed_differences"])
+        self.assertEqual(report["allowed_differences"], [])
+        if code is not None:
+            self.assertIn(code, self.codes(report), report["differences"])
+        return report
+
+    def passes(self, unsigned, signed, **kwargs):
+        report = self.compare_bytes("macho", unsigned, signed, **kwargs)
+        self.assertEqual(report["verdict"], "PASS", report["differences"])
+        return report
+
+
+    # ---- F2: fat container order, CPU/subtype/alignment and packing are compared -----------
+
+    def fat_images(self):
+        arm_u, _ = build_macho()
+        x86_u, _ = build_macho(cputype=CPU_X86_64)
+        arm_s, _ = build_signed_macho()
+        x86_s, _ = build_signed_macho(cputype=CPU_X86_64)
+        return arm_u, x86_u, arm_s, x86_s
+
+
+
+
+
+
+
+    # ---- F6: every supported command is validated before it is decoded ---------------------
+
+    def test_f6_malformed_known_load_commands_fail_instead_of_passing(self):
+        bad = {
+            "lc-note-8-bytes": struct.pack("<II", 0x31, 8),
+            "lc-load-dylib-8-bytes": struct.pack("<II", 0x0C, 8),
+            "lc-segment-64-8-bytes": struct.pack("<II", 0x19, 8),
+            "lc-rpath-8-bytes": struct.pack("<II", 0x8000001C, 8),
+            "dylib-name-offset-out-of-range": struct.pack("<IIIIII", 0x0C, 32, 0x400, 2, 0x10000, 0x10000) + b"lib\0\0\0\0\0",
+            "dylib-name-unterminated": struct.pack("<IIIIII", 0x0C, 32, 24, 2, 0x10000, 0x10000) + b"AAAAAAAA",
+            "build-version-tool-count": struct.pack("<IIIIII", 0x32, 24, 1, 0, 0, 3),
+            "data-in-code-outside-linkedit": struct.pack("<IIII", 0x29, 16, 0x10, 0x20),
+            "dyld-info-outside-linkedit": struct.pack("<II", 0x80000022, 48) + struct.pack("<10I", 0x10, 8, 0, 0, 0, 0, 0, 0, 0, 0),
+            "note-range-past-the-file": struct.pack("<II16sQQ", 0x31, 40, b"owner", 1 << 40, 8),
+        }
+        for name, command in bad.items():
+            with self.subTest(name=name):
+                unsigned, _ = build_macho(extra_load_command=command)
+                signed, _ = build_signed_macho(extra_load_command=command)
+                self.expect_fail(unsigned, signed, "macho-invalid-load-commands")
+
+    def test_f6_virtual_memory_and_section_geometry_is_validated(self):
+        overlapping = segment("__ODD", 0x100000000, 0x1000, 0, 0, 3, 3)  # zero file size, overlaps __TEXT in memory
+        unsigned, _ = build_macho(extra_load_command=overlapping)
+        signed, _ = build_signed_macho(extra_load_command=overlapping)
+        self.expect_fail(unsigned, signed, "macho-invalid-load-commands")
+        # A section whose address is outside its segment (real image, re-signed after the edit).
+        stripped = fx.macho_strip_signature(fx.read_macho_base())
+        text = correspondence.MachSlice(stripped).segments[1]
+        mutated = bytearray(stripped)
+        struct.pack_into("<Q", mutated, text.command.offset + 72 + 32, text.vmaddr + text.vmsize + 0x1000)
+        self.expect_fail(bytes(mutated), fx.macho_sign(bytes(mutated)), "macho-invalid-load-commands")
+
+    def test_f6_a_format_error_becomes_a_fail_report_not_a_traceback_with_a_stale_report(self):
+        command = struct.pack("<II", 0x19, 8)
+        unsigned = self.put("u.macho", build_macho(extra_load_command=command)[0])
+        signed = self.put("s.macho", build_signed_macho(extra_load_command=command)[0])
+        report = self.base / "report.json"
+        report.write_text(json.dumps({"schema": 1, "verdict": "PASS"}))
+        done = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--unsigned", str(unsigned), "--signed", str(signed), "--kind", "macho", "--report", str(report)],
+            capture_output=True, text=True, timeout=120,
+        )
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual(json.loads(report.read_text())["verdict"], "FAIL")
+
+    def test_f6_an_unexpected_internal_error_is_exit_2_with_an_error_report(self):
+        unsigned = self.put("u.macho", build_macho()[0])
+        signed = self.put("s.macho", build_signed_macho()[0])
+        report = self.base / "report.json"
+        report.write_text(json.dumps({"schema": 1, "verdict": "PASS"}))
+        with mock.patch.object(correspondence, "compare", side_effect=RuntimeError("internal fault")):
+            code = correspondence.main(["--unsigned", str(unsigned), "--signed", str(signed), "--kind", "macho", "--report", str(report)])
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(report.read_text())["verdict"], "ERROR")
+
+
+
+class PortableFindingTests(WorkDir):
+    """Review F10 (tree executables) and F15 (report freshness on argument errors)."""
+
+    def tree(self, name, files):
+        root = self.base / name
+        for relative, (data, mode) in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(mode)
+        return root
+
 
 
 class CommandLineTests(WorkDir):

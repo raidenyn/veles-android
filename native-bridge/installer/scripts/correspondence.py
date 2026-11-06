@@ -517,7 +517,33 @@ KNOWN_LOAD_COMMANDS = {
     0x80000033: "LC_DYLD_EXPORTS_TRIE",
     0x80000034: "LC_DYLD_CHAINED_FIXUPS",
 }
-FIXED_COMMAND_SIZES = {0x02: 24, 0x0B: 80, 0x1B: 24, 0x1D: 16, 0x26: 16, 0x29: 16, 0x2A: 16, 0x80000028: 24}
+# Commands whose size is fixed by their on-disk struct (mach-o/loader.h).
+FIXED_COMMAND_SIZES = {
+    0x02: 24,  # LC_SYMTAB
+    0x0B: 80,  # LC_DYSYMTAB
+    0x1B: 24,  # LC_UUID
+    0x1D: 16,  # LC_CODE_SIGNATURE
+    0x1E: 16,  # LC_SEGMENT_SPLIT_INFO
+    0x22: 48,  # LC_DYLD_INFO
+    0x24: 16,  # LC_VERSION_MIN_MACOSX
+    0x26: 16,  # LC_FUNCTION_STARTS
+    0x29: 16,  # LC_DATA_IN_CODE
+    0x2A: 16,  # LC_SOURCE_VERSION
+    0x2B: 16,  # LC_DYLIB_CODE_SIGN_DRS
+    0x2C: 24,  # LC_ENCRYPTION_INFO_64
+    0x2E: 16,  # LC_LINKER_OPTIMIZATION_HINT
+    0x31: 40,  # LC_NOTE
+    0x80000022: 48,  # LC_DYLD_INFO_ONLY
+    0x80000028: 24,  # LC_MAIN
+    0x80000033: 16,  # LC_DYLD_EXPORTS_TRIE
+    0x80000034: 16,  # LC_DYLD_CHAINED_FIXUPS
+}
+DYLIB_COMMANDS = (0x0C, 0x0D, 0x20, 0x80000018, 0x8000001F, 0x80000023)  # dylib_command: name at +8, 24 byte header
+STRING_COMMANDS = (0x0E, 0x27, 0x8000001C)  # dylinker / rpath: lc_str at +8, 12 byte header
+LINKEDIT_DATA_COMMANDS = (0x1D, 0x1E, 0x26, 0x29, 0x2B, 0x2E, 0x80000033, 0x80000034)  # (dataoff, datasize) at +8
+LC_SYMTAB, LC_DYSYMTAB, LC_BUILD_VERSION, LC_MAIN = 0x02, 0x0B, 0x32, 0x80000028
+LC_ENCRYPTION_INFO_64, LC_NOTE = 0x2C, 0x31
+LC_DYLD_INFO, LC_DYLD_INFO_ONLY = 0x22, 0x80000022
 CPU_TYPE_ARM64, CPU_TYPE_X86_64 = 0x0100000C, 0x01000007
 FILE_TYPES = (2, 6, 8)  # MH_EXECUTE, MH_DYLIB, MH_BUNDLE
 ZEROFILL_SECTION_TYPES = (0x01, 0x0C, 0x12)
@@ -543,6 +569,8 @@ class Command:
 class Segment:
     def __init__(self, command: Command) -> None:
         raw = command.raw
+        if len(raw) < 72:
+            raise Reject("macho-invalid-load-commands", f"LC_SEGMENT_64 has size {len(raw)}, below its 72 byte header")
         (self.name_raw, self.vmaddr, self.vmsize, self.fileoff, self.filesize, self.maxprot, self.initprot, nsects, self.flags) = struct.unpack_from(
             "<16sQQQQiiII", raw, 8
         )
@@ -565,6 +593,31 @@ class Segment:
                 }
             )
         self.command = command
+
+
+def check_command_shape(command: Command) -> None:
+    """Minimum size and internal string offsets of a known command, before anything decodes it."""
+    ident, raw, name = command.ident, command.raw, command.name
+    size = len(raw)
+
+    def bad(message: str) -> Reject:
+        return Reject("macho-invalid-load-commands", f"{name}: {message}")
+
+    if ident == LC_SEGMENT_64:
+        if size < 72:
+            raise bad(f"size {size} is below its 72 byte header")
+    elif ident in DYLIB_COMMANDS or ident in STRING_COMMANDS:
+        header = 24 if ident in DYLIB_COMMANDS else 12
+        if size < header:
+            raise bad(f"size {size} is below its {header} byte header")
+        offset = struct.unpack_from("<I", raw, 8)[0]
+        if not header <= offset < size or raw.find(b"\x00", offset) < 0:
+            raise bad("name/path offset is outside the command or its string is not terminated")
+    elif ident == LC_BUILD_VERSION:
+        if size < 24 or size != 24 + 8 * struct.unpack_from("<I", raw, 20)[0]:
+            raise bad("size does not match its tool count")
+    elif ident not in FIXED_COMMAND_SIZES:
+        raise bad("no shape rule for this command")  # KNOWN_LOAD_COMMANDS and the rules must stay in step
 
 
 class MachSlice:
@@ -596,7 +649,9 @@ class MachSlice:
             expected = FIXED_COMMAND_SIZES.get(ident)
             if expected is not None and size != expected:
                 raise Reject("macho-invalid-load-commands", f"{KNOWN_LOAD_COMMANDS[ident]} has size {size}, expected {expected}")
-            self.commands.append(Command(ident, cursor, data[cursor : cursor + size]))
+            command = Command(ident, cursor, data[cursor : cursor + size])
+            check_command_shape(command)
+            self.commands.append(command)
             cursor += size
         if cursor != 32 + sizeofcmds:
             raise Reject("macho-invalid-load-commands", "sizeofcmds is larger than the commands it describes")
@@ -640,6 +695,85 @@ class MachSlice:
             raise Reject("macho-invalid-linkedit-extent", "the code signature does not end __LINKEDIT and the slice")
         if 32 + self.sizeofcmds > self.first_data_offset():
             raise Reject("macho-invalid-load-commands", "load commands overlap section data")
+        self._validate_virtual_geometry()
+        self._validate_command_ranges()
+
+    def _validate_virtual_geometry(self) -> None:
+        """Segments and sections must be coherent in memory as well as in the file."""
+        bad = "macho-invalid-load-commands"
+        spans = []
+        for segment in self.segments:
+            if segment.vmaddr + segment.vmsize > 1 << 64:
+                raise Reject(bad, f"segment {segment.name} wraps the address space")
+            if segment.vmsize < segment.filesize:
+                raise Reject(bad, f"segment {segment.name} maps fewer bytes in memory than it has in the file")
+            if segment.vmsize:
+                spans.append((segment.vmaddr, segment.vmaddr + segment.vmsize, segment.name))
+            section_spans, file_spans = [], []
+            for section in segment.sections:
+                end = section["addr"] + section["size"]
+                if section["size"] and not (segment.vmaddr <= section["addr"] and end <= segment.vmaddr + segment.vmsize):
+                    raise Reject(bad, f"section {section['name']} lies outside its segment in memory")
+                if section["size"]:
+                    section_spans.append((section["addr"], end, section["name"]))
+                if not section["zerofill"] and section["size"]:
+                    if section["offset"] - segment.fileoff != section["addr"] - segment.vmaddr:
+                        raise Reject(bad, f"section {section['name']} file offset and address disagree within its segment")
+                    file_spans.append((section["offset"], section["offset"] + section["size"], section["name"]))
+            for group in (section_spans, file_spans):
+                for (_, left_end, left), (right_start, _, right) in _adjacent(sorted(group)):
+                    if left_end > right_start:
+                        raise Reject(bad, f"sections {left} and {right} overlap")
+        for (_, left_end, left), (right_start, _, right) in _adjacent(sorted(spans)):
+            if left_end > right_start:
+                raise Reject(bad, f"segments {left} and {right} overlap in memory")
+
+    def _validate_command_ranges(self) -> None:
+        """Offsets inside linkedit-resident commands must stay inside __LINKEDIT and off the signature."""
+        bad = "macho-invalid-load-commands"
+        low, high = self.linkedit.fileoff, self.linkedit.fileoff + self.linkedit.filesize
+        signature = None if self.dataoff is None else (self.dataoff, self.dataoff + self.datasize)
+        symbols = None
+        for command in self.commands:
+            raw, ident = command.raw, command.ident
+            ranges: list[tuple[str, int, int]] = []
+            if ident == LC_SYMTAB:
+                symoff, nsyms, stroff, strsize = struct.unpack_from("<IIII", raw, 8)
+                symbols = nsyms
+                ranges = [("symbols", symoff, nsyms * 16), ("strings", stroff, strsize)]
+            elif ident == LC_DYSYMTAB:
+                values = struct.unpack_from("<18I", raw, 8)
+                partitions = [(values[0], values[1]), (values[2], values[3]), (values[4], values[5])]
+                if symbols is not None and any(index + count > symbols for index, count in partitions):
+                    raise Reject(bad, f"{command.name}: a symbol partition runs past the symbol table")
+                ranges = [
+                    ("toc", values[6], values[7] * 8), ("modules", values[8], values[9] * 56),
+                    ("extrefs", values[10], values[11] * 4), ("indirect", values[12], values[13] * 4),
+                    ("external relocations", values[14], values[15] * 8), ("local relocations", values[16], values[17] * 8),
+                ]
+            elif ident in (LC_DYLD_INFO, LC_DYLD_INFO_ONLY):
+                values = struct.unpack_from("<10I", raw, 8)
+                ranges = [(label, values[2 * i], values[2 * i + 1]) for i, label in enumerate(("rebase", "bind", "weak bind", "lazy bind", "exports"))]
+            elif ident in LINKEDIT_DATA_COMMANDS and ident != LC_CODE_SIGNATURE:
+                ranges = [("data", *struct.unpack_from("<II", raw, 8))]
+            elif ident == LC_ENCRYPTION_INFO_64:
+                cryptoff, cryptsize = struct.unpack_from("<II", raw, 8)
+                if cryptsize and cryptoff + cryptsize > len(self.data):
+                    raise Reject(bad, f"{command.name}: encrypted range lies outside the slice")
+            elif ident == LC_NOTE:
+                offset, size = struct.unpack_from("<QQ", raw, 24)
+                if size and offset + size > len(self.data):
+                    raise Reject(bad, f"{command.name}: note data lies outside the slice")
+            elif ident == LC_MAIN:
+                if struct.unpack_from("<Q", raw, 8)[0] >= len(self.data):
+                    raise Reject(bad, f"{command.name}: entry offset lies outside the slice")
+            for label, offset, size in ranges:
+                if not size:
+                    continue
+                if offset < low or offset + size > high:
+                    raise Reject(bad, f"{command.name}: {label} range lies outside __LINKEDIT")
+                if signature and offset < signature[1] and offset + size > signature[0]:
+                    raise Reject(bad, f"{command.name}: {label} range overlaps the code signature")
 
     def first_data_offset(self) -> int:
         offsets = [s["offset"] for g in self.segments for s in g.sections if s["size"] and not s["zerofill"] and s["offset"]]
@@ -1239,6 +1373,17 @@ def _write_report(path: Path, document: dict) -> None:
         raise InputError(f"cannot write report {path}: {error.strerror}") from error
 
 
+def _fail_closed(report_path: Path | None, console: str, recorded: str) -> int:
+    """Exit 2 and replace any stale report with an ERROR document (never leave an old PASS behind)."""
+    print(f"correspondence: {console}", file=sys.stderr)
+    if report_path is not None:
+        try:
+            _write_report(report_path, {"schema": SCHEMA, "verdict": "ERROR", "error": recorded})
+        except InputError:
+            pass
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = _Parser(description="Verify that a signed image/tree differs from its unsigned input only by signature material.")
@@ -1261,13 +1406,10 @@ def main(argv: list[str] | None = None) -> int:
         _write_report(args.report, document)
         return 0 if document["verdict"] == "PASS" else 1
     except InputError as error:
-        print(f"correspondence: invalid input: {error}", file=sys.stderr)
-        if report_path is not None:
-            try:  # never leave a stale PASS behind
-                _write_report(report_path, {"schema": SCHEMA, "verdict": "ERROR", "error": str(error)})
-            except InputError:
-                pass
-        return 2
+        return _fail_closed(report_path, f"invalid input: {error}", str(error))
+    except Exception as error:  # noqa: BLE001 - the tool cannot account for this input; never PASS, never a traceback
+        message = f"internal error ({type(error).__name__}); the comparison could not be completed"
+        return _fail_closed(report_path, message, message)
 
 
 if __name__ == "__main__":
