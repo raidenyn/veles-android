@@ -51,18 +51,19 @@ use crate::journal::{
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, Operation, WarningCode,
-    canonical_json, parse_version,
+    canonical_json,
 };
 use crate::paths::{InstallPaths, JOURNAL_FILE, LOCK_FILE, RECEIPT_FILE, STAGING_DIR, STATE_DIR};
 use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, OWNERSHIP_SCHEMA_VERSION, OwnedEntry, OwnedKind,
     OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration, StateDocument,
-    ValidatedPath, parse_manifest, read_no_follow, registration_is_owned, require_quiescent_within,
+    ValidatedPath, read_no_follow, registration_is_owned, require_quiescent_within,
 };
 use crate::policy::authorize_package_policy;
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
 use crate::transaction::{
-    STATE_INSTALLED, activate_retained, install, manifest_for, verify_installed_host,
+    STATE_INSTALLED, activate_retained, install, manifest_for, release_is_usable,
+    verify_installed_host,
 };
 
 /// Nothing of this product is installed.
@@ -272,8 +273,10 @@ fn inspect(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<Inst
             false,
             Some(FailureCode::RecoveryRequired),
         )),
-        Some(_) => {
-            let usable = active_payload_verifies(paths, &receipt)?;
+        Some(live) => {
+            // The one shared predicate: claims, resources, launch permission and
+            // the executable the manifest actually selects.
+            let usable = release_is_usable(platform, paths, &receipt, Some(&live));
             Ok(report(
                 Operation::Inspect,
                 if usable {
@@ -291,26 +294,6 @@ fn inspect(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<Inst
             ))
         }
     }
-}
-
-/// Whether every claimed file of the receipted active payload still verifies.
-fn active_payload_verifies(paths: &InstallPaths, receipt: &Receipt) -> InstallResult<bool> {
-    let prefix = format!(
-        "{}/",
-        paths.version_dir_relative(&parse_version(&receipt.version)?, receipt.payload_id)
-    );
-    for claim in &receipt.ownership.owned {
-        if !claim.path.starts_with(&prefix) {
-            continue;
-        }
-        match OwnedEntry::from_claim(paths, claim) {
-            Ok(Some(_)) => {}
-            // Missing, changed, linked or unreadable: the payload no longer
-            // verifies, and inspection reports damage instead of guessing.
-            Ok(None) | Err(_) => return Ok(false),
-        }
-    }
-    Ok(true)
 }
 
 /// Repair the installed release from an authenticated same-version package.
@@ -1131,10 +1114,14 @@ fn deferred(failure: InstallFailure) -> InstallFailure {
     }
 }
 
-/// Whether the committed installation is live and its executable is present.
+/// Whether the committed installation is live, whole and launchable.
 ///
 /// A live read, never an assumption: this is what `prior_usable` means for a
-/// failure that happened before the operation could classify it.
+/// failure that happened before the operation could classify it. It is the same
+/// predicate recovery and `inspect` use ([`release_is_usable`]): the registration
+/// is ours and is the committed manifest, every claimed file verifies by content,
+/// the executable carries its launch permission and is the one the manifest
+/// selects. It performs no OS trust assessment (see that function).
 fn installation_is_usable(platform: &impl Platform, paths: &InstallPaths) -> bool {
     let Ok(ReceiptState::Committed(receipt)) = Receipt::load(platform, paths) else {
         return false;
@@ -1142,16 +1129,9 @@ fn installation_is_usable(platform: &impl Platform, paths: &InstallPaths) -> boo
     let Ok(Some(live)) = platform.read_registration(paths) else {
         return false;
     };
-    if !registration_is_owned(paths, &live) || live.manifest_digest() != receipt.manifest_sha256 {
-        return false;
-    }
-    let Ok(manifest) = parse_manifest(live.manifest()) else {
-        return false;
-    };
-    let Ok(executable) = manifest.executable() else {
-        return false;
-    };
-    fs::symlink_metadata(executable).is_ok_and(|metadata| metadata.is_file())
+    registration_is_owned(paths, &live)
+        && live.manifest_digest() == receipt.manifest_sha256
+        && release_is_usable(platform, paths, &receipt, Some(&live))
 }
 
 fn report(

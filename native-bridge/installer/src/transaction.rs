@@ -319,7 +319,7 @@ fn previous_release(
 /// It performs no OS trust assessment: it never claims a release was newly
 /// security-certified, only that what the committed installation recorded is
 /// still whole.
-fn release_is_usable(
+pub(crate) fn release_is_usable(
     platform: &impl Platform,
     paths: &InstallPaths,
     receipt: &Receipt,
@@ -1267,6 +1267,16 @@ fn recover_unreadable_journal(
         _ => false,
     };
     if !reconciled {
+        return Err(InstallFailure::new(FailureCode::RecoveryRequired));
+    }
+    // When the purported reconciled state is a committed installation, it must be
+    // shown to be whole *before* its recovery intent is released: the journal bytes
+    // are the only remaining trace of whatever was in flight, so a damaged release
+    // keeps them (RecoveryRequired, nothing mutated) instead of being quarantined
+    // first and only then reported damaged.
+    if let ReceiptState::Committed(committed) = &receipt
+        && !release_is_usable(platform, paths, committed, live.as_ref())
+    {
         return Err(InstallFailure::new(FailureCode::RecoveryRequired));
     }
     // Absence of a registration is not proof that no transaction assets exist: a

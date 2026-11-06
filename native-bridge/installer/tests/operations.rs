@@ -1099,6 +1099,78 @@ impl Platform for HookedPlatform {
     }
 }
 
+/// R2: `prior_usable` on a failure the operation did not classify, and the state
+/// `inspect` reports, are the same predicate recovery uses: claims, resources,
+/// launch permission and the manifest's selected executable - not merely "the
+/// executable is a regular file".
+#[test]
+fn prior_usable_and_inspect_share_one_complete_usability_predicate() {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    type Damage = fn(&Path);
+    #[allow(unused_mut)]
+    let mut damages: Vec<(&str, Damage)> = vec![
+        ("deleted resource", |version| {
+            fs::remove_file(version.join("licenses/NOTICE")).expect("delete a resource");
+        }),
+        ("altered resource", |version| {
+            fs::write(version.join("licenses/NOTICE"), b"tampered").expect("alter a resource");
+        }),
+        ("altered, still-regular executable", |version| {
+            fs::write(version.join("host.exe"), b"replaced by something else")
+                .expect("alter the host");
+        }),
+    ];
+    #[cfg(unix)]
+    damages.push(("stripped execute bit", |version| {
+        fs::set_permissions(version.join("host.exe"), fs::Permissions::from_mode(0o600))
+            .expect("strip the bit");
+    }));
+    let mut wrong: Vec<String> = Vec::new();
+    for (name, damage) in damages {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), Vec::new()),
+        );
+        fixture.install(&v1);
+        let version = version_dir(paths, "1.0.0", v1.descriptor.payload_id);
+
+        // Healthy baseline: both the wrapper and inspect call it usable.
+        let healthy = run_operation(&fixture.platform(), paths, Operation::Install, None)
+            .expect_err("an install needs a package");
+        assert!(healthy.prior_usable, "{name}: healthy installation");
+        let inspected = run_operation(&fixture.platform(), paths, Operation::Inspect, None)
+            .expect("inspect reports");
+        assert!(inspected.prior_usable, "{name}: healthy inspect");
+
+        damage(&version);
+
+        let failure = run_operation(&fixture.platform(), paths, Operation::Install, None)
+            .expect_err("an install needs a package");
+        assert_eq!(failure.code, FailureCode::InvalidInput, "{name}");
+        if failure.prior_usable {
+            wrong.push(format!(
+                "{name}: a damaged installation was reported prior_usable in a failure"
+            ));
+        }
+        let inspected = run_operation(&fixture.platform(), paths, Operation::Inspect, None)
+            .expect("inspect reports");
+        if inspected.state != STATE_DAMAGED
+            || inspected.prior_usable
+            || inspected.failure != Some(FailureCode::RepairPackageRequired)
+        {
+            wrong.push(format!("{name}: inspect reported {inspected:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "inconsistent usability: {wrong:#?}");
+}
+
 #[test]
 fn same_version_repairs_missing_files_not_trust() {
     let fixture = Fixture::windows();

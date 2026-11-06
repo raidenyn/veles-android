@@ -1907,6 +1907,62 @@ fn a_missing_dependency_is_damage_too() {
     assert_ne!(report.state, STATE_CLEAN);
 }
 
+/// R2: a corrupt journal over a *committed* installation is reconciled only after the
+/// installation is shown to be whole; a damaged one keeps its recovery intent
+/// (the journal bytes) instead of being quarantined and then reported damaged.
+#[test]
+fn a_torn_journal_beside_a_damaged_installation_is_not_quarantined() {
+    for damage in ["delete host", "alter host", "delete resource"] {
+        let fixture = Fixture::new(Scenario::Fresh);
+        install(&fixture.platform(), &fixture.paths, fixture.package.clone()).expect("installs");
+        let version = fixture.new_version_dir.clone();
+        match damage {
+            "delete host" => fs::remove_file(version.join("host.exe")).expect("delete"),
+            "alter host" => fs::write(version.join("host.exe"), b"tampered").expect("alter"),
+            _ => fs::remove_file(version.join("licenses/NOTICE")).expect("delete"),
+        }
+        let torn = b"{\"schema\":1,\"transaction_id\":\"0123456789abcdef";
+        fs::write(fixture.paths.journal_path(), torn).expect("torn journal");
+        let before = snapshot(fixture.temp.path());
+
+        let platform = fixture.platform();
+        let failure = recover(&platform, &fixture.paths)
+            .expect_err("the committed installation is damaged: recovery intent must be kept");
+        assert_eq!(failure.code, FailureCode::RecoveryRequired, "{damage}");
+        assert!(platform.mutations().is_empty(), "{damage}");
+        assert_eq!(
+            snapshot(fixture.temp.path()),
+            before,
+            "{damage}: nothing changed, including the journal bytes"
+        );
+        assert!(
+            !fixture
+                .paths
+                .state()
+                .join(StateDocument::Journal.quarantine_file_name())
+                .exists(),
+            "{damage}: the journal was not quarantined"
+        );
+    }
+}
+
+#[test]
+fn a_torn_journal_beside_a_whole_installation_is_still_quarantined() {
+    let fixture = Fixture::new(Scenario::Fresh);
+    install(&fixture.platform(), &fixture.paths, fixture.package.clone()).expect("installs");
+    fs::write(fixture.paths.journal_path(), b"{\"schema\":1,\"trans").expect("torn journal");
+    let report = recover(&fixture.platform(), &fixture.paths).expect("whole installation");
+    assert_eq!(report.state, STATE_CLEAN);
+    assert!(report.prior_usable, "{report:?}");
+    assert!(
+        fixture
+            .paths
+            .state()
+            .join(StateDocument::Journal.quarantine_file_name())
+            .exists()
+    );
+}
+
 #[test]
 fn an_unverified_previous_release_never_clears_recovery_intent() {
     for damage in ["delete host", "alter host", "delete resource"] {
