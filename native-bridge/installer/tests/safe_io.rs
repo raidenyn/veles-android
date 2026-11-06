@@ -63,6 +63,38 @@ fn windows_paths(temp: &TempRoot, channel: Channel) -> InstallPaths {
         .expect("valid injected Windows roots")
 }
 
+/// The form a [`ValidatedPath`] stores for a fixed-layout path, built exactly
+/// the way the handle builds it.
+///
+/// `ValidatedPath::build` replaces the trusted anchor with
+/// `fs::canonicalize(anchor)` and then joins the normalized `/`-separated
+/// components (`src/platform.rs`). `InstallPaths` instead holds the pure,
+/// non-canonicalized join produced by `for_user`, so a handle's `rendered()`
+/// is only comparable against an expectation canonicalized the same way:
+/// on Windows `fs::canonicalize` returns the extended-length `\\?\C:\...`
+/// form (`Prefix::VerbatimDisk`), which `Path::eq` never equates with the
+/// `Prefix::Disk` of the raw join, and on macOS `/var` resolves to
+/// `/private/var`. The leaf may not exist yet, so the anchor — which always
+/// exists here, the layout is locked first — is canonicalized and the
+/// components are pushed afterwards, mirroring `build`.
+///
+/// Both the Windows-only assertion and the portable assertion below use this
+/// helper, so the comparison logic is exercised on the Linux host too; only
+/// the Windows `\\?\` prefix branch needs a Windows runner (Task 8).
+#[track_caller]
+fn canonical_rendered(anchor: &Path, relative: &str) -> PathBuf {
+    let mut expected = fs::canonicalize(anchor).unwrap_or_else(|error| {
+        panic!(
+            "canonicalize the validated anchor {}: {error}",
+            anchor.display()
+        )
+    });
+    for part in relative.split('/') {
+        expected.push(part);
+    }
+    expected
+}
+
 #[test]
 fn partial_write_retries_and_readback_matches() {
     let temp = TempRoot::new();
@@ -175,17 +207,35 @@ fn ancestor_swap_and_symlink_block() {
             canonical.rendered(),
             "the separator alias renders to the same in-root path"
         );
-        assert_eq!(alias.rendered(), paths.state().join("alias.json"));
+        // Compare against the canonical expectation, never against the pure
+        // `paths.state().join("alias.json")` join: the handle stores
+        // `fs::canonicalize(root)` plus its components, which on Windows is the
+        // extended-length `\\?\C:\...` form. `Path::eq` compares
+        // `Prefix::VerbatimDisk` with `Prefix::Disk` literally, so the raw join
+        // would not match even though both name the same file. `canonical_rendered`
+        // is also used by the portable assertion below, so this comparison runs
+        // on Linux too; only the `\\?\` prefix itself needs a Windows runner.
+        assert_eq!(
+            alias.rendered(),
+            canonical_rendered(paths.root(), "state/alias.json"),
+            "the alias renders to the canonical anchor plus its components"
+        );
     }
 
-    assert!(
-        ValidatedPath::within(
-            &paths,
-            &paths.state().join("inside.json"),
-            PathKind::NewFile
-        )
-        .is_ok(),
-        "an absolute path inside the root becomes a handle"
+    let inside = ValidatedPath::within(
+        &paths,
+        &paths.state().join("inside.json"),
+        PathKind::NewFile,
+    )
+    .expect("an absolute path inside the root becomes a handle");
+    assert_eq!(inside.relative(), "state/inside.json");
+    // Portable counterpart of the Windows check above: the handle's rendered
+    // path is the canonical anchor plus the relative components, which is what
+    // `canonical_rendered` derives from the same inputs on every platform.
+    assert_eq!(
+        inside.rendered(),
+        canonical_rendered(paths.root(), "state/inside.json"),
+        "an absolute in-root path renders to the canonical anchor plus components"
     );
     assert_eq!(
         failure_code(ValidatedPath::within(
