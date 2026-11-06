@@ -2201,11 +2201,11 @@ impl NativeFs for WindowsPlatform {
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
         let handle = path.dir_handle()?;
         // Windows has **no documented API that flushes a directory entry**:
-        // `FlushFileBuffers` is documented for files. It is still issued on the
-        // directory handle as a best-effort ordering barrier, but it is not
-        // claimed as a POSIX-style directory-entry flush (see the module docs).
-        // A refusal is `CleanupPending`, never a silent success: durability of the
-        // entry cannot be established, so the caller keeps its durable intent.
+        // `FlushFileBuffers` is documented for files. Directory durability is
+        // therefore not part of this adapter's contract and no caller may infer
+        // it. The barrier is issued only as an ordering step; a refusal is
+        // `CleanupPending`, never a silent success, and the journal/receipt
+        // re-examines the entry on the next run instead of assuming it survived.
         // SAFETY: the handle is a live directory handle opened with write access.
         unsafe { FlushFileBuffers(handle.handle()) }
             .map_err(|_| InstallFailure::new(FailureCode::CleanupPending))
@@ -2243,8 +2243,9 @@ impl NativeFs for WindowsPlatform {
         }
         validate_private_directory_handle(&created)?;
         drop(created);
-        // Best-effort ordering barrier on the anchored parent, exactly as
-        // `flush_parent` documents (never a claimed directory-entry flush).
+        // The barrier on the anchored parent follows the same contract as
+        // `flush_parent`: it is an ordering step only, never a claimed
+        // directory-entry durability guarantee on Windows.
         // SAFETY: the handle is a live directory handle opened with write access.
         unsafe { FlushFileBuffers(handle.handle()) }
             .map_err(|_| InstallFailure::new(FailureCode::CleanupPending))
@@ -2298,6 +2299,19 @@ impl NativeFs for WindowsPlatform {
         // name. A swapped ancestor therefore cannot redirect the copy: the
         // anchor is verified immediately before the mutation, and a name that is
         // not a plain child of it is `ForeignState`.
+        //
+        // `CopyFile2` is still path-based, so it resolves the name a second time
+        // inside the call. That is accepted under the recorded same-user scope
+        // (a same-user attacker inside the private root is out of scope); the
+        // copy is nevertheless re-verified: immediately after it the whole
+        // captured chain is opened again, the anchor's identity must be the same
+        // object, and the directory's rendered path must still be the one the
+        // copy used. A redirect removes the entry this call created (through the
+        // anchored handle) and reports `ForeignState` instead of adopting a file
+        // from outside the validated tree. Residual, documented: an attacker who
+        // redirects a path and restores it before the re-check can still make the
+        // copy land elsewhere — that requires write access to the installer's
+        // private tree and is out of scope by policy.
         let handle = destination.dir_handle()?;
         let anchor_path = final_path_of(handle.handle())?;
         let leaf = destination.leaf_name()?.to_os_string();
@@ -2327,6 +2341,13 @@ impl NativeFs for WindowsPlatform {
             )
         }
         .map_err(|_| io_failure())?;
+        // The anchor must still be the object (and the path) the copy was built
+        // from; otherwise the copy is not adopted and the created entry is
+        // removed through the still-open handle.
+        if !anchor_still_names(destination, &handle, &anchor_path) {
+            discard_created_leaf(&handle, &leaf);
+            return Err(foreign_state());
+        }
         // The copied object is verified **through the anchored handle**: it must be
         // the plain file that was just created there (not a reparse point, not a
         // directory) and it is flushed while still writable.
@@ -2347,6 +2368,56 @@ impl NativeFs for WindowsPlatform {
         file.sync_all().map_err(|_| io_failure())?;
         drop(file);
         NativeFs::flush_parent(self, destination)
+    }
+}
+
+/// Re-check the carrier copy's anchor after the path-based copy.
+///
+/// The captured ancestor chain is opened a second time (every identity
+/// compared), the anchor must be the same object the copy was built from, and
+/// the directory's rendered path must still equal the path handed to
+/// `CopyFile2`. `false` means the copy may have landed outside the validated
+/// tree and must not be adopted.
+fn anchor_still_names(
+    destination: &ValidatedPath,
+    before: &super::native::anchor::DirectoryHandle,
+    anchor_path: &Path,
+) -> bool {
+    let Ok(after) = destination.dir_handle() else {
+        return false;
+    };
+    if after.identity() != before.identity() {
+        return false;
+    }
+    match final_path_of(after.handle()) {
+        Ok(now) => crate::platform::same_path(&now, anchor_path),
+        Err(_) => false,
+    }
+}
+
+/// Remove the leaf this call just created, through the anchored parent handle.
+///
+/// Only called when the post-copy anchor re-check failed. The entry is opened
+/// with no-follow semantics relative to the verified directory handle, must be a
+/// plain regular file, and is deleted with the handle-bound
+/// `FileDispositionInfo`; nothing else is ever removed. A failure here is
+/// ignored: the install is already reporting `ForeignState` and the journaled
+/// cleanup owns whatever remains.
+fn discard_created_leaf(handle: &super::native::anchor::DirectoryHandle, leaf: &OsStr) {
+    let Ok(file) = open_below(
+        handle.handle(),
+        leaf,
+        ACCESS_RD,
+        NT_FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
+    ) else {
+        return;
+    };
+    if let Ok(metadata) = file.metadata()
+        && metadata.is_file()
+        && matches!(is_reparse(&file), Ok(false))
+    {
+        let _ = delete_opened(&file);
     }
 }
 

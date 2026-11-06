@@ -12,6 +12,32 @@
 //! Each opened directory is compared with the identity validation captured
 //! (device/inode on macOS, volume serial plus file index on Windows). A handle
 //! naming a different object than the one that was validated is refused.
+//!
+//! # Adversary and scope
+//!
+//! The guarantee is: every mutation is performed relative to an opened,
+//! identity-verified directory handle, the identity is checked **immediately
+//! before** the mutation, and a mismatch aborts instead of proceeding. The one
+//! mutation whose OS primitive re-resolves a pathname (the Windows carrier copy)
+//! re-verifies the anchor immediately **after** the call and removes the copy on
+//! a mismatch. A component above the anchor is opened with
+//! `O_NOFOLLOW`/`FILE_OPEN_REPARSE_POINT`; a link there is refused, never
+//! followed, and the path is never canonicalised first (a canonicalised walk
+//! would silently accept a tree the link points at).
+//!
+//! **Out of scope (Task 2 policy, reconfirmed for this task):** a *same-user*
+//! attacker who can already write inside the private `0700` root. On macOS
+//! `unlinkat` deletes a directory *entry*, so such an attacker can rename an
+//! entry between the identity re-read and the unlink; macOS has no `funlinkat`
+//! that would bind the unlink to the verified object. The installer does not try
+//! to win that race: it verifies identity immediately before the deletion,
+//! refuses to overwrite an unexpected entry where the OS allows it, and reports
+//! the mismatch rather than claiming atomicity it cannot provide. (On Windows
+//! the deletion itself is handle-bound; the residual there is the path-based
+//! `CopyFile2` in the carrier install, documented on that function.) The threats
+//! actually defended against are a *different* principal, a link planted in place
+//! of an installer-owned directory, and a crash between steps — not a malicious
+//! same-user administrator.
 
 use std::path::Path;
 
@@ -61,17 +87,26 @@ pub(crate) fn open_chain(
 /// Open one absolute directory by walking **every** component from the file
 /// system root with no-follow semantics.
 ///
-/// Callers that have no earlier validation to compare against (the cleanup
-/// helper opening the install root named by a request, the installer creating a
-/// layout component) still must not hand the OS a path whose ancestor can be a
-/// link: the links above the path are resolved once (`canonicalize`, exactly as
-/// validation does) and the resolved chain is then opened component by
-/// component with `O_NOFOLLOW`/`FILE_OPEN_REPARSE_POINT`, so a component that is
-/// swapped for a link between the two steps is **refused** instead of traversed.
-/// The returned handle is the anchor every mutation is performed relative to.
+/// This is the entry point for a path the caller has not already resolved (the
+/// cleanup helper opening the install root named by a request, the installer
+/// creating a layout component). The path is **not** canonicalised first: doing
+/// so would resolve a planted link above the root and then walk the *outside*
+/// tree the link points at, which is exactly the redirect this guard must
+/// refuse. Instead the lexical components are opened one at a time with
+/// `O_NOFOLLOW`/`FILE_OPEN_REPARSE_POINT` from the file-system/volume root, so
+/// any link component fails closed with `UnsafePath`. The returned handle is the
+/// anchor every mutation is performed relative to.
+///
+/// A caller that has a canonical path (one whose ancestors were already resolved
+/// by validation, such as [`ValidatedPath`](super::super::ValidatedPath)) passes
+/// that path; a caller that has a path with a link anywhere above it is refused,
+/// even when the link resolves to a directory. That is deliberate: the installer
+/// only mutates a tree it created with no links in it.
 pub(crate) fn open_anchored(path: &Path) -> InstallResult<DirectoryHandle> {
-    let canonical = std::fs::canonicalize(path).map_err(|_| unsafe_path())?;
-    platform::open_walked(&canonical)
+    if !path.is_absolute() {
+        return Err(unsafe_path());
+    }
+    platform::open_walked(path)
 }
 
 /// The macOS half: `open`/`openat` with `O_NOFOLLOW | O_DIRECTORY`.
@@ -162,9 +197,17 @@ mod platform {
 
     /// Open an absolute path by walking every component from `/` with
     /// `O_NOFOLLOW`, so no component can be a link that redirects the walk.
-    pub(super) fn open_walked(canonical: &Path) -> InstallResult<DirectoryHandle> {
+    ///
+    /// The path is used exactly as given (never canonicalised): the first
+    /// component must be the root and every other one a normal component, so a
+    /// relative path or one containing `.`/`..` cannot escape the walk.
+    pub(super) fn open_walked(path: &Path) -> InstallResult<DirectoryHandle> {
         use std::path::Component;
 
+        let mut components = path.components();
+        if !matches!(components.next(), Some(Component::RootDir)) {
+            return Err(unsafe_path());
+        }
         let root_name = CString::new("/").map_err(|_| unsafe_path())?;
         // SAFETY: the literal is NUL-terminated and outlives the call.
         let root = unsafe { open(root_name.as_ptr(), O_RDONLY | O_DIRECTORY | O_CLOEXEC) };
@@ -181,9 +224,8 @@ mod platform {
                 return Err(failure);
             }
         };
-        for component in canonical.components() {
+        for component in components {
             match component {
-                Component::RootDir => {}
                 Component::Normal(name) => {
                     let name = name.to_str().ok_or_else(unsafe_path)?;
                     if name.is_empty() || name == "." || name == ".." {
@@ -191,8 +233,8 @@ mod platform {
                     }
                     current = open_below(&current, name)?;
                 }
-                // `canonicalize` never yields these, and a caller-supplied one
-                // would escape the walk.
+                // A second root, `.`/`..` or a platform prefix: none may appear
+                // in the absolute path this walk accepts.
                 _ => return Err(unsafe_path()),
             }
         }
@@ -330,14 +372,17 @@ mod platform {
     /// with `FILE_OPEN_REPARSE_POINT`, so no component can be a reparse point
     /// that redirects the walk.
     ///
+    /// The path is used exactly as given (never canonicalised), so a reparse
+    /// point above the anchor is refused instead of resolved.
+    ///
     /// Only the anchor itself (the last component) is opened with write access:
     /// the components above it are read/traverse only, because a standard user
     /// cannot open `C:\` or `%USERPROFILE%` for writing and the walk has no
     /// reason to ask for it.
-    pub(super) fn open_walked(canonical: &Path) -> InstallResult<DirectoryHandle> {
+    pub(super) fn open_walked(path: &Path) -> InstallResult<DirectoryHandle> {
         use std::path::{Component, Prefix};
 
-        let mut components = canonical.components();
+        let mut components = path.components();
         // A drive-letter root (`C:\`) is the only anchor this adapter can open
         // component by component; a UNC share or a verbatim device path is
         // refused rather than walked with an unverified ancestor.
@@ -350,10 +395,14 @@ mod platform {
             },
             _ => return Err(unsafe_path()),
         };
+        // A drive-relative path (`C:foo`) has no root component and must never
+        // be treated as a child of the volume root.
+        if !matches!(components.next(), Some(Component::RootDir)) {
+            return Err(unsafe_path());
+        }
         let mut names = Vec::new();
         for component in components {
             match component {
-                Component::RootDir => {}
                 Component::Normal(name) => {
                     let name = name.to_str().ok_or_else(unsafe_path)?;
                     if name.is_empty() || name == "." || name == ".." {

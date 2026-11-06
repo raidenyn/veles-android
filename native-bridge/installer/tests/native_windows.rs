@@ -503,6 +503,26 @@ fn cleanup_root_does_not_follow_a_planted_reparse_point() {
     );
     assert_eq!(outcome, RemoveOutcome::Preserved);
     assert!(outside_file.exists(), "a reparse point is never traversed");
+
+    // A junction **above** the root is refused as well: the walk from the volume
+    // root sets `FILE_OPEN_REPARSE_POINT` on every component and the path is
+    // never canonicalised first, so an ancestor cannot redirect the traversal.
+    fs::create_dir_all(outside.join("NativeBridge")).expect("outside layout");
+    let linked_parent = temp.path().join("linked-root");
+    let status = process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&linked_parent)
+        .arg(&outside)
+        .status()
+        .expect("cmd is a standard Windows tool");
+    assert!(
+        status.success(),
+        "the fixture must stage an ancestor junction"
+    );
+    assert!(
+        WindowsCleanupRoot::open(&linked_parent.join("NativeBridge")).is_err(),
+        "a junction above the cleanup root is refused, never followed"
+    );
 }
 
 /// Identity-bound deletion: the exact leaf that was opened and hashed is the one

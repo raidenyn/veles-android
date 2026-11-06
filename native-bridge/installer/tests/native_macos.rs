@@ -44,6 +44,12 @@ impl TempRoot {
             fs::remove_dir_all(&path).expect("stale temp root");
         }
         fs::create_dir_all(&path).expect("temp root");
+        // The native adapters open every ancestor with `O_NOFOLLOW` and refuse a
+        // link outright, so the fixture must hand them a path with no link in it.
+        // `std::env::temp_dir()` is `/var/folders/...` on macOS and `/var` is a
+        // symlink to `/private/var`; the resolved path is what a real install
+        // home looks like.
+        let path = fs::canonicalize(&path).expect("canonical temp root");
         Self { path }
     }
 
@@ -447,6 +453,17 @@ fn cleanup_traversal_is_anchored_and_identity_bound() {
     assert!(
         outside.join("host").exists(),
         "a linked component must never redirect a deletion"
+    );
+
+    // A link **above** the root is refused as well. The walk starts at `/` with
+    // `O_NOFOLLOW` and the path is never canonicalised first, so a planted
+    // ancestor cannot make the helper accept the outside tree the link names.
+    fs::create_dir_all(outside.join("NativeBridge")).expect("outside layout");
+    let linked_parent = temp.path().join("linked");
+    symlink(&outside, &linked_parent).expect("planted ancestor link");
+    assert!(
+        MacosCleanupRoot::open(&linked_parent.join("NativeBridge")).is_err(),
+        "a link above the cleanup root is refused, never followed"
     );
 }
 

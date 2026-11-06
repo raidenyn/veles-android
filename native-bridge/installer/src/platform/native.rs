@@ -34,6 +34,25 @@
 //! so the shared decisions are exercised on every host even though the native
 //! primitives themselves only compile for their own target.
 //!
+//! # Security scope
+//!
+//! The installer defends its own tree against a different principal and against
+//! a link/reparse point planted above it: every mutation is anchored to an
+//! opened, identity-verified directory handle, the chain is walked with
+//! `O_NOFOLLOW`/`FILE_OPEN_REPARSE_POINT` (never canonicalised first), and an
+//! identity mismatch aborts (a failed create removes only the object the call
+//! itself created).
+//!
+//! A **same-user** attacker is out of scope (the policy recorded in Task 2 and
+//! reconfirmed here): the private root is `0700`/owner-only, so an attacker who
+//! can rename entries inside it is already the account's administrator. That
+//! attacker can still rename a verified entry between the identity re-read and
+//! the following name-based deletion on macOS (there is no `funlinkat`), and the
+//! installer deliberately does not try to win that race. It verifies identity
+//! immediately before the deletion (and again after the one path-based copy),
+//! refuses to overwrite an unexpected entry, and reports the mismatch instead of
+//! claiming atomicity the OS does not offer.
+//!
 //! # Durability
 //!
 //! The contract is *per platform*, and it is stated here rather than implied:
@@ -41,23 +60,21 @@
 //! * macOS: a file's bytes are durable after `fsync(2)`; a directory entry is
 //!   durable after its parent directory's `fsync(2)`. Both are performed.
 //! * Windows: a file's bytes are durable after `FlushFileBuffers` on its handle.
-//!   A rename is performed with `NtSetInformationFile(FileRenameInformation)` on
-//!   the opened source handle with `RootDirectory` set to the opened destination
-//!   directory.
+//!   A rename is ordered through `NtSetInformationFile(FileRenameInformation)`
+//!   on the opened source handle with `RootDirectory` set to the opened
+//!   destination directory, and only afterwards is the durable intent committed.
 //!
-//!   **Directory durability is not claimed.** There is no public Win32 API that
-//!   documents a POSIX-style directory-entry flush, and `FlushFileBuffers` is
-//!   documented for *files*: issuing it on a directory handle is only a
-//!   best-effort ordering barrier, not a supported guarantee that a directory
-//!   entry survives power loss. The adapter therefore
-//!   (a) never claims POSIX-equivalent durability on Windows (no
-//!   `REPLACEFILE_WRITE_THROUGH`/`MOVEFILE_WRITE_THROUGH` implication either),
-//!   (b) fails closed when the barrier is refused — the flush maps to
-//!   `CleanupPending`, never a silent success, so a caller that needs the entry
-//!   durable reports a pending cleanup instead of a completed install, and
-//!   (c) only commits the durable intent after it, so a lost directory entry is
-//!   detected by the journal/receipt on the next run (the staged sibling and the
-//!   live document are re-examined, never assumed), rather than being silently
+//!   **Directory durability is not claimed on Windows.** There is no public
+//!   Win32 API that documents a POSIX-style directory-entry flush;
+//!   `FlushFileBuffers` is documented for *files*. The barrier is still issued on
+//!   the directory handle as an ordering step, but the adapter never presents it
+//!   as proof that the entry survives power loss. Instead:
+//!   (a) no code path or document treats a directory flush as a durability
+//!   guarantee; (b) a refused barrier is `CleanupPending`, never a silent success,
+//!   so a caller that needs the entry durable reports a pending cleanup instead of
+//!   a completed install; and (c) the journal and receipt are re-examined on the
+//!   next run — the staged sibling and the live document are read again, never
+//!   assumed — so a lost directory entry is detected then rather than being
 //!   reported as a finished installation.
 
 use std::fs;
@@ -167,10 +184,14 @@ pub(crate) fn native_ensure_layout(fs: &impl NativeFs, paths: &InstallPaths) -> 
                             return Err(unsafe_path());
                         }
                     } else {
-                        // An OS/user known folder above it may legitimately be a
-                        // link (a relocated `Application Support`, a junctioned
-                        // `%LOCALAPPDATA%`): it is only required to resolve to a
-                        // directory, and it is never mutated.
+                        // An OS/user known folder above it is never mutated and
+                        // never validated for ownership. It must resolve to a
+                        // directory here, but the anchored open used for every
+                        // mutation walks the chain with no-follow semantics and
+                        // therefore refuses a link anywhere above the installer
+                        // container: a relocated/junctioned known folder is not
+                        // silently followed into a tree the installer did not
+                        // create (fail closed, `UnsafePath`).
                         let resolved = fs::metadata(current).map_err(|_| io_failure())?;
                         if !resolved.is_dir() {
                             return Err(unsafe_path());

@@ -1066,7 +1066,11 @@ const T8_O_NOFOLLOW: c_int = 0x0100;
 const T8_O_CLOEXEC: c_int = 0x100_0000;
 const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
 const AT_REMOVEDIR: c_int = 0x0080;
+/// Darwin `renameatx_np(2)` flag: fail with `EEXIST` instead of replacing the
+/// destination, so an unexpected entry is never destroyed.
+const RENAME_EXCL: u32 = 0x0000_0004;
 const ENOENT: i32 = 2;
+const EEXIST: i32 = 17;
 const ENOTEMPTY: i32 = 66;
 
 unsafe extern "C" {
@@ -1077,6 +1081,15 @@ unsafe extern "C" {
         from: *const c_char,
         to_directory: c_int,
         to: *const c_char,
+    ) -> c_int;
+    /// `renameatx_np` is the Darwin variant that can refuse to replace an
+    /// existing destination (`RENAME_EXCL`).
+    fn renameatx_np(
+        from_directory: c_int,
+        from: *const c_char,
+        to_directory: c_int,
+        to: *const c_char,
+        flags: u32,
     ) -> c_int;
     fn unlinkat(directory: c_int, path: *const c_char, flags: c_int) -> c_int;
     fn symlinkat(target: *const c_char, directory: c_int, path: *const c_char) -> c_int;
@@ -1441,15 +1454,23 @@ fn open_leaf_fd(directory: c_int, name: &OsStr, flags: c_int) -> InstallResult<c
 /// The install root opened once as the anchor for every helper removal.
 ///
 /// The root is opened by walking its **whole** ancestor chain with `openat(2)` +
-/// `O_NOFOLLOW` from `/` (the links above it are resolved once, then the resolved
-/// chain is opened with no follow), and each relative entry is walked from this
-/// descriptor the same way. Each deletion is bound to the identity of the object
-/// that was opened and hashed: the verified entry is renamed to a fresh one-shot
-/// name inside its own directory, re-opened without following a link, compared
-/// with the hashed object and only then unlinked, so a leaf swapped for a
-/// replacement is put back and preserved instead of deleted. macOS `unlink(2)`
-/// is name-based (there is no `funlinkat`), so this rename-verify-delete sequence
-/// is what keeps the unlink bound to the verified object rather than the name.
+/// `O_NOFOLLOW` from `/` (the path is not canonicalised first, so a link anywhere
+/// above the root is refused rather than followed), and each relative entry is
+/// walked from this descriptor the same way. Each deletion is bound to the
+/// identity of the object that was opened and hashed: the verified entry is
+/// renamed to a fresh one-shot name inside its own directory, re-opened without
+/// following a link, compared with the hashed object and only then unlinked, so a
+/// leaf swapped for a replacement is put back and preserved instead of deleted.
+/// macOS `unlink(2)` is name-based (there is no `funlinkat`), so this
+/// rename-verify-delete sequence is what keeps the unlink bound to the verified
+/// object rather than the name.
+///
+/// Scope: a same-user attacker who can already write inside the private root is
+/// out of scope (Task 2 policy). That attacker can still win a rename between the
+/// re-read and the unlink; the helper verifies identity immediately before the
+/// unlink, refuses to overwrite an unexpected entry (`RENAME_EXCL` in both
+/// directions) and reports the mismatch instead of claiming an unbreakable
+/// sequence.
 pub struct CleanupRoot {
     fd: c_int,
 }
@@ -1717,6 +1738,22 @@ fn fresh_entry_name(original: &CString) -> InstallResult<CString> {
         .map_err(|_| unsafe_path())
 }
 
+/// Rename one directory entry without ever replacing the destination.
+///
+/// `renameat(2)` replaces an existing destination, so a racing entry (in either
+/// direction of [`bind_and_unlink`]) would be silently destroyed. The Darwin
+/// `renameatx_np(RENAME_EXCL)` variant fails with `EEXIST` instead, which the
+/// caller handles by leaving the source where it is and reporting it preserved.
+fn rename_exclusive(parent: c_int, from: &CString, to: &CString) -> io::Result<()> {
+    // SAFETY: `parent` is live and both names are NUL-terminated.
+    let result = unsafe { renameatx_np(parent, from.as_ptr(), parent, to.as_ptr(), RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 /// Unlink exactly the object that was verified, by rebinding the name first.
 ///
 /// `unlink(2)`/`unlinkat(2)` delete a *directory entry*, so checking the name's
@@ -1725,6 +1762,21 @@ fn fresh_entry_name(original: &CString) -> InstallResult<CString> {
 /// same (already anchored) directory, the renamed entry is re-read without
 /// following a link, and only an identity match is unlinked — a mismatch renames
 /// the entry back, so the replacement is preserved rather than destroyed.
+///
+/// Both renames use `RENAME_EXCL`, so neither the move to the private name nor
+/// the restore can overwrite an entry that appeared meanwhile:
+///
+/// * the move fails with `EEXIST` if the one-shot name is occupied (the entry is
+///   left untouched and reported `Preserved`);
+/// * the restore fails with `EEXIST` if something took the original name while
+///   the entry was private — the verified object then stays under its private
+///   `.name.token.cleanup` name and is reported `Preserved`. That name is not in
+///   any cleanup request, so a later run does not sweep it: it is a reported
+///   leftover, never foreign content that was destroyed.
+///
+/// The remaining same-user window between the identity re-read and the unlink is
+/// out of scope (see the module docs and the Task 2 policy); closing it would
+/// need `funlinkat`, which macOS does not provide.
 fn bind_and_unlink(
     parent: c_int,
     name: &CString,
@@ -1735,10 +1787,11 @@ fn bind_and_unlink(
         Ok(fresh) => fresh,
         Err(_) => return RemoveOutcome::Preserved,
     };
-    // SAFETY: `parent` is live and both names are NUL-terminated.
-    if unsafe { renameat(parent, name.as_ptr(), parent, fresh.as_ptr()) } != 0 {
-        return match io::Error::last_os_error().raw_os_error() {
+    if let Err(error) = rename_exclusive(parent, name, &fresh) {
+        return match error.raw_os_error() {
             Some(ENOENT) => RemoveOutcome::Absent,
+            // The one-shot private name was already taken: never overwrite it.
+            Some(EEXIST) => RemoveOutcome::Preserved,
             _ => RemoveOutcome::Preserved,
         };
     }
@@ -1748,11 +1801,9 @@ fn bind_and_unlink(
         .is_none_or(|status| !same_object(expected, status))
     {
         // Whatever was moved is not the object that was verified: put it back
-        // exactly where it was and report it preserved.
-        // SAFETY: `parent` is live and both names are NUL-terminated.
-        unsafe {
-            let _ = renameat(parent, fresh.as_ptr(), parent, name.as_ptr());
-        }
+        // exactly where it was (never over an entry that appeared meanwhile)
+        // and report it preserved.
+        let _ = rename_exclusive(parent, &fresh, name);
         return RemoveOutcome::Preserved;
     }
     let flags = if remove_dir { AT_REMOVEDIR } else { 0 };
@@ -1761,13 +1812,11 @@ fn bind_and_unlink(
         return RemoveOutcome::Removed;
     }
     let error = io::Error::last_os_error();
-    // The unlink failed (a non-empty directory, a permission problem, a racing
-    // replacement): restore the entry under its real name so nothing is left
-    // under a one-shot name.
-    // SAFETY: `parent` is live and both names are NUL-terminated.
-    unsafe {
-        let _ = renameat(parent, fresh.as_ptr(), parent, name.as_ptr());
-    }
+    // The unlink failed (a non-empty directory, a permission problem): restore
+    // the entry under its real name when that name is still free. If it is not,
+    // the verified object stays under the private one-shot name and is reported
+    // preserved rather than replacing the entry that took the name.
+    let _ = rename_exclusive(parent, &fresh, name);
     match error.raw_os_error() {
         Some(ENOENT) => RemoveOutcome::Absent,
         _ => RemoveOutcome::Preserved,
@@ -1916,6 +1965,13 @@ impl NativeFs for MacosPlatform {
         if outcome.is_err() && create {
             // Remove only the object this call created, bound to its descriptor:
             // a file somebody else planted at the same name is not ours to delete.
+            //
+            // The name here is the fresh one-shot staging name this call created
+            // exclusively, so the `stat`/`unlinkat` pair addresses a private name,
+            // not a caller-supplied one. The residual window between the identity
+            // comparison and the name-based `unlinkat` is a same-user race inside
+            // the private `0700` root and is out of scope (Task 2 policy: the
+            // installer does not defend against the account's own administrator).
             if let Ok(created) = stat_of(fd)
                 && let Ok(named) = stat_at(handle.fd(), &name)
                 && same_object(&created, &named)
@@ -2061,6 +2117,13 @@ impl NativeFs for MacosPlatform {
             }
             // Identity binding for a regular file: the name must still resolve to
             // the object that was opened and verified.
+            //
+            // The window between this `fstatat` and the name-based `unlinkat` is
+            // the same-user in-root rename race: out of scope by policy (the
+            // `0700` root already excludes other principals, and macOS has no
+            // `funlinkat`). Identity is checked immediately before the unlink and
+            // a mismatch aborts; the installer does not claim atomicity it cannot
+            // obtain.
             if path.kind() == PathKind::File {
                 let observed = stat_at(parent, &name).map_err(|_| unsafe_path())?;
                 if let Some(expected) = path.captured_identity()

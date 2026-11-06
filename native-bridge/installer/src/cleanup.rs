@@ -147,11 +147,12 @@ pub struct CleanupRequest {
     /// writes **one byte** to it as its last act before it waits for the helper,
     /// and never writes again. A byte (or a broken pipe, meaning the parent
     /// exited) is "the parent will not mutate anything again", which is what the
-    /// helper waits for. A request naming a handle the process does not hold, or
-    /// the wrong kind of object, is `ParentUnavailable` (never a silent proceed).
-    /// On macOS the socketpair named by `parent_handle` is both the identity and
-    /// the release channel (one byte on it is the release), so this field must be
-    /// `0`.
+    /// helper waits for. The byte is a protocol step only: it is never reported as
+    /// evidence that the parent process exited (that is a separate OS event). A
+    /// request naming a handle the process does not hold, or the wrong kind of
+    /// object, is `ParentUnavailable` (never a silent proceed). On macOS the
+    /// socketpair named by `parent_handle` is both the identity and the release
+    /// channel (one byte on it is the release), so this field must be `0`.
     pub release_handle: u64,
     /// Deadline in milliseconds, clamped to [`MAX_CLEANUP_TIMEOUT`].
     pub deadline_ms: u64,
@@ -164,7 +165,7 @@ pub struct CleanupRequest {
 #[serde(rename_all = "kebab-case")]
 pub enum CleanupStatus {
     /// Every listed identity was removed (or already absent) and the parent
-    /// exited.
+    /// released the capability.
     Complete,
     /// Something could not be established; the installer must keep reporting a
     /// pending cleanup and never a completed uninstall.
@@ -278,12 +279,15 @@ pub enum ParentEvidence {
     /// The handle names exactly this process: its pid **and** its start marker
     /// were read from the handle itself.
     Exact(ParentIdentity),
-    /// The handle names this pid, but the process has already exited, so its
-    /// start marker can no longer be read from the OS. This is accepted only when
-    /// the pid equals the request's parent pid: the pid comes from the OS for the
-    /// inherited handle (never from the request), and a *live* process with that
-    /// pid is reported as [`ParentEvidence::Exact`] and compared by start marker,
-    /// so a recycled pid cannot be accepted here.
+    /// The handle names this pid and the OS reported that the process has
+    /// **exited**. On macOS this is only produced from a real `kqueue`
+    /// `EVFILT_PROC`/`NOTE_EXIT` event (or the kernel reporting that the peer pid
+    /// no longer exists), never from "some lookup failed"; on Windows the
+    /// duplicated process handle is always queryable, so it is not used there.
+    /// It is accepted only when the pid equals the request's parent pid: the pid
+    /// comes from the OS for the inherited handle (never from the request), and a
+    /// *live* process with that pid is reported as [`ParentEvidence::Exact`] and
+    /// compared by start marker, so a recycled pid cannot be accepted here.
     Exited { pid: u32 },
 }
 
@@ -293,8 +297,15 @@ pub enum ParentState {
     /// The parent has not released the capability yet; the helper must keep
     /// waiting (it is alive, or it holds the release handle open).
     Alive,
-    /// The parent released the capability: it closed the inherited release
-    /// channel as its last act, or the process exited.
+    /// The parent released the capability as a **protocol step**: it wrote the
+    /// release byte (or closed the inherited release channel) as its last act.
+    /// This says "the parent will not mutate anything again"; it is *not* exit
+    /// evidence.
+    Released,
+    /// The OS reported that the parent **process exited** (Windows
+    /// `WaitForSingleObject` on the inherited process handle, macOS
+    /// `EVFILT_PROC`/`NOTE_EXIT`). An exit also implies the capability is
+    /// released: the parent can never mutate again.
     Exited,
     /// The OS would not say; the helper must not act.
     Unavailable,
@@ -311,10 +322,15 @@ pub trait CleanupChannel {
     fn is_inherited_pipe(&self) -> bool;
     /// What the **inherited parent handle** proves about the recorded parent,
     /// when the OS reports anything at all.
-    fn parent_handle(&self, handle: u64) -> Option<ParentEvidence>;
-    /// Block until the parent releases the capability (`parent_handle` or
-    /// `release_handle` signals, or the process exits), or until `deadline`;
-    /// `Alive` is returned only when the deadline elapsed.
+    ///
+    /// The native macOS implementation registers the peer for a real exit event
+    /// here (before the release byte is read), so the evidence is an OS event and
+    /// not a byte heuristic.
+    fn parent_handle(&mut self, handle: u64) -> Option<ParentEvidence>;
+    /// Block until the parent releases the capability (the release byte/closed
+    /// channel is [`ParentState::Released`]; a real process exit event is
+    /// [`ParentState::Exited`]), or until `deadline`; `Alive` is returned only
+    /// when the deadline elapsed.
     fn parent_state(
         &mut self,
         parent_handle: u64,
@@ -481,9 +497,9 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
     // handle names exactly the recorded process. A file redirect, console or a
     // recycled pid (the handle's start marker differs) is not that process. A
     // parent that exited after handing over the capability is still *provable*:
-    // the handle's pid comes from the OS and a live process with that pid is
-    // compared by start marker, so the exited case can only match the recorded
-    // parent pid.
+    // the pid comes from the OS for the inherited handle and an exit is a real OS
+    // event (macOS `EVFILT_PROC`/`NOTE_EXIT`, never "a lookup failed"), so the
+    // exited case can only match the recorded parent pid.
     let authenticated = match channel.parent_handle(request.parent_handle) {
         Some(ParentEvidence::Exact(identity)) => identity == request.parent,
         Some(ParentEvidence::Exited { pid }) => pid == request.parent.pid,
@@ -509,11 +525,11 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
     }
 
     // 4. Wait for the parent to *release* the capability on the inherited
-    // handles. No pid is reopened, so a parent that exited after signalling is
-    // observed as released rather than as a stale pid, and the installer does not
-    // have to exit before the helper can proceed.
+    // handles. The release byte/closed channel is a protocol step ("the parent
+    // will not mutate again"), and a real process exit event is equivalent for
+    // that purpose. No pid is reopened and no byte is treated as proof of exit.
     match channel.parent_state(request.parent_handle, request.release_handle, deadline) {
-        ParentState::Exited => {}
+        ParentState::Released | ParentState::Exited => {}
         ParentState::Alive => {
             return finish(
                 channel,
@@ -1325,7 +1341,7 @@ mod portable {
             false
         }
 
-        fn parent_handle(&self, _handle: u64) -> Option<ParentEvidence> {
+        fn parent_handle(&mut self, _handle: u64) -> Option<ParentEvidence> {
             None
         }
 

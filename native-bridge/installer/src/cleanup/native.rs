@@ -10,10 +10,15 @@
 //!   instead of reopening a pid — including the case where the parent already
 //!   exited, which is accepted only for the recorded pid because a live process
 //!   with that pid is compared by start marker;
-//! * waits until the parent **releases the capability** — one byte on the release
-//!   pipe / socketpair written as its last act, a closed channel, or the process
-//!   exit — so the installer never has to exit before the helper can proceed
-//!   (`WaitForSingleObject`, pipe state, `poll(2)`);
+//! * waits until the parent **releases the capability**: one byte on the release
+//!   pipe / socketpair written as its last act, or a closed channel. That is a
+//!   protocol step ("the parent will not mutate again"), kept separate from exit
+//!   evidence: a real process exit is observed as an OS event
+//!   (`WaitForSingleObject` on Windows, a `kqueue` `EVFILT_PROC`/`NOTE_EXIT`
+//!   registration on macOS, taken **before** the release byte is read). A byte
+//!   or EOF is never reported as "the parent exited"; so the installer never has
+//!   to exit before the helper can proceed (`WaitForSingleObject`, pipe state,
+//!   `poll(2)`);
 //! * bounds every read, write, hash and signature assessment by the run
 //!   deadline, with worker threads for the operations the OS may block for longer
 //!   than the deadline inside a single call;
@@ -135,7 +140,7 @@ use macos_impl::{MacosChannel, MacosCleanupFs};
 
 #[cfg(target_os = "macos")]
 fn native_channel() -> MacosChannel {
-    MacosChannel
+    MacosChannel::new()
 }
 
 #[cfg(windows)]
@@ -157,7 +162,7 @@ mod windows_impl {
     use super::*;
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::{
-        CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_BROKEN_PIPE, HANDLE,
+        CloseHandle, DUPLICATE_HANDLE_OPTIONS, DuplicateHandle, ERROR_BROKEN_PIPE, HANDLE,
         WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows::Win32::Storage::FileSystem::{FILE_TYPE_PIPE, GetFileType, ReadFile, WriteFile};
@@ -257,44 +262,55 @@ mod windows_impl {
     ///
     /// The pipe can hold more than one buffer, but a reader that stopped reading
     /// would block `WriteFile` forever. The write therefore runs on a worker
-    /// thread owning the handle and the caller waits with `recv_timeout`: the
-    /// queue is exactly one frame and a blocked write can never extend the run.
+    /// thread and the caller waits with `recv_timeout`: the queue is exactly one
+    /// frame and a blocked write can never extend the run. The worker owns its
+    /// **own duplicate** of the handle, so a timeout never leaves the caller
+    /// holding a handle it cannot close (and closing the caller's copy never
+    /// pulls the handle out from under a blocked `WriteFile`).
     fn write_frame_bounded(handle: HANDLE, frame: &[u8], deadline: Instant) -> io::Result<()> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err(io::Error::other("cleanup deadline elapsed"));
         }
+        let worker = duplicate_for_worker(handle)?;
         let (sender, receiver) = std::sync::mpsc::channel();
         let frame = frame.to_vec();
-        // The handle value is owned by the caller for the whole run; the worker
-        // only borrows it for the duration of one call and never closes it.
-        let raw = handle.0 as usize;
+        // The duplicate's ownership moves into the worker as a `usize`: `HANDLE`
+        // is not `Send`, but the worker closes exactly this handle on every path.
+        let raw = worker.into_raw();
         let spawned = std::thread::Builder::new()
             .name("cleanup-write".to_owned())
             .spawn(move || {
                 let handle = HANDLE(raw as *mut core::ffi::c_void);
-                let mut written = 0usize;
-                while written < frame.len() {
-                    // One chunk per call: a fragment below PIPE_BUF is atomic.
-                    let chunk = (frame.len() - written).min(1024);
-                    let mut count = 0u32;
-                    // SAFETY: the handle is live for the whole run and the chunk is
-                    // inside `frame`.
-                    let result = unsafe {
-                        WriteFile(
-                            handle,
-                            Some(&frame[written..written + chunk]),
-                            Some(&mut count),
-                            None,
-                        )
-                    };
-                    if result.is_err() || count == 0 {
-                        let _ = sender.send(Err(()));
-                        return;
+                let outcome = (|| {
+                    let mut written = 0usize;
+                    while written < frame.len() {
+                        // One chunk per call: a fragment below PIPE_BUF is atomic.
+                        let chunk = (frame.len() - written).min(1024);
+                        let mut count = 0u32;
+                        // SAFETY: the handle is owned by this worker and the chunk
+                        // is inside `frame`.
+                        let result = unsafe {
+                            WriteFile(
+                                handle,
+                                Some(&frame[written..written + chunk]),
+                                Some(&mut count),
+                                None,
+                            )
+                        };
+                        if result.is_err() || count == 0 {
+                            return Err(());
+                        }
+                        written += count as usize;
                     }
-                    written += count as usize;
+                    Ok(())
+                })();
+                // SAFETY: the duplicate's ownership was transferred to this
+                // worker, which closes it exactly once.
+                unsafe {
+                    let _ = CloseHandle(handle);
                 }
-                let _ = sender.send(Ok(()));
+                let _ = sender.send(outcome);
             });
         if spawned.is_err() {
             return Err(io::Error::other("could not start the write worker"));
@@ -306,7 +322,11 @@ mod windows_impl {
         }
     }
 
-    /// Wait until the parent exits or closes its release pipe.
+    /// Wait until the parent exits or releases the capability on its pipe.
+    ///
+    /// The process exit is a real OS event (`WaitForSingleObject`); the release
+    /// byte is a **protocol** step that means "the parent will not mutate again",
+    /// not that it exited.
     fn wait_released(process: HANDLE, release: HANDLE, deadline: Instant) -> ParentState {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -322,7 +342,7 @@ mod windows_impl {
                 _ => return ParentState::Unavailable,
             }
             match release_state(release) {
-                Ok(true) => return ParentState::Exited,
+                Ok(true) => return ParentState::Released,
                 Ok(false) => {}
                 Err(_) => return ParentState::Unavailable,
             }
@@ -361,7 +381,7 @@ mod windows_impl {
             is_pipe(HANDLE(input)) && is_pipe(HANDLE(output))
         }
 
-        fn parent_handle(&self, handle: u64) -> Option<ParentEvidence> {
+        fn parent_handle(&mut self, handle: u64) -> Option<ParentEvidence> {
             let handle = handle_of(handle)?;
             // SAFETY: the handle is inherited and names the parent for this call.
             let pid = unsafe { GetProcessId(handle) };
@@ -488,27 +508,25 @@ mod windows_impl {
             })
             .ok_or_else(pending)?;
 
-        // Inheritable child ends, non-inheritable parent ends.
-        let request_pipe = create_pipe().map_err(|_| pending())?;
-        let completion_pipe = create_pipe().map_err(|_| pending())?;
-        let release_pipe = create_pipe().map_err(|_| pending())?;
-        // SAFETY: the child ends are live handles; clearing inheritance keeps them
-        // out of later processes.
-        let child_request = Inheritable(request_pipe.0);
-        let child_completion = Inheritable(completion_pipe.1);
-        let child_release = Inheritable(release_pipe.0);
-        let parent_request = Owned(request_pipe.1);
-        let parent_completion = Owned(completion_pipe.0);
-        let parent_release = Owned(release_pipe.1);
-        for handle in [&parent_request, &parent_completion, &parent_release] {
-            handle.disinherit();
-        }
+        // Inheritable child ends, non-inheritable parent ends. Each handle is
+        // owned (RAII) the instant it exists, so a failure at any later step
+        // cannot leak an earlier pipe end.
+        let (child_request, parent_request) = create_pipe().map_err(|_| pending())?;
+        let (parent_completion, child_completion) = create_pipe().map_err(|_| pending())?;
+        let (child_release, parent_release) = create_pipe().map_err(|_| pending())?;
+        parent_request.disinherit();
+        parent_completion.disinherit();
+        parent_release.disinherit();
 
         // The parent process handle: identity for the helper, never usable to
         // terminate it (query + synchronize only).
         let parent_process = duplicate_process_handle().map_err(|_| pending())?;
 
-        let request = run.request(parent, parent_process.0.0 as u64, child_release.0.0 as u64);
+        let request = run.request(
+            parent,
+            parent_process.raw().0 as u64,
+            child_release.raw().0 as u64,
+        );
         let frame = serde_json::to_vec(&request).map_err(|_| pending())?;
         let frame = {
             // The installer validates exactly what it is about to send.
@@ -516,11 +534,20 @@ mod windows_impl {
             frame
         };
 
+        // The child inherits exactly these handles. The standard handles are part
+        // of the list too: with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` nothing else
+        // is inherited, and the helper reads/writes its request and completion on
+        // the very descriptors named here.
         let child = spawn_child(
             run.helper_path,
-            child_request.0,
-            child_completion.0,
-            &[child_release.0, parent_process.0],
+            child_request.raw(),
+            child_completion.raw(),
+            &[
+                child_request.raw(),
+                child_completion.raw(),
+                child_release.raw(),
+                parent_process.raw(),
+            ],
         )
         .map_err(|_| pending())?;
         // The child's ends are now duplicated into the child: close ours.
@@ -528,21 +555,17 @@ mod windows_impl {
         drop(child_completion);
         drop(child_release);
 
-        // Request out, then release: after this the installer only waits.
-        let request_handle = parent_request.handle();
-        if write_frame_bounded(request_handle, &frame, deadline).is_err() {
-            // The write worker may still be inside `WriteFile` on this handle, so
-            // it is leaked rather than closed underneath it (the installer process
-            // ends the run right after).
-            std::mem::forget(parent_request);
+        // Request out, then release: after this the installer only waits. The
+        // write worker owns its own duplicate of the handle, so dropping our copy
+        // here (including on a timeout) is safe.
+        if write_frame_bounded(parent_request.raw(), &frame, deadline).is_err() {
             return Err(pending());
         }
         drop(parent_request);
         // One byte on the release pipe is the release (it cannot block: one byte
         // into an empty pipe buffer), and closing the pipe afterwards is safe
         // because the identity comes from the process handle, not the pipe.
-        if write_frame_bounded(parent_release.handle(), &[1u8], deadline).is_err() {
-            std::mem::forget(parent_release);
+        if write_frame_bounded(parent_release.raw(), &[1u8], deadline).is_err() {
             return Err(pending());
         }
         drop(parent_release);
@@ -555,12 +578,8 @@ mod windows_impl {
             let _ = process.wait(0);
             return Err(pending());
         }
-        let frame = read_frame_bounded(
-            parent_completion.handle(),
-            MAX_CLEANUP_FRAME_BYTES,
-            deadline,
-        )
-        .map_err(|_| pending())?;
+        let frame = read_frame_bounded(parent_completion.raw(), MAX_CLEANUP_FRAME_BYTES, deadline)
+            .map_err(|_| pending())?;
         let remaining_ms = u32::try_from(
             deadline
                 .saturating_duration_since(Instant::now())
@@ -576,23 +595,25 @@ mod windows_impl {
         Ok(completion)
     }
 
-    /// One inherited handle as the child sees it (the value is preserved).
-    struct Inheritable(HANDLE);
-    impl Drop for Inheritable {
-        fn drop(&mut self) {
-            // SAFETY: the handle is owned by this value.
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
-    }
+    /// One owned Win32 handle, closed exactly once on every path.
+    ///
+    /// Every `CreatePipe`/`DuplicateHandle` result is wrapped the moment it
+    /// exists, so a later failure in the setup cannot leak an earlier pipe end.
+    struct Handle(HANDLE);
 
-    /// One handle owned by the installer side.
-    struct Owned(HANDLE);
-    impl Owned {
-        fn handle(&self) -> HANDLE {
+    impl Handle {
+        fn raw(&self) -> HANDLE {
             self.0
         }
+
+        /// Transfer ownership as a plain value (for a worker thread, where
+        /// `HANDLE` is not `Send`). The receiver must close it exactly once.
+        fn into_raw(self) -> usize {
+            let raw = self.0.0 as usize;
+            std::mem::forget(self);
+            raw
+        }
+
         /// Clear `HANDLE_FLAG_INHERIT`: this end must never reach the child.
         fn disinherit(&self) {
             use windows::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
@@ -601,7 +622,8 @@ mod windows_impl {
                 unsafe { SetHandleInformation(self.0, HANDLE_FLAG_INHERIT.0, Default::default()) };
         }
     }
-    impl Drop for Owned {
+
+    impl Drop for Handle {
         fn drop(&mut self) {
             // SAFETY: the handle is owned by this value.
             unsafe {
@@ -610,8 +632,38 @@ mod windows_impl {
         }
     }
 
-    /// One anonymous pipe: `(read, write)`, both inheritable on creation.
-    fn create_pipe() -> windows::core::Result<(HANDLE, HANDLE)> {
+    /// Duplicate one pipe handle for a write worker thread.
+    ///
+    /// The worker may still be blocked inside `WriteFile` when the caller's
+    /// deadline expires. Giving it its own duplicate (closed by the worker on
+    /// every path) means the caller can drop its handle without closing the
+    /// object underneath the worker, and no handle is leaked to avoid that.
+    fn duplicate_for_worker(handle: HANDLE) -> io::Result<Handle> {
+        use windows::Win32::Foundation::GENERIC_WRITE;
+
+        let mut duplicate = HANDLE::default();
+        let current = unsafe { GetCurrentProcess() };
+        // SAFETY: the source handle is live, `duplicate` is a live out-parameter
+        // and the current process is the target process. The duplicate carries
+        // only the write access the frame write uses.
+        unsafe {
+            DuplicateHandle(
+                current,
+                handle,
+                current,
+                &mut duplicate,
+                GENERIC_WRITE.0,
+                false,
+                DUPLICATE_HANDLE_OPTIONS(0),
+            )
+        }
+        .map_err(|_| io::Error::other("could not duplicate the frame handle"))?;
+        Ok(Handle(duplicate))
+    }
+
+    /// One anonymous pipe: `(read, write)`, both inheritable on creation and
+    /// owned from the moment they exist.
+    fn create_pipe() -> windows::core::Result<(Handle, Handle)> {
         use windows::Win32::Security::SECURITY_ATTRIBUTES;
         let attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -622,7 +674,7 @@ mod windows_impl {
         let mut write = HANDLE::default();
         // SAFETY: both are live out-parameters and `attributes` outlives the call.
         unsafe { CreatePipe(&mut read, &mut write, Some(&attributes), 0) }?;
-        Ok((read, write))
+        Ok((Handle(read), Handle(write)))
     }
 
     /// `SYNCHRONIZE` process access (0x0010_0000): wait on the process only.
@@ -630,10 +682,16 @@ mod windows_impl {
 
     /// A `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE` duplicate of this
     /// process, inheritable by the child.
-    fn duplicate_process_handle() -> windows::core::Result<Inheritable> {
+    ///
+    /// The access mask is explicit: `DUPLICATE_SAME_ACCESS` would copy the
+    /// pseudo-handle's full access, handing the helper termination and memory
+    /// rights over the installer that it never needs. Query and synchronize are
+    /// exactly what the helper's identity check and wait use.
+    fn duplicate_process_handle() -> windows::core::Result<Handle> {
         use windows::Win32::Foundation::HANDLE_FLAG_INHERIT;
         use windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
         let mut duplicate = HANDLE::default();
+        // SAFETY: `GetCurrentProcess` is a pseudo-handle that needs no close.
         let current = unsafe { GetCurrentProcess() };
         // SAFETY: the source handle is the current-process pseudo handle and
         // `duplicate` is a live out-parameter.
@@ -645,12 +703,12 @@ mod windows_impl {
                 &mut duplicate,
                 PROCESS_QUERY_LIMITED_INFORMATION.0 | SYNCHRONIZE_ACCESS,
                 true,
-                DUPLICATE_SAME_ACCESS,
+                DUPLICATE_HANDLE_OPTIONS(0),
             )
         }?;
         // SAFETY: the handle is live and owned here.
         unsafe { SetHandleInformation(duplicate, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }?;
-        Ok(Inheritable(duplicate))
+        Ok(Handle(duplicate))
     }
 
     /// Start the helper with exactly the listed inherited handles.
@@ -813,9 +871,22 @@ mod macos_impl {
     const LOCAL_PEERPID: c_int = 0x002;
     const POLLIN: i16 = 0x0001;
     const POLLOUT: i16 = 0x0004;
+    const POLLERR: i16 = 0x0008;
+    const POLLHUP: i16 = 0x0010;
     const EINTR: i32 = 4;
+    const ESRCH: i32 = 3;
     const AF_UNIX: c_int = 1;
     const SOCK_STREAM: c_int = 1;
+    /// Darwin `EVFILT_PROC`.
+    const EVFILT_PROC: i16 = -5;
+    /// `kevent(2)` flags.
+    const EV_ADD: u16 = 0x0001;
+    const EV_ENABLE: u16 = 0x0004;
+    const EV_ONESHOT: u16 = 0x0010;
+    const EV_ERROR: u16 = 0x4000;
+    const EV_EOF: u16 = 0x8000;
+    /// `EVFILT_PROC` flag: the watched process exited.
+    const NOTE_EXIT: u32 = 0x8000_0000;
     /// The one-byte release signal the installer sends on the socketpair.
     const RELEASE: [u8; 1] = [0x01];
     /// The fixed descriptor the child receives its release/identity end on.
@@ -826,6 +897,37 @@ mod macos_impl {
         fd: c_int,
         events: i16,
         revents: i16,
+    }
+
+    /// `struct kevent` on 64-bit Darwin (32 bytes).
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Kevent {
+        ident: usize,
+        filter: i16,
+        flags: u16,
+        fflags: u32,
+        data: isize,
+        udata: *mut std::ffi::c_void,
+    }
+
+    impl Default for Kevent {
+        fn default() -> Self {
+            Self {
+                ident: 0,
+                filter: 0,
+                flags: 0,
+                fflags: 0,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
     }
 
     unsafe extern "C" {
@@ -843,6 +945,15 @@ mod macos_impl {
         fn dup2(from: c_int, to: c_int) -> c_int;
         fn close(fd: c_int) -> c_int;
         fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
+        fn kqueue() -> c_int;
+        fn kevent(
+            kqueue: c_int,
+            changelist: *const Kevent,
+            nchanges: c_int,
+            eventlist: *mut Kevent,
+            nevents: c_int,
+            timeout: *const Timespec,
+        ) -> c_int;
     }
 
     /// `fcntl(2)`'s `F_SETFD` / `FD_CLOEXEC` on Darwin.
@@ -886,7 +997,110 @@ mod macos_impl {
         Some(pid as u32)
     }
 
-    pub(crate) struct MacosChannel;
+    /// One `kqueue` registration for the peer process's **real exit event**.
+    ///
+    /// The registration is taken in `parent_handle`, i.e. before the helper
+    /// consumes the release byte, so an exit that happens around the protocol
+    /// step cannot be missed. The release byte is never treated as exit evidence;
+    /// this event is.
+    struct ExitWatch {
+        kqueue: OwnedFd,
+        /// An exit was delivered at registration time.
+        delivered: bool,
+    }
+
+    fn is_exit(event: &Kevent) -> bool {
+        event.filter == EVFILT_PROC && event.fflags & NOTE_EXIT != 0
+    }
+
+    impl ExitWatch {
+        /// Register `pid` for `NOTE_EXIT` and report an exit that already
+        /// happened. `ESRCH` is returned as an error so the caller can distinguish
+        /// "the kernel has no such process" from any other failure.
+        fn watch(pid: u32) -> io::Result<Self> {
+            // SAFETY: `kqueue` has no preconditions.
+            let kqueue = unsafe { kqueue() };
+            if kqueue < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: the descriptor was just created and is owned here.
+            let kqueue = unsafe { OwnedFd::from_raw_fd(kqueue) };
+            let change = Kevent {
+                ident: pid as usize,
+                filter: EVFILT_PROC,
+                flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
+                fflags: NOTE_EXIT,
+                ..Kevent::default()
+            };
+            let mut events = [Kevent::default(); 1];
+            let zero = Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            // SAFETY: the change/event buffers are live and correctly sized and
+            // the timeout is a zero-valued `timespec`.
+            let count = unsafe {
+                kevent(
+                    kqueue.as_raw_fd(),
+                    &change,
+                    1,
+                    events.as_mut_ptr(),
+                    1,
+                    &zero,
+                )
+            };
+            if count < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if count > 0 && events[0].flags & EV_ERROR != 0 {
+                // The registration itself was refused; `data` carries the errno.
+                return Err(io::Error::from_raw_os_error(events[0].data as i32));
+            }
+            Ok(Self {
+                kqueue,
+                delivered: count > 0 && is_exit(&events[0]),
+            })
+        }
+
+        /// Whether the exit event has been delivered (never blocks).
+        fn observed(&mut self) -> io::Result<bool> {
+            if self.delivered {
+                return Ok(true);
+            }
+            let mut events = [Kevent::default(); 1];
+            let zero = Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            // SAFETY: the kqueue is live, the change list is empty and the event
+            // buffer is live and correctly sized.
+            let count = unsafe {
+                kevent(
+                    self.kqueue.as_raw_fd(),
+                    std::ptr::null(),
+                    0,
+                    events.as_mut_ptr(),
+                    1,
+                    &zero,
+                )
+            };
+            if count < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(count > 0 && (is_exit(&events[0]) || events[0].flags & EV_EOF != 0))
+        }
+    }
+
+    pub(crate) struct MacosChannel {
+        /// The peer's exit registration, taken before the release byte is read.
+        exit: Option<ExitWatch>,
+    }
+
+    impl MacosChannel {
+        pub(crate) fn new() -> Self {
+            Self { exit: None }
+        }
+    }
 
     impl CleanupChannel for MacosChannel {
         fn is_inherited_pipe(&self) -> bool {
@@ -895,24 +1109,42 @@ mod macos_impl {
             descriptor_is_pipe(0) && descriptor_is_pipe(1)
         }
 
-        fn parent_handle(&self, handle: u64) -> Option<ParentEvidence> {
+        fn parent_handle(&mut self, handle: u64) -> Option<ParentEvidence> {
             let fd = c_int::try_from(handle).ok()?;
-            // The inherited handle must itself be a socketpair end, and its peer
-            // pid is captured by the kernel when the pair was created.
+            // The inherited handle must itself be a socketpair end; its peer pid
+            // is captured by the kernel when the pair was created.
             if !descriptor_is_pipe(fd) {
                 return None;
             }
             let pid = peer_pid(fd)?;
-            Some(match crate::platform::macos_process_start(pid) {
-                Some(start) => ParentEvidence::Exact(ParentIdentity { pid, start }),
-                // The parent already exited after handing over the capability: its
-                // start marker can no longer be read, so the identity that remains
-                // is the kernel-reported peer pid of the inherited socket. The run
-                // accepts it only for the recorded parent pid (see `run`), and a
-                // live process with that pid would be `Exact` and compared by start
-                // marker, so a recycled pid is never accepted here.
-                None => ParentEvidence::Exited { pid },
-            })
+            // Take the exit registration **now**, before any release byte is
+            // consumed, so the exit event can never be missed.
+            let watch = ExitWatch::watch(pid);
+            match crate::platform::macos_process_start(pid) {
+                Some(start) => {
+                    // The identity is exact; keep the watch so `parent_state` can
+                    // report a real exit instead of a byte heuristic.
+                    self.exit = watch.ok();
+                    Some(ParentEvidence::Exact(ParentIdentity { pid, start }))
+                }
+                None => match watch {
+                    Ok(mut watch) => {
+                        // The start marker cannot be read, so identity is only
+                        // provable when the OS says this peer really exited.
+                        let exited = watch.observed().unwrap_or(false);
+                        self.exit = Some(watch);
+                        exited.then_some(ParentEvidence::Exited { pid })
+                    }
+                    // The kernel reports no such process: the peer the inherited
+                    // socket named exited and was reaped. A recycled pid would be
+                    // live (start marker readable, then mismatched), never this.
+                    Err(error) if error.raw_os_error() == Some(ESRCH) => {
+                        self.exit = None;
+                        Some(ParentEvidence::Exited { pid })
+                    }
+                    Err(_) => None,
+                },
+            }
         }
 
         fn parent_state(
@@ -929,13 +1161,19 @@ mod macos_impl {
                 // that names a second release handle is not this platform's shape.
                 return ParentState::Unavailable;
             }
-            // The peer sends one release byte as its last act before waiting, and
-            // a peer that exits (or crashes) closes its end, which makes our end
-            // readable with EOF. Both are properties of the inherited handle, so
-            // no pid is reopened and the installer never has to exit first.
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
-                let timeout = c_int::try_from(remaining.as_millis()).unwrap_or(c_int::MAX);
+                if remaining.is_zero() {
+                    return ParentState::Alive;
+                }
+                // Poll the release channel in short slices and check the kqueue
+                // between them (a kqueue descriptor is not relied on as pollable).
+                let timeout = c_int::try_from(
+                    remaining
+                        .min(std::time::Duration::from_millis(10))
+                        .as_millis(),
+                )
+                .unwrap_or(10);
                 let mut descriptor = PollFd {
                     fd,
                     events: POLLIN,
@@ -949,8 +1187,22 @@ mod macos_impl {
                     }
                     return ParentState::Unavailable;
                 }
+                // A real exit event is the only exit evidence.
+                if let Some(exit) = self.exit.as_mut() {
+                    match exit.observed() {
+                        Ok(true) => return ParentState::Exited,
+                        Ok(false) => {}
+                        // The watch failed: drop it and fall back to the release
+                        // channel only. A timeout still reports `Alive` (pending),
+                        // never a completed cleanup.
+                        Err(_) => self.exit = None,
+                    }
+                }
                 if ready == 0 {
-                    return ParentState::Alive;
+                    continue;
+                }
+                if descriptor.revents & (POLLIN | POLLHUP | POLLERR) == 0 {
+                    continue;
                 }
                 let mut byte = [0u8; 1];
                 // SAFETY: the descriptor is live and the buffer is live.
@@ -961,9 +1213,10 @@ mod macos_impl {
                     }
                     return ParentState::Unavailable;
                 }
-                // One release byte, or EOF (the peer closed / exited): either way
-                // the capability is released.
-                return ParentState::Exited;
+                // One release byte, or EOF (the peer closed its end): the
+                // capability is released as a **protocol step**. This is not exit
+                // evidence; the kqueue event above is.
+                return ParentState::Released;
             }
         }
 
@@ -1126,15 +1379,19 @@ mod macos_impl {
         if unsafe { socketpair(AF_UNIX, SOCK_STREAM, 0, fds.as_mut_ptr()) } != 0 {
             return Err(pending());
         }
-        let (installer_end, child_end) = (fds[0], fds[1]);
+        // Both ends are owned from the moment they exist, so every error path
+        // below closes them instead of leaking a socket descriptor.
+        // SAFETY: both descriptors were just created and are owned here.
+        let (installer_end, child_end) =
+            unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
         // Neither end may reach the child by accident: the child gets exactly one
         // copy on `CHILD_HANDLE_FD` (via `dup2`, which clears the flag), and the
         // installer's own end must stay private — otherwise the child would hold a
         // duplicate of it and could never observe a peer EOF.
         // SAFETY: both descriptors are live and owned here.
         unsafe {
-            let _ = fcntl(installer_end, F_SETFD, FD_CLOEXEC);
-            let _ = fcntl(child_end, F_SETFD, FD_CLOEXEC);
+            let _ = fcntl(installer_end.as_raw_fd(), F_SETFD, FD_CLOEXEC);
+            let _ = fcntl(child_end.as_raw_fd(), F_SETFD, FD_CLOEXEC);
         }
         let request = run.request(parent, CHILD_HANDLE_FD as u64, 0);
         let frame = serde_json::to_vec(&request).map_err(|_| pending())?;
@@ -1146,7 +1403,7 @@ mod macos_impl {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
-        let child_fd = child_end;
+        let child_fd = child_end.as_raw_fd();
         // SAFETY: the closure only makes the async-signal-safe calls `dup2` and
         // `close` on descriptors created for this child.
         unsafe {
@@ -1162,25 +1419,18 @@ mod macos_impl {
         }
         let mut child = match command.spawn() {
             Ok(child) => child,
-            Err(_) => {
-                // SAFETY: both descriptors were created here and are owned.
-                unsafe {
-                    let _ = close(installer_end);
-                    let _ = close(child_end);
-                }
-                return Err(pending());
-            }
+            // Both owned descriptors close when this function returns.
+            Err(_) => return Err(pending()),
         };
-        // SAFETY: the child's copy is inherited; this one is no longer needed.
-        unsafe {
-            let _ = close(child_end);
-        }
+        // The child holds its own copy on `CHILD_HANDLE_FD`; this one must not
+        // stay open, or the peer would never observe a close.
+        drop(child_end);
 
         // The installer's own end of the identity/release socketpair. It stays
         // open until the run ends: the helper authenticates its *peer* over this
         // socket, so the peer must still exist while the helper verifies it. (A
         // crashed installer closes it, which the helper observes as EOF.)
-        let installer_socket = unsafe { OwnedFd::from_raw_fd(installer_end) };
+        let installer_socket = installer_end;
 
         // Request out, then the release: after this the installer only waits.
         let stdin = child.stdin.take().ok_or_else(pending)?;

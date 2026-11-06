@@ -16,6 +16,19 @@
 //! with `RootDirectory` on Windows), so a component swapped after validation
 //! fails closed and a leaf swapped between hashing and unlinking is preserved.
 //!
+//! The guarantee is stated exactly: identity is verified immediately before each
+//! mutation (and again after the one primitive that re-resolves a pathname, the
+//! Windows carrier copy) and a mismatch aborts, removing only what the call
+//! created. A **same-user** attacker who can already write inside the private
+//! `0700` root is deliberately out of scope (the Task 2 policy): on macOS it can
+//! rename an entry between the identity re-read and the name-based `unlinkat`,
+//! and the platform offers no `funlinkat` that would close that window. The
+//! installer reports the mismatch instead of claiming atomicity it does not have.
+//! A path above the mutation anchor is walked with
+//! no-follow/`FILE_OPEN_REPARSE_POINT` semantics and is never canonicalised
+//! first, so a link planted there is refused rather than resolved into a tree the
+//! installer did not create.
+//!
 //! [`PortablePlatform`] is the std-only implementation used by portable tests on
 //! Linux. It performs real filesystem IO, locking and registration-file reads,
 //! but it is **not** the production adapter: Windows HKCU publication, macOS code
