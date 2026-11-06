@@ -1867,6 +1867,98 @@ fn recovery_rederives_the_effective_policy_instead_of_trusting_the_journal() {
     );
 }
 
+/// A crash after the receipt is durable but before the journal is released: the
+/// receipt names the new release and the journal is still pending.
+fn crash_after_receipt(scenario: Scenario) -> Fixture {
+    let registry = position_of(
+        &clean_mutations(scenario),
+        PlatformCall::PublishRegistration,
+    );
+    let fixture = Fixture::new(scenario);
+    let platform = fixture.platform_with(Faults {
+        // Mutation registry+1 is the registration publication, +2 the journal phase,
+        // +3 the receipt write, +4 the next journal phase write (this one dies).
+        panic_at_mutation: Some(registry + 4),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        install(&platform, &fixture.paths, fixture.package.clone())
+    }));
+    assert!(
+        outcome.is_err(),
+        "the injected death interrupts the install"
+    );
+    assert!(matches!(fixture.journal_state(), JournalState::Pending(_)));
+    assert_eq!(
+        fixture.receipt().map(|receipt| receipt.payload_id),
+        Some(fixture.payload_id()),
+        "the receipt for the new release is committed"
+    );
+    fixture
+}
+
+/// R1: after the receipt is committed, journal and receipt can be edited to agree
+/// with each other while disagreeing with the signed policy. Comparing the journal
+/// with the receipt proves two state documents agree; only the OS-authenticated
+/// descriptor says what an install may enforce, and an install enforces exactly the
+/// incoming descriptor's policy.
+#[test]
+fn recovery_after_the_receipt_rederives_the_install_policy_from_the_signed_descriptor() {
+    type Widen = fn(&mut veles_bridge_installer::ReleasePolicy);
+    let widenings: [(&str, Widen); 2] = [
+        ("an added publisher", |policy| {
+            policy.publishers.push("Attacker Publisher".to_owned());
+        }),
+        ("a widened rollback list", |policy| {
+            policy.rollback_payloads.push(Digest::of(b"anything"));
+        }),
+    ];
+    let mut wrong: Vec<String> = Vec::new();
+    for scenario in [Scenario::Fresh, Scenario::Upgrade] {
+        for (name, widen) in widenings {
+            let context = format!("{}: {name}", scenario.label());
+            let fixture = crash_after_receipt(scenario);
+            let platform = fixture.platform();
+
+            let JournalState::Pending(journal) = fixture.journal_state() else {
+                panic!("pending journal");
+            };
+            let mut forged_journal = (*journal).clone();
+            widen(&mut forged_journal.release_policy);
+            forged_journal
+                .write(&platform, &fixture.paths)
+                .expect("forged journal");
+            let mut forged_receipt = fixture.receipt().expect("committed receipt");
+            widen(&mut forged_receipt.release_policy);
+            forged_receipt
+                .write(&platform, &fixture.paths)
+                .expect("forged receipt");
+            let before = snapshot(fixture.temp.path());
+
+            let recovering = fixture.platform();
+            match recover(&recovering, &fixture.paths) {
+                Ok(report) => wrong.push(format!(
+                    "{context}: completed a policy the signature does not cover: {}",
+                    report.state
+                )),
+                Err(failure) => {
+                    if failure.code != FailureCode::RecoveryRequired
+                        || !recovering.mutations().is_empty()
+                        || snapshot(fixture.temp.path()) != before
+                        || !matches!(fixture.journal_state(), JournalState::Pending(_))
+                    {
+                        wrong.push(format!("{context}: refused wrongly: {failure:?}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "unsupported policies were completed: {wrong:#?}"
+    );
+}
+
 #[test]
 fn recovery_reassesses_the_installed_host_before_completing() {
     let fixture = crash_before_receipt(Scenario::Fresh);

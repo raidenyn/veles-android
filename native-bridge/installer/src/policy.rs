@@ -267,6 +267,19 @@ fn merge(current: &ReleasePolicy, incoming: &ReleasePolicy) -> InstallResult<Rel
     Ok(merged)
 }
 
+/// Whether `enforced` is no more permissive than the authenticated `signed` policy:
+/// every denial `signed` carries is still denied, no publisher or rollback-eligible
+/// payload is allowed that `signed` does not allow, and the epoch has not gone
+/// backwards.
+///
+/// This is the bound that holds for *every* composition of a committed policy with
+/// a signed descriptor (install adopts the descriptor's policy, repair and rollback
+/// only tighten it), so it is the check that survives after the policy the
+/// composition started from is no longer available.
+pub(crate) fn is_no_broader_than(enforced: &ReleasePolicy, signed: &ReleasePolicy) -> bool {
+    enforced.epoch >= signed.epoch && !relaxes(signed, enforced)
+}
+
 /// Any way `incoming` is more permissive than `current`.
 fn relaxes(current: &ReleasePolicy, incoming: &ReleasePolicy) -> bool {
     let current_denied: HashSet<_> = current.denied_payloads.iter().copied().collect();

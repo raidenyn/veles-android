@@ -80,7 +80,8 @@ use crate::platform::{
     require_quiescent_within,
 };
 use crate::policy::{
-    CarrierContents, authorize_package_policy, effective_policy, read_carrier_contents,
+    CarrierContents, authorize_package_policy, effective_policy, is_no_broader_than,
+    read_carrier_contents,
 };
 use crate::retained::{MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RetainedInstall};
 
@@ -1168,16 +1169,57 @@ fn authenticate_for_completion(
         return Err(recovery_required());
     }
 
-    // The effective policy is recomputed, never read back from the journal.
-    let expected_policy = match (committed_here, receipt) {
-        (Some(receipt), _) => receipt.release_policy.clone(),
-        (None, ReceiptState::Committed(prior)) => {
-            effective_policy(&prior.release_policy, &descriptor.policy, journal.operation)?
-        }
-        (None, ReceiptState::None | ReceiptState::Unreadable)
+    // The effective policy is recomputed from authenticated evidence, never read
+    // back from state. Journal and receipt are both installer state: that they agree
+    // with each other proves nothing about what the signature covers.
+    let expected_policy = match (journal.operation, committed_here, receipt) {
+        // An install enforces exactly the incoming signed policy, whatever it was
+        // composed against (`effective_policy(Install)` returns the incoming
+        // policy), so this holds before and after the receipt is committed. When
+        // the previous receipt is still present, the epoch rules of the ordinary
+        // install are re-applied as well.
+        (Operation::Install, Some(_), _) => descriptor.policy.clone(),
+        (Operation::Install, None, ReceiptState::Committed(prior)) => effective_policy(
+            &prior.release_policy,
+            &descriptor.policy,
+            Operation::Install,
+        )?,
+        (Operation::Install, None, ReceiptState::None | ReceiptState::Unreadable)
             if journal.old_payload_id.is_none() =>
         {
             descriptor.policy.clone()
+        }
+        // A rollback before the receipt: recomposed from the policy the committed
+        // installation enforces, and the retained target must be the recorded prior
+        // release of that installation, older than the one it replaces.
+        (Operation::Rollback, None, ReceiptState::Committed(current)) => {
+            let target = current.prior.as_ref().ok_or_else(recovery_required)?;
+            if target.version != journal.version
+                || target.payload_id != journal.payload_id
+                || target.carrier_sha256 != journal.policy.carrier_sha256
+                || journal.old_payload_id != Some(current.payload_id)
+                || journal.old_version.as_deref() != Some(current.version.as_str())
+                || descriptor.parsed_version()? >= parse_version(&current.version)?
+            {
+                return Err(recovery_required());
+            }
+            effective_policy(
+                &current.release_policy,
+                &descriptor.policy,
+                Operation::Rollback,
+            )?
+        }
+        // A rollback whose receipt is already committed: the policy it was composed
+        // against was replaced by the commit, so it cannot be recomposed. What the
+        // authenticated descriptor of the activated release does bound is how broad
+        // the committed policy may be; anything broader, or missing a denial that
+        // descriptor carries, is not a policy any rollback of this release could
+        // have produced. State that cannot be bounded fails closed.
+        (Operation::Rollback, Some(committed), _) => {
+            if !is_no_broader_than(&committed.release_policy, &descriptor.policy) {
+                return Err(recovery_required());
+            }
+            committed.release_policy.clone()
         }
         // An upgrade whose previous receipt is gone, unreadable or unsupported
         // has nothing to compose the policy against.
@@ -1186,8 +1228,20 @@ fn authenticate_for_completion(
     if expected_policy != journal.release_policy {
         return Err(recovery_required());
     }
+    // The committed receipt, when this transaction's, must carry that same policy.
+    if let Some(committed) = committed_here
+        && committed.release_policy != expected_policy
+    {
+        return Err(recovery_required());
+    }
     if journal.release_policy.denies(&journal.payload_id) {
         return Err(InstallFailure::new(FailureCode::PolicyDenied));
+    }
+    // The ordinary rollback also requires the target to be on the allow-list.
+    if journal.operation == Operation::Rollback
+        && !journal.release_policy.permits_rollback(&journal.payload_id)
+    {
+        return Err(recovery_required());
     }
 
     let version = parse_version(&journal.version)?;

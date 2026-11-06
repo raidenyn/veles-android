@@ -2153,6 +2153,165 @@ fn interrupted_rollback_keeps_the_retained_payload_and_settles() {
     );
 }
 
+/// R1: recovering an interrupted rollback re-establishes, from authenticated
+/// evidence, what the ordinary rollback requires - on both sides of the receipt.
+///
+/// * Before the receipt: the effective policy is recomputed, and the target must be
+///   rollback-eligible under it (not merely "not denied").
+/// * After the receipt: the committed policy must not be broader than the signed
+///   descriptor of the release it activates (publishers, rollback list), nor drop a
+///   denial that descriptor carries - even when journal and receipt agree.
+#[test]
+fn recovery_of_an_interrupted_rollback_re_establishes_policy_and_eligibility() {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let denied = Digest::of(b"a payload the retained release denies");
+    let build = |fixture: &Fixture| {
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, vec![denied], vec![p1]),
+        );
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V2,
+            NOTICE_V2,
+            policy(2, Vec::new(), vec![p1]),
+        );
+        (v1, v2)
+    };
+
+    let probe = Fixture::windows();
+    let (probe_v1, probe_v2) = build(&probe);
+    probe.install(&probe_v1);
+    probe.install(&probe_v2);
+    let platform = probe.platform_trusting(&probe_v1.proof);
+    run_operation(
+        &platform,
+        &probe.paths,
+        Operation::Rollback,
+        Some(authenticate(&probe_v1)),
+    )
+    .expect("the probe rollback completes");
+    let total = platform.mutations().len();
+
+    type Forge = fn(&mut veles_bridge_installer::ReleasePolicy, Digest);
+    let committed_forgeries: [(&str, Forge); 3] = [
+        ("an added publisher", |policy, _| {
+            policy.publishers.push("Attacker Publisher".to_owned());
+        }),
+        ("a dropped denial", |policy, denied| {
+            policy.denied_payloads.retain(|digest| *digest != denied);
+        }),
+        ("a widened rollback list", |policy, _| {
+            policy.rollback_payloads.push(Digest::of(b"anything"));
+        }),
+    ];
+    let activated_forgeries: [(&str, Forge); 1] = [(
+        "a target the current policy does not make eligible",
+        |policy, _| {
+            policy.rollback_payloads.clear();
+        },
+    )];
+
+    // One fresh layout per (death point, forgery): a recovery that wrongly completes
+    // must not contaminate the next case.
+    let mut wrong: Vec<String> = Vec::new();
+    let mut forged_before_receipt = 0;
+    let mut forged_after_receipt = 0;
+    for attempt in 1..=total {
+        #[allow(clippy::needless_range_loop)]
+        for forgery_index in 0..3 {
+            let fixture = Fixture::windows();
+            let paths = &fixture.paths;
+            let (v1, v2) = build(&fixture);
+            fixture.install(&v1);
+            fixture.install(&v2);
+            let crashing = FakePlatform::with_faults(Faults {
+                host_state: HostState::Quiescent,
+                panic_at_mutation: Some(attempt),
+                trust: Some(v1.proof.clone()),
+                ..Faults::default()
+            });
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                run_operation(
+                    &crashing,
+                    paths,
+                    Operation::Rollback,
+                    Some(authenticate(&v1)),
+                )
+            }));
+            assert!(outcome.is_err(), "attempt {attempt}: the death interrupts");
+
+            let JournalState::Pending(journal) = journal_state(paths) else {
+                break;
+            };
+            let current = receipt(paths).expect("a receipt always exists");
+            let committed = current.payload_id == v1.descriptor.payload_id;
+            let activated =
+                !committed && Digest::of(&fixture.registration()) == journal.manifest.sha256();
+            let (name, forge) = if committed {
+                committed_forgeries[forgery_index]
+            } else if activated && forgery_index == 0 {
+                activated_forgeries[0]
+            } else {
+                break;
+            };
+
+            let context = format!(
+                "attempt {attempt} ({}): {name}",
+                if committed {
+                    "receipt committed"
+                } else {
+                    "activated, no receipt"
+                }
+            );
+            let writer = fixture.platform_trusting(&v1.proof);
+            let mut forged_journal = (*journal).clone();
+            forge(&mut forged_journal.release_policy, denied);
+            forged_journal
+                .write(&writer, paths)
+                .expect("forged journal");
+            let mut forged_receipt = current.clone();
+            forge(&mut forged_receipt.release_policy, denied);
+            forged_receipt
+                .write(&writer, paths)
+                .expect("forged receipt");
+            let before = snapshot(fixture.temp.path());
+
+            let recovering = fixture.platform_trusting(&v1.proof);
+            match recover(&recovering, paths) {
+                Ok(report) => wrong.push(format!(
+                    "{context}: recovery completed a policy the signed evidence does not support: {:?}",
+                    report.state
+                )),
+                Err(_) => {
+                    if !recovering.mutations().is_empty()
+                        || snapshot(fixture.temp.path()) != before
+                    {
+                        wrong.push(format!("{context}: a refused recovery changed state"));
+                    }
+                }
+            }
+            if committed {
+                forged_after_receipt += 1;
+            } else {
+                forged_before_receipt += 1;
+            }
+        }
+    }
+    assert!(
+        forged_before_receipt >= 1 && forged_after_receipt >= 1,
+        "both windows were exercised: before={forged_before_receipt} after={forged_after_receipt}"
+    );
+    assert!(
+        wrong.is_empty(),
+        "unsupported policies were completed: {wrong:#?}"
+    );
+}
+
 #[test]
 fn rollback_requires_signer_authorized_by_both_policies() {
     let fixture = Fixture::windows();
