@@ -1558,6 +1558,28 @@ class MachoReviewFindingTests(WorkDir):
         x86_s, _ = build_signed_macho(cputype=CPU_X86_64)
         return arm_u, x86_u, arm_s, x86_s
 
+    def test_f2_fat_table_order_alignment_capabilities_and_packing_are_compared(self):
+        arm_u, x86_u, arm_s, x86_s = self.fat_images()
+        fat_u = build_fat([(CPU_ARM64, 0, arm_u, 14), (CPU_X86_64, 3, x86_u, 12)])
+        good = build_fat([(CPU_ARM64, 0, arm_s, 14), (CPU_X86_64, 3, x86_s, 12)])
+        self.passes(fat_u, good)
+        second_offset_at = 8 + 20 + 8
+        second = struct.unpack_from(">I", good, second_offset_at)[0]
+        repacked = bytearray(good[:second] + b"\0" * 0x1000 + good[second:])
+        struct.pack_into(">I", repacked, second_offset_at, second + 0x1000)
+        cases = {
+            "reversed-order": build_fat([(CPU_X86_64, 3, x86_s, 12), (CPU_ARM64, 0, arm_s, 14)]),
+            "alignment-14-to-15": build_fat([(CPU_ARM64, 0, arm_s, 15), (CPU_X86_64, 3, x86_s, 12)]),
+            "capability-bits": build_fat([(CPU_ARM64, -0x80000000, arm_s, 14), (CPU_X86_64, 3, x86_s, 12)]),
+        }
+        for name, candidate in cases.items():
+            with self.subTest(name=name):
+                self.expect_fail(fat_u, candidate, "macho-fat-metadata-changed")
+        with self.subTest(name="extra-zero-padding-between-slices"):
+            self.expect_fail(fat_u, bytes(repacked), "macho-invalid-fat")
+        # The same applies when the *unsigned* side is the odd one.
+        reversed_unsigned = build_fat([(CPU_X86_64, 3, x86_u, 12), (CPU_ARM64, 0, arm_u, 14)])
+        self.expect_fail(reversed_unsigned, good, "macho-fat-metadata-changed")
 
 
 

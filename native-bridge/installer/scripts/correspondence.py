@@ -995,6 +995,11 @@ class FatArch:
         return (self.cputype & 0xFFFFFFFF, self.cpusubtype & 0x00FFFFFF)
 
 
+def fat_table_entry(arch: FatArch) -> dict:
+    """The fat-table fields a signing step has no reason to change (everything except offset/size)."""
+    return {"cputype": f"{arch.cputype & 0xFFFFFFFF:#010x}", "cpusubtype": f"{arch.cpusubtype & 0xFFFFFFFF:#010x}", "align": arch.align}
+
+
 def parse_macho_container(data: bytes) -> tuple[str, list[tuple[FatArch | None, MachSlice]]]:
     magic = data[:4]
     if magic == MH_MAGIC_64 or magic in OTHER_THIN_MAGICS:
@@ -1012,21 +1017,30 @@ def parse_macho_container(data: bytes) -> tuple[str, list[tuple[FatArch | None, 
     keys = [a.key for a in arches]
     if len(set(keys)) != len(keys):
         raise Reject("macho-invalid-fat", "duplicate architecture in the fat header")
-    cursor = 8 + 20 * count
-    parsed = []
-    for arch in sorted(arches, key=lambda a: a.offset):
-        if arch.align > 15 or arch.offset % (1 << arch.align) or arch.offset < cursor or arch.offset + arch.size > len(data):
-            raise Reject("macho-invalid-fat", "fat slice has an invalid alignment or lies outside the file or overlaps")
+    table_end = 8 + 20 * count
+    cursor = table_end
+    slices: dict[int, MachSlice] = {}
+    # Physical layout is judged in file order. A signing step may grow slices, so offsets legitimately
+    # move, but only to the one deterministic place: each slice at its own alignment boundary directly
+    # after the previous slice (the first after the table). Any other offset is relocation or extra padding.
+    for index in sorted(range(count), key=lambda i: arches[i].offset):
+        arch = arches[index]
+        if arch.align > 15:
+            raise Reject("macho-invalid-fat", "fat slice alignment is implausible")
+        if arch.offset + arch.size > len(data) or arch.offset < cursor:
+            raise Reject("macho-invalid-fat", "fat slice lies outside the file or overlaps another slice")
+        if arch.offset != align_up(cursor, 1 << arch.align):
+            raise Reject("macho-invalid-fat", "fat slice is not packed at the next alignment boundary (relocation or extra padding)")
         if data[cursor : arch.offset].strip(b"\x00"):
             raise Reject("macho-invalid-fat", "non-zero bytes between fat slices")
         slice_ = MachSlice(data[arch.offset : arch.offset + arch.size])
         if (slice_.cputype & 0xFFFFFFFF, slice_.cpusubtype & 0x00FFFFFF) != arch.key:
             raise Reject("macho-invalid-fat", "fat header architecture disagrees with the slice header")
-        parsed.append((arch, slice_))
+        slices[index] = slice_
         cursor = arch.offset + arch.size
     if cursor != len(data):
         raise Reject("macho-trailing-data", "bytes follow the last fat slice")
-    return "fat", parsed
+    return "fat", [(arch, slices[index]) for index, arch in enumerate(arches)]  # table order, as written
 
 
 def compare_slice(u: MachSlice, s: MachSlice, expected_entitlements, entitlements_given: bool, index: int | None):
@@ -1196,10 +1210,20 @@ def compare_macho(unsigned: bytes, signed: bytes, entitlements_path: Path | None
     if keys_u != keys_s:
         differences.append(difference("macho-slice-set-changed", "architecture set differs", unsigned=keys_u, signed=keys_s))
         return differences, allowed, hashes
-    by_key_s = {(a.key if a else None): (position, s) for position, (a, s) in enumerate(slices_s)}
-    for position, (arch, slice_u) in enumerate(slices_u):
-        key = arch.key if arch else None
-        _, slice_s = by_key_s[key]
+    table_u = [fat_table_entry(a) for a, _ in slices_u if a]
+    table_s = [fat_table_entry(a) for a, _ in slices_s if a]
+    if table_u != table_s:
+        differences.append(
+            difference(
+                "macho-fat-metadata-changed",
+                "the fat table differs in order, CPU type/subtype (including capability bits) or alignment",
+                region="fat-table",
+                unsigned=table_u,
+                signed=table_s,
+            )
+        )
+        return differences, allowed, hashes
+    for position, ((arch, slice_u), (_, slice_s)) in enumerate(zip(slices_u, slices_s)):
         d, a = compare_slice(slice_u, slice_s, expected, given, None if arch is None else position)
         differences.extend(d)
         allowed.extend(a)
