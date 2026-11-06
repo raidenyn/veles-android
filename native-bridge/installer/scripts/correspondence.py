@@ -644,8 +644,12 @@ def check_command_shape(command: Command) -> None:
         if size < header:
             raise bad(f"size {size} is below its {header} byte header")
         offset = struct.unpack_from("<I", raw, 8)[0]
-        if not header <= offset < size or raw.find(b"\x00", offset) < 0:
+        terminator = raw.find(b"\x00", offset) if header <= offset < size else -1
+        if terminator < 0:
             raise bad("name/path offset is outside the command or its string is not terminated")
+        # loader.h: the command is padded with zero bytes, before the string (offset > header) and after it.
+        if raw[header:offset].strip(b"\x00") or raw[terminator:].strip(b"\x00"):
+            raise bad("non-zero padding around the name/path string")
     elif ident == LC_BUILD_VERSION:
         if size < 24 or size != 24 + 8 * struct.unpack_from("<I", raw, 20)[0]:
             raise bad("size does not match its tool count")
@@ -766,18 +770,23 @@ class MachSlice:
         bad = "macho-invalid-load-commands"
         low, high = self.linkedit.fileoff, self.linkedit.fileoff + self.linkedit.filesize
         signature = None if self.dataoff is None else (self.dataoff, self.dataoff + self.datasize)
-        symbols = None
+        # Cross-command dependencies are resolved before any command is judged, so the verdict cannot depend
+        # on the order the commands are stored in: one symbol table, one dysymtab, and the dysymtab's
+        # partitions are measured against that table (an absent table has no symbols).
+        symtabs = [c for c in self.commands if c.ident == LC_SYMTAB]
+        if len(symtabs) > 1 or len([c for c in self.commands if c.ident == LC_DYSYMTAB]) > 1:
+            raise Reject(bad, "more than one LC_SYMTAB or LC_DYSYMTAB")
+        symbols = struct.unpack_from("<I", symtabs[0].raw, 12)[0] if symtabs else 0
         for command in self.commands:
             raw, ident = command.raw, command.ident
             ranges: list[tuple[str, int, int]] = []
             if ident == LC_SYMTAB:
                 symoff, nsyms, stroff, strsize = struct.unpack_from("<IIII", raw, 8)
-                symbols = nsyms
                 ranges = [("symbols", symoff, nsyms * 16), ("strings", stroff, strsize)]
             elif ident == LC_DYSYMTAB:
                 values = struct.unpack_from("<18I", raw, 8)
                 partitions = [(values[0], values[1]), (values[2], values[3]), (values[4], values[5])]
-                if symbols is not None and any(index + count > symbols for index, count in partitions):
+                if any(index + count > symbols for index, count in partitions):
                     raise Reject(bad, f"{command.name}: a symbol partition runs past the symbol table")
                 ranges = [
                     ("toc", values[6], values[7] * 8), ("modules", values[8], values[9] * 56),

@@ -262,6 +262,8 @@ def build_macho(
     low_slack=None,
     pad_fill=None,
     linkedit_sections=(),
+    pre_symtab_command=None,
+    symtab_ident=LC_SYMTAB,
 ):
     """Build one thin Mach-O. ``signature`` is the exact bytes of the signature region
     (already padded to its allocated size) or ``None`` for an image without
@@ -294,12 +296,14 @@ def build_macho(
         segment("__PAGEZERO", 0, 0x100000000, 0, 0, 0, 0),
         segment("__TEXT", 0x100000000, page, 0, page, 5, 5, text_sections),
         segment("__LINKEDIT", 0x100000000 + page, vmsize, link_base, linkedit_filesize, 1, 1, tuple(linkedit_sections)),
-        struct.pack("<IIIIII", LC_SYMTAB, 24, sym_off, 2, str_off, len(symbols)),
+        struct.pack("<IIIIII", symtab_ident, 24, sym_off, 2, str_off, len(symbols)),
         struct.pack("<II", LC_UUID, 24) + uuid,
         struct.pack("<IIIIII", LC_BUILD_VERSION, 24, 1, 0x00100000, 0x00100000, 0),
         struct.pack("<IIQQ", LC_MAIN, 24, text_off, 0),
         struct.pack("<IIII", LC_FUNCTION_STARTS, 16, fs_off, len(funcstarts)),
     ]
+    if pre_symtab_command is not None:
+        cmds.insert(3, pre_symtab_command)  # ahead of LC_SYMTAB
     if extra_load_command is not None:
         cmds.append(extra_load_command)
     if signature is not None:
@@ -2021,6 +2025,82 @@ class Round2PolicyPlistTests(WorkDir):
         # A shared sub-structure that stays inside the budget is accepted (6 levels = 127 nodes).
         tower = self.hostile_tower(6)
         self.assertEqual(correspondence.load_policy(self.policy_file(tower)).report()["source"], "explicit")
+
+
+class Round2LoadCommandTests(WorkDir):
+    """Re-review N5: cross-command checks are order independent and string padding is zero."""
+
+    LC_DYSYMTAB = 0x0B
+
+    def dysymtab(self, **partitions):
+        values = dict(ilocal=0, nlocal=0, iext=0, next=0, iundef=0, nundef=0)
+        values.update(partitions)
+        fields = [values["ilocal"], values["nlocal"], values["iext"], values["next"], values["iundef"], values["nundef"]]
+        return struct.pack("<II18I", self.LC_DYSYMTAB, 80, *fields, *([0] * 12))
+
+    def pair(self, **kwargs):
+        return build_macho(**kwargs)[0], build_signed_macho(**kwargs)[0]
+
+    def verdict(self, **kwargs):
+        unsigned, signed = self.pair(**kwargs)
+        return self.compare_bytes("macho", unsigned, signed)
+
+    def test_n5_a_dysymtab_partition_past_the_symbol_table_fails_in_either_command_order(self):
+        reviewer = self.dysymtab(iext=0xFFFFFFFF, next=2)  # the symbol table has two symbols
+        for placement in ("pre_symtab_command", "extra_load_command"):
+            with self.subTest(placement=placement, case="out-of-range"):
+                report = self.verdict(**{placement: reviewer})
+                self.assertEqual(report["verdict"], "FAIL")
+                self.assertIn("macho-invalid-load-commands", self.codes(report), report["differences"])
+            with self.subTest(placement=placement, case="well-formed"):
+                good = self.dysymtab(iext=0, next=2, iundef=2, nundef=0)
+                self.assertEqual(self.verdict(**{placement: good})["verdict"], "PASS")
+        # No symbol table at all: any partition is out of range, an all-zero one is not.
+        for placement in ("pre_symtab_command", "extra_load_command"):
+            with self.subTest(placement=placement, case="no-symtab"):
+                report = self.verdict(symtab_ident=0x2C, **{placement: self.dysymtab(next=1)})
+                self.assertIn("macho-invalid-load-commands", self.codes(report), report["differences"])
+                self.assertEqual(self.verdict(symtab_ident=0x2C, **{placement: self.dysymtab()})["verdict"], "PASS")
+
+    def test_n5_duplicate_symbol_table_declarations_are_refused(self):
+        symtab = struct.pack("<IIIIII", LC_SYMTAB, 24, 0x4000, 2, 0x4020, 8)
+        report = self.verdict(extra_load_command=symtab)
+        self.assertIn("macho-invalid-load-commands", self.codes(report), report["differences"])
+        two = self.dysymtab()
+        report = self.verdict(pre_symtab_command=two, extra_load_command=two)
+        self.assertIn("macho-invalid-load-commands", self.codes(report), report["differences"])
+
+    def test_n5_string_areas_must_be_zero_after_the_terminator(self):
+        def dylib(area, offset=24):
+            size = offset + len(area)
+            return struct.pack("<IIIIII", 0x0C, size, offset, 2, 0x10000, 0x10000) + b"\0" * (offset - 24) + area
+
+        def path_command(ident, area, header=12):
+            return struct.pack("<III", ident, header + len(area), header) + area
+
+        junk = {
+            "dylib-junk-after-the-terminator": dylib(b"lib\0JUNK"),
+            "dylib-junk-in-the-last-byte": dylib(b"lib\0\0\0\0X"),
+            "dylib-gap-before-the-string": struct.pack("<IIIIII", 0x0C, 40, 32, 2, 0x10000, 0x10000) + b"JUNK" + b"\0" * 4 + b"lib\0\0\0\0\0",
+            "rpath-junk-after-the-terminator": path_command(0x8000001C, b"/p\0X"),
+            "dylinker-junk-after-the-terminator": path_command(0x0E, b"/usr/lib/dyld\0JUNK\0\0"),
+        }
+        for name, command in junk.items():
+            with self.subTest(name=name):
+                self.assertEqual(len(command) % 8, 0, (name, len(command)))
+                report = self.verdict(extra_load_command=command)
+                self.assertEqual(report["verdict"], "FAIL")
+                self.assertIn("macho-invalid-load-commands", self.codes(report), report["differences"])
+                self.assertTrue(any("padding" in d["message"] for d in report["differences"]), report["differences"])
+        clean = {
+            "dylib": dylib(b"lib\0\0\0\0\0"),
+            "rpath": path_command(0x8000001C, b"/p\0\0"),
+            "dylinker": path_command(0x0E, b"/usr/lib/dyld\0" + b"\0" * 6),
+        }
+        for name, command in clean.items():
+            with self.subTest(name=name, control=True):
+                self.assertEqual(len(command) % 8, 0, (name, len(command)))
+                self.assertEqual(self.verdict(extra_load_command=command)["verdict"], "PASS")
 
 
 class CommandLineTests(WorkDir):
