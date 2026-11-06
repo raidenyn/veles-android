@@ -300,7 +300,9 @@ impl Fixture {
         {
             ReceiptState::None => None,
             ReceiptState::Committed(receipt) => Some(*receipt),
-            ReceiptState::Unreadable => panic!("the committed receipt must be interpretable"),
+            ReceiptState::Unreadable | ReceiptState::Unsupported => {
+                panic!("the committed receipt must be interpretable")
+            }
         }
     }
 
