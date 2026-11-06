@@ -24,7 +24,8 @@ use veles_bridge_installer::{
     Channel, Digest, FailureCode, FakePlatform, Faults, InstallPaths, InventoryEntry, Operation,
     PRODUCTION_HOST_NAME, PlatformCall, PortablePlatform, ReleaseDescriptor, ReleasePolicy,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof,
-    authenticate_package, authorize_package_policy, canonical_json, write_carrier, write_inventory,
+    assessment_target, authenticate_package, authorize_package_policy, canonical_json,
+    is_accepted_assessment, write_carrier, write_inventory,
 };
 
 const PROD_EXTENSION_ID: &str = "mnopabcdefghijklmnopabcdefghijkl";
@@ -352,19 +353,84 @@ fn explicit_revocation_and_unsigned_carrier_rejected() {
     assert_eq!(failure.code, FailureCode::TrustDenied);
     assert_no_registration_writes(&unaccepted);
 
-    // Both native assessment verdicts are accepted so the Windows and macOS
-    // adapters share one decision layer. The signer identity format differs by
-    // platform (Authenticode certificate fingerprint vs Team ID); either is just
-    // an exact publisher-policy string here.
-    for assessment in [
+    // The Windows verdict authenticates this Windows release. (The same proof
+    // with the macOS verdict is denied: see
+    // `assessment_verdict_is_bound_to_descriptor_target`.)
+    let accepted = platform_with(Some(proof(
+        PUBLISHER,
         TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
-        TRUST_ASSESSMENT_MACOS_GATEKEEPER,
+        &package.carrier,
+    )));
+    authenticate_package(&accepted, &package.root, &package.descriptor)
+        .expect("an accepted native assessment authenticates");
+    assert_no_registration_writes(&accepted);
+}
+
+#[test]
+fn assessment_verdict_is_bound_to_descriptor_target() {
+    let temp = TempRoot::new("assessment-target");
+    let windows = Package::build(&temp.path.join("windows-package"), |_| {});
+    let macos = Package::build(&temp.path.join("macos-package"), |descriptor| {
+        descriptor.target = Target::MacosArm64;
+        descriptor.minimum_os = "26.0".to_owned();
+    });
+
+    // Correct pairings authenticate.
+    for (package, assessment) in [
+        (&windows, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE),
+        (&macos, TRUST_ASSESSMENT_MACOS_GATEKEEPER),
     ] {
-        let accepted = platform_with(Some(proof(PUBLISHER, assessment, &package.carrier)));
-        authenticate_package(&accepted, &package.root, &package.descriptor)
-            .expect("an accepted native assessment authenticates");
-        assert_no_registration_writes(&accepted);
+        let platform = platform_with(Some(proof(PUBLISHER, assessment, &package.carrier)));
+        authenticate_package(&platform, &package.root, &package.descriptor)
+            .expect("a verdict for its own release target authenticates");
+        assert_no_registration_writes(&platform);
     }
+
+    // A verdict from the other platform is never evidence for this release, even
+    // with a correctly signed carrier for exactly this descriptor and an
+    // authorized publisher. The decision layer binds the verdict itself.
+    for (package, assessment) in [
+        (&windows, TRUST_ASSESSMENT_MACOS_GATEKEEPER),
+        (&macos, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE),
+    ] {
+        let platform = platform_with(Some(proof(PUBLISHER, assessment, &package.carrier)));
+        assert_eq!(
+            authenticate_package(&platform, &package.root, &package.descriptor)
+                .expect_err("a verdict for the other platform is not evidence")
+                .code,
+            FailureCode::TrustDenied
+        );
+        assert_no_registration_writes(&platform);
+    }
+
+    // The binding is part of the exported, closed vocabulary.
+    assert_eq!(
+        assessment_target(TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE),
+        Some(Target::WindowsX64)
+    );
+    assert_eq!(
+        assessment_target(TRUST_ASSESSMENT_MACOS_GATEKEEPER),
+        Some(Target::MacosArm64)
+    );
+    assert_eq!(assessment_target("windows-authenticode-revoked"), None);
+    assert_eq!(assessment_target(""), None);
+    assert!(is_accepted_assessment(
+        TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
+        Target::WindowsX64
+    ));
+    assert!(is_accepted_assessment(
+        TRUST_ASSESSMENT_MACOS_GATEKEEPER,
+        Target::MacosArm64
+    ));
+    assert!(!is_accepted_assessment(
+        TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
+        Target::MacosArm64
+    ));
+    assert!(!is_accepted_assessment(
+        TRUST_ASSESSMENT_MACOS_GATEKEEPER,
+        Target::WindowsX64
+    ));
+    assert!(!is_accepted_assessment("", Target::WindowsX64));
 }
 
 #[test]

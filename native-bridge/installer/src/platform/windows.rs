@@ -17,7 +17,12 @@
 //!   display name;
 //! * the embedded policy-carrier resource must lie completely inside section raw
 //!   data of the verified image, with a terminal certificate table and no
-//!   unauthenticated trailing overlay (see [`super::pe`]).
+//!   unauthenticated trailing overlay (see [`super::pe`]). The image is re-read
+//!   from offset zero through the assessed handle, because WinVerifyTrust leaves
+//!   the shared file pointer at an unspecified offset.
+//!
+//! The status table itself is pure and lives in [`super::windows_trust`], so
+//! every mapping is unit-tested on any host rather than only on Windows.
 //!
 //! The remaining [`Platform`] methods are deliberately fail-closed here; Tasks 5
 //! and 8 complete process inspection, filesystem/registry mutation and cleanup.
@@ -38,11 +43,13 @@ use windows::Win32::Security::WinTrust::{
     WinVerifyTrust,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetFileSizeEx, OPEN_EXISTING, ReadFile,
+    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_READ, GetFileSizeEx, OPEN_EXISTING,
+    ReadFile, SetFilePointerEx,
 };
 use windows::core::PCWSTR;
 
 use super::pe;
+use super::windows_trust as trust_status;
 use super::{
     HostState, InstallLock, OwnedEntry, PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource,
     Platform, Registration, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath,
@@ -273,6 +280,12 @@ fn close_state(data: &mut WINTRUST_DATA) {
 /// `FILE_SHARE_READ` alone denies every write/delete/rename sharing mode, so the
 /// exact bytes WinVerifyTrust hashes cannot change before the resource is read
 /// through the same handle.
+///
+/// WinVerifyTrust may read through the supplied handle itself, so the file
+/// pointer is at an unspecified offset afterwards - possibly end of file. The
+/// image read therefore rewinds to offset zero explicitly; otherwise the PE
+/// reader would see a truncated or empty image and could mis-report a valid
+/// carrier.
 struct ReadOnlyFile(HANDLE);
 
 impl ReadOnlyFile {
@@ -295,6 +308,17 @@ impl ReadOnlyFile {
     }
 
     fn read_all(&self) -> InstallResult<Vec<u8>> {
+        // `WinVerifyTrust` reads through the handle it is given, so the shared
+        // file pointer is at an unknown offset (in practice often EOF) when it
+        // returns. Rewind explicitly: `ReadFile` would otherwise report zero
+        // bytes and the carrier resource could not be located.
+        let mut position = 0i64;
+        // SAFETY: the handle is valid and `position` is a live out-parameter.
+        unsafe { SetFilePointerEx(self.0, 0, Some(&mut position), FILE_BEGIN) }
+            .map_err(|_| io_failure())?;
+        if position != 0 {
+            return Err(io_failure());
+        }
         let mut size = 0i64;
         // SAFETY: the handle is valid and `size` is a live out-parameter.
         unsafe { GetFileSizeEx(self.0, &mut size) }.map_err(|_| io_failure())?;
@@ -327,72 +351,10 @@ impl Drop for ReadOnlyFile {
     }
 }
 
-/// Classify a WinVerifyTrust status.
-///
-/// Known signature/chain/policy denials and explicit revocation are
-/// `TrustDenied`. An assessment that cannot be formed - offline revocation data,
-/// a broken trust provider, or an unknown status - blocks activation as
-/// `TrustUnavailable` rather than being guessed as an explicit denial.
+/// Classify a WinVerifyTrust status into the installer vocabulary.
 fn classify(status: i32) -> InstallFailure {
-    match status as u32 {
-        TRUST_E_NOSIGNATURE
-        | TRUST_E_EXPLICIT_DISTRUST
-        | TRUST_E_SUBJECT_NOT_TRUSTED
-        | TRUST_E_SUBJECT_FORM_UNKNOWN
-        | TRUST_E_BAD_DIGEST
-        | TRUST_E_CERT_SIGNATURE
-        | TRUST_E_TIME_STAMP
-        | TRUST_E_FAIL
-        | CERT_E_REVOKED
-        | CERT_E_UNTRUSTEDROOT
-        | CERT_E_UNTRUSTEDTESTROOT
-        | CERT_E_CHAINING
-        | CERT_E_EXPIRED
-        | CERT_E_WRONG_USAGE
-        | CERT_E_CRITICAL
-        | CERT_E_PURPOSE
-        | CERT_E_ISSUERCHAINING
-        | CERT_E_PATHLENCONST
-        | CERT_E_UNTRUSTEDCA
-        | CERT_E_INVALID_POLICY
-        | CERT_E_INVALID_NAME
-        | CERT_E_CN_NO_MATCH => trust_denied(),
-        CERT_E_REVOCATION_FAILURE
-        | CRYPT_E_REVOCATION_OFFLINE
-        | TRUST_E_PROVIDER_UNKNOWN
-        | TRUST_E_ACTION_UNKNOWN
-        | TRUST_E_SYSTEM_ERROR => unavailable(),
-        _ => unavailable(),
-    }
+    trust_status::classify_winverifytrust_status(status).failure()
 }
-
-const TRUST_E_PROVIDER_UNKNOWN: u32 = 0x800B_0001;
-const TRUST_E_ACTION_UNKNOWN: u32 = 0x800B_0002;
-const TRUST_E_SUBJECT_FORM_UNKNOWN: u32 = 0x800B_0003;
-const TRUST_E_SUBJECT_NOT_TRUSTED: u32 = 0x800B_0004;
-const TRUST_E_NOSIGNATURE: u32 = 0x800B_0100;
-const CERT_E_EXPIRED: u32 = 0x800B_0101;
-const CERT_E_PATHLENCONST: u32 = 0x800B_0104;
-const CERT_E_CRITICAL: u32 = 0x800B_0105;
-const CERT_E_PURPOSE: u32 = 0x800B_0106;
-const CERT_E_ISSUERCHAINING: u32 = 0x800B_0107;
-const CERT_E_UNTRUSTEDROOT: u32 = 0x800B_0109;
-const CERT_E_CHAINING: u32 = 0x800B_010A;
-const TRUST_E_FAIL: u32 = 0x800B_010B;
-const CERT_E_REVOKED: u32 = 0x800B_010C;
-const CERT_E_UNTRUSTEDTESTROOT: u32 = 0x800B_010D;
-const CERT_E_REVOCATION_FAILURE: u32 = 0x800B_010E;
-const CERT_E_CN_NO_MATCH: u32 = 0x800B_010F;
-const CERT_E_WRONG_USAGE: u32 = 0x800B_0110;
-const TRUST_E_EXPLICIT_DISTRUST: u32 = 0x800B_0111;
-const CERT_E_UNTRUSTEDCA: u32 = 0x800B_0112;
-const CERT_E_INVALID_POLICY: u32 = 0x800B_0113;
-const CERT_E_INVALID_NAME: u32 = 0x800B_0114;
-const CRYPT_E_REVOCATION_OFFLINE: u32 = 0x8009_2013;
-const TRUST_E_SYSTEM_ERROR: u32 = 0x8009_6001;
-const TRUST_E_CERT_SIGNATURE: u32 = 0x8009_6004;
-const TRUST_E_TIME_STAMP: u32 = 0x8009_6005;
-const TRUST_E_BAD_DIGEST: u32 = 0x8009_6010;
 
 fn unsupported() -> InstallFailure {
     InstallFailure::new(FailureCode::UnsupportedTarget)
@@ -416,8 +378,4 @@ fn io_failure() -> InstallFailure {
 
 fn trust_denied() -> InstallFailure {
     InstallFailure::new(FailureCode::TrustDenied)
-}
-
-fn unavailable() -> InstallFailure {
-    InstallFailure::new(FailureCode::TrustUnavailable)
 }

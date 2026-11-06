@@ -43,7 +43,7 @@ pub use platform::{
     OwnedKind, OwnershipRecord, PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PackageKind,
     PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, Registration,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
-    ValidatedPath, WindowsPreimage, authenticate_package, claim_owned_entries,
+    ValidatedPath, WindowsPreimage, assessment_target, authenticate_package, claim_owned_entries,
     claim_owned_registration, is_accepted_assessment, parse_manifest, path_is_within,
 };
 pub use policy::{

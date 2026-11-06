@@ -1,44 +1,64 @@
 //! macOS OS trust adapter (Task 4).
 //!
 //! [`MacosPlatform::verify_trust`] is read-only and implements the macOS half of
-//! the package-authentication contract with Security.framework:
+//! the package-authentication contract with documented, public interfaces:
 //!
 //! * `SecStaticCodeCreateWithPath` + `SecStaticCodeCheckValidity` validate the
-//!   carrier app bundle with all architectures, nested code, the **resource
-//!   seal**, strict bundle structure, symlink/sideband restrictions, certificate
-//!   expiration and enforced certificate revocation checks. Revocation checks are
-//!   never disabled and no network-access opt-out is requested;
-//! * the Team ID from `SecCodeCopySigningInformation` is required to be a
-//!   well-formed Apple team identifier, and the bundle must satisfy a
-//!   Team-ID-pinned designated requirement (`anchor apple generic` plus
+//!   carrier app bundle with all architectures, nested code, strict bundle
+//!   structure, symlink/sideband restrictions, certificate expiration and
+//!   enforced certificate revocation checks. Revocation checks are never
+//!   disabled and no network-access opt-out is requested. The **resource
+//!   envelope is validated too**: `SecStaticCodeCheckValidity` validates the
+//!   sealed resources unless the caller passes `kSecCSDoNotValidateResources`,
+//!   and this adapter never passes it.
+//! * The Team ID from `SecCodeCopySigningInformation` must be a well-formed
+//!   Apple team identifier **and** one of the `team:<ID>` publishers the
+//!   caller-authorized release descriptor allows. The designated requirement is
+//!   built from that authorized Team ID (`anchor apple generic` plus
 //!   `certificate leaf[subject.OU]`; production additionally requires the
-//!   Developer ID intermediate/leaf markers);
-//! * the policy carrier resource under `Contents/Resources` must be the exact
-//!   sealed resource (`SecCodeValidateFileResource`), so a replaced carrier fails
-//!   closed even though the app signature still verifies;
-//! * Gatekeeper's own assessment (`SecAssessmentCreate` for the *execute*
-//!   operation) must allow the bundle, and a production package must also report
-//!   a notarization date and a stapled notarization ticket.
+//!   Developer ID intermediate/leaf markers). A requirement pinned only to the
+//!   *observed* Team ID would accept any Apple-anchored Developer ID bundle, so
+//!   the policy check happens first and a non-authorized team is denied.
+//! * Gatekeeper's execution assessment is the documented `spctl --assess
+//!   --type exec` entry point (the tool the plan lists), executed with a fixed
+//!   absolute tool path, structured argv (no shell), a timeout and captured
+//!   output. A rejection is `TrustDenied`; a spawn failure, timeout or error
+//!   status is `TrustUnavailable`. A bare `codesign` exit status is never
+//!   accepted as evidence: Gatekeeper's acceptance is the execution-policy and
+//!   notarization verdict for Developer ID code.
+//! * The policy carrier resource under `Contents/Resources` is read after
+//!   validation and the bundle is validated a second time, so a bundle that
+//!   changed before or during the read fails closed even though the app
+//!   signature still verifies.
 //!
-//! A non-zero `codesign`-style exit code is never accepted as evidence: every
-//! verdict above is the OS trust engine's, not a command exit status. The
-//! remaining [`Platform`] methods fail closed; Tasks 5 and 8 complete them.
+//! The private `SecAssessment*` SPI and `SecCodeValidateFileResource` SPI are
+//! deliberately not used: only documented public API is called. What therefore
+//! remains unverified without a native runner and a public byte-level resource
+//! accessor is recorded in the Task 4 report: the exact bytes read from the
+//! resource are not cryptographically proven to be the sealed blob (only the
+//! bundle's resource envelope is validated before and after the read), and the
+//! carrier descriptor equality check in the decision layer is what bounds the
+//! content that can be accepted.
+//!
+//! The remaining [`Platform`] methods fail closed; Tasks 5 and 8 complete them.
 
 use std::ffi::{CStr, c_char, c_void};
 use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::ptr;
+use std::thread;
+use std::time::{Duration, Instant};
 
+use super::macos_trust as policy;
 use super::{
     HostState, InstallLock, OwnedEntry, PACKAGE_MACOS_CARRIER, PackageKind, PackageSource,
     Platform, Registration, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath,
     path_is_within,
 };
-use crate::model::{
-    Channel, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target,
-};
+use crate::model::{FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
 
 /// Sealed carrier resource, relative to the bundle's `Contents` directory.
@@ -46,14 +66,15 @@ const CARRIER_RESOURCE_RELATIVE: &str = "Resources/veles-policy-carrier";
 /// Bound on the sealed carrier bytes (`TrustProof` enforces the same limit).
 const MAX_CARRIER_BYTES: usize =
     crate::policy::CARRIER_HEADER_LEN + crate::model::MAX_DOCUMENT_BYTES;
+/// Poll interval while waiting for the bounded Gatekeeper assessment.
+const SPCTL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 
-// SecCSFlags values from SecStaticCode.h. `kSecCSContentInformation` and
-// `kSecCSStrictValidate` intentionally share a numeric value: they belong to
-// different flag sets (information request vs validation option).
+// SecCSFlags values from SecStaticCode.h. `kSecCSStrictValidate` (1 << 4) shares
+// its numeric value with `kSecCSContentInformation`, which belongs to the
+// information-request flag set; this adapter uses the validation option only.
 const K_SEC_CS_SIGNING_INFORMATION: u32 = 1 << 1;
-const K_SEC_CS_CONTENT_INFORMATION: u32 = 1 << 4;
 const K_SEC_CS_CHECK_ALL_ARCHITECTURES: u32 = 1 << 0;
 const K_SEC_CS_CHECK_NESTED_CODE: u32 = 1 << 3;
 const K_SEC_CS_STRICT_VALIDATE: u32 = 1 << 4;
@@ -63,90 +84,28 @@ const K_SEC_CS_RESTRICT_SIDEBAND_DATA: u32 = 1 << 9;
 const K_SEC_CS_CONSIDER_EXPIRATION: u32 = 1 << 31;
 const K_SEC_CS_ENFORCE_REVOCATION_CHECKS: u32 = 1 << 30;
 
-// CSCommon.h OSStatus values. The SecBase certificate values (-67818/-67820/
-// -67843/-67844) are the long-standing Security.framework certificate codes.
-const ERR_SEC_CS_UNIMPLEMENTED: i32 = -67072;
-const ERR_SEC_CS_INVALID_OBJECT_REF: i32 = -67071;
-const ERR_SEC_CS_INVALID_FLAGS: i32 = -67070;
-const ERR_SEC_CS_OBJECT_REQUIRED: i32 = -67069;
-const ERR_SEC_CS_STATIC_CODE_NOT_FOUND: i32 = -67068;
-const ERR_SEC_CS_UNSIGNED: i32 = -67062;
-const ERR_SEC_CS_SIGNATURE_FAILED: i32 = -67061;
-const ERR_SEC_CS_SIGNATURE_NOT_VERIFIABLE: i32 = -67060;
-const ERR_SEC_CS_SIGNATURE_UNSUPPORTED: i32 = -67059;
-const ERR_SEC_CS_BAD_DICTIONARY_FORMAT: i32 = -67058;
-const ERR_SEC_CS_RESOURCES_NOT_SEALED: i32 = -67057;
-const ERR_SEC_CS_RESOURCES_NOT_FOUND: i32 = -67056;
-const ERR_SEC_CS_RESOURCES_INVALID: i32 = -67055;
-const ERR_SEC_CS_BAD_RESOURCE: i32 = -67054;
-const ERR_SEC_CS_RESOURCE_RULES_INVALID: i32 = -67053;
-const ERR_SEC_CS_REQ_INVALID: i32 = -67052;
-const ERR_SEC_CS_REQ_UNSUPPORTED: i32 = -67051;
-const ERR_SEC_CS_REQ_FAILED: i32 = -67050;
-const ERR_SEC_CS_BAD_OBJECT_FORMAT: i32 = -67049;
-const ERR_SEC_CS_INTERNAL_ERROR: i32 = -67048;
-const ERR_SEC_CS_SIGNATURE_INVALID: i32 = -67045;
-const ERR_SEC_CS_HELPER_FAILED: i32 = -67019;
-const ERR_SEC_CS_BAD_BUNDLE_FORMAT: i32 = -67028;
-const ERR_SEC_CS_BAD_MAIN_EXECUTABLE: i32 = -67010;
-const ERR_SEC_CS_UNSEALED_APP_ROOT: i32 = -67014;
-const ERR_SEC_CS_RESOURCE_NOT_SUPPORTED: i32 = -67016;
-const ERR_SEC_CS_UNSEALED_FRAMEWORK_ROOT: i32 = -67008;
-const ERR_SEC_CS_WEAK_RESOURCE_ENVELOPE: i32 = -67007;
-const ERR_SEC_CS_CANCELLED: i32 = -67006;
-const ERR_SEC_CS_INVALID_SYMLINK: i32 = -67003;
-const ERR_SEC_CS_NOT_APP_LIKE: i32 = -67002;
-const ERR_SEC_CS_SIGNATURE_UNTRUSTED: i32 = -66996;
-const ERR_SEC_CS_INVALID_TEAM_IDENTIFIER: i32 = -66998;
-const ERR_SEC_CS_BAD_TEAM_IDENTIFIER: i32 = -66997;
-const ERR_SEC_CS_REVOKED_NOTARIZATION: i32 = -66992;
-const ERR_SEC_CS_UNSIGNED_NESTED_CODE: i32 = -67022;
-const ERR_SEC_CS_BAD_NESTED_CODE: i32 = -67021;
-const ERR_SEC_CS_STATIC_CODE_CHANGED: i32 = -67034;
-const ERR_SEC_CERTIFICATE_EXPIRED: i32 = -67818;
-const ERR_SEC_CERTIFICATE_REVOKED: i32 = -67820;
-const ERR_SEC_NOT_TRUSTED: i32 = -67843;
-const ERR_SEC_TRUST_SETTING_DENY: i32 = -67844;
+/// Validation option every check in this adapter shares.
+///
+/// `kSecCSDoNotValidateResources` is deliberately absent: resource (seal)
+/// validation is part of the default `SecStaticCodeCheckValidity` behaviour, so
+/// the carrier bundle's resource envelope - including the policy carrier - is
+/// covered by the signature check.
+const SEC_STATIC_CODE_FLAGS: u32 = K_SEC_CS_CHECK_ALL_ARCHITECTURES
+    | K_SEC_CS_CHECK_NESTED_CODE
+    | K_SEC_CS_STRICT_VALIDATE
+    | K_SEC_CS_RESTRICT_SYMLINKS
+    | K_SEC_CS_RESTRICT_SIDEBAND_DATA
+    | K_SEC_CS_CONSIDER_EXPIRATION
+    | K_SEC_CS_ENFORCE_REVOCATION_CHECKS;
 
 type CFTypeRef = *const c_void;
 type CFStringRef = *const c_void;
 type CFURLRef = *const c_void;
 type CFDictionaryRef = *const c_void;
-type CFDataRef = *const c_void;
-type CFErrorRef = *mut c_void;
 type SecStaticCodeRef = *const c_void;
 type SecRequirementRef = *const c_void;
-type SecAssessmentRef = *const c_void;
 type OSStatus = i32;
 type Boolean = u8;
-
-type CFDictionaryRetainCallBack =
-    Option<unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void>;
-type CFDictionaryReleaseCallBack = Option<unsafe extern "C" fn(*const c_void, *const c_void)>;
-type CFDictionaryCopyDescriptionCallBack =
-    Option<unsafe extern "C" fn(*const c_void) -> *const c_void>;
-type CFDictionaryEqualCallBack =
-    Option<unsafe extern "C" fn(*const c_void, *const c_void) -> Boolean>;
-type CFDictionaryHashCallBack = Option<unsafe extern "C" fn(*const c_void) -> usize>;
-
-#[repr(C)]
-struct CFDictionaryKeyCallBacks {
-    version: isize,
-    retain: CFDictionaryRetainCallBack,
-    release: CFDictionaryReleaseCallBack,
-    copy_description: CFDictionaryCopyDescriptionCallBack,
-    equal: CFDictionaryEqualCallBack,
-    hash: CFDictionaryHashCallBack,
-}
-
-#[repr(C)]
-struct CFDictionaryValueCallBacks {
-    version: isize,
-    retain: CFDictionaryRetainCallBack,
-    release: CFDictionaryReleaseCallBack,
-    copy_description: CFDictionaryCopyDescriptionCallBack,
-    equal: CFDictionaryEqualCallBack,
-}
 
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
@@ -170,21 +129,9 @@ unsafe extern "C" {
         encoding: u32,
     ) -> Boolean;
     fn CFStringGetTypeID() -> usize;
-    fn CFBooleanGetTypeID() -> usize;
-    fn CFBooleanGetValue(value: CFTypeRef) -> Boolean;
     fn CFGetTypeID(value: CFTypeRef) -> usize;
     fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> CFTypeRef;
-    fn CFDictionaryCreateMutable(
-        allocator: CFTypeRef,
-        capacity: isize,
-        key_callbacks: *const CFDictionaryKeyCallBacks,
-        value_callbacks: *const CFDictionaryValueCallBacks,
-    ) -> CFDictionaryRef;
-    fn CFDictionarySetValue(dict: CFDictionaryRef, key: *const c_void, value: *const c_void);
-    fn CFDataCreate(allocator: CFTypeRef, bytes: *const u8, length: isize) -> CFDataRef;
     fn CFRelease(value: CFTypeRef);
-    static kCFTypeDictionaryKeyCallBacks: CFDictionaryKeyCallBacks;
-    static kCFTypeDictionaryValueCallBacks: CFDictionaryValueCallBacks;
 }
 
 #[link(name = "Security", kind = "framework")]
@@ -209,32 +156,7 @@ unsafe extern "C" {
         flags: u32,
         information: *mut CFDictionaryRef,
     ) -> OSStatus;
-    fn SecCodeValidateFileResource(
-        static_code: SecStaticCodeRef,
-        relative_path: CFStringRef,
-        file_data: CFDataRef,
-        flags: u32,
-    ) -> OSStatus;
-    // Gatekeeper's own assessment API (the one `spctl` uses). It is exported by
-    // Security.framework but not declared in the public SDK headers, so native
-    // linkage must be confirmed on a macOS runner before acceptance.
-    fn SecAssessmentCreate(
-        path: CFURLRef,
-        flags: u64,
-        context: CFDictionaryRef,
-        errors: *mut CFErrorRef,
-    ) -> SecAssessmentRef;
-    fn SecAssessmentCopyResult(
-        assessment: SecAssessmentRef,
-        flags: u64,
-        errors: *mut CFErrorRef,
-    ) -> CFDictionaryRef;
-    static kSecAssessmentContextKeyOperation: CFStringRef;
-    static kSecAssessmentOperationTypeExecute: CFStringRef;
-    static kSecAssessmentAssessmentVerdict: CFStringRef;
-    static kSecAssessmentAssessmentNotarizationDate: CFStringRef;
     static kSecCodeInfoTeamIdentifier: CFStringRef;
-    static kSecCodeInfoStapledNotarizationTicket: CFStringRef;
 }
 
 /// A retained/invalidated CoreFoundation object.
@@ -349,35 +271,15 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
     }
     let static_code = Cf::new(static_code).ok_or_else(unavailable)?;
 
-    let mut information: CFDictionaryRef = ptr::null();
-    // SAFETY: `static_code` is a live static code reference and `information` is
-    // a live out-parameter.
-    let status = unsafe {
-        SecCodeCopySigningInformation(
-            static_code.0,
-            K_SEC_CS_SIGNING_INFORMATION | K_SEC_CS_CONTENT_INFORMATION,
-            &mut information,
-        )
-    };
-    if status != 0 {
-        return Err(classify(status));
-    }
-    let information = Cf::new(information).ok_or_else(unavailable)?;
-
-    // SAFETY: the dictionary is a live retained signing-information dictionary;
-    // keys are the exported CFString constants.
-    let team_id = unsafe {
-        cf_string(CFDictionaryGetValue(
-            information.0,
-            kSecCodeInfoTeamIdentifier,
-        ))
-    }
-    .ok_or_else(trust_denied)?;
-    if !is_valid_team_id(&team_id) {
+    let team_id = observed_team_id(&static_code)?;
+    // The requirement may only be built from a Team ID the caller-authorized
+    // release descriptor already allows. Pinning the requirement to a merely
+    // *observed* Team ID would accept any Apple-anchored Developer ID bundle.
+    if !policy::is_authorized_team(&expected.policy.publishers, &team_id) {
         return Err(trust_denied());
     }
-
-    let requirement_text = publisher_requirement(expected.channel, &team_id);
+    let requirement_text =
+        policy::publisher_requirement(expected.channel, &team_id).ok_or_else(trust_denied)?;
     let requirement_text = cf_string_value(&requirement_text)?;
     let mut requirement: SecRequirementRef = ptr::null();
     // SAFETY: the CFString is live and `requirement` is a live out-parameter.
@@ -387,55 +289,142 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
     }
     let requirement = Cf::new(requirement).ok_or_else(trust_denied)?;
 
-    // Strict signature + resource-envelope validation against the publisher
-    // requirement. Revocation and expiration checks are enabled, never bypassed.
-    let flags = K_SEC_CS_CHECK_ALL_ARCHITECTURES
-        | K_SEC_CS_CHECK_NESTED_CODE
-        | K_SEC_CS_STRICT_VALIDATE
-        | K_SEC_CS_RESTRICT_SYMLINKS
-        | K_SEC_CS_RESTRICT_SIDEBAND_DATA
-        | K_SEC_CS_CONSIDER_EXPIRATION
-        | K_SEC_CS_ENFORCE_REVOCATION_CHECKS;
-    // SAFETY: both references are live retained code-signing objects.
-    let status = unsafe { SecStaticCodeCheckValidity(static_code.0, flags, requirement.0) };
-    if status != 0 {
-        return Err(classify(status));
-    }
-
-    if expected.channel.is_production() {
-        // SAFETY: `information` is a live signing-information dictionary.
-        let ticket =
-            unsafe { CFDictionaryGetValue(information.0, kSecCodeInfoStapledNotarizationTicket) };
-        if ticket.is_null() {
-            return Err(trust_denied());
-        }
-    }
+    // Strict signature, designated-requirement and resource-envelope validation.
+    // Revocation and expiration checks are enabled, never bypassed.
+    validate(&static_code, &requirement)?;
 
     let carrier_bytes = read_carrier_resource(&carrier)?;
-    let relative = cf_string_value(CARRIER_RESOURCE_RELATIVE)?;
-    let data = Cf::new(unsafe {
-        CFDataCreate(
-            ptr::null(),
-            carrier_bytes.as_ptr(),
-            carrier_bytes.len() as isize,
-        )
-    })
-    .ok_or_else(unavailable)?;
-    // The exact bytes read from disk must be the sealed resource; a replaced
-    // carrier fails closed even though the app's executable is still signed.
-    // SAFETY: `static_code`, `relative` and `data` are live CF objects.
-    let status = unsafe { SecCodeValidateFileResource(static_code.0, relative.0, data.0, 0) };
-    if status != 0 {
-        return Err(classify(status));
-    }
+    // Re-validate after reading the resource: any change to the bundle that
+    // happened before or during the read (including a replaced carrier) fails
+    // here. The sealed resource bytes cannot be fetched through a public API, so
+    // this second check is the documented, best-effort binding; the descriptor
+    // equality check in the decision layer is what actually bounds the content.
+    validate(&static_code, &requirement)?;
 
-    check_gatekeeper(url.0, expected.channel)?;
+    check_gatekeeper(carrier.path())?;
 
     TrustProof::new(
         format!("team:{team_id}"),
         TRUST_ASSESSMENT_MACOS_GATEKEEPER,
         carrier_bytes,
     )
+}
+
+/// The OS-observed Team ID, shape-checked.
+fn observed_team_id(static_code: &Cf) -> InstallResult<String> {
+    let mut information: CFDictionaryRef = ptr::null();
+    // SAFETY: `static_code` is a live static code reference and `information` is
+    // a live out-parameter.
+    let status = unsafe {
+        SecCodeCopySigningInformation(
+            static_code.0,
+            K_SEC_CS_SIGNING_INFORMATION,
+            &mut information,
+        )
+    };
+    if status != 0 {
+        return Err(classify(status));
+    }
+    let information = Cf::new(information).ok_or_else(unavailable)?;
+    // SAFETY: the dictionary is a live retained signing-information dictionary
+    // and the key is the exported CFString constant.
+    let team_id = unsafe {
+        cf_string(CFDictionaryGetValue(
+            information.0,
+            kSecCodeInfoTeamIdentifier,
+        ))
+    }
+    .ok_or_else(trust_denied)?;
+    if !policy::is_valid_team_id(&team_id) {
+        return Err(trust_denied());
+    }
+    Ok(team_id)
+}
+
+/// Validate the carrier bundle against the policy-derived requirement.
+fn validate(static_code: &Cf, requirement: &Cf) -> InstallResult<()> {
+    // SAFETY: both references are live retained code-signing objects.
+    let status =
+        unsafe { SecStaticCodeCheckValidity(static_code.0, SEC_STATIC_CODE_FLAGS, requirement.0) };
+    if status != 0 {
+        return Err(classify(status));
+    }
+    Ok(())
+}
+
+/// Run the bounded, documented Gatekeeper execution assessment.
+///
+/// `spctl` is invoked through its fixed absolute path with structured argv (no
+/// shell). The child cannot outlive the decision: the wait is bounded by
+/// [`policy::SPCTL_TIMEOUT`] and a timeout kills it. Output is fully drained but
+/// retained only up to [`policy::MAX_SPCTL_OUTPUT_BYTES`] per stream.
+fn check_gatekeeper(carrier: &Path) -> InstallResult<()> {
+    let mut command = Command::new(policy::SPCTL_PATH);
+    command
+        .args(policy::assessment_argv(carrier))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        // Loader injection cannot change which program runs (the path is
+        // absolute), but the variables are removed anyway; any assessment the
+        // tool cannot form is a fail-closed `TrustUnavailable`.
+        .env_remove("DYLD_INSERT_LIBRARIES")
+        .env_remove("DYLD_LIBRARY_PATH")
+        .env_remove("DYLD_FRAMEWORK_PATH")
+        .env_remove("DYLD_PRINT_TO_FILE")
+        .env("LC_ALL", "C");
+
+    let mut child = command.spawn().map_err(|_| unavailable())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let status = wait_bounded(&mut child);
+
+    let mut output = Vec::new();
+    if let Some(mut stdout) = stdout {
+        output.extend(policy::read_bounded(
+            &mut stdout,
+            policy::MAX_SPCTL_OUTPUT_BYTES,
+        ));
+    }
+    if let Some(mut stderr) = stderr {
+        output.extend(policy::read_bounded(
+            &mut stderr,
+            policy::MAX_SPCTL_OUTPUT_BYTES,
+        ));
+    }
+
+    let code = status.and_then(|status| status.code());
+    match policy::classify_assessment(code, &output) {
+        policy::SpctlOutcome::Accepted => Ok(()),
+        policy::SpctlOutcome::Denied => Err(trust_denied()),
+        policy::SpctlOutcome::Unavailable => Err(unavailable()),
+    }
+}
+
+/// Wait for the assessment, bounded by [`policy::SPCTL_TIMEOUT`].
+///
+/// Returns `None` for a timeout or wait failure after killing and reaping the
+/// child, so no process is left behind and no verdict is invented.
+fn wait_bounded(child: &mut Child) -> Option<ExitStatus> {
+    let deadline = Instant::now() + policy::SPCTL_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                thread::sleep(SPCTL_POLL_INTERVAL);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
 }
 
 fn open_carrier(package_root: &Path) -> InstallResult<PackageSource> {
@@ -477,92 +466,6 @@ fn read_carrier_resource(carrier: &PackageSource) -> InstallResult<Vec<u8>> {
         return Err(io_failure());
     }
     Ok(bytes)
-}
-
-/// Build the publisher designated requirement.
-///
-/// `team_id` is OS-verified signing information and is validated as ten
-/// uppercase alphanumeric characters before it is interpolated, so it cannot
-/// inject requirement syntax.
-fn publisher_requirement(channel: Channel, team_id: &str) -> String {
-    if channel.is_production() {
-        format!(
-            "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ \
-             and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ \
-             and certificate leaf[subject.OU] = \"{team_id}\""
-        )
-    } else {
-        format!("anchor apple generic and certificate leaf[subject.OU] = \"{team_id}\"")
-    }
-}
-
-fn is_valid_team_id(team_id: &str) -> bool {
-    team_id.len() == 10
-        && team_id
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-}
-
-fn check_gatekeeper(url: CFURLRef, channel: Channel) -> InstallResult<()> {
-    // SAFETY: the CF callback statics are the CoreFoundation exported constants.
-    let context = Cf::new(unsafe {
-        CFDictionaryCreateMutable(
-            ptr::null(),
-            1,
-            ptr::addr_of!(kCFTypeDictionaryKeyCallBacks),
-            ptr::addr_of!(kCFTypeDictionaryValueCallBacks),
-        )
-    })
-    .ok_or_else(unavailable)?;
-    // SAFETY: the context is a live mutable dictionary and the keys/values are
-    // the exported CFString constants for the execute operation.
-    unsafe {
-        CFDictionarySetValue(
-            context.0,
-            kSecAssessmentContextKeyOperation,
-            kSecAssessmentOperationTypeExecute,
-        );
-    }
-
-    let mut error: CFErrorRef = ptr::null_mut();
-    // SAFETY: `url` is live, `context` is a live dictionary and `error` is a
-    // live out-parameter.
-    let assessment = unsafe { SecAssessmentCreate(url, 0, context.0, &mut error) };
-    release_error(error);
-    let assessment = Cf::new(assessment).ok_or_else(unavailable)?;
-
-    let mut error: CFErrorRef = ptr::null_mut();
-    // SAFETY: the assessment is live and `error` is a live out-parameter.
-    let result = unsafe { SecAssessmentCopyResult(assessment.0, 0, &mut error) };
-    release_error(error);
-    let result = Cf::new(result).ok_or_else(unavailable)?;
-
-    // SAFETY: `result` is a live assessment-result dictionary.
-    let verdict = unsafe { CFDictionaryGetValue(result.0, kSecAssessmentAssessmentVerdict) };
-    if verdict.is_null()
-        // SAFETY: the values are live CF objects.
-        || unsafe { CFGetTypeID(verdict) } != unsafe { CFBooleanGetTypeID() }
-        || unsafe { CFBooleanGetValue(verdict) } == 0
-    {
-        return Err(trust_denied());
-    }
-
-    if channel.is_production() {
-        // SAFETY: `result` is a live dictionary.
-        let notarized =
-            unsafe { CFDictionaryGetValue(result.0, kSecAssessmentAssessmentNotarizationDate) };
-        if notarized.is_null() {
-            return Err(trust_denied());
-        }
-    }
-    Ok(())
-}
-
-fn release_error(error: CFErrorRef) {
-    if !error.is_null() {
-        // SAFETY: the caller owns the returned CFError reference.
-        unsafe { CFRelease(error.cast()) };
-    }
 }
 
 fn file_url(path: &Path) -> InstallResult<Cf> {
@@ -627,53 +530,7 @@ fn cf_string(value: CFTypeRef) -> Option<String> {
 
 /// Classify a Security.framework status into the installer vocabulary.
 fn classify(status: i32) -> InstallFailure {
-    match status {
-        ERR_SEC_CS_UNSIGNED
-        | ERR_SEC_CS_SIGNATURE_FAILED
-        | ERR_SEC_CS_SIGNATURE_UNSUPPORTED
-        | ERR_SEC_CS_BAD_DICTIONARY_FORMAT
-        | ERR_SEC_CS_RESOURCES_NOT_SEALED
-        | ERR_SEC_CS_RESOURCES_NOT_FOUND
-        | ERR_SEC_CS_RESOURCES_INVALID
-        | ERR_SEC_CS_BAD_RESOURCE
-        | ERR_SEC_CS_RESOURCE_RULES_INVALID
-        | ERR_SEC_CS_REQ_INVALID
-        | ERR_SEC_CS_REQ_UNSUPPORTED
-        | ERR_SEC_CS_REQ_FAILED
-        | ERR_SEC_CS_BAD_OBJECT_FORMAT
-        | ERR_SEC_CS_SIGNATURE_INVALID
-        | ERR_SEC_CS_BAD_BUNDLE_FORMAT
-        | ERR_SEC_CS_BAD_MAIN_EXECUTABLE
-        | ERR_SEC_CS_UNSEALED_APP_ROOT
-        | ERR_SEC_CS_UNSEALED_FRAMEWORK_ROOT
-        | ERR_SEC_CS_RESOURCE_NOT_SUPPORTED
-        | ERR_SEC_CS_WEAK_RESOURCE_ENVELOPE
-        | ERR_SEC_CS_INVALID_SYMLINK
-        | ERR_SEC_CS_NOT_APP_LIKE
-        | ERR_SEC_CS_SIGNATURE_UNTRUSTED
-        | ERR_SEC_CS_INVALID_TEAM_IDENTIFIER
-        | ERR_SEC_CS_BAD_TEAM_IDENTIFIER
-        | ERR_SEC_CS_REVOKED_NOTARIZATION
-        | ERR_SEC_CS_UNSIGNED_NESTED_CODE
-        | ERR_SEC_CS_BAD_NESTED_CODE
-        | ERR_SEC_CS_STATIC_CODE_CHANGED
-        | ERR_SEC_CERTIFICATE_EXPIRED
-        | ERR_SEC_CERTIFICATE_REVOKED
-        | ERR_SEC_NOT_TRUSTED
-        | ERR_SEC_TRUST_SETTING_DENY => trust_denied(),
-        // An assessment that could not be formed (permissions, missing code,
-        // broken trust database, API misuse) is retryable, never a success.
-        ERR_SEC_CS_UNIMPLEMENTED
-        | ERR_SEC_CS_INVALID_OBJECT_REF
-        | ERR_SEC_CS_INVALID_FLAGS
-        | ERR_SEC_CS_OBJECT_REQUIRED
-        | ERR_SEC_CS_STATIC_CODE_NOT_FOUND
-        | ERR_SEC_CS_SIGNATURE_NOT_VERIFIABLE
-        | ERR_SEC_CS_INTERNAL_ERROR
-        | ERR_SEC_CS_HELPER_FAILED
-        | ERR_SEC_CS_CANCELLED => unavailable(),
-        _ => unavailable(),
-    }
+    policy::classify_security_status(status).failure()
 }
 
 fn unsupported() -> InstallFailure {

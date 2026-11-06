@@ -53,6 +53,13 @@ mod windows;
 // tests, so its coverage checks are exercised on every host.
 #[cfg(any(windows, test))]
 mod pe;
+// The pure publisher/status logic of both native adapters is compiled for its
+// own target *and* for `cargo test`, so every security-relevant mapping is
+// asserted on any host instead of being trusted on a native runner.
+#[cfg(any(target_os = "macos", test))]
+mod macos_trust;
+#[cfg(any(windows, test))]
+mod windows_trust;
 
 #[cfg(target_os = "macos")]
 pub use macos::MacosPlatform;
@@ -1022,6 +1029,34 @@ impl PackageSource {
     }
 }
 
+/// Fail-closed classification of one native trust probe.
+///
+/// Both native adapters decide only two things about an OS verdict: it is an
+/// explicit denial, or no assessment could be formed. An accepted verdict is not
+/// representable here, so no caller can accidentally turn "unknown" into
+/// "trusted".
+#[cfg(any(windows, target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrustVerdict {
+    /// The OS formed an explicit denial (bad signature, wrong publisher,
+    /// revocation, failed requirement): fail without retry.
+    Deny,
+    /// The assessment could not be formed (offline revocation data, helper
+    /// failure, unknown status): fail closed but retryable.
+    Unavailable,
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+impl TrustVerdict {
+    /// The installer failure this verdict maps to.
+    pub(crate) fn failure(self) -> InstallFailure {
+        match self {
+            Self::Deny => InstallFailure::new(FailureCode::TrustDenied),
+            Self::Unavailable => InstallFailure::new(FailureCode::TrustUnavailable),
+        }
+    }
+}
+
 /// OS-verified signer/assessment evidence and the authenticated carrier bytes.
 ///
 /// This deliberately contains no descriptor: an unchecked descriptor is never a
@@ -1081,7 +1116,7 @@ impl TrustProof {
 /// signature, its certificate chain and the chain's revocation state.
 pub const TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE: &str = "windows-authenticode-trusted";
 /// Native assessment verdict: the macOS adapter accepted the strict
-/// code/resource seal, the Team-ID-pinned designated requirement and the
+/// code/resource seal, the policy-pinned designated requirement and the
 /// Gatekeeper assessment.
 pub const TRUST_ASSESSMENT_MACOS_GATEKEEPER: &str = "macos-gatekeeper-assessed";
 /// Windows package member holding the Authenticode-signed policy carrier binary.
@@ -1091,16 +1126,28 @@ pub const PACKAGE_MACOS_CARRIER: &str = "carrier.app";
 /// Upper bound on directory entries walked while checking a package payload tree.
 const MAX_PACKAGE_TREE_ENTRIES: usize = 1 << 20;
 
-/// Whether a [`TrustProof`] assessment verdict is one this engine accepts.
+/// The release target a native assessment verdict is evidence for.
 ///
-/// The vocabulary is closed: only a native adapter can produce these values, and
-/// any other string (including an adapter-specific "revoked"/"unsigned" string or
-/// a future verdict this build does not understand) fails closed.
-pub fn is_accepted_assessment(assessment: &str) -> bool {
-    matches!(
-        assessment,
-        TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE | TRUST_ASSESSMENT_MACOS_GATEKEEPER
-    )
+/// The vocabulary is closed: only a native adapter can produce these values and
+/// each verdict belongs to exactly one target/adapter. Any other string
+/// (including an adapter-specific "revoked"/"unsigned" string or a future
+/// verdict this build does not understand) has no target and fails closed.
+pub fn assessment_target(assessment: &str) -> Option<Target> {
+    match assessment {
+        TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE => Some(Target::WindowsX64),
+        TRUST_ASSESSMENT_MACOS_GATEKEEPER => Some(Target::MacosArm64),
+        _ => None,
+    }
+}
+
+/// Whether `assessment` is an accepted native verdict **for `target`**.
+///
+/// Binding the verdict to the descriptor target keeps the decision layer
+/// self-defending: a `macos-gatekeeper-assessed` proof can never satisfy a
+/// Windows release (or the reverse), even if an adapter or an injected proof
+/// reports a verdict from the other platform.
+pub fn is_accepted_assessment(assessment: &str, target: Target) -> bool {
+    assessment_target(assessment) == Some(target)
 }
 
 /// One payload file of an [`AuthenticatedPackage`], bound to its exact content.
@@ -1229,10 +1276,12 @@ impl AuthenticatedPackage {
 ///    macOS) and returns the OS signer/assessment plus the authenticated carrier
 ///    bytes. Any OS denial (`TrustDenied`) or unavailable required assessment
 ///    (`TrustUnavailable`) is returned unchanged.
-/// 3. The assessment verdict is in the closed native vocabulary, the carrier
-///    parses, its descriptor equals `expected` exactly, and the OS-verified signer
-///    is listed in that authenticated policy's publishers. Any mismatch is
-///    `TrustDenied`.
+/// 3. The assessment verdict belongs to the caller-authorized release target
+///    (`windows-authenticode-trusted` to `windows-x86_64`,
+///    `macos-gatekeeper-assessed` to `macos-arm64`) and is in the closed native
+///    vocabulary, the carrier parses, its descriptor equals `expected` exactly,
+///    and the OS-verified signer is listed in that authenticated policy's
+///    publishers. Any mismatch is `TrustDenied`.
 /// 4. `<package>/inventory.json` hashes to `descriptor.payload_id`, parses
 ///    strictly, matches every payload file's size and SHA-256, and `<package>/payload`
 ///    holds exactly the inventoried tree (no unreferenced, linked or special
@@ -1269,7 +1318,9 @@ fn authenticated_descriptor(
     proof: &TrustProof,
     expected: &ReleaseDescriptor,
 ) -> InstallResult<ReleaseDescriptor> {
-    if !is_accepted_assessment(proof.assessment()) {
+    // The verdict must be one this engine accepts *for this release target*: a
+    // macOS Gatekeeper proof cannot authenticate a Windows descriptor.
+    if !is_accepted_assessment(proof.assessment(), expected.target) {
         return Err(trust_denied());
     }
     let descriptor = read_carrier(proof.carrier()).map_err(|_| trust_denied())?;
