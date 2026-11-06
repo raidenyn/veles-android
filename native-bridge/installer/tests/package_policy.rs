@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use veles_bridge_installer::{
     Channel, DEVELOPMENT_HOST_NAME, Digest, FailureCode, InstallResult, InventoryEntry,
-    MAX_DOCUMENT_BYTES, MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, Operation,
+    MAX_DOCUMENT_BYTES, MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_POLICY_DIGESTS, Operation,
     PLACEHOLDER_EXTENSION_ID, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy, Target,
     canonical_json, effective_policy, extension_origin, parse_descriptor, parse_version,
     read_carrier, verify_inventory, write_carrier,
@@ -926,4 +926,45 @@ fn inventory_verification_rejects_an_escaping_ancestor_link() {
         }],
     )
     .expect("a contained path verifies");
+}
+
+/// F10: a merge that accumulates denials beyond the representable bound must fail
+/// with a deliberate policy code, never return a policy its own validator rejects.
+#[test]
+fn merged_policy_that_cannot_be_represented_is_a_policy_denial() {
+    let denials = |range: std::ops::Range<u32>| -> Vec<Digest> {
+        range.map(|n| Digest::of(&n.to_le_bytes())).collect()
+    };
+    let policy = |denied: Vec<Digest>| ReleasePolicy {
+        publishers: vec!["Publisher One".to_owned()],
+        denied_payloads: denied,
+        rollback_payloads: Vec::new(),
+        epoch: 3,
+    };
+
+    // Two individually valid policies denying 3000 *distinct* digests each.
+    let current = policy(denials(0..3000));
+    let incoming = policy(denials(3000..6000));
+    current.validate().expect("valid on its own");
+    incoming.validate().expect("valid on its own");
+    let outcome = effective_policy(&current, &incoming, Operation::Rollback);
+    match outcome {
+        Err(failure) => assert_eq!(failure.code, FailureCode::PolicyDenied),
+        Ok(merged) => panic!(
+            "merge returned a policy with {} denials that its own validator rejects: {:?}",
+            merged.denied_payloads.len(),
+            merged.validate().expect_err("over the bound").code
+        ),
+    }
+
+    // Exactly at the bound is still representable and still accumulates.
+    let half = u32::try_from(MAX_POLICY_DIGESTS / 2).expect("bound fits");
+    let merged = effective_policy(
+        &policy(denials(0..half)),
+        &policy(denials(half..2 * half)),
+        Operation::Rollback,
+    )
+    .expect("a merge at the bound is representable");
+    assert_eq!(merged.denied_payloads.len(), MAX_POLICY_DIGESTS);
+    merged.validate().expect("and valid");
 }

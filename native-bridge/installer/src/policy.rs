@@ -253,12 +253,18 @@ fn merge(current: &ReleasePolicy, incoming: &ReleasePolicy) -> InstallResult<Rel
         .filter(|digest| incoming.rollback_payloads.contains(*digest))
         .copied()
         .collect();
-    Ok(ReleasePolicy {
+    let merged = ReleasePolicy {
         publishers,
         denied_payloads,
         rollback_payloads,
         epoch: current.epoch,
-    })
+    };
+    // Two valid policies can accumulate more denials than one policy may carry.
+    // That is a refusal to compose (denials may never be dropped to make room),
+    // reported as the policy code - not a policy the persisted-state validator
+    // would later reject with an unrelated invalid-package error.
+    merged.validate().map_err(|_| policy_denied())?;
+    Ok(merged)
 }
 
 /// Any way `incoming` is more permissive than `current`.
