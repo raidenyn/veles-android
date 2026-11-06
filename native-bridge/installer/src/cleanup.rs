@@ -16,10 +16,14 @@
 //! 3. verifies its own absolute path, its own image digest and its own OS
 //!    signature against the request's pinned publisher *before* touching
 //!    anything, with a bounded hash and a bounded signature assessment;
-//! 4. waits **on that inherited handle** - not by reopening a pid - until it
-//!    signals that the parent exited, bounded by [`MAX_CLEANUP_TIMEOUT`] (10s).
-//!    A parent that exited after signalling therefore lets a legitimate cleanup
-//!    proceed, while a live parent keeps it pending;
+//! 4. waits **on that inherited handle** - not by reopening a pid - until the
+//!    parent *releases the capability*, bounded by [`MAX_CLEANUP_TIMEOUT`]
+//!    (10s). The installer writes one release byte as its last act before it
+//!    waits, and a parent that exits (or crashes) closes the channel, which the
+//!    helper observes as EOF; on macOS the same socketpair carries the peer
+//!    identity and the release. The helper therefore does **not** require the
+//!    installer to exit first: the installer writes the request, releases, then
+//!    waits for the helper ([`run_cleanup_helper`]);
 //! 5. opens the install root as an anchored traversal root and deletes only the
 //!    exact listed owned identities **relative to that handle**: every component
 //!    is opened without following links, the leaf's opened identity is compared
@@ -33,10 +37,12 @@
 //!    request's single-use capability) with a write deadline and exits non-zero
 //!    unless the status is `complete`.
 //!
-//! The helper never deletes its own image. It only exits; the installer, which
-//! is already waiting, deletes the staged image after observing the exit and
-//! authenticating the completion ([`remove_helper_after_exit`]) and verifies the
-//! path is gone. If that fails, the installer reports `CleanupPending`.
+//! The helper never deletes its own image. It only exits; the installer entry
+//! point that spawned it ([`run_cleanup_helper`]) waits for the authenticated
+//! completion **and** the process exit, deletes the staged image
+//! ([`remove_helper_after_exit`]), verifies that the path is gone and only then
+//! reports success. If any of those steps fails, the result is
+//! `CleanupPending`, never a completed uninstall.
 //!
 //! Nothing here terminates a process, invokes a shell, registers an autostart
 //! task or falls back to reboot-time deletion.
@@ -127,14 +133,26 @@ pub struct CleanupRequest {
     pub publisher: String,
     /// The installer process that spawned the helper.
     pub parent: ParentIdentity,
-    /// The **inherited handle** naming that exact parent process.
+    /// The **inherited handle** that names that exact parent process.
     ///
     /// Windows: an inherited `DuplicateHandle`d process handle with
     /// `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE`. macOS: an inherited
-    /// descriptor of a `socketpair` whose peer is the parent (`LOCAL_PEERPID`).
-    /// The helper authenticates the peer over this handle and waits on it, so it
-    /// never reopens a pid.
+    /// descriptor of a `socketpair` whose peer is the parent (`LOCAL_PEERPID`),
+    /// which also carries the release below. The helper authenticates the peer
+    /// over this handle, so it never reopens a pid.
     pub parent_handle: u64,
+    /// The inherited **release** handle: Windows only, `0` on macOS.
+    ///
+    /// The installer holds the write end of a pipe whose read end is this handle,
+    /// writes **one byte** to it as its last act before it waits for the helper,
+    /// and never writes again. A byte (or a broken pipe, meaning the parent
+    /// exited) is "the parent will not mutate anything again", which is what the
+    /// helper waits for. A request naming a handle the process does not hold, or
+    /// the wrong kind of object, is `ParentUnavailable` (never a silent proceed).
+    /// On macOS the socketpair named by `parent_handle` is both the identity and
+    /// the release channel (one byte on it is the release), so this field must be
+    /// `0`.
+    pub release_handle: u64,
     /// Deadline in milliseconds, clamped to [`MAX_CLEANUP_TIMEOUT`].
     pub deadline_ms: u64,
     /// Exact owned entries, leaves first and directories deepest-first.
@@ -254,12 +272,29 @@ impl CleanupCompletion {
     }
 }
 
-/// The state of the process the inherited handle names.
+/// What the inherited parent handle proves about the recorded parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentEvidence {
+    /// The handle names exactly this process: its pid **and** its start marker
+    /// were read from the handle itself.
+    Exact(ParentIdentity),
+    /// The handle names this pid, but the process has already exited, so its
+    /// start marker can no longer be read from the OS. This is accepted only when
+    /// the pid equals the request's parent pid: the pid comes from the OS for the
+    /// inherited handle (never from the request), and a *live* process with that
+    /// pid is reported as [`ParentEvidence::Exact`] and compared by start marker,
+    /// so a recycled pid cannot be accepted here.
+    Exited { pid: u32 },
+}
+
+/// The state of the capability's parent side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentState {
-    /// The same process is still alive; the helper must keep waiting.
+    /// The parent has not released the capability yet; the helper must keep
+    /// waiting (it is alive, or it holds the release handle open).
     Alive,
-    /// The handle signalled that the recorded process exited.
+    /// The parent released the capability: it closed the inherited release
+    /// channel as its last act, or the process exited.
     Exited,
     /// The OS would not say; the helper must not act.
     Unavailable,
@@ -274,11 +309,18 @@ pub trait CleanupChannel {
     /// Whether both ends are inherited anonymous/named pipe handles rather than
     /// a regular file, console or other redirect.
     fn is_inherited_pipe(&self) -> bool;
-    /// The identity the **inherited parent handle** names, when the OS reports it.
-    fn parent_handle(&self, handle: u64) -> Option<ParentIdentity>;
-    /// Block until the inherited handle signals that process exited, or until
-    /// `deadline`; `Alive` is returned only when the deadline elapsed.
-    fn parent_state(&mut self, handle: u64, deadline: Instant) -> ParentState;
+    /// What the **inherited parent handle** proves about the recorded parent,
+    /// when the OS reports anything at all.
+    fn parent_handle(&self, handle: u64) -> Option<ParentEvidence>;
+    /// Block until the parent releases the capability (`parent_handle` or
+    /// `release_handle` signals, or the process exits), or until `deadline`;
+    /// `Alive` is returned only when the deadline elapsed.
+    fn parent_state(
+        &mut self,
+        parent_handle: u64,
+        release_handle: u64,
+        deadline: Instant,
+    ) -> ParentState;
     /// Read one bounded request frame; must stop at the frame bound *and* at the
     /// deadline.
     fn read_request(&mut self, limit: usize, deadline: Instant) -> io::Result<Vec<u8>>;
@@ -437,10 +479,17 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
 
     // 2. The capability arrived over an inherited pipe, and the inherited parent
     // handle names exactly the recorded process. A file redirect, console or a
-    // recycled pid (the handle's start marker differs) is not that process.
-    if !channel.is_inherited_pipe()
-        || channel.parent_handle(request.parent_handle) != Some(request.parent)
-    {
+    // recycled pid (the handle's start marker differs) is not that process. A
+    // parent that exited after handing over the capability is still *provable*:
+    // the handle's pid comes from the OS and a live process with that pid is
+    // compared by start marker, so the exited case can only match the recorded
+    // parent pid.
+    let authenticated = match channel.parent_handle(request.parent_handle) {
+        Some(ParentEvidence::Exact(identity)) => identity == request.parent,
+        Some(ParentEvidence::Exited { pid }) => pid == request.parent.pid,
+        None => false,
+    };
+    if !channel.is_inherited_pipe() || !authenticated {
         return finish(
             channel,
             CleanupCompletion::pending(&request.transaction, CleanupReason::ForgedChannel),
@@ -459,9 +508,11 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
         );
     }
 
-    // 4. Wait on the inherited handle. No pid is reopened, so a parent that
-    // exited after signalling is observed as exited rather than as a stale pid.
-    match channel.parent_state(request.parent_handle, deadline) {
+    // 4. Wait for the parent to *release* the capability on the inherited
+    // handles. No pid is reopened, so a parent that exited after signalling is
+    // observed as released rather than as a stale pid, and the installer does not
+    // have to exit before the helper can proceed.
+    match channel.parent_state(request.parent_handle, request.release_handle, deadline) {
         ParentState::Exited => {}
         ParentState::Alive => {
             return finish(
@@ -605,6 +656,7 @@ pub fn parse_request(bytes: &[u8]) -> InstallResult<CleanupRequest> {
         || request.publisher.chars().any(char::is_control)
         || request.parent.pid == 0
         || request.parent_handle == 0
+        || request.release_handle == request.parent_handle
         || request.deadline_ms == 0
         || request.deadline_ms > MAX_CLEANUP_TIMEOUT.as_millis() as u64
         || request.entries.len() > MAX_CLEANUP_ENTRIES
@@ -805,6 +857,227 @@ pub fn remove_helper_after_exit(
         return Err(InstallFailure::new(FailureCode::CleanupPending));
     }
     Ok(())
+}
+
+/// The state of one process, as the OS reports it for *this* process.
+///
+/// The installer fills [`CleanupRequest::parent`] with it so the helper can prove
+/// that the inherited handle names the installer itself. `None` on a host that
+/// cannot supply a start marker (a non-product host, where the helper fails
+/// closed before that check anyway).
+pub fn parent_identity() -> Option<ParentIdentity> {
+    let pid = std::process::id();
+    process_start(pid).map(|start| ParentIdentity { pid, start })
+}
+
+/// One installed cleanup run.
+///
+/// Everything the installer must know to run the capability: the exact staged
+/// helper, the single-use capability and the exact owned entries. The helper
+/// never receives a command, a recursive target or a path to delete.
+#[derive(Debug, Clone)]
+pub struct HelperRun<'a> {
+    /// The staged helper image (outside the removable root).
+    pub helper_path: &'a Path,
+    /// The exact SHA-256 of the staged image.
+    pub helper_sha256: Digest,
+    /// The pinned publisher the helper's own signature must report.
+    pub publisher: &'a str,
+    /// The transaction the completion is bound to (hex, 32 bytes).
+    pub transaction: &'a str,
+    /// The single-use completion key (32 bytes).
+    pub capability: &'a [u8; CAPABILITY_BYTES],
+    /// The installer-owned install root the entries are relative to.
+    pub root: &'a Path,
+    /// The exact owned entries, leaves first and directories deepest-first.
+    pub entries: Vec<CleanupEntry>,
+    /// The whole-run bound, clamped to [`MAX_CLEANUP_TIMEOUT`].
+    pub timeout: Duration,
+}
+
+impl HelperRun<'_> {
+    /// The request frame for one set of inherited handle values.
+    fn request(
+        &self,
+        parent: ParentIdentity,
+        parent_handle: u64,
+        release_handle: u64,
+    ) -> CleanupRequest {
+        let deadline = self.timeout.min(MAX_CLEANUP_TIMEOUT);
+        CleanupRequest {
+            schema: CLEANUP_SCHEMA_VERSION,
+            magic: CLEANUP_MAGIC.to_owned(),
+            transaction: self.transaction.to_owned(),
+            capability: encode_hex(self.capability),
+            root: self.root.to_string_lossy().into_owned(),
+            helper_path: self.helper_path.to_string_lossy().into_owned(),
+            helper_sha256: self.helper_sha256,
+            publisher: self.publisher.to_owned(),
+            parent,
+            parent_handle,
+            release_handle,
+            deadline_ms: deadline.as_millis() as u64,
+            entries: self.entries.clone(),
+        }
+    }
+}
+
+/// Run one cleanup capability end to end and only report success when the
+/// installer's own obligations are met.
+///
+/// This is the entry point the uninstall/update operation calls. It stages the
+/// request, spawns the staged helper with its inherited channels, closes the
+/// release handle as its last act, waits for the process to exit, reads the one
+/// completion frame, authenticates it against the capability and transaction,
+/// then deletes the helper image and verifies that its path is gone
+/// ([`remove_helper_after_exit`]). Any deviation — no completion, an
+/// unauthenticated or pending completion, a helper that did not exit inside the
+/// deadline, an image that cannot be removed or is still present — is
+/// `CleanupPending`; a completed uninstall is never reported on partial evidence.
+pub fn run_cleanup_helper(run: &HelperRun<'_>) -> InstallResult<CleanupCompletion> {
+    let (completion, verdict) = run_cleanup_helper_detailed(run);
+    verdict?;
+    let completion = completion.ok_or_else(|| InstallFailure::new(FailureCode::CleanupPending))?;
+    Ok(completion)
+}
+
+/// [`run_cleanup_helper`] with the evidence kept.
+///
+/// Returns the completion that was read and authenticated (if any) together with
+/// the installer's verdict, so a caller can report *why* a cleanup is pending
+/// instead of only that it is. The verdict is `Ok(())` only when the completion
+/// was `complete`, the staged image was removed and its absence was observed.
+pub fn run_cleanup_helper_detailed(
+    run: &HelperRun<'_>,
+) -> (Option<CleanupCompletion>, InstallResult<()>) {
+    let completion = match spawn_helper(run) {
+        Ok(completion) => completion,
+        Err(failure) => return (None, Err(failure)),
+    };
+    let mut image = StdHelperImage;
+    let verdict = remove_helper_after_exit(
+        &mut image,
+        run.helper_path,
+        &completion,
+        run.capability,
+        run.transaction,
+    );
+    (Some(completion), verdict)
+}
+
+/// The start marker of one process, where the host can report one.
+#[cfg(any(windows, target_os = "macos"))]
+fn process_start(pid: u32) -> Option<u64> {
+    native::process_start(pid)
+}
+
+/// The start marker of one process, where the host can report one.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn process_start(_pid: u32) -> Option<u64> {
+    // A non-product host has no OS process identity to offer; the helper channel
+    // on such a host refuses every request before this value is used.
+    None
+}
+
+/// Authenticate one completion frame read from the helper.
+fn accept_completion(
+    frame: &[u8],
+    capability: &[u8; CAPABILITY_BYTES],
+    transaction: &str,
+) -> InstallResult<CleanupCompletion> {
+    if frame.is_empty() || frame.len() > MAX_CLEANUP_FRAME_BYTES {
+        return Err(InstallFailure::new(FailureCode::CleanupPending));
+    }
+    let completion: CleanupCompletion = serde_json::from_slice(frame)
+        .map_err(|_| InstallFailure::new(FailureCode::CleanupPending))?;
+    if completion.transaction != transaction || !completion.verify(capability) {
+        return Err(InstallFailure::new(FailureCode::CleanupPending));
+    }
+    Ok(completion)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn spawn_helper(run: &HelperRun<'_>) -> InstallResult<CleanupCompletion> {
+    native::spawn_helper(run)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn spawn_helper(run: &HelperRun<'_>) -> InstallResult<CleanupCompletion> {
+    portable_spawn::run(run)
+}
+
+/// The portable reference spawn: a bounded wait plus a bounded frame read.
+///
+/// It is the non-product host implementation of [`spawn_helper`]; the Windows and
+/// macOS adapters hand over a process handle / socketpair and a release pipe
+/// instead (`cleanup::native`). It exists so the installer-side ordering can be
+/// exercised on every host, and it is never selected by a shipped target.
+#[cfg(not(any(windows, target_os = "macos")))]
+mod portable_spawn {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+
+    pub(super) fn run(run: &HelperRun<'_>) -> InstallResult<CleanupCompletion> {
+        let pending = || InstallFailure::new(FailureCode::CleanupPending);
+        let deadline = Instant::now() + run.timeout.min(MAX_CLEANUP_TIMEOUT);
+        let parent = parent_identity().unwrap_or(ParentIdentity {
+            pid: std::process::id(),
+            start: 0,
+        });
+        let request = run.request(parent, 3, 0);
+        let frame = serde_json::to_vec(&request).map_err(|_| pending())?;
+        // The installer validates the request it is about to send exactly as the
+        // helper will, so a malformed capability fails here, not in the helper.
+        parse_request(&frame)?;
+        let mut child = Command::new(run.helper_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| pending())?;
+        {
+            let mut stdin = child.stdin.take().ok_or_else(pending)?;
+            stdin.write_all(&frame).map_err(|_| pending())?;
+            // Closing the request channel is the release: after this the installer
+            // will not write again.
+            drop(stdin);
+        }
+        // Wait for the process, bounded by the deadline. If it does not exit in
+        // time nothing is claimed and no image is removed.
+        let mut status = None;
+        while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(exit)) => {
+                    status = Some(exit);
+                    break;
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+                Err(_) => return Err(pending()),
+            }
+        }
+        let Some(status) = status else {
+            // Do not terminate the helper: it is left to finish on its own and the
+            // cleanup is reported as pending.
+            return Err(pending());
+        };
+        let mut frame = Vec::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            // Bounded read: one frame, never more.
+            stdout
+                .by_ref()
+                .take(MAX_CLEANUP_FRAME_BYTES as u64 + 1)
+                .read_to_end(&mut frame)
+                .map_err(|_| pending())?;
+        }
+        let completion = accept_completion(&frame, run.capability, run.transaction)?;
+        // The authenticated completion and the process exit must agree: a helper
+        // that reports success but did not exit successfully is not a success.
+        if completion.status == CleanupStatus::Complete && !status.success() {
+            return Err(pending());
+        }
+        Ok(completion)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,11 +1325,16 @@ mod portable {
             false
         }
 
-        fn parent_handle(&self, _handle: u64) -> Option<ParentIdentity> {
+        fn parent_handle(&self, _handle: u64) -> Option<ParentEvidence> {
             None
         }
 
-        fn parent_state(&mut self, _handle: u64, deadline: Instant) -> ParentState {
+        fn parent_state(
+            &mut self,
+            _parent_handle: u64,
+            _release_handle: u64,
+            deadline: Instant,
+        ) -> ParentState {
             // No process handle exists on a non-product host.
             std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
             ParentState::Unavailable

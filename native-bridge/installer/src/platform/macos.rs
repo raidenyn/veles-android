@@ -337,7 +337,7 @@ impl Platform for MacosPlatform {
     }
 
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
-        native_write_durable(self, path, bytes)
+        native_write_durable(self, path, bytes).map(|_| ())
     }
 
     fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
@@ -1061,7 +1061,6 @@ const T8_O_RDONLY: c_int = 0;
 const T8_O_RDWR: c_int = 2;
 const T8_O_CREAT: c_int = 0o200;
 const T8_O_EXCL: c_int = 0o2000;
-const T8_O_TRUNC: c_int = 0o1000;
 const T8_O_DIRECTORY: c_int = 0x10_0000;
 const T8_O_NOFOLLOW: c_int = 0x0100;
 const T8_O_CLOEXEC: c_int = 0x100_0000;
@@ -1071,7 +1070,6 @@ const ENOENT: i32 = 2;
 const ENOTEMPTY: i32 = 66;
 
 unsafe extern "C" {
-    fn open(path: *const c_char, flags: c_int, ...) -> c_int;
     fn openat(directory: c_int, path: *const c_char, flags: c_int, ...) -> c_int;
     fn mkdirat(directory: c_int, path: *const c_char, mode: u32) -> c_int;
     fn renameat(
@@ -1084,7 +1082,7 @@ unsafe extern "C" {
     fn symlinkat(target: *const c_char, directory: c_int, path: *const c_char) -> c_int;
     fn readlinkat(directory: c_int, path: *const c_char, buffer: *mut c_char, size: usize)
     -> isize;
-    fn fchmodat(directory: c_int, path: *const c_char, mode: u32, flags: c_int) -> c_int;
+    fn fchmod(fd: c_int, mode: u32) -> c_int;
     fn fstat(fd: c_int, status: *mut Stat) -> c_int;
     fn fstatat(directory: c_int, path: *const c_char, status: *mut Stat, flags: c_int) -> c_int;
     fn fsync(fd: c_int) -> c_int;
@@ -1436,44 +1434,41 @@ fn open_leaf_fd(directory: c_int, name: &OsStr, flags: c_int) -> InstallResult<c
     Ok(fd)
 }
 
-/// Apply owner-only permissions to a freshly created directory or file.
-fn set_owner_only(path: &Path) -> InstallResult<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| io_failure())
-}
-
 // ---------------------------------------------------------------------------
 // Cleanup helper support: an anchored traversal root.
 // ---------------------------------------------------------------------------
 
 /// The install root opened once as the anchor for every helper removal.
 ///
-/// Each relative entry is walked from this descriptor with `openat(2)` +
-/// `O_NOFOLLOW`, and each deletion is bound to the identity of the object that
-/// was opened and hashed (`fstat(2)` device/inode compared with the name's
-/// `fstatat(2)` immediately before `unlinkat(2)`). A pre-existing link at a
-/// component is never traversed, and a leaf swapped after hashing is preserved.
+/// The root is opened by walking its **whole** ancestor chain with `openat(2)` +
+/// `O_NOFOLLOW` from `/` (the links above it are resolved once, then the resolved
+/// chain is opened with no follow), and each relative entry is walked from this
+/// descriptor the same way. Each deletion is bound to the identity of the object
+/// that was opened and hashed: the verified entry is renamed to a fresh one-shot
+/// name inside its own directory, re-opened without following a link, compared
+/// with the hashed object and only then unlinked, so a leaf swapped for a
+/// replacement is put back and preserved instead of deleted. macOS `unlink(2)`
+/// is name-based (there is no `funlinkat`), so this rename-verify-delete sequence
+/// is what keeps the unlink bound to the verified object rather than the name.
 pub struct CleanupRoot {
     fd: c_int,
 }
 
 impl CleanupRoot {
-    /// Open `root` as a directory without following a final link.
+    /// Open `root` as an anchored directory.
+    ///
+    /// Only an installer-owned layout directory can be a cleanup root, and it is
+    /// opened from the file system root component by component without following
+    /// any link.
     pub fn open(root: &Path) -> io::Result<Self> {
-        let name = CString::new(root.as_os_str().as_bytes())
-            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-        // SAFETY: `name` is NUL-terminated and outlives the call.
-        let fd = unsafe {
-            open(
-                name.as_ptr(),
-                T8_O_RDONLY | T8_O_DIRECTORY | T8_O_NOFOLLOW | T8_O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
+        if !super::is_layout_root(root) {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
         }
-        Ok(Self { fd })
+        let handle = super::native::anchor::open_anchored(root)
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        Ok(Self {
+            fd: handle.into_fd(),
+        })
     }
 
     /// Open every intermediate component and return the leaf's parent descriptor
@@ -1597,23 +1592,8 @@ impl CleanupRoot {
             if Digest::from_bytes(hasher.finalize().into()) != sha256 {
                 return RemoveOutcome::Preserved;
             }
-            // Identity binding: the name must still be the object we hashed.
-            let observed = match stat_at(parent, name) {
-                Ok(observed) => observed,
-                Err(error) if error.raw_os_error() == Some(ENOENT) => return RemoveOutcome::Absent,
-                Err(_) => return RemoveOutcome::Preserved,
-            };
-            if !same_object(&status, &observed) {
-                return RemoveOutcome::Preserved;
-            }
-            // SAFETY: `parent` is live and `name` is NUL-terminated.
-            if unsafe { unlinkat(parent, name.as_ptr(), 0) } == 0 {
-                RemoveOutcome::Removed
-            } else if io::Error::last_os_error().raw_os_error() == Some(ENOENT) {
-                RemoveOutcome::Absent
-            } else {
-                RemoveOutcome::Preserved
-            }
+            // Bind the unlink to the object that was hashed, not to its name.
+            bind_and_unlink(parent, name, &status, false)
         })();
         // SAFETY: `fd` was opened here and is owned.
         unsafe {
@@ -1640,11 +1620,12 @@ impl CleanupRoot {
             Err(_) => return RemoveOutcome::Preserved,
         };
         let outcome = (|| {
-            let Ok(opened) = stat_at(parent, &name) else {
-                return match io::Error::last_os_error().raw_os_error() {
-                    Some(ENOENT) => RemoveOutcome::Absent,
-                    _ => RemoveOutcome::Preserved,
-                };
+            let opened = match stat_at(parent, &name) {
+                Ok(opened) => opened,
+                Err(error) if error.raw_os_error() == Some(ENOENT) => {
+                    return RemoveOutcome::Absent;
+                }
+                Err(_) => return RemoveOutcome::Preserved,
             };
             if mode_of(&opened) != S_IFLNK || opened.st_size < 0 || opened.st_size as u64 != size {
                 return RemoveOutcome::Preserved;
@@ -1666,21 +1647,9 @@ impl CleanupRoot {
             if Digest::of(&buffer) != sha256 {
                 return RemoveOutcome::Preserved;
             }
-            // The name must still be the same link object we just read.
-            let Ok(observed) = stat_at(parent, &name) else {
-                return RemoveOutcome::Preserved;
-            };
-            if !same_object(&opened, &observed) {
-                return RemoveOutcome::Preserved;
-            }
-            // SAFETY: `parent` is live and `name` is NUL-terminated.
-            if unsafe { unlinkat(parent, name.as_ptr(), 0) } == 0 {
-                RemoveOutcome::Removed
-            } else if io::Error::last_os_error().raw_os_error() == Some(ENOENT) {
-                RemoveOutcome::Absent
-            } else {
-                RemoveOutcome::Preserved
-            }
+            // The link object we read is the one that is unlinked, never the
+            // target and never a replacement that appeared at the same name.
+            bind_and_unlink(parent, &name, &opened, false)
         })();
         // SAFETY: `parent` was opened here and is owned.
         unsafe {
@@ -1697,16 +1666,18 @@ impl CleanupRoot {
             Err(_) => return RemoveOutcome::Preserved,
         };
         let outcome = (|| {
-            let Ok(opened) = stat_at(parent, &name) else {
-                return match io::Error::last_os_error().raw_os_error() {
-                    Some(ENOENT) => RemoveOutcome::Absent,
-                    _ => RemoveOutcome::Preserved,
-                };
+            let opened = match stat_at(parent, &name) {
+                Ok(opened) => opened,
+                Err(error) if error.raw_os_error() == Some(ENOENT) => {
+                    return RemoveOutcome::Absent;
+                }
+                Err(_) => return RemoveOutcome::Preserved,
             };
             if mode_of(&opened) != S_IFDIR {
                 return RemoveOutcome::Preserved;
             }
-            // Bind the removal to the opened object, not just the name.
+            // The name must be the directory that was opened, not a link that
+            // replaced it.
             // SAFETY: `parent` is live and `name` is NUL-terminated.
             let fd = unsafe {
                 openat(
@@ -1726,23 +1697,80 @@ impl CleanupRoot {
             if !matches!(bound, Ok(true)) {
                 return RemoveOutcome::Preserved;
             }
-            // SAFETY: `parent` is live and `name` is NUL-terminated.
-            if unsafe { unlinkat(parent, name.as_ptr(), AT_REMOVEDIR) } == 0 {
-                RemoveOutcome::Removed
-            } else {
-                match io::Error::last_os_error().raw_os_error() {
-                    Some(ENOENT) => RemoveOutcome::Absent,
-                    // Non-empty: preserved, never a recursive delete.
-                    Some(ENOTEMPTY) => RemoveOutcome::Preserved,
-                    _ => RemoveOutcome::Preserved,
-                }
-            }
+            // Directories are only ever removed when empty: a non-empty one is
+            // renamed back and preserved, never recursively deleted.
+            bind_and_unlink(parent, &name, &opened, true)
         })();
         // SAFETY: `parent` was opened here and is owned.
         unsafe {
             let _ = close(parent);
         }
         outcome
+    }
+}
+
+/// A fresh, one-shot name inside the same directory as `original`.
+fn fresh_entry_name(original: &CString) -> InstallResult<CString> {
+    let original = original.to_str().map_err(|_| unsafe_path())?;
+    let stem: String = original.chars().take(48).collect();
+    CString::new(format!(".{stem}.{}.cleanup", super::native::unique_token()))
+        .map_err(|_| unsafe_path())
+}
+
+/// Unlink exactly the object that was verified, by rebinding the name first.
+///
+/// `unlink(2)`/`unlinkat(2)` delete a *directory entry*, so checking the name's
+/// identity and then unlinking it leaves a window in which a replacement is
+/// deleted. Instead the verified entry is renamed to a fresh one-shot name in the
+/// same (already anchored) directory, the renamed entry is re-read without
+/// following a link, and only an identity match is unlinked — a mismatch renames
+/// the entry back, so the replacement is preserved rather than destroyed.
+fn bind_and_unlink(
+    parent: c_int,
+    name: &CString,
+    expected: &Stat,
+    remove_dir: bool,
+) -> RemoveOutcome {
+    let fresh = match fresh_entry_name(name) {
+        Ok(fresh) => fresh,
+        Err(_) => return RemoveOutcome::Preserved,
+    };
+    // SAFETY: `parent` is live and both names are NUL-terminated.
+    if unsafe { renameat(parent, name.as_ptr(), parent, fresh.as_ptr()) } != 0 {
+        return match io::Error::last_os_error().raw_os_error() {
+            Some(ENOENT) => RemoveOutcome::Absent,
+            _ => RemoveOutcome::Preserved,
+        };
+    }
+    let observed = stat_at(parent, &fresh).ok();
+    if observed
+        .as_ref()
+        .is_none_or(|status| !same_object(expected, status))
+    {
+        // Whatever was moved is not the object that was verified: put it back
+        // exactly where it was and report it preserved.
+        // SAFETY: `parent` is live and both names are NUL-terminated.
+        unsafe {
+            let _ = renameat(parent, fresh.as_ptr(), parent, name.as_ptr());
+        }
+        return RemoveOutcome::Preserved;
+    }
+    let flags = if remove_dir { AT_REMOVEDIR } else { 0 };
+    // SAFETY: `parent` is live and `fresh` is NUL-terminated.
+    if unsafe { unlinkat(parent, fresh.as_ptr(), flags) } == 0 {
+        return RemoveOutcome::Removed;
+    }
+    let error = io::Error::last_os_error();
+    // The unlink failed (a non-empty directory, a permission problem, a racing
+    // replacement): restore the entry under its real name so nothing is left
+    // under a one-shot name.
+    // SAFETY: `parent` is live and both names are NUL-terminated.
+    unsafe {
+        let _ = renameat(parent, fresh.as_ptr(), parent, name.as_ptr());
+    }
+    match error.raw_os_error() {
+        Some(ENOENT) => RemoveOutcome::Absent,
+        _ => RemoveOutcome::Preserved,
     }
 }
 
@@ -1758,22 +1786,35 @@ impl Drop for CleanupRoot {
 impl NativeFs for MacosPlatform {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
         native_ensure_layout(self, paths)?;
-        let mut options = fs::OpenOptions::new();
-        options.read(true).write(true).create(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-
-            options.mode(0o600).custom_flags(super::NO_FOLLOW);
-        }
-        let file = options.open(paths.lock_path()).map_err(|error| {
-            if error.raw_os_error() == Some(62) {
+        // The lock file is created **relative to the anchored root**, so its
+        // ancestors are opened and verified as a chain and cannot be redirected
+        // between validation and the open.
+        let root = super::native::anchor::open_anchored(paths.root())?;
+        let name = paths
+            .lock_path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(unsafe_path)?;
+        let c_name = c_component(OsStr::new(name))?;
+        // SAFETY: the root descriptor is live, `c_name` is NUL-terminated and the
+        // mode is only read for the creating open.
+        let fd = unsafe {
+            openat(
+                root.fd(),
+                c_name.as_ptr(),
+                T8_O_RDWR | T8_O_CREAT | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return match io::Error::last_os_error().raw_os_error() {
                 // ELOOP: the fixed lock name is a symbolic link.
-                unsafe_path()
-            } else {
-                io_failure()
-            }
-        })?;
+                Some(62) => Err(unsafe_path()),
+                _ => Err(io_failure()),
+            };
+        }
+        // SAFETY: `fd` was just opened and is owned here.
+        let file = unsafe { File::from_raw_fd(fd) };
         if !file.metadata().map_err(|_| io_failure())?.is_file() {
             return Err(unsafe_path());
         }
@@ -1788,10 +1829,21 @@ impl NativeFs for MacosPlatform {
     }
 
     fn validate_private_directory(&self, path: &Path) -> InstallResult<()> {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::fs::MetadataExt;
 
-        let metadata = fs::symlink_metadata(path).map_err(|_| io_failure())?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        // Open `<parent>/<leaf>` through an anchored parent handle: a link at the
+        // leaf fails the `O_DIRECTORY | O_NOFOLLOW` open, and a swapped ancestor
+        // fails the no-follow walk instead of redirecting the check.
+        let parent = path.parent().ok_or_else(unsafe_path)?;
+        let name = path.file_name().ok_or_else(unsafe_path)?;
+        let handle = super::native::anchor::open_anchored(parent)?;
+        let fd = open_leaf_fd(handle.fd(), name, T8_O_RDONLY | T8_O_DIRECTORY)
+            .map_err(|_| unsafe_path())?;
+        // SAFETY: `fd` was opened here and is owned.
+        let metadata = unsafe { File::from_raw_fd(fd) }
+            .metadata()
+            .map_err(|_| io_failure())?;
+        if !metadata.is_dir() {
             return Err(unsafe_path());
         }
         if metadata.uid() != super::effective_user_id() {
@@ -1799,32 +1851,83 @@ impl NativeFs for MacosPlatform {
         }
         // Group/other access to the install root would let another principal
         // plant or replace entries the installer later trusts.
-        if metadata.permissions().mode() & 0o077 != 0 {
+        if metadata.mode() & 0o077 != 0 {
             return Err(unsafe_path());
         }
         Ok(())
     }
 
-    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+    fn write_durable(
+        &self,
+        path: &ValidatedPath,
+        bytes: &[u8],
+    ) -> InstallResult<super::FileIdentity> {
         let handle = path.dir_handle()?;
-        let flags = match path.kind() {
-            PathKind::NewFile => T8_O_RDWR | T8_O_CREAT | T8_O_EXCL,
-            PathKind::File => T8_O_RDWR | T8_O_TRUNC,
+        let create = match path.kind() {
+            PathKind::NewFile => true,
+            // An existing file is opened **without** `O_TRUNC`: truncation is a
+            // destructive mutation and may only happen through the handle whose
+            // identity has been verified against the captured one.
+            PathKind::File => false,
             _ => return Err(unsafe_path()),
         };
-        let mut file = open_leaf(&handle, path.leaf_name()?, flags)?;
-        let metadata = file.metadata().map_err(|_| io_failure())?;
-        if path.kind() == PathKind::File {
-            // The opened object must be the one validation captured: a name
-            // swapped after validation cannot be written through.
-            path.verify_open(&metadata, &super::identity_of_file(&file)?)?;
-        } else if !metadata.is_file() {
-            return Err(unsafe_path());
+        let name = c_component(path.leaf_name()?)?;
+        let flags = if create {
+            T8_O_RDWR | T8_O_CREAT | T8_O_EXCL
+        } else {
+            T8_O_RDWR
+        };
+        // SAFETY: the parent descriptor is live, `name` is NUL-terminated and the
+        // mode is only read for the creating open.
+        let fd = unsafe {
+            openat(
+                handle.fd(),
+                name.as_ptr(),
+                flags | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return match io::Error::last_os_error().raw_os_error() {
+                Some(17) => Err(unsafe_path()),
+                _ => Err(io_failure()),
+            };
         }
-        use std::io::Write as _;
-        file.write_all(bytes).map_err(|_| io_failure())?;
-        file.sync_all().map_err(|_| io_failure())?;
-        read_back(&mut file, bytes).map_err(|_| io_failure())
+        let mut file = unsafe { File::from_raw_fd(fd) };
+        let outcome = (|| {
+            let metadata = file.metadata().map_err(|_| io_failure())?;
+            let identity = super::identity_of_file(&file)?;
+            if create {
+                if !metadata.is_file() {
+                    return Err(unsafe_path());
+                }
+            } else {
+                // Identity before mutation: only the object validation captured
+                // may be truncated and written.
+                path.verify_open(&metadata, &identity)?;
+                file.set_len(0).map_err(|_| io_failure())?;
+            }
+            use std::io::Write as _;
+            file.write_all(bytes).map_err(|_| io_failure())?;
+            file.sync_all().map_err(|_| io_failure())?;
+            read_back(&mut file, bytes).map_err(|_| io_failure())?;
+            Ok(identity)
+        })();
+        if outcome.is_err() && create {
+            // Remove only the object this call created, bound to its descriptor:
+            // a file somebody else planted at the same name is not ours to delete.
+            if let Ok(created) = stat_of(fd)
+                && let Ok(named) = stat_at(handle.fd(), &name)
+                && same_object(&created, &named)
+            {
+                // SAFETY: the parent descriptor is live and `name` is
+                // NUL-terminated.
+                unsafe {
+                    let _ = unlinkat(handle.fd(), name.as_ptr(), 0);
+                }
+            }
+        }
+        outcome
     }
 
     fn replace_file(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
@@ -1868,20 +1971,35 @@ impl NativeFs for MacosPlatform {
     }
 
     fn create_directory(&self, path: &Path) -> InstallResult<()> {
-        use std::os::unix::fs::DirBuilderExt;
-
-        let mut builder = fs::DirBuilder::new();
-        builder.mode(0o700);
-        match builder.create(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                return Err(unsafe_path());
-            }
-            Err(_) => return Err(io_failure()),
-        }
-        set_owner_only(path)?;
+        // Create the fixed component **relative to an anchored parent handle**:
+        // the parent chain is opened without following any link, so a swapped
+        // ancestor cannot redirect where the directory is created.
         let parent = path.parent().ok_or_else(unsafe_path)?;
-        super::flush_directory(parent)
+        let name = path.file_name().ok_or_else(unsafe_path)?;
+        let handle = super::native::anchor::open_anchored(parent)?;
+        let c_name = c_component(name)?;
+        // SAFETY: the parent descriptor is live and `c_name` is NUL-terminated.
+        if unsafe { mkdirat(handle.fd(), c_name.as_ptr(), 0o700) } != 0 {
+            return match io::Error::last_os_error().raw_os_error() {
+                Some(17) => Err(unsafe_path()),
+                _ => Err(io_failure()),
+            };
+        }
+        // The mode is applied to the descriptor that was just opened, never to the
+        // name (a name-addressed `chmod` could follow a substituted link).
+        let created = open_leaf_fd(handle.fd(), name, T8_O_RDONLY | T8_O_DIRECTORY)?;
+        // SAFETY: `created` was opened here and is owned.
+        let outcome = unsafe {
+            let result = if fchmod(created, 0o700) == 0 {
+                fsync_fd(created)
+            } else {
+                Err(io_failure())
+            };
+            let _ = close(created);
+            result
+        };
+        outcome?;
+        fsync_fd(handle.fd())
     }
 
     fn create_directory_at(&self, path: &ValidatedPath) -> InstallResult<()> {
@@ -1901,9 +2019,12 @@ impl NativeFs for MacosPlatform {
         // SAFETY: `openat` resolves the name we just created beneath the same
         // descriptor, with no-follow semantics.
         let created = open_leaf_fd(handle.fd(), path.leaf_name()?, T8_O_RDONLY | T8_O_DIRECTORY)?;
+        // The permission change is applied to the **descriptor** that was just
+        // opened, never to the name: `fchmodat` with flags 0 would resolve the
+        // name again and could follow a substituted symlink.
         // SAFETY: `created` was opened here and is owned.
         let chmod = unsafe {
-            let result = fchmodat(handle.fd(), name.as_ptr(), 0o700, 0);
+            let result = fchmod(created, 0o700);
             close(created);
             result
         };

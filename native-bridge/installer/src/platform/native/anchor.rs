@@ -58,6 +58,22 @@ pub(crate) fn open_chain(
     Ok(current)
 }
 
+/// Open one absolute directory by walking **every** component from the file
+/// system root with no-follow semantics.
+///
+/// Callers that have no earlier validation to compare against (the cleanup
+/// helper opening the install root named by a request, the installer creating a
+/// layout component) still must not hand the OS a path whose ancestor can be a
+/// link: the links above the path are resolved once (`canonicalize`, exactly as
+/// validation does) and the resolved chain is then opened component by
+/// component with `O_NOFOLLOW`/`FILE_OPEN_REPARSE_POINT`, so a component that is
+/// swapped for a link between the two steps is **refused** instead of traversed.
+/// The returned handle is the anchor every mutation is performed relative to.
+pub(crate) fn open_anchored(path: &Path) -> InstallResult<DirectoryHandle> {
+    let canonical = std::fs::canonicalize(path).map_err(|_| unsafe_path())?;
+    platform::open_walked(&canonical)
+}
+
 /// The macOS half: `open`/`openat` with `O_NOFOLLOW | O_DIRECTORY`.
 #[cfg(unix)]
 mod platform {
@@ -144,6 +160,55 @@ mod platform {
         }
     }
 
+    /// Open an absolute path by walking every component from `/` with
+    /// `O_NOFOLLOW`, so no component can be a link that redirects the walk.
+    pub(super) fn open_walked(canonical: &Path) -> InstallResult<DirectoryHandle> {
+        use std::path::Component;
+
+        let root_name = CString::new("/").map_err(|_| unsafe_path())?;
+        // SAFETY: the literal is NUL-terminated and outlives the call.
+        let root = unsafe { open(root_name.as_ptr(), O_RDONLY | O_DIRECTORY | O_CLOEXEC) };
+        if root < 0 {
+            return Err(io_failure());
+        }
+        let mut current = match wrap(root) {
+            Ok(handle) => handle,
+            Err(failure) => {
+                // SAFETY: `root` was just opened and is owned here.
+                unsafe {
+                    let _ = close(root);
+                }
+                return Err(failure);
+            }
+        };
+        for component in canonical.components() {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(name) => {
+                    let name = name.to_str().ok_or_else(unsafe_path)?;
+                    if name.is_empty() || name == "." || name == ".." {
+                        return Err(unsafe_path());
+                    }
+                    current = open_below(&current, name)?;
+                }
+                // `canonicalize` never yields these, and a caller-supplied one
+                // would escape the walk.
+                _ => return Err(unsafe_path()),
+            }
+        }
+        Ok(current)
+    }
+
+    impl DirectoryHandle {
+        /// Transfer the opened descriptor to the caller (the handle stops
+        /// closing it on drop).
+        pub(crate) fn into_fd(self) -> c_int {
+            let raw = self.raw as c_int;
+            std::mem::forget(self);
+            raw
+        }
+    }
+
     pub(super) fn open_below(
         parent: &DirectoryHandle,
         component: &str,
@@ -209,8 +274,8 @@ mod platform {
     use windows::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ATTRIBUTE_DIRECTORY,
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GetFileInformationByHandle, OPEN_EXISTING,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+        OPEN_EXISTING,
     };
     use windows::Win32::System::IO::IO_STATUS_BLOCK;
     use windows::core::PCWSTR;
@@ -224,12 +289,22 @@ mod platform {
     /// `GENERIC_READ | GENERIC_WRITE`: the directory handle is also the anchor a
     /// directory flush is issued on, which requires write access.
     const GENERIC_READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
+    /// `GENERIC_READ`: enough to traverse into a child with `RootDirectory`.
+    const GENERIC_READ_ONLY: u32 = 0x8000_0000;
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
     }
 
     pub(super) fn open_absolute(path: &Path) -> InstallResult<DirectoryHandle> {
+        open_absolute_with(path, GENERIC_READ_WRITE)
+    }
+
+    /// [`open_absolute`] with an explicit access mask: the walk above the anchor
+    /// only needs read/traverse access (a standard user cannot open `C:\` for
+    /// write), while the anchor itself is opened with the access its mutations
+    /// need.
+    fn open_absolute_with(path: &Path, access: u32) -> InstallResult<DirectoryHandle> {
         let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
         // The reparse-point flag opens a link itself; the attribute check below
         // then refuses it instead of silently following it.
@@ -237,7 +312,7 @@ mod platform {
         let handle = unsafe {
             CreateFileW(
                 PCWSTR(wide_path.as_ptr()),
-                FILE_GENERIC_READ.0 | 0x4000_0000,
+                access,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 None,
                 OPEN_EXISTING,
@@ -251,9 +326,88 @@ mod platform {
         wrap(handle)
     }
 
+    /// Open an absolute path by walking every component from its volume root
+    /// with `FILE_OPEN_REPARSE_POINT`, so no component can be a reparse point
+    /// that redirects the walk.
+    ///
+    /// Only the anchor itself (the last component) is opened with write access:
+    /// the components above it are read/traverse only, because a standard user
+    /// cannot open `C:\` or `%USERPROFILE%` for writing and the walk has no
+    /// reason to ask for it.
+    pub(super) fn open_walked(canonical: &Path) -> InstallResult<DirectoryHandle> {
+        use std::path::{Component, Prefix};
+
+        let mut components = canonical.components();
+        // A drive-letter root (`C:\`) is the only anchor this adapter can open
+        // component by component; a UNC share or a verbatim device path is
+        // refused rather than walked with an unverified ancestor.
+        let volume = match components.next() {
+            Some(Component::Prefix(prefix)) => match prefix.kind() {
+                Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                    format!("{}:\\", char::from(letter))
+                }
+                _ => return Err(unsafe_path()),
+            },
+            _ => return Err(unsafe_path()),
+        };
+        let mut names = Vec::new();
+        for component in components {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(name) => {
+                    let name = name.to_str().ok_or_else(unsafe_path)?;
+                    if name.is_empty() || name == "." || name == ".." {
+                        return Err(unsafe_path());
+                    }
+                    names.push(name.to_owned());
+                }
+                _ => return Err(unsafe_path()),
+            }
+        }
+        let mut current = open_absolute_with(
+            Path::new(&volume),
+            if names.is_empty() {
+                GENERIC_READ_WRITE
+            } else {
+                GENERIC_READ_ONLY
+            },
+        )?;
+        for (index, name) in names.iter().enumerate() {
+            let access = if index + 1 == names.len() {
+                GENERIC_READ_WRITE
+            } else {
+                GENERIC_READ_ONLY
+            };
+            current = open_below_with(&current, name, access)?;
+        }
+        Ok(current)
+    }
+
+    impl DirectoryHandle {
+        /// Transfer the opened handle to the caller (the handle stops closing it
+        /// on drop).
+        pub(crate) fn into_file(self) -> std::fs::File {
+            let raw = self.raw as RawHandle;
+            // SAFETY: `raw` is the live handle this value owns; forgetting the
+            // value transfers that ownership to the returned `File`.
+            unsafe {
+                std::mem::forget(self);
+                std::fs::File::from_raw_handle(raw)
+            }
+        }
+    }
+
     pub(super) fn open_below(
         parent: &DirectoryHandle,
         component: &str,
+    ) -> InstallResult<DirectoryHandle> {
+        open_below_with(parent, component, GENERIC_READ_WRITE)
+    }
+
+    fn open_below_with(
+        parent: &DirectoryHandle,
+        component: &str,
+        access: u32,
     ) -> InstallResult<DirectoryHandle> {
         let name: Vec<u16> = wide(component);
         if name.is_empty() {
@@ -280,7 +434,7 @@ mod platform {
         let status = unsafe {
             NtCreateFile(
                 &mut opened,
-                windows::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS(GENERIC_READ_WRITE),
+                windows::Win32::Storage::FileSystem::FILE_ACCESS_RIGHTS(access),
                 &attributes,
                 &mut status_block,
                 None,

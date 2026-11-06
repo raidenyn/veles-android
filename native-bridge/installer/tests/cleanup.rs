@@ -18,16 +18,20 @@ use std::time::{Duration, Instant};
 
 use veles_bridge_installer::cleanup::{
     CleanupChannel, CleanupCompletion, CleanupEntry, CleanupReason, CleanupRequest, CleanupStatus,
-    HelperImage, ParentIdentity, ParentState, SignaturePolicy, StdCleanupFs, encode_hex,
-    execute_cleanup, remove_helper_after_exit,
+    HelperImage, ParentEvidence, ParentIdentity, ParentState, SignaturePolicy, StdCleanupFs,
+    encode_hex, execute_cleanup, remove_helper_after_exit,
 };
+#[cfg(unix)]
+use veles_bridge_installer::cleanup::{HelperRun, hmac_sha256, run_cleanup_helper};
 use veles_bridge_installer::{Digest, OwnedKind};
 
 const PUBLISHER: &str = "team:ABCDE12345";
 const TRANSACTION: [u8; 32] = [0x11; 32];
 const CAPABILITY: [u8; 32] = [0x22; 32];
-/// The inherited parent-process handle value the request names.
+/// The inherited parent-reference handle value the request names.
 const PARENT_HANDLE: u64 = 3;
+/// The inherited release-pipe handle value the request names.
+const RELEASE_HANDLE: u64 = 4;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -137,6 +141,7 @@ fn request(fixture: &Fixture) -> CleanupRequest {
             start: 1_000_000,
         },
         parent_handle: PARENT_HANDLE,
+        release_handle: RELEASE_HANDLE,
         deadline_ms: 2_000,
         entries: fixture.entries.clone(),
     }
@@ -149,9 +154,12 @@ fn frame(request: &CleanupRequest) -> Vec<u8> {
 struct ScriptedChannel {
     request: Vec<u8>,
     is_pipe: bool,
-    peer: Option<ParentIdentity>,
-    /// The inherited handle value this double accepts as the parent.
+    /// What the inherited handle proves about the recorded parent.
+    evidence: Option<ParentEvidence>,
+    /// The inherited handle value this double accepts as the parent reference.
     handle: u64,
+    /// The release handle value the double expects (0 on macOS).
+    release: u64,
     state: ParentState,
     calls: Cell<usize>,
     read_deadline: Cell<Option<Instant>>,
@@ -163,8 +171,9 @@ impl ScriptedChannel {
         Self {
             request,
             is_pipe: true,
-            peer: Some(parent),
+            evidence: Some(ParentEvidence::Exact(parent)),
             handle: PARENT_HANDLE,
+            release: RELEASE_HANDLE,
             state,
             calls: Cell::new(0),
             read_deadline: Cell::new(None),
@@ -178,11 +187,14 @@ impl CleanupChannel for ScriptedChannel {
         self.is_pipe
     }
 
-    fn parent_handle(&self, handle: u64) -> Option<ParentIdentity> {
-        (handle == self.handle).then_some(self.peer).flatten()
+    fn parent_handle(&self, handle: u64) -> Option<ParentEvidence> {
+        (handle == self.handle).then_some(self.evidence).flatten()
     }
 
-    fn parent_state(&mut self, _handle: u64, deadline: Instant) -> ParentState {
+    fn parent_state(&mut self, handle: u64, release: u64, deadline: Instant) -> ParentState {
+        if handle != self.handle || release != self.release {
+            return ParentState::Unavailable;
+        }
         self.calls.set(self.calls.get() + 1);
         match self.state {
             // A real handle blocks until it signals or the deadline elapses.
@@ -252,10 +264,10 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     let fixture = build_fixture(&temp);
     let forged = request(&fixture);
     let mut channel = ScriptedChannel::new(frame(&forged), forged.parent, ParentState::Exited);
-    channel.peer = Some(ParentIdentity {
+    channel.evidence = Some(ParentEvidence::Exact(ParentIdentity {
         pid: forged.parent.pid,
         start: forged.parent.start + 1,
-    });
+    }));
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::CleanupPending);
@@ -265,7 +277,7 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     // 2b. A request that names a handle the process does not actually hold is
     //     refused the same way: the handle value is authenticated, never trusted.
     let mut forged = request(&fixture);
-    forged.parent_handle = PARENT_HANDLE + 1;
+    forged.parent_handle = PARENT_HANDLE + 2;
     let mut channel = ScriptedChannel::new(frame(&forged), forged.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
@@ -606,4 +618,159 @@ fn cleanup_without_signature_evidence_fails_closed() {
     assert_eq!(completion.status, CleanupStatus::CleanupPending);
     assert_eq!(completion.reason, Some(CleanupReason::SelfMismatch));
     assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
+}
+
+/// A parent that already exited after handing over the capability is still
+/// provable: the socket's peer pid is kernel-reported and only the recorded
+/// parent pid is accepted, so a recycled pid cannot pass.
+#[test]
+fn cleanup_accepts_an_exited_parent_only_for_the_recorded_pid() {
+    let temp = TempRoot::new("exited-parent");
+    let fixture = build_fixture(&temp);
+    let valid = request(&fixture);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+    channel.evidence = Some(ParentEvidence::Exited {
+        pid: valid.parent.pid,
+    });
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+    assert_eq!(completion.status, CleanupStatus::Complete);
+    assert!(!fixture.root.join("versions/1.0.0-test/host.exe").exists());
+
+    // A different pid is not the recorded parent, even though its start marker
+    // cannot be read either.
+    let temp = TempRoot::new("exited-foreign");
+    let fixture = build_fixture(&temp);
+    let valid = request(&fixture);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+    channel.evidence = Some(ParentEvidence::Exited {
+        pid: valid.parent.pid + 1,
+    });
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+    assert_eq!(completion.status, CleanupStatus::CleanupPending);
+    assert_eq!(completion.reason, Some(CleanupReason::ForgedChannel));
+    assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
+}
+
+/// One authenticated completion frame, as the helper would write it.
+#[cfg(unix)]
+fn helper_completion(
+    transaction: &str,
+    capability: &[u8; 32],
+    status: CleanupStatus,
+    reason: Option<CleanupReason>,
+) -> Vec<u8> {
+    let mut completion = CleanupCompletion {
+        schema: 1,
+        magic: "veles-cleanup-v1".to_owned(),
+        transaction: transaction.to_owned(),
+        status,
+        reason,
+        removed_files: 2,
+        removed_directories: 2,
+        preserved: 0,
+        mac: None,
+    };
+    completion.mac = Some(encode_hex(&hmac_sha256(
+        capability,
+        &completion.mac_input(),
+    )));
+    serde_json::to_vec(&completion).expect("completion frame")
+}
+
+/// A staged "helper" that writes one frame and exits `code`.
+#[cfg(unix)]
+fn staged_script(temp: &TempRoot, tag: &str, frame: Option<&[u8]>, code: i32) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = temp.path().join("private").join(format!("helper-{tag}"));
+    fs::create_dir_all(path.parent().expect("helper parent")).expect("helper dir");
+    let mut script = String::from("#!/bin/sh\n");
+    if let Some(frame) = frame {
+        script.push_str("cat <<'FRAME'\n");
+        script.push_str(&String::from_utf8_lossy(frame));
+        script.push_str("\nFRAME\n");
+    }
+    script.push_str(&format!("exit {code}\n"));
+    fs::write(&path, script).expect("helper script");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("executable");
+    path
+}
+
+/// The installer entry point that spawns the helper only reports success after
+/// the authenticated completion **and** the exit, and only then removes the
+/// staged image and observes that it is gone.
+#[cfg(unix)]
+#[test]
+fn cleanup_helper_handoff_removes_the_image_only_after_an_authenticated_complete() {
+    let transaction = encode_hex(&TRANSACTION);
+    let fixture = build_fixture(&TempRoot::new("handoff-root"));
+    let temp = TempRoot::new("handoff");
+    let root = install_root(&temp);
+    fs::create_dir_all(root.join("versions/1.0.0-test")).expect("root");
+    let entries = vec![entry("versions/1.0.0-test/host.exe", b"host-image")];
+    fn run_for<'a>(
+        helper: &'a Path,
+        transaction: &'a str,
+        root: &'a Path,
+        entries: &[CleanupEntry],
+    ) -> HelperRun<'a> {
+        HelperRun {
+            helper_path: helper,
+            helper_sha256: Digest::of(&fs::read(helper).expect("helper bytes")),
+            publisher: PUBLISHER,
+            transaction,
+            capability: &CAPABILITY,
+            root,
+            entries: entries.to_vec(),
+            timeout: Duration::from_secs(2),
+        }
+    }
+
+    // 1. An authenticated `complete` frame from a helper that exits 0: the image
+    //    is removed and its absence is observed.
+    let frame = helper_completion(&transaction, &CAPABILITY, CleanupStatus::Complete, None);
+    let helper = staged_script(&temp, "complete", Some(&frame), 0);
+    let completion = run_cleanup_helper(&run_for(&helper, &transaction, &root, &entries))
+        .expect("handoff completes");
+    assert_eq!(completion.status, CleanupStatus::Complete);
+    assert!(!helper.exists(), "the staged image is gone");
+
+    // 2. A pending completion is never a success, and the image is preserved.
+    let frame = helper_completion(
+        &transaction,
+        &CAPABILITY,
+        CleanupStatus::CleanupPending,
+        Some(CleanupReason::Leftover),
+    );
+    let helper = staged_script(&temp, "pending", Some(&frame), 1);
+    assert!(
+        run_cleanup_helper(&run_for(&helper, &transaction, &root, &entries)).is_err(),
+        "a pending completion is a pending cleanup"
+    );
+    assert!(
+        helper.exists(),
+        "a pending completion never removes the image"
+    );
+
+    // 3. A completion authenticated with the wrong capability is refused.
+    let frame = helper_completion(&transaction, &[0x33; 32], CleanupStatus::Complete, None);
+    let helper = staged_script(&temp, "forged", Some(&frame), 0);
+    assert!(run_cleanup_helper(&run_for(&helper, &transaction, &root, &entries)).is_err());
+    assert!(helper.exists());
+
+    // 4. No completion at all (the helper wrote nothing) is pending, never a
+    //    success, and the image is left alone.
+    let helper = staged_script(&temp, "silent", None, 0);
+    assert!(run_cleanup_helper(&run_for(&helper, &transaction, &root, &entries)).is_err());
+    assert!(helper.exists());
+
+    // 5. A helper that writes nothing and exits non-zero is pending too.
+    let helper = staged_script(&temp, "failed", None, 1);
+    assert!(run_cleanup_helper(&run_for(&helper, &transaction, &root, &entries)).is_err());
+    assert!(helper.exists());
+
+    // `fixture` keeps the shared request fixture alive for the whole test.
+    drop(fixture);
 }

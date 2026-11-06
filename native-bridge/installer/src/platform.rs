@@ -573,6 +573,23 @@ fn recheck_candidate(
     }
 }
 
+/// Whether `path`'s final component is one of the installer's fixed layout
+/// directory names.
+///
+/// A cleanup helper only ever opens an installer-owned layout directory as its
+/// traversal root, so an arbitrary accessible directory cannot be named by a
+/// request (or be opened by a mistaken call). This is a *shape* check, not proof
+/// of ownership: every entry below the root is still bound to its exact identity.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+pub(crate) fn is_layout_root(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(crate::paths::ROOT_DIR_PRODUCTION)
+            | Some(crate::paths::ROOT_DIR_DEVELOPMENT)
+            | Some(crate::paths::ROOT_DIR_FIXTURE)
+    )
+}
+
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FileIdentity {

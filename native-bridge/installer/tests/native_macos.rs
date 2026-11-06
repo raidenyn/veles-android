@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use veles_bridge_installer::cleanup::{
-    CleanupCompletion, CleanupStatus, StdHelperImage, remove_helper_after_exit,
+    CleanupReason, CleanupStatus, HelperRun, run_cleanup_helper_detailed,
 };
 use veles_bridge_installer::{
     Channel, Digest, FailureCode, InstallPaths, MACOS_CHROME_HOSTS_DIR, MacosCleanupRoot,
@@ -153,7 +153,11 @@ fn macos_atomic_replace_parent_flush_and_no_symlink_follow() {
     );
 
     // A planted file at a staging name is never adopted: every staging name is
-    // fresh and written with an exclusive create.
+    // fresh and written with an exclusive create. (The planted *link* above still
+    // occupies the live `receipt.json` slot, so it is removed first: the slot is
+    // only writable once it is a plain name again, which is the intended
+    // behaviour the refusal above proves.)
+    fs::remove_file(paths.state().join("receipt.json")).expect("drop the planted link");
     let planted = paths.state().join(".receipt.json.planted.tmp");
     fs::write(&planted, b"planted").expect("planted staging file");
     platform
@@ -419,8 +423,9 @@ fn cleanup_traversal_is_anchored_and_identity_bound() {
             Digest::of(b"host-image"),
             Instant::now() + Duration::from_secs(5),
         ),
-        RemoveOutcome::Preserved,
-        "an absent entry is not reported as removed through a stale handle"
+        RemoveOutcome::Absent,
+        "an intermediate component that is gone makes the entry absent (idempotent \
+         retry), never preserved"
     );
 
     // Replace `versions` with a link to a tree outside the root that holds a
@@ -445,8 +450,17 @@ fn cleanup_traversal_is_anchored_and_identity_bound() {
     );
 }
 
-/// The cleanup helper image is deleted by the **installer** after the helper
-/// exits, and its absence is observed. The helper itself never deletes it.
+/// The real staged helper is driven end to end through the installer entry
+/// point: it receives the inherited channels, authenticates the parent, is
+/// released, writes its **actual** authenticated completion, exits, and the
+/// installer then removes the image and observes that it is gone.
+///
+/// The fixture helper is unsigned (this executor has no Developer ID
+/// credentials, Task 13), so its self-verification reports `SelfMismatch` and it
+/// exits non-zero: that is the real completion, and the image must then be left
+/// alone while the installer reports `CleanupPending`. A runner that stages a
+/// signed helper (and sets `VELES_TEST_HELPER_PUBLISHER` to its Team ID) asserts
+/// the other half: `complete`, exit 0, and the image gone after the exit.
 #[test]
 fn cleanup_helper_image_disappears_after_exit() {
     let temp = TempRoot::new("helper-image");
@@ -455,48 +469,56 @@ fn cleanup_helper_image_disappears_after_exit() {
     fs::copy(env!("CARGO_BIN_EXE_veles-bridge-cleanup"), &staged).expect("stage the helper");
     fs::set_permissions(&staged, fs::Permissions::from_mode(0o700)).expect("executable");
 
-    // No inherited request pipe: the helper refuses the channel and exits
-    // non-zero without deleting its own image.
-    let mut child = process::Command::new(&staged)
-        .stdin(process::Stdio::null())
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .spawn()
-        .expect("spawn the staged helper");
-    let status = child.wait().expect("wait for the helper");
-    assert!(!status.success(), "refused cleanup reports a non-zero exit");
-    assert!(
-        staged.exists(),
-        "the helper must not delete its own image; that is the installer's job"
-    );
+    // A real installer-owned root outside the helper's private directory.
+    let root = temp.path().join("Veles").join("NativeBridge");
+    fs::create_dir_all(&root).expect("cleanup root");
 
-    // After observing the exit and authenticating the completion, the installer
-    // deletes the image and verifies it is gone.
-    // The installer authenticates the completion before deleting the image.
     let transaction = "11".repeat(32);
     let capability = [0x22u8; 32];
-    let mut completion = CleanupCompletion {
-        schema: 1,
-        magic: "veles-cleanup-v1".to_owned(),
-        transaction,
-        status: CleanupStatus::Complete,
-        reason: None,
-        removed_files: 1,
-        removed_directories: 1,
-        preserved: 0,
-        mac: None,
+    let publisher = std::env::var("VELES_TEST_HELPER_PUBLISHER").unwrap_or_else(|_| {
+        // An unsigned fixture can never report a team identifier, so the helper
+        // must fail closed with `SelfMismatch`; that is asserted below.
+        "team:UNSIGNED-FIXTURE".to_owned()
+    });
+    let run = HelperRun {
+        helper_path: &staged,
+        helper_sha256: Digest::of(&fs::read(&staged).expect("helper bytes")),
+        publisher: &publisher,
+        transaction: &transaction,
+        capability: &capability,
+        root: &root,
+        entries: Vec::new(),
+        timeout: Duration::from_secs(5),
     };
-    completion.mac = Some(veles_bridge_installer::encode_hex(
-        &veles_bridge_installer::hmac_sha256(&capability, &completion.mac_input()),
-    ));
-    let mut image = StdHelperImage;
-    remove_helper_after_exit(
-        &mut image,
-        &staged,
-        &completion,
-        &capability,
-        &completion.transaction,
-    )
-    .expect("installer removes the image");
-    assert!(!staged.exists(), "the staged helper image is gone");
+    let (completion, verdict) = run_cleanup_helper_detailed(&run);
+    let completion = completion.expect("the real helper always writes an authenticated completion");
+    assert!(
+        completion.verify(&capability),
+        "the completion is authenticated by the request capability"
+    );
+    assert_eq!(completion.transaction, transaction);
+    match completion.status {
+        CleanupStatus::Complete => {
+            verdict.expect("an authenticated complete is only reported when the image is gone");
+            assert!(
+                !staged.exists(),
+                "the installer removes the staged image after the authenticated exit"
+            );
+        }
+        CleanupStatus::CleanupPending => {
+            // This is the actual, authenticated result of the real helper on an
+            // unsigned fixture: it refuses to vouch for its own image.
+            assert_eq!(completion.reason, Some(CleanupReason::SelfMismatch));
+            assert_eq!(
+                verdict
+                    .expect_err("a pending completion is never a success")
+                    .code,
+                FailureCode::CleanupPending
+            );
+            assert!(
+                staged.exists(),
+                "a pending completion never removes the helper image"
+            );
+        }
+    }
 }

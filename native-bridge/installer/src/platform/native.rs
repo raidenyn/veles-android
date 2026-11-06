@@ -5,7 +5,10 @@
 //! ordering cannot drift between the platforms:
 //!
 //! * every existing layout directory must be owned by this user and private
-//!   before it is reused ([`NativeFs::validate_private_directory`]);
+//!   before it is reused ([`NativeFs::validate_private_directory`]); a missing
+//!   component is created and validated **relative to an anchored parent
+//!   handle**, never by re-walking the rendered path, and the lock file is opened
+//!   relative to the anchored root;
 //! * durable writes create or truncate one validated file, write every byte,
 //!   flush, read the exact bytes back and flush the parent directory;
 //! * [`Platform::replace_durable`](super::Platform::replace_durable) and the state
@@ -40,12 +43,22 @@
 //! * Windows: a file's bytes are durable after `FlushFileBuffers` on its handle.
 //!   A rename is performed with `NtSetInformationFile(FileRenameInformation)` on
 //!   the opened source handle with `RootDirectory` set to the opened destination
-//!   directory; the destination directory is then flushed with
-//!   `FlushFileBuffers`. There is **no public Win32 API that documents a
-//!   POSIX-style directory-entry flush**: the adapter performs the flush on the
-//!   directory handle and returns `Io` when the OS refuses, rather than ignoring
-//!   the failure and implying the POSIX guarantee. No `REPLACEFILE_WRITE_THROUGH`
-//!   or `MOVEFILE_WRITE_THROUGH` claim is made for a handle-relative rename.
+//!   directory.
+//!
+//!   **Directory durability is not claimed.** There is no public Win32 API that
+//!   documents a POSIX-style directory-entry flush, and `FlushFileBuffers` is
+//!   documented for *files*: issuing it on a directory handle is only a
+//!   best-effort ordering barrier, not a supported guarantee that a directory
+//!   entry survives power loss. The adapter therefore
+//!   (a) never claims POSIX-equivalent durability on Windows (no
+//!   `REPLACEFILE_WRITE_THROUGH`/`MOVEFILE_WRITE_THROUGH` implication either),
+//!   (b) fails closed when the barrier is refused — the flush maps to
+//!   `CleanupPending`, never a silent success, so a caller that needs the entry
+//!   durable reports a pending cleanup instead of a completed install, and
+//!   (c) only commits the durable intent after it, so a lost directory entry is
+//!   detected by the journal/receipt on the next run (the staged sibling and the
+//!   live document are re-examined, never assumed), rather than being silently
+//!   reported as a finished installation.
 
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -53,9 +66,9 @@ use std::path::Path;
 
 use super::{
     InstallLock, OwnedEntry, OwnedKind, PackageKind, PackageSource, PathKind, Registration,
-    StateDocument, ValidatedPath, carrier_entries_with, foreign_state, hash_file, invalid_input,
-    io_failure, is_link_like, is_owned_registration_preimage, read_no_follow, registration_target,
-    replace_file_checked, state_handle, state_relative, unsafe_path,
+    StateDocument, ValidatedPath, carrier_entries_with, foreign_state, hash_file, identity_of,
+    invalid_input, io_failure, is_link_like, is_owned_registration_preimage, read_no_follow,
+    registration_target, replace_file_checked, state_handle, state_relative, unsafe_path,
     validate_registration_manifest, write_durable_checked,
 };
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult};
@@ -86,7 +99,17 @@ pub(crate) trait NativeFs {
     fn validate_private_directory(&self, path: &Path) -> InstallResult<()>;
     /// Create-new or truncate one validated file, write every byte, flush it and
     /// read the exact bytes back through the same no-follow boundary.
-    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()>;
+    ///
+    /// The returned identity is the object the call created (for
+    /// [`PathKind::NewFile`]) or the verified object it truncated (for
+    /// [`PathKind::File`]), read from the opened handle. An existing file is only
+    /// truncated **after** its identity was verified, and a create-new failure
+    /// removes only the object this call created.
+    fn write_durable(
+        &self,
+        path: &ValidatedPath,
+        bytes: &[u8],
+    ) -> InstallResult<super::FileIdentity>;
     /// Atomically replace the `live` directory entry with the `staged` one.
     ///
     /// The two paths are siblings on the destination volume; `live` may be
@@ -204,17 +227,21 @@ pub(crate) fn native_lock(fs: &impl NativeFs, paths: &InstallPaths) -> InstallRe
 }
 
 /// Write all bytes durably through the native boundary.
+///
+/// The returned identity is the object the write created or truncated, read from
+/// the handle the primitive used: callers that stage a file bind their later
+/// rename/removal to it instead of re-reading the name.
 pub(crate) fn native_write_durable(
     fs: &impl NativeFs,
     path: &ValidatedPath,
     bytes: &[u8],
-) -> InstallResult<()> {
+) -> InstallResult<super::FileIdentity> {
     path.revalidate()?;
     fs.write_durable(path, bytes)
 }
 
-/// A one-shot token that makes each staging name unique.
-fn unique_token() -> String {
+/// A one-shot token that makes each staging/quarantine name unique.
+pub(crate) fn unique_token() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -246,16 +273,25 @@ fn staging_sibling(path: &ValidatedPath, suffix: &str) -> InstallResult<Validate
     )
 }
 
-/// Discard a staging sibling that was created but not renamed into place.
-fn discard_staging(fs: &impl NativeFs, staging: &ValidatedPath) {
-    // Re-adopt the exact file that was written so the unlink is identity-bound;
-    // an absent or replaced staging name is simply left alone.
-    if let Ok(existing) = staging.adopt(PathKind::File) {
-        let _ = fs.remove_entry(&existing);
+/// Discard a staging sibling **this call created**, identified by `created`.
+///
+/// The identity is the one the write reported for the object it created, so a
+/// file somebody else planted at the same name can never be adopted and deleted:
+/// [`NativeFs::remove_entry`] re-verifies the name against the captured identity
+/// and preserves anything else.
+fn discard_staging(fs: &impl NativeFs, staging: &ValidatedPath, created: &super::FileIdentity) {
+    if staging.captured_identity() != Some(created) {
+        return;
     }
+    let _ = fs.remove_entry(staging);
 }
 
 /// Stage `bytes` into a fresh sibling of `live`, then atomically replace `live`.
+///
+/// A staging name is one-shot, so it must be absent before the write: a name that
+/// somebody else already occupies is never adopted, truncated, renamed over the
+/// destination or deleted. The write itself removes only the object it created
+/// (its identity), so a failed write cannot destroy foreign content either.
 fn stage_and_replace(
     fs: &impl NativeFs,
     live: &ValidatedPath,
@@ -263,15 +299,29 @@ fn stage_and_replace(
     suffix: &str,
 ) -> InstallResult<()> {
     let staging = staging_sibling(live, suffix)?;
-    match native_write_durable(fs, &staging, bytes) {
-        Ok(()) => {}
+    match fs::symlink_metadata(staging.rendered()) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        // A fresh one-shot name is already occupied: refuse without touching it.
+        // The caller keeps its durable intent and retries with a new name.
+        Ok(_) => return Err(InstallFailure::new(FailureCode::CleanupPending)),
+        Err(_) => return Err(io_failure()),
+    }
+    let created = native_write_durable(fs, &staging, bytes)?;
+    let staged = staging.adopt(PathKind::File)?;
+    if staged.captured_identity() != Some(&created) {
+        // The name no longer holds the object this call wrote (and verified):
+        // publishing it would install foreign bytes.
+        discard_staging(fs, &staged, &created);
+        return Err(InstallFailure::new(FailureCode::CleanupPending));
+    }
+    match native_replace_file(fs, &staged, live) {
+        Ok(()) => Ok(()),
         Err(failure) => {
-            discard_staging(fs, &staging);
-            return Err(failure);
+            // The staged object is ours and now unreferenced: remove exactly it.
+            discard_staging(fs, &staged, &created);
+            Err(failure)
         }
     }
-    let staged = staging.adopt(PathKind::File)?;
-    native_replace_file(fs, &staged, live)
 }
 
 /// Replace one owned file without writing through its inode.
@@ -282,7 +332,7 @@ pub(crate) fn native_replace_durable(
 ) -> InstallResult<()> {
     path.revalidate()?;
     if path.kind() == PathKind::NewFile {
-        return native_write_durable(fs, path, bytes);
+        return native_write_durable(fs, path, bytes).map(|_| ());
     }
     if path.kind() != PathKind::File {
         return Err(unsafe_path());
@@ -578,8 +628,16 @@ impl NativeFs for StdNativeFs {
         Ok(())
     }
 
-    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
-        write_durable_checked(path, bytes, None, false).map(|_| ())
+    fn write_durable(
+        &self,
+        path: &ValidatedPath,
+        bytes: &[u8],
+    ) -> InstallResult<super::FileIdentity> {
+        write_durable_checked(path, bytes, None, false)?;
+        // The reference implementation is path-based by construction (it is not a
+        // production adapter): the identity is re-read from the name it wrote.
+        let metadata = fs::symlink_metadata(path.rendered()).map_err(|_| io_failure())?;
+        identity_of(path.rendered(), &metadata)
     }
 
     fn replace_file(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
@@ -741,7 +799,8 @@ mod tests {
     }
 
     /// A staging sibling is created fresh every time: an existing file at a
-    /// guessing-friendly staging name is never adopted or truncated.
+    /// guessing-friendly staging name is never adopted, truncated, deleted or
+    /// renamed over the destination.
     #[test]
     fn staging_names_are_fresh_and_never_adopted() {
         let temp = TempRoot::new("staging");
@@ -759,9 +818,10 @@ mod tests {
             native_write_durable(&fs, &first, b"ours").unwrap_err().code,
             FailureCode::UnsafePath
         );
+        // The planted file is neither adopted nor removed: a failed staging write
+        // only ever discards the exact object the write created.
         assert_eq!(std::fs::read(first.rendered()).unwrap(), b"planted");
-        discard_staging(&fs, &first);
-        assert!(!first.rendered().exists());
+        assert!(first.rendered().exists());
     }
 
     /// The shared native orchestration, exercised over `std` on every host.
