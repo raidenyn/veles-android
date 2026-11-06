@@ -10,7 +10,9 @@ read from the approved build runner before a Windows native build may proceed.
 violation and an empty list only when the supplied inventory matches the lock.
 A missing, mismatched or unresolved fingerprint always blocks: there is no
 warning mode, no ``*``/``latest`` pin and no fallback that treats an unknown
-toolchain as acceptable.
+toolchain as acceptable. The mandatory tool set, its target applicability and
+the required fingerprint formats come from ``REQUIRED_TOOLS`` below, never from
+the lock, so deleting or hollowing out a lock entry cannot make a build valid.
 
 An observed inventory is a JSON object shaped like::
 
@@ -71,6 +73,52 @@ FORBIDDEN_PAYLOAD_TOKENS = ("wix", "nsis_tauri_utils")
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+_BUILD_ID = re.compile(r"^[0-9A-Za-z]+$")
+_APPLE_VERSION = re.compile(r"^[0-9A-Za-z]+(?:[._][0-9A-Za-z]+)*$")
+
+# Every tool identity a reproducible installer build must present, its target
+# applicability and the exact fingerprints (and their formats) it must carry.
+# This table is the contract and is deliberately independent of the lock file:
+# a build cannot become valid by deleting or hollowing out a lock entry.
+# ``None`` means "exact non-placeholder string"; a compiled pattern enforces a
+# fingerprint format (versions and SHA-256 digests).
+REQUIRED_TOOLS: dict[str, dict[str, Any]] = {
+    "rust": {
+        "targets": ("windows-x86_64", "macos-arm64"),
+        "fingerprints": {
+            "channel": _SEMVER,
+            "profile": None,
+            "components": None,
+            "targets": None,
+        },
+    },
+    "xcode": {
+        "targets": ("macos-arm64",),
+        "fingerprints": {"version": _APPLE_VERSION, "build": _BUILD_ID},
+    },
+    "macos_sdk": {
+        "targets": ("macos-arm64",),
+        "fingerprints": {"version": _APPLE_VERSION},
+    },
+    "msvc": {
+        "targets": ("windows-x86_64",),
+        "fingerprints": {
+            "cl_version": _SEMVER,
+            "linker_version": _SEMVER,
+            "msvc_toolset_version": _SEMVER,
+            "msvc_toolset_sha256": _HEX64,
+        },
+    },
+    "windows_sdk": {
+        "targets": ("windows-x86_64",),
+        "fingerprints": {
+            "windows_sdk_version": _SEMVER,
+            "ucrt_version": _SEMVER,
+            "windows_sdk_sha256": _HEX64,
+        },
+    },
+}
 
 
 class ToolLockError(ValueError):
@@ -215,18 +263,34 @@ def _validate_targets(targets: dict) -> list[str]:
 
 def _validate_tools(tools: dict, target_names: set[str]) -> list[str]:
     errors: list[str] = []
-    if not tools:
-        errors.append("lock must pin at least one tool identity")
-    covered: set[str] = set()
-    for name in sorted(tools):
-        entry = tools[name]
+
+    # The mandatory tool set and its applicability are fixed by the plan, not by
+    # the lock: deleting an inconvenient entry, or hollowing it out to a
+    # placeholder identity, cannot shrink what a real build must present.
+    for name in sorted(REQUIRED_TOOLS):
+        if name not in tools:
+            errors.append(
+                f"lock must record the mandatory {name!r} tool identity for "
+                f"{', '.join(REQUIRED_TOOLS[name]['targets'])}"
+            )
+    for name in sorted(set(tools) - set(REQUIRED_TOOLS)):
         lowered = str(name).lower()
-        for token in FORBIDDEN_PAYLOAD_TOKENS:
-            if token in lowered:
-                errors.append(
-                    f"tool {name!r} is not part of the standalone installer toolchain: "
-                    "no WiX toolset or Tauri NSIS plugin is permitted"
-                )
+        if any(token in lowered for token in FORBIDDEN_PAYLOAD_TOKENS):
+            errors.append(
+                f"tool {name!r} is not part of the standalone installer toolchain: "
+                "no WiX toolset or Tauri NSIS plugin is permitted"
+            )
+        else:
+            errors.append(
+                f"tool {name!r} is not a reviewed installer tool; the lock pins exactly "
+                f"{sorted(REQUIRED_TOOLS)}"
+            )
+
+    for name in sorted(tools):
+        requirement = REQUIRED_TOOLS.get(name)
+        if requirement is None:
+            continue  # unknown tools are already rejected above
+        entry = tools[name]
         if not isinstance(entry, dict):
             errors.append(f"tool {name!r} must be a JSON object")
             continue
@@ -243,8 +307,11 @@ def _validate_tools(tools: dict, target_names: set[str]) -> list[str]:
         for target in tool_targets:
             if target not in target_names:
                 errors.append(f"tool {name!r} names unlocked target {target!r}")
-            else:
-                covered.add(target)
+        required_targets = list(requirement["targets"])
+        if set(tool_targets) != set(required_targets):
+            errors.append(
+                f"tool {name!r} must apply to exactly {required_targets}, found {sorted(tool_targets)}"
+            )
 
         identity = entry.get("identity")
         unresolved = entry.get("required_unresolved")
@@ -252,42 +319,75 @@ def _validate_tools(tools: dict, target_names: set[str]) -> list[str]:
             errors.append(f"tool {name!r} must pin exactly one of identity or required_unresolved")
             continue
         if identity is not None:
-            if not isinstance(identity, dict) or not identity:
-                errors.append(f"tool {name!r} identity must be a non-empty JSON object")
-                continue
-            for field in sorted(identity):
-                if not isinstance(field, str) or not field.strip():
-                    errors.append(f"tool {name!r} identity has an empty field name")
-                    continue
-                if not _is_exact_string(identity[field]):
-                    errors.append(
-                        f"tool {name!r} field {field!r} must be an exact string pin, "
-                        f"found {identity[field]!r}"
-                    )
-            continue
-
-        if not isinstance(unresolved, dict):
-            errors.append(f"tool {name!r} required_unresolved must be a JSON object")
-            continue
-        unknown = sorted(set(unresolved) - UNRESOLVED_KEYS)
-        if unknown:
-            errors.append(f"tool {name!r} required_unresolved has unknown fields: {', '.join(unknown)}")
-        reason = unresolved.get("reason")
-        if not isinstance(reason, str) or not reason.strip():
-            errors.append(f"tool {name!r} must explain why its identity is unresolved")
-        must_supply = unresolved.get("must_supply")
-        if not isinstance(must_supply, list) or not must_supply:
-            errors.append(f"tool {name!r} must list the fingerprints that have to be supplied")
+            errors.extend(_pinned_identity_errors(name, identity, requirement))
         else:
-            for field in must_supply:
-                if not isinstance(field, str) or not field.strip():
-                    errors.append(f"tool {name!r} required_unresolved lists an empty fingerprint name")
-            if len(set(must_supply)) != len(must_supply):
-                errors.append(f"tool {name!r} required_unresolved lists a duplicate fingerprint")
+            errors.extend(_unresolved_identity_errors(name, unresolved, requirement))
 
-    for target in TARGET_NAMES:
-        if target not in covered:
-            errors.append(f"target {target!r} has no locked tool identity")
+    return errors
+
+
+def _pinned_identity_errors(name: str, identity: Any, requirement: dict) -> list[str]:
+    """A pinned identity must contain exactly the mandatory fingerprints, well formed."""
+    if not isinstance(identity, dict) or not identity:
+        return [f"tool {name!r} identity must be a non-empty JSON object"]
+    fingerprints = requirement["fingerprints"]
+    errors: list[str] = []
+    missing = [field for field in fingerprints if field not in identity]
+    if missing:
+        errors.append(
+            f"tool {name!r} identity is missing the mandatory fingerprints: {', '.join(missing)}"
+        )
+    unexpected = sorted(set(identity) - set(fingerprints))
+    if unexpected:
+        errors.append(f"tool {name!r} identity has unreviewed fields: {', '.join(unexpected)}")
+    for field in fingerprints:
+        if field not in identity:
+            continue
+        value = identity[field]
+        if not _is_exact_string(value):
+            errors.append(f"tool {name!r} field {field!r} must be an exact string pin, found {value!r}")
+            continue
+        pattern = fingerprints[field]
+        if pattern is not None and not pattern.fullmatch(value):
+            errors.append(
+                f"tool {name!r} field {field!r} is not a valid fingerprint: {value!r}"
+            )
+    return errors
+
+
+def _unresolved_identity_errors(name: str, unresolved: Any, requirement: dict) -> list[str]:
+    """An unresolved identity must demand every mandatory fingerprint (fails closed)."""
+    if not isinstance(unresolved, dict):
+        return [f"tool {name!r} required_unresolved must be a JSON object"]
+    errors: list[str] = []
+    unknown = sorted(set(unresolved) - UNRESOLVED_KEYS)
+    if unknown:
+        errors.append(f"tool {name!r} required_unresolved has unknown fields: {', '.join(unknown)}")
+    reason = unresolved.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        errors.append(f"tool {name!r} must explain why its identity is unresolved")
+    must_supply = unresolved.get("must_supply")
+    if not isinstance(must_supply, list) or not must_supply:
+        errors.append(f"tool {name!r} must list the fingerprints that have to be supplied")
+        return errors
+    for field in must_supply:
+        if not isinstance(field, str) or not field.strip():
+            errors.append(f"tool {name!r} required_unresolved lists an empty fingerprint name")
+    if len(set(must_supply)) != len(must_supply):
+        errors.append(f"tool {name!r} required_unresolved lists a duplicate fingerprint")
+    required = set(requirement["fingerprints"])
+    supplied = {str(field) for field in must_supply if isinstance(field, str) and field.strip()}
+    missing = sorted(required - supplied)
+    if missing:
+        errors.append(
+            f"tool {name!r} required_unresolved must list every mandatory fingerprint: "
+            f"missing {', '.join(missing)}"
+        )
+    unexpected = sorted(supplied - required)
+    if unexpected:
+        errors.append(
+            f"tool {name!r} required_unresolved lists unreviewed fingerprints: {', '.join(unexpected)}"
+        )
     return errors
 
 

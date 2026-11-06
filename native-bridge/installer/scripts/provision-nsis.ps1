@@ -13,10 +13,11 @@ expanded or copied. This script is Windows-only (pwsh 7+ on Windows) and is
 never used at installer runtime.
 
 .PARAMETER Destination
-The directory that receives the extracted NSIS tree, for example
-build/native-bridge/installer/tools/nsis. It must be absolute, must not already
-exist, must not contain '..' segments and must not sit below a reparse point.
-The archive's own nsis-3.08/ root is preserved, so the locked compiler path is
+The directory that receives the extracted NSIS tree. It must be an absolute
+path inside the mandated build root build/native-bridge/installer/ (for example
+build/native-bridge/installer/tools/nsis), must not already exist, must not
+contain '..' segments and must not sit below a reparse point. The archive's own
+nsis-3.08/ root is preserved, so the locked compiler path is
 <Destination>/nsis-3.08/makensis.exe.
 #>
 [CmdletBinding()]
@@ -69,7 +70,23 @@ function Assert-NoReparsePointAncestor([string]$Path) {
     }
 }
 
+# Every generated installer file must stay under build/native-bridge/installer/.
+# Compare canonical absolute paths with a separator-terminated prefix so a
+# sibling such as build/native-bridge/installer-evil/ cannot match, using
+# Windows case-insensitive path semantics.
+function Assert-WithinBuildRoot([string]$Path, [string]$BuildRoot) {
+    if ($Path.Equals($BuildRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "destination must be a directory below the mandated build root: $BuildRoot"
+    }
+    $buildRootPrefix = $BuildRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $Path.StartsWith($buildRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "destination must stay inside the mandated build root $BuildRoot : $Path"
+    }
+}
+
 $installerDir = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = Split-Path -Parent (Split-Path -Parent $installerDir)
+$buildRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot 'build/native-bridge/installer'))
 $lockPath = Join-Path $installerDir 'config/tools.lock.json'
 if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
     throw "missing reviewed tool lock: $lockPath"
@@ -104,6 +121,9 @@ if (-not $nsis.makensis.StartsWith($rootPrefix)) {
 }
 
 $destinationPath = Assert-AbsoluteCheckedPath $Destination '-Destination'
+# Containment is enforced on the canonical path before anything is created,
+# downloaded or extracted.
+Assert-WithinBuildRoot $destinationPath $buildRoot
 if (Test-Path -LiteralPath $destinationPath) {
     throw "destination must not already exist: $destinationPath"
 }

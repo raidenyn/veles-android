@@ -14,6 +14,7 @@ happened: those native steps are recorded separately in the task report.
 """
 
 import copy
+import posixpath
 import re
 import sys
 import tomllib
@@ -69,13 +70,18 @@ def fill_unresolved(lock):
     """Return a copy of the lock with test-only identities for unresolved tools.
 
     The synthetic values exist only to prove the validator's comparison and
-    blocking behaviour; they are never written to the checked-in lock.
+    blocking behaviour; they are never written to the checked-in lock. They are
+    format-valid (semantic versions and 64-hex digests) so a test that wants a
+    *format* failure has to introduce it deliberately.
     """
     filled = copy.deepcopy(lock)
     for entry in filled["tools"].values():
         unresolved = entry.pop("required_unresolved", None)
         if unresolved is not None:
-            entry["identity"] = {field: "fixture-" + field for field in unresolved["must_supply"]}
+            entry["identity"] = {
+                field: ("a" * 64 if field.endswith("_sha256") else "1.2.3")
+                for field in unresolved["must_supply"]
+            }
     return filled
 
 
@@ -90,6 +96,24 @@ def walk_strings(value, path=()):
             yield from walk_strings(item, path + (str(index),))
     elif isinstance(value, str):
         yield path, value
+
+
+# The plan requires every generated installer file to stay under this root.
+BUILD_ROOT_SUFFIX = ("build", "native-bridge", "installer")
+
+
+def model_destination_inside_build_root(destination, repository="/repo"):
+    """Python model of provision-nsis.ps1's canonical build-root containment rule.
+
+    Kept in lockstep with the reviewed PowerShell predicate by
+    test_provisioner_confines_output_to_the_build_root. This is a source-level
+    contract model, not evidence that the script ran.
+    """
+    root = posixpath.normpath(posixpath.join(repository, *BUILD_ROOT_SUFFIX))
+    path = posixpath.normpath(destination)
+    if path.lower() == root.lower():
+        return False
+    return path.lower().startswith(root.lower() + "/")
 
 
 class NsisPinTests(unittest.TestCase):
@@ -231,11 +255,11 @@ class ValidateToolsTests(unittest.TestCase):
             self.assertTrue(any(f"{tool}.{field}" in error for error in errors), errors)
 
         mismatch = copy.deepcopy(filled_windows)
-        mismatch["tools"]["msvc"]["linker_version"] = "fixture-other-linker"
+        mismatch["tools"]["msvc"]["linker_version"] = "9.9.9"
         errors = release_config.validate_tools(filled, mismatch)
         self.assertTrue(errors, "a mismatched linker fingerprint must block")
         self.assertTrue(
-            any("linker_version" in error and "fixture-other-linker" in error for error in errors), errors
+            any("linker_version" in error and "9.9.9" in error for error in errors), errors
         )
 
         unset_archive = copy.deepcopy(macos)
@@ -313,6 +337,88 @@ class ValidateToolsTests(unittest.TestCase):
         self.assertIn("aarch64-apple-darwin", rust["targets"])
         self.assertEqual(lock["tools"]["rust"]["targets"], ["windows-x86_64", "macos-arm64"])
 
+    def test_mandatory_tool_entries_cannot_be_deleted(self):
+        """Deleting an inconvenient tool entry must not shrink the contract."""
+        lock = load_lock()
+        broken = copy.deepcopy(lock)
+        del broken["tools"]["msvc"]
+        del broken["tools"]["windows_sdk"]
+        errors = release_config.validate_lock(broken)
+        self.assertTrue(errors, "deleting the Windows compiler/SDK entries must block")
+        self.assertTrue(any("msvc" in error for error in errors), errors)
+        self.assertTrue(any("windows_sdk" in error for error in errors), errors)
+        observed = {
+            "target": "windows-x86_64",
+            "tools": {"rust": dict(lock["tools"]["rust"]["identity"])},
+        }
+        self.assertTrue(
+            release_config.validate_tools(broken, observed),
+            "a lock without the mandatory Windows tools must not validate a Windows build",
+        )
+
+    def test_resolved_windows_tools_still_require_every_fingerprint(self):
+        """Replacing required_unresolved with a placeholder identity must block."""
+        lock = load_lock()
+        broken = copy.deepcopy(lock)
+        for tool in ("msvc", "windows_sdk"):
+            broken["tools"][tool] = {
+                "targets": ["windows-x86_64"],
+                "identity": {"version": "1.0"},
+            }
+        errors = release_config.validate_lock(broken)
+        self.assertTrue(any("cl_version" in error for error in errors), errors)
+        self.assertTrue(any("windows_sdk_version" in error for error in errors), errors)
+        self.assertTrue(any("linker_version" in error for error in errors), errors)
+        self.assertTrue(any("ucrt_version" in error for error in errors), errors)
+        # Even a matching observation of the placeholder identity must not pass.
+        observed = complete_observation(lock, "windows-x86_64")
+        observed["tools"]["msvc"] = {"version": "1.0"}
+        observed["tools"]["windows_sdk"] = {"version": "1.0"}
+        self.assertTrue(
+            release_config.validate_tools(broken, observed),
+            "an identity without the mandatory compiler/linker/SDK fingerprints must not validate",
+        )
+
+    def test_tool_applicability_and_fingerprint_formats_are_enforced(self):
+        lock = load_lock()
+
+        # Target applicability is fixed by the plan, not by the lock entry.
+        moved = copy.deepcopy(lock)
+        for tool in ("msvc", "windows_sdk"):
+            moved["tools"][tool]["targets"] = ["macos-arm64"]
+        errors = release_config.validate_lock(moved)
+        self.assertTrue(any("windows-x86_64" in error for error in errors), errors)
+
+        # required_unresolved must list every mandatory fingerprint.
+        truncated = copy.deepcopy(lock)
+        truncated["tools"]["msvc"]["required_unresolved"]["must_supply"] = ["cl_version"]
+        errors = release_config.validate_lock(truncated)
+        self.assertTrue(any("linker_version" in error for error in errors), errors)
+
+        # A resolved identity must carry format-valid digests.
+        for tool, field in (
+            ("msvc", "msvc_toolset_sha256"),
+            ("windows_sdk", "windows_sdk_sha256"),
+        ):
+            filled = fill_unresolved(lock)
+            filled["tools"][tool]["identity"][field] = "NOT-A-DIGEST"
+            errors = release_config.validate_lock(filled)
+            self.assertTrue(any(field in error for error in errors), errors)
+            self.assertTrue(any("sha256" in error for error in errors), errors)
+
+        # A resolved identity missing one fingerprint blocks even if the
+        # observation matches the shrunken identity exactly.
+        filled = fill_unresolved(lock)
+        del filled["tools"]["msvc"]["identity"]["linker_version"]
+        errors = release_config.validate_tools(filled, complete_observation(filled, "windows-x86_64"))
+        self.assertTrue(any("linker_version" in error for error in errors), errors)
+
+        # Only the reviewed tools may appear.
+        unknown = copy.deepcopy(lock)
+        unknown["tools"]["clang"] = {"targets": ["windows-x86_64"], "identity": {"version": "1.0"}}
+        errors = release_config.validate_lock(unknown)
+        self.assertTrue(any("clang" in error for error in errors), errors)
+
     def test_lock_rejects_wildcards_placeholders_and_unknown_fields(self):
         lock = load_lock()
         for mutate in (
@@ -364,6 +470,64 @@ class ProvisionerContractTests(unittest.TestCase):
         self.assertIn("Get-RequiredProperty $archives 'nsis'", source)
         self.assertNotIn(NSIS_SHA256, source, "the provisioner must read the digest from the lock, not duplicate it")
         self.assertNotIn(NSIS_URL, source, "the provisioner must read the URL from the lock, not duplicate it")
+
+    def test_provisioner_confines_output_to_the_build_root(self):
+        """Every generated file must stay under build/native-bridge/installer/."""
+        source = PROVISIONER_PATH.read_text(encoding="utf-8")
+
+        # The reviewed rule: a repo-relative build root, canonical absolute
+        # paths, separator-terminated prefix comparison, Windows case-insensitive.
+        self.assertRegex(
+            source,
+            r"'build[\\/]native-bridge[\\/]installer'",
+            "the provisioner must name the mandated build root",
+        )
+        self.assertIn("GetFullPath", source, "containment must be checked on canonical paths")
+        self.assertIn(
+            "[StringComparison]::OrdinalIgnoreCase",
+            source,
+            "the containment check must use Windows path semantics",
+        )
+        self.assertIn(
+            "TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar",
+            source,
+            "the containment prefix must end at a path separator so sibling prefixes cannot match",
+        )
+        self.assertIn("$buildRoot", source)
+        self.assertIn("Assert-WithinBuildRoot", source)
+
+        # The guard must run before anything is created, downloaded or extracted.
+        guard = source.index("Assert-WithinBuildRoot $destinationPath")
+        for write in ("New-Item", "Invoke-WebRequest", "Expand-Archive", "Move-Item"):
+            self.assertLess(
+                guard,
+                source.index(write),
+                f"the build-root guard must run before {write}",
+            )
+
+        # Escape cases the reviewed rule has to reject, and the documented
+        # destination it has to accept.
+        for destination in (
+            "/tmp/nsis",
+            "build/native-bridge/installer/tools/nsis",
+            "/repo/build/native-bridge/installer-evil/tools/nsis",
+            "/repo/build/native-bridge/installer/../evil/tools",
+            "/repo/build/other/tools/nsis",
+            "/repo/build/native-bridge/installer",
+            "/repo/build/native-bridge/installerish/nsis",
+        ):
+            self.assertFalse(
+                model_destination_inside_build_root(destination),
+                f"must reject escaping destination {destination}",
+            )
+        for destination in (
+            "/repo/build/native-bridge/installer/tools/nsis",
+            "/repo/build/native-bridge/installer/./tools/nsis",
+        ):
+            self.assertTrue(
+                model_destination_inside_build_root(destination),
+                f"must accept in-tree destination {destination}",
+            )
 
 
 if __name__ == "__main__":
