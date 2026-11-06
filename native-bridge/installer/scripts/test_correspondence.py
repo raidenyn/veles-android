@@ -35,6 +35,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 import unittest
 import warnings
 import zipfile
@@ -1925,6 +1926,101 @@ class Round2FatOrderTests(WorkDir):
         signed = self.with_table_swapped(build_fat([(CPU_X86_64, 3, x86_s, 12), (CPU_ARM64, 0, arm_s, 14)]))
         report = self.compare_bytes("macho", unsigned, signed)
         self.assertEqual(report["verdict"], "PASS", report["differences"])
+
+
+class Round2PolicyPlistTests(WorkDir):
+    """Re-review N3 (expansion budget) and N4 (string keys) for binary entitlement policies."""
+
+    KEY = "com.apple.security.cs.allow-jit"
+
+    def policy_file(self, blob, name="policy.plist"):
+        return self.put(name, blob)
+
+    def assert_policy_refused(self, blob, text):
+        with self.assertRaises(correspondence.InputError) as caught:
+            correspondence.load_policy(self.policy_file(blob))
+        self.assertIn(text, str(caught.exception))
+        return caught.exception
+
+    @staticmethod
+    def integer_key(blob, text="1"):
+        """Swap the ASCII-string key object (0x51 '1') for the integer 1 (0x10 0x01): same length, same offsets."""
+        marker = bytes([0x50 + len(text)]) + text.encode()
+        assert blob.count(marker) == 1, blob
+        return blob.replace(marker, b"\x10" + bytes([int(text)]))
+
+    def test_n4_integer_dictionary_keys_in_a_binary_policy_are_refused_not_coerced(self):
+        flat = self.integer_key(plistlib.dumps({"1": True}, fmt=plistlib.FMT_BINARY))
+        self.assertEqual(plistlib.loads(flat), {1: True})  # the premise: plistlib really hands back an int key
+        self.assert_policy_refused(flat, "string key")
+        nested = self.integer_key(plistlib.dumps({"outer": {"1": True}}, fmt=plistlib.FMT_BINARY))
+        self.assertEqual(plistlib.loads(nested), {"outer": {1: True}})
+        self.assert_policy_refused(nested, "string key")
+        inside_array = self.integer_key(plistlib.dumps({"outer": [{"1": 2}]}, fmt=plistlib.FMT_BINARY))
+        self.assert_policy_refused(inside_array, "string key")
+        # canonical_plist itself never stringifies a key.
+        with self.assertRaises(ValueError):
+            correspondence.canonical_plist({1: True})
+
+    def test_n4_a_signed_xml_entitlement_never_matches_an_integer_key_policy(self):
+        unsigned, _ = build_macho()
+        signed, _ = build_signed_macho(entitlements={"1": True})
+        control = self.put("string-key.plist", plistlib.dumps({"1": True}, fmt=plistlib.FMT_BINARY))
+        self.assertEqual(self.compare_bytes("macho", unsigned, signed, entitlements=control)["verdict"], "PASS")
+        forged = self.put("int-key.plist", self.integer_key(plistlib.dumps({"1": True}, fmt=plistlib.FMT_BINARY)))
+        with self.assertRaises(correspondence.InputError):
+            self.compare_bytes("macho", unsigned, signed, entitlements=forged)
+
+    def hostile_tower(self, levels=16):
+        node = True
+        for _ in range(levels):
+            node = [node, node]
+        return plistlib.dumps({"k": node}, fmt=plistlib.FMT_BINARY)
+
+    def test_n3_shared_reference_amplification_is_refused_within_a_bounded_visit_and_memory_budget(self):
+        blob = self.hostile_tower()
+        self.assertLess(len(blob), 200)  # the review's 113-byte policy
+        visits = []
+        real = correspondence.canonical_plist
+
+        def counting(value):
+            visits.append(1)
+            return real(value)
+
+        tracemalloc.start()
+        try:
+            with mock.patch.object(correspondence, "canonical_plist", counting):
+                self.assert_policy_refused(blob, "budget")
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertLessEqual(len(visits), correspondence.MAX_PLIST_NODES, len(visits))
+        self.assertLess(peak, 4 * 1024 * 1024, peak)
+
+    def test_n3_scalar_bytes_nesting_and_node_count_are_each_bounded(self):
+        shared = "s" * 400_000
+        wide = plistlib.dumps({"k": [shared] * 64}, fmt=plistlib.FMT_BINARY)  # 25.6 M characters once expanded
+        self.assertLess(len(wide), 500_000)
+        self.assert_policy_refused(wide, "budget")
+        deep = 40
+        value = "leaf"
+        for _ in range(deep):
+            value = [value]
+        self.assert_policy_refused(plistlib.dumps({"k": value}, fmt=plistlib.FMT_BINARY), "budget")
+        many = plistlib.dumps({"k": [True] * (correspondence.MAX_PLIST_NODES + 1)}, fmt=plistlib.FMT_XML)
+        self.assertLess(len(many), correspondence.MAX_ENTITLEMENTS_BYTES)
+        self.assert_policy_refused(many, "budget")
+
+    def test_n3_an_ordinary_binary_policy_and_its_xml_twin_have_the_same_canonical_digest(self):
+        value = {self.KEY: True, "list": [1, 2.5, "x", b"d", {"nested": False}], "shared": [[True, True], [True, True]]}
+        digests = set()
+        for fmt in (plistlib.FMT_BINARY, plistlib.FMT_XML):
+            policy = correspondence.load_policy(self.policy_file(plistlib.dumps(value, fmt=fmt)))
+            digests.add(policy.report()["canonical_sha256"])
+        self.assertEqual(len(digests), 1)
+        # A shared sub-structure that stays inside the budget is accepted (6 levels = 127 nodes).
+        tower = self.hostile_tower(6)
+        self.assertEqual(correspondence.load_policy(self.policy_file(tower)).report()["source"], "explicit")
 
 
 class CommandLineTests(WorkDir):

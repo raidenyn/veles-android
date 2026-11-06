@@ -120,6 +120,12 @@ MAX_LOAD_COMMAND_BYTES = 1 << 20
 MAX_FAT_ARCHES = 8
 MAX_SUPERBLOB_BLOBS = 32
 MAX_ENTITLEMENTS_BYTES = 1 << 20
+# A binary plist can reference one object many times, so a few hundred bytes of input can describe an
+# exponentially large *logical* value. The budgets below bound that logical value (every visit of every
+# reference counts), not the input length, and are enforced before the canonical form is built.
+MAX_PLIST_NODES = 20_000
+MAX_PLIST_DEPTH = 32
+MAX_PLIST_SCALAR_BYTES = 4 * 1024 * 1024
 
 
 class Reject(Exception):
@@ -170,11 +176,13 @@ def read_regular_file(path: Path) -> bytes:
     try:
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as handle:
-            data = handle.read(MAX_FILE_BYTES + 1)
+            # Sized by the checked ``st_size`` (one byte of slack detects growth): ``read(MAX_FILE_BYTES + 1)``
+            # would reserve a 256 MiB buffer for every small file.
+            data = handle.read(info.st_size + 1)
     except OSError as error:
         raise InputError(f"cannot read {path}: {error.strerror}") from error
-    if len(data) > MAX_FILE_BYTES:
-        raise InputError(f"{path} is larger than {MAX_FILE_BYTES} bytes")
+    if len(data) != info.st_size:
+        raise InputError(f"{path} changed size while being read")
     return data
 
 
@@ -836,8 +844,44 @@ def command_region(command: Command) -> str:
 # ---- embedded signature --------------------------------------------------------
 
 
+class PlistRefused(ValueError):
+    """A plist this tool will not compare: over budget, or a shape it cannot represent exactly."""
+
+
+def check_plist_budget(value: Any) -> None:
+    """Walk the logical value (shared references expanded) and refuse it past the node/depth/byte budgets.
+
+    Allocation-free apart from the explicit stack, and it stops at the first excess, so the work done is at
+    most ``MAX_PLIST_NODES`` visits whatever the input claims. Dictionary keys must be strings.
+    """
+    nodes = scalar_bytes = 0
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_PLIST_NODES:
+            raise PlistRefused(f"more than {MAX_PLIST_NODES} values (expansion budget)")
+        if depth > MAX_PLIST_DEPTH:
+            raise PlistRefused(f"nested deeper than {MAX_PLIST_DEPTH} levels (budget)")
+        if isinstance(item, (str, bytes, bytearray)):
+            scalar_bytes += len(item)
+        elif isinstance(item, list):
+            stack.extend((child, depth + 1) for child in item)
+        elif isinstance(item, dict):
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise PlistRefused(f"dictionary key {key!r} is not a string key")
+                scalar_bytes += len(key)
+                stack.append((child, depth + 1))
+        if scalar_bytes > MAX_PLIST_SCALAR_BYTES:
+            raise PlistRefused(f"more than {MAX_PLIST_SCALAR_BYTES} bytes of strings and data (expansion budget)")
+
+
 def canonical_plist(value: Any) -> Any:
-    """A JSON-able, type-preserving form of a decoded plist (``True`` is not ``1`` is not ``1.0``)."""
+    """A JSON-able, type-preserving form of a decoded plist (``True`` is not ``1`` is not ``1.0``).
+
+    Callers apply ``check_plist_budget`` first; keys are never coerced (a non-string key is refused).
+    """
     if value is None:  # "no entitlements slot at all", distinct from an empty dictionary
         return ["absent"]
     if isinstance(value, bool):  # before int: bool is an int subclass
@@ -855,10 +899,13 @@ def canonical_plist(value: Any) -> Any:
     if isinstance(value, list):
         return ["array", [canonical_plist(item) for item in value]]
     if isinstance(value, dict):
-        return ["dict", {str(key): canonical_plist(item) for key, item in value.items()}]
+        for key in value:
+            if not isinstance(key, str):
+                raise PlistRefused(f"dictionary key {key!r} is not a string key")
+        return ["dict", {key: canonical_plist(item) for key, item in value.items()}]
     if isinstance(value, plistlib.UID):
         return ["uid", value.data]
-    raise ValueError(f"unsupported plist value type {type(value).__name__}")
+    raise PlistRefused(f"unsupported plist value type {type(value).__name__}")
 
 
 def canonical_plist_sha256(value: Any) -> str:
@@ -871,7 +918,10 @@ def decode_entitlements_dict(payload: bytes, fmt, code: str, label: str) -> dict
         raise Reject(code, f"{label} is oversized")
     try:
         value = plistlib.loads(payload, fmt=fmt)
+        check_plist_budget(value)  # logical size first: shared references must not be expanded unchecked
         canonical_plist(value)  # every nested value must be a type this tool can compare exactly
+    except PlistRefused as error:
+        raise Reject(code, f"{label} is refused: {error}") from error
     except Exception as error:  # plistlib raises several unrelated types
         raise Reject(code, f"{label} does not parse: {type(error).__name__}") from error
     if not isinstance(value, dict):
