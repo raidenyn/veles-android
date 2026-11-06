@@ -36,9 +36,9 @@ archive, so a size field is verified, never trusted as a truncating bound.
   end exactly there, consume exactly its compressed extent, and match the CRC-32.
   Directory members carry no payload. Local and central records must agree, including the
   required-version field. Only timestamps, the Unix mode and a short allowlist of
-  timestamp/owner extra fields (UT, ux, Ux, UX, NTFS) are treated as normalisable metadata;
-  each such field's internal layout (flags, lengths, version, subrecords) is validated, and
-  anything else under an allowed id is refused. Deflate "compression level" flag bits are not
+  timestamp/owner extra fields (Info-ZIP UT 0x5455 and ux 0x7875 only; Ux, UX and NTFS are
+  refused by name) are treated as normalisable metadata; each such field's internal layout
+  (flags, lengths, version) is validated, and anything else under an allowed id is refused. Deflate "compression level" flag bits are not
   accepted (owner decision pending).
 * TAR extension records (PAX / GNU long names) are bounded and rejected *before*
   ``tarfile`` reads them; negative sizes are refused before any arithmetic; the padding after
@@ -300,8 +300,13 @@ ZIP_CENTRAL = struct.Struct("<4s6H3L5H2L")
 ZIP_LOCAL = struct.Struct("<4s5H3L2H")
 ZIP_METHOD_STORED, ZIP_METHOD_DEFLATE = 0, 8
 ZIP_FLAG_ENCRYPTED, ZIP_FLAG_UTF8 = 0x1, 0x800
-# Timestamp / owner extra fields (UT, ux, Ux, UX, NTFS): normalisable, content-free for the inventory.
-ZIP_ALLOWED_EXTRA_IDS = (0x5455, 0x7875, 0x7855, 0x5855, 0x000A)
+# Extra fields this tool interprets: the two records Info-ZIP's Unix ``zip`` writes (``unix.c``) whose layouts are
+# published in ``proginfo/extrafld.txt``: UT 0x5455 (extended timestamp) and ux 0x7875 (versioned owner ids).
+# Both are normalisable metadata, content-free for the inventory. Every other id is refused by name, never guessed at:
+# UX 0x5855 is obsolete (extrafld.txt: archivers must never create it) and has differing local/central forms; Ux 0x7855
+# is written by Info-ZIP only on systems with 16-bit uid/gid (superseded by ux) and NTFS 0x000A is a Windows-writer
+# record. Nothing in this pipeline's packaging emits them, so no interpretation of them is maintained here.
+ZIP_ALLOWED_EXTRA_IDS = (0x5455, 0x7875)
 
 
 class _ZipMember:
@@ -309,12 +314,12 @@ class _ZipMember:
 
 
 def _zip_extra_body(ident: int, body: bytes, central: bool, what: str) -> None:
-    """The internal structure of one allowlisted extra field (Info-ZIP ``extrafld.txt`` / APPNOTE 4.5.5).
+    """The internal structure of one allowlisted extra field (Info-ZIP ``proginfo/extrafld.txt``).
 
-    Each field is a timestamp or owner record; its length, version and subrecords are checked, because an
-    identifier alone says nothing about the bytes behind it. The central copy of the Info-ZIP fields is
-    shorter than the local one (or empty, for the owner records); the full local layout is also accepted
-    centrally. The values themselves are not interpreted: they are normalised metadata.
+    UT: local carries one 4-byte time per set flag bit; Info-ZIP's central copy keeps the same flags but only
+    the modification time. ux: a version-1 record that Info-ZIP copies, whole, to the central directory, so it
+    is validated identically in both headers (the empty-central convention belongs to the obsolete 0x7855).
+    The values themselves are not interpreted: they are normalised metadata.
     """
 
     def bad(why: str) -> InventoryError:
@@ -327,9 +332,7 @@ def _zip_extra_body(ident: int, body: bytes, central: bool, what: str) -> None:
         expected = 1 + 4 * (1 if flags & 1 else 0) if central else 1 + 4 * bin(flags).count("1")
         if len(body) != expected:
             raise bad(f"length {len(body)} does not match flags {flags:#x}")
-    elif ident == 0x7875:  # ux: version 1, uid size, uid, gid size, gid (central: empty)
-        if central and not body:
-            return
+    elif ident == 0x7875:  # ux: version 1, uid size, uid, gid size, gid (same layout in both headers)
         if len(body) < 3 or body[0] != 1:
             raise bad("unsupported version or truncated")
         uid_size = body[1]
@@ -338,15 +341,6 @@ def _zip_extra_body(ident: int, body: bytes, central: bool, what: str) -> None:
         gid_size = body[2 + uid_size]
         if not 1 <= gid_size <= 8 or len(body) != 3 + uid_size + gid_size:
             raise bad("invalid gid size or trailing bytes")
-    elif ident == 0x7855:  # Ux: uid, gid as 16-bit (central: empty)
-        if len(body) not in ((0, 4) if central else (4,)):
-            raise bad(f"length {len(body)}")
-    elif ident == 0x5855:  # UX: atime, mtime (+ 16-bit uid, gid locally)
-        if len(body) not in ((8, 12) if central else (12,)):
-            raise bad(f"length {len(body)}")
-    elif ident == 0x000A:  # NTFS: 4 reserved zero bytes, then exactly one (tag 1, size 24) mtime/atime/ctime record
-        if len(body) != 4 + 4 + 24 or body[:4] != b"\0\0\0\0" or struct.unpack_from("<HH", body, 4) != (1, 24):
-            raise bad("not one reserved block followed by a single tag-1 timestamp record")
     else:  # pragma: no cover - ZIP_ALLOWED_EXTRA_IDS and these rules must stay in step
         raise bad("no structure rule for this field")
 
@@ -360,7 +354,7 @@ def _zip_extra_ok(extra: bytes, what: str, *, central: bool) -> None:
             raise _bad(f"truncated extra field in {what}")
         ident, length = struct.unpack_from("<HH", extra, cursor)
         if ident not in ZIP_ALLOWED_EXTRA_IDS:
-            raise _bad(f"unrecognised zip extra field {ident:#06x} in {what}")
+            raise _bad(f"zip extra field {ident:#06x} in {what} is not a supported zip extra field (only UT and ux are accepted)")
         if ident in seen:
             raise _bad(f"zip extra field {ident:#06x} appears twice in {what}")
         seen.add(ident)

@@ -1262,18 +1262,18 @@ def zip_extra(ident, body):
     return struct.pack("<HH", ident, len(body)) + body
 
 
-UT, UX_NEW, UX_OLD_SHORT, UX_OLD, NTFS = 0x5455, 0x7875, 0x7855, 0x5855, 0x000A
+UT, UX_NEW = 0x5455, 0x7875
+UX_OLD_SHORT, UX_OLD, NTFS = 0x7855, 0x5855, 0x000A  # removed from the allowlist in round 3 (R2): refused explicitly
 NTFS_TIMES = struct.pack("<4sHH3Q", b"\0\0\0\0", 1, 24, 1, 2, 3)
+UX_4_4 = b"\x01\x04" + b"\xe8\x03\x00\x00" + b"\x04" + b"\xe8\x03\x00\x00"
 
-# (id, local body, central body): each field as the Info-ZIP / NTFS writers lay it out.
+# (id, local body, central body): the two layouts Info-ZIP's Unix writer (unix.c) emits. Its central UT carries the
+# flags of the local field but only the modification time; its central ux is a byte-for-byte copy of the local one.
 VALID_EXTRAS = {
     "UT mtime+atime": (UT, b"\x03" + b"\x01\x00\x00\x00" + b"\x02\x00\x00\x00", b"\x03" + b"\x01\x00\x00\x00"),
     "UT flags only": (UT, b"\x00", b"\x00"),
-    "ux 4/4": (UX_NEW, b"\x01\x04" + b"\xe8\x03\x00\x00" + b"\x04" + b"\xe8\x03\x00\x00", b""),
-    "ux full central": (UX_NEW, b"\x01\x01\x05\x01\x06", b"\x01\x01\x05\x01\x06"),
-    "Ux": (UX_OLD_SHORT, b"\xe8\x03\xe8\x03", b""),
-    "UX": (UX_OLD, b"\x01\x00\x00\x00\x02\x00\x00\x00\xe8\x03\xe8\x03", b"\x01\x00\x00\x00\x02\x00\x00\x00"),
-    "NTFS": (NTFS, NTFS_TIMES, NTFS_TIMES),
+    "ux 4/4": (UX_NEW, UX_4_4, UX_4_4),
+    "ux 1/1": (UX_NEW, b"\x01\x01\x05\x01\x06", b"\x01\x01\x05\x01\x06"),
 }
 JUNK = b"NOT-TIMESTAMP-OR-UID!"
 
@@ -1299,24 +1299,18 @@ class Round2ZipExtraFieldTests(Round2ArchiveCase):
                 self.assert_refused("junk.zip", blob, "malformed-archive", "extra field")
 
     def test_n6_malformed_internal_structure_is_refused_for_each_field(self):
-        ntfs_unknown = struct.pack("<4sHH3Q", b"\0\0\0\0", 2, 24, 1, 2, 3)
         cases = {
             "UT reserved flag bit": (UT, b"\x08", b"\x08"),
             "UT local length does not match flags": (UT, b"\x07\x01\x00\x00\x00", b"\x07\x01\x00\x00\x00"),
             "UT empty": (UT, b"", b""),
             "UT central with surplus time": (UT, b"\x01\x01\x00\x00\x00", b"\x01\x01\x00\x00\x00\x09\x09\x09\x09"),
-            "ux version 2": (UX_NEW, b"\x02\x01\x05\x01\x06", b""),
-            "ux zero-size uid": (UX_NEW, b"\x01\x00\x01\x06", b""),
-            "ux nine-byte uid": (UX_NEW, b"\x01\x09" + b"U" * 9 + b"\x01\x06", b""),
-            "ux trailing bytes": (UX_NEW, b"\x01\x01\x05\x01\x06TAIL", b""),
-            "ux truncated gid": (UX_NEW, b"\x01\x01\x05\x04\x06", b""),
-            "Ux wrong length": (UX_OLD_SHORT, b"\xe8\x03\xe8", b""),
-            "UX wrong length": (UX_OLD, b"\x01\x00\x00\x00\x02\x00\x00\x00\xe8", b"\x01\x00\x00\x00\x02\x00\x00\x00"),
-            "NTFS unknown subrecord tag": (NTFS, ntfs_unknown, ntfs_unknown),
-            "NTFS non-zero reserved": (NTFS, b"\x01\x00\x00\x00" + NTFS_TIMES[4:], b"\x01\x00\x00\x00" + NTFS_TIMES[4:]),
-            "NTFS trailing bytes": (NTFS, NTFS_TIMES + b"TAIL", NTFS_TIMES + b"TAIL"),
-            "NTFS short times": (NTFS, NTFS_TIMES[:-8], NTFS_TIMES[:-8]),
-            "NTFS no subrecord": (NTFS, b"\0\0\0\0", b"\0\0\0\0"),
+            "ux version 2": (UX_NEW, b"\x02\x01\x05\x01\x06", b"\x02\x01\x05\x01\x06"),
+            "ux zero-size uid": (UX_NEW, b"\x01\x00\x01\x06", b"\x01\x00\x01\x06"),
+            "ux nine-byte uid": (UX_NEW, b"\x01\x09" + b"U" * 9 + b"\x01\x06", b"\x01\x09" + b"U" * 9 + b"\x01\x06"),
+            "ux trailing bytes": (UX_NEW, b"\x01\x01\x05\x01\x06TAIL", b"\x01\x01\x05\x01\x06TAIL"),
+            "ux truncated gid": (UX_NEW, b"\x01\x01\x05\x04\x06", b"\x01\x01\x05\x04\x06"),
+            # The empty central body is the 0x7855 flag convention; the versioned 0x7875 field is copied whole.
+            "ux with an empty central body": (UX_NEW, b"\x01\x01\x05\x01\x06", b""),
         }
         for label, (ident, local, central) in cases.items():
             with self.subTest(case=label):
@@ -1326,6 +1320,34 @@ class Round2ZipExtraFieldTests(Round2ArchiveCase):
         ident, local, central = VALID_EXTRAS["UT flags only"]
         twice = zip_extra(ident, local) * 2
         self.assert_refused("twice.zip", raw_zip("f", b"payload", local_extra=twice, central_extra=zip_extra(ident, central) * 2), "malformed-archive", "extra field")
+
+    def test_r2_only_the_info_zip_ut_and_ux_fields_survive_the_allowlist(self):
+        self.assertEqual(package_inputs.ZIP_ALLOWED_EXTRA_IDS, (UT, UX_NEW))
+
+    def test_r2_removed_field_ids_are_refused_explicitly_whatever_their_body(self):
+        """Ux (0x7855), UX (0x5855) and NTFS (0x000A) are no longer interpreted: refused, not guessed at."""
+        bodies = {
+            "Ux local 4 / central empty (the Info-ZIP form)": (UX_OLD_SHORT, b"\xe8\x03\xe8\x03", b""),
+            "UX local timestamps only (valid legacy form)": (UX_OLD, b"\x01\x00\x00\x00\x02\x00\x00\x00", b"\x01\x00\x00\x00\x02\x00\x00\x00"),
+            "UX local with owners / central timestamps": (UX_OLD, b"\x01\x00\x00\x00\x02\x00\x00\x00\xe8\x03\xe8\x03", b"\x01\x00\x00\x00\x02\x00\x00\x00"),
+            "NTFS single timestamp record": (NTFS, NTFS_TIMES, NTFS_TIMES),
+        }
+        for label, (ident, local, central) in bodies.items():
+            with self.subTest(case=label):
+                blob = raw_zip("f", b"payload", local_extra=zip_extra(ident, local), central_extra=zip_extra(ident, central))
+                self.assert_refused("removed.zip", blob, "malformed-archive", "not a supported zip extra field")
+                # either header alone is enough
+                self.assert_refused("removed-local.zip", raw_zip("f", b"payload", local_extra=zip_extra(ident, local)), "malformed-archive", "not a supported zip extra field")
+                self.assert_refused("removed-central.zip", raw_zip("f", b"payload", central_extra=zip_extra(ident, central)), "malformed-archive", "not a supported zip extra field")
+
+    def test_r2_ux_is_validated_the_same_way_in_both_headers(self):
+        """Info-ZIP copies the whole versioned ux field to the central directory; no empty-central exception exists."""
+        for label, (ident, local, central) in (("ux", VALID_EXTRAS["ux 4/4"]), ("ux", VALID_EXTRAS["ux 1/1"])):
+            blob = raw_zip("f", b"payload", local_extra=zip_extra(ident, local), central_extra=zip_extra(ident, central))
+            self.assertEqual(self.inventory("ux.zip", blob)["entries"][0]["size"], 7)
+        # the same malformed body is refused when it appears only centrally
+        self.assert_refused("central-only.zip", raw_zip("f", b"payload", central_extra=zip_extra(UX_NEW, b"\x02\x01\x05\x01\x06")), "malformed-archive", "extra field")
+        self.assert_refused("central-empty.zip", raw_zip("f", b"payload", central_extra=zip_extra(UX_NEW, b"")), "malformed-archive", "extra field")
 
     def test_n6_local_required_version_must_be_supported_and_agree_with_the_central_record(self):
         self.assertEqual(self.inventory("same.zip", raw_zip("f", b"x", local_need=10, central_need=10))["entries"][0]["size"], 1)
