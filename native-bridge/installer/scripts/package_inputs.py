@@ -517,6 +517,26 @@ def _tar_block(size: int) -> int:
     return (size + TAR_BLOCK - 1) // TAR_BLOCK * TAR_BLOCK
 
 
+def _tar_check_padding(handle, data_offset: int, size: int, physical_size: int) -> None:
+    """The bytes between a record's data and the next 512-byte boundary must exist and be zero.
+
+    ``tarfile`` skips them unread, so anything stored there would be carried by the archive without
+    entering the inventory (review R10). Fewer than 512 bytes, so reading them is always bounded.
+    """
+    start = data_offset + size
+    count = _tar_block(size) - size
+    if not count:
+        return
+    if start + count > physical_size:
+        raise _bad("tar record padding is truncated")
+    handle.seek(start)
+    padding = handle.read(count)
+    if len(padding) != count:
+        raise _bad("tar record padding is truncated")
+    if padding.strip(b"\x00"):
+        raise InventoryError("non-zero tar record padding", "unauthenticated-data")
+
+
 def _check_pax_records(body: bytes) -> None:
     """Strict ``"<len> <key>=<value>\\n"`` records limited to keys that cannot move a boundary."""
     cursor = 0
@@ -559,6 +579,8 @@ def _tar_preflight(path: Path, physical_size: int) -> tuple[list[tuple[int, int,
             if block.count(b"\x00") == TAR_BLOCK:
                 return records, offset
             info = tarfile.TarInfo.frombuf(block, "utf-8", "surrogateescape")
+            if info.size < 0:  # checked before any accounting, boundary arithmetic or read can use it
+                raise _bad(f"tar header declares a negative size ({info.size})")
             if info.type in TAR_REFUSED_TYPES:
                 raise _bad(f"tar header type {info.type!r} (global, sparse or Solaris extension) is not accepted")
             if start is None:
@@ -576,6 +598,7 @@ def _tar_preflight(path: Path, physical_size: int) -> tuple[list[tuple[int, int,
                     if len(body) != info.size:
                         raise _bad("tar extension record is truncated")
                     _check_pax_records(body)
+                _tar_check_padding(handle, offset + TAR_BLOCK, info.size, physical_size)
                 offset += TAR_BLOCK + _tar_block(info.size)
                 continue
             data_offset = offset + TAR_BLOCK
@@ -583,6 +606,8 @@ def _tar_preflight(path: Path, physical_size: int) -> tuple[list[tuple[int, int,
             skips_data = info.isreg() or info.type not in tarfile.SUPPORTED_TYPES
             if skips_data and data_offset + info.size > physical_size:
                 raise _bad("tar member data is truncated")
+            if skips_data:
+                _tar_check_padding(handle, data_offset, info.size, physical_size)
             records.append((start, data_offset, info.size))
             start = None
             offset = data_offset + (_tar_block(info.size) if skips_data else 0)

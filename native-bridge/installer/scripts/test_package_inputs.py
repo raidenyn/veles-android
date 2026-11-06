@@ -1079,6 +1079,108 @@ class UnicodeAliasAndBoundTests(Scratch):
         self.assertEqual(caught.exception.code, "bound-exceeded")
 
 
+class Round2ArchiveCase(Scratch):
+    def put(self, name, data):
+        path = self.base / name
+        path.write_bytes(data)
+        return path
+
+    def assert_refused(self, name, blob, code, text=None):
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_archive_inventory(self.put(name, blob))
+        self.assertEqual(caught.exception.code, code, str(caught.exception))
+        if text is not None:
+            self.assertIn(text, str(caught.exception))
+        return caught.exception
+
+
+def _raw_tar_header(name, type_, size, fmt=tarfile.GNU_FORMAT):
+    info = tarfile.TarInfo(name)
+    info.type = type_
+    info.size = size
+    return info.tobuf(fmt, "utf-8", "surrogateescape")
+
+
+class Round2TarAccountingTests(Round2ArchiveCase):
+    """Re-review N2 (negative sizes) and R10 (every skipped TAR padding byte is accounted for)."""
+
+    def test_n2_negative_tar_sizes_are_refused_before_any_arithmetic_or_read(self):
+        # The header really decodes to -1: this is not a made-up value that tarfile would already refuse.
+        self.assertEqual(tarfile.TarInfo.frombuf(_raw_tar_header("x", tarfile.XHDTYPE, -1), "utf-8", "surrogateescape").size, -1)
+        tail = b"\x41" * 10_000
+        cases = {
+            "pax": tarfile.XHDTYPE,
+            "gnu-longname": tarfile.GNUTYPE_LONGNAME,
+            "gnu-longlink": tarfile.GNUTYPE_LONGLINK,
+            "regular": tarfile.REGTYPE,
+        }
+        for label, type_ in cases.items():
+            with self.subTest(type=label):
+                path = self.put(f"negative-{label}.tar", _raw_tar_header("n", type_, -1) + tail)
+                recorder = ReadRecorder()
+                with contextlib.ExitStack() as stack:
+                    for patch in recorder.patches():
+                        stack.enter_context(patch)
+                    with self.assertRaises(package_inputs.InventoryError) as caught:
+                        package_inputs.build_archive_inventory(path)
+                self.assertEqual(caught.exception.code, "malformed-archive", str(caught.exception))
+                self.assertIn("negative", str(caught.exception))
+                self.assertTrue(recorder.reads)
+                self.assertGreaterEqual(min(recorder.reads), 0, recorder.reads)  # no read(-1) / whole-remainder read
+                self.assertLessEqual(recorder.largest, package_inputs.TAR_BLOCK, recorder.reads)
+
+    def test_r10_non_zero_tar_padding_is_refused_wherever_it_hides(self):
+        honest = make_tar([("file", "a", b"x", 0o644)])
+        self.assertEqual(package_inputs.build_archive_inventory(self.put("honest.tar", honest))["entries"][0]["size"], 1)
+        # Member data padding: the review's reproduction (bytes 513.. after a one-byte file).
+        data_padding = bytearray(honest)
+        data_padding[513:525] = b"HIDDEN-JUNK!"
+        self.assert_refused("data-padding.tar", bytes(data_padding), "unauthenticated-data", "padding")
+        # The last padding byte of the block counts too.
+        last = bytearray(honest)
+        last[1023] = 0x01
+        self.assert_refused("data-padding-last.tar", bytes(last), "unauthenticated-data", "padding")
+
+        # PAX extension record padding (the extension header is the first block, its body the second).
+        pax = io.BytesIO()
+        with tarfile.open(fileobj=pax, mode="w:", format=tarfile.PAX_FORMAT) as archive:
+            info = tarfile.TarInfo("a")
+            info.size = 1
+            info.pax_headers = {"uname": "u"}
+            archive.addfile(info, io.BytesIO(b"x"))
+        pax_blob = bytearray(pax.getvalue())
+        pax_size = tarfile.TarInfo.frombuf(bytes(pax_blob[:512]), "utf-8", "surrogateescape").size
+        self.assertEqual(pax_blob[:512][156:157], tarfile.XHDTYPE)
+        self.assertLess(pax_size, 500)
+        self.assertEqual(package_inputs.build_archive_inventory(self.put("pax-honest.tar", bytes(pax_blob)))["entries"][0]["path"], "a")
+        pax_blob[512 + pax_size + 3] = ord("J")
+        self.assert_refused("pax-padding.tar", bytes(pax_blob), "unauthenticated-data", "padding")
+
+        # GNU long-name extension record padding.
+        gnu = io.BytesIO()
+        with tarfile.open(fileobj=gnu, mode="w:", format=tarfile.GNU_FORMAT) as archive:
+            info = tarfile.TarInfo("n" * 150)
+            info.size = 1
+            archive.addfile(info, io.BytesIO(b"x"))
+        gnu_blob = bytearray(gnu.getvalue())
+        self.assertEqual(gnu_blob[156:157], tarfile.GNUTYPE_LONGNAME)
+        name_size = tarfile.TarInfo.frombuf(bytes(gnu_blob[:512]), "utf-8", "surrogateescape").size
+        self.assertEqual(package_inputs.build_archive_inventory(self.put("gnu-honest.tar", bytes(gnu_blob)))["entries"][0]["size"], 1)
+        gnu_blob[512 + name_size + 1] = ord("J")
+        self.assert_refused("gnu-padding.tar", bytes(gnu_blob), "unauthenticated-data", "padding")
+
+    def test_r10_exact_block_multiples_and_empty_members_have_no_padding_to_check(self):
+        for size in (0, 511, 512, 513, 1024):
+            with self.subTest(size=size):
+                blob = make_tar([("file", "a", b"z" * size, 0o644), ("file", "b", b"y", 0o644)])
+                inventory = package_inputs.build_archive_inventory(self.put(f"size-{size}.tar", blob))
+                self.assertEqual([entry["size"] for entry in inventory["entries"]], [size, 1])
+
+    def test_r10_truncated_padding_is_a_malformed_archive(self):
+        blob = make_tar([("file", "a", b"x", 0o644)])
+        self.assert_refused("short-padding.tar", blob[:520], "malformed-archive", "padding")
+
+
 class CommandLineTests(Scratch):
     def test_inventory_and_compare_exit_codes_and_reports(self):
         left = materialize(self.base / "left")
