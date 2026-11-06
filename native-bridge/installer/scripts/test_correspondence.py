@@ -1766,6 +1766,69 @@ class MachoReviewFindingTests(WorkDir):
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(report.read_text())["verdict"], "ERROR")
 
+    # ---- F16: the report identifies the entitlement policy and the architectures ------------
+
+    def test_f16_report_identifies_policy_source_policy_digest_and_architectures(self):
+        entitlements = {"com.apple.security.device.bluetooth": True}
+        arm_u, x86_u, _, _ = self.fat_images()
+        arm_s, _ = build_signed_macho(entitlements=entitlements)
+        x86_s, _ = build_signed_macho(entitlements=entitlements, cputype=CPU_X86_64)
+        fat_u = build_fat([(CPU_ARM64, 0, arm_u, 14), (CPU_X86_64, 3, x86_u, 12)])
+        fat_s = build_fat([(CPU_ARM64, 0, arm_s, 14), (CPU_X86_64, 3, x86_s, 12)])
+        policy_bytes = plistlib.dumps(entitlements)
+        report = self.passes(fat_u, fat_s, entitlements=self.put("policy.plist", policy_bytes))
+        policy = report["entitlement_policy"]
+        self.assertEqual(policy["source"], "explicit")
+        self.assertEqual(policy["file_sha256"], sha(policy_bytes))
+        self.assertRegex(policy["canonical_sha256"], r"^[0-9a-f]{64}$")
+        # Same semantics, different serialisation: file digest differs, canonical digest does not.
+        reserialised = plistlib.dumps(entitlements, fmt=plistlib.FMT_BINARY)
+        other = self.passes(fat_u, fat_s, entitlements=self.put("policy2.plist", reserialised))["entitlement_policy"]
+        self.assertNotEqual(other["file_sha256"], policy["file_sha256"])
+        self.assertEqual(other["canonical_sha256"], policy["canonical_sha256"])
+        # A different policy value type is a different canonical policy.
+        typed = self.put("typed.plist", plistlib.dumps({"com.apple.security.device.bluetooth": 1}))
+        arm_int, _ = build_signed_macho(entitlements={"com.apple.security.device.bluetooth": 1})
+        x86_int, _ = build_signed_macho(entitlements={"com.apple.security.device.bluetooth": 1}, cputype=CPU_X86_64)
+        fat_int = build_fat([(CPU_ARM64, 0, arm_int, 14), (CPU_X86_64, 3, x86_int, 12)])
+        different = self.passes(fat_u, fat_int, entitlements=typed)["entitlement_policy"]
+        self.assertNotEqual(different["canonical_sha256"], policy["canonical_sha256"])
+        # Inherited policy says so (no policy file digest).
+        inherited = self.passes(build_macho()[0], build_signed_macho()[0])["entitlement_policy"]
+        self.assertEqual(inherited, {"source": "inherited-from-unsigned", "file_sha256": None, "canonical_sha256": None})
+        # Fat slices carry their architecture, not only a position.
+        slices = report["slices"]
+        self.assertEqual([item["architecture"]["cputype"] for item in slices], ["0x0100000c", "0x01000007"])
+        self.assertEqual([item["architecture"]["align"] for item in slices], [14, 12])
+        for item in report["allowed_differences"]:
+            if "slice" in item:
+                self.assertEqual(item["architecture"], slices[item["slice"]]["architecture"])
+        # PE reports do not pretend to have an entitlement policy.
+        pe_u, meta = build_pe()
+        self.assertNotIn("entitlement_policy", self.compare_bytes("pe", pe_u, authenticode_like(pe_u, meta)))
+
+    def test_f16_hash_fields_per_kind_are_the_documented_ones(self):
+        pe_u, meta = build_pe()
+        pe = self.compare_bytes("pe", pe_u, authenticode_like(pe_u, meta))["input_hashes"]
+        self.assertEqual(
+            sorted(pe),
+            ["signed_invariant_sha256", "signed_matches_invariant", "signed_sha256", "unsigned_invariant_sha256", "unsigned_sha256"],
+        )
+        macho = self.compare_bytes("macho", build_macho()[0], build_signed_macho()[0])["input_hashes"]
+        self.assertEqual(sorted(macho), ["signed_matches_invariant", "signed_sha256", "unsigned_sha256"])
+        # Audit correction: the inherited assertion grepped five phrases only. Every key a report actually
+        # carries must be named in the documentation, so a new or renamed key cannot go undocumented.
+        tree_dir = self.base / "doc-tree"
+        tree_dir.mkdir()
+        (tree_dir / "file").write_bytes(b"x")
+        tree = correspondence.compare(tree_dir, tree_dir, "tree")
+        self.assertEqual(tree["entitlement_policy"]["source"], "inherited-from-unsigned")
+        for key in [*pe, *macho, *tree["input_hashes"]]:
+            self.assertIn(key, correspondence.__doc__)
+        for key in ("slices", "entitlement_policy", "canonical_sha256", "file_sha256"):
+            self.assertIn(key, correspondence.__doc__)
+        for name in ("Report fields", "verify_separately", "signtool verify", "codesign --verify", "stapler validate", "spctl"):
+            self.assertIn(name, correspondence.__doc__)
 
 
 class PortableFindingTests(WorkDir):

@@ -48,6 +48,30 @@ separately by the native tools (``signtool verify``, ``codesign --verify``,
 ``stapler validate``, ``spctl``) on the native runners; every allowed entry
 therefore records ``"verify_separately": true`` where a trust decision remains.
 
+Report fields (``schema`` 1). Every report has ``verdict``, ``kind``, ``differences``,
+``allowed_differences`` (empty unless PASS) and ``input_hashes``; the keys of
+``input_hashes`` depend on the kind:
+
+* ``pe`` - ``unsigned_sha256``, ``signed_sha256`` (whole files), ``unsigned_invariant_sha256``,
+  ``signed_invariant_sha256`` (the file with the checksum field, security directory and certificate
+  table removed) and ``signed_matches_invariant``.
+* ``macho`` - ``unsigned_sha256``, ``signed_sha256`` and ``signed_matches_invariant``. The report also
+  carries ``slices`` (index plus full architecture identity: cputype, cpusubtype, fat alignment; entries
+  of ``allowed_differences`` for a fat slice repeat that ``architecture``).
+* ``tree`` - ``unsigned_inventory_sha256``, ``signed_inventory_sha256`` and, for archive inputs, the
+  archive file's own ``unsigned_sha256`` / ``signed_sha256``.
+
+``macho`` and ``tree`` reports also carry ``entitlement_policy``: ``source`` (``explicit`` or
+``inherited-from-unsigned``), ``file_sha256`` of the policy file and ``canonical_sha256`` of its
+type-preserving canonical form (both ``null`` when inherited), so a release gate can see which policy
+applied. ``signed_matches_invariant`` is structural, never a cryptographic trust statement.
+
+Native trust obligations that this tool leaves open (``"verify_separately": true`` / blob entries with
+``"cryptographic_signature_verified": false``): ``signtool verify`` of the Authenticode chain and
+timestamp, ``codesign --verify`` of the signature and seal, ``stapler validate`` of tickets and
+``spctl`` assessment. A PASS here plus those checks is the release evidence; either alone is not.
+A DER entitlements slot is refused outright (``macho-der-entitlements-unsupported``) until it can be decoded.
+
 Exit codes of the CLI: 0 verdict PASS, 1 verdict FAIL (readable but unexpected
 content), 2 invalid input or environment (missing/unreadable file, unsupported
 ``--kind``, not a PE/Mach-O/archive at all, bad arguments, I/O error). Exit 2
@@ -1273,16 +1297,16 @@ def compare_macho(unsigned: bytes, signed: bytes, policy: Policy) -> tuple[list,
             differences.append(reject.difference(side))
     hashes["signed_matches_invariant"] = False
     if len(containers) != 2:
-        return differences, allowed, hashes
+        return differences, allowed, hashes, []
     (kind_u, slices_u), (kind_s, slices_s) = containers["unsigned"], containers["signed"]
     if kind_u != kind_s:
         differences.append(difference("macho-container-kind-changed", f"unsigned is {kind_u}, signed is {kind_s}"))
-        return differences, allowed, hashes
+        return differences, allowed, hashes, []
     keys_u = sorted((a.key if a else (s.cputype & 0xFFFFFFFF, s.cpusubtype & 0xFFFFFF)) for a, s in slices_u)
     keys_s = sorted((a.key if a else (s.cputype & 0xFFFFFFFF, s.cpusubtype & 0xFFFFFF)) for a, s in slices_s)
     if keys_u != keys_s:
         differences.append(difference("macho-slice-set-changed", "architecture set differs", unsigned=keys_u, signed=keys_s))
-        return differences, allowed, hashes
+        return differences, allowed, hashes, []
     table_u = [fat_table_entry(a) for a, _ in slices_u if a]
     table_s = [fat_table_entry(a) for a, _ in slices_s if a]
     if table_u != table_s:
@@ -1295,13 +1319,21 @@ def compare_macho(unsigned: bytes, signed: bytes, policy: Policy) -> tuple[list,
                 signed=table_s,
             )
         )
-        return differences, allowed, hashes
+        return differences, allowed, hashes, []
+    identities = []
     for position, ((arch, slice_u), (_, slice_s)) in enumerate(zip(slices_u, slices_s)):
+        # Full architecture identity (not only a position) so a consumer can tell which slice an entry is about.
+        architecture = (
+            fat_table_entry(arch)
+            if arch
+            else {"cputype": f"{slice_u.cputype & 0xFFFFFFFF:#010x}", "cpusubtype": f"{slice_u.cpusubtype & 0xFFFFFFFF:#010x}", "align": None}
+        )
+        identities.append({"index": position, "architecture": architecture})
         d, a = compare_slice(slice_u, slice_s, policy, None if arch is None else position)
-        differences.extend(d)
-        allowed.extend(a)
+        differences.extend({**item, "architecture": architecture} if "slice" in item else item for item in d)
+        allowed.extend({**item, "architecture": architecture} if "slice" in item else item for item in a)
     hashes["signed_matches_invariant"] = not differences
-    return differences, allowed, hashes
+    return differences, allowed, hashes, identities
 
 
 # ================================================================ tree + driver
@@ -1443,7 +1475,7 @@ def _delegate(kind, path, unsigned_data, signed_source, policy, differences, all
         if kind == "pe":
             d, a, _ = compare_pe(unsigned_data, signed_data)
         else:
-            d, a, _ = compare_macho(unsigned_data, signed_data, policy)
+            d, a, _, _ = compare_macho(unsigned_data, signed_data, policy)
     except InputError as error:
         differences.append(difference("tree-unparseable-executable", str(error), path=path))
         return
@@ -1460,11 +1492,18 @@ def compare(unsigned: Path, signed: Path, kind: str, *, entitlements: Path | Non
         raise InputError(f"unsupported --kind {kind!r}; expected one of {', '.join(KINDS)}")
     unsigned, signed = Path(unsigned), Path(signed)
     policy = load_policy(entitlements) if kind != "pe" else Policy()
+    extra: dict[str, Any] = {}
     if kind == "tree":
         differences, allowed, hashes = compare_tree(unsigned, signed, policy)
     else:
         data = (read_regular_file(unsigned), read_regular_file(signed))
-        differences, allowed, hashes = compare_pe(*data) if kind == "pe" else compare_macho(*data, policy)
+        if kind == "pe":
+            differences, allowed, hashes = compare_pe(*data)
+        else:
+            differences, allowed, hashes, extra["slices"] = compare_macho(*data, policy)
+    if kind != "pe":
+        # Self-describing evidence: which entitlement policy this verdict was produced under.
+        extra["entitlement_policy"] = policy.report()
     return {
         "schema": SCHEMA,
         "verdict": "PASS" if not differences else "FAIL",
@@ -1473,6 +1512,7 @@ def compare(unsigned: Path, signed: Path, kind: str, *, entitlements: Path | Non
         # On FAIL nothing is "approved": a partial allowlist must not be mistaken for acceptance.
         "allowed_differences": allowed if not differences else [],
         "input_hashes": hashes,
+        **extra,
     }
 
 
