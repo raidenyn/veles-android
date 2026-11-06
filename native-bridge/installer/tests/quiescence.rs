@@ -13,7 +13,8 @@
 //!   executing any owned image blocks mutation;
 //! * an inaccessible candidate that runs as the installing user is `Unknown`
 //!   (blocks), never `Quiescent`, while a process positively attributed to
-//!   another user/session does not have to be readable at all;
+//!   another user does not have to be readable at all - and an image outside the
+//!   owned trees rules a process out before its user is ever consulted;
 //! * process identity is the executable image (not a name) and is rechecked
 //!   against PID reuse, so a recycled PID neither keeps blocking on its own nor
 //!   hides an owned image that now runs under it;
@@ -98,37 +99,46 @@ fn version_image(paths: &InstallPaths, version: &str, name: &str) -> PathBuf {
     write_executable(&paths.versions().join(version).join(name))
 }
 
-fn owned(pid: u32, started: u64, image: &Path) -> ProcessObservation {
+fn owned(pid: u32, image: &Path) -> ProcessObservation {
     ProcessObservation {
-        identity: ProcessIdentity { pid, started },
+        identity: ProcessIdentity { pid },
         scope: ProcessScope::InstallingUser,
         image: Some(image.to_path_buf()),
     }
 }
 
-fn foreign_image(pid: u32, started: u64, image: &Path) -> ProcessObservation {
+fn foreign_image(pid: u32, image: &Path) -> ProcessObservation {
     ProcessObservation {
-        identity: ProcessIdentity { pid, started },
+        identity: ProcessIdentity { pid },
         scope: ProcessScope::InstallingUser,
         image: Some(fs::canonicalize(image).expect("canonical foreign image")),
     }
 }
 
 /// A same-user process whose image the OS could not resolve.
-fn unresolved(pid: u32, started: u64) -> ProcessObservation {
+fn unresolved(pid: u32) -> ProcessObservation {
     ProcessObservation {
-        identity: ProcessIdentity { pid, started },
+        identity: ProcessIdentity { pid },
         scope: ProcessScope::InstallingUser,
         image: None,
     }
 }
 
-/// A process positively attributed to another user or session.
-fn other_user(pid: u32, started: u64) -> ProcessObservation {
+/// A process positively attributed to another user.
+fn other_user(pid: u32) -> ProcessObservation {
     ProcessObservation {
-        identity: ProcessIdentity { pid, started },
+        identity: ProcessIdentity { pid },
         scope: ProcessScope::OtherUser,
         image: None,
+    }
+}
+
+/// A process the OS could not attribute to any user, with its resolved image.
+fn unattributed(pid: u32, image: Option<&Path>) -> ProcessObservation {
+    ProcessObservation {
+        identity: ProcessIdentity { pid },
+        scope: ProcessScope::Unknown,
+        image: image.map(Path::to_path_buf),
     }
 }
 
@@ -175,7 +185,7 @@ impl ScriptedTable {
 }
 
 impl ProcessTable for ScriptedTable {
-    fn observe(&self) -> io::Result<Vec<ProcessObservation>> {
+    fn observe(&self, _paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
         let mut tables = Self::lock(&self.tables);
         let table = if tables.len() > 1 {
             tables.remove(0)
@@ -186,7 +196,7 @@ impl ProcessTable for ScriptedTable {
         Ok(table)
     }
 
-    fn recheck(&self, pid: u32) -> io::Result<Option<ProcessObservation>> {
+    fn recheck(&self, _paths: &InstallPaths, pid: u32) -> io::Result<Option<ProcessObservation>> {
         if *Self::lock(&self.fail_rechecks) {
             return Err(io::Error::other("process recheck unavailable"));
         }
@@ -204,11 +214,11 @@ impl ProcessTable for ScriptedTable {
 struct FailingTable;
 
 impl ProcessTable for FailingTable {
-    fn observe(&self) -> io::Result<Vec<ProcessObservation>> {
+    fn observe(&self, _paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
         Err(io::Error::other("process table unavailable"))
     }
 
-    fn recheck(&self, _pid: u32) -> io::Result<Option<ProcessObservation>> {
+    fn recheck(&self, _paths: &InstallPaths, _pid: u32) -> io::Result<Option<ProcessObservation>> {
         Err(io::Error::other("process table unavailable"))
     }
 }
@@ -322,10 +332,7 @@ fn two_profiles_and_prior_version_block() {
     fs::write(&foreign, b"unrelated").expect("foreign image");
 
     // Two Chrome profiles each run the host from the same owned version.
-    let two_profiles = ScriptedTable::new(vec![vec![
-        owned(4100, 11, &current),
-        owned(4200, 12, &current),
-    ]]);
+    let two_profiles = ScriptedTable::new(vec![vec![owned(4100, &current), owned(4200, &current)]]);
     assert_eq!(
         inspect_host_processes(&paths, &two_profiles),
         HostState::Active
@@ -333,14 +340,14 @@ fn two_profiles_and_prior_version_block() {
 
     // The retained prior version is still executing: that blocks too, because
     // cleanup would otherwise pull the image out from under it.
-    let prior_version = ScriptedTable::new(vec![vec![owned(4300, 13, &prior)]]);
+    let prior_version = ScriptedTable::new(vec![vec![owned(4300, &prior)]]);
     assert_eq!(
         inspect_host_processes(&paths, &prior_version),
         HostState::Active
     );
 
     // The same executable base name in a foreign directory is not ours.
-    let same_name_elsewhere = ScriptedTable::new(vec![vec![foreign_image(4400, 14, &foreign)]]);
+    let same_name_elsewhere = ScriptedTable::new(vec![vec![foreign_image(4400, &foreign)]]);
     assert_eq!(
         inspect_host_processes(&paths, &same_name_elsewhere),
         HostState::Quiescent
@@ -349,9 +356,9 @@ fn two_profiles_and_prior_version_block() {
     // The bounded installer wait reports HostActive, retries instead of trusting
     // one sample, stays inside the fixed ten-second ceiling and mutates nothing.
     let platform = ScriptedPlatform::new(ScriptedTable::new(vec![vec![
-        owned(4100, 11, &current),
-        owned(4200, 12, &current),
-        owned(4300, 13, &prior),
+        owned(4100, &current),
+        owned(4200, &current),
+        owned(4300, &prior),
     ]]));
     let started = Instant::now();
     let failure = require_quiescent_within(&platform, &paths, Duration::from_millis(150))
@@ -395,23 +402,23 @@ fn inaccessible_candidate_is_unknown_not_quiescent() {
 
     // A same-user process whose image cannot be read could be executing an owned
     // version, so it is Unknown (blocks), never Quiescent.
-    let inaccessible = ScriptedTable::new(vec![vec![unresolved(5100, 21)]]);
+    let inaccessible = ScriptedTable::new(vec![vec![unresolved(5100)]]);
     assert_eq!(
         inspect_host_processes(&paths, &inaccessible),
         HostState::Unknown
     );
 
-    // A process positively attributed to another user/session cannot execute the
+    // A process positively attributed to another user cannot execute the
     // user-private root, so its unreadable image does not have to block: the
     // inspector never reads unrelated protected system processes' images.
-    let foreign_user = ScriptedTable::new(vec![vec![other_user(5200, 22)]]);
+    let foreign_user = ScriptedTable::new(vec![vec![other_user(5200)]]);
     assert_eq!(
         inspect_host_processes(&paths, &foreign_user),
         HostState::Quiescent
     );
 
     // The bounded wait maps Unknown to InspectionDenied, again with no mutation.
-    let platform = ScriptedPlatform::new(ScriptedTable::new(vec![vec![unresolved(5100, 21)]]));
+    let platform = ScriptedPlatform::new(ScriptedTable::new(vec![vec![unresolved(5100)]]));
     let failure = require_quiescent_within(&platform, &paths, Duration::from_millis(100))
         .expect_err("an unresolved same-user image must block");
     assert_eq!(failure.code, FailureCode::InspectionDenied);
@@ -427,6 +434,55 @@ fn inaccessible_candidate_is_unknown_not_quiescent() {
 }
 
 #[test]
+fn foreign_image_is_decided_before_user_attribution() {
+    let temp = TempRoot::new();
+    let paths = windows_paths(&temp);
+    let current = version_image(&paths, "4.0.0-ffffffff", "host");
+    let foreign = temp.path().join("bin").join("host");
+    fs::create_dir_all(foreign.parent().expect("foreign parent")).expect("foreign parent");
+    fs::write(&foreign, b"unrelated").expect("foreign image");
+
+    // A process the OS cannot attribute is irrelevant when its image is outside
+    // the owned trees: no uid is needed to rule it out, so an unrelated
+    // protected system process cannot keep the installer blocked.
+    let unknown_scope_foreign = ScriptedTable::new(vec![vec![unattributed(6700, Some(&foreign))]]);
+    assert_eq!(
+        inspect_host_processes(&paths, &unknown_scope_foreign),
+        HostState::Quiescent
+    );
+
+    // The same unattributable process with an owned image is a potential host:
+    // the image is inside our private root, so missing attribution blocks.
+    let unknown_scope_owned = ScriptedTable::new(vec![vec![unattributed(6800, Some(&current))]]);
+    assert_eq!(
+        inspect_host_processes(&paths, &unknown_scope_owned),
+        HostState::Active
+    );
+
+    // Without any resolved image the process cannot be ruled out either.
+    let unknown_scope_unresolved = ScriptedTable::new(vec![vec![unattributed(6900, None)]]);
+    assert_eq!(
+        inspect_host_processes(&paths, &unknown_scope_unresolved),
+        HostState::Unknown
+    );
+
+    // A recheck that resolves the PID to a foreign image clears the candidate;
+    // one that resolves it to an owned image blocks.
+    let reused_foreign = ScriptedTable::new(vec![vec![unattributed(7000, None)]])
+        .with_recheck(7000, Some(unattributed(7000, Some(&foreign))));
+    assert_eq!(
+        inspect_host_processes(&paths, &reused_foreign),
+        HostState::Quiescent
+    );
+    let reused_owned = ScriptedTable::new(vec![vec![unattributed(7010, None)]])
+        .with_recheck(7010, Some(unattributed(7010, Some(&current))));
+    assert_eq!(
+        inspect_host_processes(&paths, &reused_owned),
+        HostState::Active
+    );
+}
+
+#[test]
 fn pid_reuse_not_bound_to_name() {
     let temp = TempRoot::new();
     let paths = windows_paths(&temp);
@@ -436,23 +492,23 @@ fn pid_reuse_not_bound_to_name() {
     fs::write(&foreign, b"unrelated").expect("foreign image");
 
     // The base name is irrelevant: only the resolved image path identifies ours.
-    let same_name = ScriptedTable::new(vec![vec![foreign_image(6100, 31, &foreign)]]);
+    let same_name = ScriptedTable::new(vec![vec![foreign_image(6100, &foreign)]]);
     assert_eq!(
         inspect_host_processes(&paths, &same_name),
         HostState::Quiescent
     );
 
-    // The PID was recycled (different start marker) by an unrelated program, so
-    // the stale snapshot entry cannot keep the installer blocked.
-    let reused_foreign = ScriptedTable::new(vec![vec![owned(6100, 31, &current)]])
-        .with_recheck(6100, Some(foreign_image(6100, 32, &foreign)));
+    // The PID was recycled by an unrelated program, so the stale snapshot entry
+    // cannot keep the installer blocked.
+    let reused_foreign = ScriptedTable::new(vec![vec![owned(6100, &current)]])
+        .with_recheck(6100, Some(foreign_image(6100, &foreign)));
     assert_eq!(
         inspect_host_processes(&paths, &reused_foreign),
         HostState::Quiescent
     );
 
     // The observed process simply exited: nothing is live, so nothing blocks.
-    let exited = ScriptedTable::new(vec![vec![owned(6200, 41, &current)]]).with_recheck(6200, None);
+    let exited = ScriptedTable::new(vec![vec![owned(6200, &current)]]).with_recheck(6200, None);
     assert_eq!(
         inspect_host_processes(&paths, &exited),
         HostState::Quiescent
@@ -461,8 +517,8 @@ fn pid_reuse_not_bound_to_name() {
     // Conversely, a recycled PID that now executes an owned image blocks: the
     // recheck classifies the process that holds the PID now, so an inaccessible
     // snapshot entry cannot hide a newly launched owned host.
-    let reused_owned = ScriptedTable::new(vec![vec![unresolved(6300, 51)]])
-        .with_recheck(6300, Some(owned(6300, 52, &current)));
+    let reused_owned = ScriptedTable::new(vec![vec![unresolved(6300)]])
+        .with_recheck(6300, Some(owned(6300, &current)));
     assert_eq!(
         inspect_host_processes(&paths, &reused_owned),
         HostState::Active
@@ -470,21 +526,21 @@ fn pid_reuse_not_bound_to_name() {
 
     // A recycled PID that is now another user's process cannot execute the
     // user-private root.
-    let reused_other_user = ScriptedTable::new(vec![vec![owned(6400, 61, &current)]])
-        .with_recheck(6400, Some(other_user(6400, 62)));
+    let reused_other_user = ScriptedTable::new(vec![vec![owned(6400, &current)]])
+        .with_recheck(6400, Some(other_user(6400)));
     assert_eq!(
         inspect_host_processes(&paths, &reused_other_user),
         HostState::Quiescent
     );
 
-    // A live process whose identity did not change is still ours.
-    let live = ScriptedTable::new(vec![vec![owned(6500, 71, &current)]]);
+    // A live process whose recheck still reports the owned image is still ours.
+    let live = ScriptedTable::new(vec![vec![owned(6500, &current)]]);
     assert_eq!(inspect_host_processes(&paths, &live), HostState::Active);
 
     // A recheck that cannot be answered is Unknown: the process might still be
     // our host, so a failed identity recheck never becomes Quiescent.
     let unreadable_recheck =
-        ScriptedTable::new(vec![vec![owned(6600, 81, &current)]]).with_failing_rechecks();
+        ScriptedTable::new(vec![vec![owned(6600, &current)]]).with_failing_rechecks();
     assert_eq!(
         inspect_host_processes(&paths, &unreadable_recheck),
         HostState::Unknown
@@ -504,10 +560,13 @@ fn late_launch_preserves_live_payload() {
     let current = version_image(&paths, "3.0.0-dddddddd", "host");
     let prior = version_image(&paths, "2.9.0-eeeeeeee", "host");
     let maintenance = write_executable(&paths.maintenance().join("veles-cleanup"));
+    let unrelated = temp.path().join("bin").join("unrelated");
+    fs::create_dir_all(unrelated.parent().expect("unrelated parent")).expect("unrelated parent");
+    fs::write(&unrelated, b"unrelated").expect("unrelated image");
 
     let platform = ScriptedPlatform::new(ScriptedTable::new(vec![
-        Vec::new(),
-        vec![owned(7100, 91, &current)],
+        vec![foreign_image(7050, &unrelated)],
+        vec![owned(7100, &current)],
     ]));
 
     // The installer's first check succeeds: no owned host is running.

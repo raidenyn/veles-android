@@ -125,47 +125,58 @@ pub enum HostState {
     Unknown,
 }
 
-/// Which user/session a process observation is attributed to.
+/// Which user a process observation is attributed to.
 ///
 /// The per-user install root is private to the installing user (`0700` on Unix,
 /// the user's own ACLs on Windows), so a process positively attributed to another
-/// user or to the services session cannot execute an owned image and does not
-/// have to be readable. Ownership is the cheap filter: a native adapter resolves
-/// executable images only for the installing user's own processes, never for
-/// every unrelated protected system process.
+/// user cannot execute an owned image. Attribution is only consulted for a
+/// process that could still be ours: an image path that resolves *outside* the
+/// owned trees is ruled out first, so an unrelated protected system process never
+/// has to be attributed to a user and never blocks the installer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessScope {
     /// Runs as the installing user: may execute files in the per-user root.
     InstallingUser,
-    /// Positively attributed to another user or another OS session.
+    /// Positively attributed to another user.
     OtherUser,
+    /// Not positively attributed to any user.
+    ///
+    /// Either the OS would not say, or the image was already outside the owned
+    /// trees so attribution was not needed. This never rules a process out: it
+    /// stays a candidate when its image is inside the owned trees, or when its
+    /// image could not be resolved either, and then it blocks instead of being
+    /// treated as another user's process.
+    Unknown,
 }
 
-/// Identity of one OS process that survives PID reuse.
+/// Identity of one OS process.
 ///
 /// A PID is not an identity: the OS recycles it as soon as the process exits, so
 /// a snapshot entry can stop describing anything before its image is resolved.
-/// The start marker (Windows process creation time, macOS start time) is captured
-/// with the PID, and every decision is made from a fresh recheck of the PID.
+/// No decision is made from the snapshot, though: every candidate is re-read by
+/// PID and classified from the process that holds the PID *now*, so a recycled
+/// PID is neither mistaken for the observed process nor able to hide a host that
+/// now runs under it. No OS start marker is retained, because nothing compares
+/// it - the fresh re-read is the PID-reuse defence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProcessIdentity {
     /// The process identifier.
     pub pid: u32,
-    /// The OS process start marker; a different value means a recycled PID.
-    pub started: u64,
 }
 
 /// One process as the OS process table reported it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessObservation {
-    /// PID plus start marker.
+    /// The process this observation describes.
     pub identity: ProcessIdentity,
-    /// The user/session the OS attributed the process to.
+    /// The user the OS attributed the process to, when it could.
     pub scope: ProcessScope,
     /// The OS-resolved absolute executable image path, never a display name.
     ///
-    /// `None` means the OS could not resolve it. For an installing-user process
-    /// that is a potential owned host, so it blocks as [`HostState::Unknown`].
+    /// `None` means the OS could not resolve it. For a process that is not
+    /// positively another user's, that is a potential owned host, so it blocks as
+    /// [`HostState::Unknown`] - unless the image resolves outside the owned trees,
+    /// which rules the process out whatever its user.
     pub image: Option<PathBuf>,
 }
 
@@ -176,23 +187,32 @@ const MAX_PROCESS_OBSERVATIONS: usize = 1 << 16;
 ///
 /// Native adapters implement this with the Windows Toolhelp/token/process-image
 /// APIs and with macOS `libproc`; the portable tests inject a scripted table.
-/// Adapters report the user/session scope they could read and leave `image`
-/// unresolved rather than guessing an executable path.
+/// Adapters report the user scope they could read and leave `image` unresolved
+/// rather than guessing an executable path.
 pub trait ProcessTable {
     /// One snapshot of the process table.
-    fn observe(&self) -> io::Result<Vec<ProcessObservation>>;
+    ///
+    /// `paths` gives the adapter the owned trees so it can rule a process out
+    /// from its image alone, without the user attribution that may be
+    /// unavailable for an unrelated protected process. The result may therefore
+    /// be empty when every process is irrelevant; it is never a substitute for
+    /// reading the OS table, and an adapter must report a table it could not read
+    /// (including a zero-length OS snapshot) as an error rather than as "no
+    /// host".
+    fn observe(&self, paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>>;
     /// The process that currently holds `pid`, or `None` when it has exited.
     ///
     /// This is the PID-reuse check: the caller re-classifies the returned
     /// observation instead of trusting the snapshot entry, so an adapter must
-    /// report the process the PID holds *now* (with its current start marker)
-    /// rather than repeat a cached entry.
-    fn recheck(&self, pid: u32) -> io::Result<Option<ProcessObservation>>;
+    /// report the process the PID holds *now* rather than repeat a cached entry.
+    /// "Present but unreadable" is an error or an unattributed observation, not
+    /// `None`: only a PID that is gone may be reported as exited.
+    fn recheck(&self, paths: &InstallPaths, pid: u32) -> io::Result<Option<ProcessObservation>>;
 }
 
 /// How one resolved image path relates to the owned payload trees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ImageClass {
+pub(crate) enum ImageClass {
     /// Inside `versions/` or `maintenance/`: an owned host is executing.
     Owned,
     /// Somewhere else: not an owned image.
@@ -215,16 +235,18 @@ enum Rechecked {
 /// The owned executable bases (`versions/` and `maintenance/`) with canonical
 /// aliases.
 ///
-/// Native process tables report OS-resolved image paths (macOS resolves
-/// `/var` to `/private/var`; Windows reports the DOS form of the loaded image),
-/// so the lexical base and its canonical form are both accepted. A matching
-/// *file name* is never evidence: only containment below an owned tree is.
-struct OwnedImages {
+/// macOS reports a process image through the resolved filesystem (`/var` is a
+/// symlink to `/private/var`), so the lexical base and its canonical form are
+/// both accepted there. Windows compares the verbatim `\\?\` prefix with the DOS
+/// prefix by normalising it in [`comparable_components`], so a canonicalised
+/// base is a usable second spelling on every target. A matching *file name* is
+/// never evidence: only containment below an owned tree is.
+pub(crate) struct OwnedImages {
     bases: Vec<PathBuf>,
 }
 
 impl OwnedImages {
-    fn capture(paths: &InstallPaths) -> Self {
+    pub(crate) fn capture(paths: &InstallPaths) -> Self {
         let mut bases = Vec::with_capacity(4);
         for base in [paths.versions(), paths.maintenance()] {
             bases.push(base.to_path_buf());
@@ -237,7 +259,7 @@ impl OwnedImages {
         Self { bases }
     }
 
-    fn classify(&self, image: Option<&Path>) -> ImageClass {
+    pub(crate) fn classify(&self, image: Option<&Path>) -> ImageClass {
         let Some(image) = image else {
             return ImageClass::Unresolved;
         };
@@ -253,35 +275,50 @@ impl OwnedImages {
     }
 }
 
+/// Whether one observation could be a process executing an owned image.
+///
+/// The image is resolved *before* the user attribution, and that ordering is the
+/// point: a process whose image is outside the owned trees cannot be executing an
+/// owned host whatever user it runs as, so an unrelated process that the OS will
+/// not attribute (a hardened or system process) must not block the installer.
+/// Only an owned image - or an image that could not be resolved at all - still
+/// needs the attribution; there, a positive "another user" rules the process out
+/// while "installing user" or "unknown" leaves it a potential host.
+fn is_candidate(owned: &OwnedImages, observation: &ProcessObservation) -> bool {
+    match owned.classify(observation.image.as_deref()) {
+        ImageClass::Foreign => false,
+        ImageClass::Owned | ImageClass::Unresolved => observation.scope != ProcessScope::OtherUser,
+    }
+}
+
 /// Classify the OS process table against the fixed install layout.
 ///
-/// Only processes the OS attributes to the installing user can execute a file in
-/// the per-user root, so only those are resolved and rechecked. A candidate is a
-/// process whose image is inside an owned `versions/` or `maintenance/` tree or
-/// whose image could not be resolved at all. Every candidate is re-read by PID
-/// immediately before the decision: an entry that exited is dropped, and a
-/// recycled PID is classified by the process that holds it now. Any candidate
-/// that cannot be ruled out makes the result [`HostState::Unknown`] instead of
-/// claiming quiescence.
+/// A candidate is a process that could be executing an owned `versions/` or
+/// `maintenance/` image; see `is_candidate` for the image-first ordering that
+/// keeps unrelated, unattributable system processes from blocking. Every
+/// candidate is re-read by PID immediately before the decision: an entry that
+/// exited is dropped, and a recycled PID is classified by the process that holds
+/// it now. Any candidate that cannot be ruled out makes the result
+/// [`HostState::Unknown`] instead of claiming quiescence.
 ///
 /// The function is read-only. It never terminates a process or touches the
 /// install tree, so every possibly live version stays on disk for the caller.
 pub fn inspect_host_processes(paths: &InstallPaths, table: &impl ProcessTable) -> HostState {
-    let observations = match table.observe() {
+    let observations = match table.observe(paths) {
         Ok(observations) if observations.len() <= MAX_PROCESS_OBSERVATIONS => observations,
-        // An unreadable or implausible process table cannot prove quiescence.
+        // An unreadable or implausibly large process table cannot prove
+        // quiescence. (An adapter rules irrelevant processes out before it
+        // returns, so an empty result is legitimate; an empty OS snapshot is the
+        // adapter's own error.)
         _ => return HostState::Unknown,
     };
     let owned = OwnedImages::capture(paths);
     let mut unknown = false;
     for observation in &observations {
-        if observation.scope != ProcessScope::InstallingUser {
+        if !is_candidate(&owned, observation) {
             continue;
         }
-        if owned.classify(observation.image.as_deref()) == ImageClass::Foreign {
-            continue;
-        }
-        match recheck_candidate(table, &owned, observation) {
+        match recheck_candidate(table, paths, &owned, observation) {
             Rechecked::Active => return HostState::Active,
             Rechecked::Unknown => unknown = true,
             Rechecked::Inactive => {}
@@ -298,28 +335,30 @@ pub fn inspect_host_processes(paths: &InstallPaths, table: &impl ProcessTable) -
 /// observation.
 ///
 /// The OS may recycle a PID the moment its process exits, so the snapshot entry
-/// is only a candidate pointer. A different start marker means the PID now
-/// belongs to a different process: the stale entry can neither keep blocking nor
-/// hide a host that now runs under the PID, which is why the decision is made
-/// from the fresh observation and never from the executable name.
+/// is only a candidate pointer. The fresh observation decides: a PID recycled by
+/// a foreign image or another user is inactive, while a recycled PID that now
+/// executes an owned image is active. That is why the decision is made from the
+/// process holding the PID now and never from the executable name.
 fn recheck_candidate(
     table: &impl ProcessTable,
+    paths: &InstallPaths,
     owned: &OwnedImages,
     observed: &ProcessObservation,
 ) -> Rechecked {
-    let current = match table.recheck(observed.identity.pid) {
+    let current = match table.recheck(paths, observed.identity.pid) {
         // The candidate exited; nothing executes its image any more.
         Ok(None) => return Rechecked::Inactive,
         Ok(Some(current)) => current,
         // The process cannot be re-read, so it cannot be ruled out.
         Err(_) => return Rechecked::Unknown,
     };
-    if current.scope != ProcessScope::InstallingUser {
-        // Including a PID recycled by another user's process.
+    if !is_candidate(owned, &current) {
+        // A PID recycled by a foreign image or another user's process.
         return Rechecked::Inactive;
     }
     match owned.classify(current.image.as_deref()) {
         ImageClass::Owned => Rechecked::Active,
+        // `is_candidate` already ruled a foreign image out.
         ImageClass::Foreign => Rechecked::Inactive,
         ImageClass::Unresolved => Rechecked::Unknown,
     }
@@ -579,7 +618,9 @@ impl ValidatedPath {
 ///
 /// Both paths must be absolute and free of `.`/`..`. Windows components compare
 /// ASCII case-insensitively (a deliberate fail-closed approximation of
-/// `CompareStringOrdinal`); Unix compares exactly.
+/// `CompareStringOrdinal`) and a verbatim `\\?\` prefix compares equal to the
+/// equivalent DOS/UNC prefix, so a canonicalised path can be compared with a
+/// path an OS API reported. Unix compares exactly.
 pub fn path_is_within(root: &Path, candidate: &Path) -> bool {
     match (
         comparable_components(root),
@@ -623,13 +664,37 @@ fn comparable_components(path: &Path) -> Option<Vec<OsString>> {
     let mut parts = Vec::new();
     for component in path.components() {
         match component {
-            Component::Prefix(prefix) => parts.push(prefix.as_os_str().to_os_string()),
+            Component::Prefix(prefix) => parts.push(comparable_prefix(prefix.as_os_str())),
             Component::RootDir => parts.push(OsString::from("/")),
             Component::Normal(part) => parts.push(part.to_os_string()),
             Component::CurDir | Component::ParentDir => return None,
         }
     }
     Some(parts)
+}
+
+/// One comparable drive/UNC prefix.
+///
+/// `fs::canonicalize` returns the verbatim form (`\\?\C:\...`, `\\?\UNC\...`)
+/// while the OS known folders and `QueryFullProcessImageNameW` report the DOS
+/// form (`C:\...`, `\\server\share\...`). Both spell the same volume, so the
+/// verbatim marker is normalised away before comparison; otherwise a canonical
+/// path could never be compared with an OS-reported one.
+#[cfg(windows)]
+fn comparable_prefix(prefix: &OsStr) -> OsString {
+    let text = prefix.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        OsString::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        OsString::from(rest)
+    } else {
+        prefix.to_os_string()
+    }
+}
+
+#[cfg(not(windows))]
+fn comparable_prefix(prefix: &OsStr) -> OsString {
+    prefix.to_os_string()
 }
 
 #[cfg(windows)]
@@ -2430,4 +2495,33 @@ fn foreign_state() -> InstallFailure {
 
 fn trust_denied() -> InstallFailure {
     InstallFailure::new(FailureCode::TrustDenied)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::path_is_within;
+    use std::path::Path;
+
+    #[test]
+    fn verbatim_and_dos_prefixes_compare_equal() {
+        // `fs::canonicalize` returns the verbatim form; the OS known folders and
+        // process image APIs report the DOS form. Both must compare as the same
+        // volume, or an owned image could never be matched on Windows.
+        assert!(path_is_within(
+            Path::new(r"C:\Users\Test\AppData\Local\Veles\prod\versions"),
+            Path::new(r"\\?\C:\Users\Test\AppData\Local\Veles\prod\versions\1.0\host.exe"),
+        ));
+        assert!(path_is_within(
+            Path::new(r"\\?\C:\Users\Test\AppData\Local\Veles\prod\maintenance"),
+            Path::new(r"c:\users\test\appdata\local\veles\prod\maintenance\cleanup.exe"),
+        ));
+        assert!(path_is_within(
+            Path::new(r"\\server\share\Veles\maintenance"),
+            Path::new(r"\\?\UNC\server\share\Veles\maintenance\cleanup.exe"),
+        ));
+        assert!(!path_is_within(
+            Path::new(r"C:\Veles\versions"),
+            Path::new(r"\\?\D:\Veles\versions\1.0\host.exe"),
+        ));
+    }
 }

@@ -47,14 +47,19 @@
 //! ## Host inspection (Task 5)
 //!
 //! [`MacosPlatform::inspect_hosts`] reads the process table with `libproc`
-//! (`proc_listpids`, `proc_pidinfo(PROC_PIDTBSDINFO)`, `proc_pidpath`) and hands
-//! the observations to the portable classifier. Only processes the OS attributes
-//! to the installing user have their executable image resolved: other users' and
-//! the system's processes cannot execute this user's `0700` install root, so they
-//! are never read (and never block). A same-user process whose image cannot be
-//! resolved is an unknown candidate and blocks. Process identity is the PID plus
-//! `pbi_start_tvsec`/`pbi_start_tvusec`; every candidate is re-read before the
-//! decision so a recycled PID is not mistaken for the observed process.
+//! (`proc_listpids`, `proc_pidpath`, `proc_pidinfo(PROC_PIDTBSDINFO)`) and hands
+//! the observations to the portable classifier. The image is resolved **first**:
+//! a process whose image is outside the owned trees cannot be executing an owned
+//! host, whatever user it runs as, so its uid is never needed and an unrelated
+//! system process cannot block the installer merely because its user information
+//! is unreadable. Only a process with an image inside the owned trees (or with no
+//! resolvable image at all) needs attribution; there `proc_pidinfo` is tried
+//! first and a `sysctl(KERN_PROC_PID)`/`kinfo_proc` lookup is the fallback, so one
+//! failing channel does not make the installer permanently unusable. A process
+//! whose image is owned and whose uid still cannot be determined is
+//! [`super::HostState::Unknown`] and blocks. An empty PID list is an error, never
+//! "no host", and every candidate is re-read by PID before the decision so a
+//! recycled PID is not mistaken for the observed process.
 
 use std::ffi::{CStr, OsStr, c_char, c_void};
 use std::fs;
@@ -69,10 +74,10 @@ use std::time::{Duration, Instant};
 
 use super::macos_trust as policy;
 use super::{
-    HostState, InstallLock, OwnedEntry, PACKAGE_MACOS_CARRIER, PackageKind, PackageSource,
-    Platform, ProcessIdentity, ProcessObservation, ProcessScope, ProcessTable, Registration,
-    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath, inspect_host_processes,
-    path_is_within,
+    HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages, PACKAGE_MACOS_CARRIER,
+    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessObservation, ProcessScope,
+    ProcessTable, Registration, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath,
+    inspect_host_processes, path_is_within,
 };
 use crate::model::{FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
@@ -181,6 +186,14 @@ unsafe extern "C" {
     fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut c_void, buffersize: i32) -> i32;
     fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
     fn geteuid() -> u32;
+    fn sysctl(
+        name: *mut i32,
+        namelen: u32,
+        oldp: *mut c_void,
+        oldlenp: *mut usize,
+        newp: *mut c_void,
+        newlen: usize,
+    ) -> i32;
 }
 
 /// `proc_listpids` selector for every process.
@@ -193,12 +206,22 @@ const MAX_PROCESS_PATH_BYTES: usize = 4096;
 /// `pbi_name` is `2 * MAXCOMLEN` bytes.
 const MAXCOMLEN: usize = 16;
 
+/// `sys/sysctl.h`: `CTL_KERN`, `KERN_PROC` and the `KERN_PROC_PID` selector.
+const CTL_KERN: i32 = 1;
+const KERN_PROC: i32 = 14;
+const KERN_PROC_PID: i32 = 1;
+/// `sizeof(struct kinfo_proc)` on 64-bit macOS (LP64 `extern_proc` + `eproc`).
+///
+/// Only the fixed prefix declared in [`KinfoProcPrefix`] is read; the full size
+/// is what a `sysctl(KERN_PROC_PID)` call writes into the buffer.
+const KINFO_PROC_BYTES: usize = 648;
+
 /// `struct proc_bsdinfo` from `sys/proc_info.h`, used only through
 /// `proc_pidinfo(PROC_PIDTBSDINFO)`.
 ///
 /// The layout is asserted at compile time for the macOS target: if the SDK
 /// changes it, the adapter fails to build instead of silently reading the wrong
-/// uid or start marker.
+/// uid.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct ProcBsdInfo {
@@ -227,6 +250,40 @@ struct ProcBsdInfo {
 }
 
 const _: () = assert!(size_of::<ProcBsdInfo>() == 136);
+
+/// The fixed prefix of `struct kinfo_proc` that `sysctl(KERN_PROC_PID)` returns.
+///
+/// Only `kp_proc.p_pid` and `kp_eproc.e_ucred.cr_uid` are read; the
+/// version-dependent tail (`e_vm` and later) is deliberately not declared. The
+/// byte layout is `struct extern_proc` (296 bytes on LP64, `p_pid` at offset 40)
+/// followed by `e_paddr`, `e_sess`, `struct _pcred` (104 bytes) and
+/// `struct _ucred` (`cr_ref` then `cr_uid`) from `bsd/sys/sysctl.h`. The size and
+/// field offsets are asserted, and [`sysctl_uid`] re-checks the returned pid, so a
+/// layout change can only leave a process unattributed - it can never report a
+/// wrong user.
+#[repr(C)]
+struct KinfoProcPrefix {
+    /// `struct extern_proc` bytes before `p_pid`.
+    extern_proc: [u8; 40],
+    /// `p_pid`.
+    pid: i32,
+    /// `struct extern_proc` bytes after `p_pid` (296 - 44).
+    extern_proc_tail: [u8; 252],
+    /// `kp_eproc.e_paddr`.
+    e_paddr: *mut c_void,
+    /// `kp_eproc.e_sess`.
+    e_sess: *mut c_void,
+    /// `kp_eproc.e_pcred`.
+    pcred: [u8; 104],
+    /// `kp_eproc.e_ucred.cr_ref`.
+    cr_ref: i32,
+    /// `kp_eproc.e_ucred.cr_uid`.
+    cr_uid: u32,
+}
+
+const _: () = assert!(size_of::<KinfoProcPrefix>() == 424);
+const _: () = assert!(core::mem::offset_of!(KinfoProcPrefix, pid) == 40);
+const _: () = assert!(core::mem::offset_of!(KinfoProcPrefix, cr_uid) == 420);
 
 /// A retained/invalidated CoreFoundation object.
 struct Cf(CFTypeRef);
@@ -496,85 +553,94 @@ fn wait_bounded(child: &mut Child) -> Option<ExitStatus> {
 
 /// The macOS process table, read through `libproc`.
 ///
-/// The table is read in three cheap steps per process: `proc_listpids` for the
-/// PIDs, `proc_pidinfo(PROC_PIDTBSDINFO)` for the owning uid and start marker,
-/// and only for the installing user's own processes `proc_pidpath` for the
-/// executable image. Other users' images are never resolved.
+/// The image is resolved before the user: a process whose `proc_pidpath` is
+/// outside the owned trees is irrelevant whatever its uid, and it is not even
+/// reported. Only a process that could be executing an owned image - or whose
+/// image cannot be resolved at all - needs attribution, which
+/// `proc_pidinfo(PROC_PIDTBSDINFO)` provides with a `sysctl(KERN_PROC_PID)`
+/// fallback.
 #[derive(Debug, Default)]
 struct MacosProcessTable;
 
 impl ProcessTable for MacosProcessTable {
-    fn observe(&self) -> io::Result<Vec<ProcessObservation>> {
-        let uid = current_uid();
+    fn observe(&self, paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
+        let owned = OwnedImages::capture(paths);
+        let pids = process_ids()?;
         let mut observations = Vec::new();
-        for pid in process_ids()? {
+        for pid in pids {
             // The kernel idle task and `launchd` run as root/system and cannot
             // execute a user-private payload; neither exposes user information.
             if pid <= 1 || pid as u32 == process::id() {
                 continue;
             }
-            match bsd_info(pid) {
-                Some(info) if info.uid == uid => observations.push(observation(&info, pid)),
-                // Another user's process: it cannot execute this user's `0700`
-                // root, so its image does not have to be read.
-                Some(_) => {}
-                // The OS would not attribute the process at all, so it cannot be
-                // ruled out as a potential owned host.
-                None => observations.push(unattributed(pid)),
+            let image = image_path(pid);
+            if let Some(path) = image.as_deref()
+                && owned.classify(Some(path)) == ImageClass::Foreign
+            {
+                // Outside the owned trees: irrelevant regardless of its user, so
+                // the uid is never read (and an unreadable uid cannot block).
+                continue;
             }
+            observations.push(candidate_observation(pid, image));
         }
         Ok(observations)
     }
 
-    fn recheck(&self, pid: u32) -> io::Result<Option<ProcessObservation>> {
-        match bsd_info(pid as i32) {
-            Some(info) => Ok(Some(observation(&info, pid as i32))),
-            // Distinguish "exited" from "present but unreadable": only a PID that
-            // is gone is harmless, anything else cannot be ruled out.
-            None if process_ids()?.contains(&(pid as i32)) => Err(io::Error::other(
-                "process is present but its identity could not be read",
-            )),
-            None => Ok(None),
+    fn recheck(&self, paths: &InstallPaths, pid: u32) -> io::Result<Option<ProcessObservation>> {
+        let owned = OwnedImages::capture(paths);
+        let image = image_path(pid as i32);
+        if let Some(path) = image.as_deref()
+            && owned.classify(Some(path)) == ImageClass::Foreign
+        {
+            // The PID now belongs to a process outside the owned trees. The
+            // classifier discards a foreign image whatever the attribution, so
+            // the uid is not read; `Unknown` records that it was not attributed.
+            return Ok(Some(ProcessObservation {
+                identity: ProcessIdentity { pid },
+                scope: ProcessScope::Unknown,
+                image,
+            }));
         }
+        let scope = owner_scope(pid as i32);
+        if scope == ProcessScope::Unknown {
+            // Distinguish "exited" from "present but unreadable": only a PID that
+            // is gone is harmless, anything else cannot be ruled out. A partial
+            // or empty list is an error, so it can never look like an exit.
+            if !process_ids()?.contains(&(pid as i32)) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(ProcessObservation {
+            identity: ProcessIdentity { pid },
+            scope,
+            image,
+        }))
     }
 }
 
-/// One attributed observation; a foreign user's image is never resolved.
-fn observation(info: &ProcBsdInfo, pid: i32) -> ProcessObservation {
-    let scope = if info.uid == current_uid() {
-        ProcessScope::InstallingUser
-    } else {
-        ProcessScope::OtherUser
-    };
+/// One observation for a process whose image is not demonstrably foreign.
+fn candidate_observation(pid: i32, image: Option<PathBuf>) -> ProcessObservation {
     ProcessObservation {
-        identity: ProcessIdentity {
-            pid: pid as u32,
-            started: start_marker(info),
-        },
-        scope,
-        image: (scope == ProcessScope::InstallingUser)
-            .then(|| image_path(pid))
-            .flatten(),
+        identity: ProcessIdentity { pid: pid as u32 },
+        scope: owner_scope(pid),
+        image,
     }
 }
 
-/// A process the OS would not attribute to any user.
-fn unattributed(pid: i32) -> ProcessObservation {
-    ProcessObservation {
-        identity: ProcessIdentity {
-            pid: pid as u32,
-            started: 0,
-        },
-        scope: ProcessScope::InstallingUser,
-        image: None,
+/// The attribution of one process, from `proc_pidinfo` or the `sysctl` fallback.
+fn owner_scope(pid: i32) -> ProcessScope {
+    match owner_uid(pid) {
+        Some(uid) if uid == current_uid() => ProcessScope::InstallingUser,
+        Some(_) => ProcessScope::OtherUser,
+        None => ProcessScope::Unknown,
     }
 }
 
-/// `pid` plus the OS start time: a recycled PID never repeats this value.
-fn start_marker(info: &ProcBsdInfo) -> u64 {
-    info.start_sec
-        .wrapping_mul(1_000_000)
-        .wrapping_add(info.start_usec)
+/// The process's effective uid, through two independent OS channels.
+fn owner_uid(pid: i32) -> Option<u32> {
+    bsd_info(pid)
+        .map(|info| info.uid)
+        .or_else(|| sysctl_uid(pid))
 }
 
 fn current_uid() -> u32 {
@@ -583,6 +649,10 @@ fn current_uid() -> u32 {
 }
 
 /// Every PID the OS reports, bounded by the caller's snapshot size.
+///
+/// A zero-length result or a result that filled the buffer is an error: a
+/// running system always has processes, and a truncated list would make a live
+/// candidate look exited.
 fn process_ids() -> io::Result<Vec<i32>> {
     // SAFETY: a null buffer with a zero size asks only for the required size.
     let needed = unsafe { proc_listpids(PROC_ALL_PIDS, 0, ptr::null_mut(), 0) };
@@ -599,7 +669,14 @@ fn process_ids() -> io::Result<Vec<i32>> {
     if written < 0 {
         return Err(io::Error::last_os_error());
     }
-    let count = (written as usize / size_of::<i32>()).min(buffer.len());
+    let written = written as usize;
+    if written == 0 {
+        return Err(io::Error::other("empty process list"));
+    }
+    if written >= bytes {
+        return Err(io::Error::other("process list was truncated"));
+    }
+    let count = (written / size_of::<i32>()).min(buffer.len());
     Ok(buffer[..count]
         .iter()
         .copied()
@@ -607,6 +684,11 @@ fn process_ids() -> io::Result<Vec<i32>> {
         .collect())
 }
 
+/// The process's BSD info, or `None` when the OS did not write a complete one.
+///
+/// `proc_pidinfo` returns the number of bytes written; a complete struct is
+/// accepted even when the kernel reports trailing bytes, but a short read is
+/// never parsed.
 fn bsd_info(pid: i32) -> Option<ProcBsdInfo> {
     let mut info = ProcBsdInfo::default();
     let size = size_of::<ProcBsdInfo>();
@@ -620,7 +702,42 @@ fn bsd_info(pid: i32) -> Option<ProcBsdInfo> {
             size as i32,
         )
     };
-    (written == size as i32).then_some(info)
+    if written < 0 || (written as usize) < size {
+        return None;
+    }
+    Some(info)
+}
+
+/// The process's effective uid from `sysctl(KERN_PROC_PID)`.
+///
+/// This is the fallback when `proc_pidinfo` cannot attribute a process, so a
+/// single failing channel does not leave the installer permanently blocked. The
+/// returned pid is re-checked against the requested one: a struct-layout mismatch
+/// then leaves the process unattributed instead of reporting a wrong user.
+fn sysctl_uid(pid: i32) -> Option<u32> {
+    let mut mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid];
+    let mut buffer = [0u8; KINFO_PROC_BYTES];
+    let mut length = buffer.len();
+    // SAFETY: `mib` is a live four-element MIB, `buffer` is live and `length` is
+    // its length in bytes on entry and the written length on return.
+    let status = unsafe {
+        sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 || length < size_of::<KinfoProcPrefix>() {
+        return None;
+    }
+    // SAFETY: the kernel wrote at least the declared prefix into the initialized
+    // buffer; `read_unaligned` copies it out without assuming the buffer's
+    // alignment.
+    let info = unsafe { ptr::read_unaligned(buffer.as_ptr().cast::<KinfoProcPrefix>()) };
+    (info.pid == pid).then_some(info.cr_uid)
 }
 
 fn image_path(pid: i32) -> Option<PathBuf> {

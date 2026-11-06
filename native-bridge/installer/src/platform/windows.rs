@@ -30,26 +30,32 @@
 //!
 //! ## Host inspection (Task 5)
 //!
-//! [`WindowsPlatform::inspect_hosts`] walks the Toolhelp process snapshot, keeps
-//! the current interactive session (services in session 0 can never execute the
-//! user's private `%LOCALAPPDATA%` root), compares each process token's user SID
-//! with the installing user's, and resolves the executable image with
-//! `QueryFullProcessImageNameW` only for that user's processes. Other users'
-//! images are never read. A same-user process whose image cannot be resolved is a
-//! potential owned host and blocks. Process identity is the PID plus the
-//! `GetProcessTimes` creation time; every candidate is re-read before the
-//! decision so a recycled PID is not mistaken for the observed process.
+//! [`WindowsPlatform::inspect_hosts`] walks the Toolhelp process snapshot and
+//! resolves each process image with `QueryFullProcessImageNameW` (through a
+//! `PROCESS_QUERY_LIMITED_INFORMATION` handle, which is granted for
+//! higher-privilege processes). An image outside the owned trees rules it out
+//! immediately, so an unrelated service never needs a readable token. The session
+//! is deliberately not an ownership filter - a service-session process running as
+//! the installing user can still read `%LOCALAPPDATA%` and execute an owned image,
+//! and the same user may be logged on in a second session. For a process that
+//! could be ours, the token user SID decides: a matching SID is the installing
+//! user's process, a different SID is skipped, and a token or SID that cannot be
+//! read is unattributed (not "another user"), so it stays a potential owned host
+//! and blocks. Every candidate is re-read by PID before the decision and the
+//! process now holding the PID is classified, so a recycled PID is neither
+//! trusted nor able to hide a host.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::mem::size_of;
-use std::os::windows::ffi::OsStrExt;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::ptr;
 
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_NO_MORE_FILES, FILETIME, GENERIC_READ, HANDLE, HWND,
+    CloseHandle, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, GENERIC_READ, HANDLE, HWND,
 };
 use windows::Win32::Security::Cryptography::CERT_CONTEXT;
 use windows::Win32::Security::WinTrust::{
@@ -60,7 +66,7 @@ use windows::Win32::Security::WinTrust::{
     WinVerifyTrust,
 };
 use windows::Win32::Security::{
-    EqualSid, GetTokenInformation, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    EqualSid, GetTokenInformation, IsValidSid, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_READ, GetFileSizeEx, OPEN_EXISTING,
@@ -69,9 +75,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::core::{HRESULT, PCWSTR, PWSTR};
@@ -79,10 +84,10 @@ use windows::core::{HRESULT, PCWSTR, PWSTR};
 use super::pe;
 use super::windows_trust as trust_status;
 use super::{
-    HostState, InstallLock, OwnedEntry, PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource,
-    Platform, ProcessIdentity, ProcessObservation, ProcessScope, ProcessTable, Registration,
-    TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath, inspect_host_processes,
-    path_is_within,
+    HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages, PACKAGE_WINDOWS_CARRIER,
+    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessObservation, ProcessScope,
+    ProcessTable, Registration, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath,
+    inspect_host_processes, path_is_within,
 };
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
@@ -233,52 +238,55 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
 
 /// The Windows process table.
 ///
-/// Services in session 0 are skipped without being opened: they run as
-/// SYSTEM/Service and can never execute the interactive user's private
-/// `%LOCALAPPDATA%` root, so they must not have to be readable. For the current
-/// session the process token's user SID decides attribution, and only the
-/// installing user's processes have their image resolved.
+/// The image is resolved before the token: a process executing a path outside the
+/// owned trees cannot be an owned host whatever user or session it belongs to, so
+/// an unrelated service never needs its token read. Attribution is the token user
+/// SID, never the session: a service-session process running as the installing
+/// user can still read `%LOCALAPPDATA%` and execute an owned image, and the same
+/// user may be logged on in more than one session. A process whose token cannot
+/// be read is unattributed and blocks.
 #[derive(Debug, Default)]
 struct WindowsProcessTable;
 
 impl ProcessTable for WindowsProcessTable {
-    fn observe(&self) -> io::Result<Vec<ProcessObservation>> {
+    fn observe(&self, paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
+        let owned = OwnedImages::capture(paths);
         let own = CurrentUser::capture()?;
         let snapshot = ToolhelpSnapshot::capture()?;
-        let mut observations = Vec::new();
-        for entry in snapshot.entries()? {
+        let entries = snapshot.entries()?;
+        let mut observations = Vec::with_capacity(entries.len());
+        for entry in entries {
             let pid = entry.th32ProcessID;
             if pid == 0 || pid == process::id() {
                 continue;
             }
-            // Session 0 is the services session; another session belongs to a
-            // different logon and cannot reach this user's private root.
-            match session_id(pid) {
-                Some(session) if session == own.session => {}
-                // A PID whose session cannot be read has already exited.
-                _ => continue,
+            match open_process(pid) {
+                OpenedProcess::Handle(handle) => {
+                    observations.push(observe_open_process(pid, &handle, &own, &owned));
+                }
+                // The process exists but this installer may not open it, so it
+                // cannot be attributed and remains a potential owned host.
+                OpenedProcess::Denied => observations.push(unattributed(pid)),
+                // A snapshot entry whose process already exited is not live.
+                OpenedProcess::Gone => {}
             }
-            observations.push(observe_process(pid, &own));
         }
         Ok(observations)
     }
 
-    fn recheck(&self, pid: u32) -> io::Result<Option<ProcessObservation>> {
+    fn recheck(&self, paths: &InstallPaths, pid: u32) -> io::Result<Option<ProcessObservation>> {
+        let owned = OwnedImages::capture(paths);
         let own = CurrentUser::capture()?;
-        match session_id(pid) {
-            // A PID that no longer resolves to a session is gone.
-            None => Ok(None),
-            // A PID recycled into the services session or another logon is not
-            // the process that was observed and cannot execute this root.
-            Some(session) if session != own.session => Ok(Some(other_user_observation(pid))),
-            Some(_) => Ok(Some(observe_process(pid, &own))),
-        }
+        Ok(match open_process(pid) {
+            OpenedProcess::Handle(handle) => Some(observe_open_process(pid, &handle, &own, &owned)),
+            OpenedProcess::Denied => Some(unattributed(pid)),
+            OpenedProcess::Gone => None,
+        })
     }
 }
 
-/// The installing user's session and token user SID.
+/// The installing user's token user SID.
 struct CurrentUser {
-    session: u32,
     sid: TokenUserSid,
 }
 
@@ -287,76 +295,97 @@ impl CurrentUser {
         // SAFETY: `GetCurrentProcess` returns a non-owning pseudo-handle.
         let sid = TokenUserSid::of_process(unsafe { GetCurrentProcess() })
             .ok_or_else(|| io::Error::other("current process token user is unavailable"))?;
-        let session = session_id(process::id())
-            .ok_or_else(|| io::Error::other("current process session is unavailable"))?;
-        Ok(Self { session, sid })
-    }
-}
-
-/// A process the OS positively attributes to another user or session.
-fn other_user_observation(pid: u32) -> ProcessObservation {
-    ProcessObservation {
-        identity: ProcessIdentity { pid, started: 0 },
-        scope: ProcessScope::OtherUser,
-        image: None,
+        Ok(Self { sid })
     }
 }
 
 /// A process that cannot be attributed, so it cannot be ruled out.
-fn unattributed(pid: u32, started: u64) -> ProcessObservation {
+fn unattributed(pid: u32) -> ProcessObservation {
     ProcessObservation {
-        identity: ProcessIdentity { pid, started },
-        scope: ProcessScope::InstallingUser,
+        identity: ProcessIdentity { pid },
+        scope: ProcessScope::Unknown,
         image: None,
     }
 }
 
-/// Observe one process in the installing user's session.
+/// Observe one process this installer could open.
 ///
-/// Any failure to attribute or to resolve the image keeps the process as an
-/// installing-user candidate with an unresolved image, which blocks instead of
-/// claiming quiescence.
-fn observe_process(pid: u32, own: &CurrentUser) -> ProcessObservation {
-    let Some(handle) = open_process(pid) else {
-        // An OS-protected or elevated process in this session cannot be
-        // attributed by a non-elevated installer, so it is a potential host.
-        return unattributed(pid, 0);
+/// The image is resolved first. A foreign image makes the process irrelevant
+/// whatever its user, which is recorded as an unattributed scope so the token is
+/// never read. Otherwise a token or SID that cannot be read keeps the process
+/// unattributed, which the classifier treats as a potential host instead of
+/// "another user".
+fn observe_open_process(
+    pid: u32,
+    handle: &OwnedHandle,
+    own: &CurrentUser,
+    owned: &OwnedImages,
+) -> ProcessObservation {
+    let image = image_path(handle);
+    let scope = match image.as_deref() {
+        Some(path) if owned.classify(Some(path)) == ImageClass::Foreign => {
+            // Outside the owned trees: irrelevant whatever its user, so the
+            // token is never read. `Unknown` records that it was not attributed.
+            ProcessScope::Unknown
+        }
+        _ => match TokenUserSid::of_process(handle.0) {
+            Some(token) => match same_user(own, &token) {
+                Some(true) => ProcessScope::InstallingUser,
+                Some(false) => ProcessScope::OtherUser,
+                None => ProcessScope::Unknown,
+            },
+            None => ProcessScope::Unknown,
+        },
     };
-    let started = process_start(&handle).unwrap_or(0);
-    let Some(token) = TokenUserSid::of_process(handle.0) else {
-        return unattributed(pid, started);
-    };
-    // SAFETY: both SIDs belong to live token buffers.
-    let same_user = unsafe { EqualSid(own.sid.sid(), token.sid()) }.is_ok();
-    let scope = if same_user {
-        ProcessScope::InstallingUser
-    } else {
-        ProcessScope::OtherUser
-    };
-    let image = if same_user { image_path(&handle) } else { None };
     ProcessObservation {
-        identity: ProcessIdentity { pid, started },
+        identity: ProcessIdentity { pid },
         scope,
         image,
     }
 }
 
-fn open_process(pid: u32) -> Option<OwnedHandle> {
-    // SAFETY: `pid` is an observed process id and `false` disables inheritance.
-    unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
-        .ok()
-        .and_then(OwnedHandle::new)
+/// Whether two token user SIDs name the same principal.
+///
+/// `EqualSid` reports "not equal" and "could not compare" through the same FALSE
+/// return, so both SIDs are validated first: an invalid SID is unattributable,
+/// never "another user" (which would skip a potential host).
+fn same_user(own: &CurrentUser, token: &TokenUserSid) -> Option<bool> {
+    let own_sid = own.sid.sid();
+    let token_sid = token.sid();
+    // SAFETY: both SIDs point into live, OS-filled `TOKEN_USER` buffers.
+    unsafe {
+        if !IsValidSid(own_sid).as_bool() || !IsValidSid(token_sid).as_bool() {
+            return None;
+        }
+        Some(EqualSid(own_sid, token_sid).is_ok())
+    }
 }
 
-/// The process creation time: PID reuse always changes it.
-fn process_start(handle: &OwnedHandle) -> Option<u64> {
-    let mut creation = FILETIME::default();
-    let mut exit = FILETIME::default();
-    let mut kernel = FILETIME::default();
-    let mut user = FILETIME::default();
-    // SAFETY: the handle is live and every out-parameter is live.
-    unsafe { GetProcessTimes(handle.0, &mut creation, &mut exit, &mut kernel, &mut user) }.ok()?;
-    Some(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
+/// The result of trying to open one process for inspection.
+enum OpenedProcess {
+    /// A handle with the right to read the token and the image path.
+    Handle(OwnedHandle),
+    /// The PID no longer belongs to any process.
+    Gone,
+    /// The process exists but this process may not open it.
+    Denied,
+}
+
+fn open_process(pid: u32) -> OpenedProcess {
+    // SAFETY: `pid` is an observed process id and `false` disables inheritance.
+    match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        Ok(handle) => match OwnedHandle::new(handle) {
+            Some(handle) => OpenedProcess::Handle(handle),
+            None => OpenedProcess::Denied,
+        },
+        // `OpenProcess` reports a PID that does not exist as
+        // `ERROR_INVALID_PARAMETER`; every other failure (access denied,
+        // protection) means the process may still be running.
+        Err(error) if error.code() == HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) => {
+            OpenedProcess::Gone
+        }
+        Err(_) => OpenedProcess::Denied,
+    }
 }
 
 fn image_path(handle: &OwnedHandle) -> Option<PathBuf> {
@@ -376,14 +405,9 @@ fn image_path(handle: &OwnedHandle) -> Option<PathBuf> {
     if size == 0 {
         return None;
     }
-    Some(PathBuf::from(String::from_utf16_lossy(&buffer[..size])))
-}
-
-fn session_id(pid: u32) -> Option<u32> {
-    let mut session = 0u32;
-    // SAFETY: `session` is a live out-parameter.
-    unsafe { ProcessIdToSessionId(pid, &mut session) }.ok()?;
-    Some(session)
+    // The image path is arbitrary UTF-16 (not necessarily valid Unicode), so it
+    // is kept as an OS string instead of being lossily decoded.
+    Some(PathBuf::from(OsString::from_wide(&buffer[..size])))
 }
 
 /// The user SID of one process token, in a word-aligned buffer the OS filled.
