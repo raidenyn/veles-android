@@ -1242,6 +1242,98 @@ class Round2NodeBoundTests(Round2ArchiveCase):
                 self.assertEqual(len(self.inventory(kind, path)["entries"]), 2)
 
 
+def raw_zip(name, data, *, local_extra=b"", central_extra=b"", local_need=20, central_need=20, flags=0):
+    """One STORED member written by hand, so the local and central records can differ."""
+    crc = zlib.crc32(data)
+    encoded = name.encode()
+    local = struct.pack(
+        "<4s5H3L2H", b"PK\x03\x04", local_need, flags, 0, 0, 33, crc, len(data), len(data), len(encoded), len(local_extra)
+    )
+    body = local + encoded + local_extra + data
+    central = struct.pack(
+        "<4s6H3L5H2L", b"PK\x01\x02", 0x314, central_need, flags, 0, 0, 33, crc, len(data), len(data),
+        len(encoded), len(central_extra), 0, 0, 0, 0o100644 << 16, 0,
+    ) + encoded + central_extra
+    end = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 1, 1, len(central), len(body), 0)
+    return body + central + end
+
+
+def zip_extra(ident, body):
+    return struct.pack("<HH", ident, len(body)) + body
+
+
+UT, UX_NEW, UX_OLD_SHORT, UX_OLD, NTFS = 0x5455, 0x7875, 0x7855, 0x5855, 0x000A
+NTFS_TIMES = struct.pack("<4sHH3Q", b"\0\0\0\0", 1, 24, 1, 2, 3)
+
+# (id, local body, central body): each field as the Info-ZIP / NTFS writers lay it out.
+VALID_EXTRAS = {
+    "UT mtime+atime": (UT, b"\x03" + b"\x01\x00\x00\x00" + b"\x02\x00\x00\x00", b"\x03" + b"\x01\x00\x00\x00"),
+    "UT flags only": (UT, b"\x00", b"\x00"),
+    "ux 4/4": (UX_NEW, b"\x01\x04" + b"\xe8\x03\x00\x00" + b"\x04" + b"\xe8\x03\x00\x00", b""),
+    "ux full central": (UX_NEW, b"\x01\x01\x05\x01\x06", b"\x01\x01\x05\x01\x06"),
+    "Ux": (UX_OLD_SHORT, b"\xe8\x03\xe8\x03", b""),
+    "UX": (UX_OLD, b"\x01\x00\x00\x00\x02\x00\x00\x00\xe8\x03\xe8\x03", b"\x01\x00\x00\x00\x02\x00\x00\x00"),
+    "NTFS": (NTFS, NTFS_TIMES, NTFS_TIMES),
+}
+JUNK = b"NOT-TIMESTAMP-OR-UID!"
+
+
+class Round2ZipExtraFieldTests(Round2ArchiveCase):
+    """Re-review N6: an allowlisted extra-field id is not evidence that its body is a timestamp or owner."""
+
+    def inventory(self, name, blob):
+        return package_inputs.build_archive_inventory(self.put(name, blob))
+
+    def test_n6_valid_timestamp_and_owner_fields_are_accepted_and_do_not_change_the_inventory(self):
+        plain = self.inventory("plain.zip", raw_zip("f", b"payload"))
+        self.assertEqual(plain["entries"][0]["size"], 7)
+        for label, (ident, local, central) in VALID_EXTRAS.items():
+            with self.subTest(field=label):
+                blob = raw_zip("f", b"payload", local_extra=zip_extra(ident, local), central_extra=zip_extra(ident, central))
+                self.assertEqual(self.inventory("valid.zip", blob), plain)
+
+    def test_n6_arbitrary_bodies_under_every_allowed_id_are_refused(self):
+        for ident in package_inputs.ZIP_ALLOWED_EXTRA_IDS:
+            with self.subTest(ident=f"{ident:#06x}"):
+                blob = raw_zip("f", b"payload", local_extra=zip_extra(ident, JUNK), central_extra=zip_extra(ident, JUNK))
+                self.assert_refused("junk.zip", blob, "malformed-archive", "extra field")
+
+    def test_n6_malformed_internal_structure_is_refused_for_each_field(self):
+        ntfs_unknown = struct.pack("<4sHH3Q", b"\0\0\0\0", 2, 24, 1, 2, 3)
+        cases = {
+            "UT reserved flag bit": (UT, b"\x08", b"\x08"),
+            "UT local length does not match flags": (UT, b"\x07\x01\x00\x00\x00", b"\x07\x01\x00\x00\x00"),
+            "UT empty": (UT, b"", b""),
+            "UT central with surplus time": (UT, b"\x01\x01\x00\x00\x00", b"\x01\x01\x00\x00\x00\x09\x09\x09\x09"),
+            "ux version 2": (UX_NEW, b"\x02\x01\x05\x01\x06", b""),
+            "ux zero-size uid": (UX_NEW, b"\x01\x00\x01\x06", b""),
+            "ux nine-byte uid": (UX_NEW, b"\x01\x09" + b"U" * 9 + b"\x01\x06", b""),
+            "ux trailing bytes": (UX_NEW, b"\x01\x01\x05\x01\x06TAIL", b""),
+            "ux truncated gid": (UX_NEW, b"\x01\x01\x05\x04\x06", b""),
+            "Ux wrong length": (UX_OLD_SHORT, b"\xe8\x03\xe8", b""),
+            "UX wrong length": (UX_OLD, b"\x01\x00\x00\x00\x02\x00\x00\x00\xe8", b"\x01\x00\x00\x00\x02\x00\x00\x00"),
+            "NTFS unknown subrecord tag": (NTFS, ntfs_unknown, ntfs_unknown),
+            "NTFS non-zero reserved": (NTFS, b"\x01\x00\x00\x00" + NTFS_TIMES[4:], b"\x01\x00\x00\x00" + NTFS_TIMES[4:]),
+            "NTFS trailing bytes": (NTFS, NTFS_TIMES + b"TAIL", NTFS_TIMES + b"TAIL"),
+            "NTFS short times": (NTFS, NTFS_TIMES[:-8], NTFS_TIMES[:-8]),
+            "NTFS no subrecord": (NTFS, b"\0\0\0\0", b"\0\0\0\0"),
+        }
+        for label, (ident, local, central) in cases.items():
+            with self.subTest(case=label):
+                blob = raw_zip("f", b"payload", local_extra=zip_extra(ident, local), central_extra=zip_extra(ident, central))
+                self.assert_refused("bad.zip", blob, "malformed-archive", "extra field")
+        # The same field twice in one header is ambiguous.
+        ident, local, central = VALID_EXTRAS["UT flags only"]
+        twice = zip_extra(ident, local) * 2
+        self.assert_refused("twice.zip", raw_zip("f", b"payload", local_extra=twice, central_extra=zip_extra(ident, central) * 2), "malformed-archive", "extra field")
+
+    def test_n6_local_required_version_must_be_supported_and_agree_with_the_central_record(self):
+        self.assertEqual(self.inventory("same.zip", raw_zip("f", b"x", local_need=10, central_need=10))["entries"][0]["size"], 1)
+        self.assert_refused("need-63.zip", raw_zip("f", b"x", local_need=63), "malformed-archive", "version")
+        self.assert_refused("need-lower.zip", raw_zip("f", b"x", local_need=10), "malformed-archive", "version")
+        self.assert_refused("need-45.zip", raw_zip("f", b"x", local_need=45, central_need=45), "malformed-archive")
+
+
 class CommandLineTests(Scratch):
     def test_inventory_and_compare_exit_codes_and_reports(self):
         left = materialize(self.base / "left")

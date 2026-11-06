@@ -34,16 +34,21 @@ archive, so a size field is verified, never trusted as a truncating bound.
   enforceable output budget here); a stored member needs ``compressed == size``; a
   deflate stream is decoded under an output budget equal to its declared size and must
   end exactly there, consume exactly its compressed extent, and match the CRC-32.
-  Directory members carry no payload. Local and central records must agree. Only
-  timestamps, the Unix mode and a short allowlist of timestamp/owner extra fields are
-  treated as normalisable metadata.
+  Directory members carry no payload. Local and central records must agree, including the
+  required-version field. Only timestamps, the Unix mode and a short allowlist of
+  timestamp/owner extra fields (UT, ux, Ux, UX, NTFS) are treated as normalisable metadata;
+  each such field's internal layout (flags, lengths, version, subrecords) is validated, and
+  anything else under an allowed id is refused. Deflate "compression level" flag bits are not
+  accepted (owner decision pending).
 * TAR extension records (PAX / GNU long names) are bounded and rejected *before*
-  ``tarfile`` reads them; PAX keys are limited to path/link/time/owner fields (a
+  ``tarfile`` reads them; negative sizes are refused before any arithmetic; the padding after
+  every member and extension record must be present and zero; PAX keys are limited to path/link/time/owner fields (a
   ``size`` override would desynchronise the header walk) and global, sparse and
   Solaris headers are refused. ``tarfile``'s view of every member must equal the raw
   header walk, and only zero padding may follow the end marker.
 * The physical archive size, the member count and the central-directory size are
-  checked before the corresponding bytes are read or allocated.
+  checked before the corresponding bytes are read or allocated. Implied parent directories
+  count as nodes exactly like explicit records and real directories.
 
 Rejections carry a stable ``InventoryError.code`` (``symlink``, ``special-file``,
 ``unsafe-path``, ``case-folded-alias``, ``duplicate-archive-member``,
@@ -295,21 +300,69 @@ ZIP_ALLOWED_EXTRA_IDS = (0x5455, 0x7875, 0x7855, 0x5855, 0x000A)
 
 
 class _ZipMember:
-    __slots__ = ("name", "method", "flags", "crc", "csize", "usize", "offset", "mode", "data_offset")
+    __slots__ = ("name", "method", "flags", "crc", "csize", "usize", "offset", "mode", "data_offset", "need")
 
 
-def _zip_extra_ok(extra: bytes, what: str) -> None:
-    """The extra block must be whole ``(id, length, data)`` records of allowlisted ids."""
+def _zip_extra_body(ident: int, body: bytes, central: bool, what: str) -> None:
+    """The internal structure of one allowlisted extra field (Info-ZIP ``extrafld.txt`` / APPNOTE 4.5.5).
+
+    Each field is a timestamp or owner record; its length, version and subrecords are checked, because an
+    identifier alone says nothing about the bytes behind it. The central copy of the Info-ZIP fields is
+    shorter than the local one (or empty, for the owner records); the full local layout is also accepted
+    centrally. The values themselves are not interpreted: they are normalised metadata.
+    """
+
+    def bad(why: str) -> InventoryError:
+        return _bad(f"malformed zip extra field {ident:#06x} in {what}: {why}")
+
+    if ident == 0x5455:  # UT: flags, then mtime/atime/ctime (local: those flagged; central: mtime only)
+        if not body or body[0] & ~0x07:
+            raise bad("missing or reserved flag bits")
+        flags = body[0]
+        expected = 1 + 4 * (1 if flags & 1 else 0) if central else 1 + 4 * bin(flags).count("1")
+        if len(body) != expected:
+            raise bad(f"length {len(body)} does not match flags {flags:#x}")
+    elif ident == 0x7875:  # ux: version 1, uid size, uid, gid size, gid (central: empty)
+        if central and not body:
+            return
+        if len(body) < 3 or body[0] != 1:
+            raise bad("unsupported version or truncated")
+        uid_size = body[1]
+        if not 1 <= uid_size <= 8 or len(body) < 3 + uid_size:
+            raise bad("invalid uid size")
+        gid_size = body[2 + uid_size]
+        if not 1 <= gid_size <= 8 or len(body) != 3 + uid_size + gid_size:
+            raise bad("invalid gid size or trailing bytes")
+    elif ident == 0x7855:  # Ux: uid, gid as 16-bit (central: empty)
+        if len(body) not in ((0, 4) if central else (4,)):
+            raise bad(f"length {len(body)}")
+    elif ident == 0x5855:  # UX: atime, mtime (+ 16-bit uid, gid locally)
+        if len(body) not in ((8, 12) if central else (12,)):
+            raise bad(f"length {len(body)}")
+    elif ident == 0x000A:  # NTFS: 4 reserved zero bytes, then exactly one (tag 1, size 24) mtime/atime/ctime record
+        if len(body) != 4 + 4 + 24 or body[:4] != b"\0\0\0\0" or struct.unpack_from("<HH", body, 4) != (1, 24):
+            raise bad("not one reserved block followed by a single tag-1 timestamp record")
+    else:  # pragma: no cover - ZIP_ALLOWED_EXTRA_IDS and these rules must stay in step
+        raise bad("no structure rule for this field")
+
+
+def _zip_extra_ok(extra: bytes, what: str, *, central: bool) -> None:
+    """The extra block must be whole ``(id, length, data)`` records of allowlisted, structurally valid ids."""
     cursor = 0
+    seen: set[int] = set()
     while cursor < len(extra):
         if cursor + 4 > len(extra):
             raise _bad(f"truncated extra field in {what}")
         ident, length = struct.unpack_from("<HH", extra, cursor)
         if ident not in ZIP_ALLOWED_EXTRA_IDS:
             raise _bad(f"unrecognised zip extra field {ident:#06x} in {what}")
+        if ident in seen:
+            raise _bad(f"zip extra field {ident:#06x} appears twice in {what}")
+        seen.add(ident)
+        if cursor + 4 + length > len(extra):
+            raise _bad(f"extra field overruns its header in {what}")
+        _zip_extra_body(ident, extra[cursor + 4 : cursor + 4 + length], central, what)
         cursor += 4 + length
-    if cursor != len(extra):
-        raise _bad(f"extra field overruns its header in {what}")
 
 
 def _zip_locate_end(handle, size: int) -> tuple[int, tuple]:
@@ -347,7 +400,7 @@ def _zip_parse_central(directory: bytes, count: int) -> list[_ZipMember]:
         if comment_len:
             raise InventoryError("zip member comment", "unauthenticated-data")
         raw_name = directory[cursor + ZIP_CENTRAL.size : cursor + ZIP_CENTRAL.size + name_len]
-        _zip_extra_ok(directory[cursor + ZIP_CENTRAL.size + name_len : end], "the central directory")
+        _zip_extra_ok(directory[cursor + ZIP_CENTRAL.size + name_len : end], "the central directory", central=True)
         if flags & ZIP_FLAG_ENCRYPTED:
             raise InventoryError("encrypted archive member", "encrypted-member")
         if method not in (ZIP_METHOD_STORED, ZIP_METHOD_DEFLATE):
@@ -366,7 +419,7 @@ def _zip_parse_central(directory: bytes, count: int) -> list[_ZipMember]:
             member.name = raw_name.decode("utf-8" if flags & ZIP_FLAG_UTF8 else "ascii")
         except UnicodeDecodeError as error:
             raise InventoryError("zip member name is not valid UTF-8 (or undeclared non-ASCII)", "unsafe-path") from error
-        member.method, member.flags, member.crc = method, flags, crc
+        member.method, member.flags, member.crc, member.need = method, flags, crc, need
         member.csize, member.usize, member.offset = csize, usize, offset
         # Unix mode bits are only meaningful when the writer was Unix (create_system 3).
         unix_mode = external >> 16 if (made >> 8) == 3 else 0
@@ -409,9 +462,11 @@ def _zip_check_local(handle, member: _ZipMember, size: int) -> int:
     rest = handle.read(name_len + extra_len)
     if len(rest) != name_len + extra_len or rest[:name_len] != name_bytes:
         raise _bad("local header name disagrees with the central directory")
+    if need != member.need:  # the central record was already limited to features this parser implements
+        raise _bad(f"local header of {member.name!r} requires zip version {need}, the central directory {member.need}")
     if (flags, method, crc, csize, usize) != (member.flags, member.method, member.crc, member.csize, member.usize):
         raise _bad(f"local header of {member.name!r} disagrees with the central directory (or uses a data descriptor)")
-    _zip_extra_ok(rest[name_len:], "a local header")
+    _zip_extra_ok(rest[name_len:], "a local header", central=False)
     member.data_offset = member.offset + ZIP_LOCAL.size + name_len + extra_len
     return member.data_offset + member.csize
 
