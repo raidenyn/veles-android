@@ -151,14 +151,14 @@ fn oversized_state_documents_are_rejected_before_they_are_buffered() {
     let (journal, peak) = alloc_probe::largest_allocation(|| Journal::load(&platform, &paths));
     assert!(matches!(
         journal.expect("load classifies"),
-        JournalState::Unreadable
+        JournalState::Unsupported
     ));
     assert!(peak < ALLOCATION_CEILING, "journal load buffered {peak}");
 
     let (receipt, peak) = alloc_probe::largest_allocation(|| Receipt::load(&platform, &paths));
     assert!(matches!(
         receipt.expect("load classifies"),
-        ReceiptState::Unreadable
+        ReceiptState::Unsupported
     ));
     assert!(peak < ALLOCATION_CEILING, "receipt load buffered {peak}");
 }

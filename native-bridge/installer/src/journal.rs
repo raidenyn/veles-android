@@ -614,7 +614,9 @@ impl Journal {
         if bytes.is_empty() {
             return Ok(JournalState::None);
         }
-        if is_unsupported_document(&bytes, JOURNAL_SCHEMA_VERSION, Some(KNOWN_PHASES)) {
+        if is_oversized_document(&bytes)
+            || is_unsupported_document(&bytes, JOURNAL_SCHEMA_VERSION, Some(KNOWN_PHASES))
+        {
             return Ok(JournalState::Unsupported);
         }
         Ok(match Self::parse(&bytes, paths) {
@@ -735,7 +737,9 @@ impl Receipt {
         if bytes.is_empty() {
             return Ok(ReceiptState::None);
         }
-        if is_unsupported_document(&bytes, RECEIPT_SCHEMA_VERSION, None) {
+        if is_oversized_document(&bytes)
+            || is_unsupported_document(&bytes, RECEIPT_SCHEMA_VERSION, None)
+        {
             return Ok(ReceiptState::Unsupported);
         }
         Ok(match Self::parse(&bytes, paths) {
@@ -757,9 +761,24 @@ const KNOWN_PHASES: &[&str] = &[
 ];
 const KNOWN_OPERATIONS: &[&str] = &["install", "repair", "rollback", "uninstall"];
 
+/// Whether a state document is larger than this engine could ever have written.
+///
+/// The storage layer reads at most `MAX_DOCUMENT_BYTES + 1` bytes, so an oversized
+/// document reaches the parser *truncated* and fails as broken JSON whatever it
+/// really is. Every document this engine writes is within the bound (`to_bytes`
+/// enforces it), so an oversized one is a newer engine's or foreign data: its format
+/// is unknowable from the prefix, and treating it as ordinary corruption would let
+/// recovery quarantine and replace it. It is therefore unsupported - refused, kept
+/// byte for byte, and never eligible for the reconcile-then-quarantine path.
+fn is_oversized_document(bytes: &[u8]) -> bool {
+    bytes.len() > MAX_DOCUMENT_BYTES
+}
+
 /// Whether `bytes` is a JSON object that declares a format this engine does not
-/// know: a numeric `schema` other than `supported`, or (when `phases` is given) a
-/// `phase`/`operation` string outside the known vocabularies.
+/// know: a numeric `schema` other than `supported`, a `phase` string outside
+/// `phases` (when given), or an `operation` string outside the known operations.
+/// A receipt has an `operation` but no phase, so it passes no phases and still has
+/// its operation checked.
 ///
 /// This is deliberately a look at declared markers only. Anything that is not a
 /// JSON object, or declares no such marker, is ordinary corruption and keeps the
@@ -776,17 +795,16 @@ fn is_unsupported_document(bytes: &[u8], supported: u32, phases: Option<&[&str]>
             None => return false,
         }
     }
-    if let Some(known) = phases {
-        if let Some(serde_json::Value::String(phase)) = document.get("phase")
-            && !known.contains(&phase.as_str())
-        {
-            return true;
-        }
-        if let Some(serde_json::Value::String(operation)) = document.get("operation")
-            && !KNOWN_OPERATIONS.contains(&operation.as_str())
-        {
-            return true;
-        }
+    if let Some(known) = phases
+        && let Some(serde_json::Value::String(phase)) = document.get("phase")
+        && !known.contains(&phase.as_str())
+    {
+        return true;
+    }
+    if let Some(serde_json::Value::String(operation)) = document.get("operation")
+        && !KNOWN_OPERATIONS.contains(&operation.as_str())
+    {
+        return true;
     }
     false
 }

@@ -183,3 +183,111 @@ fn a_corrupt_journal_in_a_clean_layout_is_still_quarantined() {
     assert_eq!(report.state, "clean");
     assert!(!journal_path(&layout).exists());
 }
+
+/// A schema-2 document padded far past the engine's own document bound. The
+/// storage layer reads at most `limit + 1` bytes, so the parse sees a truncated,
+/// syntactically broken prefix; the *kind* of problem (a document this engine
+/// could never have written) must survive that truncation.
+fn oversized_future_document() -> Vec<u8> {
+    let mut document = br#"{"schema":2,"padding":""#.to_vec();
+    document.extend(std::iter::repeat_n(b'x', 300 * 1024));
+    document.extend_from_slice(br#""}"#);
+    document
+}
+
+#[test]
+fn an_oversized_future_journal_is_unsupported_and_never_quarantined() {
+    let layout = layout();
+    let future = oversized_future_document();
+    fs::write(journal_path(&layout), &future).expect("oversized future journal");
+
+    assert!(matches!(
+        Journal::load(&layout.platform, &layout.paths).expect("classified"),
+        JournalState::Unsupported
+    ));
+    let failure = recover(&layout.platform, &layout.paths)
+        .expect_err("a newer engine's pending transaction is not ordinary corruption");
+    assert_eq!(failure.code, FailureCode::UnsupportedState);
+    assert_eq!(
+        fs::read(journal_path(&layout)).expect("journal kept"),
+        future,
+        "every byte of the newer engine's journal is preserved"
+    );
+    assert!(
+        !layout
+            .paths
+            .root()
+            .join("state")
+            .join(StateDocument::Journal.quarantine_file_name())
+            .exists(),
+        "nothing was quarantined"
+    );
+    assert!(layout.platform.mutations().is_empty());
+    for operation in [Operation::Rollback, Operation::Uninstall] {
+        assert_eq!(
+            run_operation(&layout.platform, &layout.paths, operation, None)
+                .expect_err("blocked")
+                .code,
+            FailureCode::UnsupportedState,
+            "{operation:?}"
+        );
+    }
+}
+
+#[test]
+fn an_oversized_journal_without_a_readable_marker_is_also_preserved() {
+    // This engine writes no document above the bound, so an oversized one is a
+    // newer engine's or foreign data. Its format is unknowable from a truncated
+    // read; discarding it as "ordinary corruption" is the forbidden outcome.
+    let layout = layout();
+    let garbage = vec![b'{'; 300 * 1024];
+    fs::write(journal_path(&layout), &garbage).expect("oversized journal");
+    assert!(matches!(
+        Journal::load(&layout.platform, &layout.paths).expect("classified"),
+        JournalState::Unsupported
+    ));
+    assert_eq!(
+        recover(&layout.platform, &layout.paths)
+            .expect_err("preserved")
+            .code,
+        FailureCode::UnsupportedState
+    );
+    assert_eq!(fs::read(journal_path(&layout)).expect("kept"), garbage);
+    assert!(layout.platform.mutations().is_empty());
+}
+
+#[test]
+fn a_document_at_exactly_the_bound_is_still_ordinary_corruption() {
+    // The boundary itself: MAX_DOCUMENT_BYTES is a legal size, so a torn document
+    // of exactly that length keeps the reconcile-then-quarantine treatment.
+    let layout = layout();
+    let torn = vec![b'{'; veles_bridge_installer::MAX_DOCUMENT_BYTES];
+    fs::write(journal_path(&layout), &torn).expect("journal at the bound");
+    assert!(matches!(
+        Journal::load(&layout.platform, &layout.paths).expect("classified"),
+        JournalState::Unreadable
+    ));
+}
+
+#[test]
+fn an_oversized_or_future_operation_receipt_is_unsupported() {
+    for (name, receipt) in [
+        (
+            "unknown operation",
+            br#"{"schema":1,"operation":"sealing","transaction_id":"x"}"#.to_vec(),
+        ),
+        ("oversized future schema", oversized_future_document()),
+        ("oversized, no marker", vec![b'{'; 300 * 1024]),
+    ] {
+        let layout = layout();
+        let path = layout.paths.root().join("state/receipt.json");
+        fs::write(&path, &receipt).expect("receipt");
+        assert!(
+            matches!(
+                Receipt::load(&layout.platform, &layout.paths).expect("classified"),
+                ReceiptState::Unsupported
+            ),
+            "{name}"
+        );
+    }
+}

@@ -1520,6 +1520,48 @@ fn torn_receipt_of_a_first_install_is_quarantined_and_rebuilt_from_the_pending_j
 }
 
 #[test]
+fn a_receipt_naming_an_unknown_operation_is_not_rebuilt_over_in_a_first_install() {
+    // The first-install rebuild path may replace a *torn* receipt. A receipt that
+    // parses as JSON but declares an operation this engine does not know is a
+    // newer engine's document, not a torn one, and must survive byte for byte.
+    let fixture = Fixture::new(Scenario::Fresh);
+    let sequence = clean_mutations(Scenario::Fresh);
+    let registry = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
+    let platform = fixture.platform_with(Faults {
+        panic_at_mutation: Some(registry),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        install(&platform, &fixture.paths, fixture.package.clone())
+    }));
+    assert!(outcome.is_err(), "the manifest was activated");
+    let future =
+        b"{\"schema\":1,\"operation\":\"sealing\",\"transaction_id\":\"from a newer engine\"}";
+    fs::write(fixture.paths.receipt_path(), future).expect("future receipt");
+    let before = snapshot(fixture.temp.path());
+
+    let platform = fixture.platform();
+    assert_eq!(
+        failure_code(recover(&platform, &fixture.paths)),
+        FailureCode::UnsupportedState
+    );
+    assert!(platform.mutations().is_empty());
+    assert_eq!(snapshot(fixture.temp.path()), before, "nothing was touched");
+    assert_eq!(
+        fs::read(fixture.paths.receipt_path()).expect("receipt kept"),
+        future
+    );
+    assert!(matches!(fixture.journal_state(), JournalState::Pending(_)));
+    assert!(
+        !fixture
+            .paths
+            .state()
+            .join(StateDocument::Receipt.quarantine_file_name())
+            .exists()
+    );
+}
+
+#[test]
 fn crash_during_recover_plus_second_recovery_converges() {
     let fixture = Fixture::new(Scenario::Upgrade);
     let sequence = clean_mutations(Scenario::Upgrade);
