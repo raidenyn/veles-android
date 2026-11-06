@@ -449,6 +449,15 @@ fn owned_image_names(paths: &InstallPaths) -> io::Result<Vec<OsString>> {
             let metadata = fs::symlink_metadata(entry.path())
                 .map_err(|_| io::Error::other("owned image entry is unreadable"))?;
             if is_link_like(&metadata) {
+                // The only links this installer ever writes into the owned trees
+                // are the contained links of a signed carrier bundle (for example
+                // a framework's `Versions/Current`). Such a link is neither
+                // followed nor descended into - its target is an ordinary entry
+                // enumerated on its own path - and it contributes no name. Any
+                // other link is not the private tree this installer wrote.
+                if is_sanctioned_carrier_link(paths, &entry.path()) {
+                    continue;
+                }
                 return Err(io::Error::other("owned image tree contains a link"));
             }
             if metadata.is_dir() {
@@ -462,6 +471,41 @@ fn owned_image_names(paths: &InstallPaths) -> io::Result<Vec<OsString>> {
         }
     }
     Ok(names)
+}
+
+/// Whether `link` is a contained link of an installed signed carrier artifact.
+///
+/// Sanctioned means all of: the link sits strictly inside
+/// `versions/<release>/<carrier artifact>/` or `maintenance/<x>/<carrier
+/// artifact>/` of this installation (the artifact name is fixed per target), and
+/// its stored target - read as text, never resolved - stays inside that artifact
+/// root under the same confinement rule the carrier enumeration applied when the
+/// link was journaled ([`confine_link_target`]). Anything else, including a link
+/// directly under a version directory, is unsafe.
+fn is_sanctioned_carrier_link(paths: &InstallPaths, link: &Path) -> bool {
+    let Ok(relative) = link.strip_prefix(paths.root()) else {
+        return false;
+    };
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        let Some(part) = part.to_str() else {
+            return false;
+        };
+        parts.push(part);
+    }
+    if parts.len() < 4
+        || !matches!(parts[0], VERSIONS_DIR | MAINTENANCE_DIR)
+        || parts[2] != package_carrier_name(paths.target())
+    {
+        return false;
+    }
+    let inside_artifact = parts[3..].join("/");
+    link_target_text(link)
+        .and_then(|target| confine_link_target(&inside_artifact, &target))
+        .is_ok()
 }
 
 /// Whether `name` begins with `prefix`, ignoring ASCII case.
@@ -3047,6 +3091,19 @@ impl Platform for PortablePlatform {
     }
 }
 
+/// A process table of a machine on which nothing is running.
+struct NoProcesses;
+
+impl ProcessTable for NoProcesses {
+    fn observe(&self, _paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
+        Ok(Vec::new())
+    }
+
+    fn recheck(&self, _paths: &InstallPaths, _pid: u32) -> io::Result<Option<ProcessObservation>> {
+        Ok(None)
+    }
+}
+
 /// Fault injection knobs for [`FakePlatform`].
 #[derive(Debug, Clone)]
 pub struct Faults {
@@ -3087,6 +3144,12 @@ pub struct Faults {
     /// Make `apply_launch_permissions` a no-op, as a platform that failed to
     /// carry the executable bit would: the pre-activation check must then refuse.
     pub skip_launch_permissions: bool,
+    /// Make `inspect_hosts` run the real owned-tree classification
+    /// ([`inspect_host_processes`]) over a machine with no running process,
+    /// instead of returning `host_state`. Install, rollback and cleanup then pass
+    /// or fail on what is actually installed below `versions/` and
+    /// `maintenance/`.
+    pub inspect_owned_tree: bool,
     /// Host assessment returned by `verify_host`. `None` derives it from the
     /// injected `trust` proof (the host is signed like the carrier).
     pub host: Option<HostFault>,
@@ -3118,6 +3181,7 @@ impl Default for Faults {
             fail_flush_after_state_write_at: None,
             fail_state_read_at: None,
             skip_launch_permissions: false,
+            inspect_owned_tree: false,
             host: None,
         }
     }
@@ -3408,8 +3472,11 @@ impl Platform for FakePlatform {
         remove_registration_checked(paths, expected)
     }
 
-    fn inspect_hosts(&self, _paths: &InstallPaths) -> InstallResult<HostState> {
+    fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState> {
         self.observe(PlatformCall::InspectHosts);
+        if self.faults.inspect_owned_tree {
+            return Ok(inspect_host_processes(paths, &NoProcesses));
+        }
         Ok(self.faults.host_state)
     }
 
