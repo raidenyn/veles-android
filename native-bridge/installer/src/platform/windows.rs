@@ -52,7 +52,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::TryLockError;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::mem::size_of;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
@@ -2230,21 +2230,8 @@ impl NativeFs for WindowsPlatform {
         crate::platform::read_no_follow_capped(path, limit).map_err(|_| io_failure())
     }
 
-    fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
-        let mut file = crate::platform::open_no_follow(path).map_err(|_| io_failure())?;
-        if !file.metadata().map_err(|_| io_failure())?.is_file() {
-            return Err(unsafe_path());
-        }
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 64 * 1024];
-        loop {
-            let read = file.read(&mut buffer).map_err(|_| io_failure())?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-        }
-        Ok(Digest::from_bytes(hasher.finalize().into()))
+    fn hash_file(&self, path: &Path, limit: u64) -> InstallResult<crate::platform::HashedFile> {
+        crate::platform::hash_file_bounded(path, limit)
     }
 
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {

@@ -1774,7 +1774,7 @@ impl OwnedEntry {
             path: normalized,
             kind,
             sha256: match kind {
-                OwnedKind::File => Some(hash_file(path.rendered())?),
+                OwnedKind::File => Some(hash_owned_file(path.rendered())?),
                 OwnedKind::Symlink => Some(link_target_digest(path.rendered())?),
                 OwnedKind::Directory => None,
             },
@@ -1818,7 +1818,7 @@ impl OwnedEntry {
                     && length < expected_size
                 {
                     short = true;
-                } else if hash_file(path.rendered())? != expected {
+                } else if hash_owned_file(path.rendered())? != expected {
                     return Err(foreign_state());
                 }
             }
@@ -2402,7 +2402,13 @@ impl AuthenticatedSource {
         if is_link_like(&metadata) || !metadata.is_file() {
             return Err(unsafe_path());
         }
-        if metadata.len() != self.size || hash_file_capped(&self.path, self.size)? != self.sha256 {
+        if metadata.len() != self.size {
+            return Err(foreign_state());
+        }
+        // Bounded by the authenticated size, so growth after the check above cannot
+        // extend the work; any length other than the size is a mismatch.
+        let hashed = hash_file_bounded(&self.path, self.size)?;
+        if hashed.len != self.size || hashed.digest != self.sha256 {
             return Err(foreign_state());
         }
         Ok(())
@@ -4110,31 +4116,74 @@ pub(crate) fn open_no_follow(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-pub(crate) fn hash_file(path: &Path) -> InstallResult<Digest> {
-    hash_file_capped(path, u64::MAX - 1)
+/// The largest file this installer can legitimately own.
+///
+/// A payload file is bounded by the whole inventory ([`MAX_INVENTORY_BYTES`]) and a
+/// carrier file by [`MAX_CARRIER_BYTES`], so no authenticated claim names a larger
+/// one. Ownership records carry digests, not sizes, so this is the work bound for
+/// claim creation and verification: a file that grows (or was swapped for a huge
+/// one) after the claim was written is refused instead of being streamed to EOF.
+pub(crate) const MAX_OWNED_FILE_BYTES: u64 = MAX_INVENTORY_BYTES;
+
+/// The digest of the first `min(len, limit + 1)` bytes of a file, and how many bytes
+/// that was.
+///
+/// `len > limit` means the file is longer than the bound; `digest` then covers only
+/// its first `limit + 1` bytes and must not be treated as the file's identity.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HashedFile {
+    pub(crate) digest: Digest,
+    pub(crate) len: u64,
 }
 
-/// SHA-256 of at most `limit + 1` bytes of one regular file.
+impl HashedFile {
+    /// The digest, or `ForeignState` when the file was longer than `limit` - a file
+    /// larger than any claim this installer could have written is not ours.
+    pub(crate) fn digest_within(self, limit: u64) -> InstallResult<Digest> {
+        if self.len > limit {
+            return Err(foreign_state());
+        }
+        Ok(self.digest)
+    }
+}
+
+/// SHA-256 of at most `limit + 1` bytes read from one opened regular file.
 ///
-/// A file longer than `limit` hashes its first `limit + 1` bytes, which can never
-/// equal the digest of a `limit`-byte document: the hashing work is bounded by the
-/// authenticated size even if the file grows while it is being read.
-pub(crate) fn hash_file_capped(path: &Path, limit: u64) -> InstallResult<Digest> {
+/// The handle that is inspected is the handle that is read, and the read is
+/// `take(limit + 1)`: the work is bounded by the caller's bound even if the file
+/// grows while it is hashed. This is the only file hasher the engine and the
+/// native adapters use.
+pub(crate) fn hash_file_bounded(path: &Path, limit: u64) -> InstallResult<HashedFile> {
     let file = open_no_follow(path).map_err(|_| io_failure())?;
     if !file.metadata().map_err(|_| io_failure())?.is_file() {
         return Err(unsafe_path());
     }
-    let mut file = file.take(limit.saturating_add(1));
+    hash_reader(file, limit).map_err(|_| io_failure())
+}
+
+pub(crate) fn hash_reader(reader: impl Read, limit: u64) -> io::Result<HashedFile> {
+    let mut reader = reader.take(limit.saturating_add(1));
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
+    let mut len = 0u64;
     loop {
-        let read = file.read(&mut buffer).map_err(|_| io_failure())?;
+        let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
         }
+        len += read as u64;
         hasher.update(&buffer[..read]);
     }
-    Ok(Digest::from_bytes(hasher.finalize().into()))
+    Ok(HashedFile {
+        digest: Digest::from_bytes(hasher.finalize().into()),
+        len,
+    })
+}
+
+/// SHA-256 of one owned file under [`MAX_OWNED_FILE_BYTES`]; `ForeignState` if it
+/// is larger than any owned file can be.
+pub(crate) fn hash_owned_file(path: &Path) -> InstallResult<Digest> {
+    hash_file_bounded(path, MAX_OWNED_FILE_BYTES)?.digest_within(MAX_OWNED_FILE_BYTES)
 }
 
 /// The exact bytes a symbolic link stores as its target.
@@ -4453,7 +4502,7 @@ fn remove_registration_checked(paths: &InstallPaths, expected: &Registration) ->
 /// read-only and never copies bytes. Links and special files are refused, and
 /// entry/byte bounds apply before anything is installed.
 fn carrier_entries_checked(source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
-    carrier_entries_with(source, hash_file)
+    carrier_entries_with(source, hash_file_bounded)
 }
 
 /// Prove that a link target stays inside the artifact root.
@@ -4501,7 +4550,7 @@ fn confine_link_target(relative: &str, target: &str) -> InstallResult<()> {
 /// fake keep the `std` hasher.
 pub(crate) fn carrier_entries_with(
     source: &PackageSource,
-    hash: impl Fn(&Path) -> InstallResult<Digest>,
+    hash: impl Fn(&Path, u64) -> InstallResult<HashedFile>,
 ) -> InstallResult<Vec<CarrierEntry>> {
     let metadata = fs::symlink_metadata(source.path()).map_err(|_| invalid_package())?;
     if is_link_like(&metadata) {
@@ -4518,7 +4567,7 @@ pub(crate) fn carrier_entries_with(
             if total > MAX_CARRIER_BYTES as u64 {
                 return Err(invalid_package());
             }
-            let digest = hash(source.path())?;
+            let digest = hash_carrier_file(&hash, source.path(), metadata.len())?;
             entries.push(CarrierEntry::new(
                 "",
                 OwnedKind::File,
@@ -4537,12 +4586,28 @@ pub(crate) fn carrier_entries_with(
     Ok(entries)
 }
 
+/// Hash one carrier file whose length the walk just read, reading at most that
+/// length plus one byte. A file that grew or shrank since the length check is not
+/// the file the entry describes: refusing it keeps both the hashing work and the
+/// recorded (size, digest) pair honest.
+fn hash_carrier_file(
+    hash: &impl Fn(&Path, u64) -> InstallResult<HashedFile>,
+    path: &Path,
+    length: u64,
+) -> InstallResult<Digest> {
+    let hashed = hash(path, length)?;
+    if hashed.len != length {
+        return Err(invalid_package());
+    }
+    Ok(hashed.digest)
+}
+
 fn walk_carrier(
     directory: &Path,
     relative: &str,
     entries: &mut Vec<CarrierEntry>,
     total: &mut u64,
-    hash: &impl Fn(&Path) -> InstallResult<Digest>,
+    hash: &impl Fn(&Path, u64) -> InstallResult<HashedFile>,
 ) -> InstallResult<()> {
     let mut children: Vec<_> = fs::read_dir(directory)
         .map_err(|_| io_failure())?
@@ -4590,7 +4655,7 @@ fn walk_carrier(
             if *total > MAX_CARRIER_BYTES as u64 {
                 return Err(invalid_package());
             }
-            let digest = hash(&path)?;
+            let digest = hash_carrier_file(hash, &path, metadata.len())?;
             entries.push(CarrierEntry::new(
                 &child_relative,
                 OwnedKind::File,
@@ -4715,7 +4780,7 @@ fn remove_owned_entry(entry: &OwnedEntry) -> InstallResult<()> {
                 }
                 None => false,
             };
-            if !short && hash_file(entry.path.rendered())? != expected {
+            if !short && hash_owned_file(entry.path.rendered())? != expected {
                 return Err(foreign_state());
             }
             fs::remove_file(entry.path.rendered()).map_err(|_| io_failure())?;
@@ -4781,6 +4846,126 @@ fn trust_denied() -> InstallFailure {
 
 #[cfg(test)]
 mod tests {
+    /// A directory-kind source holding `a.bin` (`len` bytes) and the temp root.
+    fn carrier_with_one_file(name: &str, len: usize) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("carrier dir");
+        let file = root.join("a.bin");
+        std::fs::write(&file, vec![7u8; len]).expect("carrier file");
+        (root, file)
+    }
+
+    /// R6: the carrier walk bounds a file's *metadata* length, then hashes. A file
+    /// that grows between the two must not be hashed to its new end (unbounded
+    /// work) nor recorded as an entry whose size and digest disagree.
+    #[test]
+    fn a_carrier_file_that_grows_after_its_length_check_is_refused() {
+        use super::{PackageSource, carrier_entries_with, hash_file_bounded};
+
+        let (root, file) = carrier_with_one_file("veles-carrier-grows", 1000);
+        let source = PackageSource::open(&root).expect("source");
+        let outcome = carrier_entries_with(&source, |path, limit| {
+            // Grow the file by 64 MiB (sparse) after the walk read its length.
+            let handle = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&file)
+                .expect("reopen");
+            handle.set_len(64 * 1024 * 1024).expect("grow");
+            let hashed = hash_file_bounded(path, limit)?;
+            // The hasher itself stopped one byte past the bound it was given.
+            assert_eq!(
+                hashed.len,
+                limit + 1,
+                "hashing was not bounded by the length"
+            );
+            Ok(hashed)
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            outcome
+                .expect_err("a file that grew is not the file that was measured")
+                .code,
+            crate::model::FailureCode::InvalidPackage
+        );
+    }
+
+    #[test]
+    fn a_carrier_file_that_shrinks_after_its_length_check_is_refused() {
+        use super::{PackageSource, carrier_entries_with, hash_file_bounded};
+
+        let (root, file) = carrier_with_one_file("veles-carrier-shrinks", 1000);
+        let source = PackageSource::open(&root).expect("source");
+        let outcome = carrier_entries_with(&source, |path, limit| {
+            std::fs::write(&file, b"short").expect("shrink");
+            hash_file_bounded(path, limit)
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(outcome.is_err(), "{outcome:?}");
+    }
+
+    #[test]
+    fn an_unchanged_carrier_file_is_recorded_with_its_measured_length() {
+        use super::{PackageSource, carrier_entries_with, hash_file_bounded};
+
+        let (root, _) = carrier_with_one_file("veles-carrier-stable", 1000);
+        let source = PackageSource::open(&root).expect("source");
+        let entries = carrier_entries_with(&source, hash_file_bounded).expect("entries");
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(entries.len(), 2, "the root directory and the file");
+    }
+
+    /// A reader that counts the bytes it hands out and would serve forever.
+    struct Endless {
+        served: std::cell::Cell<u64>,
+    }
+
+    impl std::io::Read for &Endless {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            buffer.fill(0);
+            self.served.set(self.served.get() + buffer.len() as u64);
+            Ok(buffer.len())
+        }
+    }
+
+    #[test]
+    fn hashing_never_pulls_more_than_the_bound_plus_one_byte_from_an_endless_source() {
+        use super::hash_reader;
+
+        for limit in [0u64, 1, 4095, 64 * 1024, 64 * 1024 + 1, 1 << 20] {
+            let source = Endless {
+                served: std::cell::Cell::new(0),
+            };
+            let hashed = hash_reader(&source, limit).expect("hash");
+            assert_eq!(hashed.len, limit + 1, "limit {limit}");
+            assert!(
+                source.served.get() <= limit + 1 + 64 * 1024,
+                "limit {limit}: {} bytes were requested from the source",
+                source.served.get()
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_over_the_bound_is_foreign_not_hashed_to_its_end() {
+        use super::hash_file_bounded;
+
+        let (root, file) = carrier_with_one_file("veles-hash-bound", 100);
+        let hashed = hash_file_bounded(&file, 99).expect("hash");
+        assert_eq!(hashed.len, 100);
+        assert_eq!(
+            hashed.digest_within(99).expect_err("over the bound").code,
+            crate::model::FailureCode::ForeignState
+        );
+        let exact = hash_file_bounded(&file, 100).expect("hash");
+        assert_eq!(exact.len, 100);
+        assert_eq!(
+            exact.digest_within(100).expect("at the bound"),
+            crate::model::Digest::of(&[7u8; 100])
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[cfg(windows)]
     #[test]
     fn verbatim_and_dos_prefixes_compare_equal() {

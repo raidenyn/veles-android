@@ -81,13 +81,14 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use super::{
-    InstallLock, OwnedEntry, OwnedKind, PackageKind, PackageSource, PathKind, Registration,
-    StateDocument, ValidatedPath, carrier_entries_with, foreign_state, hash_file, identity_of,
-    invalid_input, io_failure, is_link_like, is_owned_registration_preimage, read_no_follow_capped,
-    registration_target, replace_file_checked, state_handle, state_relative, unsafe_path,
+    HashedFile, InstallLock, MAX_OWNED_FILE_BYTES, OwnedEntry, OwnedKind, PackageKind,
+    PackageSource, PathKind, Registration, StateDocument, ValidatedPath, carrier_entries_with,
+    foreign_state, hash_file_bounded, identity_of, invalid_input, io_failure, is_link_like,
+    is_owned_registration_preimage, read_no_follow_capped, registration_target,
+    replace_file_checked, state_handle, state_relative, unsafe_path,
     validate_registration_manifest, write_durable_checked,
 };
-use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES};
+use crate::model::{FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES};
 use crate::paths::{InstallPaths, STATE_DIR};
 
 // Anchored, no-follow directory handles (Windows / macOS only): validation opens
@@ -139,7 +140,9 @@ pub(crate) trait NativeFs {
     /// state instead of an IO fault.
     fn read_file(&self, path: &Path, limit: u64) -> InstallResult<Vec<u8>>;
     /// SHA-256 of one regular file read through the no-follow boundary.
-    fn hash_file(&self, path: &Path) -> InstallResult<Digest>;
+    /// SHA-256 of at most `limit + 1` bytes of one opened regular file (see
+    /// [`hash_file_bounded`]); an implementation must never read past that bound.
+    fn hash_file(&self, path: &Path, limit: u64) -> InstallResult<HashedFile>;
     /// Flush the directory that holds `path`, through its captured handle.
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()>;
     /// Create one owner-private directory addressed by path (layout only).
@@ -560,7 +563,7 @@ pub(crate) fn native_carrier_entries(
     fs: &impl NativeFs,
     source: &PackageSource,
 ) -> InstallResult<Vec<super::CarrierEntry>> {
-    carrier_entries_with(source, |path| fs.hash_file(path))
+    carrier_entries_with(source, |path, limit| fs.hash_file(path, limit))
 }
 
 /// Install one carrier artifact through the adapter's metadata-preserving copy.
@@ -596,7 +599,12 @@ pub(crate) fn native_remove_owned(fs: &impl NativeFs, entry: &OwnedEntry) -> Ins
                 }
                 None => false,
             };
-            if !short && fs.hash_file(entry.path.rendered())? != expected {
+            if !short
+                && fs
+                    .hash_file(entry.path.rendered(), MAX_OWNED_FILE_BYTES)?
+                    .digest_within(MAX_OWNED_FILE_BYTES)?
+                    != expected
+            {
                 return Err(foreign_state());
             }
             fs.remove_entry(&entry.path)?;
@@ -674,8 +682,8 @@ impl NativeFs for StdNativeFs {
         read_no_follow_capped(path, limit).map_err(|_| io_failure())
     }
 
-    fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
-        hash_file(path)
+    fn hash_file(&self, path: &Path, limit: u64) -> InstallResult<HashedFile> {
+        hash_file_bounded(path, limit)
     }
 
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
@@ -769,7 +777,7 @@ pub(crate) fn read_back(file: &mut fs::File, expected: &[u8]) -> io::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Channel, Target};
+    use crate::model::{Channel, Digest, Target};
     use crate::platform::{OwnedClaim, StateDocument, parse_manifest};
     use std::path::PathBuf;
 

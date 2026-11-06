@@ -1186,8 +1186,8 @@ impl CleanupFileSystem for StdCleanupFs {
         if Instant::now() >= deadline {
             return Err(io::Error::other("deadline elapsed"));
         }
-        crate::platform::hash_file(path)
-            .map_err(|_| io::Error::other("file is not a readable regular file"))
+        crate::platform::hash_owned_file(path)
+            .map_err(|_| io::Error::other("file is not a readable, bounded regular file"))
     }
 
     fn signature(&self, _path: &Path, deadline: Instant) -> Result<String, CleanupFailure> {

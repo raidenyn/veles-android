@@ -2052,8 +2052,8 @@ impl NativeFs for MacosPlatform {
         super::read_no_follow_capped(path, limit).map_err(|_| io_failure())
     }
 
-    fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
-        super::hash_file(path)
+    fn hash_file(&self, path: &Path, limit: u64) -> InstallResult<super::HashedFile> {
+        super::hash_file_bounded(path, limit)
     }
 
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
