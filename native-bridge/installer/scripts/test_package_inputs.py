@@ -1334,6 +1334,50 @@ class Round2ZipExtraFieldTests(Round2ArchiveCase):
         self.assert_refused("need-45.zip", raw_zip("f", b"x", local_need=45, central_need=45), "malformed-archive")
 
 
+class Round2ArchiveSnapshotApiTests(Round2ArchiveCase):
+    """Re-review N8: ``ArchiveSnapshot`` is the path inventory plus bounded reads over the same bytes."""
+
+    def test_snapshot_inventory_equals_the_path_inventory_and_reads_return_the_members(self):
+        payloads = {"a.txt": b"alpha", "d/b.bin": bytes(range(256)) * 300, "empty": b""}
+        archives = {
+            "stored.zip": make_zip(list(payloads.items())),
+            "deflate.zip": make_codec_zip(list(payloads.items()), zipfile.ZIP_DEFLATED),
+            "plain.tar": make_tar([("file", name, data, 0o644) for name, data in payloads.items()]),
+        }
+        for name, blob in archives.items():
+            with self.subTest(archive=name):
+                snapshot = package_inputs.ArchiveSnapshot(blob, name)
+                self.assertEqual(snapshot.inventory, package_inputs.build_archive_inventory(self.put(name, blob)))
+                for path, data in payloads.items():
+                    self.assertEqual(snapshot.read(path), data)
+                with self.assertRaises(KeyError):
+                    snapshot.read("missing")
+
+    def test_snapshot_construction_applies_the_same_bounds_and_refusals_as_the_path_inventory(self):
+        bombs = {
+            "lzma.zip": (make_codec_zip([("a", b"x" * (1 << 20))], zipfile.ZIP_LZMA), "unsupported-compression"),
+            "deflate.zip": (make_codec_zip([("a", b"x" * (1 << 20))], zipfile.ZIP_DEFLATED), "malformed-archive"),
+        }
+        for name, (blob, code) in bombs.items():
+            forged = patch_member(blob, 0, crc=zlib.crc32(b"x"), usize=1)
+            with self.subTest(archive=name):
+                with self.assertRaises(package_inputs.InventoryError) as caught:
+                    package_inputs.ArchiveSnapshot(forged, name)
+                self.assertEqual(caught.exception.code, code)
+        with self.assertRaises(package_inputs.InputError):
+            package_inputs.ArchiveSnapshot(b"data", "payload.rar")
+        with mock.patch.object(package_inputs, "MAX_TOTAL_BYTES", 1024), mock.patch.object(package_inputs, "MAX_ENTRIES", 1):
+            with self.assertRaises(package_inputs.InventoryError) as caught:
+                package_inputs.ArchiveSnapshot(b"\0" * (1024 + 2 * 4096 + 1), "big.tar")
+        self.assertEqual(caught.exception.code, "bound-exceeded")
+
+    def test_snapshot_reads_do_not_depend_on_the_filesystem(self):
+        blob = make_zip([("a", b"payload")])
+        snapshot = package_inputs.ArchiveSnapshot(blob, "a.zip")
+        with mock.patch("builtins.open", side_effect=AssertionError("a snapshot read must not open any path")):
+            self.assertEqual(snapshot.read("a"), b"payload")
+
+
 class CommandLineTests(Scratch):
     def test_inventory_and_compare_exit_codes_and_reports(self):
         left = materialize(self.base / "left")

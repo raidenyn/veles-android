@@ -91,8 +91,6 @@ import plistlib
 import stat
 import struct
 import sys
-import tarfile
-import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -1459,7 +1457,14 @@ def _image_kind(data: bytes, path: str, executable: bool) -> str | None:
 
 
 class TreeSource:
-    """A directory or .zip/.tar payload with its deterministic inventory and bounded file reads."""
+    """A directory or .zip/.tar payload with its deterministic inventory and bounded file reads.
+
+    An archive is read from disk exactly once. The inventory, the archive's own SHA-256 and every later
+    member read come from that one immutable ``bytes`` snapshot (``package_inputs.ArchiveSnapshot``), so
+    replacing or editing the pathname after the inventory changes nothing the comparison sees, and member
+    content is only ever decoded by the bounded decoder that inventoried it (never re-opened by name through
+    ``zipfile``/``tarfile``, whose codecs are not output-bounded).
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -1468,28 +1473,27 @@ class TreeSource:
         except OSError as error:
             raise InputError(f"cannot read {self.path}: {error.strerror}") from error
         self.archive_sha256 = None
+        self.snapshot = None
         if stat.S_ISDIR(info.st_mode):
             self.kind = "directory"
             self.inventory = package_inputs.build_inventory(self.path)
         elif stat.S_ISREG(info.st_mode):
             self.kind = "archive"
-            self.inventory = package_inputs.build_archive_inventory(self.path)
-            self.archive_sha256 = sha256(read_regular_file(self.path))
+            package_inputs.check_archive_physical_size(info.st_size)  # before a byte of it is read
+            data = read_regular_file(self.path)
+            self.archive_sha256 = sha256(data)
+            self.snapshot = package_inputs.ArchiveSnapshot(data, self.path.name)
+            self.inventory = self.snapshot.inventory
         else:
             raise InputError(f"not a directory or archive: {self.path}")
         self.entries = {entry["path"]: entry for entry in self.inventory["entries"]}
 
     def read(self, relative: str) -> bytes:
         entry = self.entries[relative]
-        if self.kind == "directory":
-            data = read_regular_file(self.path.joinpath(*relative.split("/")))
-        elif self.path.suffix.lower() == ".zip":
-            with zipfile.ZipFile(self.path) as archive, archive.open(relative) as handle:
-                data = handle.read(entry["size"] + 1)
+        if self.snapshot is not None:
+            data = self.snapshot.read(relative)
         else:
-            with tarfile.open(self.path, "r:") as archive:
-                member = archive.extractfile(relative)
-                data = member.read(entry["size"] + 1) if member else b""
+            data = read_regular_file(self.path.joinpath(*relative.split("/")))
         if len(data) != entry["size"] or sha256(data) != entry["sha256"]:
             raise InputError(f"{relative} changed while being compared")
         return data

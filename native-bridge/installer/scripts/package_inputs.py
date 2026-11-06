@@ -50,6 +50,10 @@ archive, so a size field is verified, never trusted as a truncating bound.
   checked before the corresponding bytes are read or allocated. Implied parent directories
   count as nodes exactly like explicit records and real directories.
 
+``ArchiveSnapshot(data, name)`` is the same inventory over an immutable ``bytes`` object, plus ``read(path)``,
+which decodes a member again with this module's bounded decoder (never ``zipfile``/``tarfile`` by name), so a
+caller that hashes ``data`` itself gets inventory, hash and content from one snapshot.
+
 Rejections carry a stable ``InventoryError.code`` (``symlink``, ``special-file``,
 ``unsafe-path``, ``case-folded-alias``, ``duplicate-archive-member``,
 ``bound-exceeded``, ``unauthenticated-data``, ...) that comparison reports reuse.
@@ -72,6 +76,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import stat
@@ -471,11 +476,20 @@ def _zip_check_local(handle, member: _ZipMember, size: int) -> int:
     return member.data_offset + member.csize
 
 
-def _hash_zip_member(handle, member: _ZipMember) -> str:
-    """SHA-256 of a member's content, verified against its recorded size, CRC and extent."""
+class _Source:
+    """An archive to scan: a file streamed from disk, or an immutable ``bytes`` snapshot of one."""
+
+    def __init__(self, path: Path | None = None, data: bytes | None = None) -> None:
+        self.path, self.data = path, data
+
+    def open(self):
+        return open(self.path, "rb") if self.data is None else io.BytesIO(self.data)
+
+
+def _zip_member_chunks(handle, member: _ZipMember):
+    """The member's content as verified chunks; size, extent, codec and CRC-32 are enforced before the last returns."""
     if member.usize > MAX_ARCHIVE_MEMBER_BYTES:
         raise InventoryError(f"archive member {member.name!r} declares an unreasonable size", "bound-exceeded")
-    digest = hashlib.sha256()
     crc = 0
     handle.seek(member.data_offset)
     if member.method == ZIP_METHOD_STORED:
@@ -484,9 +498,9 @@ def _hash_zip_member(handle, member: _ZipMember) -> str:
             chunk = handle.read(min(CHUNK, remaining))
             if not chunk:
                 raise _bad(f"archive member {member.name!r} is shorter than declared")
-            digest.update(chunk)
             crc = zlib.crc32(chunk, crc)
             remaining -= len(chunk)
+            yield chunk
     else:
         inflater = zlib.decompressobj(-15)
         remaining_in, produced = member.csize, 0
@@ -503,8 +517,9 @@ def _hash_zip_member(handle, member: _ZipMember) -> str:
             produced += len(out)
             if produced > member.usize:
                 raise _bad(f"archive member {member.name!r} expands past its declared size {member.usize}")
-            digest.update(out)
             crc = zlib.crc32(out, crc)
+            if out:
+                yield out
             if inflater.eof:
                 break
             if not pending and not out and not inflater.unconsumed_tail:
@@ -515,11 +530,28 @@ def _hash_zip_member(handle, member: _ZipMember) -> str:
             raise _bad(f"archive member {member.name!r} expands to {produced} bytes, not the declared {member.usize}")
     if crc != member.crc:
         raise _bad(f"archive member {member.name!r} does not match its recorded CRC-32")
+
+
+def _hash_chunks(chunks) -> str:
+    digest = hashlib.sha256()
+    for chunk in chunks:
+        digest.update(chunk)
     return digest.hexdigest()
 
 
-def _scan_zip(path: Path, size: int, admit) -> None:
-    with open(path, "rb") as handle:
+def _hash_zip_member(handle, member: _ZipMember) -> str:
+    """SHA-256 of a member's content, verified against its recorded size, CRC and extent."""
+    return _hash_chunks(_zip_member_chunks(handle, member))
+
+
+def _read_zip_member(source: _Source, member: _ZipMember) -> bytes:
+    """The member's bytes, decoded again from ``source`` under the same bounds as the inventory pass."""
+    with source.open() as handle:
+        return b"".join(_zip_member_chunks(handle, member))
+
+
+def _scan_zip(source: _Source, size: int, admit) -> None:
+    with source.open() as handle:
         eocd_offset, record = _zip_locate_end(handle, size)
         (_sig, disk, cd_disk, on_disk, count, cd_size, cd_offset, _comment) = record
         if disk or cd_disk or on_disk != count or 0xFFFF in (count, on_disk) or 0xFFFFFFFF in (cd_size, cd_offset):
@@ -557,6 +589,7 @@ def _scan_zip(path: Path, size: int, admit) -> None:
                 member.usize,
                 lambda m=member: _hash_zip_member(handle, m),
                 bool(member.mode & 0o111) and not is_directory,
+                lambda m=member: _read_zip_member(source, m),
             )
 
 
@@ -609,7 +642,7 @@ def _check_pax_records(body: bytes) -> None:
         cursor = end
 
 
-def _tar_preflight(path: Path, physical_size: int) -> tuple[list[tuple[int, int, int]], int]:
+def _tar_preflight(source: _Source, physical_size: int) -> tuple[list[tuple[int, int, int]], int]:
     """Walk the raw 512-byte headers before ``tarfile`` allocates for any of them.
 
     Returns ``[(first_header_offset, data_offset, size), ...]`` for every payload header
@@ -620,7 +653,7 @@ def _tar_preflight(path: Path, physical_size: int) -> tuple[list[tuple[int, int,
     blocks = 0
     offset = 0
     start: int | None = None
-    with open(path, "rb") as handle:
+    with source.open() as handle:
         while True:
             blocks += 1
             if blocks > 4 * MAX_ENTRIES + 8 or len(records) > MAX_ENTRIES * 2:
@@ -668,9 +701,23 @@ def _tar_preflight(path: Path, physical_size: int) -> tuple[list[tuple[int, int,
             offset = data_offset + (_tar_block(info.size) if skips_data else 0)
 
 
-def _scan_tar(path: Path, physical_size: int, admit) -> None:
-    expected, end_offset = _tar_preflight(path, physical_size)
-    with tarfile.open(path, "r:") as archive:
+def _read_tar_member(source: _Source, offset: int, size: int) -> bytes:
+    """Exactly ``size`` bytes at ``offset``: the header walk already proved they exist and what follows them."""
+    parts, remaining = [], size
+    with source.open() as handle:
+        handle.seek(offset)
+        while remaining > 0:
+            chunk = handle.read(min(CHUNK, remaining))
+            if not chunk:
+                raise _bad("archive member is shorter than declared")
+            parts.append(chunk)
+            remaining -= len(chunk)
+    return b"".join(parts)
+
+
+def _scan_tar(source: _Source, physical_size: int, admit) -> None:
+    expected, end_offset = _tar_preflight(source, physical_size)
+    with source.open() as handle, tarfile.open(fileobj=handle, mode="r:") as archive:
         members = []
         for member in archive:
             members.append(member)
@@ -683,19 +730,33 @@ def _scan_tar(path: Path, physical_size: int, admit) -> None:
             if member.isdir():
                 if member.size:
                     raise _bad(f"directory member {member.name!r} carries a payload")
-                admit(member.name.rstrip("/") + "/", 0, lambda: "", False)
+                admit(member.name.rstrip("/") + "/", 0, lambda: "", False, lambda: b"")
             elif member.isreg():
                 admit(
                     member.name,
                     member.size,
                     lambda m=member: _read_bounded(archive.extractfile(m), m.size, m.name),
                     bool(member.mode & 0o111),
+                    lambda m=member: _read_tar_member(source, m.offset_data, m.size),
                 )
             elif member.issym() or member.islnk():
                 raise InventoryError(f"link member: {member.name!r}", "symlink")
             else:
                 raise InventoryError(f"special member: {member.name!r}", "special-file")
-    _require_zero_tail(path, end_offset)
+    _require_zero_tail(source, end_offset)
+
+
+def check_archive_physical_size(size: int) -> None:
+    """The physical size is bounded before a single byte is read: payload cap plus a per-node allowance."""
+    if size > MAX_TOTAL_BYTES + 2 * MAX_ENTRIES * ARCHIVE_ENTRY_OVERHEAD:
+        raise InventoryError(f"archive larger than {MAX_TOTAL_BYTES} bytes plus header allowance", "bound-exceeded")
+
+
+def _archive_suffix(name: str) -> str:
+    suffix = Path(name).suffix.lower()
+    if suffix not in (".zip", ".tar"):
+        raise InputError(f"unsupported archive type {suffix!r} (expected .zip or .tar)")
+    return suffix
 
 
 def build_archive_inventory(path: Path) -> dict:
@@ -707,21 +768,40 @@ def build_archive_inventory(path: Path) -> dict:
         raise InputError(f"cannot read archive {path}: {error.strerror}") from error
     if not stat.S_ISREG(info.st_mode):
         raise InputError(f"archive is not a regular file: {path}")
-    suffix = path.suffix.lower()
-    if suffix not in (".zip", ".tar"):
-        raise InputError(f"unsupported archive type {suffix!r} (expected .zip or .tar)")
-    # The physical size is bounded before a single byte is read: payload cap plus a
-    # per-node allowance for headers and padding.
-    if info.st_size > MAX_TOTAL_BYTES + 2 * MAX_ENTRIES * ARCHIVE_ENTRY_OVERHEAD:
-        raise InventoryError(f"archive larger than {MAX_TOTAL_BYTES} bytes plus header allowance", "bound-exceeded")
+    suffix = _archive_suffix(path.name)
+    check_archive_physical_size(info.st_size)
+    return _inventory_archive(_Source(path=path), suffix, info.st_size, path.name)[0]
+
+
+class ArchiveSnapshot:
+    """An archive held as immutable bytes, with its inventory and bounded member reads over those same bytes.
+
+    Inventory, any whole-archive hash the caller takes of ``data`` and every ``read`` are derived from one
+    ``bytes`` object, so a pathname that is replaced or edited afterwards changes none of them, and no later read
+    can select a different (unbounded) codec from newly read metadata: members are decoded again by this module's
+    own bounded decoder with the offsets, sizes and CRC the inventory pass accepted.
+    """
+
+    def __init__(self, data: bytes, name: str) -> None:
+        suffix = _archive_suffix(name)
+        check_archive_physical_size(len(data))
+        self.inventory, self._readers = _inventory_archive(_Source(data=data), suffix, len(data), name)
+
+    def read(self, relative: str) -> bytes:
+        """The verified content of the file member ``relative`` (``KeyError`` if the inventory has no such file)."""
+        return self._readers[relative]()
+
+
+def _inventory_archive(source: _Source, suffix: str, physical_size: int, label: str) -> tuple[dict, dict]:
     entries: list[dict] = []
     empty_directories: list[str] = []
     directories: list[str] = []
+    readers: dict[str, Any] = {}
     seen: set[str] = set()  # explicit members, for duplicate detection
     nodes: set[str] = set()  # every distinct path: explicit members *and* the parents they imply
     total = 0
 
-    def admit(name: str, size: int, digest_reader, executable: bool) -> None:
+    def admit(name: str, size: int, digest_reader, executable: bool, reader) -> None:
         nonlocal total
         directory = name.endswith("/")
         normalized = normalize_relative_path(name.rstrip("/"))
@@ -744,29 +824,30 @@ def build_archive_inventory(path: Path) -> dict:
         if total > MAX_TOTAL_BYTES:
             raise InventoryError(f"archive larger than {MAX_TOTAL_BYTES} bytes", "bound-exceeded")
         entries.append({"path": normalized, "size": size, "sha256": digest_reader(), "executable": executable})
+        readers[normalized] = reader
 
     try:
         if suffix == ".zip":
-            _scan_zip(path, info.st_size, admit)
+            _scan_zip(source, physical_size, admit)
         else:
-            _scan_tar(path, info.st_size, admit)
+            _scan_tar(source, physical_size, admit)
     except (tarfile.TarError, OSError, EOFError, RuntimeError, zlib.error, struct.error) as error:
-        raise InventoryError(f"malformed archive {path.name}: {error}", "malformed-archive") from error
+        raise InventoryError(f"malformed archive {label}: {error}", "malformed-archive") from error
     # A directory is "empty" only when nothing lies below it, whether the descendant is a
     # file or another directory member: ``a/`` + ``a/b/`` describes the same tree as ``a/b/``.
     populated = {parent for entry in entries for parent in _parents(entry["path"])}
     populated |= {parent for directory in directories for parent in _parents(directory.rstrip("/"))}
     empty_directories = [d for d in directories if d.rstrip("/") not in populated]
-    return _finish(entries, empty_directories)
+    return _finish(entries, empty_directories), readers
 
 
-def _require_zero_tail(path: Path, offset: int) -> None:
+def _require_zero_tail(source: _Source, offset: int) -> None:
     """Everything after the tar end-of-archive marker must be zero padding.
 
     ``tarfile`` stops at the first zero block and ignores the rest, so a second
     payload could ride behind the marker without ever entering the inventory.
     """
-    with open(path, "rb") as handle:
+    with source.open() as handle:
         handle.seek(offset)
         while chunk := handle.read(CHUNK):
             if chunk.strip(b"\x00"):

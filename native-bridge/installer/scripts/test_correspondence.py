@@ -30,6 +30,7 @@ blocked native steps and the commands that would produce real signed fixtures.
 import hashlib
 import io
 import json
+import lzma
 import plistlib
 import struct
 import subprocess
@@ -39,6 +40,7 @@ import tracemalloc
 import unittest
 import warnings
 import zipfile
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -2150,6 +2152,79 @@ class Round2CodeLimitTests(WorkDir):
                 self.assertEqual(report["allowed_differences"], [])
                 self.assertEqual(self.codes(report), ["macho-invalid-signature-blob"], report["differences"])
                 self.assertIn(text, report["differences"][0]["message"])
+
+
+class Round2ArchiveSnapshotTests(WorkDir):
+    """Re-review N8: inventory, archive hash and member reads share one immutable snapshot."""
+
+    def lzma_bomb(self):
+        blob = raw_zip.make_codec_zip([("a", b"x" * (1 << 20))], zipfile.ZIP_LZMA)
+        return raw_zip.patch_member(blob, 0, crc=zlib.crc32(b"x"), usize=1)
+
+    def test_n8_a_zip_replaced_after_inventory_is_never_reread_through_an_unbounded_codec(self):
+        genuine = raw_zip.make_zip([("a", b"x")])
+        path = self.put("payload.zip", genuine)
+        source = correspondence.TreeSource(path)
+        expected_inventory = source.inventory
+        path.write_bytes(self.lzma_bomb())  # replaced between the inventory and the content read
+        decoded = []
+        real = lzma.LZMADecompressor
+
+        class Counting:  # LZMADecompressor is an immutable type: wrap it to account for every decoded byte
+            def __init__(self, *args, **kwargs):
+                self._decompressor = real(*args, **kwargs)
+
+            def decompress(self, data, max_length=-1):
+                out = self._decompressor.decompress(data, max_length)
+                decoded.append(len(out))
+                return out
+
+            def __getattr__(self, name):
+                return getattr(self._decompressor, name)
+
+        with mock.patch.object(lzma, "LZMADecompressor", Counting):
+            data = source.read("a")
+        self.assertEqual(data, b"x")
+        self.assertEqual(decoded, [])  # no codec ran at all on the replacement
+        self.assertEqual(source.archive_sha256, correspondence.sha256(genuine))
+        self.assertEqual(source.inventory, expected_inventory)
+
+    def test_n8_replacing_an_archive_with_different_valid_content_does_not_change_what_is_read(self):
+        for suffix, genuine, other in (
+            (".zip", raw_zip.make_zip([("a", b"x")]), raw_zip.make_zip([("a", b"y")])),
+            (".tar", raw_zip.make_tar([("file", "a", b"x", 0o644)]), raw_zip.make_tar([("file", "a", b"y", 0o644)])),
+        ):
+            with self.subTest(suffix=suffix):
+                path = self.put(f"payload{suffix}", genuine)
+                source = correspondence.TreeSource(path)
+                path.write_bytes(other)
+                self.assertEqual(source.read("a"), b"x")
+                self.assertEqual(source.archive_sha256, correspondence.sha256(genuine))
+
+    def test_n8_the_archive_is_read_from_disk_exactly_once(self):
+        path = self.put("payload.tar", raw_zip.make_tar([("file", "a", b"x", 0o644), ("file", "b", b"yy", 0o644)]))
+        reads = []
+        real = correspondence.read_regular_file
+
+        def recording(target):
+            reads.append(Path(target))
+            return real(target)
+
+        with mock.patch.object(correspondence, "read_regular_file", recording):
+            source = correspondence.TreeSource(path)
+            self.assertEqual([source.read("a"), source.read("b")], [b"x", b"yy"])
+        self.assertEqual(reads, [path])
+
+    def test_n8_a_tree_comparison_uses_the_snapshot_for_every_member(self):
+        unsigned = self.put("u.zip", raw_zip.make_zip([("keep.txt", b"same"), ("tool.exe", b"MZ" + b"\0" * 30)]))
+        signed = self.put("s.zip", raw_zip.make_zip([("keep.txt", b"same"), ("tool.exe", b"MZ" + b"\0" * 30)]))
+        with mock.patch.object(zipfile, "ZipFile", side_effect=AssertionError("zipfile must not be used for reads")):
+            report = correspondence.compare(unsigned, signed, "tree")
+        self.assertEqual(report["verdict"], "FAIL")  # the unreadable MZ candidate is rejected, not a crash
+        self.assertIn(("tree-unparseable-executable", "tool.exe"), [(d["code"], d.get("path")) for d in report["differences"]])
+        plain_u = self.put("pu.tar", raw_zip.make_tar([("file", "a.txt", b"same", 0o644)]))
+        plain_s = self.put("ps.tar", raw_zip.make_tar([("file", "a.txt", b"same", 0o644)]))
+        self.assertEqual(correspondence.compare(plain_u, plain_s, "tree")["verdict"], "PASS")
 
 
 class CommandLineTests(WorkDir):
