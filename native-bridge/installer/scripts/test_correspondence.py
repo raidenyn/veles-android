@@ -1581,10 +1581,133 @@ class MachoReviewFindingTests(WorkDir):
         reversed_unsigned = build_fat([(CPU_X86_64, 3, x86_u, 12), (CPU_ARM64, 0, arm_u, 14)])
         self.expect_fail(reversed_unsigned, good, "macho-fat-metadata-changed")
 
+    # ---- F3: entitlements semantics -------------------------------------------------------
 
+    def test_f3_der_entitlements_slot_fails_closed_until_it_is_decoded(self):
+        unsigned, _ = build_macho()
+        signed, _ = build_signed_macho(der_entitlements=b"NOT-A-DER-ENTITLEMENTS-VALUE")
+        report = self.expect_fail(unsigned, signed, "macho-der-entitlements-unsupported")
+        self.assertEqual([d["code"] for d in report["differences"]], ["macho-der-entitlements-unsupported"])
 
+    def test_f3_entitlement_value_types_are_compared_exactly(self):
+        key = "com.apple.security.cs.allow-jit"
+        unsigned, _ = build_macho()
+        cases = [
+            (1, True, False), (True, 1, False), (1, 1.0, False), (0, False, False), ("1", 1, False),
+            (True, True, True), (1, 1, True), (1.5, 1.5, True), ("x", "x", True),
+        ]
+        for policy_value, embedded_value, expected in cases:
+            with self.subTest(policy=repr(policy_value), embedded=repr(embedded_value)):
+                signed, _ = build_signed_macho(entitlements={key: embedded_value})
+                policy = self.put("policy.plist", plistlib.dumps({key: policy_value}))
+                if expected:
+                    self.passes(unsigned, signed, entitlements=policy)
+                else:
+                    self.expect_fail(unsigned, signed, "macho-entitlements-mismatch", entitlements=policy)
 
+    def test_f3_baseline_entitlement_types_are_inherited_exactly_and_shapes_are_validated(self):
+        key = "com.apple.security.cs.allow-jit"
+        stripped = fx.macho_strip_signature(fx.read_macho_base())
+        as_int = fx.macho_sign(stripped, entitlements=plistlib.dumps({key: 1}))
+        as_bool = fx.macho_sign(stripped, entitlements=plistlib.dumps({key: True}))
+        self.passes(as_int, fx.macho_sign(stripped, entitlements=plistlib.dumps({key: 1})))
+        self.expect_fail(as_int, as_bool, "macho-entitlements-mismatch")
+        self.expect_fail(as_bool, as_int, "macho-entitlements-mismatch")
+        # An entitlements plist whose top level is not a dictionary is not an entitlement set.
+        not_a_dict, _ = build_signed_macho(entitlements=["com.apple.security.cs.allow-jit"])
+        self.expect_fail(build_macho()[0], not_a_dict, "macho-invalid-entitlements")
+        array_policy = self.put("array.plist", plistlib.dumps(["x"]))
+        with self.assertRaises(correspondence.InputError):
+            self.compare_bytes("macho", build_macho()[0], build_signed_macho()[0], entitlements=array_policy)
 
+    # ---- F4: an unreadable unsigned signature is a rejection, not "no entitlements" --------
+
+    def test_f4_unreadable_or_ambiguous_unsigned_signature_is_rejected(self):
+        signed, _ = build_signed_macho()
+        unsigned, meta = linker_signed()
+        self.passes(unsigned, signed)  # control: a well-formed linker signature is fine
+        sig = meta["sig_off"]
+        blobs = {b["slot"]: b for b in superblob_blobs(unsigned, sig)}
+
+        def mutated(edit):
+            image = bytearray(unsigned)
+            edit(image)
+            return bytes(image)
+
+        cases = {
+            "bad-magic": mutated(lambda i: struct.pack_into(">I", i, sig, 0xFADE0CC1)),
+            "declared-length-too-short": mutated(lambda i: struct.pack_into(">I", i, sig + 4, 40)),
+            "duplicate-slot": mutated(lambda i: struct.pack_into(">I", i, blobs[2]["entry"], 0)),
+            "overlapping-blobs": mutated(lambda i: struct.pack_into(">I", i, blobs[2]["entry"] + 4, blobs[0]["offset"] - sig + 8)),
+            "blob-past-the-region": mutated(lambda i: struct.pack_into(">I", i, blobs[2]["offset"] + 4, 0xFFFF)),
+            "implausible-count": mutated(lambda i: struct.pack_into(">I", i, sig + 8, 0)),
+        }
+        for name, candidate in cases.items():
+            with self.subTest(name=name):
+                report = self.expect_fail(candidate, signed, "macho-invalid-signature-blob")
+                self.assertEqual({d.get("side") for d in report["differences"]}, {"unsigned"})
+        # Duplicate entitlements entries in the unsigned input are ambiguous.
+        with_ent, ent_meta = linker_signed(entitlements={"k": True})
+        ent_blobs = {b["slot"]: b for b in superblob_blobs(with_ent, ent_meta["sig_off"])}
+        duplicate = bytearray(with_ent)
+        struct.pack_into(">I", duplicate, ent_blobs[2]["entry"], 5)  # two slot-5 entries
+        self.expect_fail(bytes(duplicate), signed, "macho-invalid-signature-blob")
+        # A DER entitlements slot cannot be interpreted, on the unsigned side either.
+        with_der, _ = linker_signed(der_entitlements=b"DER")
+        self.expect_fail(with_der, signed, "macho-der-entitlements-unsupported")
+
+    # ---- F5: only understood CodeDirectory layouts are accepted ---------------------------
+
+    def test_f5_unsupported_codedirectory_layouts_are_rejected(self):
+        unsigned, _ = build_macho()
+        signed, meta = build_signed_macho()
+        self.passes(unsigned, signed)
+        cd = {b["slot"]: b for b in superblob_blobs(signed, meta["sig_off"])}[0]["offset"]
+
+        def patched(offset, value, fmt=">I"):
+            image = bytearray(signed)
+            struct.pack_into(fmt, image, cd + offset, value)
+            return bytes(image)
+
+        cases = {
+            "scatterOffset": patched(44, 0xFFFFFFFF),
+            "version-newer-than-implemented": patched(8, 0x20700),
+            "version-between-layouts": patched(8, 0x20150),
+            "version-future-major": patched(8, 0x30000),
+            "version-too-old": patched(8, 0x20000),
+        }
+        for name, candidate in cases.items():
+            with self.subTest(name=name):
+                self.expect_fail(unsigned, candidate, "macho-unsupported-signature-layout")
+        # v0x20400 declares an 88-byte header; this CodeDirectory's identifier starts at byte 48.
+        self.expect_fail(unsigned, patched(8, 0x20400), "macho-invalid-signature-blob")
+
+    def test_f5_newer_layout_fields_are_validated_on_the_real_image(self):
+        # Added during the audit: the inherited F5 test patched only the v0x20100 builder, leaving the
+        # 0x20200+ selectors (team identifier, spare fields, executable segment) unexercised.
+        stripped = fx.macho_strip_signature(fx.read_macho_base())
+        signed = fx.macho_sign(stripped, entitlements=None)
+        self.passes(stripped, signed)
+        slice_ = correspondence.MachSlice(signed)
+        cd = {b["slot"]: b for b in superblob_blobs(signed, slice_.dataoff)}[0]["offset"]
+        self.assertEqual(struct.unpack_from(">I", signed, cd + 8)[0], 0x20400)
+
+        def patched(offset, value, fmt=">I"):
+            image = bytearray(signed)
+            struct.pack_into(fmt, image, cd + offset, value)
+            return bytes(image)
+
+        cases = {
+            "spare2": (patched(40, 1), "macho-unsupported-signature-layout"),
+            "spare3": (patched(52, 1), "macho-unsupported-signature-layout"),
+            "team-offset-outside-the-blob": (patched(48, 0xFFFF), "macho-invalid-signature-blob"),
+            "team-offset-inside-the-header": (patched(48, 8), "macho-invalid-signature-blob"),
+            "both-code-limits": (patched(56, slice_.dataoff, ">Q"), "macho-invalid-signature-blob"),
+            "exec-segment-past-the-signed-range": (patched(72, slice_.dataoff + 1, ">Q"), "macho-invalid-signature-blob"),
+        }
+        for name, (candidate, code) in cases.items():
+            with self.subTest(name=name):
+                self.expect_fail(stripped, candidate, code)
 
     # ---- F6: every supported command is validated before it is decoded ---------------------
 

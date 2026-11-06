@@ -58,6 +58,7 @@ when the comparison could not be performed.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -811,6 +812,49 @@ def command_region(command: Command) -> str:
 # ---- embedded signature --------------------------------------------------------
 
 
+def canonical_plist(value: Any) -> Any:
+    """A JSON-able, type-preserving form of a decoded plist (``True`` is not ``1`` is not ``1.0``)."""
+    if value is None:  # "no entitlements slot at all", distinct from an empty dictionary
+        return ["absent"]
+    if isinstance(value, bool):  # before int: bool is an int subclass
+        return ["bool", value]
+    if isinstance(value, int):
+        return ["int", str(value)]
+    if isinstance(value, float):
+        return ["real", "nan" if value != value else value.hex()]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, (bytes, bytearray)):
+        return ["data", bytes(value).hex()]
+    if isinstance(value, datetime.datetime):
+        return ["date", value.isoformat()]
+    if isinstance(value, list):
+        return ["array", [canonical_plist(item) for item in value]]
+    if isinstance(value, dict):
+        return ["dict", {str(key): canonical_plist(item) for key, item in value.items()}]
+    if isinstance(value, plistlib.UID):
+        return ["uid", value.data]
+    raise ValueError(f"unsupported plist value type {type(value).__name__}")
+
+
+def canonical_plist_sha256(value: Any) -> str:
+    return sha256(canonical_json(canonical_plist(value)))
+
+
+def decode_entitlements_dict(payload: bytes, fmt, code: str, label: str) -> dict:
+    """Decode an entitlements plist; it must be a dictionary of plist values."""
+    if len(payload) > MAX_ENTITLEMENTS_BYTES:
+        raise Reject(code, f"{label} is oversized")
+    try:
+        value = plistlib.loads(payload, fmt=fmt)
+        canonical_plist(value)  # every nested value must be a type this tool can compare exactly
+    except Exception as error:  # plistlib raises several unrelated types
+        raise Reject(code, f"{label} does not parse: {type(error).__name__}") from error
+    if not isinstance(value, dict):
+        raise Reject(code, f"{label} is not a dictionary")
+    return value
+
+
 class SignatureInfo:
     def __init__(self) -> None:
         self.report: dict[str, Any] = {}
@@ -826,8 +870,12 @@ def parse_blob_header(region: bytes, offset: int, code: str) -> tuple[int, int]:
     return magic, length
 
 
-def parse_signature(slice_: MachSlice) -> SignatureInfo:
-    """Validate the SuperBlob at the slice's LC_CODE_SIGNATURE (structure, not trust)."""
+def parse_signature(slice_: MachSlice, *, signed: bool = True) -> SignatureInfo:
+    """Validate the SuperBlob at the slice's LC_CODE_SIGNATURE (structure, not trust).
+
+    ``signed=False`` is for an *unsigned input* that already carries a linker (ad-hoc) signature: it gets
+    the identical bounded structural checks, relaxing only the CMS-wrapper and ad-hoc requirements.
+    """
     code = "macho-invalid-signature-blob"
     region = slice_.data[slice_.dataoff : slice_.dataoff + slice_.datasize]
     if len(region) < 12:
@@ -869,27 +917,25 @@ def parse_signature(slice_: MachSlice) -> SignatureInfo:
             raise Reject(code, "signature blobs overlap")
     if SLOT_CODE_DIRECTORY not in blobs:
         raise Reject(code, "no primary CodeDirectory")
+    if SLOT_DER_ENTITLEMENTS in blobs:
+        # The DER form is the one the kernel enforces. Until it is decoded and cross-checked against the
+        # XML form and the policy, its semantics are unverified: fail closed rather than disclaim.
+        raise Reject("macho-der-entitlements-unsupported", "a DER entitlements slot is present but this tool cannot decode it")
     cms = blobs.get(SLOT_CMS)
-    if cms is None or len(cms) <= 8:
+    if signed and (cms is None or len(cms) <= 8):
         raise Reject("macho-adhoc-signature", "no CMS signature wrapper: ad-hoc signatures are not an acceptable signed output")
 
     info = SignatureInfo()
     directories = []
     for slot in sorted(blobs):
         if slot == SLOT_CODE_DIRECTORY or SLOT_ALTERNATE_FIRST <= slot <= SLOT_ALTERNATE_LAST:
-            directories.append(validate_code_directory(slot, blobs, slice_))
+            directories.append(validate_code_directory(slot, blobs, slice_, allow_adhoc=not signed))
     if len({d["identifier"] for d in directories}) != 1 or len({d["code_limit"] for d in directories}) != 1:
         raise Reject(code, "CodeDirectories disagree on identifier or code limit")
     primary = directories[0]
     entitlements = blobs.get(SLOT_ENTITLEMENTS)
     if entitlements is not None:
-        payload = entitlements[8:]
-        if len(payload) > MAX_ENTITLEMENTS_BYTES:
-            raise Reject("macho-invalid-entitlements", "entitlements blob is oversized")
-        try:
-            info.entitlements = plistlib.loads(payload, fmt=plistlib.FMT_XML)
-        except Exception as error:  # plistlib raises several unrelated types
-            raise Reject("macho-invalid-entitlements", f"entitlements plist does not parse: {type(error).__name__}") from error
+        info.entitlements = decode_entitlements_dict(entitlements[8:], plistlib.FMT_XML, "macho-invalid-entitlements", "entitlements plist")
     info.report = {
         "dataoff": slice_.dataoff,
         "datasize": slice_.datasize,
@@ -897,17 +943,24 @@ def parse_signature(slice_: MachSlice) -> SignatureInfo:
         "code_directory": primary,
         "alternate_code_directories": len(directories) - 1,
         "entitlements_sha256": sha256(entitlements) if entitlements is not None else None,
-        "entitlements_der_present": SLOT_DER_ENTITLEMENTS in blobs,
-        "entitlements_der_cross_checked": False,
-        "cms_sha256": sha256(cms),
+        "cms_sha256": sha256(cms) if cms is not None else None,
         "cryptographic_signature_verified": False,
         "verify_separately": True,
     }
     return info
 
 
-def validate_code_directory(slot: int, blobs: dict[int, bytes], slice_: MachSlice) -> dict:
+# CodeDirectory versions this tool implements, with their full fixed header sizes (cs_blobs.h):
+#   0x20001 base (through spare2) / 0x20100 + scatterOffset / 0x20200 + teamOffset /
+#   0x20300 + spare3, codeLimit64 / 0x20400 + execSegBase, execSegLimit, execSegFlags /
+#   0x20500 + runtime, preEncryptOffset.
+# Anything else (older, between layouts, or newer) is refused, never read as "an 88-byte header".
+CODE_DIRECTORY_HEADER_SIZES = {0x20001: 44, 0x20100: 48, 0x20200: 52, 0x20300: 64, 0x20400: 88, 0x20500: 96}
+
+
+def validate_code_directory(slot: int, blobs: dict[int, bytes], slice_: MachSlice, *, allow_adhoc: bool = False) -> dict:
     code = "macho-invalid-signature-blob"
+    unsupported = "macho-unsupported-signature-layout"
     blob = blobs[slot]
     if len(blob) < 44:
         raise Reject(code, "CodeDirectory is truncated")
@@ -915,18 +968,36 @@ def validate_code_directory(slot: int, blobs: dict[int, bytes], slice_: MachSlic
     hash_size, hash_type, _platform, page_log2 = struct.unpack_from(">BBBB", blob, 36)
     if length != len(blob):
         raise Reject(code, "CodeDirectory length disagrees with its blob")
-    if version < 0x20001:
-        raise Reject(code, f"CodeDirectory version {version:#x} is too old")
-    header_size = 44 if version < 0x20100 else 48 if version < 0x20200 else 52 if version < 0x20300 else 64 if version < 0x20400 else 88
+    header_size = CODE_DIRECTORY_HEADER_SIZES.get(version)
+    if header_size is None:
+        raise Reject(unsupported, f"CodeDirectory version {version:#x} is not an implemented layout")
     if len(blob) < header_size:
         raise Reject(code, "CodeDirectory header is truncated")
-    if version >= 0x20300 and code_limit == 0:
-        code_limit = struct.unpack_from(">Q", blob, 56)[0]
+    if ident_offset < header_size or ident_offset >= length:  # structure before layout selectors
+        raise Reject(code, "CodeDirectory identifier offset is invalid")
+    if struct.unpack_from(">I", blob, 40)[0]:
+        raise Reject(unsupported, "CodeDirectory spare2 field is not zero")
+    if version >= 0x20100 and struct.unpack_from(">I", blob, 44)[0]:
+        raise Reject(unsupported, "CodeDirectory declares scatter vector pages, which this tool does not implement")
+    team_offset = struct.unpack_from(">I", blob, 48)[0] if version >= 0x20200 else 0
+    if version >= 0x20300:
+        if struct.unpack_from(">I", blob, 52)[0]:
+            raise Reject(unsupported, "CodeDirectory spare3 field is not zero")
+        code_limit64 = struct.unpack_from(">Q", blob, 56)[0]
+        if code_limit and code_limit64:
+            raise Reject(code, "CodeDirectory declares both a 32-bit and a 64-bit code limit")
+        code_limit = code_limit or code_limit64
+    if version >= 0x20400:
+        exec_base, exec_limit = struct.unpack_from(">QQ", blob, 64)
+        if exec_base + exec_limit > code_limit:
+            raise Reject(code, "CodeDirectory executable segment lies outside the signed range")
+    if version >= 0x20500 and struct.unpack_from(">I", blob, 92)[0]:
+        raise Reject(unsupported, "CodeDirectory declares pre-encryption hashes, which this tool does not implement")
     if hash_type not in HASH_TYPES or HASH_TYPES[hash_type][1] != hash_size:
         raise Reject(code, f"unsupported CodeDirectory hash type {hash_type} / size {hash_size}")
     algorithm = HASH_TYPES[hash_type][0]
     hash_name = {"sha1": "sha1", "sha256": "sha256", "sha256-truncated": "sha256", "sha384": "sha384"}[algorithm]
-    if flags & CS_ADHOC:
+    if flags & CS_ADHOC and not allow_adhoc:
         raise Reject("macho-adhoc-signature", "CodeDirectory is flagged ad-hoc")
     if code_limit != slice_.dataoff:
         raise Reject(code, "CodeDirectory does not cover exactly the bytes before the signature")
@@ -936,13 +1007,18 @@ def validate_code_directory(slot: int, blobs: dict[int, bytes], slice_: MachSlic
     expected_slots = -(-code_limit // page) if code_limit else 0
     if n_code != expected_slots or n_special > 255:
         raise Reject(code, "CodeDirectory slot counts do not match the code limit")
-    if ident_offset < header_size or ident_offset >= length:
-        raise Reject(code, "CodeDirectory identifier offset is invalid")
     end = blob.find(b"\x00", ident_offset)
     if end < 0:
         raise Reject(code, "CodeDirectory identifier is not terminated")
     if hash_offset < max(header_size, end + 1) + n_special * hash_size or hash_offset + n_code * hash_size > length:
         raise Reject(code, "CodeDirectory hash arrays are out of range")
+    team = None
+    if team_offset:
+        team_end = blob.find(b"\x00", team_offset) if header_size <= team_offset < length else -1
+        hashes_start = hash_offset - n_special * hash_size
+        if team_end < 0 or (team_offset < hash_offset + n_code * hash_size and team_end >= hashes_start):
+            raise Reject(code, "CodeDirectory team identifier offset is invalid")
+        team = blob[team_offset:team_end].decode("utf-8", "replace")
 
     def digest(chunk: bytes) -> bytes:
         return hashlib.new(hash_name, chunk).digest()[:hash_size]
@@ -975,6 +1051,7 @@ def validate_code_directory(slot: int, blobs: dict[int, bytes], slice_: MachSlic
         "flags": f"{flags:#x}",
         "hash_type": algorithm,
         "identifier": blob[ident_offset:end].decode("utf-8", "replace"),
+        "team_identifier": team,
         "code_limit": code_limit,
         "page_size": page,
         "n_code_slots": n_code,
@@ -1043,7 +1120,7 @@ def parse_macho_container(data: bytes) -> tuple[str, list[tuple[FatArch | None, 
     return "fat", [(arch, slices[index]) for index, arch in enumerate(arches)]  # table order, as written
 
 
-def compare_slice(u: MachSlice, s: MachSlice, expected_entitlements, entitlements_given: bool, index: int | None):
+def compare_slice(u: MachSlice, s: MachSlice, policy: "Policy", index: int | None):
     """Differences/allowed for one thin slice pair (both already parsed)."""
     differences: list[dict] = []
     allowed: list[dict] = []
@@ -1124,15 +1201,17 @@ def compare_slice(u: MachSlice, s: MachSlice, expected_entitlements, entitlement
         if u.data[lu.fileoff : data_end] != s.data[lu.fileoff : data_end]:
             bad("macho-content-changed", "__LINKEDIT data other than the signature differs", region="__LINKEDIT")
 
-    # --- entitlements semantics
-    before = None
+    # --- entitlements semantics: type-preserving comparison against the declared or inherited policy
     if replaced:
         try:
-            before = parse_signature_lenient_entitlements(u)
-        except Reject:
-            before = None
-    wanted = expected_entitlements if entitlements_given else before
-    if signature.entitlements != wanted:
+            before = parse_signature(u, signed=False).entitlements
+        except Reject as reject:  # an unreadable or ambiguous baseline is not evidence of "no entitlements"
+            differences.append(reject.difference("unsigned", **tag))
+            return differences, allowed
+    else:
+        before = None
+    wanted = policy.value if policy.value is not None else before
+    if canonical_plist(signature.entitlements) != canonical_plist(wanted):
         bad("macho-entitlements-mismatch", "entitlements embedded in the signature differ from the expected policy")
 
     if differences:
@@ -1158,37 +1237,31 @@ def compare_slice(u: MachSlice, s: MachSlice, expected_entitlements, entitlement
     return differences, allowed
 
 
-def parse_signature_lenient_entitlements(slice_: MachSlice):
-    """Entitlements of a (linker-)signed *unsigned input*, without demanding a CMS wrapper."""
-    region = slice_.data[slice_.dataoff : slice_.dataoff + slice_.datasize]
-    if len(region) < 12 or struct.unpack_from(">I", region, 0)[0] != CSMAGIC_EMBEDDED_SIGNATURE:
-        raise Reject("macho-invalid-signature-blob", "unsigned input carries an unreadable signature")
-    count = struct.unpack_from(">I", region, 8)[0]
-    if not 1 <= count <= MAX_SUPERBLOB_BLOBS or 12 + 8 * count > len(region):
-        raise Reject("macho-invalid-signature-blob", "unsigned input signature index is implausible")
-    for index in range(count):
-        slot, offset = struct.unpack_from(">II", region, 12 + 8 * index)
-        if slot == SLOT_ENTITLEMENTS:
-            magic, length = parse_blob_header(region, offset, "macho-invalid-signature-blob")
-            if magic != CSMAGIC_ENTITLEMENTS or length - 8 > MAX_ENTITLEMENTS_BYTES:
-                raise Reject("macho-invalid-entitlements", "unsigned input entitlements blob is invalid")
-            try:
-                return plistlib.loads(region[offset + 8 : offset + length], fmt=plistlib.FMT_XML)
-            except Exception as error:
-                raise Reject("macho-invalid-entitlements", "unsigned input entitlements do not parse") from error
-    return None
+class Policy:
+    """The entitlement policy a comparison was run under: explicit (a plist file) or inherited."""
+
+    def __init__(self, value: dict | None = None, file_sha256: str | None = None) -> None:
+        self.value = value
+        self.file_sha256 = file_sha256
+
+    def report(self) -> dict:
+        if self.value is None:
+            return {"source": "inherited-from-unsigned", "file_sha256": None, "canonical_sha256": None}
+        return {"source": "explicit", "file_sha256": self.file_sha256, "canonical_sha256": canonical_plist_sha256(self.value)}
 
 
-def compare_macho(unsigned: bytes, signed: bytes, entitlements_path: Path | None) -> tuple[list, list, dict]:
-    expected = None
-    given = entitlements_path is not None
-    if given:
-        try:
-            expected = plistlib.loads(read_regular_file(entitlements_path))
-        except InputError:
-            raise
-        except Exception as error:
-            raise InputError(f"cannot parse entitlements plist {entitlements_path}: {type(error).__name__}") from error
+def load_policy(path: Path | None) -> Policy:
+    if path is None:
+        return Policy()
+    raw = read_regular_file(path)
+    try:
+        value = decode_entitlements_dict(raw, None, "macho-invalid-entitlements", "entitlements policy")
+    except Reject as reject:
+        raise InputError(f"cannot use entitlements policy {path}: {reject}") from reject
+    return Policy(value, sha256(raw))
+
+
+def compare_macho(unsigned: bytes, signed: bytes, policy: Policy) -> tuple[list, list, dict]:
     differences: list[dict] = []
     allowed: list[dict] = []
     hashes = {"unsigned_sha256": sha256(unsigned), "signed_sha256": sha256(signed)}
@@ -1224,7 +1297,7 @@ def compare_macho(unsigned: bytes, signed: bytes, entitlements_path: Path | None
         )
         return differences, allowed, hashes
     for position, ((arch, slice_u), (_, slice_s)) in enumerate(zip(slices_u, slices_s)):
-        d, a = compare_slice(slice_u, slice_s, expected, given, None if arch is None else position)
+        d, a = compare_slice(slice_u, slice_s, policy, None if arch is None else position)
         differences.extend(d)
         allowed.extend(a)
     hashes["signed_matches_invariant"] = not differences
@@ -1292,7 +1365,7 @@ class TreeSource:
         return data
 
 
-def compare_tree(unsigned_path: Path, signed_path: Path, entitlements: Path | None) -> tuple[list, list, dict]:
+def compare_tree(unsigned_path: Path, signed_path: Path, policy: Policy) -> tuple[list, list, dict]:
     differences: list[dict] = []
     allowed: list[dict] = []
     sources: dict[str, TreeSource] = {}
@@ -1332,7 +1405,7 @@ def compare_tree(unsigned_path: Path, signed_path: Path, entitlements: Path | No
             if (left["sha256"], left["size"]) != (right["sha256"], right["size"]):
                 differences.append(difference("tree-content-changed", "file content differs", path=path))
         else:
-            _delegate(kind, path, data, s, entitlements, differences, allowed)
+            _delegate(kind, path, data, s, policy, differences, allowed)
         if left["executable"] != right["executable"]:
             differences.append(difference("tree-mode-changed", "execute bit differs", path=path))
     for path in sorted(set(s.entries) - set(u.entries)):
@@ -1351,13 +1424,13 @@ def compare_tree(unsigned_path: Path, signed_path: Path, entitlements: Path | No
     return differences, allowed, hashes
 
 
-def _delegate(kind, path, unsigned_data, signed_source, entitlements, differences, allowed):
+def _delegate(kind, path, unsigned_data, signed_source, policy, differences, allowed):
     signed_data = signed_source.read(path)
     try:
         if kind == "pe":
             d, a, _ = compare_pe(unsigned_data, signed_data)
         else:
-            d, a, _ = compare_macho(unsigned_data, signed_data, entitlements)
+            d, a, _ = compare_macho(unsigned_data, signed_data, policy)
     except InputError as error:
         differences.append(difference("tree-unparseable-executable", str(error), path=path))
         return
@@ -1373,11 +1446,12 @@ def compare(unsigned: Path, signed: Path, kind: str, *, entitlements: Path | Non
     if kind not in KINDS:
         raise InputError(f"unsupported --kind {kind!r}; expected one of {', '.join(KINDS)}")
     unsigned, signed = Path(unsigned), Path(signed)
+    policy = load_policy(entitlements) if kind != "pe" else Policy()
     if kind == "tree":
-        differences, allowed, hashes = compare_tree(unsigned, signed, entitlements)
+        differences, allowed, hashes = compare_tree(unsigned, signed, policy)
     else:
         data = (read_regular_file(unsigned), read_regular_file(signed))
-        differences, allowed, hashes = compare_pe(*data) if kind == "pe" else compare_macho(*data, entitlements)
+        differences, allowed, hashes = compare_pe(*data) if kind == "pe" else compare_macho(*data, policy)
     return {
         "schema": SCHEMA,
         "verdict": "PASS" if not differences else "FAIL",
