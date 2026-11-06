@@ -858,30 +858,53 @@ class PlistRefused(ValueError):
 def check_plist_budget(value: Any) -> None:
     """Walk the logical value (shared references expanded) and refuse it past the node/depth/byte budgets.
 
-    Allocation-free apart from the explicit stack, and it stops at the first excess, so the work done is at
-    most ``MAX_PLIST_NODES`` visits whatever the input claims. Dictionary keys must be strings.
+    Children are visited lazily: each container keeps only an iterator, so the pending state is one frame per
+    nesting level (at most ``MAX_PLIST_DEPTH``) however wide a container is, and every visit is counted before the
+    next child is even produced. The work and allocation done are therefore bounded by the budget, not by the
+    fan-out the input claims. A container that contains itself (directly or through descendants) is refused as a
+    cycle; a shared acyclic sub-structure is expanded and counted at every reference. Dictionary keys must be
+    strings.
     """
     nodes = scalar_bytes = 0
-    stack: list[tuple[Any, int]] = [(value, 1)]
-    while stack:
-        item, depth = stack.pop()
+    ancestors: set[int] = set()  # containers on the current path only
+    frames: list[tuple[Any, int, bool]] = []  # (child iterator, container id, is a dictionary)
+    node: Any = value
+    while True:
         nodes += 1
         if nodes > MAX_PLIST_NODES:
             raise PlistRefused(f"more than {MAX_PLIST_NODES} values (expansion budget)")
-        if depth > MAX_PLIST_DEPTH:
+        if len(frames) + 1 > MAX_PLIST_DEPTH:
             raise PlistRefused(f"nested deeper than {MAX_PLIST_DEPTH} levels (budget)")
-        if isinstance(item, (str, bytes, bytearray)):
-            scalar_bytes += len(item)
-        elif isinstance(item, list):
-            stack.extend((child, depth + 1) for child in item)
-        elif isinstance(item, dict):
-            for key, child in item.items():
+        if isinstance(node, (str, bytes, bytearray)):
+            scalar_bytes += len(node)
+        elif isinstance(node, (list, dict)):
+            ident = id(node)
+            if ident in ancestors:
+                raise PlistRefused("a container contains itself (cyclic reference)")
+            ancestors.add(ident)
+            is_dict = isinstance(node, dict)
+            frames.append((iter(node.items() if is_dict else node), ident, is_dict))
+        if scalar_bytes > MAX_PLIST_SCALAR_BYTES:
+            raise PlistRefused(f"more than {MAX_PLIST_SCALAR_BYTES} bytes of strings and data (expansion budget)")
+        while True:  # advance to the next unvisited node, closing exhausted containers on the way
+            if not frames:
+                return
+            children, ident, is_dict = frames[-1]
+            try:
+                child = next(children)
+            except StopIteration:
+                frames.pop()
+                ancestors.discard(ident)
+                continue
+            if is_dict:
+                key, child = child
                 if not isinstance(key, str):
                     raise PlistRefused(f"dictionary key {key!r} is not a string key")
                 scalar_bytes += len(key)
-                stack.append((child, depth + 1))
-        if scalar_bytes > MAX_PLIST_SCALAR_BYTES:
-            raise PlistRefused(f"more than {MAX_PLIST_SCALAR_BYTES} bytes of strings and data (expansion budget)")
+                if scalar_bytes > MAX_PLIST_SCALAR_BYTES:
+                    raise PlistRefused(f"more than {MAX_PLIST_SCALAR_BYTES} bytes of strings and data (expansion budget)")
+            node = child
+            break
 
 
 def canonical_plist(value: Any) -> Any:

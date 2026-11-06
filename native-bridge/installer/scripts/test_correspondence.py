@@ -2016,6 +2016,74 @@ class Round2PolicyPlistTests(WorkDir):
         self.assertLess(len(many), correspondence.MAX_ENTITLEMENTS_BYTES)
         self.assert_policy_refused(many, "budget")
 
+    # ---- round 3, R1: the preflight itself must be bounded in allocation, not just in what it finally accepts ----
+
+    PREFLIGHT_PEAK_BUDGET = 512 * 1024  # a lazy walker holds O(depth) frames; the eager one held 22-36 MB here
+
+    def traced_peak(self, function, *args):
+        tracemalloc.start()
+        try:
+            try:
+                function(*args)
+                outcome = None
+            except correspondence.PlistRefused as error:
+                outcome = str(error)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        return outcome, peak
+
+    @staticmethod
+    def cyclic_policy(fan_out=10_000):
+        ring = []
+        ring.extend([ring] * fan_out)
+        return plistlib.dumps({"k": ring}, fmt=plistlib.FMT_BINARY)
+
+    def test_r1_a_wide_shared_reference_list_is_refused_without_scheduling_its_whole_fan_out(self):
+        blob = plistlib.dumps({"k": [True] * 500_000}, fmt=plistlib.FMT_BINARY)
+        self.assertLess(len(blob), correspondence.MAX_ENTITLEMENTS_BYTES)  # inside the input cap: reaches the walker
+        decoded = plistlib.loads(blob)  # decoded outside the measurement: only the budget walk is traced
+        outcome, peak = self.traced_peak(correspondence.check_plist_budget, decoded)
+        self.assertIn("expansion budget", outcome)
+        self.assertLess(peak, self.PREFLIGHT_PEAK_BUDGET, peak)
+
+    def test_r1_the_whole_policy_path_adds_no_fan_out_allocation_beyond_plistlib_itself(self):
+        blob = plistlib.dumps({"k": [True] * 500_000}, fmt=plistlib.FMT_BINARY)
+        _outcome, decode_peak = self.traced_peak(plistlib.loads, blob)  # the unavoidable decode cost
+        path = self.policy_file(blob)
+        tracemalloc.start()
+        try:
+            with self.assertRaises(correspondence.InputError):
+                correspondence.load_policy(path)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, decode_peak + self.PREFLIGHT_PEAK_BUDGET, (peak, decode_peak))
+
+    def test_r1_a_wide_cyclic_policy_is_refused_as_a_cycle_within_a_bounded_allocation(self):
+        blob = self.cyclic_policy()
+        self.assertLess(len(blob), 20_000)
+        decoded = plistlib.loads(blob)
+        self.assertIs(decoded["k"][0], decoded["k"])  # the premise: plistlib really restores the cycle
+        outcome, peak = self.traced_peak(correspondence.check_plist_budget, decoded)
+        self.assertLess(peak, self.PREFLIGHT_PEAK_BUDGET, peak)
+        self.assertIn("cycl", outcome)
+        self.assert_policy_refused(blob, "cycl")
+
+    def test_r1_cycles_are_refused_through_dictionaries_and_mutual_references_but_shared_dags_still_pass(self):
+        loop = {}
+        loop["again"] = [loop]
+        mutual_a, mutual_b = [], []
+        mutual_a.append(mutual_b)
+        mutual_b.append(mutual_a)
+        for label, value in (("dictionary self-reference", {"k": loop}), ("mutually recursive lists", {"k": mutual_a})):
+            with self.subTest(case=label):
+                outcome, peak = self.traced_peak(correspondence.check_plist_budget, value)
+                self.assertLess(peak, self.PREFLIGHT_PEAK_BUDGET, peak)
+                self.assertIn("cycl", outcome)
+        shared = [True, "x"]
+        correspondence.check_plist_budget({"a": shared, "b": shared, "c": [shared, shared]})  # a DAG is not a cycle
+
     def test_n3_an_ordinary_binary_policy_and_its_xml_twin_have_the_same_canonical_digest(self):
         value = {self.KEY: True, "list": [1, 2.5, "x", b"d", {"nested": False}], "shared": [[True, True], [True, True]]}
         digests = set()
