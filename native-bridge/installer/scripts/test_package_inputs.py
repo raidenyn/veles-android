@@ -1349,6 +1349,63 @@ class Round2ZipExtraFieldTests(Round2ArchiveCase):
         self.assert_refused("central-only.zip", raw_zip("f", b"payload", central_extra=zip_extra(UX_NEW, b"\x02\x01\x05\x01\x06")), "malformed-archive", "extra field")
         self.assert_refused("central-empty.zip", raw_zip("f", b"payload", central_extra=zip_extra(UX_NEW, b"")), "malformed-archive", "extra field")
 
+    def test_r4_contradictory_ut_declarations_between_the_headers_are_refused(self):
+        """Info-ZIP: central flags describe the LOCAL timestamps, and a locally declared mtime MUST be present centrally.
+
+        Each body below is individually well formed; only the pair is contradictory.
+        """
+        t = b"\x01\x00\x00\x00"
+        cases = {
+            # the reported case: local declares and carries mtime, central claims none
+            "local mtime / central flags 00": (UT, b"\x01" + t, UT, b"\x00"),
+            # flags must agree, not merely be individually valid
+            "local atime / central mtime": (UT, b"\x02" + t, UT, b"\x01" + t),
+            "local mtime / central mtime+atime flags": (UT, b"\x01" + t, UT, b"\x03" + t),
+            "local mtime+atime / central mtime flag only": (UT, b"\x03" + t + t, UT, b"\x01" + t),
+            "local atime / central flags 00": (UT, b"\x02" + t, UT, b"\x00"),
+            # a locally declared mtime must exist centrally at all
+            "local mtime / no central UT": (UT, b"\x01" + t, None, b""),
+            "local mtime+ctime / no central UT": (UT, b"\x05" + t + t, None, b""),
+            # central flags describe local timestamps that are not there
+            "no local UT / central mtime": (None, b"", UT, b"\x01" + t),
+        }
+        for label, (lid, lbody, cid, cbody) in cases.items():
+            with self.subTest(case=label):
+                local = zip_extra(lid, lbody) if lid is not None else b""
+                central = zip_extra(cid, cbody) if cid is not None else b""
+                self.assert_refused("contradictory-ut.zip", raw_zip("f", b"payload", local_extra=local, central_extra=central), "malformed-archive", "extra field")
+        # ... also when ux sits beside UT, in either order
+        ux = zip_extra(UX_NEW, UX_4_4)
+        self.assert_refused(
+            "contradictory-ut-ux.zip",
+            raw_zip("f", b"payload", local_extra=ux + zip_extra(UT, b"\x01" + t), central_extra=zip_extra(UT, b"\x00") + ux),
+            "malformed-archive", "extra field",
+        )
+
+    def test_r4_legitimate_ut_pairs_still_pass_including_differing_local_and_central_lengths(self):
+        t = b"\x01\x00\x00\x00"
+        plain = self.inventory("plain.zip", raw_zip("f", b"payload"))
+        pairs = {
+            "mtime+atime local 9 bytes / central 5 bytes (Info-ZIP)": (zip_extra(UT, b"\x03" + t + t), zip_extra(UT, b"\x03" + t)),
+            "all three local 13 bytes / central 5 bytes": (zip_extra(UT, b"\x07" + t * 3), zip_extra(UT, b"\x07" + t)),
+            "mtime only, equal 5 / 5": (zip_extra(UT, b"\x01" + t), zip_extra(UT, b"\x01" + t)),
+            "no mtime: atime local / central flag only (1 byte)": (zip_extra(UT, b"\x02" + t), zip_extra(UT, b"\x02")),
+            "no mtime: atime+ctime local / central flag only": (zip_extra(UT, b"\x06" + t + t), zip_extra(UT, b"\x06")),
+            "no timestamps declared in either header": (zip_extra(UT, b"\x00"), zip_extra(UT, b"\x00")),
+            "atime only locally, central UT omitted (no mtime required)": (zip_extra(UT, b"\x02" + t), b""),
+            "no UT in either header": (b"", b""),
+            "ux beside UT in both, differing UT lengths": (
+                zip_extra(UX_NEW, UX_4_4) + zip_extra(UT, b"\x03" + t + t),
+                zip_extra(UT, b"\x03" + t) + zip_extra(UX_NEW, UX_4_4),
+            ),
+            "ux differing between headers is still not required to be equal": (
+                zip_extra(UX_NEW, b"\x01\x01\x05\x01\x06"), zip_extra(UX_NEW, UX_4_4),
+            ),
+        }
+        for label, (local, central) in pairs.items():
+            with self.subTest(case=label):
+                self.assertEqual(self.inventory("ok.zip", raw_zip("f", b"payload", local_extra=local, central_extra=central)), plain)
+
     def test_n6_local_required_version_must_be_supported_and_agree_with_the_central_record(self):
         self.assertEqual(self.inventory("same.zip", raw_zip("f", b"x", local_need=10, central_need=10))["entries"][0]["size"], 1)
         self.assert_refused("need-63.zip", raw_zip("f", b"x", local_need=63), "malformed-archive", "version")

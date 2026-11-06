@@ -311,7 +311,7 @@ ZIP_ALLOWED_EXTRA_IDS = (0x5455, 0x7875)
 
 
 class _ZipMember:
-    __slots__ = ("name", "method", "flags", "crc", "csize", "usize", "offset", "mode", "data_offset", "need")
+    __slots__ = ("name", "method", "flags", "crc", "csize", "usize", "offset", "mode", "data_offset", "need", "ut_flags")
 
 
 def _zip_extra_body(ident: int, body: bytes, central: bool, what: str) -> None:
@@ -346,9 +346,14 @@ def _zip_extra_body(ident: int, body: bytes, central: bool, what: str) -> None:
         raise bad("no structure rule for this field")
 
 
-def _zip_extra_ok(extra: bytes, what: str, *, central: bool) -> None:
-    """The extra block must be whole ``(id, length, data)`` records of allowlisted, structurally valid ids."""
+def _zip_extra_ok(extra: bytes, what: str, *, central: bool) -> int | None:
+    """The extra block must be whole ``(id, length, data)`` records of allowlisted, structurally valid ids.
+
+    Returns the validated UT flags byte (``None`` when the block has no UT record) so the two headers can be
+    compared: the body checks alone cannot see a local/central contradiction.
+    """
     cursor = 0
+    ut_flags: int | None = None
     seen: set[int] = set()
     while cursor < len(extra):
         if cursor + 4 > len(extra):
@@ -361,8 +366,35 @@ def _zip_extra_ok(extra: bytes, what: str, *, central: bool) -> None:
         seen.add(ident)
         if cursor + 4 + length > len(extra):
             raise _bad(f"extra field overruns its header in {what}")
-        _zip_extra_body(ident, extra[cursor + 4 : cursor + 4 + length], central, what)
+        body = extra[cursor + 4 : cursor + 4 + length]
+        _zip_extra_body(ident, body, central, what)
+        if ident == 0x5455:
+            ut_flags = body[0]  # _zip_extra_body has just proved the body is non-empty
         cursor += 4 + length
+    return ut_flags
+
+
+def _zip_ut_pair_ok(local: int | None, central: int | None, name: str) -> None:
+    """Info-ZIP ``extrafld.txt``: the flags of *both* UT forms say which timestamps the LOCAL field carries, and a
+    modification time present locally MUST be present centrally. Only the flags are compared: the local and central
+    bodies legitimately differ in length (central keeps the mtime only), and the ux owner record is not constrained.
+    An absent UT declares no timestamps."""
+    if local is not None and central is not None:
+        consistent = local == central
+    elif local is not None:  # no central UT: legitimate only when no mtime is declared locally
+        consistent = not local & 1
+    elif central is not None:  # no local UT: the central flags would describe timestamps that do not exist
+        consistent = central == 0
+    else:
+        consistent = True
+    if consistent:
+        return
+    raise _bad(
+        f"zip extra field 0x5455 of {name!r} contradicts itself: local flags "
+        f"{'absent' if local is None else format(local, '#x')}, central flags "
+        f"{'absent' if central is None else format(central, '#x')} (central flags describe the local timestamps, "
+        "and a local modification time must also be present centrally)"
+    )
 
 
 def _zip_locate_end(handle, size: int) -> tuple[int, tuple]:
@@ -400,7 +432,7 @@ def _zip_parse_central(directory: bytes, count: int) -> list[_ZipMember]:
         if comment_len:
             raise InventoryError("zip member comment", "unauthenticated-data")
         raw_name = directory[cursor + ZIP_CENTRAL.size : cursor + ZIP_CENTRAL.size + name_len]
-        _zip_extra_ok(directory[cursor + ZIP_CENTRAL.size + name_len : end], "the central directory", central=True)
+        central_ut = _zip_extra_ok(directory[cursor + ZIP_CENTRAL.size + name_len : end], "the central directory", central=True)
         if flags & ZIP_FLAG_ENCRYPTED:
             raise InventoryError("encrypted archive member", "encrypted-member")
         if method not in (ZIP_METHOD_STORED, ZIP_METHOD_DEFLATE):
@@ -420,6 +452,7 @@ def _zip_parse_central(directory: bytes, count: int) -> list[_ZipMember]:
         except UnicodeDecodeError as error:
             raise InventoryError("zip member name is not valid UTF-8 (or undeclared non-ASCII)", "unsafe-path") from error
         member.method, member.flags, member.crc, member.need = method, flags, crc, need
+        member.ut_flags = central_ut
         member.csize, member.usize, member.offset = csize, usize, offset
         # Unix mode bits are only meaningful when the writer was Unix (create_system 3).
         unix_mode = external >> 16 if (made >> 8) == 3 else 0
@@ -466,7 +499,8 @@ def _zip_check_local(handle, member: _ZipMember, size: int) -> int:
         raise _bad(f"local header of {member.name!r} requires zip version {need}, the central directory {member.need}")
     if (flags, method, crc, csize, usize) != (member.flags, member.method, member.crc, member.csize, member.usize):
         raise _bad(f"local header of {member.name!r} disagrees with the central directory (or uses a data descriptor)")
-    _zip_extra_ok(rest[name_len:], "a local header", central=False)
+    local_ut = _zip_extra_ok(rest[name_len:], "a local header", central=False)
+    _zip_ut_pair_ok(local_ut, member.ut_flags, member.name)
     member.data_offset = member.offset + ZIP_LOCAL.size + name_len + extra_len
     return member.data_offset + member.csize
 
