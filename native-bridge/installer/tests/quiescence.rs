@@ -691,8 +691,14 @@ fn pid_reuse_not_bound_to_name() {
     );
 }
 
+/// Scope: the *wait function* sees a host that appears between two calls. It does
+/// not run the install or cleanup transaction; the transaction-level guarantee
+/// ("a host launched mid-transaction aborts the activation and preserves the live
+/// payload") is `late_host_launch_before_activation_aborts_the_install_and_preserves_the_live_release`
+/// (install) and `late_host_launch_after_removal_reports_cleanup_pending`
+/// (cleanup) in `tests/operations.rs`.
 #[test]
-fn late_launch_preserves_live_payload() {
+fn quiescence_wait_observes_a_host_that_appears_between_calls() {
     let temp = TempRoot::new();
     let paths = windows_paths(&temp);
     let current = version_image(&paths, "3.0.0-dddddddd", "host");

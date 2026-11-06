@@ -867,6 +867,9 @@ enum Hook {
     },
     /// Die (as a killed process would) before the first removal under `prefix`.
     CrashBeforeRemoval { prefix: String },
+    /// A host launches while the payload is being staged: every inspection from
+    /// the first staged write on reports an owned host running.
+    LaunchAfterStaging,
     /// Replace `state/staging` with a symlink to `outside` before inspection `at`.
     #[cfg(unix)]
     SymlinkStaging { outside: PathBuf, at: usize },
@@ -987,6 +990,11 @@ impl Platform for HookedPlatform {
                         .expect("injected re-registration");
                     self.fired.fetch_add(1, Ordering::SeqCst);
                 }
+            }
+            Hook::LaunchAfterStaging
+                if self.inner.calls().contains(&PlatformCall::WriteDurable) =>
+            {
+                return Ok(HostState::Active);
             }
             #[cfg(unix)]
             Hook::SymlinkStaging { outside, at } if inspection == *at => {
@@ -2487,6 +2495,88 @@ fn retention_keeps_exactly_one_prior_version() {
         claimed_versions, expected,
         "the receipt never carries a superseded version claim"
     );
+}
+
+/// A host that launches *after* the operation began - while the new payload is
+/// being staged - must be caught by the recheck immediately before activation.
+/// This drives the real install transaction: delete that recheck from
+/// `transaction::run` and the install publishes over a running host and this test
+/// fails (it succeeds instead of reporting `HostActive`).
+#[test]
+fn late_host_launch_before_activation_aborts_the_install_and_preserves_the_live_release() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), Vec::new()),
+    );
+    let p1 = v1.descriptor.payload_id;
+    fixture.install(&v1);
+    let live_before = fixture.registration();
+    let receipt_before = receipt(paths).expect("v1 is committed");
+    let retained_v1 = version_dir(paths, "1.0.0", p1);
+
+    let platform = HookedPlatform::new(Hook::LaunchAfterStaging);
+    let failure = run_operation(
+        &platform,
+        paths,
+        Operation::Install,
+        Some(authenticate(&v2)),
+    )
+    .expect_err("a host launched during staging blocks the activation");
+    assert_eq!(failure.code, FailureCode::HostActive);
+    assert!(
+        failure.prior_usable,
+        "the live release is untouched and still verified"
+    );
+
+    // Nothing was activated, and nothing was deleted while a host ran.
+    let calls = platform.inner.calls();
+    for forbidden in [
+        PlatformCall::PublishManifest,
+        PlatformCall::PublishRegistration,
+        PlatformCall::RemoveOwned,
+    ] {
+        assert!(
+            !calls.contains(&forbidden),
+            "{forbidden:?} ran although an owned host was running"
+        );
+    }
+    assert_eq!(fixture.registration(), live_before);
+    assert_eq!(receipt(paths), Some(receipt_before));
+    assert_eq!(
+        fs::read(retained_v1.join("host.exe")).expect("live payload"),
+        HOST_V1,
+        "the live payload is preserved"
+    );
+    // The staged version is retained (cleanup is deferred, never forced) and the
+    // journal says so, so recovery - not a guess - settles it once the host exits.
+    assert!(matches!(journal_state(paths), JournalState::Pending(_)));
+
+    let report = recover(&fixture.platform(), paths).expect("recovery after the host exited");
+    assert_eq!(
+        report.state,
+        veles_bridge_installer::STATE_RECOVERED_PREVIOUS
+    );
+    assert_eq!(fixture.registration(), live_before);
+    assert!(matches!(journal_state(paths), JournalState::None));
+    run_operation(
+        &fixture.platform(),
+        paths,
+        Operation::Install,
+        Some(authenticate(&v2)),
+    )
+    .expect("the install can be retried once the host is gone");
 }
 
 #[test]

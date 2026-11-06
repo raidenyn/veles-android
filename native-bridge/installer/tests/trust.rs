@@ -293,7 +293,7 @@ fn offline_required_assessment_unavailable_preserves_prior() {
 }
 
 #[test]
-fn explicit_revocation_and_unsigned_carrier_rejected() {
+fn explicit_revocation_and_malformed_carrier_rejected() {
     let temp = TempRoot::new("revocation");
     let package = Package::build(&temp.path.join("package"), |_| {});
 
@@ -308,17 +308,21 @@ fn explicit_revocation_and_unsigned_carrier_rejected() {
     assert_eq!(failure.code, FailureCode::TrustDenied);
     assert_no_registration_writes(&revoked);
 
-    // An unsigned carrier supplies no authenticated bytes at all, so the proof
-    // cannot even be parsed as a policy carrier.
-    let unsigned = platform_with(Some(proof(
+    // Scope of this case: an adapter that (wrongly) reported an *accepted*
+    // assessment over bytes that are not a policy carrier at all. That tests the
+    // decision layer's parsing, not the rejection of a well-formed unsigned
+    // carrier: the OS refusing a real unsigned `carrier.exe` / `carrier.app` is
+    // asserted by the native tests in `tests/native_windows.rs` and
+    // `tests/native_macos.rs` (NOT RUN on this host).
+    let malformed = platform_with(Some(proof(
         PUBLISHER,
         TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
         b"not a veles policy carrier",
     )));
-    let failure = authenticate_package(&unsigned, &package.root, &package.descriptor)
-        .expect_err("an unsigned carrier is denied");
+    let failure = authenticate_package(&malformed, &package.root, &package.descriptor)
+        .expect_err("bytes that are not a policy carrier are denied");
     assert_eq!(failure.code, FailureCode::TrustDenied);
-    assert_no_registration_writes(&unsigned);
+    assert_no_registration_writes(&malformed);
 
     // A proof without carrier bytes is not constructible in the first place.
     assert_eq!(

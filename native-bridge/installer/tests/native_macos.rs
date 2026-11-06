@@ -559,3 +559,73 @@ fn cleanup_helper_image_disappears_after_exit() {
         }
     }
 }
+
+/// F12 native negative: Security.framework / Gatekeeper - not a fake - must refuse
+/// a **well-formed but unsigned** bundle, both as the policy carrier and as the
+/// host. NOT RUN on the Linux executor; it needs a macOS runner.
+#[test]
+fn an_unsigned_well_formed_bundle_is_denied_as_carrier_and_as_host() {
+    use veles_bridge_installer::{Digest, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy};
+
+    let temp = TempRoot::new("unsigned");
+    let package = temp.path().join("package");
+    for bundle in [
+        package.join("carrier.app"),
+        package.join("payload/Veles.app"),
+    ] {
+        fs::create_dir_all(bundle.join("Contents/MacOS")).expect("bundle tree");
+        fs::create_dir_all(bundle.join("Contents/Resources")).expect("bundle resources");
+        fs::write(
+            bundle.join("Contents/Info.plist"),
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>host</string>
+<key>CFBundleIdentifier</key><string>me.nagaev.veles.bridge</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+"#,
+        )
+        .expect("Info.plist");
+        fs::copy(
+            std::env::current_exe().expect("this test binary"),
+            bundle.join("Contents/MacOS/host"),
+        )
+        .expect("an unsigned Mach-O");
+    }
+
+    let descriptor = ReleaseDescriptor {
+        schema: 1,
+        channel: Channel::Production,
+        version: "1.0.0".to_owned(),
+        source_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        target: Target::MacosArm64,
+        minimum_os: "26.0".to_owned(),
+        extension_id: "mnopabcdefghijklmnopabcdefghijkl".to_owned(),
+        host_name: PRODUCTION_HOST_NAME.to_owned(),
+        bundle_id: PRODUCTION_HOST_NAME.to_owned(),
+        api_min: 1,
+        api_max: 2,
+        payload_id: Digest::ZERO,
+        policy: ReleasePolicy {
+            publishers: vec!["team:ABCDE12345".to_owned()],
+            denied_payloads: Vec::new(),
+            rollback_payloads: Vec::new(),
+            epoch: 1,
+        },
+    };
+    let platform = MacosPlatform::new();
+    let source = PackageSource::open(&package).expect("package source");
+    let carrier_failure = platform
+        .verify_trust(&source, &descriptor)
+        .expect_err("an unsigned carrier bundle is not trusted");
+    assert_eq!(carrier_failure.code, FailureCode::TrustDenied);
+    let host_failure = platform
+        .verify_host(
+            &package.join("payload"),
+            "Veles.app/Contents/MacOS/host",
+            &descriptor,
+        )
+        .expect_err("an unsigned host bundle is not trusted");
+    assert_eq!(host_failure.code, FailureCode::TrustDenied);
+}

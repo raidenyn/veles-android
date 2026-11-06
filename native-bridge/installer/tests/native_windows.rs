@@ -20,9 +20,10 @@ use veles_bridge_installer::cleanup::{
     CleanupReason, CleanupStatus, HelperRun, run_cleanup_helper_detailed,
 };
 use veles_bridge_installer::{
-    Channel, Digest, FailureCode, InstallPaths, NativeManifest, PackageSource, PathKind, Platform,
-    Registration, RegistryView, RemoveOutcome, StateDocument, Target, ValidatedPath,
-    WindowsCleanupRoot, WindowsPlatform, extension_origin,
+    Channel, Digest, FailureCode, InstallPaths, NativeManifest, PRODUCTION_HOST_NAME,
+    PackageSource, PathKind, Platform, Registration, RegistryView, ReleaseDescriptor,
+    ReleasePolicy, RemoveOutcome, StateDocument, Target, ValidatedPath, WindowsCleanupRoot,
+    WindowsPlatform, extension_origin,
 };
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -658,4 +659,57 @@ fn cleanup_root_removes_only_matching_identities() {
     // The helper request names the install root; a root this installer does not
     // own cannot be opened as an anchored traversal root.
     assert!(WindowsCleanupRoot::open(temp.path()).is_err());
+}
+
+/// F12 native negative: the OS - not a fake - must refuse a **well-formed but
+/// unsigned** executable, both as the policy carrier and as the host.
+///
+/// The test binary itself is the fixture: it is a real, well-formed PE with no
+/// Authenticode signature. NOT RUN on the Linux executor; it needs a Windows
+/// runner (WinVerifyTrust).
+#[test]
+fn an_unsigned_well_formed_executable_is_denied_as_carrier_and_as_host() {
+    let temp = TempRoot::new("unsigned");
+    let package = temp.path().join("package");
+    fs::create_dir_all(package.join("payload")).expect("package tree");
+    let image = std::env::current_exe().expect("this test binary");
+    fs::copy(&image, package.join("carrier.exe")).expect("carrier copy");
+    fs::copy(&image, package.join("payload/host.exe")).expect("host copy");
+
+    let descriptor = ReleaseDescriptor {
+        schema: 1,
+        channel: Channel::Production,
+        version: "1.0.0".to_owned(),
+        source_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        target: Target::WindowsX64,
+        minimum_os: "11".to_owned(),
+        extension_id: "mnopabcdefghijklmnopabcdefghijkl".to_owned(),
+        host_name: PRODUCTION_HOST_NAME.to_owned(),
+        bundle_id: PRODUCTION_HOST_NAME.to_owned(),
+        api_min: 1,
+        api_max: 2,
+        payload_id: Digest::ZERO,
+        policy: ReleasePolicy {
+            publishers: vec!["Publisher One".to_owned()],
+            denied_payloads: Vec::new(),
+            rollback_payloads: Vec::new(),
+            epoch: 1,
+        },
+    };
+    let platform = WindowsPlatform::new();
+    let source = PackageSource::open(&package).expect("package source");
+    assert_eq!(
+        platform
+            .verify_trust(&source, &descriptor)
+            .expect_err("an unsigned carrier is not trusted")
+            .code,
+        FailureCode::TrustDenied
+    );
+    assert_eq!(
+        platform
+            .verify_host(&package.join("payload"), "host.exe", &descriptor)
+            .expect_err("an unsigned host is not trusted")
+            .code,
+        FailureCode::TrustDenied
+    );
 }

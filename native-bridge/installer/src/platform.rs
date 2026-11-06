@@ -45,7 +45,8 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -3091,6 +3092,46 @@ impl Platform for PortablePlatform {
     }
 }
 
+thread_local! {
+    /// The armed crash-boundary probe of the [`FakePlatform`] call in progress.
+    static PROBE: std::cell::RefCell<Option<(Arc<AtomicUsize>, Option<usize>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// A point inside a durable primitive at which a process could die.
+///
+/// A no-op unless a [`FakePlatform`] armed the probe for the current call. When
+/// armed, every crossing is counted, and the crossing numbered `panic_at_boundary`
+/// panics - a simulated process death *inside* a file creation, write, flush,
+/// rename, directory flush or removal, with no caller cleanup running.
+fn crash_point() {
+    PROBE.with(|probe| {
+        if let Some((counter, panic_at)) = probe.borrow().as_ref() {
+            let crossing = counter.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            if *panic_at == Some(crossing) {
+                panic!("injected process death at durable boundary {crossing}");
+            }
+        }
+    });
+}
+
+/// Arms the probe for the duration of one platform call, disarming on drop
+/// (including while a simulated death unwinds).
+struct ProbeGuard;
+
+impl ProbeGuard {
+    fn arm(counter: &Arc<AtomicUsize>, panic_at: Option<usize>) -> Self {
+        PROBE.with(|probe| *probe.borrow_mut() = Some((Arc::clone(counter), panic_at)));
+        Self
+    }
+}
+
+impl Drop for ProbeGuard {
+    fn drop(&mut self) {
+        PROBE.with(|probe| *probe.borrow_mut() = None);
+    }
+}
+
 /// A process table of a machine on which nothing is running.
 struct NoProcesses;
 
@@ -3144,6 +3185,12 @@ pub struct Faults {
     /// Make `apply_launch_permissions` a no-op, as a platform that failed to
     /// carry the executable bit would: the pre-activation check must then refuse.
     pub skip_launch_permissions: bool,
+    /// Simulate a process death at the N-th durable *boundary* (1-based), counted
+    /// inside the platform primitives: after a file is created, after its bytes
+    /// are written, after the flush, after the read-back, around every rename and
+    /// directory flush, around every removal. Unlike `panic_at_mutation`, which
+    /// dies before a whole platform call, this dies in the middle of one.
+    pub panic_at_boundary: Option<usize>,
     /// Make `inspect_hosts` run the real owned-tree classification
     /// ([`inspect_host_processes`]) over a machine with no running process,
     /// instead of returning `host_state`. Install, rollback and cleanup then pass
@@ -3182,6 +3229,7 @@ impl Default for Faults {
             fail_state_read_at: None,
             skip_launch_permissions: false,
             inspect_owned_tree: false,
+            panic_at_boundary: None,
             host: None,
         }
     }
@@ -3254,6 +3302,7 @@ struct FakeState {
 pub struct FakePlatform {
     faults: Faults,
     state: Mutex<FakeState>,
+    boundaries: Arc<AtomicUsize>,
 }
 
 impl FakePlatform {
@@ -3265,7 +3314,19 @@ impl FakePlatform {
         Self {
             faults,
             state: Mutex::new(FakeState::default()),
+            boundaries: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// How many durable boundaries the primitives crossed so far.
+    pub fn boundary_count(&self) -> usize {
+        self.boundaries.load(AtomicOrdering::SeqCst)
+    }
+
+    /// Run one platform call with the crash-boundary probe armed.
+    fn probed<R>(&self, call: impl FnOnce() -> R) -> R {
+        let _armed = ProbeGuard::arm(&self.boundaries, self.faults.panic_at_boundary);
+        call()
     }
 
     /// All observed calls, in order.
@@ -3362,19 +3423,21 @@ impl Platform for FakePlatform {
             let _ = write_partial(path, bytes);
             panic!("injected partial payload write at state mutation {mutation}");
         }
-        let short = write_durable_checked(
-            path,
-            bytes,
-            self.faults.short_write_limit,
-            self.faults.corrupt_readback,
-        )?;
+        let short = self.probed(|| {
+            write_durable_checked(
+                path,
+                bytes,
+                self.faults.short_write_limit,
+                self.faults.corrupt_readback,
+            )
+        })?;
         self.fake_state().short_writes += short;
         Ok(())
     }
 
     fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::WriteDurable)?;
-        replace_durable_checked(path, bytes)
+        self.probed(|| replace_durable_checked(path, bytes))
     }
 
     fn write_state(
@@ -3397,14 +3460,16 @@ impl Platform for FakePlatform {
             panic!("injected partial state write at state mutation {mutation}");
         }
         let fail_after_rename = self.faults.fail_flush_after_state_write_at == Some(write_index);
-        let short = write_state_atomic(
-            paths,
-            document,
-            bytes,
-            self.faults.short_write_limit,
-            self.faults.corrupt_readback,
-            fail_after_rename,
-        )?;
+        let short = self.probed(|| {
+            write_state_atomic(
+                paths,
+                document,
+                bytes,
+                self.faults.short_write_limit,
+                self.faults.corrupt_readback,
+                fail_after_rename,
+            )
+        })?;
         self.fake_state().short_writes += short;
         Ok(())
     }
@@ -3428,17 +3493,17 @@ impl Platform for FakePlatform {
 
     fn quarantine_state(&self, paths: &InstallPaths, document: StateDocument) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::QuarantineStateDocument)?;
-        quarantine_state_document(paths, document)
+        self.probed(|| quarantine_state_document(paths, document))
     }
 
     fn create_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::CreateDirectory)?;
-        create_private_directory(path)
+        self.probed(|| create_private_directory(path))
     }
 
     fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::ReplaceManifest)?;
-        replace_manifest_checked(staged, live)
+        self.probed(|| replace_manifest_checked(staged, live))
     }
 
     fn read_registration(&self, paths: &InstallPaths) -> InstallResult<Option<Registration>> {
@@ -3448,7 +3513,7 @@ impl Platform for FakePlatform {
 
     fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::PublishManifest)?;
-        publish_manifest_checked(paths, value)
+        self.probed(|| publish_manifest_checked(paths, value))
     }
 
     fn publish_registration(
@@ -3469,7 +3534,7 @@ impl Platform for FakePlatform {
         expected: &Registration,
     ) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::RemoveRegistration)?;
-        remove_registration_checked(paths, expected)
+        self.probed(|| remove_registration_checked(paths, expected))
     }
 
     fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState> {
@@ -3533,7 +3598,7 @@ impl Platform for FakePlatform {
         if self.faults.skip_launch_permissions {
             return Ok(());
         }
-        apply_launch_permissions_checked(path, executable)
+        self.probed(|| apply_launch_permissions_checked(path, executable))
     }
 
     fn check_launch_permissions(
@@ -3601,12 +3666,12 @@ impl Platform for FakePlatform {
         // Contract-test implementation only: a byte copy is sufficient here
         // because the fake makes no macOS signature claim. The native adapters
         // (Task 8) perform the metadata-preserving install.
-        install_carrier_bytes(source, destination)
+        self.probed(|| install_carrier_bytes(source, destination))
     }
 
     fn remove_owned(&self, entry: &OwnedEntry) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::RemoveOwned)?;
-        remove_owned_entry(entry)
+        self.probed(|| remove_owned_entry(entry))
     }
 
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
@@ -3640,6 +3705,7 @@ fn create_private_directory(path: &ValidatedPath) -> InstallResult<()> {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(unsafe_path()),
         Err(_) => return Err(io_failure()),
     }
+    crash_point(); // created, permissions not yet applied
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -3667,6 +3733,7 @@ fn write_durable_checked(
             io_failure()
         }
     })?;
+    crash_point(); // created, empty
 
     let mut short_writes = 0;
     match short_write_limit {
@@ -3679,13 +3746,16 @@ fn write_durable_checked(
             write_all_retrying(&mut writer, bytes, &mut short_writes).map_err(|_| io_failure())?;
         }
     }
+    crash_point(); // written, not flushed
     file.sync_all().map_err(|_| io_failure())?;
     drop(file);
+    crash_point(); // flushed, not read back
 
     let readback = read_no_follow(path.rendered(), bytes.len() as u64).map_err(|_| io_failure())?;
     if corrupt_readback || readback != bytes {
         return Err(io_failure());
     }
+    crash_point(); // verified, parent entry not flushed
     if let Some(parent) = path.rendered().parent() {
         flush_directory(parent)?;
     }
@@ -3734,11 +3804,13 @@ fn replace_durable_checked(path: &ValidatedPath, bytes: &[u8]) -> InstallResult<
             io_failure()
         }
     })?;
+    crash_point(); // staging sibling created, empty
     let mut short_writes = 0;
     {
         let mut writer = &file;
         write_all_retrying(&mut writer, bytes, &mut short_writes).map_err(|_| io_failure())?;
     }
+    crash_point(); // staging bytes written, not flushed
     file.sync_all().map_err(|_| io_failure())?;
     drop(file);
 
@@ -3755,10 +3827,12 @@ fn replace_durable_checked(path: &ValidatedPath, bytes: &[u8]) -> InstallResult<
     }
     // Revalidate immediately before the rename so a swapped ancestor fails closed.
     path.revalidate()?;
+    crash_point(); // staged and verified, live entry untouched
     fs::rename(&staging, live).map_err(|_| {
         let _ = fs::remove_file(&staging);
         io_failure()
     })?;
+    crash_point(); // renamed, parent not flushed
     flush_directory(parent)
 }
 
@@ -4185,7 +4259,9 @@ fn replace_file_checked(staged: &ValidatedPath, live: &ValidatedPath) -> Install
 
     #[cfg(unix)]
     {
+        crash_point(); // revalidated, live entry untouched
         fs::rename(staged.rendered(), live.rendered()).map_err(|_| io_failure())?;
+        crash_point(); // renamed, parent not flushed
         if let Some(parent) = live.rendered().parent() {
             flush_directory(parent)?;
         }
@@ -4364,7 +4440,9 @@ fn remove_registration_checked(paths: &InstallPaths, expected: &Registration) ->
     }
     let live = ValidatedPath::registration(paths, PathKind::File)?;
     live.revalidate()?;
+    crash_point(); // verified, still registered
     fs::remove_file(live.rendered()).map_err(|_| io_failure())?;
+    crash_point(); // unregistered, parent not flushed
     if let Some(parent) = live.rendered().parent() {
         flush_directory(parent)?;
     }
@@ -4626,6 +4704,7 @@ fn copy_carrier_tree(
 
 fn remove_owned_entry(entry: &OwnedEntry) -> InstallResult<()> {
     entry.path.revalidate()?;
+    crash_point(); // verified, still present
     match entry.claim.kind {
         OwnedKind::File => {
             let expected = entry.claim.sha256.ok_or_else(foreign_state)?;
@@ -4661,6 +4740,7 @@ fn remove_owned_entry(entry: &OwnedEntry) -> InstallResult<()> {
             Err(_) => return Err(io_failure()),
         },
     }
+    crash_point(); // unlinked, parent not flushed
     if let Some(parent) = entry.path.rendered().parent() {
         flush_directory(parent)?;
     }

@@ -546,8 +546,12 @@ fn position_of(mutations: &[PlatformCall], call: PlatformCall) -> usize {
         .unwrap_or_else(|| panic!("the clean transaction uses {call:?}: {mutations:?}"))
 }
 
+/// Dies *before* each whole platform mutation (a state-document replacement, a
+/// payload write, a directory creation, a publication step). It does not die
+/// inside one: see `crash_inside_every_durable_primitive` for the file-create /
+/// write / flush / rename / unlink boundaries within each call.
 #[test]
-fn crash_at_every_durable_boundary() {
+fn crash_before_every_platform_mutation() {
     for scenario in [Scenario::Fresh, Scenario::Upgrade] {
         let sequence = clean_mutations(scenario);
         let total = sequence.len();
@@ -670,6 +674,74 @@ fn crash_at_every_durable_boundary() {
                 "upgrade: the previous version is restored before activation: {observed:?}"
             );
         }
+    }
+}
+
+/// Dies at every durable boundary *inside* the platform primitives: after a file
+/// is created, after its bytes are written, after the flush, after the read-back,
+/// around every rename, directory flush, unlink and registration removal.
+#[test]
+fn crash_inside_every_durable_primitive() {
+    for scenario in [Scenario::Fresh, Scenario::Upgrade] {
+        // The clean run counts the boundaries the transaction crosses.
+        let counted = Fixture::new(scenario);
+        let platform = counted.platform();
+        install(&platform, &counted.paths, counted.package.clone()).expect("clean install");
+        let total = platform.boundary_count();
+        assert!(
+            total >= 3 * platform.mutations().len(),
+            "{}: several boundaries per platform mutation ({total} for {} mutations)",
+            scenario.label(),
+            platform.mutations().len()
+        );
+
+        let mut observed = std::collections::BTreeSet::new();
+        for boundary in 1..=total {
+            let fixture = Fixture::new(scenario);
+            let context = format!(
+                "{}: died at durable boundary {boundary}/{total}",
+                scenario.label()
+            );
+            let dying = fixture.platform_with(Faults {
+                panic_at_boundary: Some(boundary),
+                ..Faults::default()
+            });
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                install(&dying, &fixture.paths, fixture.package.clone())
+            }));
+            assert!(
+                outcome.is_err(),
+                "{context}: the injected death interrupts the transaction"
+            );
+
+            // A fresh process with no inherited memory reconciles it. A death
+            // before the first journal byte is durable has nothing to reconcile.
+            let recovering = fixture.platform();
+            let report = recover(&recovering, &fixture.paths)
+                .unwrap_or_else(|failure| panic!("{context}: recovery failed: {failure:?}"));
+            assert!(report.failure.is_none(), "{context}: {report:?}");
+            observed.insert(report.state.clone());
+            fixture.assert_settled(scenario, &context);
+            fixture.assert_journal_closed(&context);
+
+            // The next run starts cleanly, whatever debris the death left.
+            if fixture.registration().is_none_or(|bytes| {
+                parse_manifest(&bytes)
+                    .and_then(|manifest| manifest.executable())
+                    .is_ok_and(|executable| fs::read(executable).ok() != Some(HOST_V2.to_vec()))
+            }) {
+                let retry = fixture.platform();
+                install(&retry, &fixture.paths, fixture.package.clone()).unwrap_or_else(
+                    |failure| panic!("{context}: the next install must succeed: {failure:?}"),
+                );
+                fixture.assert_new_complete(&context);
+            }
+        }
+        assert!(
+            observed.contains(STATE_RECOVERED_ACTIVE),
+            "{}: a death after activation is finished forward: {observed:?}",
+            scenario.label()
+        );
     }
 }
 
