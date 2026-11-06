@@ -224,6 +224,12 @@ def _read_bounded(stream, declared: int, name: str) -> str:
     return digest.hexdigest()
 
 
+def _hash_zip_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo) -> str:
+    # Closed on every path, including a read that raises mid-stream.
+    with archive.open(member) as stream:
+        return _read_bounded(stream, member.file_size, member.filename)
+
+
 def build_archive_inventory(path: Path) -> dict:
     """Inventory a ``.zip`` or ``.tar`` payload without extracting it."""
     path = Path(path)
@@ -283,7 +289,7 @@ def build_archive_inventory(path: Path) -> dict:
                     admit(
                         member.filename,
                         member.file_size,
-                        lambda m=member: _read_bounded(archive.open(m), m.file_size, m.filename),
+                        lambda m=member: _hash_zip_member(archive, m),
                         bool(unix_mode & 0o111) and not member.is_dir(),
                     )
         else:

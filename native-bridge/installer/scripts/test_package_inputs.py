@@ -15,6 +15,7 @@ trivially constant: every property that must change the result does.
 
 import io
 import json
+import lzma
 import os
 import subprocess
 import sys
@@ -23,6 +24,7 @@ import tempfile
 import unittest
 import warnings
 import zipfile
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -422,6 +424,31 @@ class ArchiveInventoryTests(Scratch):
             with self.assertRaises(package_inputs.InventoryError) as caught:
                 package_inputs.build_archive_inventory(many)
         self.assertEqual(caught.exception.code, "bound-exceeded")
+
+    def test_corrupt_compressed_member_is_an_inventory_rejection_not_a_crash(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            info = zipfile.ZipInfo("data.bin", date_time=(2020, 1, 1, 0, 0, 0))
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, bytes(range(256)) * 64)
+        blob = bytearray(buffer.getvalue())
+        data_start = 30 + len("data.bin")  # local header + name; the deflate stream follows
+        blob[data_start : data_start + 16] = b"\xff" * 16  # invalid deflate block
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_archive_inventory(self.put("corrupt.zip", bytes(blob)))
+        self.assertEqual(caught.exception.code, "malformed-archive")
+
+    def test_decompressor_exceptions_other_than_badzipfile_are_mapped(self):
+        # CPython 3.14's zipfile reports every corruption I can provoke as BadZipFile, but other
+        # builds/codecs surface the raw decompressor error. The mapping is defensive, so it is
+        # tested by simulating those exceptions rather than by crafting an archive.
+        path = self.put("ok.zip", make_zip([("a", b"payload")]))
+        for error in (zlib.error("invalid block type"), lzma.LZMAError("corrupt input")):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch.object(zipfile.ZipFile, "open", side_effect=error):
+                    with self.assertRaises(package_inputs.InventoryError) as caught:
+                        package_inputs.build_archive_inventory(path)
+                self.assertEqual(caught.exception.code, "malformed-archive")
 
     def test_unauthenticated_data_around_archives_is_rejected(self):
         # Bytes in front of the first zip member (self-extractor style prefix).
