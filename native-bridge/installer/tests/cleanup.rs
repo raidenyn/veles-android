@@ -297,13 +297,34 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     assert_eq!(completion.reason, Some(CleanupReason::InvalidRequest));
     assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
 
-    // 4. A legitimate cleanup is not rejected because the parent signalled and
-    //    then exited: the release byte is the protocol step (`Released`) and the
-    //    removal proceeds.
-    let temp = TempRoot::new("exited-after-signalling");
+    // 4. The release byte alone is a protocol step, never exit evidence: a
+    //    parent that released and is still alive can still mutate, so nothing
+    //    is deleted and the run reports a pending `ParentAlive`. (This is the
+    //    portable half of the macOS `NOTE_EXIT` requirement.)
+    let temp = TempRoot::new("released-only");
     let fixture = build_fixture(&temp);
     let valid = request(&fixture);
     let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+    assert_eq!(completion.status, CleanupStatus::CleanupPending);
+    assert_eq!(completion.reason, Some(CleanupReason::ParentAlive));
+    assert_eq!(completion.removed_files, 0);
+    assert_eq!(completion.removed_directories, 0);
+    assert!(
+        fixture.root.join("versions/1.0.0-test/host.exe").exists(),
+        "a release byte never permits a deletion"
+    );
+    let framed = written_completion(&channel);
+    assert_eq!(framed.status, CleanupStatus::CleanupPending);
+    assert_eq!(framed.reason, Some(CleanupReason::ParentAlive));
+
+    // 4b. A real OS exit event (`Exited`, not a release byte) is the only state
+    //     that lets the removal proceed: the parent can never mutate again.
+    let temp = TempRoot::new("os-exit");
+    let fixture = build_fixture(&temp);
+    let valid = request(&fixture);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::Complete);
@@ -313,17 +334,41 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     assert!(!fixture.root.join("versions").exists());
     let framed = written_completion(&channel);
     assert_eq!(framed.status, CleanupStatus::Complete);
+}
 
-    // 4b. A real OS exit event (`Exited`, not a release byte) is equally a
-    //     released capability: the parent can never mutate again.
-    let temp = TempRoot::new("os-exit");
+/// The one-byte release is a **protocol step**, never exit evidence: a parent
+/// that released and is still alive must not cause a single deletion. Only a
+/// real OS exit event may (`cleanup_timeout_never_reports_uninstall_complete`
+/// covers the alive case; `cleanup_rejects_forged_pipe_and_pid_reuse` case 4b the
+/// exit).
+#[test]
+fn cleanup_released_parent_never_deletes_owned_entries() {
+    let temp = TempRoot::new("released-parent");
     let fixture = build_fixture(&temp);
     let valid = request(&fixture);
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
     let mut fs = trusted_fs(&fixture);
-    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
-    assert_eq!(completion.status, CleanupStatus::Complete);
-    assert!(!fixture.root.join("versions/1.0.0-test/host.exe").exists());
+    let started = Instant::now();
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(5));
+    assert_eq!(completion.status, CleanupStatus::CleanupPending);
+    assert_eq!(completion.reason, Some(CleanupReason::ParentAlive));
+    assert_eq!(completion.removed_files, 0);
+    assert_eq!(completion.removed_directories, 0);
+    assert_eq!(completion.preserved, 0);
+    for entry in &fixture.entries {
+        assert!(
+            fixture.root.join(&entry.path).exists(),
+            "`{}` must never be removed on a release byte",
+            entry.path
+        );
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the release is observed without waiting out the deadline"
+    );
+    let framed = written_completion(&channel);
+    assert_eq!(framed.status, CleanupStatus::CleanupPending);
+    assert_eq!(framed.reason, Some(CleanupReason::ParentAlive));
 }
 
 #[test]
@@ -363,7 +408,7 @@ fn cleanup_is_bounded_to_ten_seconds() {
     let temp = TempRoot::new("bounded");
     let fixture = build_fixture(&temp);
     let valid = request(&fixture);
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let started = Instant::now();
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(60));
@@ -386,7 +431,7 @@ fn cleanup_is_bounded_to_ten_seconds() {
     long.helper_sha256 = fixture.helper_sha256;
     long.entries = fixture.entries.clone();
     long.deadline_ms = 60_000;
-    let mut channel = ScriptedChannel::new(frame(&long), long.parent, ParentState::Released);
+    let mut channel = ScriptedChannel::new(frame(&long), long.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.reason, Some(CleanupReason::InvalidRequest));
@@ -404,7 +449,7 @@ fn cleanup_preserves_a_foreign_identity_and_reports_pending() {
     )
     .expect("replace");
     let valid = request(&fixture);
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::CleanupPending);
@@ -424,7 +469,7 @@ fn cleanup_rejects_a_replaced_helper_image() {
     let fixture = build_fixture(&temp);
     let mut valid = request(&fixture);
     valid.helper_sha256 = Digest::of(b"some other binary");
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::CleanupPending);
@@ -453,7 +498,7 @@ fn cleanup_never_traverses_a_linked_root_component() {
         std::os::unix::fs::symlink(&outside, fixture.root.join("versions")).expect("planted link");
 
         let valid = request(&fixture);
-        let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+        let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
         let mut fs = trusted_fs(&fixture);
         let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
         assert_eq!(completion.status, CleanupStatus::CleanupPending);
@@ -480,7 +525,7 @@ fn cleanup_leaves_the_helper_image_for_the_installer() {
     let temp = TempRoot::new("helper-image");
     let fixture = build_fixture(&temp);
     let valid = request(&fixture);
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::Complete);
@@ -523,7 +568,7 @@ fn cleanup_reports_pending_when_the_helper_image_cannot_be_removed() {
     let temp = TempRoot::new("pending-image");
     let fixture = build_fixture(&temp);
     let valid = request(&fixture);
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::Complete);
@@ -623,7 +668,7 @@ fn cleanup_without_signature_evidence_fails_closed() {
     let temp = TempRoot::new("signature");
     let fixture = build_fixture(&temp);
     let valid = request(&fixture);
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Released);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let mut fs = StdCleanupFs::new(fixture.helper.clone());
     assert_eq!(fs.signature_policy(), SignaturePolicy::Unavailable);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));

@@ -2303,15 +2303,17 @@ impl NativeFs for WindowsPlatform {
         // `CopyFile2` is still path-based, so it resolves the name a second time
         // inside the call. That is accepted under the recorded same-user scope
         // (a same-user attacker inside the private root is out of scope); the
-        // copy is nevertheless re-verified: immediately after it the whole
-        // captured chain is opened again, the anchor's identity must be the same
-        // object, and the directory's rendered path must still be the one the
-        // copy used. A redirect removes the entry this call created (through the
-        // anchored handle) and reports `ForeignState` instead of adopting a file
-        // from outside the validated tree. Residual, documented: an attacker who
-        // redirects a path and restores it before the re-check can still make the
-        // copy land elsewhere — that requires write access to the installer's
-        // private tree and is out of scope by policy.
+        // copy is nevertheless re-verified: the identity of the object it created
+        // is read from the opened destination handle, the whole captured chain is
+        // opened again, the anchor's identity must be the same object, and the
+        // directory's rendered path must still be the one the copy used. On a
+        // redirect only the **exact object whose identity was recorded** is
+        // removed (never whatever else occupies the name), and the install
+        // reports `ForeignState` instead of adopting a file from outside the
+        // validated tree. Residual, documented: an attacker who redirects a path
+        // and restores it before the re-check can still make the copy land
+        // elsewhere — that requires write access to the installer's private tree
+        // and is out of scope by policy.
         let handle = destination.dir_handle()?;
         let anchor_path = final_path_of(handle.handle())?;
         let leaf = destination.leaf_name()?.to_os_string();
@@ -2341,32 +2343,42 @@ impl NativeFs for WindowsPlatform {
             )
         }
         .map_err(|_| io_failure())?;
-        // The anchor must still be the object (and the path) the copy was built
-        // from; otherwise the copy is not adopted and the created entry is
-        // removed through the still-open handle.
-        if !anchor_still_names(destination, &handle, &anchor_path) {
-            discard_created_leaf(&handle, &leaf);
-            return Err(foreign_state());
-        }
-        // The copied object is verified **through the anchored handle**: it must be
-        // the plain file that was just created there (not a reparse point, not a
-        // directory) and it is flushed while still writable.
-        let file = open_below(
+        // Record the identity of the object the copy created **from the opened
+        // destination handle**, relative to the anchored parent and before the
+        // anchor re-check. That identity — not the name — is the only thing a
+        // later discard may delete: an occupant that appeared at the leaf is not
+        // provably ours. If the leaf cannot be opened at all, there is no identity
+        // to bind and the install reports `ForeignState` without removing
+        // anything.
+        let created_file = match open_below(
             handle.handle(),
             &leaf,
             GENERIC_READ.0 | GENERIC_WRITE.0,
             NT_FILE_OPEN,
             FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
-        )?;
-        let metadata = file.metadata().map_err(|_| io_failure())?;
+        ) {
+            Ok(file) => file,
+            Err(_) => return Err(foreign_state()),
+        };
+        let metadata = created_file.metadata().map_err(|_| io_failure())?;
         if !metadata.is_file()
             || metadata.len() == 0
-            || is_reparse(&file).map_err(|_| io_failure())?
+            || is_reparse(&created_file).map_err(|_| io_failure())?
         {
             return Err(unsafe_path());
         }
-        file.sync_all().map_err(|_| io_failure())?;
-        drop(file);
+        let created = crate::platform::identity_of_file(&created_file)?;
+        // The anchor must still be the object (and the path) the copy was built
+        // from; otherwise the copy is not adopted. The only thing that may then be
+        // removed is the exact object whose identity was just recorded.
+        if !anchor_still_names(destination, &handle, &anchor_path) {
+            drop(created_file);
+            return discard_created_leaf(&handle, &leaf, created);
+        }
+        // The copied object is verified **through the anchored handle**: it is the
+        // plain regular file opened above, and it is flushed while still writable.
+        created_file.sync_all().map_err(|_| io_failure())?;
+        drop(created_file);
         NativeFs::flush_parent(self, destination)
     }
 }
@@ -2395,30 +2407,54 @@ fn anchor_still_names(
     }
 }
 
-/// Remove the leaf this call just created, through the anchored parent handle.
+/// Remove the leaf this call created, **only** when it is still the object whose
+/// identity was recorded from the destination handle.
 ///
 /// Only called when the post-copy anchor re-check failed. The entry is opened
-/// with no-follow semantics relative to the verified directory handle, must be a
-/// plain regular file, and is deleted with the handle-bound
-/// `FileDispositionInfo`; nothing else is ever removed. A failure here is
-/// ignored: the install is already reporting `ForeignState` and the journaled
-/// cleanup owns whatever remains.
-fn discard_created_leaf(handle: &super::native::anchor::DirectoryHandle, leaf: &OsStr) {
-    let Ok(file) = open_below(
+/// with no-follow semantics relative to the anchored directory handle, must be a
+/// plain regular file, and its **current identity** must equal the identity the
+/// copy recorded; only then is it deleted with the handle-bound
+/// `FileDispositionInfo`. An occupant that is not that object is left untouched
+/// and reported as `ForeignState` (the journaled cleanup then reports the
+/// leftover), and a refused deletion of the proven object is `CleanupPending`.
+fn discard_created_leaf(
+    handle: &super::native::anchor::DirectoryHandle,
+    leaf: &OsStr,
+    created: crate::platform::FileIdentity,
+) -> InstallResult<()> {
+    crate::platform::discard_created_leaf(
+        created,
+        || {
+            let file = open_created_leaf(handle, leaf)?;
+            Ok(Some(crate::platform::identity_of_file(&file)?))
+        },
+        || {
+            let file = open_created_leaf(handle, leaf)?;
+            delete_opened(&file)
+        },
+    )
+}
+
+/// Open one leaf below an anchored parent handle as a plain regular file.
+///
+/// A link, reparse point or directory is refused, so the identity that is read
+/// (and the object that is deleted) can only be a regular file.
+fn open_created_leaf(
+    handle: &super::native::anchor::DirectoryHandle,
+    leaf: &OsStr,
+) -> InstallResult<File> {
+    let file = open_below(
         handle.handle(),
         leaf,
         ACCESS_RD,
         NT_FILE_OPEN,
         FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
-    ) else {
-        return;
-    };
-    if let Ok(metadata) = file.metadata()
-        && metadata.is_file()
-        && matches!(is_reparse(&file), Ok(false))
-    {
-        let _ = delete_opened(&file);
+    )?;
+    let metadata = file.metadata().map_err(|_| io_failure())?;
+    if !metadata.is_file() || is_reparse(&file).map_err(|_| io_failure())? {
+        return Err(unsafe_path());
     }
+    Ok(file)
 }
 
 /// The volume path Windows reports for one opened handle.

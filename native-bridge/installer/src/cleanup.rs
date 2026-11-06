@@ -17,13 +17,14 @@
 //!    signature against the request's pinned publisher *before* touching
 //!    anything, with a bounded hash and a bounded signature assessment;
 //! 4. waits **on that inherited handle** - not by reopening a pid - until the
-//!    parent *releases the capability*, bounded by [`MAX_CLEANUP_TIMEOUT`]
-//!    (10s). The installer writes one release byte as its last act before it
-//!    waits, and a parent that exits (or crashes) closes the channel, which the
-//!    helper observes as EOF; on macOS the same socketpair carries the peer
-//!    identity and the release. The helper therefore does **not** require the
-//!    installer to exit first: the installer writes the request, releases, then
-//!    waits for the helper ([`run_cleanup_helper`]);
+//!    parent *exits*, bounded by [`MAX_CLEANUP_TIMEOUT`] (10s). The release byte
+//!    (or a closed channel) is only the protocol step that says "the parent will
+//!    not mutate anything again"; it is **not** exit evidence and never permits
+//!    deletion. The exit is a real OS event: `WaitForSingleObject` on the
+//!    inherited process handle (Windows), an `EVFILT_PROC`/`NOTE_EXIT`
+//!    registration taken before the release byte is read (macOS, with a kernel
+//!    `ESRCH` for the peer accepted as "already gone"). If that evidence cannot
+//!    be obtained the run fails closed with a pending completion;
 //! 5. opens the install root as an anchored traversal root and deletes only the
 //!    exact listed owned identities **relative to that handle**: every component
 //!    is opened without following links, the leaf's opened identity is compared
@@ -43,6 +44,18 @@
 //! ([`remove_helper_after_exit`]), verifies that the path is gone and only then
 //! reports success. If any of those steps fails, the result is
 //! `CleanupPending`, never a completed uninstall.
+//!
+//! ## Consequence for the parent side
+//!
+//! Because deletion requires an **observed parent exit**, the process whose
+//! identity the request records must be gone before the helper removes anything.
+//! A parent that stays alive and merely sends the release byte cannot produce
+//! that evidence, so the run reports `cleanup-pending/parent-alive` (fail
+//! closed) instead of deleting. The installer's helper entry point
+//! [`run_cleanup_helper`] keeps its process alive to read the completion, so its
+//! native run currently stops at that pending verdict; a parent side that wants a
+//! completed cleanup has to hand the capability over from a process that exits
+//! after the release (see [`run_cleanup_helper`]).
 //!
 //! Nothing here terminates a process, invokes a shell, registers an autostart
 //! task or falls back to reboot-time deletion.
@@ -144,11 +157,11 @@ pub struct CleanupRequest {
     /// The inherited **release** handle: Windows only, `0` on macOS.
     ///
     /// The installer holds the write end of a pipe whose read end is this handle,
-    /// writes **one byte** to it as its last act before it waits for the helper,
-    /// and never writes again. A byte (or a broken pipe, meaning the parent
-    /// exited) is "the parent will not mutate anything again", which is what the
-    /// helper waits for. The byte is a protocol step only: it is never reported as
-    /// evidence that the parent process exited (that is a separate OS event). A
+    /// writes **one byte** to it as its last act before it stops mutating, and
+    /// never writes again. A byte (or a broken pipe) is "the parent will not
+    /// mutate anything again", which is a protocol step only: it is **never**
+    /// evidence that the parent process exited and never permits deletion. The
+    /// deletion gate is the real exit of the process named by `parent_handle`. A
     /// request naming a handle the process does not hold, or the wrong kind of
     /// object, is `ParentUnavailable` (never a silent proceed). On macOS the
     /// socketpair named by `parent_handle` is both the identity and the release
@@ -164,8 +177,8 @@ pub struct CleanupRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CleanupStatus {
-    /// Every listed identity was removed (or already absent) and the parent
-    /// released the capability.
+    /// Every listed identity was removed (or already absent) and a real parent
+    /// exit was observed.
     Complete,
     /// Something could not be established; the installer must keep reporting a
     /// pending cleanup and never a completed uninstall.
@@ -300,7 +313,8 @@ pub enum ParentState {
     /// The parent released the capability as a **protocol step**: it wrote the
     /// release byte (or closed the inherited release channel) as its last act.
     /// This says "the parent will not mutate anything again"; it is *not* exit
-    /// evidence.
+    /// evidence and never permits deletion. The run reports a pending
+    /// `ParentAlive` until a real exit is observed.
     Released,
     /// The OS reported that the parent **process exited** (Windows
     /// `WaitForSingleObject` on the inherited process handle, macOS
@@ -327,10 +341,14 @@ pub trait CleanupChannel {
     /// here (before the release byte is read), so the evidence is an OS event and
     /// not a byte heuristic.
     fn parent_handle(&mut self, handle: u64) -> Option<ParentEvidence>;
-    /// Block until the parent releases the capability (the release byte/closed
-    /// channel is [`ParentState::Released`]; a real process exit event is
-    /// [`ParentState::Exited`]), or until `deadline`; `Alive` is returned only
-    /// when the deadline elapsed.
+    /// Block until a real parent exit is observed (`ParentState::Exited`), or
+    /// until `deadline`; `Alive` is returned only when the deadline elapsed.
+    ///
+    /// The release byte/closed channel is [`ParentState::Released`]: it is the
+    /// protocol step that says the parent will not mutate again, and it is
+    /// **not** exit evidence. [`ParentState::Unavailable`] means the OS cannot
+    /// supply exit evidence at all (for example a refused macOS
+    /// `EVFILT_PROC` registration), which must fail closed.
     fn parent_state(
         &mut self,
         parent_handle: u64,
@@ -524,13 +542,15 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
         );
     }
 
-    // 4. Wait for the parent to *release* the capability on the inherited
-    // handles. The release byte/closed channel is a protocol step ("the parent
-    // will not mutate again"), and a real process exit event is equivalent for
-    // that purpose. No pid is reopened and no byte is treated as proof of exit.
+    // 4. Wait for the parent to *exit*. The release byte/closed channel is only
+    // a protocol step ("the parent will not mutate again"); it is not exit
+    // evidence, so it can never permit deletion. Only a real OS exit event
+    // (`ParentState::Exited`) lets the helper touch the tree: a parent that
+    // merely released and is still alive is a pending cleanup, and a channel
+    // that cannot produce exit evidence at all fails closed.
     match channel.parent_state(request.parent_handle, request.release_handle, deadline) {
-        ParentState::Released | ParentState::Exited => {}
-        ParentState::Alive => {
+        ParentState::Exited => {}
+        ParentState::Released | ParentState::Alive => {
             return finish(
                 channel,
                 CleanupCompletion::pending(&request.transaction, CleanupReason::ParentAlive),
@@ -950,6 +970,14 @@ impl HelperRun<'_> {
 /// unauthenticated or pending completion, a helper that did not exit inside the
 /// deadline, an image that cannot be removed or is still present — is
 /// `CleanupPending`; a completed uninstall is never reported on partial evidence.
+///
+/// **Limitation (parent-exit gate).** The helper only deletes after it observed
+/// the recorded parent *exit*, and this entry point keeps the installer alive to
+/// read the completion. A native run therefore ends at
+/// `cleanup-pending/parent-alive`; a caller that wants a completed cleanup must
+/// hand the capability over from a process that exits after the release (Task
+/// 10/11 parent side). Reporting the pending verdict is the fail-closed
+/// behaviour, never a claimed success.
 pub fn run_cleanup_helper(run: &HelperRun<'_>) -> InstallResult<CleanupCompletion> {
     let (completion, verdict) = run_cleanup_helper_detailed(run);
     verdict?;

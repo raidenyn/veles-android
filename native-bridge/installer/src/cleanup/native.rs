@@ -10,15 +10,13 @@
 //!   instead of reopening a pid — including the case where the parent already
 //!   exited, which is accepted only for the recorded pid because a live process
 //!   with that pid is compared by start marker;
-//! * waits until the parent **releases the capability**: one byte on the release
-//!   pipe / socketpair written as its last act, or a closed channel. That is a
-//!   protocol step ("the parent will not mutate again"), kept separate from exit
-//!   evidence: a real process exit is observed as an OS event
-//!   (`WaitForSingleObject` on Windows, a `kqueue` `EVFILT_PROC`/`NOTE_EXIT`
-//!   registration on macOS, taken **before** the release byte is read). A byte
-//!   or EOF is never reported as "the parent exited"; so the installer never has
-//!   to exit before the helper can proceed (`WaitForSingleObject`, pipe state,
-//!   `poll(2)`);
+//! * waits until the parent **exits**: a real process exit is observed as an OS
+//!   event (`WaitForSingleObject` on Windows, a `kqueue` `EVFILT_PROC`/`NOTE_EXIT`
+//!   registration on macOS taken **before** the release byte is read). The one
+//!   release byte on the release pipe / socketpair, or a closed channel, is a
+//!   protocol step only ("the parent will not mutate again"): it is never
+//!   reported as "the parent exited" and never permits deletion. If the exit
+//!   registration cannot be taken the run fails closed with `cleanup-pending`;
 //! * bounds every read, write, hash and signature assessment by the run
 //!   deadline, with worker threads for the operations the OS may block for longer
 //!   than the deadline inside a single call;
@@ -267,6 +265,11 @@ mod windows_impl {
     /// **own duplicate** of the handle, so a timeout never leaves the caller
     /// holding a handle it cannot close (and closing the caller's copy never
     /// pulls the handle out from under a blocked `WriteFile`).
+    ///
+    /// The duplicate is an RAII `Handle` moved into the closure, not a raw
+    /// integer: if `spawn` fails the closure — and with it the handle — is
+    /// dropped here, so a refused thread creation cannot leak a handle that no
+    /// worker would ever close.
     fn write_frame_bounded(handle: HANDLE, frame: &[u8], deadline: Instant) -> io::Result<()> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -275,13 +278,10 @@ mod windows_impl {
         let worker = duplicate_for_worker(handle)?;
         let (sender, receiver) = std::sync::mpsc::channel();
         let frame = frame.to_vec();
-        // The duplicate's ownership moves into the worker as a `usize`: `HANDLE`
-        // is not `Send`, but the worker closes exactly this handle on every path.
-        let raw = worker.into_raw();
         let spawned = std::thread::Builder::new()
             .name("cleanup-write".to_owned())
             .spawn(move || {
-                let handle = HANDLE(raw as *mut core::ffi::c_void);
+                let handle = worker;
                 let outcome = (|| {
                     let mut written = 0usize;
                     while written < frame.len() {
@@ -292,7 +292,7 @@ mod windows_impl {
                         // is inside `frame`.
                         let result = unsafe {
                             WriteFile(
-                                handle,
+                                handle.raw(),
                                 Some(&frame[written..written + chunk]),
                                 Some(&mut count),
                                 None,
@@ -305,11 +305,8 @@ mod windows_impl {
                     }
                     Ok(())
                 })();
-                // SAFETY: the duplicate's ownership was transferred to this
-                // worker, which closes it exactly once.
-                unsafe {
-                    let _ = CloseHandle(handle);
-                }
+                // `handle` is an RAII owner: it closes the duplicate exactly once
+                // here, on success and on every error path.
                 let _ = sender.send(outcome);
             });
         if spawned.is_err() {
@@ -324,17 +321,20 @@ mod windows_impl {
 
     /// Wait until the parent exits or releases the capability on its pipe.
     ///
-    /// The process exit is a real OS event (`WaitForSingleObject`); the release
-    /// byte is a **protocol** step that means "the parent will not mutate again",
-    /// not that it exited.
+    /// The process exit is a real OS event (`WaitForSingleObject`) and is the
+    /// only state that allows the helper to delete anything. The release byte is
+    /// a **protocol** step that means "the parent will not mutate again", not
+    /// that it exited: it is reported as [`ParentState::Released`], which the run
+    /// treats as a pending `ParentAlive`.
     fn wait_released(process: HANDLE, release: HANDLE, deadline: Instant) -> ParentState {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return ParentState::Alive;
             }
-            // The process exit is the crashed-parent case: the capability is
-            // released even if the release pipe was never closed.
+            // The process exit is the only exit evidence, and it is also the
+            // crashed-parent case: the capability is released even if the release
+            // pipe was never written.
             // SAFETY: the handle is inherited and names the parent process.
             match unsafe { WaitForSingleObject(process, 0) } {
                 WAIT_OBJECT_0 => return ParentState::Exited,
@@ -342,7 +342,17 @@ mod windows_impl {
                 _ => return ParentState::Unavailable,
             }
             match release_state(release) {
-                Ok(true) => return ParentState::Released,
+                Ok(true) => {
+                    // The release is a protocol step. Confirm the process state
+                    // once more (a crash often breaks the pipe in the same
+                    // instant) and otherwise report the still-alive parent.
+                    // SAFETY: the handle is inherited and names the parent.
+                    return match unsafe { WaitForSingleObject(process, 0) } {
+                        WAIT_OBJECT_0 => ParentState::Exited,
+                        WAIT_TIMEOUT => ParentState::Released,
+                        _ => ParentState::Unavailable,
+                    };
+                }
                 Ok(false) => {}
                 Err(_) => return ParentState::Unavailable,
             }
@@ -352,10 +362,10 @@ mod windows_impl {
 
     /// Whether the parent released the capability on the release pipe.
     ///
-    /// The installer writes one byte as its last act before waiting, so a byte is
-    /// "released"; a broken pipe means the parent exited (or closed) before
-    /// writing it, which is also "released" — the installer will never mutate
-    /// again either way.
+    /// The installer writes one byte as its last act before it stops mutating, so
+    /// a byte is "released"; a broken pipe means the parent exited (or closed)
+    /// before writing it, which is also "released". Neither is exit evidence —
+    /// the process handle is.
     fn release_state(release: HANDLE) -> io::Result<bool> {
         let mut available = 0u32;
         // SAFETY: `release` is the inherited read end of the release pipe and
@@ -601,17 +611,14 @@ mod windows_impl {
     /// exists, so a later failure in the setup cannot leak an earlier pipe end.
     struct Handle(HANDLE);
 
+    // SAFETY: a Win32 handle is a process-wide reference to a kernel object; using
+    // it (and closing it) from another thread is valid, and ownership stays
+    // unique because the value is moved into the worker, never shared or copied.
+    unsafe impl Send for Handle {}
+
     impl Handle {
         fn raw(&self) -> HANDLE {
             self.0
-        }
-
-        /// Transfer ownership as a plain value (for a worker thread, where
-        /// `HANDLE` is not `Send`). The receiver must close it exactly once.
-        fn into_raw(self) -> usize {
-            let raw = self.0.0 as usize;
-            std::mem::forget(self);
-            raw
         }
 
         /// Clear `HANDLE_FLAG_INHERIT`: this end must never reach the child.
@@ -706,9 +713,12 @@ mod windows_impl {
                 DUPLICATE_HANDLE_OPTIONS(0),
             )
         }?;
-        // SAFETY: the handle is live and owned here.
-        unsafe { SetHandleInformation(duplicate, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }?;
-        Ok(Handle(duplicate))
+        // Own the duplicate immediately: a refused `SetHandleInformation` closes
+        // it on the error path instead of leaking the handle.
+        let handle = Handle(duplicate);
+        // SAFETY: the handle is live and owned by `handle`.
+        unsafe { SetHandleInformation(handle.raw(), HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }?;
+        Ok(handle)
     }
 
     /// Start the helper with exactly the listed inherited handles.
@@ -1094,11 +1104,22 @@ mod macos_impl {
     pub(crate) struct MacosChannel {
         /// The peer's exit registration, taken before the release byte is read.
         exit: Option<ExitWatch>,
+        /// The peer was already observed as exited (a `NOTE_EXIT` delivered at
+        /// registration time, or a kernel `ESRCH` for the peer pid).
+        exited: bool,
+        /// No exit registration could be taken and no exit was observed. There
+        /// is then no exit evidence at all, so the run must fail closed instead
+        /// of treating the release byte as one.
+        exit_unavailable: bool,
     }
 
     impl MacosChannel {
         pub(crate) fn new() -> Self {
-            Self { exit: None }
+            Self {
+                exit: None,
+                exited: false,
+                exit_unavailable: false,
+            }
         }
     }
 
@@ -1122,9 +1143,17 @@ mod macos_impl {
             let watch = ExitWatch::watch(pid);
             match crate::platform::macos_process_start(pid) {
                 Some(start) => {
-                    // The identity is exact; keep the watch so `parent_state` can
-                    // report a real exit instead of a byte heuristic.
-                    self.exit = watch.ok();
+                    // The identity is exact. The exit gate still needs a real
+                    // registration: without one there is no exit evidence, and a
+                    // refused registration must fail closed in `parent_state`
+                    // rather than let a release byte stand in for an exit.
+                    match watch {
+                        Ok(watch) => {
+                            self.exited = watch.delivered;
+                            self.exit = Some(watch);
+                        }
+                        Err(_) => self.exit_unavailable = true,
+                    }
                     Some(ParentEvidence::Exact(ParentIdentity { pid, start }))
                 }
                 None => match watch {
@@ -1132,6 +1161,7 @@ mod macos_impl {
                         // The start marker cannot be read, so identity is only
                         // provable when the OS says this peer really exited.
                         let exited = watch.observed().unwrap_or(false);
+                        self.exited = exited;
                         self.exit = Some(watch);
                         exited.then_some(ParentEvidence::Exited { pid })
                     }
@@ -1139,10 +1169,14 @@ mod macos_impl {
                     // socket named exited and was reaped. A recycled pid would be
                     // live (start marker readable, then mismatched), never this.
                     Err(error) if error.raw_os_error() == Some(ESRCH) => {
+                        self.exited = true;
                         self.exit = None;
                         Some(ParentEvidence::Exited { pid })
                     }
-                    Err(_) => None,
+                    Err(_) => {
+                        self.exit_unavailable = true;
+                        None
+                    }
                 },
             }
         }
@@ -1159,6 +1193,16 @@ mod macos_impl {
             if release_handle != 0 {
                 // On macOS the socketpair itself is the release channel; a request
                 // that names a second release handle is not this platform's shape.
+                return ParentState::Unavailable;
+            }
+            if self.exited {
+                // Observed at registration time (`NOTE_EXIT` or a kernel `ESRCH`
+                // for the peer): the parent is gone and can never mutate again.
+                return ParentState::Exited;
+            }
+            if self.exit_unavailable || self.exit.is_none() {
+                // No exit registration exists, so no exit can ever be observed.
+                // The release byte alone is not exit evidence: fail closed.
                 return ParentState::Unavailable;
             }
             loop {
@@ -1190,12 +1234,19 @@ mod macos_impl {
                 // A real exit event is the only exit evidence.
                 if let Some(exit) = self.exit.as_mut() {
                     match exit.observed() {
-                        Ok(true) => return ParentState::Exited,
+                        Ok(true) => {
+                            self.exited = true;
+                            return ParentState::Exited;
+                        }
                         Ok(false) => {}
-                        // The watch failed: drop it and fall back to the release
-                        // channel only. A timeout still reports `Alive` (pending),
-                        // never a completed cleanup.
-                        Err(_) => self.exit = None,
+                        // The watch can no longer report an exit: no exit evidence
+                        // remains, so the run fails closed instead of falling back
+                        // to the release channel.
+                        Err(_) => {
+                            self.exit = None;
+                            self.exit_unavailable = true;
+                            return ParentState::Unavailable;
+                        }
                     }
                 }
                 if ready == 0 {
@@ -1214,8 +1265,16 @@ mod macos_impl {
                     return ParentState::Unavailable;
                 }
                 // One release byte, or EOF (the peer closed its end): the
-                // capability is released as a **protocol step**. This is not exit
-                // evidence; the kqueue event above is.
+                // capability is released as a **protocol step**. It is not exit
+                // evidence, so it cannot permit deletion. Re-check the exit
+                // registration once (an exit may have been delivered in the same
+                // instant) and then report `Released`, i.e. "still alive".
+                if let Some(exit) = self.exit.as_mut()
+                    && exit.observed().unwrap_or(false)
+                {
+                    self.exited = true;
+                    return ParentState::Exited;
+                }
                 return ParentState::Released;
             }
         }

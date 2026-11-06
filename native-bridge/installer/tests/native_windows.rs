@@ -410,9 +410,15 @@ fn preexisting_layout_directory_with_a_wide_dacl_is_refused() {
 /// The fixture helper is unsigned (this executor has no Authenticode credentials,
 /// Task 13), so its self-verification reports `SelfMismatch` and it exits
 /// non-zero: that is the real completion, and the image must then be left alone
-/// while the installer reports `CleanupPending`. A runner that stages a signed
-/// helper (and sets `VELES_TEST_HELPER_PUBLISHER` to its publisher) asserts the
-/// other half: `complete`, exit 0, and the image gone after the exit.
+/// while the installer reports `CleanupPending`.
+///
+/// A runner that stages a **signed** helper (and sets
+/// `VELES_TEST_HELPER_PUBLISHER`) reaches the parent-exit gate instead. Because
+/// this entry point keeps the installer alive to read the completion, the helper
+/// reports `cleanup-pending/ParentAlive` and the image is preserved: deletion
+/// requires an observed parent exit, and a live parent never supplies one. Both
+/// outcomes are asserted as the real, authenticated completion; neither is a
+/// success claim.
 #[test]
 fn cleanup_helper_image_disappears_after_exit() {
     let temp = TempRoot::new("helper-image");
@@ -453,7 +459,22 @@ fn cleanup_helper_image_disappears_after_exit() {
             );
         }
         CleanupStatus::CleanupPending => {
-            assert_eq!(completion.reason, Some(CleanupReason::SelfMismatch));
+            // The two actual outcomes of a real helper here:
+            // * `SelfMismatch` — an unsigned fixture refuses to vouch for its own
+            //   image (Task 13 credentials are required for the other half);
+            // * `ParentAlive` — a *signed* helper passes self-verification, but the
+            //   deletion gate is a real parent exit and this entry point keeps the
+            //   installer alive to read the completion. That is the fail-closed
+            //   verdict, never a claimed success (see the module docs and the Task
+            //   8 report: the parent side must release from a process that exits).
+            assert!(
+                matches!(
+                    completion.reason,
+                    Some(CleanupReason::SelfMismatch) | Some(CleanupReason::ParentAlive)
+                ),
+                "unexpected pending reason: {:?}",
+                completion.reason
+            );
             assert_eq!(
                 verdict
                     .expect_err("a pending completion is never a success")

@@ -687,6 +687,38 @@ pub(crate) fn identity_of_file(file: &File) -> InstallResult<FileIdentity> {
     })
 }
 
+/// Discard exactly one leaf that a path-based carrier copy created.
+///
+/// `created` is the identity recorded from the **destination handle** right
+/// after the copy; `current` re-reads what now occupies the leaf (relative to
+/// the same anchored parent) and `delete` removes the object that was re-read.
+/// Only the recorded object may be removed:
+///
+/// * the leaf no longer holds that object (a file that appeared at the name, a
+///   link, a directory, an unreadable identity) → nothing is deleted and the
+///   install reports `ForeignState`; the journaled cleanup then reports the
+///   leftover (`LeftoverFiles` / `CleanupPending`) instead of this call
+///   destroying foreign content;
+/// * the leaf still holds it but the deletion is refused → the leftover is
+///   reported as `CleanupPending`;
+/// * otherwise the object is removed and the call succeeds.
+#[cfg(any(windows, test))]
+pub(crate) fn discard_created_leaf<C, D>(
+    created: FileIdentity,
+    current: C,
+    delete: D,
+) -> InstallResult<()>
+where
+    C: FnOnce() -> InstallResult<Option<FileIdentity>>,
+    D: FnOnce() -> InstallResult<()>,
+{
+    let current = current().ok().flatten();
+    if current != Some(created) {
+        return Err(InstallFailure::new(FailureCode::ForeignState));
+    }
+    delete().map_err(|_| InstallFailure::new(FailureCode::CleanupPending))
+}
+
 #[cfg(not(unix))]
 fn identity_of(path: &Path, _metadata: &Metadata) -> InstallResult<FileIdentity> {
     use ::windows::Win32::Foundation::INVALID_HANDLE_VALUE;
@@ -4138,13 +4170,14 @@ fn trust_denied() -> InstallFailure {
     InstallFailure::new(FailureCode::TrustDenied)
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
-    use super::path_is_within;
-    use std::path::Path;
-
+    #[cfg(windows)]
     #[test]
     fn verbatim_and_dos_prefixes_compare_equal() {
+        use super::path_is_within;
+        use std::path::Path;
+
         // `fs::canonicalize` returns the verbatim form; the OS known folders and
         // process image APIs report the DOS form. Both must compare as the same
         // volume, or an owned image could never be matched on Windows.
@@ -4164,5 +4197,106 @@ mod tests {
             Path::new(r"C:\Veles\versions"),
             Path::new(r"\\?\D:\Veles\versions\1.0\host.exe"),
         ));
+    }
+
+    /// A leaf that no longer holds the object the carrier copy created is never
+    /// deleted: the install reports `ForeignState` and the file is preserved, so
+    /// the journaled cleanup reports the leftover instead of this call destroying
+    /// foreign content. A refused deletion of the proven object is
+    /// `CleanupPending`, and an unreadable identity is treated as foreign.
+    #[test]
+    fn mismatched_leaf_identity_is_foreign_and_preserved() {
+        use super::{discard_created_leaf, identity_of_file};
+        use crate::model::{FailureCode, InstallFailure};
+
+        let unique = format!("veles-platform-discard-{}", std::process::id());
+        let dir = std::env::temp_dir().join(unique);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("carrier");
+
+        // The object the copy created.
+        std::fs::write(&path, b"created by the copy").expect("created file");
+        let created = {
+            let file = std::fs::File::open(&path).expect("open created");
+            identity_of_file(&file).expect("created identity")
+        };
+        // A different object now holds the same leaf.
+        std::fs::remove_file(&path).expect("drop created");
+        std::fs::write(&path, b"foreign content").expect("foreign file");
+        let occupant = {
+            let file = std::fs::File::open(&path).expect("open occupant");
+            identity_of_file(&file).expect("occupant identity")
+        };
+        assert_ne!(created, occupant, "the replacement is a distinct object");
+
+        let mut deleted = false;
+        let failure = discard_created_leaf(
+            created,
+            || Ok(Some(occupant)),
+            || {
+                deleted = true;
+                Ok(())
+            },
+        )
+        .expect_err("a foreign occupant is not ours to delete");
+        assert_eq!(failure.code, FailureCode::ForeignState);
+        assert!(!deleted, "the deleter never runs for a foreign identity");
+        assert_eq!(
+            std::fs::read(&path).expect("preserved"),
+            b"foreign content",
+            "the foreign leaf is preserved"
+        );
+
+        // An identity that cannot be read proves nothing either.
+        let mut deleted = false;
+        assert_eq!(
+            discard_created_leaf(
+                created,
+                || Err(InstallFailure::new(FailureCode::Io)),
+                || {
+                    deleted = true;
+                    Ok(())
+                },
+            )
+            .expect_err("an unreadable identity cannot prove ownership")
+            .code,
+            FailureCode::ForeignState
+        );
+        assert!(!deleted);
+
+        // The object whose identity was recorded is the one that may be removed.
+        let ours_path = dir.join("carrier-ours");
+        std::fs::write(&ours_path, b"ours").expect("ours");
+        let ours = {
+            let file = std::fs::File::open(&ours_path).expect("open ours");
+            identity_of_file(&file).expect("ours identity")
+        };
+        let mut removed = false;
+        discard_created_leaf(
+            ours,
+            || Ok(Some(ours)),
+            || {
+                removed = true;
+                std::fs::remove_file(&ours_path).map_err(|_| InstallFailure::new(FailureCode::Io))
+            },
+        )
+        .expect("the recorded object is discarded");
+        assert!(removed);
+        assert!(!ours_path.exists());
+
+        // Ours, but the deletion is refused: a pending cleanup, not `ForeignState`.
+        assert_eq!(
+            discard_created_leaf(
+                ours,
+                || Ok(Some(ours)),
+                || Err(InstallFailure::new(FailureCode::Io)),
+            )
+            .expect_err("a refused deletion leaves a leftover")
+            .code,
+            FailureCode::CleanupPending
+        );
+
+        std::fs::remove_dir_all(&dir).expect("temp dir cleanup");
     }
 }
