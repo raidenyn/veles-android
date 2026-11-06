@@ -596,11 +596,10 @@ fn verify_host(
         return Err(unsupported());
     }
     let relative = crate::inventory::normalize_relative_path(executable)?;
-    // Containment and regular-file proof; the handle itself is dropped before the
-    // trust handle is opened below.
-    drop(crate::inventory::open_entry(root, &relative)?);
+    // The anchored, no-follow handle the containment walk produced is the very
+    // handle WinVerifyTrust assesses: the host is not reopened by pathname.
     let path = root.join(&relative);
-    let handle = ReadOnlyFile::open(&path)?;
+    let handle = ReadOnlyFile::adopt(crate::inventory::open_entry(root, &relative)?);
     let wide = wide_path(&path)?;
     let signer = authenticate_file(&handle, &wide)?;
     HostAssessment::new(signer, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE)
@@ -1179,6 +1178,13 @@ impl ReadOnlyFile {
         Ok(Self(handle))
     }
 
+    /// Take ownership of an already-opened, already-checked handle.
+    fn adopt(file: File) -> Self {
+        use std::os::windows::io::IntoRawHandle;
+
+        Self(HANDLE(file.into_raw_handle()))
+    }
+
     fn read_all(&self) -> InstallResult<Vec<u8>> {
         // `WinVerifyTrust` reads through the handle it is given, so the shared
         // file pointer is at an unknown offset (in practice often EOF) when it
@@ -1551,6 +1557,81 @@ fn open_below_status(
     }
     // SAFETY: the handle was just opened and ownership is transferred here.
     Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
+/// Anchored read-only traversal of `parts` below `root` (package inventory reads).
+///
+/// The root is opened once with `FILE_FLAG_OPEN_REPARSE_POINT` (a reparse point
+/// there is refused), then each component is opened relative to its parent's handle
+/// with `NtCreateFile` + `RootDirectory` and `FILE_OPEN_REPARSE_POINT`, and every
+/// handle is checked not to be a reparse point nor the wrong kind of object before
+/// it becomes the next anchor. A missing component is `InvalidPackage`. `between`
+/// runs after the last ancestor is open and before the leaf is.
+///
+/// NOT RUN on this host: it compiles for `x86_64-pc-windows-msvc` only.
+pub(crate) fn anchored_open_regular_below(
+    root: &Path,
+    parts: &[&str],
+    between: &mut dyn FnMut(),
+) -> InstallResult<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let mut current = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(root)
+        .map_err(|_| io_failure())?;
+    if is_reparse(&current).map_err(|_| io_failure())?
+        || !current.metadata().is_ok_and(|m| m.is_dir())
+    {
+        return Err(unsafe_path());
+    }
+    let Some((leaf, ancestors)) = parts.split_last() else {
+        return Err(unsafe_path());
+    };
+    let open = |parent: &File, name: &str, directory: bool| -> InstallResult<File> {
+        let kind = if directory {
+            FILE_DIRECTORY_FILE
+        } else {
+            FILE_NON_DIRECTORY_FILE
+        };
+        let file = open_below_status(
+            HANDLE(parent.as_raw_handle()),
+            OsStr::new(name),
+            GENERIC_READ.0,
+            NT_FILE_OPEN,
+            kind | FILE_OPEN_FOR_BACKUP_INTENT,
+            ptr::null(),
+        )
+        .map_err(|status| {
+            if nt_status_is_absent(status) {
+                InstallFailure::new(FailureCode::InvalidPackage)
+            } else {
+                // A directory open of a file (or the reverse) is a kind mismatch,
+                // not an absent entry.
+                match status.0 as u32 {
+                    // STATUS_NOT_A_DIRECTORY / STATUS_FILE_IS_A_DIRECTORY.
+                    0xC000_0103 | 0xC000_00BA => unsafe_path(),
+                    _ => io_failure(),
+                }
+            }
+        })?;
+        if is_reparse(&file).map_err(|_| io_failure())? {
+            return Err(unsafe_path());
+        }
+        Ok(file)
+    };
+    for name in ancestors {
+        current = open(&current, name, true)?;
+    }
+    between();
+    let file = open(&current, leaf, false)?;
+    if !file.metadata().map_err(|_| io_failure())?.is_file() {
+        return Err(unsafe_path());
+    }
+    Ok(file)
 }
 
 /// `STATUS_OBJECT_NAME_INVALID`.

@@ -18,7 +18,6 @@ use crate::model::{
     Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry, MAX_DOCUMENT_BYTES,
     MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES, canonical_json,
 };
-use crate::platform::{is_link_like, open_no_follow};
 
 /// The only supported package-inventory document schema generation.
 pub const INVENTORY_SCHEMA_VERSION: u32 = 1;
@@ -322,41 +321,31 @@ fn validate_entries(entries: &[InventoryEntry]) -> InstallResult<Vec<String>> {
     Ok(normalized_paths)
 }
 
-/// Open one inventory entry for reading, walking every component below `root`.
+mod anchored;
+
+/// Open one inventory entry for reading through an anchored traversal of `root`.
 ///
-/// Each ancestor (and the leaf) is inspected with `symlink_metadata` before it is
-/// descended into or opened: a link, junction or reparse point at *any* level is
-/// `UnsafePath`, so a directory that merely resolves outside `root` can never be
-/// read through. The leaf is then opened without following a final link and the
-/// open handle must itself be a regular file. A missing component is
-/// `InvalidPackage` (the inventory names something the package does not hold).
+/// `root` is opened once without following a link, and each component is then
+/// opened *relative to its parent's handle* with no-follow semantics (see
+/// [`anchored`]): a link, junction or reparse point at any level is `UnsafePath`,
+/// the leaf must be a regular file, and an ancestor swapped after it was opened
+/// cannot redirect the read because the walk holds the handles it checked. A
+/// missing component is `InvalidPackage` (the inventory names something the
+/// package does not hold). The returned handle is the one to hash or assess.
 pub(crate) fn open_entry(root: &Path, relative: &str) -> InstallResult<File> {
+    open_entry_with(root, relative, &mut || {})
+}
+
+/// [`open_entry`] with a seam: `between` runs after every ancestor directory is open
+/// and before the leaf is opened - the instant a racing writer would swap an
+/// ancestor. Production passes a no-op.
+pub(crate) fn open_entry_with(
+    root: &Path,
+    relative: &str,
+    between: &mut dyn FnMut(),
+) -> InstallResult<File> {
     let parts: Vec<&str> = relative.split('/').collect();
-    let mut current = root.to_path_buf();
-    for (index, part) in parts.iter().enumerate() {
-        current.push(part);
-        let metadata = fs::symlink_metadata(&current).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => invalid_package(),
-            _ => io_failure(),
-        })?;
-        if is_link_like(&metadata) {
-            return Err(unsafe_path());
-        }
-        let is_leaf = index + 1 == parts.len();
-        if (is_leaf && !metadata.file_type().is_file())
-            || (!is_leaf && !metadata.file_type().is_dir())
-        {
-            return Err(unsafe_path());
-        }
-    }
-    let file = open_no_follow(&current).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => invalid_package(),
-        _ => io_failure(),
-    })?;
-    if !file.metadata().map_err(|_| io_failure())?.is_file() {
-        return Err(unsafe_path());
-    }
-    Ok(file)
+    anchored::open_regular_below(root, &parts, between)
 }
 
 fn verify_entry(root: &Path, relative: &str, entry: &InventoryEntry) -> InstallResult<()> {
@@ -511,5 +500,96 @@ mod tests {
         }
         let mut macho = io::Cursor::new(vec![0xcf, 0xfa, 0xed, 0xfe, 0, 0]);
         assert!(is_signable_image(&mut macho, 6).expect("classified"));
+    }
+
+    /// R4: the traversal must be anchored. A directory component swapped for a link
+    /// to somewhere else *after* it was checked must not redirect the read.
+    #[cfg(unix)]
+    #[test]
+    fn an_ancestor_swapped_after_it_was_checked_cannot_redirect_the_read() {
+        let base = std::env::temp_dir().join(format!("veles-anchored-swap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("payload");
+        std::fs::create_dir_all(root.join("dir")).expect("package tree");
+        std::fs::create_dir_all(base.join("outside")).expect("outside tree");
+        std::fs::write(root.join("dir/host"), b"the package's host").expect("package host");
+        std::fs::write(base.join("outside/host"), b"attacker-chosen bytes").expect("outside");
+
+        let swap_root = root.clone();
+        let outside = base.join("outside");
+        let mut swapped = false;
+        let outcome = open_entry_with(&root, "dir/host", &mut || {
+            std::fs::rename(swap_root.join("dir"), swap_root.join("dir.moved")).expect("move");
+            std::os::unix::fs::symlink(&outside, swap_root.join("dir")).expect("link");
+            swapped = true;
+        });
+        assert!(
+            swapped,
+            "the seam ran between the ancestor checks and the leaf open"
+        );
+        let content = outcome.map(|mut file| {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).expect("read");
+            bytes
+        });
+        let _ = std::fs::remove_dir_all(&base);
+        match content {
+            Err(_) => {}
+            Ok(bytes) => assert_eq!(
+                bytes, b"the package's host",
+                "the read followed the swapped ancestor out of the payload root"
+            ),
+        }
+    }
+
+    /// The anchored walk keeps the failure vocabulary the callers (and the
+    /// package-authentication tests) rely on.
+    #[cfg(unix)]
+    #[test]
+    fn the_anchored_walk_classifies_every_refusal() {
+        use std::os::unix::fs::symlink;
+
+        let base =
+            std::env::temp_dir().join(format!("veles-anchored-kinds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("payload");
+        std::fs::create_dir_all(root.join("dir")).expect("tree");
+        std::fs::create_dir_all(base.join("outside")).expect("outside");
+        std::fs::write(root.join("dir/file"), b"data").expect("file");
+        std::fs::write(base.join("outside/file"), b"foreign").expect("outside file");
+        symlink(base.join("outside"), root.join("linked-dir")).expect("dir link");
+        symlink(base.join("outside/file"), root.join("dir/linked-file")).expect("file link");
+        symlink(&root, base.join("linked-root")).expect("root link");
+        // A FIFO leaf would block a blocking open forever.
+        let fifo = root.join("dir/fifo");
+        let status = std::process::Command::new("mkfifo").arg(&fifo).status();
+        let have_fifo = status.is_ok_and(|status| status.success());
+
+        let code = |root: &Path, relative: &str| {
+            open_entry(root, relative)
+                .map(|_| ())
+                .expect_err(relative)
+                .code
+        };
+        assert!(open_entry(&root, "dir/file").is_ok());
+        assert_eq!(code(&root, "dir/absent"), FailureCode::InvalidPackage);
+        assert_eq!(code(&root, "absent/file"), FailureCode::InvalidPackage);
+        assert_eq!(code(&root, "linked-dir/file"), FailureCode::UnsafePath);
+        assert_eq!(code(&root, "dir/linked-file"), FailureCode::UnsafePath);
+        assert_eq!(
+            code(&root, "dir"),
+            FailureCode::UnsafePath,
+            "a directory leaf"
+        );
+        assert_eq!(code(&root, "dir/file/below"), FailureCode::UnsafePath);
+        assert_eq!(
+            code(&base.join("linked-root"), "dir/file"),
+            FailureCode::UnsafePath,
+            "a linked root is never the anchor"
+        );
+        if have_fifo {
+            assert_eq!(code(&root, "dir/fifo"), FailureCode::UnsafePath);
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
