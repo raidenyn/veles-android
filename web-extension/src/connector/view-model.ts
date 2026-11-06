@@ -167,7 +167,7 @@ function missingHostGuidance(): Guidance {
         kind: 'missing_host',
         title: 'Native bridge not installed',
         message:
-            'The Veles Native Bridge host is missing or not registered. Install the compatible Veles Native Bridge package for this computer, then choose Retry.',
+            'The Veles Native Bridge host is missing or not registered. Install the compatible Veles Native Bridge package for this computer, then choose Retry. Your paired phones stay trusted and nothing is replayed.',
         actionLabel: 'Retry',
         canRetry: true,
         bleControlsEnabled: false,
@@ -180,7 +180,7 @@ function incompatibleGuidance(): Guidance {
         kind: 'incompatible_api',
         title: 'Update required',
         message:
-            'The installed Veles Native Bridge and this extension do not share a supported API version. Update the Veles Native Bridge and/or the extension, then choose Retry.',
+            'The installed Veles Native Bridge and this extension do not share a supported API version. Update the Veles Native Bridge and/or the extension, then choose Retry. Your paired phones stay trusted and nothing is replayed.',
         actionLabel: 'Retry',
         canRetry: true,
         bleControlsEnabled: false,

@@ -13,9 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use veles_bridge_installer::{
     Channel, DEVELOPMENT_HOST_NAME, Digest, FailureCode, InstallResult, InventoryEntry,
     MAX_DOCUMENT_BYTES, MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_POLICY_DIGESTS, Operation,
-    PLACEHOLDER_EXTENSION_ID, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy, Target,
-    canonical_json, effective_policy, extension_origin, parse_descriptor, parse_version,
-    read_carrier, verify_inventory, write_carrier,
+    PLACEHOLDER_EXTENSION_ID, PRODUCTION_HOST_NAME, ROOT_DIR_DEVELOPMENT, ROOT_DIR_PRODUCTION,
+    ReleaseDescriptor, ReleasePolicy, Target, canonical_json, effective_policy, extension_origin,
+    parse_descriptor, parse_version, read_carrier, verify_inventory, write_carrier,
 };
 
 const PROD_EXTENSION_ID: &str = "mnopabcdefghijklmnopabcdefghijkl";
@@ -967,4 +967,92 @@ fn merged_policy_that_cannot_be_represented_is_a_policy_denial() {
     .expect("a merge at the bound is representable");
     assert_eq!(merged.denied_payloads.len(), MAX_POLICY_DIGESTS);
     merged.validate().expect("and valid");
+}
+
+/// A development descriptor carries an explicit unpacked-extension ID and the
+/// development identity; it can neither borrow the production identity nor use
+/// the placeholder, and its root and host name stay distinct from production
+/// (OTP-25 Task 12).
+#[test]
+fn development_descriptor_binds_the_dev_identity_to_an_explicit_id() {
+    const DEV_EXTENSION_ID: &str = "hgfedcbahgfedcbahgfedcbahgfedcba";
+    let mut dev = descriptor();
+    dev.channel = Channel::Development;
+    dev.extension_id = DEV_EXTENSION_ID.to_owned();
+    dev.host_name = DEVELOPMENT_HOST_NAME.to_owned();
+    dev.bundle_id = DEVELOPMENT_HOST_NAME.to_owned();
+    let parsed = parse_descriptor(&descriptor_bytes(&dev)).expect("explicit dev descriptor parses");
+    assert_eq!(parsed.channel, Channel::Development);
+    assert_eq!(
+        extension_origin(&parsed.extension_id).unwrap(),
+        format!("chrome-extension://{DEV_EXTENSION_ID}/")
+    );
+    assert_ne!(
+        extension_origin(&parsed.extension_id).unwrap(),
+        extension_origin(PROD_EXTENSION_ID).unwrap(),
+        "dev and production origins must differ"
+    );
+
+    let cases: &[(&str, DescriptorMutation)] = &[
+        ("placeholder id", |d| {
+            d.extension_id = PLACEHOLDER_EXTENSION_ID.to_owned();
+        }),
+        ("wildcard id", |d| d.extension_id = "*".to_owned()),
+        ("production host name", |d| {
+            d.host_name = PRODUCTION_HOST_NAME.to_owned();
+        }),
+        ("production bundle id", |d| {
+            d.bundle_id = PRODUCTION_HOST_NAME.to_owned();
+        }),
+        ("fixture host name", |d| {
+            d.host_name = "me.nagaev.veles.bridge.fixture".to_owned();
+        }),
+    ];
+    for (name, mutate) in cases {
+        let mut candidate = dev.clone();
+        mutate(&mut candidate);
+        assert_eq!(
+            failure_code(parse_descriptor(&descriptor_bytes(&candidate))),
+            FailureCode::OriginRejected,
+            "case: {name}"
+        );
+    }
+
+    // Distinct identities and roots; the production connector name is untouched.
+    assert_eq!(ROOT_DIR_DEVELOPMENT, "NativeBridgeDev");
+    assert_eq!(ROOT_DIR_PRODUCTION, "NativeBridge");
+    assert_ne!(DEVELOPMENT_HOST_NAME, PRODUCTION_HOST_NAME);
+    assert_eq!(
+        DEVELOPMENT_HOST_NAME,
+        format!("{PRODUCTION_HOST_NAME}.dev"),
+        "the development name is the production name plus `.dev`, never the reverse"
+    );
+}
+
+/// The Python development wrappers hard-code the identities they refuse and select; keep them
+/// from drifting away from the engine's constants (OTP-25 Task 12).
+#[test]
+fn development_wrapper_constants_match_the_engine() {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts")
+            .join("development.py"),
+    )
+    .expect("development.py is part of the installer tree");
+    let constant = |name: &str| -> String {
+        let prefix = format!("{name} = \"");
+        let line = source
+            .lines()
+            .find(|line| line.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("development.py defines {name}"));
+        line[prefix.len()..line.len() - 1].to_owned()
+    };
+    assert_eq!(constant("PRODUCTION_HOST_NAME"), PRODUCTION_HOST_NAME);
+    assert_eq!(constant("DEV_HOST_NAME"), DEVELOPMENT_HOST_NAME);
+    assert_eq!(constant("PRODUCTION_ROOT_DIR"), ROOT_DIR_PRODUCTION);
+    assert_eq!(constant("DEV_ROOT_DIR"), ROOT_DIR_DEVELOPMENT);
+    assert_eq!(
+        constant("PLACEHOLDER_EXTENSION_ID"),
+        PLACEHOLDER_EXTENSION_ID
+    );
 }
