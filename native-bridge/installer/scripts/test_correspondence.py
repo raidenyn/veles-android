@@ -1707,7 +1707,6 @@ class MachoReviewFindingTests(WorkDir):
             "spare3": (patched(52, 1), "macho-unsupported-signature-layout"),
             "team-offset-outside-the-blob": (patched(48, 0xFFFF), "macho-invalid-signature-blob"),
             "team-offset-inside-the-header": (patched(48, 8), "macho-invalid-signature-blob"),
-            "both-code-limits": (patched(56, slice_.dataoff, ">Q"), "macho-invalid-signature-blob"),
             "exec-segment-past-the-signed-range": (patched(72, slice_.dataoff + 1, ">Q"), "macho-invalid-signature-blob"),
         }
         for name, (candidate, code) in cases.items():
@@ -2101,6 +2100,56 @@ class Round2LoadCommandTests(WorkDir):
             with self.subTest(name=name, control=True):
                 self.assertEqual(len(command) % 8, 0, (name, len(command)))
                 self.assertEqual(self.verdict(extra_load_command=command)["verdict"], "PASS")
+
+
+class Round2CodeLimitTests(WorkDir):
+    """Re-review N7: the CodeDirectory's effective code limit follows Apple's reader (codeLimit64 when non-zero)."""
+
+    def setUp(self):
+        super().setUp()
+        self.stripped = fx.macho_strip_signature(fx.read_macho_base())
+        self.signed = fx.macho_sign(self.stripped, entitlements=None)
+        self.slice = correspondence.MachSlice(self.signed)
+        self.cd = {b["slot"]: b for b in superblob_blobs(self.signed, self.slice.dataoff)}[0]["offset"]
+        self.dataoff = self.slice.dataoff
+        self.assertEqual(struct.unpack_from(">I", self.signed, self.cd + 8)[0], 0x20400)
+        self.assertEqual(struct.unpack_from(">I", self.signed, self.cd + 32)[0], self.dataoff)
+        self.assertEqual(struct.unpack_from(">Q", self.signed, self.cd + 56)[0], 0)
+
+    def limits(self, limit32, limit64):
+        image = bytearray(self.signed)
+        struct.pack_into(">I", image, self.cd + 32, limit32)
+        struct.pack_into(">Q", image, self.cd + 56, limit64)
+        return bytes(image)
+
+    def report(self, limit32, limit64):
+        return self.compare_bytes("macho", self.stripped, self.limits(limit32, limit64))
+
+    def test_n7_a_dual_populated_code_directory_with_the_correct_effective_limit_passes(self):
+        self.assertEqual(self.report(self.dataoff, 0)["verdict"], "PASS")  # control: the 32-bit-only form
+        for label, limit32 in (("32-bit field kept", self.dataoff), ("32-bit sentinel", 0xFFFFFFFF)):
+            with self.subTest(form=label):
+                report = self.report(limit32, self.dataoff)
+                self.assertEqual(report["verdict"], "PASS", report["differences"])
+                blob = [item for item in report["allowed_differences"] if item["code"] == "macho-code-signature-blob"][0]
+                self.assertEqual(blob["code_directory"]["code_limit"], self.dataoff)
+
+    def test_n7_a_wrong_effective_limit_or_an_inconsistent_32_bit_field_still_fails(self):
+        cases = {
+            "64-bit limit one byte long": (0xFFFFFFFF, self.dataoff + 1, "does not cover exactly"),
+            "64-bit limit short": (0xFFFFFFFF, self.dataoff - 16, "does not cover exactly"),
+            "64-bit limit long beside the old 32-bit limit": (self.dataoff, self.dataoff + 1, "32-bit code limit"),
+            "32-bit limit wrong, no 64-bit limit": (self.dataoff + 16, 0, "does not cover exactly"),
+            "32-bit field contradicts the 64-bit limit": (self.dataoff + 16, self.dataoff, "32-bit code limit"),
+            "32-bit field zero beside a 64-bit limit": (0, self.dataoff, "32-bit code limit"),
+        }
+        for name, (limit32, limit64, text) in cases.items():
+            with self.subTest(name=name):
+                report = self.report(limit32, limit64)
+                self.assertEqual(report["verdict"], "FAIL")
+                self.assertEqual(report["allowed_differences"], [])
+                self.assertEqual(self.codes(report), ["macho-invalid-signature-blob"], report["differences"])
+                self.assertIn(text, report["differences"][0]["message"])
 
 
 class CommandLineTests(WorkDir):

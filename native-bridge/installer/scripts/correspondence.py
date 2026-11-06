@@ -1067,9 +1067,18 @@ def validate_code_directory(slot: int, blobs: dict[int, bytes], slice_: MachSlic
         if struct.unpack_from(">I", blob, 52)[0]:
             raise Reject(unsupported, "CodeDirectory spare3 field is not zero")
         code_limit64 = struct.unpack_from(">Q", blob, 56)[0]
-        if code_limit and code_limit64:
-            raise Reject(code, "CodeDirectory declares both a 32-bit and a 64-bit code limit")
-        code_limit = code_limit or code_limit64
+        if code_limit64:
+            # Apple's reader (CodeDirectory::signingLimit) uses codeLimit64 whenever it is non-zero and its
+            # builder fills both fields for large files, so both being set is valid. The 32-bit field is
+            # ignored by that reader, so it is held to the two values a writer produces: the same length or the
+            # 0xFFFFFFFF "see codeLimit64" sentinel. Anything else leaves 32-bit-only consumers with a
+            # different signed range than the one hashed here.
+            if code_limit not in (code_limit64, 0xFFFFFFFF):
+                raise Reject(
+                    code,
+                    f"CodeDirectory 32-bit code limit {code_limit:#x} contradicts its 64-bit code limit {code_limit64:#x}",
+                )
+            code_limit = code_limit64
     if version >= 0x20400:
         exec_base, exec_limit = struct.unpack_from(">QQ", blob, 64)
         if exec_base + exec_limit > code_limit:
