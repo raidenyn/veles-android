@@ -423,8 +423,16 @@ pub enum JournalState {
     /// Present bytes that cannot be interpreted (a torn write or foreign bytes).
     ///
     /// Recovery reconciles from verified live state and quarantines the bytes
-    /// instead of failing forever; an install refuses to start.
+    /// instead of failing forever - but only once no transaction asset is left
+    /// outstanding; an install refuses to start.
     Unreadable,
+    /// A well-formed document of a format this engine does not know: another
+    /// schema generation, or a phase or operation it has never heard of.
+    ///
+    /// It is a newer engine's pending transaction, not damage. Every operation
+    /// refuses it with [`FailureCode::UnsupportedState`] and leaves the bytes
+    /// exactly as they are.
+    Unsupported,
 }
 
 /// The durable receipt slot, as found by [`Receipt::load`].
@@ -436,6 +444,8 @@ pub enum ReceiptState {
     Committed(Box<Receipt>),
     /// Present bytes that cannot be interpreted.
     Unreadable,
+    /// A receipt of a schema generation (or operation) this engine does not know.
+    Unsupported,
 }
 
 /// The journal v1 document.
@@ -604,6 +614,9 @@ impl Journal {
         if bytes.is_empty() {
             return Ok(JournalState::None);
         }
+        if is_unsupported_document(&bytes, JOURNAL_SCHEMA_VERSION, Some(KNOWN_PHASES)) {
+            return Ok(JournalState::Unsupported);
+        }
         Ok(match Self::parse(&bytes, paths) {
             Ok(journal) => JournalState::Pending(Box::new(journal)),
             Err(_) => JournalState::Unreadable,
@@ -722,11 +735,60 @@ impl Receipt {
         if bytes.is_empty() {
             return Ok(ReceiptState::None);
         }
+        if is_unsupported_document(&bytes, RECEIPT_SCHEMA_VERSION, None) {
+            return Ok(ReceiptState::Unsupported);
+        }
         Ok(match Self::parse(&bytes, paths) {
             Ok(receipt) => ReceiptState::Committed(Box::new(receipt)),
             Err(_) => ReceiptState::Unreadable,
         })
     }
+}
+
+/// Every phase this engine writes; a journal naming another one is a newer
+/// engine's.
+const KNOWN_PHASES: &[&str] = &[
+    "prepared",
+    "staged",
+    "manifest-activated",
+    "registration-published",
+    "receipt-committed",
+    "cleanup-pending",
+];
+const KNOWN_OPERATIONS: &[&str] = &["install", "repair", "rollback", "uninstall"];
+
+/// Whether `bytes` is a JSON object that declares a format this engine does not
+/// know: a numeric `schema` other than `supported`, or (when `phases` is given) a
+/// `phase`/`operation` string outside the known vocabularies.
+///
+/// This is deliberately a look at declared markers only. Anything that is not a
+/// JSON object, or declares no such marker, is ordinary corruption and keeps the
+/// reconcile-then-quarantine treatment; a document that *does* declare an unknown
+/// marker must never be reinterpreted or discarded by an older engine.
+fn is_unsupported_document(bytes: &[u8], supported: u32, phases: Option<&[&str]>) -> bool {
+    let Ok(serde_json::Value::Object(document)) = serde_json::from_slice(bytes) else {
+        return false;
+    };
+    if let Some(schema) = document.get("schema") {
+        match schema.as_u64() {
+            Some(value) if value == u64::from(supported) => {}
+            Some(_) => return true,
+            None => return false,
+        }
+    }
+    if let Some(known) = phases {
+        if let Some(serde_json::Value::String(phase)) = document.get("phase")
+            && !known.contains(&phase.as_str())
+        {
+            return true;
+        }
+        if let Some(serde_json::Value::String(operation)) = document.get("operation")
+            && !KNOWN_OPERATIONS.contains(&operation.as_str())
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// A deterministic transaction identifier for one transaction intent.

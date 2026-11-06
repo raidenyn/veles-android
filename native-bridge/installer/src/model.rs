@@ -119,6 +119,9 @@ pub enum FailureCode {
     UnsafePath,
     Io,
     RecoveryRequired,
+    /// Installer state written by a newer engine (an unknown schema or phase):
+    /// refused and left untouched, never quarantined or reinterpreted.
+    UnsupportedState,
     NoRollback,
     RepairPackageRequired,
     CleanupPending,
@@ -142,6 +145,7 @@ impl FailureCode {
             Self::UnsafePath => "unsafe-path",
             Self::Io => "io",
             Self::RecoveryRequired => "recovery-required",
+            Self::UnsupportedState => "unsupported-state",
             Self::NoRollback => "no-rollback",
             Self::RepairPackageRequired => "repair-package-required",
             Self::CleanupPending => "cleanup-pending",

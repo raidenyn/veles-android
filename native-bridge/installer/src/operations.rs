@@ -181,12 +181,30 @@ fn inspect(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<Inst
                 Some(FailureCode::RecoveryRequired),
             ));
         }
+        ReceiptState::Unsupported => {
+            return Ok(report(
+                Operation::Inspect,
+                STATE_RECOVERY_REQUIRED,
+                None,
+                false,
+                Some(FailureCode::UnsupportedState),
+            ));
+        }
     };
     // A pending transaction is reported as guidance, never guessed at. A
     // partially removed installation is "damaged, cleanup pending": the frontend
     // resumes the uninstall, which is the only operation that owns removal.
+    if matches!(journal, JournalState::Unsupported) {
+        return Ok(report(
+            Operation::Inspect,
+            STATE_RECOVERY_REQUIRED,
+            receipt.as_ref().map(|receipt| receipt.payload_id),
+            false,
+            Some(FailureCode::UnsupportedState),
+        ));
+    }
     let journal_guidance = match &journal {
-        JournalState::None => None,
+        JournalState::None | JournalState::Unsupported => None,
         JournalState::Unreadable => Some(None),
         JournalState::Pending(journal) if journal.operation == Operation::Uninstall => {
             Some(Some(FailureCode::CleanupPending))
@@ -315,6 +333,7 @@ fn repair(
         JournalState::Pending(_) | JournalState::Unreadable => {
             return Err(recovery_required());
         }
+        JournalState::Unsupported => return Err(unsupported_state()),
     }
 
     let mut receipt = match Receipt::load(platform, paths)? {
@@ -325,6 +344,7 @@ fn repair(
         }
         ReceiptState::Committed(receipt) => *receipt,
         ReceiptState::Unreadable => return Err(recovery_required()),
+        ReceiptState::Unsupported => return Err(unsupported_state()),
     };
 
     let descriptor = package.descriptor();
@@ -684,11 +704,13 @@ fn uninstall(
             Some(*journal)
         }
         JournalState::Pending(_) | JournalState::Unreadable => return Err(recovery_required()),
+        JournalState::Unsupported => return Err(unsupported_state()),
     };
     let receipt = match Receipt::load(platform, paths)? {
         ReceiptState::None => None,
         ReceiptState::Committed(receipt) => Some(*receipt),
         ReceiptState::Unreadable => return Err(recovery_required()),
+        ReceiptState::Unsupported => return Err(unsupported_state()),
     };
 
     // The durable removal intent: the journal of an interrupted uninstall, or
@@ -1163,6 +1185,10 @@ fn io_failure() -> InstallFailure {
 
 fn foreign_state() -> InstallFailure {
     InstallFailure::new(FailureCode::ForeignState)
+}
+
+fn unsupported_state() -> InstallFailure {
+    InstallFailure::new(FailureCode::UnsupportedState)
 }
 
 fn recovery_required() -> InstallFailure {

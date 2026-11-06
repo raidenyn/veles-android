@@ -61,7 +61,7 @@ use crate::model::{
     MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor, ReleasePolicy, WarningCode, canonical_json,
     extension_origin, parse_version,
 };
-use crate::paths::{InstallPaths, VERSIONS_DIR};
+use crate::paths::{InstallPaths, MAINTENANCE_DIR, VERSIONS_DIR};
 use crate::platform::{
     AuthenticatedPackage, CarrierEntry, MAX_CARRIER_BYTES, MAX_CARRIER_ENTRIES, NativeManifest,
     OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageSource,
@@ -140,6 +140,7 @@ pub fn install(
         JournalState::Pending(_) | JournalState::Unreadable => {
             return Err(recovery_required());
         }
+        JournalState::Unsupported => return Err(unsupported_state()),
     }
 
     let plan = Plan::prepare(platform, paths, &package)?;
@@ -211,7 +212,9 @@ fn settle_failed_install(
             }
         }
         // Cannot prove this is not the commit point: do not roll back.
-        ReceiptState::Unreadable => Err(failure.with_prior_usable(prior_usable)),
+        ReceiptState::Unreadable | ReceiptState::Unsupported => {
+            Err(failure.with_prior_usable(prior_usable))
+        }
         _ => match restore_previous(platform, paths, &journal) {
             Ok(()) => {
                 Err(failure.with_prior_usable(previous_is_verified(platform, paths, &journal)))
@@ -288,12 +291,14 @@ pub(crate) fn activate_retained(
         JournalState::Pending(_) | JournalState::Unreadable => {
             return Err(recovery_required());
         }
+        JournalState::Unsupported => return Err(unsupported_state()),
     }
 
     let current = match Receipt::load(platform, paths)? {
         ReceiptState::None => return Err(no_rollback()),
         ReceiptState::Committed(receipt) => *receipt,
         ReceiptState::Unreadable => return Err(recovery_required()),
+        ReceiptState::Unsupported => return Err(unsupported_state()),
     };
     // Exactly one prior install is retained, so that is the only rollback target.
     let Some(prior) = current.prior.as_ref() else {
@@ -849,6 +854,9 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
     let journal = match Journal::load(platform, paths)? {
         JournalState::None => return clean_report(platform, paths),
         JournalState::Unreadable => return recover_unreadable_journal(platform, paths),
+        // A newer engine's pending transaction: refused, never reinterpreted,
+        // quarantined or released by this one.
+        JournalState::Unsupported => return Err(unsupported_state()),
         JournalState::Pending(journal) => *journal,
     };
     if journal.operation == Operation::Uninstall {
@@ -874,6 +882,9 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
         live_digest == Some(new_digest) && verify_created_assets(paths, &journal).is_ok();
 
     let receipt = Receipt::load(platform, paths)?;
+    if matches!(receipt, ReceiptState::Unsupported) {
+        return Err(unsupported_state());
+    }
     let committed = matches!(
         &receipt,
         ReceiptState::Committed(receipt) if receipt.transaction_id == journal.transaction_id
@@ -946,8 +957,51 @@ fn recover_unreadable_journal(
     if !reconciled {
         return Err(InstallFailure::new(FailureCode::RecoveryRequired));
     }
+    // Absence of a registration is not proof that no transaction assets exist: a
+    // torn first-install journal can sit beside a fully staged version directory.
+    // The journal is the only record of what that transaction created, so while
+    // anything outside the committed receipt's claims remains, releasing it would
+    // orphan the assets (and block a retry on the immutable directory). Fail
+    // closed, mutate nothing, and keep the journal for a human to reconcile.
+    let committed = match &receipt {
+        ReceiptState::Committed(receipt) => Some(receipt.as_ref()),
+        _ => None,
+    };
+    if has_outstanding_assets(paths, committed)? {
+        return Err(InstallFailure::new(FailureCode::RecoveryRequired));
+    }
     platform.quarantine_state(paths, StateDocument::Journal)?;
     clean_report(platform, paths)
+}
+
+/// Whether anything below `versions/` or `maintenance/` is unclaimed by the
+/// committed receipt (or by nothing, when there is none).
+fn has_outstanding_assets(paths: &InstallPaths, receipt: Option<&Receipt>) -> InstallResult<bool> {
+    for directory in [VERSIONS_DIR, MAINTENANCE_DIR] {
+        let entries = match fs::read_dir(paths.root().join(directory)) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(io_failure()),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|_| io_failure())?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                return Ok(true);
+            };
+            let relative = format!("{directory}/{name}");
+            let claimed = receipt.is_some_and(|receipt| {
+                receipt
+                    .ownership
+                    .owned
+                    .iter()
+                    .any(|claim| claim.path == relative)
+            });
+            if !claimed {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 impl Plan {
@@ -1079,6 +1133,7 @@ impl Plan {
             ReceiptState::None => None,
             ReceiptState::Committed(receipt) => Some(*receipt),
             ReceiptState::Unreadable => return Err(recovery_required()),
+            ReceiptState::Unsupported => return Err(unsupported_state()),
         };
         let live = platform.read_registration(paths)?;
         let mut old_manifest = None;
@@ -1702,6 +1757,7 @@ fn clean_report(platform: &impl Platform, paths: &InstallPaths) -> InstallResult
         ReceiptState::Committed(receipt) => Some(*receipt),
         // No journal is available to reconstruct what was installed.
         ReceiptState::Unreadable => return Err(recovery_required()),
+        ReceiptState::Unsupported => return Err(unsupported_state()),
     };
     let live = platform.read_registration(paths)?;
     let (state, prior_usable, active_payload) = match (receipt, live) {
@@ -1753,6 +1809,8 @@ fn ensure_receipt(
             platform.quarantine_state(paths, StateDocument::Receipt)?;
             None
         }
+        // A newer engine's receipt is never quarantined and rebuilt.
+        ReceiptState::Unsupported => return Err(unsupported_state()),
     };
     if let Some(existing) = existing.as_ref()
         && existing.transaction_id == journal.transaction_id
@@ -1952,6 +2010,10 @@ fn io_failure() -> InstallFailure {
 
 fn foreign_state() -> InstallFailure {
     InstallFailure::new(FailureCode::ForeignState)
+}
+
+fn unsupported_state() -> InstallFailure {
+    InstallFailure::new(FailureCode::UnsupportedState)
 }
 
 fn recovery_required() -> InstallFailure {
