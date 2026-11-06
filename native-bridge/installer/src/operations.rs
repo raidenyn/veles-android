@@ -57,7 +57,7 @@ use crate::paths::{InstallPaths, JOURNAL_FILE, LOCK_FILE, RECEIPT_FILE, STAGING_
 use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, OWNERSHIP_SCHEMA_VERSION, OwnedEntry, OwnedKind,
     OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration, StateDocument,
-    ValidatedPath, parse_manifest, registration_is_owned, require_quiescent_within,
+    ValidatedPath, parse_manifest, read_no_follow, registration_is_owned, require_quiescent_within,
 };
 use crate::policy::authorize_package_policy;
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
@@ -615,7 +615,7 @@ fn restore_bytes(
                 return Err(unsafe_path());
             }
             let intact = metadata.len() == size
-                && fs::read(&absolute)
+                && read_no_follow(&absolute, size)
                     .map(|current| Digest::of(&current) == sha256)
                     .unwrap_or(false);
             if intact {
@@ -640,14 +640,10 @@ fn restore_bytes(
 /// identity is not damaged local content and is not trust: the correct guidance
 /// is a fresh signed download, with the prior installation untouched.
 fn read_source(source: &AuthenticatedSource) -> InstallResult<Vec<u8>> {
-    source
-        .revalidate()
+    // One bounded handle read bound to the authenticated identity.
+    let bytes = source
+        .read_verified()
         .map_err(|_| InstallFailure::new(FailureCode::RepairPackageRequired))?;
-    let bytes = fs::read(source.path())
-        .map_err(|_| InstallFailure::new(FailureCode::RepairPackageRequired))?;
-    if bytes.len() as u64 != source.size() || Digest::of(&bytes) != source.sha256() {
-        return Err(InstallFailure::new(FailureCode::RepairPackageRequired));
-    }
     Ok(bytes)
 }
 

@@ -878,7 +878,10 @@ fn read_carrier_resource(carrier: &PackageSource) -> InstallResult<Vec<u8>> {
     if metadata.len() == 0 || metadata.len() > MAX_CARRIER_BYTES as u64 {
         return Err(invalid_package());
     }
-    let bytes = fs::read(&canonical).map_err(|_| io_failure())?;
+    // One bounded read through the no-follow boundary: the pre-read metadata is
+    // advisory only, the limit is what bounds the buffer.
+    let bytes =
+        super::read_no_follow(&canonical, MAX_CARRIER_BYTES as u64).map_err(|_| io_failure())?;
     if bytes.len() as u64 != metadata.len() {
         return Err(io_failure());
     }
@@ -2014,8 +2017,8 @@ impl NativeFs for MacosPlatform {
         outcome
     }
 
-    fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>> {
-        super::read_no_follow(path).map_err(|_| io_failure())
+    fn read_file(&self, path: &Path, limit: u64) -> InstallResult<Vec<u8>> {
+        super::read_no_follow_capped(path, limit).map_err(|_| io_failure())
     }
 
     fn hash_file(&self, path: &Path) -> InstallResult<Digest> {

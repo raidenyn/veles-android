@@ -58,8 +58,8 @@ use crate::inventory::{
 };
 use crate::model::{
     Channel, Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry,
-    MAX_DOCUMENT_BYTES, MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES, MAX_PUBLISHER_BYTES,
-    ReleaseDescriptor, Target, validate_extension_id,
+    MAX_DOCUMENT_BYTES, MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES,
+    MAX_PUBLISHER_BYTES, ReleaseDescriptor, Target, validate_extension_id,
 };
 use crate::paths::{
     InstallPaths, JOURNAL_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE, STAGING_DIR,
@@ -2238,6 +2238,40 @@ impl AuthenticatedSource {
         self.executable
     }
 
+    /// Open the source once and return its bytes, bound to the authenticated
+    /// identity.
+    ///
+    /// The handle is inspected first (a linked, non-regular or wrong-sized file
+    /// is refused before any buffer exists), at most `size + 1` bytes are read
+    /// through that same handle and the digest is compared before the bytes are
+    /// returned. A source enlarged or replaced after authentication therefore
+    /// can neither exhaust memory nor reach staging: it is `ForeignState`.
+    pub fn read_verified(&self) -> InstallResult<Vec<u8>> {
+        let mut file = match open_no_follow(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(foreign_state()),
+            Err(_) => return Err(io_failure()),
+        };
+        let metadata = file.metadata().map_err(|_| io_failure())?;
+        if !metadata.is_file() {
+            return Err(unsafe_path());
+        }
+        if metadata.len() != self.size || self.size > MAX_INVENTORY_BYTES {
+            return Err(foreign_state());
+        }
+        let bytes = match read_bounded(&mut file, self.size, Some(metadata.len())) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                return Err(foreign_state());
+            }
+            Err(_) => return Err(io_failure()),
+        };
+        if bytes.len() as u64 != self.size || Digest::of(&bytes) != self.sha256 {
+            return Err(foreign_state());
+        }
+        Ok(bytes)
+    }
+
     /// Re-hash the source file immediately before copying it.
     ///
     /// A missing, replaced, linked or content-changed source is a failure; the
@@ -2252,7 +2286,7 @@ impl AuthenticatedSource {
         if is_link_like(&metadata) || !metadata.is_file() {
             return Err(unsafe_path());
         }
-        if metadata.len() != self.size || hash_file(&self.path)? != self.sha256 {
+        if metadata.len() != self.size || hash_file_capped(&self.path, self.size)? != self.sha256 {
             return Err(foreign_state());
         }
         Ok(())
@@ -2390,14 +2424,16 @@ fn authenticated_payload(
 ) -> InstallResult<Vec<AuthenticatedSource>> {
     let payload_root = source.path().join(PACKAGE_PAYLOAD_DIR);
     let inventory_path = source.path().join(PACKAGE_INVENTORY_FILE);
-    let bytes = match read_no_follow(&inventory_path) {
+    let bytes = match read_no_follow(&inventory_path, MAX_DOCUMENT_BYTES as u64) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(invalid_package()),
+        // Longer than the document bound: rejected from the handle's length (or
+        // from the limit-plus-one read), never buffered.
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+            return Err(invalid_package());
+        }
         Err(_) => return Err(io_failure()),
     };
-    if bytes.len() > MAX_DOCUMENT_BYTES {
-        return Err(invalid_package());
-    }
     // The descriptor (itself signature-covered) authenticates the exact document
     // bytes; no caller argument can substitute another inventory.
     if Digest::of(&bytes) != descriptor.payload_id {
@@ -3283,7 +3319,7 @@ fn write_durable_checked(
     file.sync_all().map_err(|_| io_failure())?;
     drop(file);
 
-    let readback = read_no_follow(path.rendered()).map_err(|_| io_failure())?;
+    let readback = read_no_follow(path.rendered(), bytes.len() as u64).map_err(|_| io_failure())?;
     if corrupt_readback || readback != bytes {
         return Err(io_failure());
     }
@@ -3343,7 +3379,7 @@ fn replace_durable_checked(path: &ValidatedPath, bytes: &[u8]) -> InstallResult<
     file.sync_all().map_err(|_| io_failure())?;
     drop(file);
 
-    let readback = match read_no_follow(&staging) {
+    let readback = match read_no_follow(&staging, bytes.len() as u64) {
         Ok(readback) => readback,
         Err(_) => {
             let _ = fs::remove_file(&staging);
@@ -3450,7 +3486,9 @@ fn read_state_document(
     let absolute = paths.root().join(state_relative(document));
     match fs::symlink_metadata(&absolute) {
         Ok(metadata) if is_link_like(&metadata) || !metadata.is_file() => Err(unsafe_path()),
-        Ok(_) => read_no_follow(&absolute)
+        // At most the document bound plus one byte is buffered: an overlong
+        // document is handed to the caller's parser as uninterpretable state.
+        Ok(_) => read_no_follow_capped(&absolute, MAX_DOCUMENT_BYTES as u64)
             .map(Some)
             .map_err(|_| io_failure()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -3549,21 +3587,60 @@ fn write_all_retrying(
     Ok(())
 }
 
-fn read_no_follow(path: &Path) -> io::Result<Vec<u8>> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        options.custom_flags(NO_FOLLOW);
-    }
-    let mut file = options.open(path)?;
-    if !file.metadata()?.is_file() {
+/// Read one file through a single no-follow handle, never buffering more than
+/// `limit` bytes.
+///
+/// The handle is inspected first: a regular file whose reported length exceeds
+/// `limit` is rejected before any buffer exists. A length that lies (a file that
+/// grows after the check) is still bounded, because the read itself is limited to
+/// `limit + 1` bytes and any overflow is an error. [`io::ErrorKind::InvalidData`]
+/// means "longer than the limit".
+pub(crate) fn read_no_follow(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+    let mut file = open_no_follow(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
         return Err(io::Error::from(io::ErrorKind::InvalidInput));
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+    read_bounded(&mut file, limit, Some(metadata.len()))
+}
+
+/// Like [`read_no_follow`], but an overlong file yields its first `limit + 1`
+/// bytes instead of an error, so the caller's own `len > limit` classification
+/// (an uninterpretable document, not an IO fault) stays in charge.
+pub(crate) fn read_no_follow_capped(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+    let mut file = open_no_follow(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::from(io::ErrorKind::InvalidInput));
+    }
+    read_up_to(&mut file, limit, Some(metadata.len()))
+}
+
+/// Read `reader` to its end, failing with [`io::ErrorKind::InvalidData`] when it
+/// holds more than `limit` bytes. At most `limit + 1` bytes are ever buffered.
+pub(crate) fn read_bounded(
+    reader: &mut impl Read,
+    limit: u64,
+    length_hint: Option<u64>,
+) -> io::Result<Vec<u8>> {
+    if length_hint.is_some_and(|length| length > limit) {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
+    let bytes = read_up_to(reader, limit, length_hint)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
+    Ok(bytes)
+}
+
+fn read_up_to(reader: &mut impl Read, limit: u64, length_hint: Option<u64>) -> io::Result<Vec<u8>> {
+    // The initial capacity is clamped by the limit, never taken from the hint
+    // alone: a lying length cannot size the buffer.
+    let capacity = length_hint.map_or(0, |length| length.min(limit.saturating_add(1)));
+    let mut bytes = Vec::with_capacity(usize::try_from(capacity).unwrap_or(0));
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -3599,10 +3676,20 @@ pub(crate) fn open_no_follow(path: &Path) -> io::Result<File> {
 }
 
 pub(crate) fn hash_file(path: &Path) -> InstallResult<Digest> {
-    let mut file = open_no_follow(path).map_err(|_| io_failure())?;
+    hash_file_capped(path, u64::MAX - 1)
+}
+
+/// SHA-256 of at most `limit + 1` bytes of one regular file.
+///
+/// A file longer than `limit` hashes its first `limit + 1` bytes, which can never
+/// equal the digest of a `limit`-byte document: the hashing work is bounded by the
+/// authenticated size even if the file grows while it is being read.
+pub(crate) fn hash_file_capped(path: &Path, limit: u64) -> InstallResult<Digest> {
+    let file = open_no_follow(path).map_err(|_| io_failure())?;
     if !file.metadata().map_err(|_| io_failure())?.is_file() {
         return Err(unsafe_path());
     }
+    let mut file = file.take(limit.saturating_add(1));
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
@@ -3697,7 +3784,7 @@ fn read_registration_from(path: &Path) -> InstallResult<Option<Registration>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(io_failure()),
     }
-    let bytes = read_no_follow(path).map_err(|_| io_failure())?;
+    let bytes = read_no_follow_capped(path, MAX_DOCUMENT_BYTES as u64).map_err(|_| io_failure())?;
     Registration::new(bytes)
         .map(Some)
         .map_err(|_| foreign_state())
@@ -4029,8 +4116,14 @@ fn install_carrier_bytes(source: &PackageSource, destination: &ValidatedPath) ->
             if destination.kind() != PathKind::NewFile {
                 return Err(invalid_input());
             }
-            let bytes = fs::read(source.path()).map_err(|_| io_failure())?;
-            if bytes.is_empty() || bytes.len() > MAX_CARRIER_BYTES {
+            let bytes = match read_no_follow(source.path(), MAX_CARRIER_BYTES as u64) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                    return Err(invalid_package());
+                }
+                Err(_) => return Err(io_failure()),
+            };
+            if bytes.is_empty() {
                 return Err(invalid_package());
             }
             write_durable_checked(destination, &bytes, None, false).map(|_| ())
@@ -4098,7 +4191,7 @@ fn copy_carrier_tree(
             if *total > MAX_CARRIER_BYTES as u64 {
                 return Err(invalid_package());
             }
-            let bytes = fs::read(&path).map_err(|_| io_failure())?;
+            let bytes = read_no_follow(&path, metadata.len()).map_err(|_| io_failure())?;
             fs::write(&target, &bytes).map_err(|_| io_failure())?;
         } else {
             return Err(unsafe_path());

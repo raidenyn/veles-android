@@ -83,11 +83,11 @@ use std::path::Path;
 use super::{
     InstallLock, OwnedEntry, OwnedKind, PackageKind, PackageSource, PathKind, Registration,
     StateDocument, ValidatedPath, carrier_entries_with, foreign_state, hash_file, identity_of,
-    invalid_input, io_failure, is_link_like, is_owned_registration_preimage, read_no_follow,
+    invalid_input, io_failure, is_link_like, is_owned_registration_preimage, read_no_follow_capped,
     registration_target, replace_file_checked, state_handle, state_relative, unsafe_path,
     validate_registration_manifest, write_durable_checked,
 };
-use crate::model::{Digest, FailureCode, InstallFailure, InstallResult};
+use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES};
 use crate::paths::{InstallPaths, STATE_DIR};
 
 // Anchored, no-follow directory handles (Windows / macOS only): validation opens
@@ -132,8 +132,12 @@ pub(crate) trait NativeFs {
     /// absent (first publication). The implementation must never write through
     /// the destination inode, so another name for the same file keeps its bytes.
     fn replace_file(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()>;
-    /// Read one regular file exactly, refusing to follow a final link.
-    fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>>;
+    /// Read one regular file, refusing to follow a final link.
+    ///
+    /// At most `limit + 1` bytes are ever buffered: a longer file yields its first
+    /// `limit + 1` bytes so the caller classifies the overflow as uninterpretable
+    /// state instead of an IO fault.
+    fn read_file(&self, path: &Path, limit: u64) -> InstallResult<Vec<u8>>;
     /// SHA-256 of one regular file read through the no-follow boundary.
     fn hash_file(&self, path: &Path) -> InstallResult<Digest>;
     /// Flush the directory that holds `path`, through its captured handle.
@@ -398,7 +402,7 @@ pub(crate) fn native_read_state(
     let absolute = paths.root().join(state_relative(document));
     match fs::symlink_metadata(&absolute) {
         Ok(metadata) if is_link_like(&metadata) || !metadata.is_file() => Err(unsafe_path()),
-        Ok(_) => fs.read_file(&absolute).map(Some),
+        Ok(_) => fs.read_file(&absolute, MAX_DOCUMENT_BYTES as u64).map(Some),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err(io_failure()),
     }
@@ -446,7 +450,9 @@ pub(crate) fn read_registration_with(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(io_failure()),
     }
-    let bytes = fs.read_file(path).map_err(|_| io_failure())?;
+    let bytes = fs
+        .read_file(path, MAX_DOCUMENT_BYTES as u64)
+        .map_err(|_| io_failure())?;
     Registration::new(bytes)
         .map(Some)
         .map_err(|_| foreign_state())
@@ -664,8 +670,8 @@ impl NativeFs for StdNativeFs {
         replace_file_checked(staged, live)
     }
 
-    fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>> {
-        read_no_follow(path).map_err(|_| io_failure())
+    fn read_file(&self, path: &Path, limit: u64) -> InstallResult<Vec<u8>> {
+        read_no_follow_capped(path, limit).map_err(|_| io_failure())
     }
 
     fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
@@ -749,8 +755,10 @@ impl NativeFs for StdNativeFs {
 /// previous call can never make an earlier write look complete.
 pub(crate) fn read_back(file: &mut fs::File, expected: &[u8]) -> io::Result<()> {
     file.seek(SeekFrom::Start(0))?;
+    // Never more than one byte past what was written is buffered.
     let mut bytes = Vec::with_capacity(expected.len());
-    file.read_to_end(&mut bytes)?;
+    file.take(expected.len() as u64 + 1)
+        .read_to_end(&mut bytes)?;
     if bytes == expected {
         Ok(())
     } else {

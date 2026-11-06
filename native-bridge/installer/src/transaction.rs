@@ -54,20 +54,21 @@ use crate::journal::{
     RegistrationPreimage, transaction_id,
 };
 use crate::model::{
-    Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry, Operation,
-    ReleaseDescriptor, WarningCode, canonical_json, extension_origin, parse_version,
+    Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry,
+    MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor, WarningCode, canonical_json,
+    extension_origin, parse_version,
 };
 use crate::paths::{InstallPaths, VERSIONS_DIR};
 use crate::platform::{
-    AuthenticatedPackage, AuthenticatedSource, CarrierEntry, MAX_CARRIER_BYTES,
-    MAX_CARRIER_ENTRIES, NativeManifest, OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry,
-    OwnedKind, OwnershipRecord, PackageSource, PathKind, Platform, Registration, StateDocument,
-    ValidatedPath, WindowsPreimage, claim_owned_entries, claim_owned_registration,
-    is_accepted_assessment, package_carrier_name, parse_manifest, registration_is_owned,
-    require_quiescent, require_quiescent_within,
+    AuthenticatedPackage, CarrierEntry, MAX_CARRIER_BYTES, MAX_CARRIER_ENTRIES, NativeManifest,
+    OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageSource,
+    PathKind, Platform, Registration, StateDocument, ValidatedPath, WindowsPreimage,
+    claim_owned_entries, claim_owned_registration, is_accepted_assessment, package_carrier_name,
+    parse_manifest, read_no_follow, registration_is_owned, require_quiescent,
+    require_quiescent_within,
 };
 use crate::policy::{authorize_package_policy, effective_policy, read_carrier};
-use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
+use crate::retained::{MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RetainedInstall};
 
 /// The report state of a completed install.
 pub const STATE_INSTALLED: &str = "installed";
@@ -522,7 +523,7 @@ fn load_retained(
         Ok(metadata) if metadata.is_file() => {}
         _ => return Err(no_rollback()),
     }
-    let bytes = fs::read(&absolute).map_err(|_| no_rollback())?;
+    let bytes = read_no_follow(&absolute, MAX_RETAINED_BYTES as u64).map_err(|_| no_rollback())?;
     if Digest::of(&bytes) != expected {
         return Err(no_rollback());
     }
@@ -547,7 +548,7 @@ fn retained_inventory(
         Ok(metadata) if metadata.is_file() => {}
         _ => return Err(no_rollback()),
     }
-    let bytes = fs::read(&absolute).map_err(|_| no_rollback())?;
+    let bytes = read_no_follow(&absolute, MAX_DOCUMENT_BYTES as u64).map_err(|_| no_rollback())?;
     if Digest::of(&bytes) != payload_id {
         return Err(no_rollback());
     }
@@ -591,7 +592,7 @@ fn current_api_window(paths: &InstallPaths, current: &Receipt) -> Option<(u32, u
         .iter()
         .find(|claim| claim.kind == OwnedKind::File && claim.path == relative)?;
     let expected = claim.sha256?;
-    let bytes = fs::read(paths.root().join(&relative)).ok()?;
+    let bytes = read_no_follow(&paths.root().join(&relative), MAX_RETAINED_BYTES as u64).ok()?;
     if Digest::of(&bytes) != expected {
         return None;
     }
@@ -1199,8 +1200,9 @@ fn stage_payload(
         platform.create_directory(&target)?;
     }
     for (source, relative) in package.payload().iter().zip(plan.files.iter()) {
-        source.revalidate()?;
-        let bytes = read_staged(source)?;
+        // One handle, bounded by the authenticated size: the identity check and
+        // the read cannot be separated by a swap or a growth.
+        let bytes = source.read_verified()?;
         let target = ValidatedPath::new(paths, Path::new(relative), PathKind::NewFile)?;
         platform.write_durable(&target, &bytes)?;
     }
@@ -1279,15 +1281,6 @@ fn carrier_entry_path(root_relative: &str, entry: &CarrierEntry) -> String {
     } else {
         format!("{root_relative}/{}", entry.relative())
     }
-}
-
-/// Read authenticated source bytes and re-check the authenticated identity.
-fn read_staged(source: &AuthenticatedSource) -> InstallResult<Vec<u8>> {
-    let bytes = fs::read(source.path()).map_err(|_| io_failure())?;
-    if bytes.len() as u64 != source.size() || Digest::of(&bytes) != source.sha256() {
-        return Err(foreign_state());
-    }
-    Ok(bytes)
 }
 
 /// Restore the state the journal recorded, then remove only created assets.

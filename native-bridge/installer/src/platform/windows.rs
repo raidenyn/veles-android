@@ -2192,14 +2192,8 @@ impl NativeFs for WindowsPlatform {
         rename_below(&staged_file, live_handle.handle(), live.leaf_name()?)
     }
 
-    fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>> {
-        let mut file = crate::platform::open_no_follow(path).map_err(|_| io_failure())?;
-        if !file.metadata().map_err(|_| io_failure())?.is_file() {
-            return Err(unsafe_path());
-        }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(|_| io_failure())?;
-        Ok(bytes)
+    fn read_file(&self, path: &Path, limit: u64) -> InstallResult<Vec<u8>> {
+        crate::platform::read_no_follow_capped(path, limit).map_err(|_| io_failure())
     }
 
     fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
