@@ -38,8 +38,9 @@ archive, so a size field is verified, never trusted as a truncating bound.
   required-version field. Only timestamps, the Unix mode and a short allowlist of
   timestamp/owner extra fields (Info-ZIP UT 0x5455 and ux 0x7875 only; Ux, UX and NTFS are
   refused by name) are treated as normalisable metadata; each such field's internal layout
-  (flags, lengths, version) is validated, and anything else under an allowed id is refused. Deflate "compression level" flag bits are not
-  accepted (owner decision pending).
+  (flags, lengths, version) is validated, and anything else under an allowed id is refused. Deflate "compression level" flag bits (0x2/0x4) are
+  rejected: a deliberate compatibility restriction (owner decision, round 3) -- a valid writer option
+  can be refused, so packaging output must be produced without them.
 * TAR extension records (PAX / GNU long names) are bounded and rejected *before*
   ``tarfile`` reads them; negative sizes are refused before any arithmetic; the padding after
   every member and extension record must be present and zero; PAX keys are limited to path/link/time/owner fields (a

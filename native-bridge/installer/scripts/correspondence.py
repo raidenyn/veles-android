@@ -1496,6 +1496,9 @@ class TreeSource:
         elif stat.S_ISREG(info.st_mode):
             self.kind = "archive"
             package_inputs.check_archive_physical_size(info.st_size)  # before a byte of it is read
+            # Memory: this holds one immutable snapshot per archive (each <= the 256 MiB cap). Two of them are NOT a
+            # 512 MiB process ceiling: member reads join chunks next to the joined member and executable parsing adds
+            # input/slice copies, so the CI runner needs headroom beyond 2 x 256 MiB.
             data = read_regular_file(self.path)
             self.archive_sha256 = sha256(data)
             self.snapshot = package_inputs.ArchiveSnapshot(data, self.path.name)
