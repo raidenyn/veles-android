@@ -42,8 +42,8 @@ pub(super) fn open_regular_below(
 // crate takes no `libc` dependency. They are listed only for the Linux
 // architectures whose values were checked (the asm-generic set, plus the 32/64-bit
 // ARM set that differs for `O_DIRECTORY`/`O_NOFOLLOW`); mips, powerpc, sparc and
-// alpha use different numbers and take the pathname fallback below instead of a
-// silently wrong flag.
+// alpha use different numbers and are refused (see `unsupported` below) instead of
+// being handed a silently wrong flag.
 #[cfg(any(
     all(
         any(target_os = "linux", target_os = "android"),
@@ -72,13 +72,14 @@ mod imp {
     use crate::model::{FailureCode, InstallFailure, InstallResult};
 
     // `open(2)` flag values are per OS (and, on Linux, per architecture family).
+    // `O_NOFOLLOW` is shared with the rest of the crate (one audited table), so the
+    // anchored walk and the single-file opens cannot disagree about it.
     #[cfg(all(
         any(target_os = "linux", target_os = "android"),
         not(any(target_arch = "arm", target_arch = "aarch64"))
     ))]
     mod flags {
         pub const O_DIRECTORY: i32 = 0o200_000;
-        pub const O_NOFOLLOW: i32 = 0o400_000;
     }
     #[cfg(all(
         any(target_os = "linux", target_os = "android"),
@@ -86,12 +87,10 @@ mod imp {
     ))]
     mod flags {
         pub const O_DIRECTORY: i32 = 0o040_000;
-        pub const O_NOFOLLOW: i32 = 0o100_000;
     }
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     mod flags {
         pub const O_DIRECTORY: i32 = 0x10_0000;
-        pub const O_NOFOLLOW: i32 = 0x0100;
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     const O_CLOEXEC: c_int = 0o2_000_000;
@@ -102,7 +101,8 @@ mod imp {
     const O_NONBLOCK: c_int = 0o4_000;
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     const O_NONBLOCK: c_int = 0x0004;
-    use flags::{O_DIRECTORY, O_NOFOLLOW};
+    use crate::platform::NO_FOLLOW as O_NOFOLLOW;
+    use flags::O_DIRECTORY;
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     const ELOOP: i32 = 40;
@@ -198,10 +198,53 @@ mod imp {
     }
 }
 
-/// Any other target (including a Linux architecture whose `open(2)` constants were
-/// not checked) has no audited handle-relative open here. It keeps the
-/// component-by-component pathname check (a link at any level is refused when it is
-/// *observed*), which does not defend against a swap after the check.
+/// Any other target has no audited handle-relative open here, and this module
+/// does not pretend otherwise. A component-by-component pathname check followed by
+/// one open of the whole path checks one object and opens another (the race this
+/// module exists to remove), and the process-wide no-follow flag is only known for
+/// the audited targets, so a "best effort" walk would give a false sense of
+/// containment. The target is refused outright with
+/// [`FailureCode::UnsupportedTarget`]: nothing under the package root is opened, and
+/// the `between` seam is never reached.
+///
+/// Compiled for tests on every host so the refusal is exercised on the audited
+/// targets too; only unsupported targets *use* it.
+#[cfg(any(
+    test,
+    not(any(
+        windows,
+        all(
+            any(target_os = "linux", target_os = "android"),
+            any(
+                target_arch = "x86",
+                target_arch = "x86_64",
+                target_arch = "arm",
+                target_arch = "aarch64",
+                target_arch = "riscv64",
+                target_arch = "loongarch64",
+                target_arch = "s390x",
+            )
+        ),
+        target_os = "macos",
+        target_os = "ios"
+    ))
+))]
+mod unsupported {
+    use std::fs::File;
+    use std::path::Path;
+
+    use crate::model::{FailureCode, InstallFailure, InstallResult};
+
+    #[allow(dead_code)]
+    pub(super) fn open_regular_below(
+        _root: &Path,
+        _parts: &[&str],
+        _between: &mut dyn FnMut(),
+    ) -> InstallResult<File> {
+        Err(InstallFailure::new(FailureCode::UnsupportedTarget))
+    }
+}
+
 #[cfg(not(any(
     windows,
     all(
@@ -220,41 +263,38 @@ mod imp {
     target_os = "ios"
 )))]
 mod imp {
-    use std::fs::{self, File};
-    use std::path::Path;
+    pub(super) use super::unsupported::open_regular_below;
+}
 
-    use crate::model::{FailureCode, InstallFailure, InstallResult};
-    use crate::platform::{is_link_like, open_no_follow};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::FailureCode;
 
-    pub(super) fn open_regular_below(
-        root: &Path,
-        parts: &[&str],
-        between: &mut dyn FnMut(),
-    ) -> InstallResult<File> {
-        let mut current = root.to_path_buf();
-        for (index, part) in parts.iter().enumerate() {
-            current.push(part);
-            let metadata = fs::symlink_metadata(&current).map_err(|error| match error.kind() {
-                std::io::ErrorKind::NotFound => InstallFailure::new(FailureCode::InvalidPackage),
-                _ => InstallFailure::new(FailureCode::Io),
-            })?;
-            let is_leaf = index + 1 == parts.len();
-            if is_link_like(&metadata)
-                || (is_leaf && !metadata.file_type().is_file())
-                || (!is_leaf && !metadata.file_type().is_dir())
-            {
-                return Err(InstallFailure::new(FailureCode::UnsafePath));
-            }
-        }
-        between();
-        let file = open_no_follow(&current).map_err(|_| InstallFailure::new(FailureCode::Io))?;
-        if !file
-            .metadata()
-            .map_err(|_| InstallFailure::new(FailureCode::Io))?
-            .is_file()
-        {
-            return Err(InstallFailure::new(FailureCode::UnsafePath));
-        }
-        Ok(file)
+    /// N3: a target without an audited anchored open must refuse the read, not fall
+    /// back to a pathname walk that re-opens a path it already checked.
+    #[test]
+    fn a_target_without_an_anchored_open_refuses_and_opens_nothing() {
+        let base = std::env::temp_dir().join(format!("veles-unsupported-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("payload");
+        std::fs::create_dir_all(root.join("dir")).expect("tree");
+        std::fs::write(root.join("dir/host"), b"the package's host").expect("host");
+
+        let mut reached_the_race_window = false;
+        let outcome = unsupported::open_regular_below(&root, &["dir", "host"], &mut || {
+            reached_the_race_window = true;
+        });
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(
+            outcome
+                .expect_err("an unaudited target never opens a package entry")
+                .code,
+            FailureCode::UnsupportedTarget
+        );
+        assert!(
+            !reached_the_race_window,
+            "the refusal must precede any traversal, not follow a check-then-open walk"
+        );
     }
 }

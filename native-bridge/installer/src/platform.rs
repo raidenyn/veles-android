@@ -116,13 +116,52 @@ pub const OWNERSHIP_SCHEMA_VERSION: u32 = 1;
 /// A registration manifest is a bounded JSON document.
 pub const MAX_MANIFEST_PATH_BYTES: usize = 32_767;
 
-#[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
-const NO_FOLLOW: i32 = 0o400_000;
+/// `O_NOFOLLOW` for the audited Linux architectures. The value is per architecture
+/// family: the asm-generic set uses `0o400_000`, while 32/64-bit ARM uses
+/// `0o100_000` (where `0o400_000` is `O_LARGEFILE`). One constant for every Linux
+/// target is wrong on at least ARM, and on mips/powerpc/sparc/alpha `0o400_000` is
+/// not even a no-follow flag (on powerpc it is `O_DIRECT`, which rejects ordinary
+/// reads), so unaudited architectures do not build instead of being handed a flag
+/// that either protects nothing or breaks ordinary files.
+#[cfg(all(
+    unix,
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64",
+        target_arch = "s390x",
+    )
+))]
+pub(crate) const NO_FOLLOW: i32 = 0o400_000;
+#[cfg(all(
+    unix,
+    any(target_os = "linux", target_os = "android"),
+    any(target_arch = "arm", target_arch = "aarch64")
+))]
+pub(crate) const NO_FOLLOW: i32 = 0o100_000;
+#[cfg(all(
+    any(target_os = "linux", target_os = "android"),
+    not(any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64",
+        target_arch = "s390x",
+        target_arch = "arm",
+        target_arch = "aarch64",
+    ))
+))]
+compile_error!(
+    "no audited O_NOFOLLOW value for this Linux architecture; refusing to build with a \
+     flag that may protect nothing (or break ordinary reads) instead of guessing"
+);
 #[cfg(all(
     unix,
     any(target_os = "macos", target_os = "ios", target_os = "freebsd")
 ))]
-const NO_FOLLOW: i32 = 0x0100;
+pub(crate) const NO_FOLLOW: i32 = 0x0100;
 #[cfg(all(
     unix,
     not(any(
@@ -133,7 +172,10 @@ const NO_FOLLOW: i32 = 0x0100;
         target_os = "freebsd"
     ))
 ))]
-const NO_FOLLOW: i32 = 0;
+compile_error!(
+    "no audited O_NOFOLLOW value for this Unix target; refusing to build with a flag \
+     that protects nothing instead of defaulting to zero"
+);
 
 #[cfg(windows)]
 pub(crate) const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
