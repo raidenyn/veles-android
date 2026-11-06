@@ -378,6 +378,23 @@ fn inventory_rejects_escape_duplicate_case_alias_and_partial_content() {
     );
 }
 
+/// `verify_inventory` checks the declared entries and never enumerates the root.
+///
+/// An unreferenced extra file - the Windows DLL-sideload shape - is therefore
+/// accepted, and an empty inventory verifies against any directory. This test
+/// pins that documented boundary: callers requiring a closed tree must walk
+/// `root` themselves.
+#[test]
+fn inventory_verification_does_not_enumerate_the_root() {
+    let root = TempRoot::new();
+    root.write("host.exe", b"host");
+    root.write("planted.dll", b"never inventoried");
+
+    verify_inventory(&root.path, &[entry("host.exe", b"host")])
+        .expect("an unreferenced file does not fail declared-entry verification");
+    verify_inventory(&root.path, &[]).expect("an empty inventory does not enumerate the root");
+}
+
 fn policy(
     epoch: u64,
     publishers: &[&str],
@@ -787,6 +804,44 @@ fn canonical_json_is_compact_sorted_and_newline_terminated() {
     assert!(text.find("\"api_max\"").unwrap() < text.find("\"api_min\"").unwrap());
     assert!(text.find("\"host_name\"").unwrap() < text.find("\"minimum_os\"").unwrap());
     assert!(!text.contains("\n "), "compact, single-line JSON");
+}
+
+/// `FailureCode::as_str()` is documented as identical to the serde wire name;
+/// keep the hand-written match and the derive from drifting apart.
+#[test]
+fn failure_code_as_str_matches_its_serde_representation() {
+    let codes = [
+        FailureCode::InvalidInput,
+        FailureCode::OriginRejected,
+        FailureCode::InvalidPackage,
+        FailureCode::TrustDenied,
+        FailureCode::TrustUnavailable,
+        FailureCode::PolicyDenied,
+        FailureCode::UnsupportedTarget,
+        FailureCode::Busy,
+        FailureCode::HostActive,
+        FailureCode::InspectionDenied,
+        FailureCode::ForeignState,
+        FailureCode::UnsafePath,
+        FailureCode::Io,
+        FailureCode::RecoveryRequired,
+        FailureCode::NoRollback,
+        FailureCode::RepairPackageRequired,
+        FailureCode::CleanupPending,
+    ];
+    let mut wire_names = HashSet::new();
+    for code in codes {
+        let serialized = serde_json::to_value(code).expect("failure codes serialize");
+        assert_eq!(
+            serialized,
+            serde_json::Value::String(code.as_str().to_owned()),
+            "as_str drift for {code:?}"
+        );
+        assert!(
+            wire_names.insert(code.as_str()),
+            "duplicate wire name for {code:?}"
+        );
+    }
 }
 
 fn entry(path: &str, content: &[u8]) -> InventoryEntry {

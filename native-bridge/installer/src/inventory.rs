@@ -53,7 +53,14 @@ pub fn normalize_relative_path(path: &str) -> InstallResult<String> {
     Ok(normalized)
 }
 
-/// Verify that `entries` exactly describes the regular files below `root`.
+/// Verify that every entry matches a regular file below `root`.
+///
+/// This is a declared-entry check, **not** a tree enumeration: files below
+/// `root` that are absent from `entries` are never noticed, and an empty
+/// `entries` slice verifies against any directory. A caller that needs "the root
+/// holds exactly this inventory" - for example to reject a planted DLL next to
+/// the executable - must enumerate the tree itself and compare it with
+/// `entries`; extra-file and enumeration checks are the caller's obligation.
 ///
 /// Structural violations (path policy, counts, total size) are rejected before
 /// any file access; then each declared size and SHA-256 must match the file on
