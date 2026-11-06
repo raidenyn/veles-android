@@ -50,18 +50,26 @@
 //! PID is neither trusted nor able to hide a host.
 
 use std::ffi::OsString;
-use std::fs;
-use std::io;
+use std::fs::TryLockError;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::mem::size_of;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::io::FromRawHandle;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::ptr;
 
+use sha2::{Digest as _, Sha256};
+
 use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_INVALID_PARAMETER, GENERIC_READ, HANDLE, HWND, STATUS_INFO_LENGTH_MISMATCH,
-    STATUS_SUCCESS,
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER,
+    ERROR_PATH_NOT_FOUND, FALSE, GENERIC_READ, GENERIC_WRITE, HANDLE, HLOCAL, HWND, LocalFree,
+    STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS,
+};
+use windows::Win32::Security::Authorization::{
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::Cryptography::CERT_CONTEXT;
 use windows::Win32::Security::WinTrust::{
@@ -74,9 +82,20 @@ use windows::Win32::Security::WinTrust::{
 use windows::Win32::Security::{
     EqualSid, GetTokenInformation, IsValidSid, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
+use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_READ, GetFileSizeEx, OPEN_EXISTING,
-    ReadFile, SetFilePointerEx,
+    COPY_FILE_FAIL_IF_EXISTS, COPYFILE2_EXTENDED_PARAMETERS, CREATE_NEW, CopyFile2,
+    CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BEGIN,
+    FILE_CREATION_DISPOSITION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, GetFileSizeEx, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    MoveFileExW, OPEN_ALWAYS, OPEN_EXISTING, REPLACEFILE_WRITE_THROUGH, ReadFile, ReplaceFileW,
+    SetFilePointerEx,
+};
+use windows::Win32::System::Registry::{
+    HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
+    REG_OPTION_NON_VOLATILE, REG_SAM_FLAGS, REG_SZ, REG_VALUE_TYPE, RegCloseKey, RegCreateKeyExW,
+    RegDeleteKeyW, RegDeleteValueW, RegFlushKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
 };
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
@@ -85,14 +104,21 @@ use windows::Win32::System::Threading::{
 use windows::Win32::System::WindowsProgramming::SYSTEM_PROCESS_INFORMATION;
 use windows::core::{HRESULT, PCWSTR, PWSTR};
 
+use super::native::{
+    NativeFs, native_carrier_entries, native_ensure_layout, native_flush_parent,
+    native_install_carrier, native_lock, native_publish_manifest, native_quarantine_state,
+    native_read_registration, native_read_state, native_remove_manifest, native_remove_owned,
+    native_replace_durable, native_replace_file, native_write_durable, native_write_state,
+    read_back, require_published_manifest,
+};
 use super::pe;
 use super::windows_trust as trust_status;
 use super::{
-    CarrierEntry, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
-    PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage,
-    ProcessObservation, ProcessScope, ProcessTable, Registration,
-    TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath, inspect_host_processes,
-    path_is_within,
+    CarrierEntry, HostState, ImageClass, InstallLock, MAX_MANIFEST_PATH_BYTES, OwnedEntry,
+    OwnedImages, PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource, PathKind, Platform,
+    ProcessIdentity, ProcessImage, ProcessObservation, ProcessScope, ProcessTable, Registration,
+    TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath, WindowsPreimage,
+    inspect_host_processes, path_is_within,
 };
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
@@ -116,93 +142,288 @@ const MAX_PROCESS_LIST_ATTEMPTS: usize = 8;
 /// Bound for one process image path (32767 WCHARs plus the terminator).
 const MAX_PROCESS_IMAGE_CHARS: usize = 32_768;
 
+/// The HKCU key Native Messaging publication uses in production.
+///
+/// Chrome resolves a host registration for the current user at exactly
+/// `HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\<name>`.
+/// `HKCU\Software` is not a WOW64-redirected key: a 32-bit and a 64-bit Chrome
+/// read the same view, and this 64-bit adapter therefore writes the default view
+/// rather than guessing a `KEY_WOW64_*` flag. The native test reads the same value
+/// back through the default, explicit-64-bit and explicit-32-bit views and
+/// requires all three to agree, which is what proves the path Chrome resolves.
+pub const PRODUCTION_REGISTRY_PREFIX: &str = r"Software\Google\Chrome\NativeMessagingHosts";
+
+/// The HKCU subtree test-only registrations are confined to.
+///
+/// Tests may never touch the production key: a test scope can only name a
+/// subkey below this prefix, so even a mistaken call in a production binary
+/// cannot address Chrome's key.
+pub const TEST_REGISTRY_PREFIX: &str = r"Software\Veles\InstallerTests";
+
+/// Which HKCU key a [`WindowsPlatform`] publishes the Native Messaging manifest
+/// to.
+///
+/// Production always uses [`PRODUCTION_REGISTRY_PREFIX`]; the test constructor
+/// is confined to [`TEST_REGISTRY_PREFIX`], so a fixture never mutates a
+/// person's real Chrome registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryScope {
+    prefix: String,
+}
+
+impl RegistryScope {
+    /// The one production scope Chrome resolves.
+    pub fn production() -> Self {
+        Self {
+            prefix: PRODUCTION_REGISTRY_PREFIX.to_owned(),
+        }
+    }
+
+    /// A test-only scope below [`TEST_REGISTRY_PREFIX`].
+    ///
+    /// `subkey` must be one bounded, non-empty path component made of ASCII
+    /// alphanumerics, `-`, `_` or `.`. It cannot contain a backslash, so a caller
+    /// can never escape the test subtree and address Chrome's key.
+    pub fn for_tests(subkey: &str) -> InstallResult<Self> {
+        if subkey.is_empty()
+            || subkey.len() > 128
+            || subkey
+                .chars()
+                .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        {
+            return Err(invalid_input());
+        }
+        Ok(Self {
+            prefix: format!(r"{TEST_REGISTRY_PREFIX}\{subkey}"),
+        })
+    }
+
+    /// Whether this scope is a test subtree (never the production key).
+    pub fn is_test(&self) -> bool {
+        self.prefix.starts_with(TEST_REGISTRY_PREFIX)
+    }
+
+    /// The exact key below HKCU for one installation's host name.
+    pub fn key_for(&self, paths: &InstallPaths) -> String {
+        format!(r"{}\{}", self.prefix, paths.registration_name())
+    }
+}
+
+impl Default for RegistryScope {
+    fn default() -> Self {
+        Self::production()
+    }
+}
+
+/// Which registry view a test read uses.
+///
+/// Production publication never selects a view; this exists so the native test
+/// can prove the value is visible in every view Chrome could read it from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistryView {
+    /// The process's own (non-redirected) view - what production uses.
+    Default,
+    /// An explicit 64-bit view.
+    Native64,
+    /// An explicit 32-bit view.
+    Native32,
+}
+
+impl RegistryView {
+    fn flags(self) -> REG_SAM_FLAGS {
+        match self {
+            Self::Default => REG_SAM_FLAGS(0),
+            Self::Native64 => KEY_WOW64_64KEY,
+            Self::Native32 => KEY_WOW64_32KEY,
+        }
+    }
+}
+
 /// The Windows [`Platform`] adapter.
 ///
 /// Task 4 implements [`Platform::verify_trust`] and Task 5 implements
-/// [`Platform::inspect_hosts`]; the remaining boundary methods fail closed until
-/// Task 8 (native filesystem, registry and cleanup) implements them.
-#[derive(Debug, Default)]
-pub struct WindowsPlatform;
+/// [`Platform::inspect_hosts`]; Task 8 completes the native filesystem, HKCU
+/// registration and cleanup surface.
+#[derive(Debug, Clone, Default)]
+pub struct WindowsPlatform {
+    scope: RegistryScope,
+}
 
 impl WindowsPlatform {
-    /// Construct the Windows adapter.
+    /// Construct the Windows adapter for the production registration key.
     pub fn new() -> Self {
-        Self
+        Self {
+            scope: RegistryScope::production(),
+        }
+    }
+
+    /// Construct a test-scoped adapter whose HKCU key is below
+    /// [`TEST_REGISTRY_PREFIX`], never Chrome's production key.
+    ///
+    /// Test-only: production binaries must call [`WindowsPlatform::new`]. The
+    /// scope cannot address `Software\Google\Chrome\NativeMessagingHosts`.
+    pub fn for_tests(subkey: &str) -> InstallResult<Self> {
+        Ok(Self {
+            scope: RegistryScope::for_tests(subkey)?,
+        })
+    }
+
+    /// The registration scope this adapter publishes to.
+    pub fn registry_scope(&self) -> &RegistryScope {
+        &self.scope
+    }
+
+    /// The exact HKCU key this adapter uses for `paths`.
+    pub fn registry_key(&self, paths: &InstallPaths) -> String {
+        self.scope.key_for(paths)
+    }
+
+    /// Read the default (manifest path) value in one registry view.
+    ///
+    /// Read-only and view-explicit: the native test uses it to prove the
+    /// production key is not redirected, while production publication uses the
+    /// default view only.
+    pub fn read_registry_value(
+        &self,
+        paths: &InstallPaths,
+        view: RegistryView,
+    ) -> InstallResult<Option<String>> {
+        read_scope_value(&self.scope.key_for(paths), view)
     }
 }
 
 impl Platform for WindowsPlatform {
-    fn lock(&self, _paths: &InstallPaths) -> InstallResult<InstallLock> {
-        Err(unsupported())
+    fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
+        native_lock(self, paths)
     }
 
-    fn write_durable(&self, _path: &ValidatedPath, _bytes: &[u8]) -> InstallResult<()> {
-        Err(unsupported())
+    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        native_write_durable(self, path, bytes)
     }
 
-    fn replace_durable(&self, _path: &ValidatedPath, _bytes: &[u8]) -> InstallResult<()> {
-        // The native atomic replacement belongs to the Task 8 adapter.
-        Err(unsupported())
+    fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        native_replace_durable(self, path, bytes)
     }
 
     fn write_state(
         &self,
-        _paths: &InstallPaths,
-        _document: super::StateDocument,
-        _bytes: &[u8],
+        paths: &InstallPaths,
+        document: super::StateDocument,
+        bytes: &[u8],
     ) -> InstallResult<()> {
-        Err(unsupported())
+        native_write_state(self, paths, document, bytes)
     }
+
     fn read_state(
         &self,
-        _paths: &InstallPaths,
-        _document: super::StateDocument,
+        paths: &InstallPaths,
+        document: super::StateDocument,
     ) -> InstallResult<Option<Vec<u8>>> {
-        Err(unsupported())
+        native_read_state(self, paths, document)
     }
 
     fn quarantine_state(
         &self,
-        _paths: &InstallPaths,
-        _document: super::StateDocument,
+        paths: &InstallPaths,
+        document: super::StateDocument,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        native_quarantine_state(self, paths, document)
     }
 
-    fn publish_manifest(&self, _paths: &InstallPaths, _value: &Registration) -> InstallResult<()> {
-        Err(unsupported())
+    fn create_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        if path.kind() != super::PathKind::NewDirectory {
+            return Err(invalid_input());
+        }
+        path.revalidate()?;
+        NativeFs::create_directory(self, path.rendered())?;
+        let parent = path.rendered().parent().ok_or_else(unsafe_path)?;
+        self.flush_directory(parent)
     }
 
-    fn replace_manifest(
-        &self,
-        _staged: &ValidatedPath,
-        _live: &ValidatedPath,
-    ) -> InstallResult<()> {
-        Err(unsupported())
+    fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+        native_publish_manifest(self, paths, value)
     }
 
-    /// Task 8 reads the manifest file and the fixed HKCU value together and
-    /// returns a [`Registration`] carrying the exact HKCU key and previous
-    /// default value as its [`WindowsPreimage`](super::WindowsPreimage), so the
-    /// transaction can journal a complete restore preimage.
-    fn read_registration(&self, _paths: &InstallPaths) -> InstallResult<Option<Registration>> {
-        Err(unsupported())
+    fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
+        native_replace_file(self, staged, live)
     }
 
+    /// The manifest file **and** the current HKCU default value.
+    ///
+    /// The returned [`Registration`] carries a [`WindowsPreimage`] naming the
+    /// exact key and the value publication would replace (or its absence), so
+    /// the transaction journals a complete restore preimage before the first
+    /// registry mutation.
+    fn read_registration(&self, paths: &InstallPaths) -> InstallResult<Option<Registration>> {
+        let Some(live) = native_read_registration(self, paths)? else {
+            return Ok(None);
+        };
+        let key = self.scope.key_for(paths);
+        let previous = read_scope_value(&key, RegistryView::Default)?;
+        Ok(Some(live.with_windows_preimage(WindowsPreimage::new(
+            key, previous,
+        )?)))
+    }
+
+    /// Publication step two: re-read the live manifest, then write the fixed HKCU
+    /// default value that points Chrome at the absolute manifest path.
     fn publish_registration(
         &self,
-        _paths: &InstallPaths,
-        _value: &Registration,
+        paths: &InstallPaths,
+        value: &Registration,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        require_published_manifest(self, paths, value)?;
+        let key = self.scope.key_for(paths);
+        let manifest = paths
+            .registration_path()
+            .to_str()
+            .ok_or_else(unsafe_path)?
+            .to_owned();
+        // A value already present may only be this exact manifest path (our own
+        // previous publication). Anything else is another owner of our host name
+        // and is left untouched.
+        if let Some(current) = read_scope_value(&key, RegistryView::Default)?
+            && !same_windows_value(&current, &manifest)
+        {
+            return Err(foreign_state());
+        }
+        write_scope_value(&key, &manifest)
     }
 
+    /// Remove our registration: the HKCU value first, then the manifest file.
+    ///
+    /// The order is deliberate. A crash between the two leaves the manifest
+    /// without the value, which a republish can restore from the journal; the
+    /// reverse order could leave a value pointing at an absent manifest with no
+    /// preimage recorded.
     fn remove_registration(
         &self,
-        _paths: &InstallPaths,
-        _expected: &Registration,
+        paths: &InstallPaths,
+        expected: &Registration,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        let live = native_read_registration(self, paths)?;
+        if let Some(live) = live.as_ref()
+            && !expected.matches_published(live)
+        {
+            return Err(foreign_state());
+        }
+        let key = self.scope.key_for(paths);
+        let manifest = paths
+            .registration_path()
+            .to_str()
+            .ok_or_else(unsafe_path)?
+            .to_owned();
+        match read_scope_value(&key, RegistryView::Default)? {
+            Some(current) if !same_windows_value(&current, &manifest) => {
+                return Err(foreign_state());
+            }
+            Some(_) => delete_scope_key(&key)?,
+            None => {}
+        }
+        if live.is_some() {
+            native_remove_manifest(self, paths, expected)?;
+        }
+        Ok(())
     }
 
     fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState> {
@@ -227,30 +448,24 @@ impl Platform for WindowsPlatform {
         verify_trust(source, expected)
     }
 
-    /// BLOCKED (Task 8): a metadata-preserving `carrier.exe` install.
-    ///
-    /// A portable byte copy would drop the extended attributes the signature
-    /// assessment covers, so this adapter must fail closed until Task 8 installs
-    /// it with `CopyFile2`.
-    fn carrier_entries(&self, _source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
-        Err(unsupported())
+    fn carrier_entries(&self, source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
+        native_carrier_entries(self, source)
     }
 
-    /// BLOCKED (Task 8): see [`Platform::install_carrier`].
     fn install_carrier(
         &self,
-        _source: &PackageSource,
-        _destination: &ValidatedPath,
+        source: &PackageSource,
+        destination: &ValidatedPath,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        native_install_carrier(self, source, destination)
     }
 
-    fn remove_owned(&self, _entry: &OwnedEntry) -> InstallResult<()> {
-        Err(unsupported())
+    fn remove_owned(&self, entry: &OwnedEntry) -> InstallResult<()> {
+        native_remove_owned(self, entry)
     }
 
-    fn flush_parent(&self, _path: &ValidatedPath) -> InstallResult<()> {
-        Err(unsupported())
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
+        native_flush_parent(self, path)
     }
 }
 
@@ -264,40 +479,7 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
     let carrier = open_carrier(source.path())?;
     let handle = ReadOnlyFile::open(carrier.path())?;
     let wide = wide_path(carrier.path())?;
-    let mut file_info = WINTRUST_FILE_INFO {
-        cbStruct: size_of::<WINTRUST_FILE_INFO>() as u32,
-        pcwszFilePath: PCWSTR(wide.as_ptr()),
-        hFile: handle.0,
-        pgKnownSubject: ptr::null_mut(),
-    };
-    let mut data = WINTRUST_DATA {
-        cbStruct: size_of::<WINTRUST_DATA>() as u32,
-        dwUIChoice: WTD_UI_NONE,
-        fdwRevocationChecks: WTD_REVOKE_WHOLECHAIN,
-        dwUnionChoice: WTD_CHOICE_FILE,
-        Anonymous: WINTRUST_DATA_0 {
-            pFile: &mut file_info,
-        },
-        dwStateAction: WTD_STATEACTION_VERIFY,
-        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN | WTD_DISABLE_MD2_MD4,
-        ..Default::default()
-    };
-    let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-    let status = unsafe {
-        WinVerifyTrust(
-            HWND::default(),
-            &mut action,
-            (&mut data as *mut WINTRUST_DATA).cast(),
-        )
-    };
-    let signer = if status == 0 {
-        // State data lives only until WTD_STATEACTION_CLOSE.
-        signer_fingerprint(&data)
-    } else {
-        Err(classify(status))
-    };
-    close_state(&mut data);
-    let signer = signer?;
+    let signer = authenticate_file(&handle, &wide)?;
 
     let image = handle.read_all()?;
     let carrier_bytes = pe::extract_carrier(&image, CARRIER_RESOURCE_NAME, MAX_CARRIER_BYTES)
@@ -748,6 +930,62 @@ fn wide_path(path: &Path) -> InstallResult<Vec<u16>> {
     Ok(wide)
 }
 
+/// Run WinVerifyTrust over one already-open file and return its signer.
+///
+/// Revocation checking is never disabled, no cache-only retry is requested and
+/// there is no UI, so an explicit denial/revocation and an assessment that could
+/// not be formed stay distinguishable through [`classify`].
+fn authenticate_file(handle: &ReadOnlyFile, wide: &[u16]) -> InstallResult<String> {
+    let mut file_info = WINTRUST_FILE_INFO {
+        cbStruct: size_of::<WINTRUST_FILE_INFO>() as u32,
+        pcwszFilePath: PCWSTR(wide.as_ptr()),
+        hFile: handle.0,
+        pgKnownSubject: ptr::null_mut(),
+    };
+    let mut data = WINTRUST_DATA {
+        cbStruct: size_of::<WINTRUST_DATA>() as u32,
+        dwUIChoice: WTD_UI_NONE,
+        fdwRevocationChecks: WTD_REVOKE_WHOLECHAIN,
+        dwUnionChoice: WTD_CHOICE_FILE,
+        Anonymous: WINTRUST_DATA_0 {
+            pFile: &mut file_info,
+        },
+        dwStateAction: WTD_STATEACTION_VERIFY,
+        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN | WTD_DISABLE_MD2_MD4,
+        ..Default::default()
+    };
+    let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    // SAFETY: `data` is a fully initialized structure and `handle` is a live
+    // read-only file handle.
+    let status = unsafe {
+        WinVerifyTrust(
+            HWND::default(),
+            &mut action,
+            (&mut data as *mut WINTRUST_DATA).cast(),
+        )
+    };
+    let signer = if status == 0 {
+        // State data lives only until WTD_STATEACTION_CLOSE.
+        signer_fingerprint(&data)
+    } else {
+        Err(classify(status))
+    };
+    close_state(&mut data);
+    signer
+}
+
+/// Verify the cleanup helper's own Authenticode signature and return its signer.
+///
+/// The cleanup helper is installed outside the removable root, so it must prove
+/// it is still the exact signed image before it deletes anything: a replaced
+/// helper is denied by the same whole-chain Authenticode path the package
+/// assessment uses.
+pub(crate) fn windows_verify_own_signature(path: &Path) -> InstallResult<String> {
+    let handle = ReadOnlyFile::open(path)?;
+    let wide = wide_path(path)?;
+    authenticate_file(&handle, &wide)
+}
+
 /// The signer fingerprint from the live WinVerifyTrust state.
 fn signer_fingerprint(data: &WINTRUST_DATA) -> InstallResult<String> {
     if data.hWVTStateData.is_invalid() {
@@ -879,6 +1117,10 @@ fn classify(status: i32) -> InstallFailure {
     trust_status::classify_winverifytrust_status(status).failure()
 }
 
+fn foreign_state() -> InstallFailure {
+    InstallFailure::new(FailureCode::ForeignState)
+}
+
 fn unsupported() -> InstallFailure {
     InstallFailure::new(FailureCode::UnsupportedTarget)
 }
@@ -901,4 +1143,502 @@ fn io_failure() -> InstallFailure {
 
 fn trust_denied() -> InstallFailure {
     InstallFailure::new(FailureCode::TrustDenied)
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: native filesystem and HKCU primitives.
+// ---------------------------------------------------------------------------
+
+/// HKCU value names are the unnamed/default value of the host key.
+const REGISTRY_DEFAULT_VALUE: PCWSTR = PCWSTR::null();
+
+/// Open one registry key, or `None` when it does not exist.
+fn reg_open(key: &str, view: RegistryView, access: REG_SAM_FLAGS) -> InstallResult<Option<RegKey>> {
+    let wide = registry_wide(key)?;
+    let mut hkey = HKEY::default();
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `hkey` is a live
+    // out-parameter and is closed by `RegKey`.
+    let status = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(wide.as_ptr()),
+            None,
+            access | view.flags(),
+            &mut hkey,
+        )
+    };
+    if status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND {
+        return Ok(None);
+    }
+    if status.0 != 0 {
+        return Err(io_failure());
+    }
+    Ok(Some(RegKey(hkey)))
+}
+
+/// One open HKCU key, closed exactly once.
+struct RegKey(HKEY);
+
+impl Drop for RegKey {
+    fn drop(&mut self) {
+        // SAFETY: the handle was returned by a successful registry open/create
+        // and is owned by this value.
+        unsafe {
+            let _ = RegCloseKey(self.0);
+        }
+    }
+}
+
+/// The default value of `key` in one view, or `None` when absent.
+fn read_scope_value(key: &str, view: RegistryView) -> InstallResult<Option<String>> {
+    let Some(key) = reg_open(key, view, KEY_QUERY_VALUE)? else {
+        return Ok(None);
+    };
+    let mut value_type = REG_VALUE_TYPE(0);
+    let mut size = 0u32;
+    // SAFETY: a null data buffer with the size out-parameter only asks for the
+    // required length.
+    let status = unsafe {
+        RegQueryValueExW(
+            key.0,
+            REGISTRY_DEFAULT_VALUE,
+            None,
+            Some(&mut value_type),
+            None,
+            Some(&mut size),
+        )
+    };
+    if status == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
+    }
+    if status.0 != 0 {
+        return Err(io_failure());
+    }
+    if value_type != REG_SZ || size == 0 || size as usize > MAX_MANIFEST_PATH_BYTES * 2 + 2 {
+        // A non-string or implausibly large value is not a Native Messaging
+        // registration we can interpret; never guess.
+        return Err(foreign_state());
+    }
+    let mut buffer = vec![0u8; size as usize];
+    let mut written = size;
+    // SAFETY: `buffer` is live and `written` is its length in bytes on entry.
+    let status = unsafe {
+        RegQueryValueExW(
+            key.0,
+            REGISTRY_DEFAULT_VALUE,
+            None,
+            Some(&mut value_type),
+            Some(buffer.as_mut_ptr()),
+            Some(&mut written),
+        )
+    };
+    if status.0 != 0 || written > size || value_type != REG_SZ {
+        return Err(io_failure());
+    }
+    buffer.truncate(written as usize);
+    decode_registry_string(&buffer).map(Some)
+}
+
+/// Create the fixed key and write its default value durably.
+fn write_scope_value(key: &str, value: &str) -> InstallResult<()> {
+    let wide = registry_wide(key)?;
+    let mut hkey = HKEY::default();
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `hkey` is a live
+    // out-parameter and is closed by `RegKey`.
+    let status = unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(wide.as_ptr()),
+            None,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE | KEY_QUERY_VALUE,
+            None,
+            &mut hkey,
+            None,
+        )
+    };
+    if status.0 != 0 {
+        return Err(io_failure());
+    }
+    let key = RegKey(hkey);
+    // REG_SZ is UTF-16LE with one terminating NUL; the length is in bytes.
+    let mut data: Vec<u8> = value.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    if data.len() > MAX_MANIFEST_PATH_BYTES * 2 {
+        return Err(unsafe_path());
+    }
+    data.extend_from_slice(&[0, 0]);
+    // SAFETY: `data` is live for the call and is a well-formed REG_SZ image.
+    let status =
+        unsafe { RegSetValueExW(key.0, REGISTRY_DEFAULT_VALUE, None, REG_SZ, Some(&data)) };
+    if status.0 != 0 {
+        return Err(io_failure());
+    }
+    // Make the value durable before the caller records the commit.
+    // SAFETY: `key` is a live writable key handle.
+    let status = unsafe { RegFlushKey(key.0) };
+    if status.0 != 0 {
+        return Err(io_failure());
+    }
+    Ok(())
+}
+
+/// Delete the default value and then the fixed key itself.
+///
+/// An absent value or key is already uninstalled. `RegDeleteKeyW` never removes
+/// a key with subkeys, so this can never become a recursive registry delete.
+fn delete_scope_key(key: &str) -> InstallResult<()> {
+    if let Some(open) = reg_open(key, RegistryView::Default, KEY_SET_VALUE | KEY_QUERY_VALUE)? {
+        // SAFETY: `open` is a live key handle with KEY_SET_VALUE.
+        let status = unsafe { RegDeleteValueW(open.0, REGISTRY_DEFAULT_VALUE) };
+        if status.0 != 0 && status != ERROR_FILE_NOT_FOUND {
+            return Err(io_failure());
+        }
+    }
+    let wide = registry_wide(key)?;
+    // SAFETY: `wide` is NUL-terminated and outlives the call.
+    let status = unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, PCWSTR(wide.as_ptr())) };
+    if status.0 != 0 && status != ERROR_FILE_NOT_FOUND && status != ERROR_PATH_NOT_FOUND {
+        return Err(io_failure());
+    }
+    Ok(())
+}
+
+/// Decode a `REG_SZ` payload without lossy conversion.
+fn decode_registry_string(bytes: &[u8]) -> InstallResult<String> {
+    if !bytes.len().is_multiple_of(2) {
+        return Err(foreign_state());
+    }
+    let mut units: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
+    let mut index = 0;
+    while index < bytes.len() {
+        units.push(u16::from_le_bytes([bytes[index], bytes[index + 1]]));
+        index += 2;
+    }
+    while units.last() == Some(&0) {
+        units.pop();
+    }
+    let value = String::from_utf16(&units).map_err(|_| foreign_state())?;
+    if value.chars().any(char::is_control) {
+        return Err(foreign_state());
+    }
+    Ok(value)
+}
+
+/// Whether two Windows manifest paths name the same value (case-insensitive).
+fn same_windows_value(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+/// A bounded, NUL-terminated UTF-16 registry key.
+fn registry_wide(key: &str) -> InstallResult<Vec<u16>> {
+    if key.is_empty() || key.len() > 1024 || key.chars().any(char::is_control) {
+        return Err(unsafe_path());
+    }
+    Ok(key.encode_utf16().chain([0]).collect())
+}
+
+/// Open one file with the exact Win32 sharing and reparse-point semantics the
+/// installer needs. `share` of zero is an exclusive open (the installer lock).
+fn create_file(
+    path: &Path,
+    access: u32,
+    share: FILE_SHARE_MODE,
+    disposition: FILE_CREATION_DISPOSITION,
+    flags: FILE_FLAGS_AND_ATTRIBUTES,
+) -> io::Result<File> {
+    let wide = wide_path(path).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    // SAFETY: `wide` is NUL-terminated and outlives the call; no template or
+    // security attributes are needed for a file below a private directory.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            access,
+            share,
+            None,
+            disposition,
+            flags | FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+    }
+    .map_err(|error| io::Error::from_raw_os_error(error.code().0))?;
+    // SAFETY: CreateFileW transferred ownership of the handle to the caller.
+    Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
+/// Map a Win32 open failure to the installer vocabulary.
+fn map_open_error(error: &io::Error) -> InstallFailure {
+    match error.raw_os_error() {
+        // A second lock holder, or a destination another process has open
+        // without sharing: the caller retries, it is not a corruption.
+        Some(32) => InstallFailure::new(FailureCode::Busy),
+        Some(5) | Some(2) => unsafe_path(),
+        _ => io_failure(),
+    }
+}
+
+/// Whether an open handle names a reparse point instead of the intended object.
+fn is_reparse(file: &File) -> io::Result<bool> {
+    use std::os::windows::fs::MetadataExt;
+
+    Ok(file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0)
+}
+
+impl NativeFs for WindowsPlatform {
+    fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
+        native_ensure_layout(self, paths)?;
+        let file = create_file(
+            paths.lock_path(),
+            GENERIC_READ.0 | GENERIC_WRITE.0,
+            FILE_SHARE_MODE(0),
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+        )
+        .map_err(|error| map_open_error(&error))?;
+        if is_reparse(&file).map_err(|_| io_failure())? {
+            return Err(unsafe_path());
+        }
+        if !file.metadata().map_err(|_| io_failure())?.is_file() {
+            return Err(unsafe_path());
+        }
+        match file.try_lock() {
+            Ok(()) => Ok(InstallLock {
+                path: paths.lock_path().to_path_buf(),
+                file,
+            }),
+            Err(TryLockError::WouldBlock) => Err(InstallFailure::new(FailureCode::Busy)),
+            Err(_) => Err(io_failure()),
+        }
+    }
+
+    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        let (disposition, truncate) = match path.kind() {
+            PathKind::NewFile => (CREATE_NEW, false),
+            PathKind::File => (OPEN_EXISTING, true),
+            _ => return Err(unsafe_path()),
+        };
+        let mut file = create_file(
+            path.rendered(),
+            GENERIC_READ.0 | GENERIC_WRITE.0,
+            FILE_SHARE_MODE(0),
+            disposition,
+            FILE_ATTRIBUTE_NORMAL,
+        )
+        .map_err(|error| map_open_error(&error))?;
+        if is_reparse(&file).map_err(|_| io_failure())? {
+            return Err(unsafe_path());
+        }
+        let metadata = file.metadata().map_err(|_| io_failure())?;
+        if !metadata.is_file() {
+            return Err(unsafe_path());
+        }
+        if truncate {
+            file.set_len(0).map_err(|_| io_failure())?;
+        }
+        // Write every byte through the one handle, then flush that handle.
+        file.write_all(bytes).map_err(|_| io_failure())?;
+        file.sync_all().map_err(|_| io_failure())?;
+        read_back(&mut file, bytes).map_err(|_| io_failure())
+    }
+
+    fn replace_file(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
+        let staged_wide = wide_path(staged.rendered())?;
+        let live_wide = wide_path(live.rendered())?;
+        match live.kind() {
+            // ReplaceFileW atomically swaps the directory entry, preserves the
+            // destination's attributes and never writes through its inode.
+            PathKind::File => {
+                // SAFETY: both paths are NUL-terminated live buffers; no backup
+                // name, exclude or preserved-ACL parameter is requested.
+                unsafe {
+                    ReplaceFileW(
+                        PCWSTR(live_wide.as_ptr()),
+                        PCWSTR(staged_wide.as_ptr()),
+                        PCWSTR::null(),
+                        REPLACEFILE_WRITE_THROUGH,
+                        None,
+                        None,
+                    )
+                }
+                .map_err(|_| io_failure())
+            }
+            // A first publication has no destination to replace; MoveFileExW
+            // with write-through publishes the staged entry atomically.
+            PathKind::NewFile => {
+                // SAFETY: both paths are NUL-terminated live buffers.
+                unsafe {
+                    MoveFileExW(
+                        PCWSTR(staged_wide.as_ptr()),
+                        PCWSTR(live_wide.as_ptr()),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                    )
+                }
+                .map_err(|_| io_failure())
+            }
+            _ => Err(unsafe_path()),
+        }
+    }
+
+    fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>> {
+        let mut file = create_file(
+            path,
+            GENERIC_READ.0,
+            FILE_SHARE_READ,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+        )
+        .map_err(|error| map_open_error(&error))?;
+        if is_reparse(&file).map_err(|_| io_failure())?
+            || !file.metadata().map_err(|_| io_failure())?.is_file()
+        {
+            return Err(unsafe_path());
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|_| io_failure())?;
+        Ok(bytes)
+    }
+
+    fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
+        let mut file = create_file(
+            path,
+            GENERIC_READ.0,
+            FILE_SHARE_READ,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+        )
+        .map_err(|error| map_open_error(&error))?;
+        if is_reparse(&file).map_err(|_| io_failure())?
+            || !file.metadata().map_err(|_| io_failure())?.is_file()
+        {
+            return Err(unsafe_path());
+        }
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|_| io_failure())?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        Ok(Digest::from_bytes(hasher.finalize().into()))
+    }
+
+    fn flush_directory(&self, path: &Path) -> InstallResult<()> {
+        // A directory handle needs FILE_FLAG_BACKUP_SEMANTICS; the reparse-point
+        // flag keeps a linked directory from being flushed instead of this one.
+        let file = create_file(
+            path,
+            GENERIC_READ.0 | GENERIC_WRITE.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+        )
+        .map_err(|error| map_open_error(&error))?;
+        if is_reparse(&file).map_err(|_| io_failure())? {
+            return Err(unsafe_path());
+        }
+        file.sync_all().map_err(|_| io_failure())
+    }
+
+    fn create_directory(&self, path: &Path) -> InstallResult<()> {
+        let wide = wide_path(path)?;
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        // A protected DACL granting full control to the object owner (and
+        // nothing to everyone else) is inherited by everything the installer
+        // creates below the private root. `OW` resolves to the creating user;
+        // administrators retain take-ownership, never implicit read access.
+        let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)\0".encode_utf16().collect();
+        // SAFETY: `sddl` is NUL-terminated and `descriptor` is a live
+        // out-parameter whose allocation is released below.
+        let converted = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(sddl.as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        };
+        if converted.is_err() {
+            return Err(io_failure());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.0,
+            bInheritHandle: FALSE,
+        };
+        // SAFETY: `wide` is NUL-terminated and `attributes` (with its
+        // descriptor) outlives the call.
+        let status = unsafe { CreateDirectoryW(PCWSTR(wide.as_ptr()), Some(&attributes)) };
+        // SAFETY: `descriptor` is the allocation returned by the conversion.
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+        }
+        match status {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == HRESULT::from_win32(ERROR_ALREADY_EXISTS.0) => {
+                Err(unsafe_path())
+            }
+            Err(_) => Err(io_failure()),
+        }
+    }
+
+    fn remove_file(&self, path: &Path) -> InstallResult<()> {
+        fs::remove_file(path).map_err(|_| io_failure())
+    }
+
+    fn remove_directory(&self, path: &Path) -> InstallResult<()> {
+        match fs::remove_dir(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            // A non-empty directory is not ours to delete recursively.
+            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {
+                Err(InstallFailure::new(FailureCode::CleanupPending))
+            }
+            Err(_) => Err(io_failure()),
+        }
+    }
+
+    fn install_carrier(
+        &self,
+        source: &PackageSource,
+        destination: &ValidatedPath,
+    ) -> InstallResult<()> {
+        if source.kind() != PackageKind::File || destination.kind() != PathKind::NewFile {
+            return Err(invalid_package());
+        }
+        let from = wide_path(source.path())?;
+        let to = wide_path(destination.rendered())?;
+        let parameters = COPYFILE2_EXTENDED_PARAMETERS {
+            dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32,
+            dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS,
+            ..Default::default()
+        };
+        // CopyFile2 copies the complete file including every data stream and
+        // extended attribute (it is the documented superset of CopyFileEx), so
+        // the Authenticode signature and its secondary data survive the install.
+        // SAFETY: both paths are NUL-terminated live buffers and `parameters` is
+        // a correctly sized, fully initialized structure.
+        unsafe {
+            CopyFile2(
+                PCWSTR(from.as_ptr()),
+                PCWSTR(to.as_ptr()),
+                Some(&parameters),
+            )
+        }
+        .map_err(|_| io_failure())?;
+        // The destination bytes are the authenticated ones; flush them before
+        // the caller journals the created entry.
+        let file = create_file(
+            destination.rendered(),
+            GENERIC_READ.0,
+            FILE_SHARE_READ,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+        )
+        .map_err(|error| map_open_error(&error))?;
+        file.sync_all().map_err(|_| io_failure())?;
+        let parent = destination.rendered().parent().ok_or_else(unsafe_path)?;
+        self.flush_directory(parent)
+    }
 }

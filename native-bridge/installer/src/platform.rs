@@ -51,8 +51,13 @@ use crate::paths::{
 };
 use crate::policy::{CARRIER_HEADER_LEN, read_carrier};
 
+// Shared native-file orchestration: the decisions both native adapters must make
+// identically (durable writes, atomic replacement, ordered publication, exact
+// removal) live here; each adapter supplies only the OS primitives.
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg_attr(not(any(windows, target_os = "macos", test)), allow(dead_code))]
+mod native;
 #[cfg(windows)]
 mod windows;
 // The PE carrier-resource parser is Windows-only in production but portable in
@@ -69,8 +74,15 @@ mod windows_trust;
 
 #[cfg(target_os = "macos")]
 pub use macos::MacosPlatform;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::{macos_process_start, macos_verify_own_signature};
+pub use native::StdNativeFs;
 #[cfg(windows)]
 pub use windows::WindowsPlatform;
+#[cfg(windows)]
+pub(crate) use windows::windows_verify_own_signature;
+#[cfg(windows)]
+pub use windows::{PRODUCTION_REGISTRY_PREFIX, RegistryScope, RegistryView, TEST_REGISTRY_PREFIX};
 
 /// The only ownership-record schema generation supported at this boundary.
 pub const OWNERSHIP_SCHEMA_VERSION: u32 = 1;
@@ -97,7 +109,7 @@ const NO_FOLLOW: i32 = 0x0100;
 const NO_FOLLOW: i32 = 0;
 
 #[cfg(windows)]
-const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+pub(crate) const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
 
 /// One installer state document addressed through the platform boundary.
 ///
@@ -659,6 +671,32 @@ impl ValidatedPath {
         Self::build(self.anchor.clone(), self.relative.clone(), kind)
     }
 
+    /// A handle for one sibling of this path below the same anchor.
+    ///
+    /// The name must be a single normal component: a caller cannot turn this
+    /// into a general path constructor, and the sibling inherits the captured
+    /// ancestry so a later mutation revalidates the same trusted chain.
+    pub(crate) fn sibling(&self, name: &str, kind: PathKind) -> InstallResult<Self> {
+        if name.is_empty()
+            || name.len() > 255
+            || name.contains(['/', '\\'])
+            || name.contains(':')
+            || name.chars().any(char::is_control)
+        {
+            return Err(unsafe_path());
+        }
+        let parent = match self.relative.rfind('/') {
+            Some(index) => &self.relative[..index],
+            None => "",
+        };
+        let relative = if parent.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{parent}/{name}")
+        };
+        Self::build(self.anchor.clone(), relative, kind)
+    }
+
     /// The canonical anchor directory.
     pub fn anchor(&self) -> &Path {
         &self.anchor
@@ -892,7 +930,7 @@ fn os_eq(left: &OsStr, right: &OsStr) -> bool {
     left == right
 }
 
-fn same_path(left: &Path, right: &Path) -> bool {
+pub(crate) fn same_path(left: &Path, right: &Path) -> bool {
     match (comparable_components(left), comparable_components(right)) {
         (Some(left), Some(right)) => {
             left.len() == right.len()
@@ -3173,7 +3211,7 @@ fn read_no_follow(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn hash_file(path: &Path) -> InstallResult<Digest> {
+pub(crate) fn hash_file(path: &Path) -> InstallResult<Digest> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -3413,6 +3451,18 @@ fn remove_registration_checked(paths: &InstallPaths, expected: &Registration) ->
 /// read-only and never copies bytes. Links and special files are refused, and
 /// entry/byte bounds apply before anything is installed.
 fn carrier_entries_checked(source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
+    carrier_entries_with(source, hash_file)
+}
+
+/// [`carrier_entries_checked`] over a caller-supplied content hash.
+///
+/// The native adapters pass their own no-follow hasher so enumeration and
+/// install agree on the bytes they cover, while the portable adapter and the
+/// fake keep the `std` hasher.
+pub(crate) fn carrier_entries_with(
+    source: &PackageSource,
+    hash: impl Fn(&Path) -> InstallResult<Digest>,
+) -> InstallResult<Vec<CarrierEntry>> {
     let metadata = fs::symlink_metadata(source.path()).map_err(|_| invalid_package())?;
     if is_link_like(&metadata) {
         return Err(unsafe_path());
@@ -3428,7 +3478,7 @@ fn carrier_entries_checked(source: &PackageSource) -> InstallResult<Vec<CarrierE
             if total > MAX_CARRIER_BYTES as u64 {
                 return Err(invalid_package());
             }
-            let digest = hash_file(source.path())?;
+            let digest = hash(source.path())?;
             entries.push(CarrierEntry::new(
                 "",
                 OwnedKind::File,
@@ -3441,7 +3491,7 @@ fn carrier_entries_checked(source: &PackageSource) -> InstallResult<Vec<CarrierE
                 return Err(invalid_package());
             }
             entries.push(CarrierEntry::new("", OwnedKind::Directory, 0, None)?);
-            walk_carrier(source.path(), "", &mut entries, &mut total)?;
+            walk_carrier(source.path(), "", &mut entries, &mut total, &hash)?;
         }
     }
     Ok(entries)
@@ -3452,6 +3502,7 @@ fn walk_carrier(
     relative: &str,
     entries: &mut Vec<CarrierEntry>,
     total: &mut u64,
+    hash: &impl Fn(&Path) -> InstallResult<Digest>,
 ) -> InstallResult<()> {
     let mut children: Vec<_> = fs::read_dir(directory)
         .map_err(|_| io_failure())?
@@ -3481,7 +3532,7 @@ fn walk_carrier(
                 0,
                 None,
             )?);
-            walk_carrier(&path, &child_relative, entries, total)?;
+            walk_carrier(&path, &child_relative, entries, total, hash)?;
         } else if metadata.is_file() {
             *total = total
                 .checked_add(metadata.len())
@@ -3489,7 +3540,7 @@ fn walk_carrier(
             if *total > MAX_CARRIER_BYTES as u64 {
                 return Err(invalid_package());
             }
-            let digest = hash_file(&path)?;
+            let digest = hash(&path)?;
             entries.push(CarrierEntry::new(
                 &child_relative,
                 OwnedKind::File,

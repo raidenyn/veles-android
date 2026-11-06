@@ -61,7 +61,7 @@
 //! "no host", and every candidate is re-read by PID before the decision so a
 //! recycled PID is not mistaken for the observed process.
 
-use std::ffi::{CStr, OsStr, c_char, c_void};
+use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_void};
 use std::fs;
 use std::io;
 use std::mem::size_of;
@@ -73,6 +73,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::macos_trust as policy;
+use super::native::{
+    NativeFs, native_carrier_entries, native_ensure_layout, native_flush_parent,
+    native_install_carrier, native_lock, native_publish_manifest, native_quarantine_state,
+    native_read_registration, native_read_state, native_remove_manifest, native_remove_owned,
+    native_replace_durable, native_replace_file, native_write_durable, native_write_state,
+    read_back, require_published_manifest,
+};
 use super::{
     CarrierEntry, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
     PACKAGE_MACOS_CARRIER, PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage,
@@ -80,7 +87,7 @@ use super::{
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath, inspect_host_processes,
     path_is_within,
 };
-use crate::model::{FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
+use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
 
 /// Sealed carrier resource, relative to the bundle's `Contents` directory.
@@ -307,8 +314,8 @@ impl Drop for Cf {
 /// The macOS [`Platform`] adapter.
 ///
 /// Task 4 implements [`Platform::verify_trust`] and Task 5 implements
-/// [`Platform::inspect_hosts`]; the remaining boundary methods fail closed until
-/// Task 8 (native filesystem, registration and cleanup) implements them.
+/// [`Platform::inspect_hosts`]; Task 8 completes the native filesystem and
+/// Chrome registration surface.
 #[derive(Debug, Default)]
 pub struct MacosPlatform;
 
@@ -320,74 +327,83 @@ impl MacosPlatform {
 }
 
 impl Platform for MacosPlatform {
-    fn lock(&self, _paths: &InstallPaths) -> InstallResult<InstallLock> {
-        Err(unsupported())
+    fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
+        native_lock(self, paths)
     }
 
-    fn write_durable(&self, _path: &ValidatedPath, _bytes: &[u8]) -> InstallResult<()> {
-        Err(unsupported())
+    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        native_write_durable(self, path, bytes)
     }
 
-    fn replace_durable(&self, _path: &ValidatedPath, _bytes: &[u8]) -> InstallResult<()> {
-        // The native atomic replacement belongs to the Task 8 adapter.
-        Err(unsupported())
+    fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        native_replace_durable(self, path, bytes)
     }
 
     fn write_state(
         &self,
-        _paths: &InstallPaths,
-        _document: super::StateDocument,
-        _bytes: &[u8],
+        paths: &InstallPaths,
+        document: super::StateDocument,
+        bytes: &[u8],
     ) -> InstallResult<()> {
-        Err(unsupported())
+        native_write_state(self, paths, document, bytes)
     }
 
     fn read_state(
         &self,
-        _paths: &InstallPaths,
-        _document: super::StateDocument,
+        paths: &InstallPaths,
+        document: super::StateDocument,
     ) -> InstallResult<Option<Vec<u8>>> {
-        Err(unsupported())
+        native_read_state(self, paths, document)
     }
 
     fn quarantine_state(
         &self,
-        _paths: &InstallPaths,
-        _document: super::StateDocument,
+        paths: &InstallPaths,
+        document: super::StateDocument,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        native_quarantine_state(self, paths, document)
     }
 
-    fn publish_manifest(&self, _paths: &InstallPaths, _value: &Registration) -> InstallResult<()> {
-        Err(unsupported())
+    fn create_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        if path.kind() != super::PathKind::NewDirectory {
+            return Err(invalid_input());
+        }
+        path.revalidate()?;
+        NativeFs::create_directory(self, path.rendered())
     }
 
-    fn replace_manifest(
-        &self,
-        _staged: &ValidatedPath,
-        _live: &ValidatedPath,
-    ) -> InstallResult<()> {
-        Err(unsupported())
+    fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+        native_publish_manifest(self, paths, value)
     }
 
-    fn read_registration(&self, _paths: &InstallPaths) -> InstallResult<Option<Registration>> {
-        Err(unsupported())
+    fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
+        native_replace_file(self, staged, live)
     }
 
+    /// The live manifest file. macOS registers a Native Messaging host by the
+    /// manifest file itself, so there is no separate registry value and no
+    /// [`WindowsPreimage`](super::WindowsPreimage) to capture.
+    fn read_registration(&self, paths: &InstallPaths) -> InstallResult<Option<Registration>> {
+        native_read_registration(self, paths)
+    }
+
+    /// Publication step two on macOS is the ordered verification of step one:
+    /// the live manifest must still be exactly the bytes just published, and a
+    /// manifest another product owns is refused before anything is written.
     fn publish_registration(
         &self,
-        _paths: &InstallPaths,
-        _value: &Registration,
+        paths: &InstallPaths,
+        value: &Registration,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        require_published_manifest(self, paths, value)
     }
 
     fn remove_registration(
         &self,
-        _paths: &InstallPaths,
-        _expected: &Registration,
+        paths: &InstallPaths,
+        expected: &Registration,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        native_remove_manifest(self, paths, expected)
     }
 
     fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState> {
@@ -412,30 +428,24 @@ impl Platform for MacosPlatform {
         verify_trust(source, expected)
     }
 
-    /// BLOCKED (Task 8): a metadata-preserving `carrier.app` install.
-    ///
-    /// The portable engine cannot copy the bundle without dropping the extended
-    /// attributes and link targets Gatekeeper covers, so this adapter must fail
-    /// closed until Task 8 installs it with `copyfile(3)`.
-    fn carrier_entries(&self, _source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
-        Err(unsupported())
+    fn carrier_entries(&self, source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
+        native_carrier_entries(self, source)
     }
 
-    /// BLOCKED (Task 8): see [`Platform::install_carrier`].
     fn install_carrier(
         &self,
-        _source: &PackageSource,
-        _destination: &ValidatedPath,
+        source: &PackageSource,
+        destination: &ValidatedPath,
     ) -> InstallResult<()> {
-        Err(unsupported())
+        native_install_carrier(self, source, destination)
     }
 
-    fn remove_owned(&self, _entry: &OwnedEntry) -> InstallResult<()> {
-        Err(unsupported())
+    fn remove_owned(&self, entry: &OwnedEntry) -> InstallResult<()> {
+        native_remove_owned(self, entry)
     }
 
-    fn flush_parent(&self, _path: &ValidatedPath) -> InstallResult<()> {
-        Err(unsupported())
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
+        native_flush_parent(self, path)
     }
 }
 
@@ -928,6 +938,44 @@ fn cf_string(value: CFTypeRef) -> Option<String> {
     )
 }
 
+/// The start marker of one process, from its BSD info.
+pub(crate) fn macos_process_start(pid: u32) -> Option<u64> {
+    let info = bsd_info(pid as i32)?;
+    Some(
+        info.start_sec
+            .wrapping_mul(1_000_000)
+            .wrapping_add(info.start_usec),
+    )
+}
+
+/// Verify the cleanup helper's own code signature and return its Team ID.
+///
+/// This is the same strict static-code validation the package assessment uses
+/// (all architectures, nested code, strict bundle, symlink/sideband restrictions
+/// and enforced revocation), with no designated requirement because the helper
+/// verifies its own image and its publisher is pinned by the request. Gatekeeper
+/// assessment is not repeated here: it judges policy, not whether this exact
+/// image is intact.
+pub(crate) fn macos_verify_own_signature(path: &Path) -> InstallResult<String> {
+    let url = file_url(path)?;
+    let mut static_code: SecStaticCodeRef = ptr::null();
+    // SAFETY: `url` is a live CFURL for this executable.
+    let status = unsafe { SecStaticCodeCreateWithPath(url.0, 0, &mut static_code) };
+    if status != 0 {
+        return Err(classify(status));
+    }
+    let static_code = Cf::new(static_code).ok_or_else(unavailable)?;
+    // SAFETY: `static_code` is live; a null requirement requests no designated
+    // requirement, and every strict validation flag still applies.
+    let status =
+        unsafe { SecStaticCodeCheckValidity(static_code.0, SEC_STATIC_CODE_FLAGS, ptr::null()) };
+    if status != 0 {
+        return Err(classify(status));
+    }
+    let team = observed_team_id(&static_code)?;
+    Ok(format!("team:{team}"))
+}
+
 /// Classify a Security.framework status into the installer vocabulary.
 fn classify(status: i32) -> InstallFailure {
     policy::classify_security_status(status).failure()
@@ -959,4 +1007,283 @@ fn trust_denied() -> InstallFailure {
 
 fn unavailable() -> InstallFailure {
     InstallFailure::new(FailureCode::TrustUnavailable)
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: native filesystem and metadata-preserving carrier install.
+// ---------------------------------------------------------------------------
+
+/// `copyfile(3)` metadata classes. `COPYFILE_ALL` covers the ACL, stat,
+/// extended-attribute and data classes, which is what the code seal covers
+/// (including the resource fork, stored as `com.apple.ResourceFork`).
+const COPYFILE_ACL: u32 = 1 << 0;
+const COPYFILE_STAT: u32 = 1 << 1;
+const COPYFILE_XATTR: u32 = 1 << 2;
+const COPYFILE_DATA: u32 = 1 << 3;
+const COPYFILE_METADATA: u32 = COPYFILE_ACL | COPYFILE_STAT | COPYFILE_XATTR;
+const COPYFILE_ALL: u32 = COPYFILE_METADATA | COPYFILE_DATA;
+/// Refuse to overwrite an existing carrier entry.
+const COPYFILE_EXCL: u32 = 1 << 16;
+
+unsafe extern "C" {
+    fn copyfile(from: *const c_char, to: *const c_char, state: *mut c_void, flags: u32) -> c_int;
+    fn fcopyfile(from: c_int, to: c_int, state: *mut c_void, flags: u32) -> c_int;
+}
+
+/// One absolute path as a NUL-terminated C string.
+fn c_path(path: &Path) -> InstallResult<CString> {
+    CString::new(path.as_os_str().as_bytes()).map_err(|_| unsafe_path())
+}
+
+/// Copy one regular file with every metadata class the seal covers.
+fn copy_file_exact(from: &Path, to: &Path) -> InstallResult<()> {
+    let from = c_path(from)?;
+    let to = c_path(to)?;
+    // SAFETY: both paths are NUL-terminated live buffers; no copy state or
+    // callback is requested.
+    let status = unsafe {
+        copyfile(
+            from.as_ptr(),
+            to.as_ptr(),
+            ptr::null_mut(),
+            COPYFILE_ALL | COPYFILE_EXCL,
+        )
+    };
+    if status != 0 {
+        return Err(io_failure());
+    }
+    Ok(())
+}
+
+/// Copy one directory's ACL, stat and extended attributes onto an existing
+/// destination directory.
+fn copy_directory_metadata(from: &Path, to: &Path) -> InstallResult<()> {
+    use std::os::unix::io::AsRawFd;
+
+    let from_file = fs::File::open(from).map_err(|_| io_failure())?;
+    let to_file = fs::File::open(to).map_err(|_| io_failure())?;
+    // SAFETY: both descriptors are live for the call; only metadata classes are
+    // requested, so no directory data is read or written as a file.
+    let status = unsafe {
+        fcopyfile(
+            from_file.as_raw_fd(),
+            to_file.as_raw_fd(),
+            ptr::null_mut(),
+            COPYFILE_METADATA,
+        )
+    };
+    if status != 0 {
+        return Err(io_failure());
+    }
+    Ok(())
+}
+
+/// Copy one carrier app bundle entry by entry.
+///
+/// Bounds are checked before any copy and again per entry, so a package that
+/// grew after enumeration still cannot install an implausible tree. Links are
+/// recreated from their target (never followed) and special files are refused.
+fn copy_carrier_tree(
+    from: &Path,
+    to: &Path,
+    entries: &mut usize,
+    total: &mut u64,
+) -> InstallResult<()> {
+    let mut children: Vec<_> = fs::read_dir(from)
+        .map_err(|_| io_failure())?
+        .map(|entry| entry.map_err(|_| io_failure()))
+        .collect::<Result<_, _>>()?;
+    children.sort_by_key(|entry| entry.file_name());
+    for child in children {
+        *entries += 1;
+        if *entries > super::MAX_CARRIER_ENTRIES {
+            return Err(invalid_package());
+        }
+        let file_type = child.file_type().map_err(|_| io_failure())?;
+        let source = child.path();
+        let destination = to.join(child.file_name());
+        if !path_is_within(to, &destination) {
+            return Err(unsafe_path());
+        }
+        if file_type.is_symlink() {
+            let target = fs::read_link(&source).map_err(|_| io_failure())?;
+            std::os::unix::fs::symlink(target, &destination).map_err(|_| io_failure())?;
+        } else if file_type.is_dir() {
+            fs::create_dir(&destination).map_err(|_| io_failure())?;
+            set_owner_only(&destination)?;
+            copy_carrier_tree(&source, &destination, entries, total)?;
+            copy_directory_metadata(&source, &destination)?;
+        } else if file_type.is_file() {
+            let length = fs::symlink_metadata(&source)
+                .map_err(|_| io_failure())?
+                .len();
+            *total = total.checked_add(length).ok_or_else(invalid_package)?;
+            if *total > super::MAX_CARRIER_BYTES as u64 {
+                return Err(invalid_package());
+            }
+            copy_file_exact(&source, &destination)?;
+        } else {
+            return Err(unsafe_path());
+        }
+    }
+    Ok(())
+}
+
+/// Apply owner-only permissions to a freshly created directory or file.
+fn set_owner_only(path: &Path) -> InstallResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| io_failure())
+}
+
+impl NativeFs for MacosPlatform {
+    fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
+        native_ensure_layout(self, paths)?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+
+            options.mode(0o600).custom_flags(super::NO_FOLLOW);
+        }
+        let file = options.open(paths.lock_path()).map_err(|error| {
+            if error.raw_os_error() == Some(62) {
+                // ELOOP: the fixed lock name is a symbolic link.
+                unsafe_path()
+            } else {
+                io_failure()
+            }
+        })?;
+        if !file.metadata().map_err(|_| io_failure())?.is_file() {
+            return Err(unsafe_path());
+        }
+        match file.try_lock() {
+            Ok(()) => Ok(InstallLock {
+                path: paths.lock_path().to_path_buf(),
+                file,
+            }),
+            Err(super::TryLockError::WouldBlock) => Err(InstallFailure::new(FailureCode::Busy)),
+            Err(_) => Err(io_failure()),
+        }
+    }
+
+    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true);
+        match path.kind() {
+            super::PathKind::NewFile => {
+                options.create_new(true);
+            }
+            super::PathKind::File => {
+                options.truncate(true);
+            }
+            _ => return Err(unsafe_path()),
+        }
+        // O_NOFOLLOW makes the final component an error instead of following a
+        // link planted after revalidation.
+        options.mode(0o600).custom_flags(super::NO_FOLLOW);
+        let mut file = options.open(path.rendered()).map_err(|error| {
+            if error.kind() == io::ErrorKind::AlreadyExists || error.raw_os_error() == Some(62) {
+                unsafe_path()
+            } else {
+                io_failure()
+            }
+        })?;
+        if !file.metadata().map_err(|_| io_failure())?.is_file() {
+            return Err(unsafe_path());
+        }
+        use std::io::Write as _;
+        file.write_all(bytes).map_err(|_| io_failure())?;
+        file.sync_all().map_err(|_| io_failure())?;
+        read_back(&mut file, bytes).map_err(|_| io_failure())
+    }
+
+    fn replace_file(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
+        // Both siblings are below the same validated anchor, so the rename is a
+        // same-volume atomic directory-entry replacement.
+        fs::rename(staged.rendered(), live.rendered()).map_err(|_| io_failure())
+    }
+
+    fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>> {
+        super::read_no_follow(path).map_err(|_| io_failure())
+    }
+
+    fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
+        super::hash_file(path)
+    }
+
+    fn flush_directory(&self, path: &Path) -> InstallResult<()> {
+        super::flush_directory(path)
+    }
+
+    fn create_directory(&self, path: &Path) -> InstallResult<()> {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                return Err(unsafe_path());
+            }
+            Err(_) => return Err(io_failure()),
+        }
+        set_owner_only(path)?;
+        let parent = path.parent().ok_or_else(unsafe_path)?;
+        super::flush_directory(parent)
+    }
+
+    fn remove_file(&self, path: &Path) -> InstallResult<()> {
+        fs::remove_file(path).map_err(|_| io_failure())
+    }
+
+    fn remove_directory(&self, path: &Path) -> InstallResult<()> {
+        match fs::remove_dir(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {
+                Err(InstallFailure::new(FailureCode::CleanupPending))
+            }
+            Err(_) => Err(io_failure()),
+        }
+    }
+
+    fn install_carrier(
+        &self,
+        source: &PackageSource,
+        destination: &ValidatedPath,
+    ) -> InstallResult<()> {
+        match (source.kind(), destination.kind()) {
+            (PackageKind::File, super::PathKind::NewFile) => {
+                copy_file_exact(source.path(), destination.rendered())?;
+                // Flush the freshly copied file and its directory before the
+                // caller journals the created entry.
+                let file = fs::File::open(destination.rendered()).map_err(|_| io_failure())?;
+                file.sync_all().map_err(|_| io_failure())?;
+                let parent = destination.rendered().parent().ok_or_else(unsafe_path)?;
+                super::flush_directory(parent)
+            }
+            (PackageKind::Directory, super::PathKind::NewDirectory) => {
+                fs::create_dir(destination.rendered()).map_err(|_| io_failure())?;
+                set_owner_only(destination.rendered())?;
+                let mut entries = 0usize;
+                let mut total = 0u64;
+                copy_carrier_tree(
+                    source.path(),
+                    destination.rendered(),
+                    &mut entries,
+                    &mut total,
+                )?;
+                // The bundle root's ACL/stat/xattrs are part of the seal too.
+                copy_directory_metadata(source.path(), destination.rendered())?;
+                super::flush_directory(destination.rendered())?;
+                let parent = destination.rendered().parent().ok_or_else(unsafe_path)?;
+                super::flush_directory(parent)
+            }
+            _ => Err(invalid_package()),
+        }
+    }
 }

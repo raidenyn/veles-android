@@ -11,6 +11,7 @@
 //! This crate currently produces portable contract evidence only. It does not
 //! perform native installation, signing or acceptance.
 
+pub mod cleanup;
 pub mod inventory;
 pub mod journal;
 pub mod model;
@@ -21,6 +22,12 @@ pub mod policy;
 pub mod retained;
 pub mod transaction;
 
+pub use cleanup::{
+    CLEANUP_MAGIC, CLEANUP_SCHEMA_VERSION, CleanupChannel, CleanupCompletion, CleanupEntry,
+    CleanupFailure, CleanupFileSystem, CleanupReason, CleanupRequest, CleanupStatus,
+    MAX_CLEANUP_ENTRIES, MAX_CLEANUP_FRAME_BYTES, MAX_CLEANUP_TIMEOUT, ParentIdentity, ParentState,
+    RemoveOutcome, StdCleanupFs, encode_hex, execute_cleanup, hmac_sha256, parse_request,
+};
 pub use inventory::{
     INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, normalize_relative_path,
     parse_inventory, verify_inventory, write_inventory,
@@ -65,6 +72,8 @@ pub use platform::{
     parse_manifest, path_is_within, registration_is_owned, require_quiescent,
     require_quiescent_within,
 };
+#[cfg(windows)]
+pub use platform::{PRODUCTION_REGISTRY_PREFIX, RegistryScope, RegistryView, TEST_REGISTRY_PREFIX};
 pub use policy::{
     CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, authorize_package_policy, effective_policy,
     parse_descriptor, read_carrier, write_carrier,

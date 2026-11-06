@@ -30,12 +30,21 @@ windows = { version = "=0.62.2", features = [
     "Wdk_System_SystemInformation",
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Security_Cryptography",
     "Win32_Security_Cryptography_Catalog",
     "Win32_Security_Cryptography_Sip",
     "Win32_Security_WinTrust",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
+    # Task 8: HKCU Native Messaging publication (`RegCreateKeyExW` and friends),
+    # the bounded cleanup helper's inherited pipe (`CreateNamedPipeW`/
+    # `GetNamedPipeClientProcessId`, anonymous-pipe peer attribution), its own
+    # image path (`GetModuleFileNameW`) and deletion-on-close semantics
+    # (`SetFileInformationByHandle(FileDispositionInfo)`).
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_System_WindowsProgramming",
 ] }
