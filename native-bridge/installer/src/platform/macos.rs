@@ -401,6 +401,16 @@ impl Platform for MacosPlatform {
         verify_trust(source, expected)
     }
 
+    /// A retained version directory holds the same sealed `carrier.app` a fresh
+    /// package does, so the retained check is the identical Gatekeeper path.
+    fn verify_retained(
+        &self,
+        source: &PackageSource,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<TrustProof> {
+        verify_trust(source, expected)
+    }
+
     fn remove_owned(&self, _entry: &OwnedEntry) -> InstallResult<()> {
         Err(unsupported())
     }

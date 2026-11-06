@@ -1356,6 +1356,50 @@ impl OwnedEntry {
         Self::from_claim_allowing_short(paths, claim, Some(expected_size))
     }
 
+    /// Adopt one fixed installer-private artifact for removal.
+    ///
+    /// Unlike a receipt claim, these are not in `versions/`/`maintenance/`: they
+    /// are the installer's own state documents and emptied private directories.
+    /// Only the closed set of fixed paths is eligible, so an arbitrary caller
+    /// string can never turn cleanup into a delete. The handle captures the full
+    /// ancestry and the content digest; [`Platform::remove_owned`] revalidates and
+    /// re-hashes immediately before the unlink.
+    pub fn private_layout(
+        paths: &InstallPaths,
+        relative: &str,
+        kind: OwnedKind,
+    ) -> InstallResult<Option<Self>> {
+        let normalized = normalize_relative_path(relative).map_err(|_| unsafe_path())?;
+        if !is_private_artifact(&normalized, kind) {
+            return Err(unsafe_path());
+        }
+        let absolute = paths.root().join(Path::new(&normalized));
+        match fs::symlink_metadata(&absolute) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(io_failure()),
+            Ok(_) => {}
+        }
+        let path = match kind {
+            OwnedKind::File => ValidatedPath::new(paths, Path::new(&normalized), PathKind::File)?,
+            OwnedKind::Directory => {
+                ValidatedPath::new(paths, Path::new(&normalized), PathKind::Directory)?
+            }
+        };
+        let claim = OwnedClaim {
+            path: normalized,
+            kind,
+            sha256: match kind {
+                OwnedKind::File => Some(hash_file(path.rendered())?),
+                OwnedKind::Directory => None,
+            },
+        };
+        Ok(Some(Self {
+            path,
+            claim,
+            incomplete_size: None,
+        }))
+    }
+
     fn from_claim_allowing_short(
         paths: &InstallPaths,
         claim: &OwnedClaim,
@@ -1467,6 +1511,36 @@ fn is_owned_claim_scope(normalized: &str) -> bool {
         normalized.split('/').next(),
         Some(VERSIONS_DIR) | Some(MAINTENANCE_DIR)
     )
+}
+
+/// The fixed installer-private files cleanup may remove.
+///
+/// These are the installer's own state slots, never receipt claims. The list is
+/// closed on purpose: cleanup must not become a general delete primitive.
+const PRIVATE_LAYOUT_FILES: [&str; 3] = [
+    "state/journal.json",
+    "state/receipt.json",
+    "state/staging/registration.json",
+];
+
+/// The fixed installer-private directories cleanup may remove when empty.
+const PRIVATE_LAYOUT_DIRECTORIES: [&str; 3] = ["state/staging", "versions", "maintenance"];
+
+/// Whether `normalized` is one of the fixed installer-private layout paths.
+fn is_private_artifact(normalized: &str, kind: OwnedKind) -> bool {
+    let same = |candidate: &str| {
+        if cfg!(windows) {
+            normalized.eq_ignore_ascii_case(candidate)
+        } else {
+            normalized == candidate
+        }
+    };
+    match kind {
+        OwnedKind::File => PRIVATE_LAYOUT_FILES.iter().any(|candidate| same(candidate)),
+        OwnedKind::Directory => PRIVATE_LAYOUT_DIRECTORIES
+            .iter()
+            .any(|candidate| same(candidate)),
+    }
 }
 
 fn is_owned_executable_scope(normalized: &str) -> bool {
@@ -1618,6 +1692,18 @@ pub const TRUST_ASSESSMENT_MACOS_GATEKEEPER: &str = "macos-gatekeeper-assessed";
 pub const PACKAGE_WINDOWS_CARRIER: &str = "carrier.exe";
 /// macOS package member holding the sealed signed policy-carrier app bundle.
 pub const PACKAGE_MACOS_CARRIER: &str = "carrier.app";
+
+/// The signed policy-carrier artifact name for a release target.
+///
+/// The same name is used inside an authenticated package and inside the retained
+/// immutable version directory, so `verify_retained` can hand the version
+/// directory to the identical OS verification path a fresh package uses.
+pub const fn package_carrier_name(target: Target) -> &'static str {
+    match target {
+        Target::WindowsX64 => PACKAGE_WINDOWS_CARRIER,
+        Target::MacosArm64 => PACKAGE_MACOS_CARRIER,
+    }
+}
 /// Upper bound on directory entries walked while checking a package payload tree.
 const MAX_PACKAGE_TREE_ENTRIES: usize = 1 << 20;
 
@@ -2060,6 +2146,25 @@ pub trait Platform {
         source: &PackageSource,
         expected: &ReleaseDescriptor,
     ) -> InstallResult<TrustProof>;
+    /// Verify the OS signer/assessment of a **retained** signed carrier artifact.
+    ///
+    /// `source` is the immutable version directory. It contains the exact signed
+    /// carrier artifact (`carrier.exe` on Windows, `carrier.app` on macOS) that
+    /// was preserved at install time, next to the payload and the retained
+    /// metadata. The adapter must apply the *same* OS signature/Gatekeeper path
+    /// as [`Platform::verify_trust`] to that artifact and never trust the stored
+    /// metadata's claims: a rollback accepts the returned signer/assessment only.
+    ///
+    /// The default fails closed (`TrustUnavailable`) so a platform without a real
+    /// retained-carrier verification can never authorize a rollback.
+    fn verify_retained(
+        &self,
+        source: &PackageSource,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<TrustProof> {
+        let _ = (source, expected);
+        Err(InstallFailure::new(FailureCode::TrustUnavailable))
+    }
     /// Remove one validated owned entry.
     fn remove_owned(&self, entry: &OwnedEntry) -> InstallResult<()>;
     /// Flush the parent directory of a validated path.
@@ -2271,6 +2376,7 @@ pub enum PlatformCall {
     RemoveRegistration,
     InspectHosts,
     VerifyTrust,
+    VerifyRetained,
     RemoveOwned,
     FlushParent,
 }
@@ -2531,6 +2637,32 @@ impl Platform for FakePlatform {
         _expected: &ReleaseDescriptor,
     ) -> InstallResult<TrustProof> {
         self.observe(PlatformCall::VerifyTrust);
+        if self.faults.trust_denied {
+            return Err(InstallFailure::new(FailureCode::TrustDenied));
+        }
+        self.faults
+            .trust
+            .clone()
+            .ok_or_else(|| InstallFailure::new(FailureCode::TrustUnavailable))
+    }
+
+    fn verify_retained(
+        &self,
+        source: &PackageSource,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<TrustProof> {
+        self.observe(PlatformCall::VerifyRetained);
+        // The retained artifact must actually have been preserved: the fake
+        // cannot assess a signature, but it can refuse a version directory that
+        // never received the signed carrier the native path would verify.
+        let carrier = source.path().join(package_carrier_name(expected.target));
+        let present = match expected.target {
+            Target::WindowsX64 => fs::symlink_metadata(&carrier).is_ok_and(|m| m.is_file()),
+            Target::MacosArm64 => fs::symlink_metadata(&carrier).is_ok_and(|m| m.is_dir()),
+        };
+        if !present {
+            return Err(InstallFailure::new(FailureCode::InvalidPackage));
+        }
         if self.faults.trust_denied {
             return Err(InstallFailure::new(FailureCode::TrustDenied));
         }

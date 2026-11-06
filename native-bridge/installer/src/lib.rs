@@ -61,7 +61,7 @@ pub use platform::{
     StateDocument, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
     TrustProof, ValidatedPath, WindowsPreimage, assessment_target, authenticate_package,
     claim_owned_entries, claim_owned_registration, inspect_host_processes, is_accepted_assessment,
-    parse_manifest, path_is_within, registration_is_owned, require_quiescent,
+    package_carrier_name, parse_manifest, path_is_within, registration_is_owned, require_quiescent,
     require_quiescent_within,
 };
 pub use policy::{

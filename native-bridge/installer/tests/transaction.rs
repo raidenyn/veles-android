@@ -142,6 +142,10 @@ fn build_package(
 
     let carrier =
         write_carrier(&canonical_json(&descriptor).expect("descriptor JSON")).expect("carrier");
+    // The signed carrier artifact is retained with the version so a rollback can
+    // re-run the OS verification; the fixture's copy also stands in for the
+    // native signed binary.
+    fs::write(root.join("carrier.exe"), &carrier).expect("carrier artifact");
     let proof = TrustProof::new(PUBLISHER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, carrier)
         .expect("fixture trust proof");
 
@@ -495,6 +499,7 @@ impl Fixture {
             payload_id: self.payload_id(),
             old_version: Some("1.0.0".to_owned()),
             old_payload_id: self.prior_payload_id,
+            old_carrier_sha256: Some(Digest::of(b"prior carrier")),
             manifest: ManifestSnapshot::new(next_manifest).expect("bounded manifest"),
             old_manifest: Some(ManifestSnapshot::new(preimage.to_vec()).expect("bounded manifest")),
             preimage: Some(registration_preimage),
@@ -771,6 +776,7 @@ fn journal_rejects_unknown_phase_and_unbound_manifest() {
         payload_id: Digest::of(b"payload"),
         old_version: None,
         old_payload_id: None,
+        old_carrier_sha256: None,
         manifest: ManifestSnapshot::new(manifest).expect("bounded manifest"),
         old_manifest: None,
         preimage: None,

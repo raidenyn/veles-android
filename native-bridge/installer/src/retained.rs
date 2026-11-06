@@ -8,26 +8,29 @@
 //! committed and re-derive the release identity without trusting a package the
 //! caller supplies now.
 //!
-//! The document is data, never code: it carries the exact carrier bytes (hex),
-//! the OS-verified signer and assessment strings, and the strict descriptor. On
-//! read, the carrier is parsed again and must reproduce the descriptor exactly,
-//! the assessment must be one accepted for the descriptor target, and the signer
-//! must be listed by the descriptor's own policy. OS signature/assessment
-//! evidence was established when the release was installed; re-running a native
-//! trust engine on a retained file is Task 8's scope, so this document binds the
-//! bytes that evidence covered instead of inventing a fresh assessment.
+//! The document is data, never code: it carries the exact carrier bytes (hex) and
+//! the strict descriptor. It deliberately carries **no** signer or assessment
+//! string: those are trust verdicts, and a rollback re-establishes them by
+//! running the same OS signature/assessment path over the signed carrier artifact
+//! retained next to this document (see
+//! [`crate::platform::Platform::verify_retained`]). The locally stored carrier is
+//! only cross-checked against that fresh OS evidence; it can never authorize a
+//! signer by itself.
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES, MAX_PUBLISHER_BYTES,
-    ReleaseDescriptor, canonical_json,
+    FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES, ReleaseDescriptor,
+    canonical_json,
 };
-use crate::platform::{AuthenticatedPackage, is_accepted_assessment};
 use crate::policy::{CARRIER_HEADER_LEN, read_carrier};
 
 /// The only supported retained-metadata schema generation.
-pub const RETAINED_SCHEMA_VERSION: u32 = 1;
+///
+/// Generation 2 removed the stored signer/assessment strings: a rollback must
+/// derive them from fresh OS verification of the retained signed carrier, never
+/// from this document.
+pub const RETAINED_SCHEMA_VERSION: u32 = 2;
 /// File name of the retained release metadata inside a version directory.
 pub const RETAINED_FILE_NAME: &str = "installer-retained.json";
 /// The retained document is bounded to 1 MiB (a carrier and its descriptor).
@@ -40,22 +43,16 @@ pub struct RetainedInstall {
     pub schema: u32,
     /// The strict authenticated release descriptor.
     pub descriptor: ReleaseDescriptor,
-    /// The OS-verified signer identity recorded at install time.
-    pub signer: String,
-    /// The OS assessment verdict recorded at install time.
-    pub assessment: String,
     /// The exact authenticated carrier bytes, lowercase hex encoded.
     pub carrier_hex: String,
 }
 
 impl RetainedInstall {
     /// Capture the authenticated metadata of `package`.
-    pub fn from_package(package: &AuthenticatedPackage) -> InstallResult<Self> {
+    pub fn from_package(package: &crate::platform::AuthenticatedPackage) -> InstallResult<Self> {
         let value = Self {
             schema: RETAINED_SCHEMA_VERSION,
             descriptor: package.descriptor().clone(),
-            signer: package.signer().to_owned(),
-            assessment: package.assessment().to_owned(),
             carrier_hex: encode_hex(package.proof().carrier()),
         };
         value.validate()?;
@@ -79,26 +76,6 @@ impl RetainedInstall {
             return Err(invalid_package());
         }
         self.descriptor.validate()?;
-        for value in [&self.signer, &self.assessment] {
-            if value.is_empty()
-                || value.len() > MAX_PUBLISHER_BYTES
-                || value.chars().any(char::is_control)
-            {
-                return Err(invalid_package());
-            }
-        }
-        if !is_accepted_assessment(&self.assessment, self.descriptor.target) {
-            return Err(invalid_package());
-        }
-        if !self
-            .descriptor
-            .policy
-            .publishers
-            .iter()
-            .any(|publisher| publisher == &self.signer)
-        {
-            return Err(invalid_package());
-        }
         let carrier = self.carrier()?;
         if carrier.len() > CARRIER_HEADER_LEN + MAX_DOCUMENT_BYTES {
             return Err(invalid_package());

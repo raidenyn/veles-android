@@ -53,7 +53,7 @@ use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry, Operation,
     WarningCode, canonical_json, parse_version,
 };
-use crate::paths::{InstallPaths, LOCK_FILE};
+use crate::paths::{InstallPaths, JOURNAL_FILE, LOCK_FILE, RECEIPT_FILE, STAGING_DIR, STATE_DIR};
 use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, OWNERSHIP_SCHEMA_VERSION, OwnedEntry, OwnedKind,
     OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration, StateDocument,
@@ -61,7 +61,9 @@ use crate::platform::{
 };
 use crate::policy::authorize_package_policy;
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
-use crate::transaction::{STATE_INSTALLED, activate_retained, install, manifest_for};
+use crate::transaction::{
+    CarrierFile, STATE_INSTALLED, activate_retained, install, manifest_for, read_retained_carrier,
+};
 
 /// Nothing of this product is installed.
 pub const STATE_ABSENT: &str = "absent";
@@ -445,6 +447,8 @@ struct RepairPlan<'a> {
     inventory: Vec<u8>,
     retained_relative: String,
     retained: Vec<u8>,
+    /// Signed carrier artifact files the version directory must still hold.
+    carrier_files: Vec<CarrierFile>,
 }
 
 impl<'a> RepairPlan<'a> {
@@ -521,6 +525,33 @@ impl<'a> RepairPlan<'a> {
             return Err(foreign_state());
         }
 
+        // The signed carrier artifact is part of the immutable version: repair
+        // restores it when missing or damaged, exactly like the payload. The
+        // package's authenticated carrier document must still be the one the
+        // receipt committed (a same-release source never swaps the policy).
+        if Digest::of(package.proof().carrier()) != receipt.policy.carrier_sha256 {
+            return Err(foreign_state());
+        }
+        let (carrier_directories, carrier_files) =
+            read_retained_carrier(version_relative, paths.target(), package)?;
+        for directory in &carrier_directories {
+            if !claimed(directory, OwnedKind::Directory, None) {
+                return Err(foreign_state());
+            }
+            if !directories.contains(directory) {
+                directories.push(directory.clone());
+            }
+        }
+        for file in &carrier_files {
+            if !claimed(
+                &file.relative,
+                OwnedKind::File,
+                Some(Digest::of(&file.bytes)),
+            ) {
+                return Err(foreign_state());
+            }
+        }
+
         let mut files = Vec::with_capacity(package.payload().len());
         for source in package.payload() {
             let relative = format!("{version_relative}/{}", source.relative());
@@ -537,6 +568,7 @@ impl<'a> RepairPlan<'a> {
             inventory,
             retained_relative,
             retained,
+            carrier_files,
         })
     }
 
@@ -582,7 +614,18 @@ impl<'a> RepairPlan<'a> {
             self.retained.len() as u64,
             Digest::of(&self.retained),
             &self.retained,
-        )
+        )?;
+        for file in &self.carrier_files {
+            restore_bytes(
+                platform,
+                paths,
+                &file.relative,
+                file.bytes.len() as u64,
+                Digest::of(&file.bytes),
+                &file.bytes,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -695,14 +738,18 @@ fn uninstall(
                     // after the terminal inspection: an owned host may still be
                     // executing a payload that no receipt can claim.
                     require_quiescent_within(platform, paths, quiescence).map_err(deferred)?;
-                    let warnings = final_layout_cleanup(paths);
+                    let leftover = final_layout_cleanup(platform, paths)?;
                     Ok(report_with_warnings(
                         Operation::Uninstall,
                         STATE_UNINSTALLED,
                         None,
                         false,
                         None,
-                        warnings,
+                        if leftover {
+                            vec![WarningCode::LeftoverFiles]
+                        } else {
+                            Vec::new()
+                        },
                     ))
                 }
             };
@@ -737,7 +784,10 @@ fn uninstall(
         check_committed_registration(paths, live, manifest_sha256)?;
     }
 
-    require_quiescent_within(platform, paths, quiescence)?;
+    // An initially active host defers the whole removal: the receipt and the
+    // committed state stay durable and the frontend is told cleanup is pending,
+    // never a bare `HostActive` that reads like a different failure.
+    require_quiescent_within(platform, paths, quiescence).map_err(deferred)?;
 
     // Journal the removal before the first mutation whenever removing the
     // registration changes observable state. Without a live registration there
@@ -769,14 +819,30 @@ fn uninstall(
     if let Err(failure) = require_quiescent_within(platform, paths, quiescence) {
         return Err(deferred(failure));
     }
-    remove_owned_entries(platform, &entries)?;
+    let mut leftover = remove_owned_entries(platform, &entries)?;
 
-    // Everything the receipt claimed must be gone: an unrelated file left inside
-    // an owned directory prevents its removal and is preserved, and the report
-    // says cleanup is still pending rather than claiming a complete uninstall.
+    // Every owned *file* claim must be gone. A claimed directory that still
+    // exists can only retain foreign content at this point (every owned child
+    // was removed above): that is preserved and reported, not treated as a
+    // pending deletion.
     for claim in &record.owned {
-        if OwnedEntry::from_claim(paths, claim)?.is_some() {
-            return Err(InstallFailure::new(FailureCode::CleanupPending));
+        match claim.kind {
+            OwnedKind::File => match OwnedEntry::from_claim(paths, claim) {
+                // An owned file that is still there was not removed: keep the
+                // durable intent and report the deletion as pending.
+                Ok(Some(_)) | Err(_) => {
+                    return Err(InstallFailure::new(FailureCode::CleanupPending));
+                }
+                Ok(None) => {}
+            },
+            // A claimed directory that still exists (or was replaced by a link
+            // or another kind) keeps only foreign content now: preserve and
+            // report it rather than claiming a pending owned deletion.
+            OwnedKind::Directory => {
+                if !matches!(OwnedEntry::from_claim(paths, claim), Ok(None)) {
+                    leftover = true;
+                }
+            }
         }
     }
 
@@ -787,6 +853,14 @@ fn uninstall(
         return Err(deferred(failure));
     }
 
+    // Final private-layout cleanup happens *before* the durable intent is
+    // released, so an owned artifact that cannot be removed still reports
+    // `CleanupPending` with the receipt/journal intact (never a false success).
+    // Every deletion goes through a validated handle that revalidates its full
+    // ancestry immediately before the unlink; a swapped ancestor fails closed and
+    // its content is preserved as foreign leftovers.
+    leftover |= final_layout_cleanup(platform, paths)?;
+
     // Release the durable intent only after removal is proven. The receipt is
     // released before the journal: a crash in between leaves a journal whose
     // claims are all absent, so the retry finishes idempotently.
@@ -795,50 +869,61 @@ fn uninstall(
         Journal::clear(platform, paths)?;
     }
 
-    // Final private-layout cleanup is attempted only after the product is gone.
-    // Foreign files are preserved and reported; they never make the installer
-    // delete something it does not own.
-    let warnings = final_layout_cleanup(paths);
     Ok(report_with_warnings(
         Operation::Uninstall,
         STATE_UNINSTALLED,
         None,
         false,
         None,
-        warnings,
+        if leftover {
+            vec![WarningCode::LeftoverFiles]
+        } else {
+            Vec::new()
+        },
     ))
 }
 
-/// Best-effort removal of the installer's own state artifacts and empty private
-/// directories, then report files this product does not own.
+/// Remove the installer's own staging artifact and emptied private directories.
+///
+/// Every removal uses a validated handle ([`OwnedEntry::private_layout`]) that
+/// captures the ancestry and content identity and revalidates them immediately
+/// before the unlink: a `state/staging` directory swapped for a symlink during a
+/// quiescence inspection can therefore never turn cleanup into a delete outside
+/// the install root. Foreign content is preserved and reported; an owned artifact
+/// that cannot be removed is `CleanupPending` (the caller keeps its receipt and
+/// journal until removal is established).
 ///
 /// The held lock file, the `state/` directory and the fixed root cannot be
 /// removed while this process still holds the lock; they are the fixed layout,
-/// not leftovers. Everything else that remains below `versions/`,
-/// `maintenance/` or `state/` is foreign, is preserved, and is reported.
-fn final_layout_cleanup(paths: &InstallPaths) -> Vec<WarningCode> {
-    for file in [paths.journal_path(), paths.receipt_path()] {
-        remove_file_if_present(file);
-    }
-    remove_file_if_present(&paths.staging().join("registration.json"));
-    remove_directory_if_empty(paths.staging());
-    remove_directory_if_empty(paths.versions());
-    remove_directory_if_empty(paths.maintenance());
-    if layout_has_leftovers(paths) {
-        vec![WarningCode::LeftoverFiles]
-    } else {
-        Vec::new()
-    }
+/// not leftovers. The released (empty) journal/receipt slots are fixed state
+/// slots too and are not reported as leftovers.
+fn final_layout_cleanup(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<bool> {
+    remove_private_file(
+        platform,
+        paths,
+        &format!("{STATE_DIR}/{STAGING_DIR}/registration.json"),
+    )?;
+    // `versions/`, `maintenance/` and `state/staging/` are part of the fixed
+    // private layout the lock recreates on every run: an empty one is not a
+    // leftover and removing it would mutate on an idempotent retry. Non-empty
+    // ones hold foreign content and are reported below.
+    Ok(layout_has_leftovers(paths))
 }
 
-fn remove_file_if_present(path: &Path) {
-    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file()) {
-        let _ = fs::remove_file(path);
+/// Remove one fixed installer-private file, if it is still ours.
+fn remove_private_file(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    relative: &str,
+) -> InstallResult<()> {
+    match OwnedEntry::private_layout(paths, relative, OwnedKind::File) {
+        Ok(None) => Ok(()),
+        Ok(Some(entry)) => platform.remove_owned(&entry).map_err(deferred_removal),
+        // The path (or its ancestry) is no longer the installer's own file: it
+        // is foreign content now, preserved and reported rather than deleted.
+        Err(failure) if failure.code == FailureCode::UnsafePath => Ok(()),
+        Err(failure) => Err(deferred_removal(failure)),
     }
-}
-
-fn remove_directory_if_empty(path: &Path) {
-    let _ = fs::remove_dir(path);
 }
 
 /// Whether anything this product does not own remains inside its private layout.
@@ -850,7 +935,15 @@ fn layout_has_leftovers(paths: &InstallPaths) -> bool {
     }
     if let Ok(entries) = fs::read_dir(paths.state()) {
         for entry in entries.flatten() {
-            if entry.file_name() != LOCK_FILE {
+            let name = entry.file_name();
+            // The lock and the released (empty) journal/receipt slots are the
+            // fixed state layout, not leftovers. A quarantined or any other
+            // document is foreign and is reported.
+            if name != LOCK_FILE
+                && name != JOURNAL_FILE
+                && name != RECEIPT_FILE
+                && name != STAGING_DIR
+            {
                 return true;
             }
         }
@@ -900,6 +993,7 @@ fn uninstall_journal(
         payload_id: receipt.payload_id,
         old_version: None,
         old_payload_id: None,
+        old_carrier_sha256: None,
         manifest: ManifestSnapshot::new(live.manifest().to_vec())?,
         old_manifest: None,
         preimage: None,
@@ -921,16 +1015,17 @@ fn removal_claim(claim: &crate::platform::OwnedClaim) -> JournalClaim {
 }
 
 /// Remove owned files first and directories deepest-first.
-fn remove_owned_entries(platform: &impl Platform, entries: &[OwnedEntry]) -> InstallResult<()> {
+fn remove_owned_entries(platform: &impl Platform, entries: &[OwnedEntry]) -> InstallResult<bool> {
+    let mut leftover = false;
     let mut files: Vec<&OwnedEntry> = entries
         .iter()
         .filter(|entry| entry.claim().kind == OwnedKind::File)
         .collect();
     files.sort_by(|left, right| left.claim().path.cmp(&right.claim().path));
     for entry in files {
-        if let Err(failure) = platform.remove_owned(entry) {
-            return Err(deferred(failure));
-        }
+        // Any error removing an owned file is a deletion that has not been
+        // established: never report a completed uninstall.
+        platform.remove_owned(entry).map_err(deferred_removal)?;
     }
 
     let mut directories: Vec<&OwnedEntry> = entries
@@ -943,11 +1038,29 @@ fn remove_owned_entries(platform: &impl Platform, entries: &[OwnedEntry]) -> Ins
             .then_with(|| right.claim().path.cmp(&left.claim().path))
     });
     for entry in directories {
-        if let Err(failure) = platform.remove_owned(entry) {
-            return Err(deferred(failure));
+        match platform.remove_owned(entry) {
+            Ok(()) => {}
+            // Non-empty through foreign content: preserve it and report it.
+            Err(failure) if failure.code == FailureCode::CleanupPending => leftover = true,
+            // Replaced by a link/other kind: not ours to delete any more.
+            Err(failure) if failure.code == FailureCode::UnsafePath => leftover = true,
+            Err(failure) => return Err(deferred_removal(failure)),
         }
     }
-    Ok(())
+    Ok(leftover)
+}
+
+/// Classify a failed removal of an owned path.
+///
+/// An owned path that cannot be removed means cleanup is not established: it is
+/// reported as `CleanupPending` with the durable receipt/journal retained, never
+/// as a completed uninstall. Paths that are no longer the owned content are
+/// classified separately by the caller as preserved foreign leftovers.
+fn deferred_removal(failure: InstallFailure) -> InstallFailure {
+    match failure.code {
+        FailureCode::UnsafePath | FailureCode::RecoveryRequired => failure,
+        _ => InstallFailure::new(FailureCode::CleanupPending),
+    }
 }
 
 /// A removal that could not complete is deferred visibly, never reported as a

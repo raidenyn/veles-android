@@ -216,6 +216,16 @@ impl Platform for WindowsPlatform {
         verify_trust(source, expected)
     }
 
+    /// A retained version directory holds the same signed `carrier.exe` a fresh
+    /// package does, so the retained check is the identical Authenticode path.
+    fn verify_retained(
+        &self,
+        source: &PackageSource,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<TrustProof> {
+        verify_trust(source, expected)
+    }
+
     fn remove_owned(&self, _entry: &OwnedEntry) -> InstallResult<()> {
         Err(unsupported())
     }

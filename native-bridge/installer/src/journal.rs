@@ -436,6 +436,12 @@ pub struct Journal {
     pub old_version: Option<String>,
     /// Previous payload identity, when a committed receipt names one.
     pub old_payload_id: Option<Digest>,
+    /// SHA-256 of the previous release's authenticated policy carrier.
+    ///
+    /// Journaled with the previous identity so recovery and receipt rebuilding
+    /// can bind the retained carrier to evidence even if the replaced receipt is
+    /// gone or unreadable.
+    pub old_carrier_sha256: Option<Digest>,
     /// Exact new manifest bytes this transaction activates.
     pub manifest: ManifestSnapshot,
     /// Exact previous manifest bytes, when one was live.
@@ -495,6 +501,9 @@ impl Journal {
             parse_version(version)?;
         }
         if self.old_version.is_some() != self.old_payload_id.is_some() {
+            return Err(invalid_input());
+        }
+        if self.old_payload_id.is_some() != self.old_carrier_sha256.is_some() {
             return Err(invalid_input());
         }
         if self.created.len() > MAX_INVENTORY_ENTRIES {
@@ -589,6 +598,12 @@ pub struct PriorInstall {
     pub payload_id: Digest,
     /// Exact manifest digest of the prior registration, when it was live.
     pub manifest_sha256: Option<Digest>,
+    /// SHA-256 of the authenticated policy carrier bytes of the prior release.
+    ///
+    /// A rollback re-derives the carrier through the OS trust path and requires
+    /// those bytes to match this receipt-claimed digest; the retained metadata
+    /// can never substitute a carrier (or signer) of its own.
+    pub carrier_sha256: Digest,
 }
 
 /// The committed receipt for this installation.

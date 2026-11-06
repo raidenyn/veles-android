@@ -55,16 +55,17 @@ use crate::journal::{
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry, Operation,
-    WarningCode, canonical_json, extension_origin, parse_version,
+    ReleaseDescriptor, WarningCode, canonical_json, extension_origin, parse_version,
 };
 use crate::paths::{InstallPaths, VERSIONS_DIR};
 use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, NativeManifest, OWNERSHIP_SCHEMA_VERSION,
-    OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PathKind, Platform, Registration,
-    StateDocument, ValidatedPath, WindowsPreimage, claim_owned_entries, claim_owned_registration,
-    parse_manifest, registration_is_owned, require_quiescent, require_quiescent_within,
+    OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageSource, PathKind, Platform,
+    Registration, StateDocument, ValidatedPath, WindowsPreimage, claim_owned_entries,
+    claim_owned_registration, is_accepted_assessment, parse_manifest, registration_is_owned,
+    require_quiescent, require_quiescent_within,
 };
-use crate::policy::{authorize_package_policy, effective_policy};
+use crate::policy::{authorize_package_policy, effective_policy, read_carrier};
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
 
 /// The report state of a completed install.
@@ -99,7 +100,20 @@ struct Plan {
     /// Authenticated carrier/API metadata retained with this version.
     retained_relative: String,
     retained: Vec<u8>,
+    /// The signed carrier artifact copied from the package into the version.
+    carrier_files: Vec<CarrierFile>,
 }
+
+/// One file of the retained signed carrier artifact.
+pub(crate) struct CarrierFile {
+    pub(crate) relative: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// Bound on the number of entries retained from a signed carrier artifact.
+const MAX_RETAINED_CARRIER_ENTRIES: usize = 4096;
+/// Bound on the bytes retained from a signed carrier artifact (64 MiB).
+const MAX_RETAINED_CARRIER_BYTES: usize = 64 * 1024 * 1024;
 
 /// Install one authenticated package.
 ///
@@ -319,19 +333,50 @@ pub(crate) fn activate_retained(
         return Err(no_rollback());
     }
 
-    // The signer must be authorized under BOTH policies, not merely belong to a
-    // non-empty publisher intersection. A retained package signed by a publisher
-    // the persisted policy has revoked must stay denied.
+    // Retained content is authenticated exactly like a fresh install: the same
+    // OS signature/Gatekeeper path runs over the signed carrier artifact copied
+    // into the immutable version directory. The locally stored metadata is only
+    // cross-checked against that evidence; it can never supply a signer, an
+    // assessment or a policy of its own. The OS-derived carrier bytes must also
+    // match the digest the committed receipt claims for the retained release.
+    let carrier_source =
+        PackageSource::open(&paths.root().join(&version_relative)).map_err(|_| no_rollback())?;
+    let anchor = ReleaseDescriptor {
+        target: paths.target(),
+        channel: paths.channel(),
+        policy: current.release_policy.clone(),
+        ..descriptor.clone()
+    };
+    let proof = platform.verify_retained(&carrier_source, &anchor)?;
+    if !is_accepted_assessment(proof.assessment(), paths.target()) {
+        return Err(InstallFailure::new(FailureCode::TrustDenied));
+    }
+    let os_descriptor =
+        read_carrier(proof.carrier()).map_err(|_| InstallFailure::new(FailureCode::TrustDenied))?;
+    if &os_descriptor != descriptor {
+        return Err(InstallFailure::new(FailureCode::TrustDenied));
+    }
+    let retained_carrier = retained.carrier()?;
+    if proof.carrier() != retained_carrier.as_slice()
+        || Digest::of(proof.carrier()) != prior.carrier_sha256
+    {
+        return Err(InstallFailure::new(FailureCode::TrustDenied));
+    }
+
+    // The OS-verified signer must be authorized under BOTH policies, not merely
+    // belong to a non-empty publisher intersection. A retained artifact signed by
+    // a publisher the persisted policy has revoked must stay denied.
+    let signer = proof.signer();
     if !current
         .release_policy
         .publishers
         .iter()
-        .any(|publisher| publisher == &retained.signer)
-        || !descriptor
+        .any(|publisher| publisher == signer)
+        || !os_descriptor
             .policy
             .publishers
             .iter()
-            .any(|publisher| publisher == &retained.signer)
+            .any(|publisher| publisher == signer)
     {
         return Err(InstallFailure::new(FailureCode::PolicyDenied));
     }
@@ -414,14 +459,15 @@ pub(crate) fn activate_retained(
         payload_id: prior.payload_id,
         old_version: Some(current.version.clone()),
         old_payload_id: Some(current.payload_id),
+        old_carrier_sha256: Some(current.policy.carrier_sha256),
         manifest,
         old_manifest: Some(old_manifest),
         preimage: Some(preimage),
         policy: PolicyCarrierRefs::new(
             Digest::of(&canonical_json(descriptor)?),
-            Digest::of(&retained.carrier()?),
-            retained.signer.clone(),
-            retained.assessment.clone(),
+            Digest::of(proof.carrier()),
+            proof.signer(),
+            proof.assessment(),
             policy.epoch,
         )?,
         release_policy: policy,
@@ -590,64 +636,32 @@ fn retained_claims(
     ownership: &OwnershipRecord,
 ) -> InstallResult<Vec<JournalClaim>> {
     ownership.validate(paths)?;
+    let contains = |relative: &str| {
+        relative == version_relative || relative.starts_with(&format!("{version_relative}/"))
+    };
     let claimed = |relative: &str, kind: OwnedKind, sha256: Option<Digest>| {
         ownership
             .owned
             .iter()
             .any(|claim| claim.kind == kind && claim.path == relative && claim.sha256 == sha256)
     };
+    let claim_exists = |relative: &str, kind: OwnedKind| {
+        ownership
+            .owned
+            .iter()
+            .any(|claim| claim.kind == kind && claim.path == relative)
+    };
 
-    let mut directories = vec![version_relative.to_owned()];
-    for entry in entries {
-        let parts: Vec<&str> = entry.path.split('/').collect();
-        let mut prefix = version_relative.to_owned();
-        for part in &parts[..parts.len() - 1] {
-            prefix.push('/');
-            prefix.push_str(part);
-            if !directories.contains(&prefix) {
-                directories.push(prefix.clone());
-            }
-        }
+    // The immutable version directory itself must be owned by this receipt.
+    if !claimed(version_relative, OwnedKind::Directory, None) {
+        return Err(no_rollback());
     }
-    directories.sort_by(|left, right| {
-        path_depth(left)
-            .cmp(&path_depth(right))
-            .then_with(|| left.cmp(right))
-    });
-
-    let mut claims = Vec::with_capacity(directories.len() + entries.len() + 2);
-    for directory in &directories {
-        if !claimed(directory, OwnedKind::Directory, None) {
-            return Err(no_rollback());
-        }
-        match fs::symlink_metadata(paths.root().join(directory)) {
-            Ok(metadata) if metadata.is_dir() => {
-                ValidatedPath::new(paths, Path::new(directory), PathKind::Directory)?;
-            }
-            // A missing or replaced directory of the retained version means the
-            // target is no longer the verified payload: repair guidance, not a
-            // delete.
-            _ => return Err(no_rollback()),
-        }
-        claims.push(JournalClaim::directory(directory.clone()));
-    }
+    // Every authenticated payload entry is a claimed file with its exact digest.
     for entry in entries {
         let relative = format!("{version_relative}/{}", entry.path);
         if !claimed(&relative, OwnedKind::File, Some(entry.sha256)) {
             return Err(no_rollback());
         }
-        // Damaged retained content is guidance, not `ForeignState`: the prior
-        // installation stays exactly as it is.
-        match OwnedEntry::from_claim(paths, &OwnedClaim::file(relative.clone(), entry.sha256)) {
-            Ok(Some(_)) => {}
-            Ok(None) | Err(_) => return Err(no_rollback()),
-        }
-        claims.push(JournalClaim::file(
-            relative,
-            entry.sha256,
-            entry.size,
-            false,
-        ));
     }
     // The installed inventory document is the retained payload identity; it is a
     // file claim of the receipt, not an authenticated package member.
@@ -655,22 +669,62 @@ fn retained_claims(
     if !claimed(&inventory_relative, OwnedKind::File, Some(payload_id)) {
         return Err(no_rollback());
     }
-    let inventory = match OwnedEntry::from_claim(
-        paths,
-        &OwnedClaim::file(inventory_relative.clone(), payload_id),
+    // The retained metadata and the signed carrier artifact are claims of the
+    // immutable version too: a rollback must be able to prove and later remove
+    // exactly what it re-activated (receipt generation carries them forward).
+    if !claim_exists(
+        &format!("{version_relative}/{RETAINED_FILE_NAME}"),
+        OwnedKind::File,
     ) {
-        Ok(Some(entry)) => entry,
-        Ok(None) | Err(_) => return Err(no_rollback()),
+        return Err(no_rollback());
+    }
+    let carrier_relative = format!(
+        "{version_relative}/{}",
+        crate::platform::package_carrier_name(paths.target())
+    );
+    let carrier_kind = match paths.target() {
+        crate::model::Target::WindowsX64 => OwnedKind::File,
+        crate::model::Target::MacosArm64 => OwnedKind::Directory,
     };
-    let size = fs::symlink_metadata(inventory.path().rendered())
-        .map_err(|_| no_rollback())?
-        .len();
-    claims.push(JournalClaim::file(
-        inventory_relative,
-        payload_id,
-        size,
-        false,
-    ));
+    if !claim_exists(&carrier_relative, carrier_kind) {
+        return Err(no_rollback());
+    }
+
+    // Every claim inside the version directory is re-verified through a validated
+    // handle and journaled, so the rebuilt receipt keeps ownership of the whole
+    // tree it re-activated (metadata and carrier included) and an interrupted
+    // rollback can verify it again.
+    let mut claims = Vec::with_capacity(ownership.owned.len());
+    for claim in &ownership.owned {
+        if !contains(&claim.path) {
+            continue;
+        }
+        match claim.kind {
+            OwnedKind::File => {
+                let sha256 = claim.sha256.ok_or_else(no_rollback)?;
+                // Damaged retained content is guidance, not `ForeignState`: the
+                // prior installation stays exactly as it is.
+                let entry = match OwnedEntry::from_claim(paths, claim) {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) | Err(_) => return Err(no_rollback()),
+                };
+                let size = fs::symlink_metadata(entry.path().rendered())
+                    .map_err(|_| no_rollback())?
+                    .len();
+                claims.push(JournalClaim::file(claim.path.clone(), sha256, size, false));
+            }
+            OwnedKind::Directory => {
+                match fs::symlink_metadata(paths.root().join(&claim.path)) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        ValidatedPath::new(paths, Path::new(&claim.path), PathKind::Directory)
+                            .map_err(|_| no_rollback())?;
+                    }
+                    _ => return Err(no_rollback()),
+                }
+                claims.push(JournalClaim::directory(claim.path.clone()));
+            }
+        }
+    }
     Ok(claims)
 }
 
@@ -871,6 +925,16 @@ impl Plan {
                 true,
             ));
         }
+        // Retain the exact signed carrier artifact next to the payload. A later
+        // rollback runs the same OS signature/Gatekeeper path over this copy as a
+        // fresh install does; the metadata document is never the authority.
+        let (carrier_directories, carrier_files) =
+            read_retained_carrier(&version_relative, paths.target(), package)?;
+        for directory in carrier_directories {
+            if !directories.contains(&directory) {
+                directories.push(directory);
+            }
+        }
         directories.sort_by(|left, right| {
             path_depth(left)
                 .cmp(&path_depth(right))
@@ -956,6 +1020,14 @@ impl Plan {
             retained.len() as u64,
             true,
         ));
+        for file in &carrier_files {
+            created.push(JournalClaim::file(
+                &file.relative,
+                Digest::of(&file.bytes),
+                file.bytes.len() as u64,
+                true,
+            ));
+        }
 
         let journal = Journal {
             schema: JOURNAL_SCHEMA_VERSION,
@@ -977,6 +1049,7 @@ impl Plan {
             payload_id,
             old_version: prior.as_ref().map(|receipt| receipt.version.clone()),
             old_payload_id: prior.as_ref().map(|receipt| receipt.payload_id),
+            old_carrier_sha256: prior.as_ref().map(|receipt| receipt.policy.carrier_sha256),
             manifest,
             old_manifest,
             preimage,
@@ -995,6 +1068,7 @@ impl Plan {
             inventory,
             retained_relative,
             retained,
+            carrier_files,
         })
     }
 }
@@ -1094,7 +1168,117 @@ fn stage_payload(
     )?;
     platform.write_durable(&target, &plan.inventory)?;
     let target = ValidatedPath::new(paths, Path::new(&plan.retained_relative), PathKind::NewFile)?;
-    platform.write_durable(&target, &plan.retained)
+    platform.write_durable(&target, &plan.retained)?;
+    for file in &plan.carrier_files {
+        let target = ValidatedPath::new(paths, Path::new(&file.relative), PathKind::NewFile)?;
+        platform.write_durable(&target, &file.bytes)?;
+    }
+    Ok(())
+}
+
+/// Read the signed carrier artifact from the authenticated package and lay it out
+/// inside the immutable version directory.
+///
+/// The package root already passed OS verification (it holds the carrier the
+/// native adapter authenticated). The copy is retained so a later rollback can
+/// re-run the identical OS check without the original download. Links and
+/// special files are refused: only plain carrier bytes are ever retained.
+pub(crate) fn read_retained_carrier(
+    version_relative: &str,
+    target: crate::model::Target,
+    package: &AuthenticatedPackage,
+) -> InstallResult<(Vec<String>, Vec<CarrierFile>)> {
+    let name = crate::platform::package_carrier_name(target);
+    let source = package.package().path().join(name);
+    let root_relative = format!("{version_relative}/{name}");
+    let metadata = fs::symlink_metadata(&source).map_err(|_| invalid_package())?;
+    if metadata.file_type().is_symlink() {
+        return Err(unsafe_path());
+    }
+    let mut directories = Vec::new();
+    let mut files = Vec::new();
+    let mut total = 0usize;
+    match target {
+        crate::model::Target::WindowsX64 => {
+            if !metadata.is_file() {
+                return Err(invalid_package());
+            }
+            let bytes = fs::read(&source).map_err(|_| io_failure())?;
+            if bytes.is_empty() || bytes.len() > MAX_RETAINED_CARRIER_BYTES {
+                return Err(invalid_package());
+            }
+            files.push(CarrierFile {
+                relative: root_relative,
+                bytes,
+            });
+        }
+        crate::model::Target::MacosArm64 => {
+            if !metadata.is_dir() {
+                return Err(invalid_package());
+            }
+            directories.push(root_relative.clone());
+            walk_retained_carrier(
+                &source,
+                &root_relative,
+                &mut directories,
+                &mut files,
+                &mut total,
+            )?;
+        }
+    }
+    Ok((directories, files))
+}
+
+/// Walk one signed carrier bundle, collecting plain directories and files.
+fn walk_retained_carrier(
+    directory: &Path,
+    relative: &str,
+    directories: &mut Vec<String>,
+    files: &mut Vec<CarrierFile>,
+    total: &mut usize,
+) -> InstallResult<()> {
+    let mut entries: Vec<_> = fs::read_dir(directory)
+        .map_err(|_| io_failure())?
+        .map(|entry| entry.map_err(|_| io_failure()))
+        .collect::<Result<_, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if directories.len() + files.len() >= MAX_RETAINED_CARRIER_ENTRIES {
+            return Err(invalid_package());
+        }
+        let name = entry
+            .file_name()
+            .to_str()
+            .ok_or_else(unsafe_path)?
+            .to_owned();
+        let path = entry.path();
+        let child_relative = format!("{relative}/{name}");
+        let metadata = fs::symlink_metadata(&path).map_err(|_| io_failure())?;
+        if metadata.file_type().is_symlink() {
+            // A carrier bundle containing links cannot be retained through the
+            // validated no-follow boundary; the native adapter must implement a
+            // link-preserving copy when a release bundle needs one.
+            return Err(unsafe_path());
+        }
+        if metadata.is_dir() {
+            directories.push(child_relative.clone());
+            walk_retained_carrier(&path, &child_relative, directories, files, total)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(unsafe_path());
+        }
+        let size = metadata.len() as usize;
+        *total = total.saturating_add(size);
+        if *total > MAX_RETAINED_CARRIER_BYTES {
+            return Err(invalid_package());
+        }
+        files.push(CarrierFile {
+            relative: child_relative,
+            bytes: fs::read(&path).map_err(|_| io_failure())?,
+        });
+    }
+    Ok(())
 }
 
 /// Read authenticated source bytes and re-check the authenticated identity.
@@ -1200,14 +1384,22 @@ fn remove_superseded_versions(
         return Ok(());
     }
     require_quiescent(platform, paths)?;
-    remove_claims(platform, paths, &claims)
+    remove_claims(platform, paths, &claims, journal.manifest.sha256())
 }
 
 /// Remove a set of receipt claims, files first and directories deepest-first.
+///
+/// The live registration is re-read and compared with the activation this prune
+/// belongs to immediately before **every** deletion. Pruning runs after the
+/// quiescence wait, and that wait is exactly when a retained version could become
+/// live again (for example a launcher that re-activates the old release): deleting
+/// it then would remove the executable the browser is about to start. A changed
+/// registration aborts the prune, keeping every version for a later pass.
 fn remove_claims(
     platform: &impl Platform,
     paths: &InstallPaths,
     claims: &[OwnedClaim],
+    expected_live: Digest,
 ) -> InstallResult<()> {
     let mut entries = Vec::with_capacity(claims.len());
     for claim in claims {
@@ -1221,6 +1413,7 @@ fn remove_claims(
         .collect();
     files.sort_by(|left, right| left.claim().path.cmp(&right.claim().path));
     for entry in files {
+        require_live_registration_unchanged(platform, paths, expected_live)?;
         platform.remove_owned(entry)?;
     }
     let mut directories: Vec<&OwnedEntry> = entries
@@ -1233,9 +1426,28 @@ fn remove_claims(
             .then_with(|| right.claim().path.cmp(&left.claim().path))
     });
     for entry in directories {
+        require_live_registration_unchanged(platform, paths, expected_live)?;
         platform.remove_owned(entry)?;
     }
     Ok(())
+}
+
+/// Abort a prune unless the live registration still names `expected_live`.
+fn require_live_registration_unchanged(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    expected_live: Digest,
+) -> InstallResult<()> {
+    match platform.read_registration(paths)? {
+        Some(live)
+            if registration_is_owned(paths, &live) && live.manifest_digest() == expected_live =>
+        {
+            Ok(())
+        }
+        // The activation this prune belongs to is no longer live: keep the
+        // version and report the deletion as deferred rather than guessing.
+        _ => Err(InstallFailure::new(FailureCode::CleanupPending)),
+    }
 }
 
 /// Remove every path this transaction created, after rechecking quiescence.
@@ -1326,6 +1538,17 @@ fn complete_forward(
         return Err(io_failure());
     }
 
+    // Retention: the normal path prunes superseded versions before the receipt
+    // commit. A crash between activation and that prune leaves the old receipt
+    // still claiming them, and the new receipt is about to drop those claims. Run
+    // the same guarded prune pass first, from the receipt being replaced, so the
+    // committed state still names exactly one prior version and no directory is
+    // orphaned without an owner.
+    if let ReceiptState::Committed(existing) = Receipt::load(platform, paths)?
+        && existing.transaction_id != journal.transaction_id
+    {
+        remove_superseded_versions(platform, paths, &existing, journal)?;
+    }
     ensure_receipt(platform, paths, journal)?;
     journal
         .with_phase(Phase::ReceiptCommitted)
@@ -1433,16 +1656,22 @@ fn build_receipt(
         // is bounded: exactly one prior version is carried forward, and every
         // superseded version claim is dropped here (the directories themselves
         // are removed during transactional cleanup).
-        let retained = match (&journal.old_version, journal.old_payload_id) {
-            (Some(version), Some(payload_id)) => {
-                Some(paths.version_dir_relative(&parse_version(version)?, payload_id))
-            }
-            _ => None,
-        };
+        //
+        // The version this transaction activates is kept too: after a rollback
+        // the target was the *previous* receipt's claim set, and the rebuilt
+        // receipt must keep owning its retained metadata and signed carrier
+        // artifact, not only the payload files the journal happened to journal.
+        let mut keep = Vec::new();
+        if let (Some(version), Some(payload_id)) = (&journal.old_version, journal.old_payload_id) {
+            keep.push(paths.version_dir_relative(&parse_version(version)?, payload_id));
+        }
+        keep.push(
+            paths.version_dir_relative(&parse_version(&journal.version)?, journal.payload_id),
+        );
         for entry in claim_owned_entries(paths, &prior.ownership)? {
             let claim = entry.claim();
             let in_versions = claim.path.starts_with(&format!("{VERSIONS_DIR}/"));
-            let retained_version = retained.as_ref().is_some_and(|retained| {
+            let retained_version = keep.iter().any(|retained| {
                 claim.path == *retained || claim.path.starts_with(&format!("{retained}/"))
             });
             if !in_versions || retained_version {
@@ -1459,6 +1688,7 @@ fn build_receipt(
             version: version.clone(),
             payload_id,
             manifest_sha256: journal.old_manifest.as_ref().map(ManifestSnapshot::sha256),
+            carrier_sha256: journal.old_carrier_sha256.ok_or_else(recovery_required)?,
         }),
         (None, None) => None,
         _ => return Err(recovery_required()),

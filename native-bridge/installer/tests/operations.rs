@@ -33,10 +33,11 @@ use std::time::Duration;
 
 use veles_bridge_installer::{
     AuthenticatedPackage, Channel, Digest, FailureCode, FakePlatform, Faults, HostState,
-    InstallLock, InstallPaths, InstallResult, InventoryEntry, JournalState, Operation,
-    PRODUCTION_HOST_NAME, Platform, PlatformCall, PortablePlatform, RETAINED_FILE_NAME, Receipt,
-    ReceiptState, Registration, ReleaseDescriptor, ReleasePolicy, STATE_ABSENT, STATE_DAMAGED,
-    STATE_FOREIGN, STATE_REPAIRED, STATE_ROLLED_BACK, STATE_UNINSTALLED, StateDocument,
+    InstallFailure, InstallLock, InstallPaths, InstallResult, InventoryEntry, JournalState,
+    NativeManifest, Operation, PRODUCTION_HOST_NAME, Platform, PlatformCall, PortablePlatform,
+    RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, Receipt, ReceiptState, Registration,
+    ReleaseDescriptor, ReleasePolicy, RetainedInstall, STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN,
+    STATE_REPAIRED, STATE_ROLLED_BACK, STATE_UNINSTALLED, StateDocument,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof,
     ValidatedPath, Version, WarningCode, authenticate_package, canonical_json, extension_origin,
     parse_manifest, path_is_within, recover, run_operation, run_operation_within, write_carrier,
@@ -90,6 +91,29 @@ impl Drop for TempRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(out, "{byte:02x}").expect("hex encoding");
+    }
+    out
+}
+
+/// A valid owned manifest selecting `executable`, as an injected registration
+/// would carry it.
+fn manifest_selecting(paths: &InstallPaths, executable: &Path) -> Vec<u8> {
+    canonical_json(&NativeManifest {
+        name: paths.registration_name().to_owned(),
+        description: "injected earlier release".to_owned(),
+        path: executable.to_str().expect("UTF-8 fixture path").to_owned(),
+        kind: "stdio".to_owned(),
+        allowed_origins: vec![extension_origin(EXTENSION_ID).expect("valid fixture origin")],
+    })
+    .expect("canonical manifest")
 }
 
 /// The payload identity of a `(host, notice)` payload, exactly as the installer
@@ -212,6 +236,18 @@ fn build_package_with(
 
     let carrier =
         write_carrier(&canonical_json(&descriptor).expect("descriptor JSON")).expect("carrier");
+    // The same signed carrier artifact a native package holds. The installer
+    // copies it into the immutable version and a rollback re-verifies that copy.
+    match target {
+        Target::WindowsX64 => {
+            fs::write(root.join("carrier.exe"), &carrier).expect("carrier artifact");
+        }
+        Target::MacosArm64 => {
+            let resources = root.join("carrier.app/Contents/Resources");
+            fs::create_dir_all(&resources).expect("carrier bundle");
+            fs::write(resources.join("veles-policy-carrier"), &carrier).expect("carrier resource");
+        }
+    }
     let proof = TrustProof::new(signer, assessment, carrier).expect("fixture trust proof");
 
     Package {
@@ -397,6 +433,19 @@ impl Fixture {
     fn platform(&self) -> FakePlatform {
         FakePlatform::with_faults(Faults {
             host_state: HostState::Quiescent,
+            ..Faults::default()
+        })
+    }
+
+    /// A platform whose retained-carrier OS verification accepts `proof`.
+    ///
+    /// A rollback re-runs the OS trust path over the retained signed carrier; the
+    /// fake stands in for that native evidence, so a rollback test must supply the
+    /// proof of the release being re-activated (never a stored metadata string).
+    fn platform_trusting(&self, proof: &TrustProof) -> FakePlatform {
+        FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust: Some(proof.clone()),
             ..Faults::default()
         })
     }
@@ -734,6 +783,186 @@ impl Platform for InterveningPlatform {
     }
 }
 
+/// Behaviours the cleanup/prune contract tests need to inject at a precise
+/// boundary, while every other call stays a real [`FakePlatform`] operation.
+enum Hook {
+    /// Fail removing one exact owned path (an installer-private staging artifact).
+    FailRemoval { path: String },
+    /// Replace the live registration once it names an executable under `prefix`.
+    Reregister {
+        when_executable_under: String,
+        replacement: Vec<u8>,
+    },
+    /// Die (as a killed process would) before the first removal under `prefix`.
+    CrashBeforeRemoval { prefix: String },
+    /// Replace `state/staging` with a symlink to `outside` before inspection `at`.
+    #[cfg(unix)]
+    SymlinkStaging { outside: PathBuf, at: usize },
+}
+
+/// A [`Platform`] that delegates every call to [`FakePlatform`] and applies one
+/// injected [`Hook`]. Every method is delegated so the inner call log and faults
+/// stay complete.
+struct HookedPlatform {
+    inner: FakePlatform,
+    hook: Hook,
+    inspections: AtomicUsize,
+    fired: AtomicUsize,
+}
+
+impl HookedPlatform {
+    fn new(hook: Hook) -> Self {
+        Self {
+            inner: FakePlatform::with_faults(Faults {
+                host_state: HostState::Quiescent,
+                ..Faults::default()
+            }),
+            hook,
+            inspections: AtomicUsize::new(0),
+            fired: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl Platform for HookedPlatform {
+    fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
+        self.inner.lock(paths)
+    }
+
+    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        self.inner.write_durable(path, bytes)
+    }
+
+    fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        self.inner.replace_durable(path, bytes)
+    }
+
+    fn write_state(
+        &self,
+        paths: &InstallPaths,
+        document: StateDocument,
+        bytes: &[u8],
+    ) -> InstallResult<()> {
+        self.inner.write_state(paths, document, bytes)
+    }
+
+    fn read_state(
+        &self,
+        paths: &InstallPaths,
+        document: StateDocument,
+    ) -> InstallResult<Option<Vec<u8>>> {
+        self.inner.read_state(paths, document)
+    }
+
+    fn quarantine_state(&self, paths: &InstallPaths, document: StateDocument) -> InstallResult<()> {
+        self.inner.quarantine_state(paths, document)
+    }
+
+    fn create_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        self.inner.create_directory(path)
+    }
+
+    fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
+        self.inner.replace_manifest(staged, live)
+    }
+
+    fn read_registration(&self, paths: &InstallPaths) -> InstallResult<Option<Registration>> {
+        self.inner.read_registration(paths)
+    }
+
+    fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+        self.inner.publish_manifest(paths, value)
+    }
+
+    fn publish_registration(
+        &self,
+        paths: &InstallPaths,
+        value: &Registration,
+    ) -> InstallResult<()> {
+        self.inner.publish_registration(paths, value)
+    }
+
+    fn remove_registration(
+        &self,
+        paths: &InstallPaths,
+        expected: &Registration,
+    ) -> InstallResult<()> {
+        self.inner.remove_registration(paths, expected)
+    }
+
+    fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState> {
+        let state = self.inner.inspect_hosts(paths)?;
+        let inspection = self.inspections.fetch_add(1, Ordering::SeqCst);
+        let _ = inspection;
+        match &self.hook {
+            Hook::Reregister {
+                when_executable_under,
+                replacement,
+            } if self.fired.load(Ordering::SeqCst) == 0 => {
+                if let Some(live) = self.inner.read_registration(paths)?
+                    && parse_manifest(live.manifest()).is_ok_and(|manifest| {
+                        manifest
+                            .executable()
+                            .is_ok_and(|path| path.starts_with(when_executable_under))
+                    })
+                {
+                    fs::write(paths.registration_path(), replacement)
+                        .expect("injected re-registration");
+                    self.fired.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            #[cfg(unix)]
+            Hook::SymlinkStaging { outside, at } if inspection == *at => {
+                let staging = paths.staging();
+                let moved = paths.state().join("staging.before-cleanup");
+                fs::rename(staging, &moved).expect("move staging aside");
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(outside, staging).expect("staging symlink");
+            }
+            _ => {}
+        }
+        Ok(state)
+    }
+
+    fn verify_trust(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<TrustProof> {
+        self.inner.verify_trust(source, expected)
+    }
+
+    fn verify_retained(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<TrustProof> {
+        self.inner.verify_retained(source, expected)
+    }
+
+    fn remove_owned(&self, entry: &veles_bridge_installer::OwnedEntry) -> InstallResult<()> {
+        match &self.hook {
+            Hook::FailRemoval { path } if entry.claim().path == *path => {
+                Err(InstallFailure::new(FailureCode::Io))
+            }
+            Hook::CrashBeforeRemoval { prefix }
+                if entry.claim().path.starts_with(prefix)
+                    && self.fired.fetch_add(1, Ordering::SeqCst) == 0 =>
+            {
+                panic!(
+                    "injected process death before pruning {}",
+                    entry.claim().path
+                );
+            }
+            _ => self.inner.remove_owned(entry),
+        }
+    }
+
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
+        self.inner.flush_parent(path)
+    }
+}
+
 #[test]
 fn same_version_repairs_missing_files_not_trust() {
     let fixture = Fixture::windows();
@@ -989,7 +1218,7 @@ fn rollback_rejects_known_denial() {
 
     // A correctly signed older package cannot erase the recorded denial: the
     // persisted policy and the retained policy are both applied.
-    let platform = fixture.platform();
+    let platform = fixture.platform_trusting(&v1.proof);
     let failure = run_operation(
         &platform,
         paths,
@@ -1018,7 +1247,7 @@ fn rollback_rejects_known_denial() {
 
     // The retained carrier makes rollback independent of a supplied package, but
     // the persisted denial still applies to the recorded prior target.
-    let platform = fixture.platform();
+    let platform = fixture.platform_trusting(&v1.proof);
     let failure = run_operation(&platform, paths, Operation::Rollback, None)
         .expect_err("a denied retained target is never re-activated");
     assert_eq!(failure.code, FailureCode::PolicyDenied);
@@ -1460,7 +1689,7 @@ fn rollback_activates_the_retained_verified_payload() {
     let retained_v2 = version_dir(paths, "2.0.0", p2);
     let before = snapshot(fixture.temp.path());
 
-    let platform = fixture.platform();
+    let platform = fixture.platform_trusting(&v1.proof);
     let report = run_operation(
         &platform,
         paths,
@@ -1526,7 +1755,7 @@ fn rollback_activates_the_retained_verified_payload() {
 
     // The receipt now retains 2.0.0 as its prior: 1.0.0 is no longer a rollback
     // target, and the refusal mutates nothing.
-    let platform = fixture.platform();
+    let platform = fixture.platform_trusting(&v1.proof);
     let failure = run_operation(
         &platform,
         paths,
@@ -1538,6 +1767,46 @@ fn rollback_activates_the_retained_verified_payload() {
     assert!(failure.prior_usable);
     assert!(platform.mutations().is_empty());
     assert_eq!(fixture.registration(), live);
+
+    // The rolled-back-to version's retained metadata and signed carrier are
+    // owned claims of the new receipt. Without them a later repair would see
+    // unclaimed files and uninstall could never remove the version directory.
+    for (version, payload_id) in [("1.0.0", p1), ("2.0.0", p2)] {
+        let directory = paths.version_dir_relative(
+            &Version::parse(version).expect("fixture version"),
+            payload_id,
+        );
+        for relative in [
+            format!("{directory}/{RETAINED_FILE_NAME}"),
+            format!("{directory}/carrier.exe"),
+        ] {
+            assert!(
+                receipt
+                    .ownership
+                    .owned
+                    .iter()
+                    .any(|claim| claim.path == relative),
+                "the rollback receipt keeps its claim on {relative}"
+            );
+        }
+    }
+    // Uninstall can remove both retained versions: the version directory is not
+    // left with an unclaimed retained document.
+    let platform = fixture.platform();
+    let report = run_operation(&platform, paths, Operation::Uninstall, None)
+        .expect("the rolled-back installation uninstalls completely");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(
+        !report.warns(WarningCode::LeftoverFiles),
+        "{:?}",
+        report.warnings
+    );
+    assert_eq!(
+        fs::read_dir(paths.versions())
+            .expect("versions dir")
+            .count(),
+        0
+    );
 }
 
 #[test]
@@ -1561,7 +1830,7 @@ fn interrupted_rollback_keeps_the_retained_payload_and_settles() {
     );
     probe.install(&probe_v1);
     probe.install(&probe_v2);
-    let platform = probe.platform();
+    let platform = probe.platform_trusting(&probe_v1.proof);
     run_operation(
         &platform,
         &probe.paths,
@@ -1602,6 +1871,7 @@ fn interrupted_rollback_keeps_the_retained_payload_and_settles() {
         let crashing = FakePlatform::with_faults(Faults {
             host_state: HostState::Quiescent,
             panic_at_mutation: Some(attempt),
+            trust: Some(v1.proof.clone()),
             ..Faults::default()
         });
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
@@ -1718,7 +1988,7 @@ fn rollback_requires_signer_authorized_by_both_policies() {
 
     // A retained package signed by a publisher the persisted policy revoked is
     // never accepted just because some other publisher is still trusted.
-    let platform = fixture.platform();
+    let platform = fixture.platform_trusting(&v1.proof);
     let failure = run_operation(
         &platform,
         paths,
@@ -1926,8 +2196,13 @@ fn rollback_uses_retained_authenticated_carrier_without_a_package() {
 
     // No package and no original download: the authenticated carrier retained in
     // the immutable version directory is sufficient.
-    let report = run_operation(&fixture.platform(), paths, Operation::Rollback, None)
-        .expect("the retained verified prior release re-activates");
+    let report = run_operation(
+        &fixture.platform_trusting(&v1.proof),
+        paths,
+        Operation::Rollback,
+        None,
+    )
+    .expect("the retained verified prior release re-activates");
     assert_eq!(report.state, STATE_ROLLED_BACK);
     assert_eq!(report.active_payload, Some(p1));
     assert!(report.failure.is_none());
@@ -1991,7 +2266,7 @@ fn damaged_retained_metadata_requests_repair_not_foreign_state() {
         b"tampered",
     )
     .expect("damaged retained payload");
-    let platform = fixture.platform();
+    let platform = fixture.platform_trusting(&v1.proof);
     let failure = run_operation(&platform, paths, Operation::Rollback, None)
         .expect_err("a damaged retained payload is not a rollback target");
     assert_eq!(failure.code, FailureCode::NoRollback);
@@ -2196,8 +2471,13 @@ fn rollback_warns_when_the_retained_api_window_does_not_overlap() {
     fixture.install(&v1);
     fixture.install(&v2);
 
-    let report = run_operation(&fixture.platform(), paths, Operation::Rollback, None)
-        .expect("the retained prior re-activates with a compatibility warning");
+    let report = run_operation(
+        &fixture.platform_trusting(&v1.proof),
+        paths,
+        Operation::Rollback,
+        None,
+    )
+    .expect("the retained prior re-activates with a compatibility warning");
     assert_eq!(report.state, STATE_ROLLED_BACK);
     assert!(
         report.warns(WarningCode::CompatibilityWindow),
@@ -2241,4 +2521,408 @@ fn report_warnings_are_additive_bounded_and_deduplicated() {
         serde_json::from_str::<veles_bridge_installer::InstallReport>(&too_many).is_err(),
         "the warning list is bounded"
     );
+}
+
+/// F4: a retained metadata document and its receipt claim digest can both be
+/// rewritten, but the retained signed carrier is still verified by the OS. The
+/// forged signer/policy is never accepted.
+#[test]
+fn forged_retained_metadata_and_receipt_hash_is_rejected() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), vec![p1]),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), vec![p1]),
+    );
+    fixture.install(&v1);
+    fixture.install(&v2);
+
+    let retained_relative = format!("versions/1.0.0-{}/{}", p1.to_hex(), RETAINED_FILE_NAME);
+    let retained_path = paths.root().join(&retained_relative);
+    let genuine_metadata = fs::read(&retained_path).expect("retained metadata");
+    let genuine_receipt = receipt(paths).expect("receipt");
+
+    // Forge the metadata to claim a different publisher set and a matching,
+    // self-consistent carrier, then rewrite the receipt's claim digest for that
+    // file. Only fresh OS verification of the retained signed carrier can tell
+    // this apart from the real release.
+    let mut forged_descriptor = v1.descriptor.clone();
+    forged_descriptor
+        .policy
+        .publishers
+        .push("Forged Publisher".to_owned());
+    let forged_carrier =
+        write_carrier(&canonical_json(&forged_descriptor).expect("forged descriptor JSON"))
+            .expect("forged carrier");
+    let forged = RetainedInstall {
+        schema: RETAINED_SCHEMA_VERSION,
+        descriptor: forged_descriptor,
+        carrier_hex: hex(&forged_carrier),
+    };
+    let forged_bytes = forged.to_bytes().expect("forged metadata bytes");
+    fs::write(&retained_path, &forged_bytes).expect("forged retained metadata");
+    let mut forged_receipt = genuine_receipt.clone();
+    for claim in &mut forged_receipt.ownership.owned {
+        if claim.path == retained_relative {
+            claim.sha256 = Some(Digest::of(&forged_bytes));
+        }
+    }
+    forged_receipt
+        .write(&PortablePlatform::new(), paths)
+        .expect("forged receipt with a matching claim digest");
+
+    let registration = fixture.registration();
+    let before = snapshot(fixture.temp.path());
+    let platform = fixture.platform_trusting(&v1.proof);
+    let failure = run_operation(&platform, paths, Operation::Rollback, None)
+        .expect_err("the OS verdict does not match the forged metadata");
+    assert_eq!(
+        failure.code,
+        FailureCode::TrustDenied,
+        "forged signer/policy metadata is a trust failure"
+    );
+    assert!(
+        platform.calls().contains(&PlatformCall::VerifyRetained),
+        "the retained carrier goes through the OS verification path"
+    );
+    assert!(!platform.calls().contains(&PlatformCall::VerifyTrust));
+    assert!(platform.mutations().is_empty());
+    assert_eq!(snapshot(fixture.temp.path()), before);
+    assert_eq!(fixture.registration(), registration);
+
+    // Even a metadata document identical to the OS-verified carrier cannot
+    // substitute bytes for the receipt-claimed carrier digest.
+    fs::write(&retained_path, &genuine_metadata).expect("restore genuine metadata");
+    let mut digest_forged = genuine_receipt;
+    digest_forged
+        .prior
+        .as_mut()
+        .expect("a retained prior")
+        .carrier_sha256 = Digest::of(b"forged carrier bytes");
+    digest_forged
+        .write(&PortablePlatform::new(), paths)
+        .expect("receipt with a forged carrier digest");
+    let platform = fixture.platform_trusting(&v1.proof);
+    let failure = run_operation(&platform, paths, Operation::Rollback, None)
+        .expect_err("a carrier that does not match the committed digest is rejected");
+    assert_eq!(failure.code, FailureCode::TrustDenied);
+    assert!(platform.mutations().is_empty());
+}
+
+/// F6: an owned staging artifact that cannot be deleted is a pending cleanup,
+/// never a completed uninstall, and the durable receipt/journal survive so the
+/// retry can finish.
+#[test]
+fn uninstall_reports_cleanup_pending_for_an_owned_staging_artifact() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let artifact = paths.staging().join("registration.json");
+    fs::write(&artifact, b"staged registration manifest").expect("owned staging artifact");
+
+    let platform = HookedPlatform::new(Hook::FailRemoval {
+        path: "state/staging/registration.json".to_owned(),
+    });
+    let failure = run_operation_within(&platform, paths, Operation::Uninstall, None, SHORT_WAIT)
+        .expect_err("an owned artifact that cannot be removed is not success");
+    assert_eq!(failure.code, FailureCode::CleanupPending);
+    assert!(artifact.exists(), "the artifact is preserved for the retry");
+    assert!(
+        receipt(paths).is_some(),
+        "the durable removal intent survives a deferred cleanup"
+    );
+    match journal_state(paths) {
+        JournalState::Pending(journal) => assert_eq!(journal.operation, Operation::Uninstall),
+        other => panic!("the uninstall journal must stay pending, not {other:?}"),
+    }
+
+    let platform = fixture.platform();
+    let report = run_operation_within(&platform, paths, Operation::Uninstall, None, SHORT_WAIT)
+        .expect("the retried uninstall removes the artifact");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(
+        !artifact.exists(),
+        "the owned artifact is removed by the retry"
+    );
+    assert!(receipt(paths).is_none());
+    assert!(matches!(journal_state(paths), JournalState::None));
+}
+
+/// F6: foreign content inside a claimed version directory is preserved and
+/// reported as leftovers; the rest of the uninstall still completes.
+#[test]
+fn uninstall_preserves_foreign_content_inside_a_claimed_version_directory() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let installed = version_dir(paths, "1.0.0", p1);
+    let foreign = installed.join("foreign.txt");
+    fs::write(&foreign, b"not ours").expect("foreign file inside the claimed version");
+
+    let platform = fixture.platform();
+    let report = run_operation(&platform, paths, Operation::Uninstall, None)
+        .expect("foreign content does not block the owned removal");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(
+        report.warns(WarningCode::LeftoverFiles),
+        "foreign content is reported: {:?}",
+        report.warnings
+    );
+    assert_eq!(
+        fs::read(&foreign).expect("foreign file preserved"),
+        b"not ours"
+    );
+    assert!(
+        !installed.join("host.exe").exists(),
+        "the owned payload is removed"
+    );
+    assert!(receipt(paths).is_none());
+    assert!(matches!(journal_state(paths), JournalState::None));
+
+    // The second uninstall reports the same leftovers and mutates nothing.
+    let platform = fixture.platform();
+    let again = run_operation(&platform, paths, Operation::Uninstall, None)
+        .expect("the second uninstall is idempotent");
+    assert_eq!(again.warnings, vec![WarningCode::LeftoverFiles]);
+    assert_eq!(
+        fs::read(&foreign).expect("foreign file preserved"),
+        b"not ours"
+    );
+    assert!(
+        platform.mutations().is_empty(),
+        "nothing is left to remove: {:?}",
+        platform.mutations()
+    );
+}
+
+/// C-B: pruning re-reads the live registration immediately before each deletion.
+/// A retained version that becomes live during the quiescence wait survives.
+#[test]
+fn pruning_rechecks_the_live_registration_before_deleting() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let p2 = payload_id(HOST_V2, NOTICE_V2);
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), Vec::new()),
+    );
+    let v3 = fixture.package(
+        "v3",
+        "3.0.0",
+        HOST_V3,
+        NOTICE_V3,
+        policy(3, Vec::new(), Vec::new()),
+    );
+    let p3 = v3.descriptor.payload_id;
+    fixture.install(&v1);
+    fixture.install(&v2);
+
+    // At the prune inspection the live registration already names the new v3
+    // manifest; replace it with an owned manifest selecting the soon-superseded
+    // v1 executable, as a launcher re-activating the old release would.
+    let retained_v1 = version_dir(paths, "1.0.0", p1);
+    let replacement = manifest_selecting(paths, &retained_v1.join("host.exe"));
+    let platform = HookedPlatform::new(Hook::Reregister {
+        when_executable_under: version_dir(paths, "3.0.0", p3)
+            .to_str()
+            .expect("UTF-8 fixture path")
+            .to_owned(),
+        replacement,
+    });
+    let failure = run_operation(
+        &platform,
+        paths,
+        Operation::Install,
+        Some(authenticate(&v3)),
+    )
+    .expect_err("the prune aborts when the live registration changed");
+    assert!(
+        failure.code == FailureCode::CleanupPending || failure.code == FailureCode::ForeignState,
+        "the changed activation is refused: {failure:?}"
+    );
+    assert_eq!(
+        fs::read(retained_v1.join("host.exe")).expect("retained v1 payload"),
+        HOST_V1,
+        "the version that became live is never deleted"
+    );
+    assert_eq!(
+        fs::read(retained_v1.join("licenses/NOTICE")).expect("retained v1 notice"),
+        NOTICE_V1
+    );
+    assert_eq!(
+        receipt(paths)
+            .expect("the previous receipt survives")
+            .version,
+        "2.0.0",
+        "the aborted upgrade never commits"
+    );
+    assert!(
+        version_dir(paths, "2.0.0", p2).join("host.exe").exists(),
+        "the previous release is untouched"
+    );
+}
+
+/// F7: a crash after activation but before the prune pass leaves superseded
+/// version claims in the replaced receipt. Recovery prunes them with the same
+/// guards, so exactly one prior version remains and nothing is orphaned.
+#[test]
+fn recovery_prunes_superseded_versions_before_it_commits() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let p2 = payload_id(HOST_V2, NOTICE_V2);
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), Vec::new()),
+    );
+    let v3 = fixture.package(
+        "v3",
+        "3.0.0",
+        HOST_V3,
+        NOTICE_V3,
+        policy(3, Vec::new(), Vec::new()),
+    );
+    let p3 = v3.descriptor.payload_id;
+    fixture.install(&v1);
+    fixture.install(&v2);
+    let superseded = version_dir(paths, "1.0.0", p1);
+
+    let crashing = HookedPlatform::new(Hook::CrashBeforeRemoval {
+        prefix: format!("versions/1.0.0-{}", p1.to_hex()),
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        run_operation(
+            &crashing,
+            paths,
+            Operation::Install,
+            Some(authenticate(&v3)),
+        )
+    }));
+    assert!(outcome.is_err(), "the injected death interrupts the prune");
+    assert!(
+        superseded.join("host.exe").exists(),
+        "the crash happens before the superseded version is deleted"
+    );
+    assert_eq!(
+        receipt(paths)
+            .expect("the previous receipt survives")
+            .version,
+        "2.0.0"
+    );
+
+    let recovering = fixture.platform();
+    let report = recover(&recovering, paths).expect("recovery completes the interrupted install");
+    assert_eq!(report.state, veles_bridge_installer::STATE_RECOVERED_ACTIVE);
+    let committed = receipt(paths).expect("recovery commits the new receipt");
+    assert_eq!(committed.version, "3.0.0");
+    assert_eq!(
+        committed.prior.as_ref().map(|prior| prior.version.as_str()),
+        Some("2.0.0"),
+        "exactly one prior version remains"
+    );
+    assert!(
+        !superseded.exists(),
+        "the superseded version is pruned instead of being orphaned without a claim"
+    );
+    assert!(version_dir(paths, "2.0.0", p2).join("host.exe").exists());
+    assert!(version_dir(paths, "3.0.0", p3).join("host.exe").exists());
+    assert_eq!(
+        fs::read_dir(paths.versions())
+            .expect("versions dir")
+            .count(),
+        2
+    );
+    assert!(
+        !committed
+            .ownership
+            .owned
+            .iter()
+            .any(|claim| claim.path.starts_with("versions/1.0.0-")),
+        "the committed receipt never names an orphaned version"
+    );
+}
+
+/// C-C: cleanup validates ancestry immediately before every delete. Swapping
+/// `state/staging` for a symlink must preserve the file it points at.
+#[cfg(unix)]
+#[test]
+fn cleanup_never_deletes_through_a_swapped_ancestor() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+
+    let outside = fixture.temp.path().join("outside");
+    fs::create_dir_all(&outside).expect("outside directory");
+    let sentinel = outside.join("registration.json");
+    fs::write(&sentinel, b"outside registration").expect("outside registration");
+
+    let platform = HookedPlatform::new(Hook::SymlinkStaging {
+        outside: outside.clone(),
+        at: 1,
+    });
+    let report = run_operation_within(&platform, paths, Operation::Uninstall, None, SHORT_WAIT)
+        .expect("the swapped ancestor is preserved as foreign content");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(report.warns(WarningCode::LeftoverFiles));
+    assert_eq!(
+        fs::read(&sentinel).expect("outside registration preserved"),
+        b"outside registration",
+        "cleanup never deletes through a swapped ancestor"
+    );
+    assert!(sentinel.exists());
+    assert!(receipt(paths).is_none());
 }
