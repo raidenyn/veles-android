@@ -4431,3 +4431,191 @@ fn cleanup_never_deletes_through_a_swapped_ancestor() {
     assert!(sentinel.exists());
     assert!(receipt(paths).is_none());
 }
+
+/// Two different signed releases may share identical canonical payload bytes (for
+/// example a policy-only maintenance release): the payload id hashes the inventory,
+/// while version and policy live in the separately signed descriptor and carrier. The
+/// release ordering, not the payload id, tells a rollback's target from the release
+/// it replaced. v1.0.0 and v2.0.0 here share one payload, so:
+///
+/// * an uninterrupted v2 -> v1 rollback must be followed by a higher-epoch upgrade;
+/// * recovery of the interrupted rollback must complete in EVERY crash window, and
+///   the installation must then still accept that upgrade; and
+/// * rewriting the replaced release as the target itself (the N5 substitution) must
+///   still be refused after the receipt commit, by the version ordering alone.
+#[test]
+fn releases_sharing_a_payload_roll_back_recover_and_upgrade() {
+    let p = payload_id(HOST_V1, NOTICE_V1);
+    let denied = Digest::of(b"a payload only the newer release denies");
+    // Identical payload bytes, different signed descriptors.
+    let build = |fixture: &Fixture| {
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), vec![p]),
+        );
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(2, vec![denied], vec![p]),
+        );
+        let v3 = fixture.package(
+            "v3",
+            "3.0.0",
+            HOST_V3,
+            NOTICE_V3,
+            policy(3, Vec::new(), vec![p]),
+        );
+        (v1, v2, v3)
+    };
+    let trusting = |fixture: &Fixture, panic_at: Option<usize>| {
+        FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust_by_carrier: fixture.proofs.borrow().clone(),
+            panic_at_mutation: panic_at,
+            ..Faults::default()
+        })
+    };
+
+    // Uninterrupted rollback, then the forward upgrade at a higher epoch.
+    let probe = Fixture::windows();
+    let (v1, v2, v3) = build(&probe);
+    assert_eq!(v1.descriptor.payload_id, v2.descriptor.payload_id);
+    assert_ne!(v1.proof.carrier(), v2.proof.carrier());
+    probe.install(&v1);
+    probe.install(&v2);
+    let counting = trusting(&probe, None);
+    run_operation(
+        &counting,
+        &probe.paths,
+        Operation::Rollback,
+        Some(authenticate(&v1)),
+    )
+    .expect("a rollback between releases that share a payload completes");
+    let total = counting.mutations().len();
+    let rolled_back = receipt(&probe.paths).expect("receipt");
+    assert_eq!(rolled_back.version, "1.0.0");
+    assert_eq!(rolled_back.operation, Operation::Rollback);
+    let mut wrong: Vec<String> = Vec::new();
+    match run_operation(
+        &trusting(&probe, None),
+        &probe.paths,
+        Operation::Install,
+        Some(authenticate(&v3)),
+    ) {
+        Ok(_) => assert_eq!(receipt(&probe.paths).expect("receipt").version, "3.0.0"),
+        Err(failure) => wrong.push(format!(
+            "uninterrupted rollback: the higher-epoch upgrade was refused: {:?}",
+            failure.code
+        )),
+    }
+
+    let mut after_receipt = 0;
+    let mut substituted = 0;
+    for attempt in 1..=total {
+        for rewrite in [false, true] {
+            let fixture = Fixture::windows();
+            let paths = &fixture.paths;
+            let (v1, v2, v3) = build(&fixture);
+            fixture.install(&v1);
+            fixture.install(&v2);
+            let crashing = trusting(&fixture, Some(attempt));
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                run_operation(
+                    &crashing,
+                    paths,
+                    Operation::Rollback,
+                    Some(authenticate(&v1)),
+                )
+            }));
+            assert!(outcome.is_err(), "attempt {attempt}: the death interrupts");
+            let JournalState::Pending(journal) = journal_state(paths) else {
+                continue;
+            };
+            let current = receipt(paths).expect("a receipt always exists");
+            let committed = current.version == "1.0.0";
+            if rewrite && !committed {
+                continue;
+            }
+            let context = format!("attempt {attempt} (committed={committed}, rewrite={rewrite})");
+            if rewrite {
+                // The N5 substitution: the denial removed and the replaced release
+                // rewritten as the target itself. The payload ids now agree, so only
+                // the version ordering can refuse it.
+                let writer = trusting(&fixture, None);
+                let mut forged_journal = (*journal).clone();
+                let mut forged_receipt = current.clone();
+                for policy in [
+                    &mut forged_journal.release_policy,
+                    &mut forged_receipt.release_policy,
+                ] {
+                    policy.denied_payloads.retain(|d| *d != denied);
+                }
+                forged_journal.old_version = Some(v1.descriptor.version.clone());
+                forged_journal.old_payload_id = Some(v1.descriptor.payload_id);
+                forged_journal.old_carrier_sha256 = Some(Digest::of(v1.proof.carrier()));
+                let prior = forged_receipt.prior.as_mut().expect("a rollback prior");
+                prior.version = v1.descriptor.version.clone();
+                prior.payload_id = v1.descriptor.payload_id;
+                prior.carrier_sha256 = Digest::of(v1.proof.carrier());
+                forged_journal
+                    .write(&writer, paths)
+                    .expect("forged journal");
+                forged_receipt
+                    .write(&writer, paths)
+                    .expect("forged receipt");
+            }
+            let before = snapshot(fixture.temp.path());
+            let recovering = trusting(&fixture, None);
+            match (rewrite, recover(&recovering, paths)) {
+                (false, Err(failure)) => {
+                    wrong.push(format!(
+                        "{context}: honest recovery was refused: {:?}",
+                        failure.code
+                    ));
+                    continue;
+                }
+                (false, Ok(_)) => {}
+                (true, Ok(report)) => {
+                    wrong.push(format!(
+                        "{context}: recovery completed on rewritten history: {:?}",
+                        report.state
+                    ));
+                    continue;
+                }
+                (true, Err(_)) => {
+                    if !recovering.mutations().is_empty() || snapshot(fixture.temp.path()) != before
+                    {
+                        wrong.push(format!("{context}: a refused recovery changed state"));
+                    }
+                    substituted += 1;
+                    continue;
+                }
+            }
+            if committed {
+                after_receipt += 1;
+            }
+            // The recovered installation still accepts the higher-epoch upgrade.
+            if let Err(failure) = run_operation(
+                &trusting(&fixture, None),
+                paths,
+                Operation::Install,
+                Some(authenticate(&v3)),
+            ) {
+                wrong.push(format!(
+                    "{context}: the upgrade after recovery was refused: {:?}",
+                    failure.code
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(
+        after_receipt >= 1 && substituted >= 1,
+        "the post-receipt windows were exercised: recovered={after_receipt} refused={substituted}"
+    );
+}

@@ -640,7 +640,9 @@ pub(crate) fn authenticate_enforced_policy(
 /// receipt's prior, and the receipt's own policy is no evidence of them. Any other
 /// receipt has nothing to add: an install adopts the installed release's policy.
 /// The replaced release must be strictly newer than the installed one and must be
-/// authenticated in place; when it cannot be, the policy is unproven.
+/// authenticated in place; when it cannot be, the policy is unproven. Releases are
+/// ordered by version, never by payload id: distinct signed releases may carry
+/// byte-identical payloads.
 pub(crate) fn bound_by_replaced_release(
     platform: &impl Platform,
     paths: &InstallPaths,
@@ -651,7 +653,6 @@ pub(crate) fn bound_by_replaced_release(
     }
     let replaced = receipt.prior.as_ref().ok_or_else(recovery_required)?;
     if parse_version(&replaced.version)? <= parse_version(&receipt.version)?
-        || replaced.payload_id == receipt.payload_id
         || replaced.carrier_sha256 == receipt.policy.carrier_sha256
     {
         return Err(recovery_required());
@@ -1335,12 +1336,13 @@ fn authenticate_for_completion(
             }
             // Two editable references agreeing with each other is not evidence. A
             // rollback replaces a STRICTLY NEWER release, so a "replaced" release that
-            // is the activated target (same or older version, same payload or carrier)
+            // is the activated target (same or older version, or the same carrier)
             // can never have been replaced by this transaction: it would make the
             // target its own policy evidence and leave the real replaced release's
-            // restrictions unestablished.
+            // restrictions unestablished. Payload ids are deliberately not compared:
+            // distinct signed releases may carry byte-identical payloads, and the
+            // version ordering plus the carrier binding already separate them.
             if parse_version(&replaced.version)? <= descriptor.parsed_version()?
-                || replaced.payload_id == journal.payload_id
                 || replaced.carrier_sha256 == journal.policy.carrier_sha256
             {
                 return Err(recovery_required());
