@@ -2129,21 +2129,27 @@ class Round2CodeLimitTests(WorkDir):
 
     def test_n7_a_dual_populated_code_directory_with_the_correct_effective_limit_passes(self):
         self.assertEqual(self.report(self.dataoff, 0)["verdict"], "PASS")  # control: the 32-bit-only form
-        for label, limit32 in (("32-bit field kept", self.dataoff), ("32-bit sentinel", 0xFFFFFFFF)):
+        # Apple's reader (CodeDirectory::signingLimit) ignores the 32-bit field whenever codeLimit64 is non-zero,
+        # so ANY value there is format-valid: equal, the sentinel, zero, or unrelated (round-3 R3).
+        for label, limit32 in (
+            ("32-bit field kept", self.dataoff),
+            ("32-bit sentinel", 0xFFFFFFFF),
+            ("32-bit field zero", 0),
+            ("32-bit field unrelated", self.dataoff + 16),
+        ):
             with self.subTest(form=label):
                 report = self.report(limit32, self.dataoff)
                 self.assertEqual(report["verdict"], "PASS", report["differences"])
                 blob = [item for item in report["allowed_differences"] if item["code"] == "macho-code-signature-blob"][0]
                 self.assertEqual(blob["code_directory"]["code_limit"], self.dataoff)
 
-    def test_n7_a_wrong_effective_limit_or_an_inconsistent_32_bit_field_still_fails(self):
+    def test_n7_a_wrong_effective_limit_still_fails(self):
         cases = {
             "64-bit limit one byte long": (0xFFFFFFFF, self.dataoff + 1, "does not cover exactly"),
             "64-bit limit short": (0xFFFFFFFF, self.dataoff - 16, "does not cover exactly"),
-            "64-bit limit long beside the old 32-bit limit": (self.dataoff, self.dataoff + 1, "32-bit code limit"),
+            # the effective limit is the 64-bit field, so a correct 32-bit field cannot rescue a wrong 64-bit one
+            "64-bit limit long beside the correct 32-bit limit": (self.dataoff, self.dataoff + 1, "does not cover exactly"),
             "32-bit limit wrong, no 64-bit limit": (self.dataoff + 16, 0, "does not cover exactly"),
-            "32-bit field contradicts the 64-bit limit": (self.dataoff + 16, self.dataoff, "32-bit code limit"),
-            "32-bit field zero beside a 64-bit limit": (0, self.dataoff, "32-bit code limit"),
         }
         for name, (limit32, limit64, text) in cases.items():
             with self.subTest(name=name):
