@@ -904,6 +904,135 @@ class ArchiveAccountingTests(Scratch):
         self.assertEqual(package_inputs.build_inventory(tree), first)
 
 
+class UnicodeAliasAndBoundTests(Scratch):
+    """Review F11 (normalisation aliases) and F12 (count/depth bounds are uniform)."""
+
+    COMPOSED, DECOMPOSED = "caf\u00e9", "cafe\u0301"
+
+    def put(self, name, data):
+        path = self.base / name
+        path.write_bytes(data)
+        return path
+
+    def test_f11_composed_and_decomposed_names_are_aliases_in_trees_and_archives(self):
+        self.assertNotEqual(self.COMPOSED, self.DECOMPOSED)
+        tree = materialize(
+            self.base / "tree",
+            files={f"{self.COMPOSED}.txt": (b"a", 0o644), f"{self.DECOMPOSED}.txt": (b"b", 0o644)},
+            empty_dirs=(),
+        )
+        self.assertEqual(len(list(tree.iterdir())), 2)  # this filesystem really keeps both spellings
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_inventory(tree)
+        self.assertEqual(caught.exception.code, "case-folded-alias")
+        members = [(f"{self.COMPOSED}.txt", b"a"), (f"{self.DECOMPOSED}.txt", b"b")]
+        for name, blob in (
+            ("alias.zip", make_zip(members)),
+            ("alias.tar", make_tar([("file", n, d, 0o644) for n, d in members])),
+        ):
+            with self.subTest(archive=name):
+                with self.assertRaises(package_inputs.InventoryError) as caught:
+                    package_inputs.build_archive_inventory(self.put(name, blob))
+                self.assertEqual(caught.exception.code, "case-folded-alias")
+
+    def test_f11_directory_components_and_case_plus_normalisation_aliases_are_rejected(self):
+        dirs = materialize(
+            self.base / "dirs",
+            files={f"D{self.COMPOSED}/a.txt": (b"a", 0o644), f"d{self.DECOMPOSED}/b.txt": (b"b", 0o644)},
+            empty_dirs=(),
+        )
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_inventory(dirs)
+        self.assertEqual(caught.exception.code, "case-folded-alias")
+        # Upper-case composed vs lower-case decomposed: needs casefold AND normalisation.
+        with self.assertRaises(package_inputs.InventoryError):
+            package_inputs.build_archive_inventory(self.put("mixed.zip", make_zip([("\u00c9.txt", b"a"), ("e\u0301.txt", b"b")])))
+
+    def test_f11_distinct_names_are_kept_with_their_original_spelling(self):
+        inventory = package_inputs.build_archive_inventory(
+            self.put("fine.zip", make_zip([(f"{self.DECOMPOSED}.txt", b"a"), ("cafe.txt", b"b"), ("other.txt", b"c")]))
+        )
+        self.assertEqual([entry["path"] for entry in inventory["entries"]], ["cafe.txt", f"{self.DECOMPOSED}.txt", "other.txt"])
+
+    def test_f12_every_directory_node_counts_toward_the_bound(self):
+        root = materialize(self.base / "dirs", files={"a.txt": (b"x", 0o644)}, empty_dirs=tuple(f"empty{index}" for index in range(10)))
+        with mock.patch.object(package_inputs, "MAX_ENTRIES", 1):
+            with self.assertRaises(package_inputs.InventoryError) as caught:
+                package_inputs.build_inventory(root)
+        self.assertEqual(caught.exception.code, "bound-exceeded")
+        # Within the limit (files <= MAX_ENTRIES, nodes <= 2 * MAX_ENTRIES) the tree is accepted.
+        with mock.patch.object(package_inputs, "MAX_ENTRIES", 11):
+            self.assertEqual(len(package_inputs.build_inventory(root)["empty_directories"]), 10)
+        archive = make_zip([(f"e{index}/", b"") for index in range(10)], unix_modes={f"e{index}/": 0o040755 for index in range(10)})
+        with mock.patch.object(package_inputs, "MAX_ENTRIES", 1):
+            with self.assertRaises(package_inputs.InventoryError) as caught:
+                package_inputs.build_archive_inventory(self.put("dirs.zip", archive))
+        self.assertEqual(caught.exception.code, "bound-exceeded")
+
+    def test_f12_directory_listing_is_bounded_before_it_is_materialised(self):
+        consumed = []
+
+        class Entry:
+            path = "/nonexistent"
+
+            def __init__(self, index):
+                self.name = f"n{index}"
+                consumed.append(index)
+
+            def stat(self, follow_symlinks=True):
+                return os.stat_result((0o120777, 0, 0, 1, 0, 0, 0, 0, 0, 0))  # a symlink: never inventoried
+
+        class Scanner:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def __iter__(self):
+                return (Entry(index) for index in range(100_000))
+
+        root = materialize(self.base / "fake", files={"a.txt": (b"x", 0o644)}, empty_dirs=())
+        with mock.patch.object(package_inputs, "MAX_ENTRIES", 10), mock.patch.object(package_inputs.os, "scandir", return_value=Scanner()):
+            with self.assertRaises(package_inputs.InventoryError) as caught:
+                package_inputs.build_inventory(root)
+        self.assertEqual(caught.exception.code, "bound-exceeded")
+        self.assertLessEqual(len(consumed), 25, len(consumed))  # stopped near 2 * MAX_ENTRIES, not 100000
+
+    def test_f12_archive_paths_obey_the_same_depth_bound_as_directory_trees(self):
+        limit = package_inputs.MAX_DEPTH
+        ok_name = "/".join(["d"] * limit + ["f"])  # exactly `limit` directory components
+        too_deep = "/".join(["d"] * (limit + 2) + ["f"])
+        just_over = "/".join(["d"] * (limit + 1) + ["f"])
+        self.assertEqual(
+            [e["path"] for e in package_inputs.build_archive_inventory(self.put("ok.zip", make_zip([(ok_name, b"x")])))["entries"]],
+            [ok_name],
+        )
+        for label, blob in (
+            ("zip34", make_zip([(too_deep, b"x")])),
+            ("zip33", make_zip([(just_over, b"x")])),
+            ("tar34", make_tar([("file", too_deep, b"x", 0o644)])),
+            ("zipdir", make_zip([("/".join(["d"] * (limit + 1)) + "/", b"")], unix_modes={"/".join(["d"] * (limit + 1)) + "/": 0o040755})),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaises(package_inputs.InventoryError) as caught:
+                    package_inputs.build_archive_inventory(self.put(f"{label}.zip" if label.startswith("zip") else f"{label}.tar", blob))
+                self.assertEqual(caught.exception.code, "bound-exceeded")
+        # The directory walk agrees at the boundary: `limit` nested directories pass, one more fails.
+        deep = materialize(self.base / "deep-ok", files={}, empty_dirs=())
+        cursor = deep
+        for _ in range(limit):
+            cursor = cursor / "d"
+        cursor.mkdir(parents=True)
+        (cursor / "f").write_bytes(b"x")
+        self.assertEqual(len(package_inputs.build_inventory(deep)["entries"]), 1)
+        (cursor / "d").mkdir()
+        (cursor / "d" / "f").write_bytes(b"x")
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_inventory(deep)
+        self.assertEqual(caught.exception.code, "bound-exceeded")
+
+
 class CommandLineTests(Scratch):
     def test_inventory_and_compare_exit_codes_and_reports(self):
         left = materialize(self.base / "left")

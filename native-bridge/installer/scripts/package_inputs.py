@@ -48,7 +48,13 @@ archive, so a size field is verified, never trusted as a truncating bound.
 Rejections carry a stable ``InventoryError.code`` (``symlink``, ``special-file``,
 ``unsafe-path``, ``case-folded-alias``, ``duplicate-archive-member``,
 ``bound-exceeded``, ``unauthenticated-data``, ...) that comparison reports reuse.
-Case aliases are checked on every path component, not only on whole paths.
+Aliases are checked on every path component, not only on whole paths, under
+Unicode canonical equivalence *and* case folding: ``caf\u00e9`` and ``cafe\u0301`` (and
+``\u00c9`` / ``e\u0301``) name one file on a normalisation-insensitive macOS volume, so a
+Linux inventory listing both could not be reproduced there. The original spelling is
+kept in the inventory; only the collision key is normalised. Bounds count every node
+(files and directories): at most ``MAX_ENTRIES`` files, ``2 * MAX_ENTRIES`` nodes and
+``MAX_DEPTH`` directory components above any path, for trees and archives alike.
 
 CLI (exit 0 equal / 0 written, 1 inventories differ or a tree is rejected, 2 invalid
 input; ``compare --report`` always replaces any stale report: PASS/FAIL/ERROR)::
@@ -67,6 +73,7 @@ import stat
 import struct
 import sys
 import tarfile
+import unicodedata
 import zlib
 from pathlib import Path
 from typing import Any
@@ -129,6 +136,18 @@ def normalize_relative_path(path: str) -> str:
     return path
 
 
+def alias_key(component_path: str) -> str:
+    """Collision key: canonical decomposition + full case folding (``NFD(casefold(NFD(x)))``)."""
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", component_path).casefold())
+
+
+def check_depth(path: str, *, directory: bool) -> None:
+    """At most ``MAX_DEPTH`` directory components above the node (the node itself if it is a directory)."""
+    components = path.count("/") + 1
+    if (components if directory else components - 1) > MAX_DEPTH:
+        raise InventoryError(f"path nested deeper than {MAX_DEPTH} directories: {path[:80]!r}", "bound-exceeded")
+
+
 def _finish(entries: list[dict], empty_directories: list[str]) -> dict:
     entries.sort(key=lambda entry: entry["path"].encode("utf-8"))
     empty_directories.sort(key=lambda value: value.encode("utf-8"))
@@ -142,13 +161,13 @@ def _finish(entries: list[dict], empty_directories: list[str]) -> dict:
         for index in range(1, len(parts) + 1):
             prefix = "/".join(parts[:index])
             prefix_kind = kind if index == len(parts) else "directory"
-            key = prefix.casefold()
+            key = alias_key(prefix)
             if key not in seen:
                 seen[key] = (prefix, prefix_kind)
                 continue
             spelling, existing_kind = seen[key]
             if spelling != prefix:
-                raise InventoryError(f"case-folded alias: {spelling!r} / {prefix!r}", "case-folded-alias")
+                raise InventoryError(f"case/Unicode-normalisation alias: {spelling!r} / {prefix!r}", "case-folded-alias")
             if existing_kind != prefix_kind:
                 raise InventoryError(f"{prefix!r} is both a file and a directory", "duplicate-archive-member")
             if index == len(parts):
@@ -185,17 +204,26 @@ def build_inventory(root: Path) -> dict:
     entries: list[dict] = []
     empty_directories: list[str] = []
     total = 0
+    nodes = 0
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     pending: list[tuple[Path, str, int]] = [(root, "", 0)]
     while pending:
         directory, prefix, depth = pending.pop()
         if depth > MAX_DEPTH:
             raise InventoryError(f"directory nesting deeper than {MAX_DEPTH}", "bound-exceeded")
+        children = []
         try:
             with os.scandir(directory) as scanner:
-                children = sorted(scanner, key=lambda item: item.name)
+                for item in scanner:
+                    # Counted as they stream in, so a hostile directory is refused after
+                    # ~2 * MAX_ENTRIES names instead of being materialised and sorted first.
+                    nodes += 1
+                    if nodes > MAX_ENTRIES * 2:
+                        raise InventoryError(f"more than {MAX_ENTRIES * 2} files and directories", "bound-exceeded")
+                    children.append(item)
         except OSError as error:
             raise InputError(f"cannot list {directory}: {error.strerror}") from error
+        children.sort(key=lambda item: item.name)
         if not children and prefix:
             empty_directories.append(normalize_relative_path(prefix.rstrip("/")) + "/")
         for child in children:
@@ -616,6 +644,9 @@ def build_archive_inventory(path: Path) -> dict:
         nonlocal total
         directory = name.endswith("/")
         normalized = normalize_relative_path(name.rstrip("/"))
+        check_depth(normalized, directory=directory)
+        if len(seen) >= MAX_ENTRIES * 2:
+            raise InventoryError(f"more than {MAX_ENTRIES * 2} archive members", "bound-exceeded")
         if normalized in seen:
             raise InventoryError(f"duplicate archive member: {normalized!r}", "duplicate-archive-member")
         seen.add(normalized)
