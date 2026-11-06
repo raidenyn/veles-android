@@ -40,14 +40,29 @@
 //! carrier descriptor equality check in the decision layer is what bounds the
 //! content that can be accepted.
 //!
-//! The remaining [`Platform`] methods fail closed; Tasks 5 and 8 complete them.
+//! The remaining [`Platform`] methods fail closed; Task 5 implements
+//! [`Platform::inspect_hosts`] and Task 8 completes filesystem, registration and
+//! cleanup.
+//!
+//! ## Host inspection (Task 5)
+//!
+//! [`MacosPlatform::inspect_hosts`] reads the process table with `libproc`
+//! (`proc_listpids`, `proc_pidinfo(PROC_PIDTBSDINFO)`, `proc_pidpath`) and hands
+//! the observations to the portable classifier. Only processes the OS attributes
+//! to the installing user have their executable image resolved: other users' and
+//! the system's processes cannot execute this user's `0700` install root, so they
+//! are never read (and never block). A same-user process whose image cannot be
+//! resolved is an unknown candidate and blocks. Process identity is the PID plus
+//! `pbi_start_tvsec`/`pbi_start_tvusec`; every candidate is re-read before the
+//! decision so a recycled PID is not mistaken for the observed process.
 
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, OsStr, c_char, c_void};
 use std::fs;
 use std::io;
+use std::mem::size_of;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{self, Child, Command, ExitStatus, Stdio};
 use std::ptr;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -55,7 +70,8 @@ use std::time::{Duration, Instant};
 use super::macos_trust as policy;
 use super::{
     HostState, InstallLock, OwnedEntry, PACKAGE_MACOS_CARRIER, PackageKind, PackageSource,
-    Platform, Registration, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath,
+    Platform, ProcessIdentity, ProcessObservation, ProcessScope, ProcessTable, Registration,
+    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath, inspect_host_processes,
     path_is_within,
 };
 use crate::model::{FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
@@ -159,6 +175,59 @@ unsafe extern "C" {
     static kSecCodeInfoTeamIdentifier: CFStringRef;
 }
 
+// `libproc` and `libc` are part of libSystem, which every macOS binary links.
+unsafe extern "C" {
+    fn proc_listpids(kind: u32, typeinfo: u32, buffer: *mut c_void, buffersize: i32) -> i32;
+    fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut c_void, buffersize: i32) -> i32;
+    fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
+    fn geteuid() -> u32;
+}
+
+/// `proc_listpids` selector for every process.
+const PROC_ALL_PIDS: u32 = 1;
+/// `proc_pidinfo` flavor returning a [`ProcBsdInfo`].
+const PROC_PIDTBSDINFO: i32 = 3;
+/// `PATH_MAX` is 1024 on macOS; one page is a safe upper bound for an image path.
+const MAX_PROCESS_PATH_BYTES: usize = 4096;
+/// `MAXCOMLEN` from `sys/proc_info.h`: `pbi_comm` is `MAXCOMLEN` bytes and
+/// `pbi_name` is `2 * MAXCOMLEN` bytes.
+const MAXCOMLEN: usize = 16;
+
+/// `struct proc_bsdinfo` from `sys/proc_info.h`, used only through
+/// `proc_pidinfo(PROC_PIDTBSDINFO)`.
+///
+/// The layout is asserted at compile time for the macOS target: if the SDK
+/// changes it, the adapter fails to build instead of silently reading the wrong
+/// uid or start marker.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct ProcBsdInfo {
+    flags: u32,
+    status: u32,
+    xstatus: u32,
+    pid: u32,
+    ppid: u32,
+    uid: u32,
+    gid: u32,
+    ruid: u32,
+    rgid: u32,
+    svuid: u32,
+    svgid: u32,
+    reserved: u32,
+    comm: [u8; MAXCOMLEN],
+    name: [u8; 2 * MAXCOMLEN],
+    files: u32,
+    pgid: u32,
+    jobc: u32,
+    tdev: u32,
+    tpgid: u32,
+    nice: i32,
+    start_sec: u64,
+    start_usec: u64,
+}
+
+const _: () = assert!(size_of::<ProcBsdInfo>() == 136);
+
 /// A retained/invalidated CoreFoundation object.
 struct Cf(CFTypeRef);
 
@@ -179,9 +248,9 @@ impl Drop for Cf {
 
 /// The macOS [`Platform`] adapter.
 ///
-/// Task 4 implements [`Platform::verify_trust`]; the remaining boundary methods
-/// fail closed until Tasks 5 (host inspection) and 8 (native filesystem,
-/// registration and cleanup) implement them.
+/// Task 4 implements [`Platform::verify_trust`] and Task 5 implements
+/// [`Platform::inspect_hosts`]; the remaining boundary methods fail closed until
+/// Task 8 (native filesystem, registration and cleanup) implements them.
 #[derive(Debug, Default)]
 pub struct MacosPlatform;
 
@@ -229,10 +298,8 @@ impl Platform for MacosPlatform {
         Err(unsupported())
     }
 
-    fn inspect_hosts(&self, _paths: &InstallPaths) -> InstallResult<HostState> {
-        // Task 5 implements real process inspection. `Unknown` blocks every
-        // mutation instead of claiming quiescence.
-        Ok(HostState::Unknown)
+    fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState> {
+        Ok(inspect_host_processes(paths, &MacosProcessTable))
     }
 
     fn verify_trust(
@@ -425,6 +492,151 @@ fn wait_bounded(child: &mut Child) -> Option<ExitStatus> {
             }
         }
     }
+}
+
+/// The macOS process table, read through `libproc`.
+///
+/// The table is read in three cheap steps per process: `proc_listpids` for the
+/// PIDs, `proc_pidinfo(PROC_PIDTBSDINFO)` for the owning uid and start marker,
+/// and only for the installing user's own processes `proc_pidpath` for the
+/// executable image. Other users' images are never resolved.
+#[derive(Debug, Default)]
+struct MacosProcessTable;
+
+impl ProcessTable for MacosProcessTable {
+    fn observe(&self) -> io::Result<Vec<ProcessObservation>> {
+        let uid = current_uid();
+        let mut observations = Vec::new();
+        for pid in process_ids()? {
+            // The kernel idle task and `launchd` run as root/system and cannot
+            // execute a user-private payload; neither exposes user information.
+            if pid <= 1 || pid as u32 == process::id() {
+                continue;
+            }
+            match bsd_info(pid) {
+                Some(info) if info.uid == uid => observations.push(observation(&info, pid)),
+                // Another user's process: it cannot execute this user's `0700`
+                // root, so its image does not have to be read.
+                Some(_) => {}
+                // The OS would not attribute the process at all, so it cannot be
+                // ruled out as a potential owned host.
+                None => observations.push(unattributed(pid)),
+            }
+        }
+        Ok(observations)
+    }
+
+    fn recheck(&self, pid: u32) -> io::Result<Option<ProcessObservation>> {
+        match bsd_info(pid as i32) {
+            Some(info) => Ok(Some(observation(&info, pid as i32))),
+            // Distinguish "exited" from "present but unreadable": only a PID that
+            // is gone is harmless, anything else cannot be ruled out.
+            None if process_ids()?.contains(&(pid as i32)) => Err(io::Error::other(
+                "process is present but its identity could not be read",
+            )),
+            None => Ok(None),
+        }
+    }
+}
+
+/// One attributed observation; a foreign user's image is never resolved.
+fn observation(info: &ProcBsdInfo, pid: i32) -> ProcessObservation {
+    let scope = if info.uid == current_uid() {
+        ProcessScope::InstallingUser
+    } else {
+        ProcessScope::OtherUser
+    };
+    ProcessObservation {
+        identity: ProcessIdentity {
+            pid: pid as u32,
+            started: start_marker(info),
+        },
+        scope,
+        image: (scope == ProcessScope::InstallingUser)
+            .then(|| image_path(pid))
+            .flatten(),
+    }
+}
+
+/// A process the OS would not attribute to any user.
+fn unattributed(pid: i32) -> ProcessObservation {
+    ProcessObservation {
+        identity: ProcessIdentity {
+            pid: pid as u32,
+            started: 0,
+        },
+        scope: ProcessScope::InstallingUser,
+        image: None,
+    }
+}
+
+/// `pid` plus the OS start time: a recycled PID never repeats this value.
+fn start_marker(info: &ProcBsdInfo) -> u64 {
+    info.start_sec
+        .wrapping_mul(1_000_000)
+        .wrapping_add(info.start_usec)
+}
+
+fn current_uid() -> u32 {
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    unsafe { geteuid() }
+}
+
+/// Every PID the OS reports, bounded by the caller's snapshot size.
+fn process_ids() -> io::Result<Vec<i32>> {
+    // SAFETY: a null buffer with a zero size asks only for the required size.
+    let needed = unsafe { proc_listpids(PROC_ALL_PIDS, 0, ptr::null_mut(), 0) };
+    if needed <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Leave room for processes that appeared between the two calls.
+    let capacity = needed as usize / size_of::<i32>() + 16;
+    let mut buffer = vec![0i32; capacity];
+    let bytes = size_of_val(buffer.as_slice());
+    // SAFETY: the buffer is live, word-aligned and `bytes` long.
+    let written =
+        unsafe { proc_listpids(PROC_ALL_PIDS, 0, buffer.as_mut_ptr().cast(), bytes as i32) };
+    if written < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let count = (written as usize / size_of::<i32>()).min(buffer.len());
+    Ok(buffer[..count]
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .collect())
+}
+
+fn bsd_info(pid: i32) -> Option<ProcBsdInfo> {
+    let mut info = ProcBsdInfo::default();
+    let size = size_of::<ProcBsdInfo>();
+    // SAFETY: `info` is a live, correctly sized and aligned out-buffer.
+    let written = unsafe {
+        proc_pidinfo(
+            pid,
+            PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut ProcBsdInfo).cast(),
+            size as i32,
+        )
+    };
+    (written == size as i32).then_some(info)
+}
+
+fn image_path(pid: i32) -> Option<PathBuf> {
+    let mut buffer = vec![0u8; MAX_PROCESS_PATH_BYTES];
+    // SAFETY: the buffer is live for the call.
+    let written = unsafe { proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    let written = (written as usize).min(buffer.len());
+    // `proc_pidpath` NUL-terminates the path; a non-UTF-8 image is still a path.
+    let end = buffer[..written]
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(written);
+    Some(PathBuf::from(OsStr::from_bytes(&buffer[..end])))
 }
 
 fn open_carrier(package_root: &Path) -> InstallResult<PackageSource> {

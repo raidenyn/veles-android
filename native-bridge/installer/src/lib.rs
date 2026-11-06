@@ -41,10 +41,12 @@ pub use platform::{
     AuthenticatedPackage, AuthenticatedSource, FakePlatform, Faults, HostState, InstallLock,
     MAX_MANIFEST_PATH_BYTES, NativeManifest, OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry,
     OwnedKind, OwnershipRecord, PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PackageKind,
-    PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, Registration,
+    PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, ProcessIdentity,
+    ProcessObservation, ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
     ValidatedPath, WindowsPreimage, assessment_target, authenticate_package, claim_owned_entries,
-    claim_owned_registration, is_accepted_assessment, parse_manifest, path_is_within,
+    claim_owned_registration, inspect_host_processes, is_accepted_assessment, parse_manifest,
+    path_is_within, require_quiescent, require_quiescent_within,
 };
 pub use policy::{
     CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, authorize_package_policy, effective_policy,

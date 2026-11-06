@@ -366,7 +366,11 @@ mod tests {
     fn gatekeeper_assessment_argv_is_fixed_absolute_and_uninterpreted() {
         let carrier = Path::new("/Users/dev/with space/package/carrier.app");
         assert_eq!(SPCTL_PATH, "/usr/sbin/spctl");
-        assert!(Path::new(SPCTL_PATH).is_absolute());
+        // POSIX-absolute, not `Path::is_absolute`: this test also runs on hosts
+        // whose path rules are not POSIX (a `cargo test` on Windows), where
+        // `/usr/sbin/spctl` has no root component and would not be absolute.
+        assert!(SPCTL_PATH.starts_with('/'));
+        assert!(!SPCTL_PATH.contains('\0'));
         assert_eq!(
             assessment_argv(carrier),
             vec![

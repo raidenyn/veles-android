@@ -16,10 +16,13 @@
 //!
 //! [`PortablePlatform`] is the std-only implementation used by portable tests on
 //! Linux. It performs real filesystem IO, locking and registration-file reads,
-//! but it is **not** the production adapter: Windows HKCU publication, macOS
-//! code sealing, host process inspection and OS trust assessment are stubs that
-//! fail closed until Tasks 4, 5 and 8 implement them. [`FakePlatform`] wraps the
-//! same primitives with fault injection and call recording.
+//! but it is **not** the production adapter: Windows HKCU publication, macOS code
+//! sealing and OS trust assessment are stubs that fail closed, and it has no
+//! process table, so host inspection stays `Unknown`. The native adapters
+//! (`WindowsPlatform`, `MacosPlatform`) implement trust assessment (Task 4) and
+//! real host inspection (Task 5); Task 8 completes native filesystem, registry
+//! and cleanup. [`FakePlatform`] wraps the same primitives with fault injection
+//! and call recording.
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
@@ -27,6 +30,8 @@ use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -118,6 +123,206 @@ pub enum HostState {
     Active,
     /// Inspection was inaccessible or ambiguous; treated as active.
     Unknown,
+}
+
+/// Which user/session a process observation is attributed to.
+///
+/// The per-user install root is private to the installing user (`0700` on Unix,
+/// the user's own ACLs on Windows), so a process positively attributed to another
+/// user or to the services session cannot execute an owned image and does not
+/// have to be readable. Ownership is the cheap filter: a native adapter resolves
+/// executable images only for the installing user's own processes, never for
+/// every unrelated protected system process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessScope {
+    /// Runs as the installing user: may execute files in the per-user root.
+    InstallingUser,
+    /// Positively attributed to another user or another OS session.
+    OtherUser,
+}
+
+/// Identity of one OS process that survives PID reuse.
+///
+/// A PID is not an identity: the OS recycles it as soon as the process exits, so
+/// a snapshot entry can stop describing anything before its image is resolved.
+/// The start marker (Windows process creation time, macOS start time) is captured
+/// with the PID, and every decision is made from a fresh recheck of the PID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProcessIdentity {
+    /// The process identifier.
+    pub pid: u32,
+    /// The OS process start marker; a different value means a recycled PID.
+    pub started: u64,
+}
+
+/// One process as the OS process table reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessObservation {
+    /// PID plus start marker.
+    pub identity: ProcessIdentity,
+    /// The user/session the OS attributed the process to.
+    pub scope: ProcessScope,
+    /// The OS-resolved absolute executable image path, never a display name.
+    ///
+    /// `None` means the OS could not resolve it. For an installing-user process
+    /// that is a potential owned host, so it blocks as [`HostState::Unknown`].
+    pub image: Option<PathBuf>,
+}
+
+/// Upper bound on one process-table snapshot; a larger table is untrustworthy.
+const MAX_PROCESS_OBSERVATIONS: usize = 1 << 16;
+
+/// The OS process table, as the injected boundary for host inspection.
+///
+/// Native adapters implement this with the Windows Toolhelp/token/process-image
+/// APIs and with macOS `libproc`; the portable tests inject a scripted table.
+/// Adapters report the user/session scope they could read and leave `image`
+/// unresolved rather than guessing an executable path.
+pub trait ProcessTable {
+    /// One snapshot of the process table.
+    fn observe(&self) -> io::Result<Vec<ProcessObservation>>;
+    /// The process that currently holds `pid`, or `None` when it has exited.
+    ///
+    /// This is the PID-reuse check: the caller re-classifies the returned
+    /// observation instead of trusting the snapshot entry, so an adapter must
+    /// report the process the PID holds *now* (with its current start marker)
+    /// rather than repeat a cached entry.
+    fn recheck(&self, pid: u32) -> io::Result<Option<ProcessObservation>>;
+}
+
+/// How one resolved image path relates to the owned payload trees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageClass {
+    /// Inside `versions/` or `maintenance/`: an owned host is executing.
+    Owned,
+    /// Somewhere else: not an owned image.
+    Foreign,
+    /// Not resolved, or not an absolute path: cannot be ruled out.
+    Unresolved,
+}
+
+/// The decision after re-reading one candidate PID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rechecked {
+    /// The process holding the PID now executes an owned image.
+    Active,
+    /// The process exited or its image is foreign / another user's.
+    Inactive,
+    /// The process cannot be read, so it cannot be ruled out.
+    Unknown,
+}
+
+/// The owned executable bases (`versions/` and `maintenance/`) with canonical
+/// aliases.
+///
+/// Native process tables report OS-resolved image paths (macOS resolves
+/// `/var` to `/private/var`; Windows reports the DOS form of the loaded image),
+/// so the lexical base and its canonical form are both accepted. A matching
+/// *file name* is never evidence: only containment below an owned tree is.
+struct OwnedImages {
+    bases: Vec<PathBuf>,
+}
+
+impl OwnedImages {
+    fn capture(paths: &InstallPaths) -> Self {
+        let mut bases = Vec::with_capacity(4);
+        for base in [paths.versions(), paths.maintenance()] {
+            bases.push(base.to_path_buf());
+            if let Ok(canonical) = fs::canonicalize(base)
+                && canonical.as_path() != base
+            {
+                bases.push(canonical);
+            }
+        }
+        Self { bases }
+    }
+
+    fn classify(&self, image: Option<&Path>) -> ImageClass {
+        let Some(image) = image else {
+            return ImageClass::Unresolved;
+        };
+        // A relative image cannot be shown to be outside the owned trees.
+        if !image.is_absolute() {
+            return ImageClass::Unresolved;
+        }
+        if self.bases.iter().any(|base| path_is_within(base, image)) {
+            ImageClass::Owned
+        } else {
+            ImageClass::Foreign
+        }
+    }
+}
+
+/// Classify the OS process table against the fixed install layout.
+///
+/// Only processes the OS attributes to the installing user can execute a file in
+/// the per-user root, so only those are resolved and rechecked. A candidate is a
+/// process whose image is inside an owned `versions/` or `maintenance/` tree or
+/// whose image could not be resolved at all. Every candidate is re-read by PID
+/// immediately before the decision: an entry that exited is dropped, and a
+/// recycled PID is classified by the process that holds it now. Any candidate
+/// that cannot be ruled out makes the result [`HostState::Unknown`] instead of
+/// claiming quiescence.
+///
+/// The function is read-only. It never terminates a process or touches the
+/// install tree, so every possibly live version stays on disk for the caller.
+pub fn inspect_host_processes(paths: &InstallPaths, table: &impl ProcessTable) -> HostState {
+    let observations = match table.observe() {
+        Ok(observations) if observations.len() <= MAX_PROCESS_OBSERVATIONS => observations,
+        // An unreadable or implausible process table cannot prove quiescence.
+        _ => return HostState::Unknown,
+    };
+    let owned = OwnedImages::capture(paths);
+    let mut unknown = false;
+    for observation in &observations {
+        if observation.scope != ProcessScope::InstallingUser {
+            continue;
+        }
+        if owned.classify(observation.image.as_deref()) == ImageClass::Foreign {
+            continue;
+        }
+        match recheck_candidate(table, &owned, observation) {
+            Rechecked::Active => return HostState::Active,
+            Rechecked::Unknown => unknown = true,
+            Rechecked::Inactive => {}
+        }
+    }
+    if unknown {
+        HostState::Unknown
+    } else {
+        HostState::Quiescent
+    }
+}
+
+/// Re-read the process that holds the candidate's PID and decide from *that*
+/// observation.
+///
+/// The OS may recycle a PID the moment its process exits, so the snapshot entry
+/// is only a candidate pointer. A different start marker means the PID now
+/// belongs to a different process: the stale entry can neither keep blocking nor
+/// hide a host that now runs under the PID, which is why the decision is made
+/// from the fresh observation and never from the executable name.
+fn recheck_candidate(
+    table: &impl ProcessTable,
+    owned: &OwnedImages,
+    observed: &ProcessObservation,
+) -> Rechecked {
+    let current = match table.recheck(observed.identity.pid) {
+        // The candidate exited; nothing executes its image any more.
+        Ok(None) => return Rechecked::Inactive,
+        Ok(Some(current)) => current,
+        // The process cannot be re-read, so it cannot be ruled out.
+        Err(_) => return Rechecked::Unknown,
+    };
+    if current.scope != ProcessScope::InstallingUser {
+        // Including a PID recycled by another user's process.
+        return Rechecked::Inactive;
+    }
+    match owned.classify(current.image.as_deref()) {
+        ImageClass::Owned => Rechecked::Active,
+        ImageClass::Foreign => Rechecked::Inactive,
+        ImageClass::Unresolved => Rechecked::Unknown,
+    }
 }
 
 #[cfg(unix)]
@@ -1443,6 +1648,10 @@ fn verify_closed_payload_tree(root: &Path, entries: &[InventoryEntry]) -> Instal
 }
 
 /// The injected OS boundary. Tasks 4, 5 and 8 implement the native adapters.
+///
+/// `inspect_hosts` classifies whether a process executing an owned host version
+/// is running; [`require_quiescent`] is the bounded wait an operation uses before
+/// any mutation.
 pub trait Platform {
     /// Acquire the exclusive per-user installer lock (nonblocking).
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock>;
@@ -1493,6 +1702,65 @@ pub trait Platform {
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()>;
 }
 
+/// The longest an installer waits for owned hosts to exit.
+///
+/// The wait is bounded: an install decision never blocks forever on a Chrome
+/// profile the user forgot to close. Nothing is terminated to shorten the wait -
+/// the [`Platform`] boundary has no termination call at all - so the bound only
+/// decides when the failure is reported.
+pub const QUIESCENCE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Poll interval between quiescence inspections.
+const QUIESCENCE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Block until no process executes an owned host version, or fail with the
+/// exact state.
+///
+/// * [`HostState::Quiescent`] returns `Ok`.
+/// * [`HostState::Active`] is `HostActive` after [`QUIESCENCE_TIMEOUT`].
+/// * [`HostState::Unknown`] is `InspectionDenied` after [`QUIESCENCE_TIMEOUT`].
+///
+/// The state is re-inspected until the bound elapses, so a host that exits while
+/// the user closes the last tab lets the operation continue, while a host that
+/// stays running (or an inspection that stays unreadable) fails visibly instead
+/// of waiting forever. This function never mutates, terminates or removes
+/// anything: on failure the caller still holds every possibly live payload, and
+/// the failure must be reported rather than treated as a completed cleanup.
+pub fn require_quiescent(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<()> {
+    require_quiescent_within(platform, paths, QUIESCENCE_TIMEOUT)
+}
+
+/// [`require_quiescent`] with an explicit bound, clamped to
+/// [`QUIESCENCE_TIMEOUT`].
+///
+/// The explicit bound lets a caller ask for a shorter wait (and lets the portable
+/// tests exercise the bounded loop without a ten-second stall). A longer request
+/// is clamped: no caller may extend the install's wait past the fixed ceiling.
+pub fn require_quiescent_within(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    timeout: Duration,
+) -> InstallResult<()> {
+    let deadline = Instant::now() + timeout.min(QUIESCENCE_TIMEOUT);
+    loop {
+        match platform.inspect_hosts(paths)? {
+            HostState::Quiescent => return Ok(()),
+            HostState::Active => {
+                if Instant::now() >= deadline {
+                    return Err(InstallFailure::new(FailureCode::HostActive));
+                }
+            }
+            HostState::Unknown => {
+                if Instant::now() >= deadline {
+                    return Err(InstallFailure::new(FailureCode::InspectionDenied));
+                }
+            }
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        thread::sleep(QUIESCENCE_POLL_INTERVAL.min(remaining));
+    }
+}
+
 /// Std-only platform used by portable tests.
 ///
 /// It performs real filesystem writes, renames, locking and registration-file
@@ -1541,7 +1809,8 @@ impl Platform for PortablePlatform {
     }
 
     fn inspect_hosts(&self, _paths: &InstallPaths) -> InstallResult<HostState> {
-        // Task 5 supplies real process classification. Unknown blocks mutation.
+        // The portable adapter has no process table. `Unknown` blocks every
+        // mutation instead of claiming quiescence.
         Ok(HostState::Unknown)
     }
 
