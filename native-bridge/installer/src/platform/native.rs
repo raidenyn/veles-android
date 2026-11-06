@@ -4,25 +4,48 @@
 //! decides *what* is written where is asserted once here so a security-relevant
 //! ordering cannot drift between the platforms:
 //!
+//! * every existing layout directory must be owned by this user and private
+//!   before it is reused ([`NativeFs::validate_private_directory`]);
 //! * durable writes create or truncate one validated file, write every byte,
 //!   flush, read the exact bytes back and flush the parent directory;
 //! * [`Platform::replace_durable`](super::Platform::replace_durable) and the state
-//!   documents stage into a fresh sibling on the destination volume, flush and
-//!   read it back, then replace the destination directory entry atomically;
+//!   documents stage into a **freshly created** sibling on the destination
+//!   volume, flush and read it back, then replace the destination directory entry
+//!   atomically. The staging name is never re-adopted, so a planted file at a
+//!   staging name can never be truncated or renamed over the destination;
+//! * the manifest is staged next to its live destination, so the publishing
+//!   rename never crosses a volume;
 //! * manifest publication and registry publication stay two ordered steps, and
 //!   the registry half re-reads the live manifest before writing;
 //! * the manifest half applies the owned-preimage refusal *before* the first
 //!   mutation, so a registration this installer does not own is left intact;
-//! * removal revalidates ancestry and re-hashes the exact owned content
-//!   immediately before the unlink, and a non-empty directory is
-//!   `CleanupPending` rather than a recursive delete.
+//! * removal revalidates ancestry, re-hashes the exact owned content immediately
+//!   before the unlink, and unlinks **through the captured parent handle** after
+//!   comparing the opened leaf's identity with the captured one;
+//! * a non-empty directory is `CleanupPending` rather than a recursive delete.
 //!
 //! The [`NativeFs`] trait is the primitive boundary each adapter implements with
-//! its own OS calls (`CreateFileW`/`ReplaceFileW`/`FlushFileBuffers` on Windows,
-//! no-follow descriptors plus `rename(2)`/`fsync(2)` on macOS). [`StdNativeFs`]
-//! is the same orchestration over `std`, used by portable tests so the shared
-//! decisions are exercised on every host even though the native primitives
-//! themselves only compile for their own target.
+//! its own OS calls (`NtCreateFile`/`NtSetInformationFile` on Windows, no-follow
+//! descriptors plus `renameat(2)`/`unlinkat(2)`/`fsync(2)` on macOS).
+//! [`StdNativeFs`] is the same orchestration over `std`, used by portable tests
+//! so the shared decisions are exercised on every host even though the native
+//! primitives themselves only compile for their own target.
+//!
+//! # Durability
+//!
+//! The contract is *per platform*, and it is stated here rather than implied:
+//!
+//! * macOS: a file's bytes are durable after `fsync(2)`; a directory entry is
+//!   durable after its parent directory's `fsync(2)`. Both are performed.
+//! * Windows: a file's bytes are durable after `FlushFileBuffers` on its handle.
+//!   A rename is performed with `NtSetInformationFile(FileRenameInformation)` on
+//!   the opened source handle with `RootDirectory` set to the opened destination
+//!   directory; the destination directory is then flushed with
+//!   `FlushFileBuffers`. There is **no public Win32 API that documents a
+//!   POSIX-style directory-entry flush**: the adapter performs the flush on the
+//!   directory handle and returns `Io` when the OS refuses, rather than ignoring
+//!   the failure and implying the POSIX guarantee. No `REPLACEFILE_WRITE_THROUGH`
+//!   or `MOVEFILE_WRITE_THROUGH` claim is made for a handle-relative rename.
 
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -30,23 +53,37 @@ use std::path::Path;
 
 use super::{
     InstallLock, OwnedEntry, OwnedKind, PackageKind, PackageSource, PathKind, Registration,
-    StateDocument, ValidatedPath, carrier_entries_with, flush_directory, foreign_state, hash_file,
-    invalid_input, io_failure, is_link_like, is_owned_registration_preimage, read_no_follow,
-    registration_target, replace_file_checked, state_handle, state_relative,
-    state_staging_relative, unsafe_path, validate_registration_manifest, write_durable_checked,
+    StateDocument, ValidatedPath, carrier_entries_with, foreign_state, hash_file, invalid_input,
+    io_failure, is_link_like, is_owned_registration_preimage, read_no_follow, registration_target,
+    replace_file_checked, state_handle, state_relative, unsafe_path,
+    validate_registration_manifest, write_durable_checked,
 };
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult};
-use crate::paths::{InstallPaths, STAGING_DIR, STATE_DIR};
+use crate::paths::{InstallPaths, STATE_DIR};
+
+// Anchored, no-follow directory handles (Windows / macOS only): validation opens
+// the trusted chain once and every native mutation is performed relative to it.
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) mod anchor;
 
 /// The OS primitives a native adapter supplies.
 ///
-/// Every method receives a path that the shared orchestration has already
-/// revalidated against its captured ancestry; the primitive must still apply its
-/// own no-follow/open-reparse-point rules, because that is the actual race
-/// defence. Paths are absolute and rendered exactly as the OS will see them.
+/// Every mutation that names a [`ValidatedPath`] receives the handle validation
+/// captured, including the **opened parent directory**. The primitive must
+/// perform the operation relative to that handle and verify the opened leaf's
+/// identity; re-walking the rendered path would re-open the race the handle
+/// exists to close. Path-addressed methods exist only for work outside the
+/// validated tree (creating the fixed layout, reading a package source).
 pub(crate) trait NativeFs {
     /// Acquire the exclusive per-user lock (the layout must already exist).
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock>;
+    /// Verify one **existing** installer-owned directory.
+    ///
+    /// The directory must be a real directory owned by the current user with no
+    /// access for anybody else (POSIX mode/DACL). A pre-existing directory that
+    /// fails this is `UnsafePath`: reusing it would let another principal plant
+    /// or replace entries the installer later trusts.
+    fn validate_private_directory(&self, path: &Path) -> InstallResult<()>;
     /// Create-new or truncate one validated file, write every byte, flush it and
     /// read the exact bytes back through the same no-follow boundary.
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()>;
@@ -60,14 +97,21 @@ pub(crate) trait NativeFs {
     fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>>;
     /// SHA-256 of one regular file read through the no-follow boundary.
     fn hash_file(&self, path: &Path) -> InstallResult<Digest>;
-    /// Flush one directory's entry table to stable storage.
-    fn flush_directory(&self, path: &Path) -> InstallResult<()>;
-    /// Create one owner-private directory; an existing path is `UnsafePath`.
+    /// Flush the directory that holds `path`, through its captured handle.
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()>;
+    /// Create one owner-private directory addressed by path (layout only).
     fn create_directory(&self, path: &Path) -> InstallResult<()>;
-    /// Unlink one regular file.
-    fn remove_file(&self, path: &Path) -> InstallResult<()>;
+    /// Create `path`'s leaf relative to its validated parent handle.
+    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    fn create_directory_at(&self, path: &ValidatedPath) -> InstallResult<()>;
+    /// Unlink a regular file or a symbolic link **at its validated handle**.
+    ///
+    /// The link's target is never followed and no other name is touched. The
+    /// implementation binds the unlink to the identity it opened (device/inode or
+    /// volume/file id), so a leaf swapped after validation is preserved.
+    fn remove_entry(&self, path: &ValidatedPath) -> InstallResult<()>;
     /// Remove one *empty* directory; `CleanupPending` when it is not empty.
-    fn remove_directory(&self, path: &Path) -> InstallResult<()>;
+    fn remove_directory(&self, path: &ValidatedPath) -> InstallResult<()>;
     /// Install the signed carrier artifact with every metadata class the OS
     /// signature assessment covers preserved.
     fn install_carrier(
@@ -78,14 +122,50 @@ pub(crate) trait NativeFs {
 }
 
 /// Create the fixed private layout with the adapter's native directory security.
+///
+/// An existing directory is never simply adopted: it must still be owned by this
+/// user and private, otherwise `UnsafePath`.
 pub(crate) fn native_ensure_layout(fs: &impl NativeFs, paths: &InstallPaths) -> InstallResult<()> {
-    // Trusted OS-known-folder ancestors (for example macOS `/var` ->
-    // `/private/var`) may be symlinks; only the installer-owned directories are
-    // traversed strictly.
-    if let Some(parent) = paths.root().parent()
-        && fs::symlink_metadata(parent).is_err()
-    {
-        fs::create_dir_all(parent).map_err(|_| io_failure())?;
+    // The `Veles` container is installer-owned too; everything above it is an OS
+    // known folder and is deliberately not validated (and never re-written). A
+    // missing intermediate component (a fresh home, `Library/Application
+    // Support`) is created with the adapter's private-directory security, one
+    // validated component at a time — never with `create_dir_all`'s ambient mode.
+    if let Some(parent) = paths.root().parent() {
+        let mut missing = Vec::new();
+        let mut current = parent;
+        loop {
+            match fs::symlink_metadata(current) {
+                Ok(metadata) => {
+                    if current == parent {
+                        // The `Veles` container is installer-owned: it must be a
+                        // real, private directory.
+                        if is_link_like(&metadata) || !metadata.is_dir() {
+                            return Err(unsafe_path());
+                        }
+                    } else {
+                        // An OS/user known folder above it may legitimately be a
+                        // link (a relocated `Application Support`, a junctioned
+                        // `%LOCALAPPDATA%`): it is only required to resolve to a
+                        // directory, and it is never mutated.
+                        let resolved = fs::metadata(current).map_err(|_| io_failure())?;
+                        if !resolved.is_dir() {
+                            return Err(unsafe_path());
+                        }
+                    }
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    missing.push(current.to_path_buf());
+                    current = current.parent().ok_or_else(io_failure)?;
+                }
+                Err(_) => return Err(io_failure()),
+            }
+        }
+        for directory in missing.iter().rev() {
+            fs.create_directory(directory)?;
+        }
+        fs.validate_private_directory(parent)?;
     }
     for directory in [
         paths.root(),
@@ -99,6 +179,7 @@ pub(crate) fn native_ensure_layout(fs: &impl NativeFs, paths: &InstallPaths) -> 
                 if is_link_like(&metadata) || !metadata.is_dir() {
                     return Err(unsafe_path());
                 }
+                fs.validate_private_directory(directory)?;
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 fs.create_directory(directory)?;
@@ -132,6 +213,67 @@ pub(crate) fn native_write_durable(
     fs.write_durable(path, bytes)
 }
 
+/// A one-shot token that makes each staging name unique.
+fn unique_token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    format!("{:x}-{:x}-{counter:x}", std::process::id(), nanos)
+}
+
+/// A **fresh** staging sibling of `path` that can never be an existing name.
+///
+/// The name carries a process-unique token and the write below is an exclusive
+/// create, so a file planted at a predictable staging name is never adopted,
+/// truncated or renamed over the destination.
+fn staging_sibling(path: &ValidatedPath, suffix: &str) -> InstallResult<ValidatedPath> {
+    let name = path
+        .rendered()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(unsafe_path)?;
+    // Keep the staging component well inside the single-component bound even for
+    // a long destination name.
+    let stem: String = name.chars().take(64).collect();
+    path.sibling(
+        &format!(".{stem}.{}.{suffix}", unique_token()),
+        PathKind::NewFile,
+    )
+}
+
+/// Discard a staging sibling that was created but not renamed into place.
+fn discard_staging(fs: &impl NativeFs, staging: &ValidatedPath) {
+    // Re-adopt the exact file that was written so the unlink is identity-bound;
+    // an absent or replaced staging name is simply left alone.
+    if let Ok(existing) = staging.adopt(PathKind::File) {
+        let _ = fs.remove_entry(&existing);
+    }
+}
+
+/// Stage `bytes` into a fresh sibling of `live`, then atomically replace `live`.
+fn stage_and_replace(
+    fs: &impl NativeFs,
+    live: &ValidatedPath,
+    bytes: &[u8],
+    suffix: &str,
+) -> InstallResult<()> {
+    let staging = staging_sibling(live, suffix)?;
+    match native_write_durable(fs, &staging, bytes) {
+        Ok(()) => {}
+        Err(failure) => {
+            discard_staging(fs, &staging);
+            return Err(failure);
+        }
+    }
+    let staged = staging.adopt(PathKind::File)?;
+    native_replace_file(fs, &staged, live)
+}
+
 /// Replace one owned file without writing through its inode.
 pub(crate) fn native_replace_durable(
     fs: &impl NativeFs,
@@ -145,31 +287,7 @@ pub(crate) fn native_replace_durable(
     if path.kind() != PathKind::File {
         return Err(unsafe_path());
     }
-    let name = path
-        .rendered()
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(unsafe_path)?;
-    let staging = match path.sibling(&format!(".{name}.installer-new"), PathKind::NewFile) {
-        Ok(staging) => staging,
-        // A previous attempt may have left the staging sibling behind; re-adopt
-        // it as an existing regular file (a link or directory is still refused).
-        Err(error) if error.code == FailureCode::UnsafePath => {
-            path.sibling(&format!(".{name}.installer-new"), PathKind::File)?
-        }
-        Err(error) => return Err(error),
-    };
-    match native_write_durable(fs, &staging, bytes) {
-        Ok(()) => {}
-        Err(failure) => {
-            // The staged bytes are inert; remove them so a retry starts clean.
-            let _ = fs.remove_file(staging.rendered());
-            return Err(failure);
-        }
-    }
-    let staged = staging.adopt(PathKind::File)?;
-    let live = path.adopt(PathKind::File)?;
-    native_replace_file(fs, &staged, &live)
+    stage_and_replace(fs, path, bytes, "installer-new")
 }
 
 /// Atomically replace one file and flush the destination directory.
@@ -187,8 +305,7 @@ pub(crate) fn native_replace_file(
     staged.revalidate()?;
     live.revalidate()?;
     fs.replace_file(staged, live)?;
-    let parent = live.rendered().parent().ok_or_else(unsafe_path)?;
-    fs.flush_directory(parent)
+    fs.flush_parent(live)
 }
 
 /// Atomically replace one installer state document.
@@ -198,12 +315,8 @@ pub(crate) fn native_write_state(
     document: StateDocument,
     bytes: &[u8],
 ) -> InstallResult<()> {
-    let staging_relative = state_staging_relative(document);
-    let staging = state_handle(paths, &staging_relative)?;
-    native_write_durable(fs, &staging, bytes)?;
-    let staging = staging.adopt(PathKind::File)?;
     let live = state_handle(paths, &state_relative(document))?;
-    native_replace_file(fs, &staging, &live)
+    stage_and_replace(fs, &live, bytes, "tmp")
 }
 
 /// Read one state document exactly, rejecting links and non-files.
@@ -287,18 +400,10 @@ pub(crate) fn native_publish_manifest(
     }
     native_ensure_layout(fs, paths)?;
     ensure_registration_parent(paths)?;
-    let staged_relative = format!("{STATE_DIR}/{STAGING_DIR}/registration.json");
-    let staged = match ValidatedPath::new(paths, Path::new(&staged_relative), PathKind::NewFile) {
-        Ok(staged) => staged,
-        Err(error) if error.code == FailureCode::UnsafePath => {
-            ValidatedPath::existing_file(paths, Path::new(&staged_relative))?
-        }
-        Err(error) => return Err(error),
-    };
-    native_write_durable(fs, &staged, value.manifest())?;
-    let staged = staged.adopt(PathKind::File)?;
     let live = registration_target(paths)?;
-    native_replace_file(fs, &staged, &live)
+    // Stage next to the live destination: the publishing rename must never cross
+    // a volume (the macOS Chrome registration lives outside the install root).
+    stage_and_replace(fs, &live, value.manifest(), "installer-new")
 }
 
 /// Create the fixed registration directory when Chrome has not created it yet.
@@ -370,9 +475,8 @@ pub(crate) fn native_remove_manifest(
     }
     let live = ValidatedPath::registration(paths, PathKind::File)?;
     live.revalidate()?;
-    fs.remove_file(live.rendered())?;
-    let parent = live.rendered().parent().ok_or_else(unsafe_path)?;
-    fs.flush_directory(parent)
+    fs.remove_entry(&live)?;
+    fs.flush_parent(&live)
 }
 
 /// Enumerate exactly what a native carrier install will create.
@@ -419,26 +523,33 @@ pub(crate) fn native_remove_owned(fs: &impl NativeFs, entry: &OwnedEntry) -> Ins
             if !short && fs.hash_file(entry.path.rendered())? != expected {
                 return Err(foreign_state());
             }
-            fs.remove_file(entry.path.rendered())?;
+            fs.remove_entry(&entry.path)?;
         }
-        OwnedKind::Directory => fs.remove_directory(entry.path.rendered())?,
+        // The link is bound to its exact target bytes; its target is never read
+        // as content and never unlinked.
+        OwnedKind::Symlink => {
+            let expected = entry.claim.sha256.ok_or_else(foreign_state)?;
+            if crate::platform::link_target_digest(entry.path.rendered())? != expected {
+                return Err(foreign_state());
+            }
+            fs.remove_entry(&entry.path)?;
+        }
+        OwnedKind::Directory => fs.remove_directory(&entry.path)?,
     }
-    let parent = entry.path.rendered().parent().ok_or_else(unsafe_path)?;
-    fs.flush_directory(parent)
+    fs.flush_parent(&entry.path)
 }
 
 /// Flush the parent directory of one validated path.
 pub(crate) fn native_flush_parent(fs: &impl NativeFs, path: &ValidatedPath) -> InstallResult<()> {
     path.revalidate_ancestors()?;
-    let parent = path.rendered().parent().ok_or_else(unsafe_path)?;
-    fs.flush_directory(parent)
+    fs.flush_parent(path)
 }
 
 /// The portable reference implementation of [`NativeFs`].
 ///
 /// This is deliberately public: it is the implementation the portable tests use
 /// to exercise the shared native orchestration on any host. It is **not** a
-/// production adapter - it performs no OS registration and no signature
+/// production adapter: it performs no OS registration and no signature
 /// assessment, and the production binaries never select it.
 #[derive(Debug, Default)]
 pub struct StdNativeFs;
@@ -446,6 +557,25 @@ pub struct StdNativeFs;
 impl NativeFs for StdNativeFs {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
         super::acquire_lock(paths)
+    }
+
+    fn validate_private_directory(&self, path: &Path) -> InstallResult<()> {
+        let metadata = fs::symlink_metadata(path).map_err(|_| io_failure())?;
+        if is_link_like(&metadata) || !metadata.is_dir() {
+            return Err(unsafe_path());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+            if metadata.uid() != super::effective_user_id() {
+                return Err(unsafe_path());
+            }
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(unsafe_path());
+            }
+        }
+        Ok(())
     }
 
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
@@ -464,8 +594,9 @@ impl NativeFs for StdNativeFs {
         hash_file(path)
     }
 
-    fn flush_directory(&self, path: &Path) -> InstallResult<()> {
-        flush_directory(path)
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
+        let parent = path.rendered().parent().ok_or_else(unsafe_path)?;
+        super::flush_directory(parent)
     }
 
     fn create_directory(&self, path: &Path) -> InstallResult<()> {
@@ -496,12 +627,26 @@ impl NativeFs for StdNativeFs {
         Ok(())
     }
 
-    fn remove_file(&self, path: &Path) -> InstallResult<()> {
-        fs::remove_file(path).map_err(|_| io_failure())
+    fn create_directory_at(&self, path: &ValidatedPath) -> InstallResult<()> {
+        if path.kind() != PathKind::NewDirectory {
+            return Err(invalid_input());
+        }
+        path.revalidate()?;
+        NativeFs::create_directory(self, path.rendered())?;
+        self.flush_parent(path)
     }
 
-    fn remove_directory(&self, path: &Path) -> InstallResult<()> {
-        match fs::remove_dir(path) {
+    fn remove_entry(&self, path: &ValidatedPath) -> InstallResult<()> {
+        if !matches!(path.kind(), PathKind::File | PathKind::Symlink) {
+            return Err(unsafe_path());
+        }
+        path.revalidate()?;
+        fs::remove_file(path.rendered()).map_err(|_| io_failure())
+    }
+
+    fn remove_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        path.revalidate()?;
+        match fs::remove_dir(path.rendered()) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {
@@ -587,11 +732,36 @@ mod tests {
     fn sibling_names_cannot_escape_the_parent() {
         let temp = TempRoot::new("sibling");
         let paths = layout(&temp.0);
-        std::fs::create_dir_all(paths.state()).unwrap();
+        let fs = StdNativeFs;
+        native_ensure_layout(&fs, &paths).unwrap();
         let handle = ValidatedPath::existing_directory(&paths, Path::new("state")).unwrap();
         assert!(handle.sibling("..", PathKind::NewFile).is_err());
         assert!(handle.sibling("a/b", PathKind::NewFile).is_err());
         assert!(handle.sibling("ok.tmp", PathKind::NewFile).is_ok());
+    }
+
+    /// A staging sibling is created fresh every time: an existing file at a
+    /// guessing-friendly staging name is never adopted or truncated.
+    #[test]
+    fn staging_names_are_fresh_and_never_adopted() {
+        let temp = TempRoot::new("staging");
+        let paths = layout(&temp.0);
+        let fs = StdNativeFs;
+        native_ensure_layout(&fs, &paths).unwrap();
+        let live = ValidatedPath::new_file(&paths, Path::new("state/receipt.json")).unwrap();
+        let first = staging_sibling(&live, "tmp").unwrap();
+        let second = staging_sibling(&live, "tmp").unwrap();
+        assert_ne!(first.relative(), second.relative());
+        // A planted file at the first staging name cannot make the next write
+        // adopt it: the name is one-shot, and the write is an exclusive create.
+        std::fs::write(first.rendered(), b"planted").unwrap();
+        assert_eq!(
+            native_write_durable(&fs, &first, b"ours").unwrap_err().code,
+            FailureCode::UnsafePath
+        );
+        assert_eq!(std::fs::read(first.rendered()).unwrap(), b"planted");
+        discard_staging(&fs, &first);
+        assert!(!first.rendered().exists());
     }
 
     /// The shared native orchestration, exercised over `std` on every host.
@@ -616,8 +786,13 @@ mod tests {
             native_read_state(&fs, &paths, StateDocument::Journal).unwrap(),
             Some(b"second".to_vec())
         );
-        // No torn staging sibling survives a completed replacement.
-        assert!(!paths.state().join("journal.json.tmp").exists());
+        // No staging sibling survives a completed replacement.
+        let staged: Vec<_> = std::fs::read_dir(paths.state())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().contains("installer-new"))
+            .collect();
+        assert!(staged.is_empty(), "staging siblings must be renamed away");
         drop(lock);
 
         // A manifest selecting an owned executable publishes, and the second
@@ -637,6 +812,24 @@ mod tests {
                 .unwrap()
                 .manifest(),
             bytes.as_slice()
+        );
+        // The manifest is staged next to its live destination, so the publishing
+        // rename never leaves the destination directory (and its volume).
+        assert!(
+            !paths
+                .state()
+                .join("staging")
+                .join("registration.json")
+                .exists()
+        );
+        let leftover_in_state: Vec<_> = std::fs::read_dir(paths.state())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().contains("registration.json"))
+            .collect();
+        assert!(
+            leftover_in_state.is_empty(),
+            "the manifest must not be staged inside the install state directory"
         );
 
         // The manifest can be withdrawn exactly, and the state quarantine keeps
@@ -720,6 +913,21 @@ mod tests {
                 .join("data.bin")
                 .exists()
         );
+
+        // An owned symbolic link is removed as a link: its target keeps its bytes
+        // and a changed target is preserved instead of unlinked.
+        let target = paths.versions().join("1.0.0-test").join("target.bin");
+        std::fs::write(&target, b"target").unwrap();
+        #[cfg(unix)]
+        {
+            let link = paths.versions().join("1.0.0-test").join("link");
+            std::os::unix::fs::symlink("../1.0.0-test/target.bin", &link).unwrap();
+            let claim = OwnedClaim::symlink("versions/1.0.0-test/link", "../1.0.0-test/target.bin");
+            let entry = OwnedEntry::from_claim(&paths, &claim).unwrap().unwrap();
+            native_remove_owned(&fs, &entry).unwrap();
+            assert!(!link.exists());
+            assert_eq!(std::fs::read(&target).unwrap(), b"target");
+        }
 
         // A non-empty directory is never recursively deleted.
         let directory = OwnedClaim::directory("versions/1.0.0-test");

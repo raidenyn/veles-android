@@ -1,9 +1,8 @@
 //! Native Windows filesystem and HKCU registration evidence (OTP-25 Task 8).
 //!
 //! These tests must run on a **Windows** runner under a standard, non-elevated
-//! user account. They are compiled only on Windows and are explicitly ignored on
-//! every other host: the Linux/macOS executor records them as BLOCKED, never as
-//! passes.
+//! user account. They are compiled only on Windows; the Linux executor cannot
+//! run them and records them as **NOT RUN**, never as passes.
 //!
 //! Every test uses a private temporary install root and a test-only HKCU subkey
 //! below `Software\Veles\InstallerTests`. A person's production
@@ -15,10 +14,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
+use veles_bridge_installer::cleanup::{
+    CleanupCompletion, CleanupStatus, StdHelperImage, remove_helper_after_exit,
+};
 use veles_bridge_installer::{
-    Channel, FailureCode, InstallPaths, NativeManifest, PathKind, Platform, Registration,
-    RegistryView, StateDocument, Target, ValidatedPath, WindowsPlatform, extension_origin,
+    Channel, Digest, FailureCode, InstallPaths, NativeManifest, PathKind, Platform, Registration,
+    RegistryView, RemoveOutcome, StateDocument, Target, ValidatedPath, WindowsCleanupRoot,
+    WindowsPlatform, extension_origin,
 };
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -88,8 +92,22 @@ fn registration(paths: &InstallPaths, executable: &str) -> Registration {
     Registration::new(serde_json::to_vec(&manifest).expect("manifest bytes")).expect("registration")
 }
 
+/// Replace the live manifest with `bytes` through the staged sibling + rename
+/// path the transaction uses, without going through publication step one.
+fn force_manifest(platform: &WindowsPlatform, paths: &InstallPaths, bytes: &[u8]) {
+    let staged = ValidatedPath::new_file(paths, Path::new("state/staging/registration.json"))
+        .expect("staging handle");
+    platform
+        .write_durable(&staged, bytes)
+        .expect("staged bytes");
+    let staged = staged.adopt(PathKind::File).expect("adopt staged");
+    let live = ValidatedPath::registration(paths, PathKind::File).expect("registration handle");
+    platform
+        .replace_manifest(&staged, &live)
+        .expect("replace manifest");
+}
+
 #[test]
-#[ignore = "requires Windows runner; native evidence BLOCKED on this executor"]
 fn windows_hkcu_manifest_swap_and_partial_registry_failure() {
     let temp = TempRoot::new("hkcu");
     let paths = windows_paths(&temp);
@@ -173,17 +191,7 @@ fn windows_hkcu_manifest_swap_and_partial_registry_failure() {
     // replaced by different (still owned) bytes. The registry half re-reads the
     // live manifest, refuses, and leaves the previously published value intact.
     let other = registration(&paths, "versions/1.0.0-aaaa/host.exe");
-    let staged_path = Path::new("state/staging/registration.json");
-    let staged = ValidatedPath::new_file(&paths, staged_path).expect("staging handle");
-    platform
-        .write_durable(&staged, other.manifest())
-        .expect("staged bytes");
-    let staged = staged.adopt(PathKind::File).expect("adopt staged");
-    let live_handle =
-        ValidatedPath::registration(&paths, PathKind::File).expect("registration handle");
-    platform
-        .replace_manifest(&staged, &live_handle)
-        .expect("replace manifest");
+    force_manifest(&platform, &paths, other.manifest());
     assert!(platform.publish_registration(&paths, &second).is_err());
     assert_eq!(
         platform
@@ -194,9 +202,13 @@ fn windows_hkcu_manifest_swap_and_partial_registry_failure() {
         "a refused registry half must not touch the published value"
     );
 
-    // A live registration this installer does not own is never stolen.
-    platform.publish_manifest(&paths, &second).expect("restore");
+    // A live registration this installer does not own is never stolen. Restore
+    // our own bytes first (a foreign manifest cannot be republished over), then
+    // write foreign bytes and require both halves to refuse.
+    force_manifest(&platform, &paths, second.manifest());
     let foreign = br#"{"name":"me.nagaev.veles.bridge","description":"Veles","path":"C:\\Program Files\\Other\\host.exe","type":"stdio","allowed_origins":["chrome-extension://mnopabcdefghijklmnopabcdefghijkl/"]}"#;
+    let live_handle =
+        ValidatedPath::registration(&paths, PathKind::File).expect("registration handle");
     platform
         .write_durable(&live_handle, foreign)
         .expect("foreign live bytes");
@@ -209,9 +221,17 @@ fn windows_hkcu_manifest_swap_and_partial_registry_failure() {
         foreign,
         "the refused registration is left byte-for-byte intact"
     );
+    // The registry half refuses the same foreign manifest.
+    assert_eq!(
+        platform
+            .publish_registration(&paths, &second)
+            .expect_err("a foreign registration is refused by the registry half")
+            .code,
+        FailureCode::ForeignState
+    );
 
     // Removal takes our value and manifest, and is idempotent.
-    platform.publish_manifest(&paths, &second).expect("restore");
+    force_manifest(&platform, &paths, second.manifest());
     platform
         .publish_registration(&paths, &second)
         .expect("republish");
@@ -232,8 +252,73 @@ fn windows_hkcu_manifest_swap_and_partial_registry_failure() {
     drop(lock);
 }
 
+/// A HKCU registration naming another product's manifest is foreign state even
+/// when our local manifest file is absent: `read_registration` must not conceal
+/// it, and publication must refuse it.
 #[test]
-#[ignore = "requires Windows runner; native evidence BLOCKED on this executor"]
+fn windows_foreign_hkcu_value_without_manifest_is_refused() {
+    let temp = TempRoot::new("foreign-hkcu");
+    let paths = windows_paths(&temp);
+    let platform = test_platform();
+    let _lock = platform.lock(&paths).expect("lock");
+
+    let directory = ValidatedPath::new_directory(&paths, Path::new("versions/1.0.0-aaaa"))
+        .expect("version dir");
+    platform.create_directory(&directory).expect("version dir");
+    let executable = ValidatedPath::new_file(&paths, Path::new("versions/1.0.0-aaaa/host.exe"))
+        .expect("host handle");
+    platform
+        .write_durable(&executable, b"host-image")
+        .expect("host image");
+
+    // Publish ours, then repoint HKCU at a foreign manifest *and* remove our
+    // manifest file: the value is the only remaining evidence of a registration.
+    let ours = registration(&paths, "versions/1.0.0-aaaa/host.exe");
+    platform.publish_manifest(&paths, &ours).expect("manifest");
+    platform
+        .publish_registration(&paths, &ours)
+        .expect("registry publication");
+    let foreign_manifest = temp.path().join("Foreign").join("host.json");
+    fs::create_dir_all(foreign_manifest.parent().expect("parent")).expect("foreign dir");
+    fs::write(
+        &foreign_manifest,
+        br#"{"name":"me.nagaev.veles.bridge","description":"Other","path":"C:\\Other\\host.exe","type":"stdio","allowed_origins":["chrome-extension://mnopabcdefghijklmnopabcdefghijkl/"]}"#,
+    )
+    .expect("foreign manifest");
+    // Rewrite the test key directly through the test-only registry API.
+    platform
+        .write_registry_value_for_tests(
+            &paths,
+            foreign_manifest.to_str().expect("utf-8 foreign path"),
+        )
+        .expect("foreign value");
+    fs::remove_file(paths.registration_path()).expect("remove our manifest");
+
+    assert_eq!(
+        platform
+            .read_registration(&paths)
+            .expect_err("a foreign HKCU value must not be concealed as absent")
+            .code,
+        FailureCode::ForeignState
+    );
+    assert_eq!(
+        platform
+            .publish_manifest(&paths, &ours)
+            .expect_err("the manifest half refuses a foreign value")
+            .code,
+        FailureCode::ForeignState
+    );
+    assert!(!paths.registration_path().exists());
+    assert_eq!(
+        platform
+            .read_registry_value(&paths, RegistryView::Default)
+            .expect("registry read")
+            .as_deref(),
+        foreign_manifest.to_str()
+    );
+}
+
+#[test]
 fn non_admin_unicode_paths() {
     // Must run as a standard, non-elevated account: every mutation below targets
     // `%LOCALAPPDATA%`/temporary paths below the user profile only, never
@@ -252,11 +337,11 @@ fn non_admin_unicode_paths() {
     let _lock = platform.lock(&paths).expect("lock");
 
     // Durable bytes and state documents survive non-ASCII/space components.
-    let file = ValidatedPath::new_file(&paths, Path::new("versions/1.0.0-aaaa/host.exe"))
-        .expect("host handle");
     let directory = ValidatedPath::new_directory(&paths, Path::new("versions/1.0.0-aaaa"))
         .expect("version dir");
     platform.create_directory(&directory).expect("version dir");
+    let file = ValidatedPath::new_file(&paths, Path::new("versions/1.0.0-aaaa/host.exe"))
+        .expect("host handle");
     platform
         .write_durable(&file, b"unicode-host")
         .expect("durable write");
@@ -291,4 +376,166 @@ fn non_admin_unicode_paths() {
         fs::read(paths.registration_path()).expect("manifest file"),
         registration.manifest()
     );
+}
+
+/// A pre-existing layout directory this user does not privately own is refused
+/// instead of reused: another principal could plant or replace entries the
+/// installer later trusts.
+#[test]
+fn preexisting_layout_directory_with_a_wide_dacl_is_refused() {
+    let temp = TempRoot::new("wide-dacl");
+    let paths = windows_paths(&temp);
+    let platform = test_platform();
+    // Create the layout with the installer's own protected DACL, then release it
+    // and widen one directory's DACL as a foreign process could.
+    drop(platform.lock(&paths).expect("lock"));
+    let status = process::Command::new("icacls")
+        .arg(paths.state())
+        .args(["/grant", "*S-1-1-0:(OI)(CI)F"])
+        .status()
+        .expect("icacls is a standard Windows tool");
+    assert!(status.success(), "could not widen the fixture DACL");
+    let failure = platform
+        .lock(&paths)
+        .expect_err("a widened layout directory is not adopted");
+    assert_eq!(failure.code, FailureCode::UnsafePath);
+}
+
+/// The cleanup helper image is deleted by the **installer** after the helper
+/// exits, and its absence is observed. The helper itself never deletes it.
+#[test]
+fn cleanup_helper_image_disappears_after_exit() {
+    let temp = TempRoot::new("helper-image");
+    let staged = temp.path().join("private").join("veles-cleanup.exe");
+    fs::create_dir_all(staged.parent().expect("helper parent")).expect("helper dir");
+    fs::copy(env!("CARGO_BIN_EXE_veles-bridge-cleanup"), &staged).expect("stage the helper");
+
+    // No inherited request pipe: the helper refuses the channel, writes a
+    // pending completion to its (inherited) stdout and exits non-zero.
+    let mut child = process::Command::new(&staged)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .spawn()
+        .expect("spawn the staged helper");
+    let status = child.wait().expect("wait for the helper");
+    assert!(!status.success(), "refused cleanup reports a non-zero exit");
+    assert!(
+        staged.exists(),
+        "the helper must not delete its own image; that is the installer's job"
+    );
+
+    // After observing the exit and authenticating the completion, the installer
+    // deletes the image and verifies it is gone.
+    // The installer authenticates the completion before deleting the image.
+    let transaction = "11".repeat(32);
+    let capability = [0x22u8; 32];
+    let mut completion = CleanupCompletion {
+        schema: 1,
+        magic: "veles-cleanup-v1".to_owned(),
+        transaction,
+        status: CleanupStatus::Complete,
+        reason: None,
+        removed_files: 1,
+        removed_directories: 1,
+        preserved: 0,
+        mac: None,
+    };
+    completion.mac = Some(veles_bridge_installer::encode_hex(
+        &veles_bridge_installer::hmac_sha256(&capability, &completion.mac_input()),
+    ));
+    let mut image = StdHelperImage;
+    remove_helper_after_exit(
+        &mut image,
+        &staged,
+        &completion,
+        &capability,
+        &completion.transaction,
+    )
+    .expect("installer removes the image");
+    assert!(!staged.exists(), "the staged helper image is gone");
+}
+
+/// A removal request whose root component was replaced by a junction/reparse
+/// point is not followed: the cleanup traversal refuses it and nothing outside
+/// the install root is touched.
+#[test]
+fn cleanup_root_does_not_follow_a_planted_reparse_point() {
+    let temp = TempRoot::new("anchored");
+    let root = temp.path().join("Veles/NativeBridge");
+    fs::create_dir_all(root.join("versions/1.0.0-aaaa")).expect("version dir");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&outside).expect("outside");
+    let outside_file = outside.join("host.exe");
+    fs::write(&outside_file, b"host-image").expect("outside host");
+
+    // Open the anchored root first, then replace `versions` with a junction that
+    // points at the outside tree.
+    let mut traversal = WindowsCleanupRoot::open(&root).expect("open the anchored root");
+    fs::remove_dir_all(root.join("versions")).expect("drop versions");
+    let status = process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(root.join("versions"))
+        .arg(&outside)
+        .status()
+        .expect("cmd is a standard Windows tool");
+    assert!(
+        status.success(),
+        "a junction does not require elevation; the fixture must stage one"
+    );
+    let outcome = traversal.remove_file(
+        "versions/host.exe",
+        b"host-image".len() as u64,
+        Digest::of(b"host-image"),
+        Instant::now() + Duration::from_secs(5),
+    );
+    assert_eq!(outcome, RemoveOutcome::Preserved);
+    assert!(outside_file.exists(), "a reparse point is never traversed");
+}
+
+/// Identity-bound deletion: the exact leaf that was opened and hashed is the one
+/// removed, and a directory that still holds anything is preserved.
+#[test]
+fn cleanup_root_removes_only_matching_identities() {
+    let temp = TempRoot::new("identity");
+    let root = temp.path().join("Veles/NativeBridge");
+    fs::create_dir_all(root.join("versions/1.0.0-aaaa")).expect("version dir");
+    fs::write(root.join("versions/1.0.0-aaaa/host.exe"), b"host-image").expect("host");
+    let mut traversal = WindowsCleanupRoot::open(&root).expect("open the anchored root");
+
+    // Wrong digest: preserved.
+    assert_eq!(
+        traversal.remove_file(
+            "versions/1.0.0-aaaa/host.exe",
+            b"host-image".len() as u64,
+            Digest::of(b"other"),
+            Instant::now() + Duration::from_secs(5),
+        ),
+        RemoveOutcome::Preserved
+    );
+    assert!(root.join("versions/1.0.0-aaaa/host.exe").exists());
+
+    // Non-empty directory: preserved, never recursively deleted.
+    let blocked = traversal.remove_directory("versions/1.0.0-aaaa");
+    assert_eq!(blocked, RemoveOutcome::Preserved);
+
+    // Exact identity: removed, then the empty directory.
+    assert_eq!(
+        traversal.remove_file(
+            "versions/1.0.0-aaaa/host.exe",
+            b"host-image".len() as u64,
+            Digest::of(b"host-image"),
+            Instant::now() + Duration::from_secs(5),
+        ),
+        RemoveOutcome::Removed
+    );
+    assert!(!root.join("versions/1.0.0-aaaa/host.exe").exists());
+    assert_eq!(
+        traversal.remove_directory("versions/1.0.0-aaaa"),
+        RemoveOutcome::Removed
+    );
+
+    // The helper request names the install root; a root this installer does not
+    // own cannot be opened as an anchored traversal root.
+    assert!(WindowsCleanupRoot::open(temp.path()).is_err());
 }

@@ -49,24 +49,32 @@
 //! the decision and the process now holding the PID is classified, so a recycled
 //! PID is neither trusted nor able to hide a host.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::TryLockError;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::mem::size_of;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
-use std::os::windows::io::FromRawHandle;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::ptr;
+use std::time::Instant;
 
 use sha2::{Digest as _, Sha256};
 
+use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
+use windows::Wdk::Storage::FileSystem::{
+    FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN_FOR_BACKUP_INTENT,
+    FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_RENAME_REPLACE_IF_EXISTS,
+    FILE_SYNCHRONOUS_IO_NONALERT, FileRenameInformation, NTCREATEFILE_CREATE_DISPOSITION,
+    NTCREATEFILE_CREATE_OPTIONS, NtCreateFile, NtSetInformationFile,
+};
 use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER,
     ERROR_PATH_NOT_FOUND, FALSE, GENERIC_READ, GENERIC_WRITE, HANDLE, HLOCAL, HWND, LocalFree,
-    STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS,
+    NTSTATUS, OBJ_CASE_INSENSITIVE, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
 };
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -80,18 +88,19 @@ use windows::Win32::Security::WinTrust::{
     WinVerifyTrust,
 };
 use windows::Win32::Security::{
-    EqualSid, GetTokenInformation, IsValidSid, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, EqualSid, GetTokenInformation, IsValidSid, PSID,
+    TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Storage::FileSystem::{
-    COPY_FILE_FAIL_IF_EXISTS, COPYFILE2_EXTENDED_PARAMETERS, CREATE_NEW, CopyFile2,
-    CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BEGIN,
-    FILE_CREATION_DISPOSITION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, GetFileSizeEx, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    MoveFileExW, OPEN_ALWAYS, OPEN_EXISTING, REPLACEFILE_WRITE_THROUGH, ReadFile, ReplaceFileW,
-    SetFilePointerEx,
+    COPY_FILE_FAIL_IF_EXISTS, COPYFILE2_EXTENDED_PARAMETERS, CopyFile2, CreateDirectoryW,
+    CreateFileW, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_BEGIN, FILE_CREATION_DISPOSITION, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FlushFileBuffers, GetFileSizeEx,
+    OPEN_ALWAYS, OPEN_EXISTING, ReadFile, SetFileInformationByHandle, SetFilePointerEx,
 };
+use windows::Win32::System::IO::IO_STATUS_BLOCK;
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
     REG_OPTION_NON_VOLATILE, REG_SAM_FLAGS, REG_SZ, REG_VALUE_TYPE, RegCloseKey, RegCreateKeyExW,
@@ -120,6 +129,7 @@ use super::{
     TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath, WindowsPreimage,
     inspect_host_processes, path_is_within,
 };
+use crate::cleanup::RemoveOutcome;
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
 
@@ -290,6 +300,22 @@ impl WindowsPlatform {
     ) -> InstallResult<Option<String>> {
         read_scope_value(&self.scope.key_for(paths), view)
     }
+
+    /// Test-only: write the test scope's default value.
+    ///
+    /// Refuses unless the scope is a test subtree, so a fixture can stage a
+    /// foreign registration without ever touching Chrome's production key.
+    #[doc(hidden)]
+    pub fn write_registry_value_for_tests(
+        &self,
+        paths: &InstallPaths,
+        value: &str,
+    ) -> InstallResult<()> {
+        if !self.scope.is_test() {
+            return Err(unsafe_path());
+        }
+        write_scope_value(&self.scope.key_for(paths), value)
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -335,12 +361,28 @@ impl Platform for WindowsPlatform {
             return Err(invalid_input());
         }
         path.revalidate()?;
-        NativeFs::create_directory(self, path.rendered())?;
-        let parent = path.rendered().parent().ok_or_else(unsafe_path)?;
-        self.flush_directory(parent)
+        // Created relative to the captured parent handle, which is then flushed
+        // through that same handle.
+        self.create_directory_at(path)
     }
 
+    /// Publication step one: the manifest file.
+    ///
+    /// Both publication halves refuse a foreign registration. The HKCU value is
+    /// read **before** anything is staged: if it names a manifest this installer
+    /// does not own, this is `ForeignState` and no file or registry byte changes.
     fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+        let key = self.scope.key_for(paths);
+        let manifest = paths
+            .registration_path()
+            .to_str()
+            .ok_or_else(unsafe_path)?
+            .to_owned();
+        if let Some(current) = read_scope_value(&key, RegistryView::Default)?
+            && !same_windows_value(&current, &manifest)
+        {
+            return Err(foreign_state());
+        }
         native_publish_manifest(self, paths, value)
     }
 
@@ -350,16 +392,31 @@ impl Platform for WindowsPlatform {
 
     /// The manifest file **and** the current HKCU default value.
     ///
-    /// The returned [`Registration`] carries a [`WindowsPreimage`] naming the
-    /// exact key and the value publication would replace (or its absence), so
-    /// the transaction journals a complete restore preimage before the first
-    /// registry mutation.
+    /// The HKCU value is read **first**, before the manifest is even looked at: a
+    /// value this installer does not own is foreign state even when our local
+    /// manifest is missing, so returning `None` early would conceal it. The
+    /// returned [`Registration`] carries a [`WindowsPreimage`] naming the exact key
+    /// and the value publication would replace (or its absence), so the
+    /// transaction journals a complete restore preimage before the first registry
+    /// mutation.
     fn read_registration(&self, paths: &InstallPaths) -> InstallResult<Option<Registration>> {
+        let key = self.scope.key_for(paths);
+        let previous = read_scope_value(&key, RegistryView::Default)?;
+        let manifest = paths
+            .registration_path()
+            .to_str()
+            .ok_or_else(unsafe_path)?
+            .to_owned();
+        if let Some(current) = previous.as_ref()
+            && !same_windows_value(current, &manifest)
+        {
+            // The value names another product's manifest (or a stale path): this
+            // is not our registration, whatever our manifest file says.
+            return Err(foreign_state());
+        }
         let Some(live) = native_read_registration(self, paths)? else {
             return Ok(None);
         };
-        let key = self.scope.key_for(paths);
-        let previous = read_scope_value(&key, RegistryView::Default)?;
         Ok(Some(live.with_windows_preimage(WindowsPreimage::new(
             key, previous,
         )?)))
@@ -1340,6 +1397,13 @@ fn registry_wide(key: &str) -> InstallResult<Vec<u16>> {
 
 /// Open one file with the exact Win32 sharing and reparse-point semantics the
 /// installer needs. `share` of zero is an exclusive open (the installer lock).
+///
+/// The error is translated to a raw Win32 code: `CreateFileW` reports an
+/// `HRESULT_FROM_WIN32`-encoded status, and `from_raw_os_error(encoded)` would
+/// never match `ERROR_SHARING_VIOLATION`, so [`map_open_error`] would lose the
+/// busy case. `HRESULT::to_hresult`/`win32_error` is not needed: the low
+/// 16 bits of the encoded status *are* the Win32 error, and `code().0 as u32`
+/// keeps them intact for `from_raw_os_error`.
 fn create_file(
     path: &Path,
     access: u32,
@@ -1361,9 +1425,21 @@ fn create_file(
             None,
         )
     }
-    .map_err(|error| io::Error::from_raw_os_error(error.code().0))?;
+    .map_err(|error| io::Error::from_raw_os_error(win32_code(error.code())))?;
     // SAFETY: CreateFileW transferred ownership of the handle to the caller.
     Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
+/// The Win32 error inside one encoded `HRESULT`.
+fn win32_code(code: HRESULT) -> i32 {
+    // `HRESULT_FROM_WIN32(err)` is `0x8007_0000 | err`; the low 16 bits are the
+    // Win32 code. Anything that is not such an encoding is passed through.
+    let raw = code.0 as u32;
+    if raw & 0xFFFF_0000 == 0x8007_0000 {
+        (raw & 0xFFFF) as i32
+    } else {
+        code.0
+    }
 }
 
 /// Map a Win32 open failure to the installer vocabulary.
@@ -1372,7 +1448,8 @@ fn map_open_error(error: &io::Error) -> InstallFailure {
         // A second lock holder, or a destination another process has open
         // without sharing: the caller retries, it is not a corruption.
         Some(32) => InstallFailure::new(FailureCode::Busy),
-        Some(5) | Some(2) => unsafe_path(),
+        // `ERROR_FILE_NOT_FOUND` / `ERROR_PATH_NOT_FOUND` / access denied.
+        Some(2) | Some(3) | Some(5) => unsafe_path(),
         _ => io_failure(),
     }
 }
@@ -1382,6 +1459,530 @@ fn is_reparse(file: &File) -> io::Result<bool> {
     use std::os::windows::fs::MetadataExt;
 
     Ok(file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0)
+}
+
+// ---------------------------------------------------------------------------
+// Anchored, handle-relative primitives and the Windows cleanup traversal root.
+// ---------------------------------------------------------------------------
+
+/// `NtCreateFile` dispositions used by the anchored opens.
+const NT_FILE_OPEN: NTCREATEFILE_CREATE_DISPOSITION = NTCREATEFILE_CREATE_DISPOSITION(1);
+const NT_FILE_CREATE: NTCREATEFILE_CREATE_DISPOSITION = NTCREATEFILE_CREATE_DISPOSITION(2);
+
+/// `GENERIC_READ | GENERIC_WRITE | DELETE`: enough to read, write, rename or
+/// delete the object a handle names.
+const ACCESS_RWD: u32 = 0x8000_0000 | 0x4000_0000 | 0x0001_0000;
+const ACCESS_RD: u32 = 0x8000_0000 | 0x0001_0000;
+
+/// Open `name` relative to one already-opened directory handle.
+///
+/// The single component is resolved against `RootDirectory`, so no ancestor is
+/// re-walked, and `FILE_OPEN_REPARSE_POINT` opens a link itself (the caller then
+/// refuses its attribute) instead of following it.
+fn open_below(
+    parent: HANDLE,
+    name: &OsStr,
+    access: u32,
+    disposition: NTCREATEFILE_CREATE_DISPOSITION,
+    options: NTCREATEFILE_CREATE_OPTIONS,
+) -> InstallResult<File> {
+    let wide: Vec<u16> = name.encode_wide().collect();
+    if wide.is_empty() || wide.contains(&0) {
+        return Err(unsafe_path());
+    }
+    let unicode = UNICODE_STRING {
+        Length: (wide.len() * 2) as u16,
+        MaximumLength: (wide.len() * 2) as u16,
+        Buffer: PWSTR(wide.as_ptr() as *mut u16),
+    };
+    let attributes = OBJECT_ATTRIBUTES {
+        Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: parent,
+        ObjectName: &unicode,
+        Attributes: OBJ_CASE_INSENSITIVE,
+        SecurityDescriptor: ptr::null(),
+        SecurityQualityOfService: ptr::null(),
+    };
+    let mut status_block = IO_STATUS_BLOCK::default();
+    let mut handle = HANDLE::default();
+    // SAFETY: every pointer is live for the call, the name/attributes outlive it
+    // and no EA buffer is supplied.
+    let status = unsafe {
+        NtCreateFile(
+            &mut handle,
+            FILE_ACCESS_RIGHTS(access),
+            &attributes,
+            &mut status_block,
+            None,
+            Default::default(),
+            FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+            disposition,
+            options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+            None,
+            0,
+        )
+    };
+    if status.0 < 0 || handle.is_invalid() {
+        return Err(map_nt_status(status));
+    }
+    // SAFETY: the handle was just opened and ownership is transferred here.
+    Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
+/// Map one `NTSTATUS` to the installer vocabulary.
+fn map_nt_status(status: NTSTATUS) -> InstallFailure {
+    match status.0 as u32 {
+        // STATUS_OBJECT_NAME_NOT_FOUND / STATUS_OBJECT_PATH_NOT_FOUND / no such file.
+        0xC000_0034 | 0xC000_003A | 0xC000_000F => unsafe_path(),
+        // STATUS_OBJECT_NAME_COLLISION (create-new on an existing name).
+        0xC000_0035 => unsafe_path(),
+        // STATUS_ACCESS_DENIED.
+        0xC000_0022 => unsafe_path(),
+        // STATUS_DIRECTORY_NOT_EMPTY (removing a non-empty directory).
+        0xC000_0101 => InstallFailure::new(FailureCode::CleanupPending),
+        _ => io_failure(),
+    }
+}
+
+/// Rename one opened entry relative to two directory handles.
+///
+/// The staged object's **handle** is renamed, so the destination name is resolved
+/// against `live_parent` and the source object cannot be swapped between the
+/// identity check and the rename.
+fn rename_below(staged: &File, live_parent: HANDLE, live_name: &OsStr) -> InstallResult<()> {
+    let wide: Vec<u16> = live_name.encode_wide().collect();
+    if wide.is_empty() {
+        return Err(unsafe_path());
+    }
+    let header = size_of::<FILE_RENAME_INFORMATION>();
+    let bytes = header + wide.len() * 2;
+    let words = bytes.div_ceil(size_of::<usize>());
+    let mut buffer = vec![0usize; words];
+    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+    // SAFETY: `buffer` is at least `bytes` long and word-aligned; the structure
+    // followed by the name fits inside it.
+    unsafe {
+        (*information).Anonymous.Flags = FILE_RENAME_REPLACE_IF_EXISTS;
+        (*information).RootDirectory = live_parent;
+        (*information).FileNameLength = (wide.len() * 2) as u32;
+        ptr::copy_nonoverlapping(
+            wide.as_ptr(),
+            (*information).FileName.as_mut_ptr(),
+            wide.len(),
+        );
+    }
+    let mut status_block = IO_STATUS_BLOCK::default();
+    // SAFETY: `staged` is a live handle with DELETE access and the information
+    // buffer is correctly sized and aligned.
+    let status = unsafe {
+        NtSetInformationFile(
+            HANDLE(staged.as_raw_handle()),
+            &mut status_block,
+            information.cast(),
+            bytes as u32,
+            FileRenameInformation,
+        )
+    };
+    if status.0 < 0 {
+        return Err(map_nt_status(status));
+    }
+    Ok(())
+}
+
+/// Mark one opened object for deletion when its last handle closes.
+///
+/// Deleting through the handle is bound to the object that was opened and
+/// verified: no name is resolved for the unlink, so a leaf swapped after
+/// validation is simply not the object that gets deleted.
+fn delete_opened(file: &File) -> InstallResult<()> {
+    let mut information = FILE_DISPOSITION_INFO { DeleteFile: true };
+    // SAFETY: `file` is a live handle with DELETE access and `information` is a
+    // correctly sized FILE_DISPOSITION_INFO.
+    let result = unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileDispositionInfo,
+            (&mut information as *mut FILE_DISPOSITION_INFO).cast(),
+            size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    };
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if win32_code(error.code()) == 145 => {
+            // ERROR_DIR_NOT_EMPTY: preserved, never a recursive delete.
+            Err(InstallFailure::new(FailureCode::CleanupPending))
+        }
+        Err(_) => Err(io_failure()),
+    }
+}
+
+/// Open, verify and delete one leaf relative to its validated parent handle.
+fn remove_below(path: &ValidatedPath) -> InstallResult<()> {
+    let handle = path.dir_handle()?;
+    let options = match path.kind() {
+        PathKind::File | PathKind::Symlink => FILE_NON_DIRECTORY_FILE,
+        PathKind::Directory => FILE_DIRECTORY_FILE,
+        _ => return Err(unsafe_path()),
+    };
+    let file = open_below(
+        handle.handle(),
+        path.leaf_name()?,
+        ACCESS_RD,
+        NT_FILE_OPEN,
+        options | FILE_OPEN_FOR_BACKUP_INTENT,
+    )?;
+    let metadata = file.metadata().map_err(|_| io_failure())?;
+    path.verify_open(&metadata, &crate::platform::identity_of_file(&file)?)?;
+    delete_opened(&file)
+}
+
+/// An opened install root the cleanup helper deletes exact identities through.
+///
+/// Every entry is resolved with `NtCreateFile` + `RootDirectory` from this
+/// handle, one component at a time, so a planted reparse point at a component is
+/// opened as a link (and refused) rather than followed. Deletion is the
+/// handle-bound `FileDispositionInfo` on the object whose identity was checked.
+pub struct CleanupRoot {
+    directory: File,
+}
+
+impl CleanupRoot {
+    /// Open `root` as a directory handle without following a final reparse point.
+    pub fn open(root: &Path) -> io::Result<Self> {
+        let wide = wide_path(root).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // SAFETY: `wide` is NUL-terminated and outlives the call.
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                ACCESS_RWD,
+                FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                None,
+            )
+        }
+        .map_err(|error| io::Error::from_raw_os_error(win32_code(error.code())))?;
+        // SAFETY: CreateFileW transferred ownership of the handle.
+        let directory = unsafe { File::from_raw_handle(handle.0) };
+        if is_reparse(&directory)? || !directory.metadata()?.is_dir() {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        Ok(Self { directory })
+    }
+
+    /// Resolve one relative entry from the anchored root, one component at a time.
+    fn open_entry(&self, relative: &str) -> InstallResult<Option<File>> {
+        let normalized =
+            crate::inventory::normalize_relative_path(relative).map_err(|_| unsafe_path())?;
+        let parts: Vec<&str> = normalized.split('/').collect();
+        let mut current = self.directory.try_clone().map_err(|_| io_failure())?;
+        for (index, part) in parts.iter().enumerate() {
+            let last = index + 1 == parts.len();
+            let name = OsStr::new(part);
+            let options = if last {
+                FILE_OPEN_FOR_BACKUP_INTENT
+            } else {
+                FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT
+            };
+            match open_below(
+                HANDLE(current.as_raw_handle()),
+                name,
+                ACCESS_RD,
+                NT_FILE_OPEN,
+                options,
+            ) {
+                Ok(next) => {
+                    // A reparse point is opened as itself (never followed). An
+                    // intermediate one would otherwise be traversed by the next
+                    // component, so it is refused here.
+                    if !last && is_reparse(&next).map_err(|_| io_failure())? {
+                        return Err(unsafe_path());
+                    }
+                    current = next;
+                }
+                // Only an absent *leaf* is "already gone"; a blocked component
+                // (a reparse point, a file where a directory is expected) must be
+                // preserved and reported instead.
+                Err(failure) if failure.code == FailureCode::UnsafePath && last => {
+                    return Ok(None);
+                }
+                Err(failure) => return Err(failure),
+            }
+        }
+        Ok(Some(current))
+    }
+
+    /// Remove one regular file with exactly this size and content digest.
+    pub fn remove_file(
+        &mut self,
+        relative: &str,
+        size: u64,
+        sha256: Digest,
+        deadline: Instant,
+    ) -> RemoveOutcome {
+        let file = match self.open_entry(relative) {
+            Ok(Some(file)) => file,
+            Ok(None) => return RemoveOutcome::Absent,
+            Err(_) => return RemoveOutcome::Preserved,
+        };
+        let Ok(metadata) = file.metadata() else {
+            return RemoveOutcome::Preserved;
+        };
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
+            || !metadata.is_file()
+            || metadata.len() != size
+        {
+            return RemoveOutcome::Preserved;
+        }
+        match hash_open_file(&file, deadline) {
+            Ok(Some(digest)) if digest == sha256 => {}
+            Ok(Some(_)) => return RemoveOutcome::Preserved,
+            Ok(None) => return RemoveOutcome::Deferred,
+            Err(_) => return RemoveOutcome::Preserved,
+        }
+        match delete_opened(&file) {
+            Ok(()) => RemoveOutcome::Removed,
+            Err(_) => RemoveOutcome::Preserved,
+        }
+    }
+
+    /// Windows carriers are single signed files, so an owned link entry can only
+    /// be foreign content: it is preserved rather than guessed at.
+    pub fn remove_link(
+        &mut self,
+        _relative: &str,
+        _size: u64,
+        _sha256: Digest,
+        _deadline: Instant,
+    ) -> RemoveOutcome {
+        RemoveOutcome::Preserved
+    }
+
+    /// Remove one *empty* directory.
+    pub fn remove_directory(&mut self, relative: &str) -> RemoveOutcome {
+        let Ok(Some(directory)) = self.open_entry(relative) else {
+            return RemoveOutcome::Absent;
+        };
+        let Ok(metadata) = directory.metadata() else {
+            return RemoveOutcome::Preserved;
+        };
+        if !metadata.is_dir() || is_reparse(&directory).unwrap_or(true) {
+            return RemoveOutcome::Preserved;
+        }
+        match delete_opened(&directory) {
+            Ok(()) => RemoveOutcome::Removed,
+            Err(failure) if failure.code == FailureCode::CleanupPending => RemoveOutcome::Preserved,
+            Err(_) => RemoveOutcome::Preserved,
+        }
+    }
+}
+
+/// SHA-256 of one already-opened regular file; `Ok(None)` means the deadline
+/// elapsed before the whole file was read.
+fn hash_open_file(file: &File, deadline: Instant) -> InstallResult<Option<Digest>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = file.try_clone().map_err(|_| io_failure())?;
+    file.seek(SeekFrom::Start(0)).map_err(|_| io_failure())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        let read = file.read(&mut buffer).map_err(|_| io_failure())?;
+        if read == 0 {
+            return Ok(Some(Digest::from_bytes(hasher.finalize().into())));
+        }
+        hasher.update(&buffer[..read]);
+    }
+}
+
+/// The SID of the current process's user token.
+fn current_user_sid() -> InstallResult<Vec<usize>> {
+    let mut token = HANDLE::default();
+    // SAFETY: `GetCurrentProcess` is a pseudo-handle and `token` is a live
+    // out-parameter.
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }
+        .map_err(|_| io_failure())?;
+    let token = OwnedHandle::new(token).ok_or_else(io_failure)?;
+    let mut needed = 0u32;
+    // SAFETY: a null buffer with length zero only asks for the size.
+    let _ = unsafe { GetTokenInformation(token.0, TokenUser, None, 0, &mut needed) };
+    if needed == 0 {
+        return Err(io_failure());
+    }
+    let words = (needed as usize).div_ceil(size_of::<usize>());
+    let mut buffer = vec![0usize; words];
+    // SAFETY: the buffer is aligned and at least `needed` bytes long.
+    unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            (words * size_of::<usize>()) as u32,
+            &mut needed,
+        )
+    }
+    .map_err(|_| io_failure())?;
+    Ok(buffer)
+}
+
+fn token_sid(buffer: &[usize]) -> PSID {
+    // SAFETY: `GetTokenInformation(TokenUser)` wrote a complete `TOKEN_USER`.
+    unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid }
+}
+
+/// ACE type byte for a plain access-allowed ACE (`ACCESS_ALLOWED_ACE_TYPE`).
+const ACCESS_ALLOWED_ACE_TYPE_LOCAL: u8 = 0;
+/// ACE type byte for a plain access-denied ACE.
+const ACCESS_DENIED_ACE_TYPE_LOCAL: u8 = 1;
+
+/// Prove one existing directory is this user's and nobody else's.
+///
+/// * the owner must be the current user's SID;
+/// * the DACL must exist (a `NULL` DACL grants everyone full control) and every
+///   access-allowed ACE must name only the current user, the dynamic
+///   `OWNER RIGHTS` SID (`S-1-3-4`) or `CREATOR OWNER` (`S-1-3-0`) — the three
+///   principals the installer's own protected DACL can produce;
+/// * an object ACE or an unreadable ACE is refused: it cannot be proved.
+fn validate_private_directory(path: &Path) -> InstallResult<()> {
+    use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows::Win32::Security::{
+        ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION, GetAce,
+        GetAclInformation, OWNER_SECURITY_INFORMATION,
+    };
+
+    const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
+    const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
+    const ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: u8 = 11;
+    let wide = wide_path(path)?;
+    let mut owner = PSID::default();
+    let mut dacl: *mut ACL = ptr::null_mut();
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `wide` is NUL-terminated, the out-parameters are live and the
+    // returned descriptor is released below.
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            Some(&mut dacl),
+            None,
+            &mut descriptor,
+        )
+    };
+    if status.0 != 0 {
+        return Err(io_failure());
+    }
+    let result = (|| {
+        let own = current_user_sid()?;
+        let own_sid = token_sid(&own);
+        // SAFETY: every SID points into a live, OS-filled buffer.
+        unsafe {
+            if !IsValidSid(owner).as_bool()
+                || !IsValidSid(own_sid).as_bool()
+                || EqualSid(owner, own_sid).is_err()
+            {
+                return Err(unsafe_path());
+            }
+        }
+        if dacl.is_null() {
+            // A NULL DACL grants full control to everyone.
+            return Err(unsafe_path());
+        }
+        let mut information = ACL_SIZE_INFORMATION::default();
+        // SAFETY: `dacl` is a live ACL and `information` is correctly sized.
+        unsafe {
+            GetAclInformation(
+                dacl,
+                (&mut information as *mut ACL_SIZE_INFORMATION).cast(),
+                size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        }
+        .map_err(|_| io_failure())?;
+        for index in 0..information.AceCount {
+            let mut ace = ptr::null_mut::<core::ffi::c_void>();
+            // SAFETY: `index` is below the ACE count and `ace` is a live
+            // out-parameter.
+            unsafe { GetAce(dacl, index, &mut ace) }.map_err(|_| io_failure())?;
+            if ace.is_null() {
+                return Err(io_failure());
+            }
+            // SAFETY: `ace` points at a complete ACE_HEADER inside the ACL.
+            let header = unsafe { ptr::read_unaligned(ace.cast::<ACE_HEADER>()) };
+            match header.AceType {
+                ACCESS_ALLOWED_ACE_TYPE_LOCAL => {
+                    // The SID is stored inline *inside the ACL*, not inside a
+                    // copied struct: take its address from the ACE itself.
+                    let sid = PSID(
+                        // SAFETY: the ACE header says this is an access-allowed
+                        // ACE, so an inline SID follows the mask.
+                        unsafe {
+                            ace.cast::<u8>()
+                                .add(std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart))
+                        }
+                        .cast(),
+                    );
+                    // The installer's own protected DACL grants access to `OW`
+                    // (the dynamic `OWNER RIGHTS` SID), so that SID and
+                    // `CREATOR OWNER` are accepted alongside this user's SID.
+                    // SAFETY: the ACE declares an inline SID; both helpers
+                    // validate it before reading.
+                    let permitted = unsafe {
+                        IsValidSid(sid).as_bool()
+                            && (EqualSid(sid, own_sid).is_ok() || is_dynamic_owner_sid(sid))
+                    };
+                    if !permitted {
+                        return Err(unsafe_path());
+                    }
+                }
+                // Audit/alarm ACEs grant no access; deny ACEs only restrict.
+                ACCESS_DENIED_ACE_TYPE_LOCAL => {}
+                ACCESS_ALLOWED_OBJECT_ACE_TYPE
+                | ACCESS_ALLOWED_CALLBACK_ACE_TYPE
+                | ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE => return Err(unsafe_path()),
+                _ => {}
+            }
+        }
+        Ok(())
+    })();
+    // SAFETY: `descriptor` is the allocation returned by GetNamedSecurityInfoW.
+    unsafe {
+        let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+    }
+    result
+}
+
+/// The raw bytes of `S-1-3-4` (`OWNER RIGHTS`) and `S-1-3-0` (`CREATOR OWNER`).
+///
+/// Both are *dynamic* SIDs: they name the object owner rather than a particular
+/// account, so they cannot be compared with the current user's SID. A
+/// one-subauthority SID is 12 bytes (`S-1-3-4` / `S-1-3-0`), compared directly
+/// instead of relying on a well-known-SID table this crate does not expose.
+const OWNER_RIGHTS_SID_BYTES: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 3, 4, 0, 0, 0];
+const CREATOR_OWNER_SID_BYTES: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0];
+
+/// Whether `sid` is the dynamic `OWNER RIGHTS` or `CREATOR OWNER` SID.
+fn is_dynamic_owner_sid(sid: PSID) -> bool {
+    if sid.0.is_null() {
+        return false;
+    }
+    // SAFETY: the caller obtained `sid` from a parsed ACE; `IsValidSid` bounds
+    // the read below to a well-formed one-subauthority SID (12 bytes), and any
+    // longer SID differs in its subauthority count byte.
+    unsafe {
+        if !IsValidSid(sid).as_bool() {
+            return false;
+        }
+        let bytes = std::slice::from_raw_parts(sid.0.cast::<u8>(), 12);
+        bytes == OWNER_RIGHTS_SID_BYTES || bytes == CREATOR_OWNER_SID_BYTES
+    }
 }
 
 impl NativeFs for WindowsPlatform {
@@ -1411,86 +2012,60 @@ impl NativeFs for WindowsPlatform {
         }
     }
 
+    fn validate_private_directory(&self, path: &Path) -> InstallResult<()> {
+        validate_private_directory(path)
+    }
+
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
         let (disposition, truncate) = match path.kind() {
-            PathKind::NewFile => (CREATE_NEW, false),
-            PathKind::File => (OPEN_EXISTING, true),
+            PathKind::NewFile => (NT_FILE_CREATE, false),
+            PathKind::File => (NT_FILE_OPEN, true),
             _ => return Err(unsafe_path()),
         };
-        let mut file = create_file(
-            path.rendered(),
-            GENERIC_READ.0 | GENERIC_WRITE.0,
-            FILE_SHARE_MODE(0),
+        let handle = path.dir_handle()?;
+        let mut file = open_below(
+            handle.handle(),
+            path.leaf_name()?,
+            ACCESS_RWD,
             disposition,
-            FILE_ATTRIBUTE_NORMAL,
-        )
-        .map_err(|error| map_open_error(&error))?;
+            FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
+        )?;
         if is_reparse(&file).map_err(|_| io_failure())? {
             return Err(unsafe_path());
         }
         let metadata = file.metadata().map_err(|_| io_failure())?;
-        if !metadata.is_file() {
+        if path.kind() == PathKind::File {
+            // The opened object must be the one validation captured.
+            path.verify_open(&metadata, &crate::platform::identity_of_file(&file)?)?;
+        } else if !metadata.is_file() {
             return Err(unsafe_path());
         }
         if truncate {
             file.set_len(0).map_err(|_| io_failure())?;
         }
-        // Write every byte through the one handle, then flush that handle.
         file.write_all(bytes).map_err(|_| io_failure())?;
         file.sync_all().map_err(|_| io_failure())?;
         read_back(&mut file, bytes).map_err(|_| io_failure())
     }
 
     fn replace_file(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
-        let staged_wide = wide_path(staged.rendered())?;
-        let live_wide = wide_path(live.rendered())?;
-        match live.kind() {
-            // ReplaceFileW atomically swaps the directory entry, preserves the
-            // destination's attributes and never writes through its inode.
-            PathKind::File => {
-                // SAFETY: both paths are NUL-terminated live buffers; no backup
-                // name, exclude or preserved-ACL parameter is requested.
-                unsafe {
-                    ReplaceFileW(
-                        PCWSTR(live_wide.as_ptr()),
-                        PCWSTR(staged_wide.as_ptr()),
-                        PCWSTR::null(),
-                        REPLACEFILE_WRITE_THROUGH,
-                        None,
-                        None,
-                    )
-                }
-                .map_err(|_| io_failure())
-            }
-            // A first publication has no destination to replace; MoveFileExW
-            // with write-through publishes the staged entry atomically.
-            PathKind::NewFile => {
-                // SAFETY: both paths are NUL-terminated live buffers.
-                unsafe {
-                    MoveFileExW(
-                        PCWSTR(staged_wide.as_ptr()),
-                        PCWSTR(live_wide.as_ptr()),
-                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-                    )
-                }
-                .map_err(|_| io_failure())
-            }
-            _ => Err(unsafe_path()),
-        }
+        let staged_handle = staged.dir_handle()?;
+        let live_handle = live.dir_handle()?;
+        let staged_file = open_below(
+            staged_handle.handle(),
+            staged.leaf_name()?,
+            ACCESS_RWD,
+            NT_FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
+        )?;
+        let metadata = staged_file.metadata().map_err(|_| io_failure())?;
+        staged.verify_open(&metadata, &crate::platform::identity_of_file(&staged_file)?)?;
+        rename_below(&staged_file, live_handle.handle(), live.leaf_name()?)
     }
 
     fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>> {
-        let mut file = create_file(
-            path,
-            GENERIC_READ.0,
-            FILE_SHARE_READ,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-        )
-        .map_err(|error| map_open_error(&error))?;
-        if is_reparse(&file).map_err(|_| io_failure())?
-            || !file.metadata().map_err(|_| io_failure())?.is_file()
-        {
+        let mut file = crate::platform::open_no_follow(path).map_err(|_| io_failure())?;
+        if !file.metadata().map_err(|_| io_failure())?.is_file() {
             return Err(unsafe_path());
         }
         let mut bytes = Vec::new();
@@ -1499,17 +2074,8 @@ impl NativeFs for WindowsPlatform {
     }
 
     fn hash_file(&self, path: &Path) -> InstallResult<Digest> {
-        let mut file = create_file(
-            path,
-            GENERIC_READ.0,
-            FILE_SHARE_READ,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-        )
-        .map_err(|error| map_open_error(&error))?;
-        if is_reparse(&file).map_err(|_| io_failure())?
-            || !file.metadata().map_err(|_| io_failure())?.is_file()
-        {
+        let mut file = crate::platform::open_no_follow(path).map_err(|_| io_failure())?;
+        if !file.metadata().map_err(|_| io_failure())?.is_file() {
             return Err(unsafe_path());
         }
         let mut hasher = Sha256::new();
@@ -1524,21 +2090,10 @@ impl NativeFs for WindowsPlatform {
         Ok(Digest::from_bytes(hasher.finalize().into()))
     }
 
-    fn flush_directory(&self, path: &Path) -> InstallResult<()> {
-        // A directory handle needs FILE_FLAG_BACKUP_SEMANTICS; the reparse-point
-        // flag keeps a linked directory from being flushed instead of this one.
-        let file = create_file(
-            path,
-            GENERIC_READ.0 | GENERIC_WRITE.0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS,
-        )
-        .map_err(|error| map_open_error(&error))?;
-        if is_reparse(&file).map_err(|_| io_failure())? {
-            return Err(unsafe_path());
-        }
-        file.sync_all().map_err(|_| io_failure())
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
+        let handle = path.dir_handle()?;
+        // SAFETY: the handle is a live directory handle opened with write access.
+        unsafe { FlushFileBuffers(handle.handle()) }.map_err(|_| io_failure())
     }
 
     fn create_directory(&self, path: &Path) -> InstallResult<()> {
@@ -1546,8 +2101,8 @@ impl NativeFs for WindowsPlatform {
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         // A protected DACL granting full control to the object owner (and
         // nothing to everyone else) is inherited by everything the installer
-        // creates below the private root. `OW` resolves to the creating user;
-        // administrators retain take-ownership, never implicit read access.
+        // creates below the private root. `OW` resolves to the creating user, so
+        // the owner check in `validate_private_directory` accepts it.
         let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)\0".encode_utf16().collect();
         // SAFETY: `sddl` is NUL-terminated and `descriptor` is a live
         // out-parameter whose allocation is released below.
@@ -1567,8 +2122,8 @@ impl NativeFs for WindowsPlatform {
             lpSecurityDescriptor: descriptor.0,
             bInheritHandle: FALSE,
         };
-        // SAFETY: `wide` is NUL-terminated and `attributes` (with its
-        // descriptor) outlives the call.
+        // SAFETY: `wide` is NUL-terminated and `attributes` (with its descriptor)
+        // outlives the call.
         let status = unsafe { CreateDirectoryW(PCWSTR(wide.as_ptr()), Some(&attributes)) };
         // SAFETY: `descriptor` is the allocation returned by the conversion.
         unsafe {
@@ -1576,26 +2131,43 @@ impl NativeFs for WindowsPlatform {
         }
         match status {
             Ok(()) => Ok(()),
-            Err(error) if error.code() == HRESULT::from_win32(ERROR_ALREADY_EXISTS.0) => {
+            Err(error) if win32_code(error.code()) == ERROR_ALREADY_EXISTS.0 as i32 => {
                 Err(unsafe_path())
             }
             Err(_) => Err(io_failure()),
         }
     }
 
-    fn remove_file(&self, path: &Path) -> InstallResult<()> {
-        fs::remove_file(path).map_err(|_| io_failure())
+    fn create_directory_at(&self, path: &ValidatedPath) -> InstallResult<()> {
+        if path.kind() != PathKind::NewDirectory {
+            return Err(invalid_input());
+        }
+        path.revalidate()?;
+        let handle = path.dir_handle()?;
+        let created = open_below(
+            handle.handle(),
+            path.leaf_name()?,
+            ACCESS_RD,
+            NT_FILE_CREATE,
+            FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
+        )?;
+        let metadata = created.metadata().map_err(|_| io_failure())?;
+        if !metadata.is_dir() || is_reparse(&created).map_err(|_| io_failure())? {
+            return Err(unsafe_path());
+        }
+        drop(created);
+        NativeFs::flush_parent(self, path)
     }
 
-    fn remove_directory(&self, path: &Path) -> InstallResult<()> {
-        match fs::remove_dir(path) {
+    fn remove_entry(&self, path: &ValidatedPath) -> InstallResult<()> {
+        remove_below(path)
+    }
+
+    fn remove_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        match remove_below(path) {
             Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            // A non-empty directory is not ours to delete recursively.
-            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {
-                Err(InstallFailure::new(FailureCode::CleanupPending))
-            }
-            Err(_) => Err(io_failure()),
+            Err(failure) if failure.code == FailureCode::CleanupPending => Err(failure),
+            Err(failure) => Err(failure),
         }
     }
 
@@ -1627,18 +2199,23 @@ impl NativeFs for WindowsPlatform {
             )
         }
         .map_err(|_| io_failure())?;
-        // The destination bytes are the authenticated ones; flush them before
-        // the caller journals the created entry.
-        let file = create_file(
-            destination.rendered(),
-            GENERIC_READ.0,
-            FILE_SHARE_READ,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-        )
-        .map_err(|error| map_open_error(&error))?;
+        // Flush the destination while it is still writable: a read-only handle
+        // cannot be flushed. It is opened relative to the captured parent handle,
+        // so the copied name is not re-resolved through its ancestors.
+        let handle = destination.dir_handle()?;
+        let file = open_below(
+            handle.handle(),
+            destination.leaf_name()?,
+            GENERIC_READ.0 | GENERIC_WRITE.0,
+            NT_FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
+        )?;
+        let metadata = file.metadata().map_err(|_| io_failure())?;
+        if !metadata.is_file() || is_reparse(&file).map_err(|_| io_failure())? {
+            return Err(unsafe_path());
+        }
         file.sync_all().map_err(|_| io_failure())?;
-        let parent = destination.rendered().parent().ok_or_else(unsafe_path)?;
-        self.flush_directory(parent)
+        drop(file);
+        NativeFs::flush_parent(self, destination)
     }
 }

@@ -731,6 +731,19 @@ fn retained_claims(
                     .len();
                 claims.push(JournalClaim::file(claim.path.clone(), sha256, size, false));
             }
+            // A retained bundle link is re-verified against its exact target
+            // bytes and carried forward the same way.
+            OwnedKind::Symlink => {
+                let sha256 = claim.sha256.ok_or_else(no_rollback)?;
+                let entry = match OwnedEntry::from_claim(paths, claim) {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) | Err(_) => return Err(no_rollback()),
+                };
+                let size = fs::symlink_metadata(entry.path().rendered())
+                    .map_err(|_| no_rollback())?
+                    .len();
+                claims.push(JournalClaim::link(claim.path.clone(), sha256, size));
+            }
             OwnedKind::Directory => {
                 match fs::symlink_metadata(paths.root().join(&claim.path)) {
                     Ok(metadata) if metadata.is_dir() => {
@@ -964,6 +977,11 @@ impl Plan {
                     true,
                 ),
                 OwnedKind::Directory => JournalClaim::directory(relative),
+                OwnedKind::Symlink => JournalClaim::link(
+                    relative,
+                    entry.sha256().ok_or_else(invalid_package)?,
+                    entry.size(),
+                ),
             });
         }
         directories.sort_by(|left, right| {
@@ -1391,7 +1409,7 @@ fn remove_claims(
     }
     let mut files: Vec<&OwnedEntry> = entries
         .iter()
-        .filter(|entry| entry.claim().kind == OwnedKind::File)
+        .filter(|entry| !entry.claim().kind.is_directory())
         .collect();
     files.sort_by(|left, right| left.claim().path.cmp(&right.claim().path));
     for entry in files {
@@ -1400,7 +1418,7 @@ fn remove_claims(
     }
     let mut directories: Vec<&OwnedEntry> = entries
         .iter()
-        .filter(|entry| entry.claim().kind == OwnedKind::Directory)
+        .filter(|entry| entry.claim().kind.is_directory())
         .collect();
     directories.sort_by(|left, right| {
         path_depth(&right.claim().path)
@@ -1476,7 +1494,7 @@ fn remove_created_assets(
 
     let mut files: Vec<&OwnedEntry> = entries
         .iter()
-        .filter(|entry| entry.claim().kind == OwnedKind::File)
+        .filter(|entry| !entry.claim().kind.is_directory())
         .collect();
     files.sort_by(|left, right| left.claim().path.cmp(&right.claim().path));
     for entry in files {
@@ -1485,7 +1503,7 @@ fn remove_created_assets(
 
     let mut directories: Vec<&OwnedEntry> = entries
         .iter()
-        .filter(|entry| entry.claim().kind == OwnedKind::Directory)
+        .filter(|entry| entry.claim().kind.is_directory())
         .collect();
     directories.sort_by(|left, right| {
         path_depth(&right.claim().path)

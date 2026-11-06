@@ -343,6 +343,19 @@ impl JournalClaim {
         }
     }
 
+    /// A claim for a symbolic link this transaction installs.
+    ///
+    /// `sha256` is the digest of the exact target bytes and `size` their length.
+    pub fn link(path: impl Into<String>, target_sha256: Digest, target_size: u64) -> Self {
+        Self {
+            path: path.into(),
+            kind: OwnedKind::Symlink,
+            sha256: Some(target_sha256),
+            size: Some(target_size),
+            incomplete: false,
+        }
+    }
+
     /// The claim as the ownership record represents it.
     pub fn as_owned(&self) -> OwnedClaim {
         OwnedClaim {
@@ -379,6 +392,19 @@ impl JournalClaim {
             }
             OwnedKind::Directory => {
                 if self.sha256.is_some() || self.size.is_some() || self.incomplete {
+                    return Err(invalid_input());
+                }
+            }
+            OwnedKind::Symlink => {
+                // A link is bound to its exact target bytes; it is never staged,
+                // so a size or incomplete marker would describe a file write.
+                if self.sha256.is_none() || self.incomplete {
+                    return Err(invalid_input());
+                }
+                if self
+                    .size
+                    .is_some_and(|size| size > crate::model::MAX_PATH_BYTES as u64)
+                {
                     return Err(invalid_input());
                 }
             }

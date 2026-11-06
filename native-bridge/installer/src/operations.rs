@@ -795,9 +795,9 @@ fn uninstall(
     // pending deletion.
     for claim in &record.owned {
         match claim.kind {
-            OwnedKind::File => match OwnedEntry::from_claim(paths, claim) {
-                // An owned file that is still there was not removed: keep the
-                // durable intent and report the deletion as pending.
+            // An owned leaf (file or link) that is still there was not removed:
+            // keep the durable intent and report the deletion as pending.
+            OwnedKind::File | OwnedKind::Symlink => match OwnedEntry::from_claim(paths, claim) {
                 Ok(Some(_)) | Err(_) => {
                     return Err(InstallFailure::new(FailureCode::CleanupPending));
                 }
@@ -1022,7 +1022,7 @@ fn remove_owned_entries(platform: &impl Platform, entries: &[OwnedEntry]) -> Ins
     let mut leftover = false;
     let mut files: Vec<&OwnedEntry> = entries
         .iter()
-        .filter(|entry| entry.claim().kind == OwnedKind::File)
+        .filter(|entry| !entry.claim().kind.is_directory())
         .collect();
     files.sort_by(|left, right| left.claim().path.cmp(&right.claim().path));
     for entry in files {
@@ -1033,7 +1033,7 @@ fn remove_owned_entries(platform: &impl Platform, entries: &[OwnedEntry]) -> Ins
 
     let mut directories: Vec<&OwnedEntry> = entries
         .iter()
-        .filter(|entry| entry.claim().kind == OwnedKind::Directory)
+        .filter(|entry| entry.claim().kind.is_directory())
         .collect();
     directories.sort_by(|left, right| {
         path_depth(&right.claim().path)

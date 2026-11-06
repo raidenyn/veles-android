@@ -27,6 +27,11 @@ sha2 = "=0.10.9"
 # `Win32_System_WindowsProgramming` is `SYSTEM_PROCESS_INFORMATION`).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.62.2", features = [
+    # Task 8: handle-relative file opens and renames
+    # (`NtCreateFile`/`NtSetInformationFile` with `RootDirectory`) and the
+    # `OBJECT_ATTRIBUTES`/`UNICODE_STRING` they take.
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
     "Wdk_System_SystemInformation",
     "Win32_Foundation",
     "Win32_Security",

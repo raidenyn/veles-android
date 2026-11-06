@@ -1,22 +1,35 @@
 //! Native cleanup channel and self-verification (Windows / macOS only).
 //!
-//! The installer hands the helper two inherited pipe handles as its standard
-//! input (request) and standard output (completion), so a request can never be
-//! supplied through a command line or a path. The channel implementation proves
-//! the handles really are pipes and attributes the request writer to the parent
-//! the request names, including that parent's start marker (a pid alone is not
-//! an identity). The file system implementation removes exact owned identities
-//! and arms the helper's own deletion with the OS's native semantics.
+//! The installer hands the helper three inherited handles: standard input (the
+//! bounded request), standard output (the authenticated completion) and one
+//! **parent-process handle** named by the request. The helper:
+//!
+//! * proves standard input/output are pipes, not files or a console;
+//! * authenticates the *inherited handle* as the recorded parent
+//!   (`GetProcessId` + `GetProcessTimes` on Windows, `LOCAL_PEERPID` on macOS)
+//!   instead of reopening a pid;
+//! * waits on that handle until the process exits (`WaitForSingleObject` /
+//!   `poll(2)` EOF), so a parent that exits after signalling is observed as
+//!   exited rather than as a stale or recycled pid;
+//! * bounds every read, write, hash and signature assessment by the run
+//!   deadline;
+//! * removes exact owned identities through the adapter's anchored
+//!   [`CleanupRoot`](crate::platform::MacosCleanupRoot) implementation.
+//!
+//! The helper never deletes its own image: it only exits, and the installer
+//! deletes the staged image afterwards (see `remove_helper_after_exit`).
 
-use std::io::{Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use sha2::{Digest as _, Sha256};
 
 use super::{
     CleanupChannel, CleanupCompletion, CleanupFailure, CleanupFileSystem, CleanupStatus,
-    MAX_CLEANUP_TIMEOUT, ParentIdentity, ParentState, RemoveOutcome, execute_cleanup,
+    CleanupTree, MAX_CLEANUP_TIMEOUT, ParentIdentity, ParentState, RemoveOutcome, execute_cleanup,
 };
 use crate::model::Digest;
-use crate::platform::hash_file;
 
 /// Run one cleanup capability on the native channel.
 pub(super) fn run() -> i32 {
@@ -25,18 +38,6 @@ pub(super) fn run() -> i32 {
     let mut fs = native_fs(own);
     let completion: CleanupCompletion = execute_cleanup(&mut channel, &mut fs, MAX_CLEANUP_TIMEOUT);
     i32::from(completion.status != CleanupStatus::Complete)
-}
-
-/// SHA-256 of one file, bounded by the caller's size check.
-fn hash_bytes(path: &Path) -> std::io::Result<Digest> {
-    hash_file(path).map_err(|_| std::io::Error::other("file is not a readable regular file"))
-}
-
-/// A completion that could not be authenticated is never complete.
-fn write_frame(frame: &[u8]) -> std::io::Result<()> {
-    let mut stdout = std::io::stdout();
-    stdout.write_all(frame)?;
-    stdout.flush()
 }
 
 #[cfg(windows)]
@@ -59,6 +60,58 @@ fn native_fs(own: PathBuf) -> MacosCleanupFs {
     MacosCleanupFs { own_path: own }
 }
 
+/// SHA-256 of one regular file, stopped at `deadline`.
+///
+/// The helper hashes its own image here; an image large enough to outlast the
+/// cleanup budget must fail closed, not extend the run.
+fn hash_bounded(path: &Path, deadline: Instant) -> io::Result<Digest> {
+    let mut file = crate::platform::open_no_follow(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::other("not a regular file"));
+    }
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        if Instant::now() >= deadline {
+            return Err(io::Error::other("cleanup deadline elapsed"));
+        }
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(Digest::from_bytes(hasher.finalize().into()))
+}
+
+/// The OS signature assessment, run in a worker so a stalled verifier cannot
+/// outlast the cleanup budget.
+fn signature_bounded(
+    path: &Path,
+    deadline: Instant,
+    assess: impl Fn(&Path) -> Result<String, CleanupFailure> + Send + 'static,
+) -> Result<String, CleanupFailure> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(CleanupFailure);
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let path = path.to_path_buf();
+    let spawned = std::thread::Builder::new()
+        .name("cleanup-signature".to_owned())
+        .spawn(move || {
+            let _ = sender.send(assess(&path));
+        });
+    if spawned.is_err() {
+        return Err(CleanupFailure);
+    }
+    match receiver.recv_timeout(remaining) {
+        Ok(result) => result,
+        Err(_) => Err(CleanupFailure),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Windows
 // ---------------------------------------------------------------------------
@@ -66,47 +119,27 @@ fn native_fs(own: PathBuf) -> MacosCleanupFs {
 #[cfg(windows)]
 mod windows_impl {
     use super::*;
-    use std::fs::File;
-    use std::mem::size_of;
-    use std::os::windows::ffi::OsStrExt;
-    use std::os::windows::io::{AsRawHandle, FromRawHandle};
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, HANDLE};
-    use windows::Win32::Storage::FileSystem::{
-        CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_DISPOSITION_INFO,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_TYPE_PIPE, FileDispositionInfo, GetFileType, OPEN_EXISTING,
-        SetFileInformationByHandle,
-    };
-    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    use windows::core::PCWSTR;
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::Storage::FileSystem::{FILE_TYPE_PIPE, GetFileType, ReadFile};
+    use windows::Win32::System::Pipes::PeekNamedPipe;
+    use windows::Win32::System::Threading::{GetProcessId, GetProcessTimes, WaitForSingleObject};
 
-    /// The start marker of one process: its kernel creation time.
-    pub(crate) fn process_start(pid: u32) -> Option<u64> {
-        // SAFETY: `pid` is an observed process id; `false` disables inheritance.
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
-        let handle = OwnedProcess(handle);
+    /// The start marker of one process, read from **the inherited handle**.
+    fn handle_start(handle: HANDLE) -> Option<u64> {
         let mut creation = Default::default();
         let mut exit = Default::default();
         let mut kernel = Default::default();
         let mut user = Default::default();
         // SAFETY: the handle is live and every out-parameter is a live FILETIME.
-        unsafe { GetProcessTimes(handle.0, &mut creation, &mut exit, &mut kernel, &mut user) }
+        unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) }
             .ok()?;
         Some((u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
     }
 
-    struct OwnedProcess(HANDLE);
-
-    impl Drop for OwnedProcess {
-        fn drop(&mut self) {
-            // SAFETY: the handle was returned by OpenProcess and is owned here.
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
+    fn handle_of(handle: u64) -> Option<HANDLE> {
+        let handle = HANDLE(handle as *mut core::ffi::c_void);
+        (!handle.is_invalid()).then_some(handle)
     }
 
     pub(crate) struct WindowsChannel;
@@ -121,174 +154,149 @@ mod windows_impl {
             input_type == FILE_TYPE_PIPE && output_type == FILE_TYPE_PIPE
         }
 
-        fn peer(&self) -> Option<ParentIdentity> {
-            let input = std::io::stdin().as_raw_handle();
-            let mut pid = 0u32;
-            // The read end of the anonymous pipe is its server end, so the
-            // client process id is the writer - the installer that spawned us.
-            // SAFETY: `input` is a live pipe handle and `pid` is a live
-            // out-parameter.
-            unsafe { GetNamedPipeClientProcessId(HANDLE(input), &mut pid) }.ok()?;
+        fn parent_handle(&self, handle: u64) -> Option<ParentIdentity> {
+            let handle = handle_of(handle)?;
+            // SAFETY: the handle is inherited and names the parent for this call.
+            let pid = unsafe { GetProcessId(handle) };
             if pid == 0 {
                 return None;
             }
             Some(ParentIdentity {
                 pid,
-                start: process_start(pid)?,
+                start: handle_start(handle)?,
             })
         }
 
-        fn parent_state(&self, parent: &ParentIdentity) -> ParentState {
-            match process_start(parent.pid) {
-                Some(start) if start == parent.start => ParentState::Alive,
-                Some(_) => ParentState::Reused,
-                None => {
-                    // Distinguish "exited" from "cannot open": only a PID the OS
-                    // says no longer exists may be reported as exited.
-                    // SAFETY: `parent.pid` is an observed process id.
-                    match unsafe {
-                        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, parent.pid)
-                    } {
-                        Ok(handle) => {
-                            // SAFETY: the handle was just opened and is owned here.
-                            let _ = OwnedProcess(handle);
-                            ParentState::Unavailable
-                        }
-                        Err(error)
-                            if error.code()
-                                == windows::core::HRESULT::from_win32(
-                                    ERROR_INVALID_PARAMETER.0,
-                                ) =>
-                        {
-                            ParentState::Exited
-                        }
-                        Err(_) => ParentState::Unavailable,
-                    }
-                }
+        fn parent_state(&mut self, handle: u64, deadline: Instant) -> ParentState {
+            let Some(handle) = handle_of(handle) else {
+                return ParentState::Unavailable;
+            };
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let millis = u32::try_from(remaining.as_millis()).unwrap_or(u32::MAX - 1);
+            // SAFETY: the handle is inherited and names the parent process.
+            match unsafe { WaitForSingleObject(handle, millis) } {
+                WAIT_OBJECT_0 => ParentState::Exited,
+                WAIT_TIMEOUT => ParentState::Alive,
+                _ => ParentState::Unavailable,
             }
         }
 
-        fn read_request(&mut self, limit: usize) -> std::io::Result<Vec<u8>> {
+        fn read_request(&mut self, limit: usize, deadline: Instant) -> io::Result<Vec<u8>> {
+            let input = HANDLE(std::io::stdin().as_raw_handle());
             let mut bytes = Vec::new();
-            std::io::stdin()
-                .take(limit as u64 + 1)
-                .read_to_end(&mut bytes)?;
-            if bytes.len() > limit {
-                return Err(std::io::Error::other("request frame is too large"));
+            let mut buffer = [0u8; 4096];
+            loop {
+                if bytes.len() > limit {
+                    return Err(io::Error::other("request frame is too large"));
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(io::Error::other("cleanup deadline elapsed"));
+                }
+                // `PeekNamedPipe` is the documented, non-consuming way to ask an
+                // anonymous pipe whether the writer has produced bytes (and
+                // whether it is still connected). Waiting on a *synchronous* pipe
+                // handle is not a reliable data-available signal, so the wait is
+                // a bounded poll instead.
+                let mut available = 0u32;
+                // SAFETY: `input` is the inherited read end of the request pipe
+                // and `available` is a live out-parameter; no data buffer is
+                // supplied, so nothing is consumed.
+                let peeked =
+                    unsafe { PeekNamedPipe(input, None, 0, None, Some(&mut available), None) };
+                if peeked.is_err() {
+                    // A broken pipe is the writer closing: return what arrived.
+                    return Ok(bytes);
+                }
+                if available == 0 {
+                    std::thread::sleep(remaining.min(std::time::Duration::from_millis(10)));
+                    continue;
+                }
+                let mut read = 0u32;
+                let mut target = &mut buffer[..];
+                // SAFETY: the handle is live, `target` is a live output buffer and
+                // no overlapped operation is requested.
+                let result = unsafe { ReadFile(input, Some(&mut target), Some(&mut read), None) };
+                if result.is_err() {
+                    return Err(io::Error::last_os_error());
+                }
+                if read == 0 {
+                    return Ok(bytes);
+                }
+                bytes.extend_from_slice(&buffer[..read as usize]);
             }
-            Ok(bytes)
         }
 
-        fn write_completion(&mut self, frame: &[u8]) -> std::io::Result<()> {
-            write_frame(frame)
+        fn write_completion(&mut self, frame: &[u8], deadline: Instant) -> io::Result<()> {
+            if Instant::now() >= deadline {
+                return Err(io::Error::other("cleanup deadline elapsed"));
+            }
+            // The frame is far smaller than the pipe buffer, so one small write
+            // cannot block behind a full pipe.
+            use std::io::Write as _;
+            let mut stdout = std::io::stdout();
+            stdout.write_all(frame)?;
+            stdout.flush()
         }
     }
 
     pub(crate) struct WindowsCleanupFs {
         pub(crate) own_path: PathBuf,
-        /// The self-delete disposition handle, held open until process exit.
-        disposition: Option<File>,
     }
 
     impl WindowsCleanupFs {
         pub(crate) fn new(own_path: PathBuf) -> Self {
-            Self {
-                own_path,
-                disposition: None,
-            }
+            Self { own_path }
+        }
+    }
+
+    struct WindowsTree(crate::platform::WindowsCleanupRoot);
+
+    impl CleanupTree for WindowsTree {
+        fn remove_file(
+            &mut self,
+            relative: &str,
+            size: u64,
+            sha256: Digest,
+            deadline: Instant,
+        ) -> RemoveOutcome {
+            self.0.remove_file(relative, size, sha256, deadline)
+        }
+
+        fn remove_link(
+            &mut self,
+            relative: &str,
+            size: u64,
+            sha256: Digest,
+            deadline: Instant,
+        ) -> RemoveOutcome {
+            self.0.remove_link(relative, size, sha256, deadline)
+        }
+
+        fn remove_directory(&mut self, relative: &str) -> RemoveOutcome {
+            self.0.remove_directory(relative)
         }
     }
 
     impl CleanupFileSystem for WindowsCleanupFs {
-        fn own_path(&self) -> std::io::Result<PathBuf> {
+        fn own_path(&self) -> io::Result<PathBuf> {
             Ok(self.own_path.clone())
         }
 
-        fn hash_file(&self, path: &Path) -> std::io::Result<Digest> {
-            hash_bytes(path)
+        fn hash_file(&self, path: &Path, deadline: Instant) -> io::Result<Digest> {
+            hash_bounded(path, deadline)
         }
 
-        fn signature(&self, path: &Path) -> Result<String, CleanupFailure> {
-            crate::platform::windows_verify_own_signature(path).map_err(|_| CleanupFailure)
+        fn signature(&self, path: &Path, deadline: Instant) -> Result<String, CleanupFailure> {
+            signature_bounded(path, deadline, |path| {
+                crate::platform::windows_verify_own_signature(path).map_err(|_| CleanupFailure)
+            })
         }
 
-        fn remove_file_exact(&mut self, path: &Path, size: u64, sha256: Digest) -> RemoveOutcome {
-            use std::os::windows::fs::MetadataExt;
-
-            let metadata = match std::fs::symlink_metadata(path) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return RemoveOutcome::Absent;
-                }
-                Err(_) => return RemoveOutcome::Preserved,
-            };
-            if metadata.file_attributes() & crate::platform::FILE_ATTRIBUTE_REPARSE_POINT != 0
-                || !metadata.is_file()
-                || metadata.len() != size
-            {
-                return RemoveOutcome::Preserved;
-            }
-            match hash_file(path) {
-                Ok(digest) if digest == sha256 => {}
-                _ => return RemoveOutcome::Preserved,
-            }
-            match std::fs::remove_file(path) {
-                Ok(()) => RemoveOutcome::Removed,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => RemoveOutcome::Absent,
-                Err(_) => RemoveOutcome::Preserved,
-            }
-        }
-
-        fn remove_directory(&mut self, path: &Path) -> RemoveOutcome {
-            match std::fs::remove_dir(path) {
-                Ok(()) => RemoveOutcome::Removed,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => RemoveOutcome::Absent,
-                Err(_) => RemoveOutcome::Preserved,
-            }
-        }
-
-        fn arm_self_delete(&mut self, path: &Path) -> Result<(), CleanupFailure> {
-            let wide: Vec<u16> = path
-                .as_os_str()
-                .encode_wide()
-                .chain([0])
-                .collect::<Vec<u16>>();
-            // Open our own image with DELETE and every sharing mode, so the
-            // loader's existing mapping does not block the disposition.
-            // SAFETY: `wide` is NUL-terminated and outlives the call.
-            let handle = unsafe {
-                CreateFileW(
-                    PCWSTR(wide.as_ptr()),
-                    DELETE.0,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                    None,
-                    OPEN_EXISTING,
-                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
-                    None,
-                )
-            }
-            .map_err(|_| CleanupFailure)?;
-            if handle.is_invalid() {
-                return Err(CleanupFailure);
-            }
-            // SAFETY: CreateFileW transferred the handle; File closes it once.
-            let file = unsafe { File::from_raw_handle(handle.0) };
-            let mut information = FILE_DISPOSITION_INFO { DeleteFile: true };
-            // SAFETY: `file` is a live DELETE-capable handle and `information`
-            // is a correctly sized FILE_DISPOSITION_INFO.
-            unsafe {
-                SetFileInformationByHandle(
-                    HANDLE(file.as_raw_handle()),
-                    FileDispositionInfo,
-                    (&mut information as *mut FILE_DISPOSITION_INFO).cast(),
-                    size_of::<FILE_DISPOSITION_INFO>() as u32,
-                )
-            }
-            .map_err(|_| CleanupFailure)?;
-            // The deletion is armed: the OS removes the image when this last
-            // handle closes at process exit. No reboot fallback exists.
-            self.disposition = Some(file);
-            Ok(())
+        fn open_root(&mut self, root: &Path) -> Result<Box<dyn CleanupTree + '_>, CleanupFailure> {
+            let root =
+                crate::platform::WindowsCleanupRoot::open(root).map_err(|_| CleanupFailure)?;
+            Ok(Box::new(WindowsTree(root)))
         }
     }
 }
@@ -304,44 +312,20 @@ use windows_impl::{WindowsChannel, WindowsCleanupFs};
 mod macos_impl {
     use super::*;
     use std::ffi::c_int;
-    use std::io;
 
-    const _: () = assert!(std::mem::size_of::<FileStatus>() == 144);
-
-    const S_IFMT: u32 = 0o170000;
-    const S_IFIFO: u32 = 0o010000;
-    const S_IFSOCK: u32 = 0o140000;
     const SOL_LOCAL: c_int = 0;
     const LOCAL_PEERPID: c_int = 0x002;
+    const POLLIN: i16 = 0x0001;
+    const EINTR: i32 = 4;
 
     #[repr(C)]
-    struct FileStatus {
-        st_dev: i32,
-        st_mode: u16,
-        st_nlink: u16,
-        st_ino: u64,
-        st_uid: u32,
-        st_gid: u32,
-        st_rdev: i32,
-        st_atime: i64,
-        st_atime_nsec: i64,
-        st_mtime: i64,
-        st_mtime_nsec: i64,
-        st_ctime: i64,
-        st_ctime_nsec: i64,
-        st_birthtime: i64,
-        st_birthtime_nsec: i64,
-        st_size: i64,
-        st_blocks: i64,
-        st_blksize: i32,
-        st_flags: u32,
-        st_gen: u32,
-        st_lspare: i32,
-        st_qspare: [i64; 2],
+    struct PollFd {
+        fd: c_int,
+        events: i16,
+        revents: i16,
     }
 
     unsafe extern "C" {
-        fn fstat(fd: c_int, status: *mut FileStatus) -> c_int;
         fn getsockopt(
             socket: c_int,
             level: c_int,
@@ -349,88 +333,192 @@ mod macos_impl {
             value: *mut std::ffi::c_void,
             length: *mut u32,
         ) -> c_int;
-        fn kill(pid: c_int, signal: c_int) -> c_int;
+        fn poll(fds: *mut PollFd, count: u64, timeout: c_int) -> c_int;
+        fn read(fd: c_int, buffer: *mut u8, count: usize) -> isize;
+        fn write(fd: c_int, buffer: *const u8, count: usize) -> isize;
     }
 
-    const ESRCH: i32 = 3;
+    fn descriptor_is_pipe(fd: c_int) -> bool {
+        use std::mem::ManuallyDrop;
+        use std::os::unix::fs::FileTypeExt;
+        use std::os::unix::io::FromRawFd;
 
-    pub(crate) struct MacosChannel;
-
-    impl MacosChannel {
-        fn descriptor_is_pipe(fd: c_int) -> bool {
-            let mut status = std::mem::MaybeUninit::<FileStatus>::zeroed();
-            // SAFETY: the out-buffer is live and sized by the OS definition.
-            let result = unsafe { fstat(fd, status.as_mut_ptr()) };
-            if result != 0 {
-                return false;
-            }
-            // SAFETY: fstat initialized the structure on success.
-            let status = unsafe { status.assume_init() };
-            let kind = u32::from(status.st_mode) & S_IFMT;
-            kind == S_IFIFO || kind == S_IFSOCK
+        // SAFETY: the descriptor is borrowed for the duration of the call.
+        let file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+        match file.metadata() {
+            Ok(metadata) => metadata.file_type().is_fifo() || metadata.file_type().is_socket(),
+            Err(_) => false,
         }
     }
+
+    fn peer_pid(fd: c_int) -> Option<u32> {
+        let mut pid: c_int = 0;
+        let mut length = std::mem::size_of::<c_int>() as u32;
+        // SAFETY: the descriptor is the inherited liveness socket and
+        // `pid`/`length` are live out-parameters.
+        let result = unsafe {
+            getsockopt(
+                fd,
+                SOL_LOCAL,
+                LOCAL_PEERPID,
+                (&mut pid as *mut c_int).cast(),
+                &mut length,
+            )
+        };
+        if result != 0 || pid <= 0 {
+            return None;
+        }
+        Some(pid as u32)
+    }
+
+    pub(crate) struct MacosChannel;
 
     impl CleanupChannel for MacosChannel {
         fn is_inherited_pipe(&self) -> bool {
             // Both standard descriptors must be a pipe/socket, never a regular
             // file or a terminal.
-            Self::descriptor_is_pipe(0) && Self::descriptor_is_pipe(1)
+            descriptor_is_pipe(0) && descriptor_is_pipe(1)
         }
 
-        fn peer(&self) -> Option<ParentIdentity> {
-            let mut pid: c_int = 0;
-            let mut length = std::mem::size_of::<c_int>() as u32;
-            // SAFETY: the descriptor is inherited stdin and `pid`/`length` are
-            // live out-parameters.
-            let result = unsafe {
-                getsockopt(
-                    0,
-                    SOL_LOCAL,
-                    LOCAL_PEERPID,
-                    (&mut pid as *mut c_int).cast(),
-                    &mut length,
-                )
-            };
-            if result != 0 || pid <= 0 {
+        fn parent_handle(&self, handle: u64) -> Option<ParentIdentity> {
+            let fd = c_int::try_from(handle).ok()?;
+            // The inherited handle must itself be a socketpair end, and its peer
+            // must still be a live process; the pid comes from that handle.
+            if !descriptor_is_pipe(fd) {
                 return None;
             }
+            let pid = peer_pid(fd)?;
             Some(ParentIdentity {
-                pid: pid as u32,
-                start: process_start(pid as u32)?,
+                pid,
+                start: crate::platform::macos_process_start(pid)?,
             })
         }
 
-        fn parent_state(&self, parent: &ParentIdentity) -> ParentState {
-            match process_start(parent.pid) {
-                Some(start) if start == parent.start => ParentState::Alive,
-                Some(_) => ParentState::Reused,
-                None => {
-                    // SAFETY: signal 0 performs only the existence/permission
-                    // check and never delivers a signal.
-                    let result = unsafe { kill(parent.pid as c_int, 0) };
-                    let errno = std::io::Error::last_os_error().raw_os_error();
-                    if result != 0 && errno == Some(ESRCH) {
-                        // The only outcome that may be read as "exited".
-                        ParentState::Exited
-                    } else {
-                        ParentState::Unavailable
+        fn parent_state(&mut self, handle: u64, deadline: Instant) -> ParentState {
+            let Ok(fd) = c_int::try_from(handle) else {
+                return ParentState::Unavailable;
+            };
+            // A socketpair peer that exits closes its end: our end becomes
+            // readable with EOF. That is a property of the inherited handle, so
+            // no pid is reopened.
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let timeout = c_int::try_from(remaining.as_millis()).unwrap_or(c_int::MAX);
+                let mut descriptor = PollFd {
+                    fd,
+                    events: POLLIN,
+                    revents: 0,
+                };
+                // SAFETY: `descriptor` is a live pollfd and the timeout is bounded.
+                let ready = unsafe { poll(&mut descriptor, 1, timeout) };
+                if ready < 0 {
+                    if io::Error::last_os_error().raw_os_error() == Some(EINTR) {
+                        continue;
                     }
+                    return ParentState::Unavailable;
                 }
+                if ready == 0 {
+                    return ParentState::Alive;
+                }
+                let mut byte = [0u8; 1];
+                // SAFETY: the descriptor is live and the buffer is live.
+                let count = unsafe { read(fd, byte.as_mut_ptr(), 1) };
+                if count == 0 {
+                    return ParentState::Exited;
+                }
+                if count < 0 {
+                    if io::Error::last_os_error().raw_os_error() == Some(EINTR) {
+                        continue;
+                    }
+                    return ParentState::Unavailable;
+                }
+                // The liveness peer never sends bytes; anything else is not the
+                // channel this capability expects.
+                return ParentState::Unavailable;
             }
         }
 
-        fn read_request(&mut self, limit: usize) -> io::Result<Vec<u8>> {
-            let mut bytes = Vec::new();
-            io::stdin().take(limit as u64 + 1).read_to_end(&mut bytes)?;
+        fn read_request(&mut self, limit: usize, deadline: Instant) -> io::Result<Vec<u8>> {
+            read_bounded(0, limit, deadline)
+        }
+
+        fn write_completion(&mut self, frame: &[u8], deadline: Instant) -> io::Result<()> {
+            write_bounded(1, frame, deadline)
+        }
+    }
+
+    /// A bounded, chunked read from one descriptor.
+    fn read_bounded(fd: c_int, limit: usize, deadline: Instant) -> io::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut buffer = [0u8; 4096];
+        loop {
             if bytes.len() > limit {
                 return Err(io::Error::other("request frame is too large"));
             }
-            Ok(bytes)
+            if !wait_for(fd, POLLIN, deadline)? {
+                return Err(io::Error::other("cleanup deadline elapsed"));
+            }
+            // SAFETY: the descriptor is live and `buffer` is a live output buffer.
+            let count = unsafe { read(fd, buffer.as_mut_ptr(), buffer.len()) };
+            if count < 0 {
+                if io::Error::last_os_error().raw_os_error() == Some(EINTR) {
+                    continue;
+                }
+                return Err(io::Error::last_os_error());
+            }
+            if count == 0 {
+                return Ok(bytes);
+            }
+            bytes.extend_from_slice(&buffer[..count as usize]);
         }
+    }
 
-        fn write_completion(&mut self, frame: &[u8]) -> io::Result<()> {
-            write_frame(frame)
+    /// A bounded, chunked write to one descriptor.
+    fn write_bounded(fd: c_int, frame: &[u8], deadline: Instant) -> io::Result<()> {
+        const POLLOUT: i16 = 0x0004;
+
+        let mut written = 0usize;
+        while written < frame.len() {
+            if !wait_for(fd, POLLOUT, deadline)? {
+                return Err(io::Error::other("cleanup deadline elapsed"));
+            }
+            // One small write at a time: a fragment below PIPE_BUF is atomic.
+            let chunk = (frame.len() - written).min(1024);
+            // SAFETY: the descriptor is live and the chunk is inside `frame`.
+            let count = unsafe { write(fd, frame[written..].as_ptr(), chunk) };
+            if count < 0 {
+                if io::Error::last_os_error().raw_os_error() == Some(EINTR) {
+                    continue;
+                }
+                return Err(io::Error::last_os_error());
+            }
+            written += count as usize;
+        }
+        Ok(())
+    }
+
+    /// Wait for `events` with the remaining deadline; `false` on timeout.
+    fn wait_for(fd: c_int, events: i16, deadline: Instant) -> io::Result<bool> {
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(false);
+            }
+            let timeout = c_int::try_from(remaining.as_millis()).unwrap_or(c_int::MAX);
+            let mut descriptor = PollFd {
+                fd,
+                events,
+                revents: 0,
+            };
+            // SAFETY: `descriptor` is a live pollfd and the timeout is bounded.
+            let ready = unsafe { poll(&mut descriptor, 1, timeout) };
+            if ready < 0 {
+                if io::Error::last_os_error().raw_os_error() == Some(EINTR) {
+                    continue;
+                }
+                return Err(io::Error::last_os_error());
+            }
+            return Ok(ready > 0);
         }
     }
 
@@ -438,65 +526,53 @@ mod macos_impl {
         pub(crate) own_path: PathBuf,
     }
 
-    impl CleanupFileSystem for MacosCleanupFs {
-        fn own_path(&self) -> std::io::Result<PathBuf> {
-            Ok(self.own_path.clone())
+    struct MacosTree(crate::platform::MacosCleanupRoot);
+
+    impl CleanupTree for MacosTree {
+        fn remove_file(
+            &mut self,
+            relative: &str,
+            size: u64,
+            sha256: Digest,
+            deadline: Instant,
+        ) -> RemoveOutcome {
+            self.0.remove_file(relative, size, sha256, deadline)
         }
 
-        fn hash_file(&self, path: &Path) -> std::io::Result<Digest> {
-            hash_bytes(path)
+        fn remove_link(
+            &mut self,
+            relative: &str,
+            size: u64,
+            sha256: Digest,
+            deadline: Instant,
+        ) -> RemoveOutcome {
+            self.0.remove_link(relative, size, sha256, deadline)
         }
 
-        fn signature(&self, path: &Path) -> Result<String, CleanupFailure> {
-            crate::platform::macos_verify_own_signature(path).map_err(|_| CleanupFailure)
-        }
-
-        fn remove_file_exact(&mut self, path: &Path, size: u64, sha256: Digest) -> RemoveOutcome {
-            let metadata = match std::fs::symlink_metadata(path) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    return RemoveOutcome::Absent;
-                }
-                Err(_) => return RemoveOutcome::Preserved,
-            };
-            // lstat semantics: a symbolic link is never followed and never
-            // removed as if it were the owned file.
-            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() != size {
-                return RemoveOutcome::Preserved;
-            }
-            match hash_file(path) {
-                Ok(digest) if digest == sha256 => {}
-                _ => return RemoveOutcome::Preserved,
-            }
-            match std::fs::remove_file(path) {
-                Ok(()) => RemoveOutcome::Removed,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => RemoveOutcome::Absent,
-                Err(_) => RemoveOutcome::Preserved,
-            }
-        }
-
-        fn remove_directory(&mut self, path: &Path) -> RemoveOutcome {
-            match std::fs::remove_dir(path) {
-                Ok(()) => RemoveOutcome::Removed,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => RemoveOutcome::Absent,
-                Err(_) => RemoveOutcome::Preserved,
-            }
-        }
-
-        fn arm_self_delete(&mut self, path: &Path) -> Result<(), CleanupFailure> {
-            // unlink(2) removes the name while the image is still mapped; the
-            // process keeps running until it exits, and the name is gone.
-            std::fs::remove_file(path).map_err(|_| CleanupFailure)?;
-            match std::fs::symlink_metadata(path) {
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                _ => Err(CleanupFailure),
-            }
+        fn remove_directory(&mut self, relative: &str) -> RemoveOutcome {
+            self.0.remove_directory(relative)
         }
     }
 
-    /// Resolve the start marker of one pid, or `None` when it is not readable.
-    fn process_start(pid: u32) -> Option<u64> {
-        crate::platform::macos_process_start(pid)
+    impl CleanupFileSystem for MacosCleanupFs {
+        fn own_path(&self) -> io::Result<PathBuf> {
+            Ok(self.own_path.clone())
+        }
+
+        fn hash_file(&self, path: &Path, deadline: Instant) -> io::Result<Digest> {
+            hash_bounded(path, deadline)
+        }
+
+        fn signature(&self, path: &Path, deadline: Instant) -> Result<String, CleanupFailure> {
+            signature_bounded(path, deadline, |path| {
+                crate::platform::macos_verify_own_signature(path).map_err(|_| CleanupFailure)
+            })
+        }
+
+        fn open_root(&mut self, root: &Path) -> Result<Box<dyn CleanupTree + '_>, CleanupFailure> {
+            let root = crate::platform::MacosCleanupRoot::open(root).map_err(|_| CleanupFailure)?;
+            Ok(Box::new(MacosTree(root)))
+        }
     }
 }
 

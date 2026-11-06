@@ -2,8 +2,8 @@
 //! (OTP-25 Task 8).
 //!
 //! These tests must run on an **Apple-silicon macOS** runner under a standard,
-//! non-root user. They are compiled only on macOS and are explicitly ignored
-//! elsewhere: the Linux executor records them as BLOCKED, never as passes.
+//! non-root user. They are compiled only on macOS; the Linux executor cannot run
+//! them and records them as **NOT RUN**, never as passes.
 
 #![cfg(target_os = "macos")]
 
@@ -12,10 +12,15 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
+use veles_bridge_installer::cleanup::{
+    CleanupCompletion, CleanupStatus, StdHelperImage, remove_helper_after_exit,
+};
 use veles_bridge_installer::{
-    Channel, FailureCode, InstallPaths, MACOS_CHROME_HOSTS_DIR, MacosPlatform, NativeManifest,
-    PackageSource, Platform, Registration, StateDocument, Target, ValidatedPath, extension_origin,
+    Channel, Digest, FailureCode, InstallPaths, MACOS_CHROME_HOSTS_DIR, MacosCleanupRoot,
+    MacosPlatform, NativeManifest, OwnedKind, PackageSource, Platform, Registration, RemoveOutcome,
+    StateDocument, Target, ValidatedPath, extension_origin,
 };
 
 unsafe extern "C" {
@@ -77,7 +82,6 @@ fn registration(paths: &InstallPaths, executable: &str) -> Registration {
 }
 
 #[test]
-#[ignore = "requires macOS runner; native evidence BLOCKED on this executor"]
 fn macos_atomic_replace_parent_flush_and_no_symlink_follow() {
     let temp = TempRoot::new("atomic");
     let paths = macos_paths(&temp);
@@ -104,9 +108,14 @@ fn macos_atomic_replace_parent_flush_and_no_symlink_follow() {
             .expect("state read"),
         Some(b"{\"phase\":\"second\"}".to_vec())
     );
+    let staging: Vec<_> = fs::read_dir(paths.state())
+        .expect("state listing")
+        .map(|entry| entry.expect("entry").file_name())
+        .filter(|name| name.to_string_lossy().contains(".tmp"))
+        .collect();
     assert!(
-        !paths.state().join("journal.json.tmp").exists(),
-        "the staging sibling must be renamed away, not left behind"
+        staging.is_empty(),
+        "the staging sibling must be renamed away, not left behind: {staging:?}"
     );
 
     // A planted symbolic link where a state document is expected is never
@@ -143,6 +152,21 @@ fn macos_atomic_replace_parent_flush_and_no_symlink_follow() {
         "the planted link is untouched"
     );
 
+    // A planted file at a staging name is never adopted: every staging name is
+    // fresh and written with an exclusive create.
+    let planted = paths.state().join(".receipt.json.planted.tmp");
+    fs::write(&planted, b"planted").expect("planted staging file");
+    platform
+        .write_state(&paths, StateDocument::Receipt, b"{\"receipt\":true}")
+        .expect("state write ignores the planted name");
+    assert_eq!(fs::read(&planted).expect("planted bytes"), b"planted");
+    assert_eq!(
+        platform
+            .read_state(&paths, StateDocument::Receipt)
+            .expect("state read"),
+        Some(b"{\"receipt\":true}".to_vec())
+    );
+
     // `replace_durable` stages a sibling and renames it, so a hard link to the
     // old inode keeps its bytes: the destination entry is replaced, not written
     // through.
@@ -173,6 +197,17 @@ fn macos_atomic_replace_parent_flush_and_no_symlink_follow() {
     platform
         .flush_parent(&existing)
         .expect("parent flush must be a real fsync of the directory");
+    assert_eq!(
+        existing
+            .rendered()
+            .symlink_metadata()
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600,
+        "durably written files are owner-only"
+    );
 
     // Every installer-owned directory is private to the user.
     for directory in [paths.root(), paths.state(), paths.versions()] {
@@ -186,7 +221,6 @@ fn macos_atomic_replace_parent_flush_and_no_symlink_follow() {
 }
 
 #[test]
-#[ignore = "requires macOS runner; native evidence BLOCKED on this executor"]
 fn non_admin_unicode_paths() {
     // SAFETY: geteuid has no preconditions.
     assert_ne!(unsafe { geteuid() }, 0, "this evidence must be non-root");
@@ -204,12 +238,13 @@ fn non_admin_unicode_paths() {
         .join(MACOS_CHROME_HOSTS_DIR)
         .join(format!("{}.json", paths.registration_name()));
     assert_eq!(paths.registration_path(), expected);
+    let rendered = paths
+        .registration_path()
+        .to_str()
+        .expect("utf-8 registration path");
     assert!(
-        paths
-            .registration_path()
-            .to_str()
-            .expect("utf-8")
-            .contains("用户 Å")
+        rendered.contains("Test User Å") && rendered.contains("用户"),
+        "the fixture home's Unicode components must survive: {rendered}"
     );
 
     let directory = ValidatedPath::new_directory(&paths, Path::new("versions/1.0.0-aaaa"))
@@ -265,19 +300,57 @@ fn non_admin_unicode_paths() {
         "could not set the fixture extended attribute"
     );
 
+    // Enumeration records the bundle link as a *link entry* with its exact
+    // target, still confined: the required symlink-preserving path is proven
+    // here, not merely the refusal of a link.
+    let source_package = PackageSource::open(&source).expect("carrier source");
+    let entries = platform
+        .carrier_entries(&source_package)
+        .expect("a symlink-bearing carrier artifact is enumerated");
+    let link_entry = entries
+        .iter()
+        .find(|entry| entry.relative() == "Contents/Frameworks/Current")
+        .expect("the bundle link is described");
+    assert_eq!(link_entry.kind(), OwnedKind::Symlink);
+    assert_eq!(link_entry.target(), Some("../MacOS"));
+    assert_eq!(link_entry.size(), "../MacOS".len() as u64);
+    assert_eq!(
+        link_entry.sha256(),
+        Some(Digest::of(b"../MacOS")),
+        "a link's owned content is its exact target bytes"
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.relative() == "Contents/MacOS/carrier"
+                && entry.kind() == OwnedKind::File),
+        "regular bundle files are still enumerated"
+    );
+
+    // A link that climbs out of the artifact root is refused at enumeration: a
+    // copied link must never point a later reader outside the signed bundle.
+    let escaping = temp.path().join("escaping.app");
+    fs::create_dir_all(escaping.join("Contents")).expect("escaping bundle");
+    symlink(Path::new("../../outside"), escaping.join("Contents/escape")).expect("escaping link");
+    assert_eq!(
+        platform
+            .carrier_entries(&PackageSource::open(&escaping).expect("source"))
+            .expect_err("a link escaping the artifact root is refused")
+            .code,
+        FailureCode::UnsafePath
+    );
+
     let carrier_dir =
         ValidatedPath::new_directory(&paths, Path::new("versions/1.0.0-aaaa/carrier.app"))
             .expect("carrier dir handle");
     platform
-        .install_carrier(
-            &PackageSource::open(&source).expect("carrier source"),
-            &carrier_dir,
-        )
+        .install_carrier(&source_package, &carrier_dir)
         .expect("carrier install");
     let installed = paths.root().join("versions/1.0.0-aaaa/carrier.app");
     assert_eq!(
         fs::read(installed.join("Contents/MacOS/carrier")).expect("installed carrier"),
-        b"carrier-image"
+        b"carrier-image",
+        "the bytes must actually be copied (COPYFILE_EXCL, not COPYFILE_CHECK)"
     );
     assert_eq!(
         fs::read_link(installed.join("Contents/Frameworks/Current")).expect("installed link"),
@@ -295,11 +368,135 @@ fn non_admin_unicode_paths() {
         "fidelity",
         "extended attributes are part of the seal and must survive the copy"
     );
+}
 
-    // Enumeration describes exactly the symlink-free tree that install creates
-    // and never escapes the artifact root.
-    let refusal = platform
-        .carrier_entries(&PackageSource::open(&source).expect("carrier source"))
-        .expect_err("a symlink-bearing carrier artifact is refused at enumeration");
-    assert_eq!(refusal.code, FailureCode::UnsafePath);
+/// The cleanup helper's anchored traversal refuses a component replaced by a
+/// symlink: a deletion is never redirected outside the install root, and the
+/// object that is unlinked is the one whose identity was verified.
+#[test]
+fn cleanup_traversal_is_anchored_and_identity_bound() {
+    let temp = TempRoot::new("anchored");
+    let root = temp.path().join("Veles").join("NativeBridge");
+    fs::create_dir_all(root.join("versions/1.0.0-aaaa")).expect("version dir");
+    fs::write(root.join("versions/1.0.0-aaaa/host"), b"host-image").expect("host");
+
+    // The root handle is opened *before* the swap, as the helper does.
+    let traversal = MacosCleanupRoot::open(&root).expect("open the anchored root");
+
+    // Wrong digest: preserved.
+    assert_eq!(
+        traversal.remove_file(
+            "versions/1.0.0-aaaa/host",
+            b"host-image".len() as u64,
+            Digest::of(b"other"),
+            Instant::now() + Duration::from_secs(5),
+        ),
+        RemoveOutcome::Preserved
+    );
+    // A non-empty directory is never recursively deleted.
+    assert_eq!(
+        traversal.remove_directory("versions/1.0.0-aaaa"),
+        RemoveOutcome::Preserved
+    );
+    // The exact identity is removed.
+    assert_eq!(
+        traversal.remove_file(
+            "versions/1.0.0-aaaa/host",
+            b"host-image".len() as u64,
+            Digest::of(b"host-image"),
+            Instant::now() + Duration::from_secs(5),
+        ),
+        RemoveOutcome::Removed
+    );
+    assert_eq!(
+        traversal.remove_directory("versions/1.0.0-aaaa"),
+        RemoveOutcome::Removed
+    );
+    assert_eq!(
+        traversal.remove_file(
+            "versions/1.0.0-aaaa/host",
+            b"host-image".len() as u64,
+            Digest::of(b"host-image"),
+            Instant::now() + Duration::from_secs(5),
+        ),
+        RemoveOutcome::Preserved,
+        "an absent entry is not reported as removed through a stale handle"
+    );
+
+    // Replace `versions` with a link to a tree outside the root that holds a
+    // file with exactly the requested identity: the traversal must not follow it.
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&outside).expect("outside tree");
+    fs::write(outside.join("host"), b"host-image").expect("outside host");
+    fs::remove_dir_all(root.join("versions")).expect("drop versions");
+    symlink(&outside, root.join("versions")).expect("planted link");
+    assert_eq!(
+        traversal.remove_file(
+            "versions/host",
+            b"host-image".len() as u64,
+            Digest::of(b"host-image"),
+            Instant::now() + Duration::from_secs(5),
+        ),
+        RemoveOutcome::Preserved
+    );
+    assert!(
+        outside.join("host").exists(),
+        "a linked component must never redirect a deletion"
+    );
+}
+
+/// The cleanup helper image is deleted by the **installer** after the helper
+/// exits, and its absence is observed. The helper itself never deletes it.
+#[test]
+fn cleanup_helper_image_disappears_after_exit() {
+    let temp = TempRoot::new("helper-image");
+    let staged = temp.path().join("private").join("veles-cleanup");
+    fs::create_dir_all(staged.parent().expect("helper parent")).expect("helper dir");
+    fs::copy(env!("CARGO_BIN_EXE_veles-bridge-cleanup"), &staged).expect("stage the helper");
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o700)).expect("executable");
+
+    // No inherited request pipe: the helper refuses the channel and exits
+    // non-zero without deleting its own image.
+    let mut child = process::Command::new(&staged)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .spawn()
+        .expect("spawn the staged helper");
+    let status = child.wait().expect("wait for the helper");
+    assert!(!status.success(), "refused cleanup reports a non-zero exit");
+    assert!(
+        staged.exists(),
+        "the helper must not delete its own image; that is the installer's job"
+    );
+
+    // After observing the exit and authenticating the completion, the installer
+    // deletes the image and verifies it is gone.
+    // The installer authenticates the completion before deleting the image.
+    let transaction = "11".repeat(32);
+    let capability = [0x22u8; 32];
+    let mut completion = CleanupCompletion {
+        schema: 1,
+        magic: "veles-cleanup-v1".to_owned(),
+        transaction,
+        status: CleanupStatus::Complete,
+        reason: None,
+        removed_files: 1,
+        removed_directories: 1,
+        preserved: 0,
+        mac: None,
+    };
+    completion.mac = Some(veles_bridge_installer::encode_hex(
+        &veles_bridge_installer::hmac_sha256(&capability, &completion.mac_input()),
+    ));
+    let mut image = StdHelperImage;
+    remove_helper_after_exit(
+        &mut image,
+        &staged,
+        &completion,
+        &capability,
+        &completion.transaction,
+    )
+    .expect("installer removes the image");
+    assert!(!staged.exists(), "the staged helper image is gone");
 }

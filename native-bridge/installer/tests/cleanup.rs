@@ -1,12 +1,13 @@
 //! Bounded cleanup-capability protocol tests (OTP-25 Task 8).
 //!
 //! These exercise the production validation and deletion ordering
-//! ([`veles_bridge_installer::cleanup::execute_cleanup`]) over a real temporary
+//! (`veles_bridge_installer::cleanup::execute_cleanup`) over a real temporary
 //! root with a scripted inherited pipe. They are portable evidence: the request
 //! framing, forged-channel/pid-reuse refusal, deadline handling, authenticated
-//! completion and exact-identity removal run on this host. They are **not**
-//! evidence for the Windows/macOS pipe-peer and self-signature APIs; those are
-//! in `native_windows.rs`/`native_macos.rs` and are native-only.
+//! completion, anchored relative removal and the installer-side helper-image
+//! removal run on this host. They are **not** evidence for the Windows/macOS
+//! pipe-peer and self-signature APIs or for the OS-level anchored traversal;
+//! those live in the native adapters and in `tests/native_*.rs`.
 
 use std::cell::Cell;
 use std::fs;
@@ -17,13 +18,16 @@ use std::time::{Duration, Instant};
 
 use veles_bridge_installer::cleanup::{
     CleanupChannel, CleanupCompletion, CleanupEntry, CleanupReason, CleanupRequest, CleanupStatus,
-    ParentIdentity, ParentState, StdCleanupFs, encode_hex, execute_cleanup,
+    HelperImage, ParentIdentity, ParentState, SignaturePolicy, StdCleanupFs, encode_hex,
+    execute_cleanup, remove_helper_after_exit,
 };
 use veles_bridge_installer::{Digest, OwnedKind};
 
 const PUBLISHER: &str = "team:ABCDE12345";
 const TRANSACTION: [u8; 32] = [0x11; 32];
 const CAPABILITY: [u8; 32] = [0x22; 32];
+/// The inherited parent-process handle value the request names.
+const PARENT_HANDLE: u64 = 3;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -132,6 +136,7 @@ fn request(fixture: &Fixture) -> CleanupRequest {
             pid: 4242,
             start: 1_000_000,
         },
+        parent_handle: PARENT_HANDLE,
         deadline_ms: 2_000,
         entries: fixture.entries.clone(),
     }
@@ -145,8 +150,11 @@ struct ScriptedChannel {
     request: Vec<u8>,
     is_pipe: bool,
     peer: Option<ParentIdentity>,
-    states: Vec<ParentState>,
+    /// The inherited handle value this double accepts as the parent.
+    handle: u64,
+    state: ParentState,
     calls: Cell<usize>,
+    read_deadline: Cell<Option<Instant>>,
     written: Vec<u8>,
 }
 
@@ -156,8 +164,10 @@ impl ScriptedChannel {
             request,
             is_pipe: true,
             peer: Some(parent),
-            states: vec![state],
+            handle: PARENT_HANDLE,
+            state,
             calls: Cell::new(0),
+            read_deadline: Cell::new(None),
             written: Vec::new(),
         }
     }
@@ -168,27 +178,34 @@ impl CleanupChannel for ScriptedChannel {
         self.is_pipe
     }
 
-    fn peer(&self) -> Option<ParentIdentity> {
-        self.peer
+    fn parent_handle(&self, handle: u64) -> Option<ParentIdentity> {
+        (handle == self.handle).then_some(self.peer).flatten()
     }
 
-    fn parent_state(&self, _parent: &ParentIdentity) -> ParentState {
-        let index = self.calls.get();
-        self.calls.set(index + 1);
-        self.states
-            .get(index)
-            .copied()
-            .unwrap_or_else(|| *self.states.last().expect("scripted states"))
+    fn parent_state(&mut self, _handle: u64, deadline: Instant) -> ParentState {
+        self.calls.set(self.calls.get() + 1);
+        match self.state {
+            // A real handle blocks until it signals or the deadline elapses.
+            ParentState::Alive => {
+                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                ParentState::Alive
+            }
+            other => other,
+        }
     }
 
-    fn read_request(&mut self, limit: usize) -> std::io::Result<Vec<u8>> {
+    fn read_request(&mut self, limit: usize, deadline: Instant) -> std::io::Result<Vec<u8>> {
+        self.read_deadline.set(Some(deadline));
         if self.request.len() > limit {
             return Err(std::io::Error::other("request frame is too large"));
         }
         Ok(self.request.clone())
     }
 
-    fn write_completion(&mut self, frame: &[u8]) -> std::io::Result<()> {
+    fn write_completion(&mut self, frame: &[u8], deadline: Instant) -> std::io::Result<()> {
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::other("cleanup deadline elapsed"));
+        }
         self.written.extend_from_slice(frame);
         Ok(())
     }
@@ -228,8 +245,9 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     let framed = written_completion(&channel);
     assert_eq!(framed.reason, Some(CleanupReason::ForgedChannel));
 
-    // 2. A pid that now belongs to a different process is not the parent: the
-    //    peer identity (pid *and* start marker) must match exactly.
+    // 2. An inherited handle that names a different process (a reused pid, or a
+    //    handle for somebody else) is not the parent: pid *and* start marker must
+    //    match the handle's identity.
     let temp = TempRoot::new("pid-reuse");
     let fixture = build_fixture(&temp);
     let forged = request(&fixture);
@@ -241,6 +259,16 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::CleanupPending);
+    assert_eq!(completion.reason, Some(CleanupReason::ForgedChannel));
+    assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
+
+    // 2b. A request that names a handle the process does not actually hold is
+    //     refused the same way: the handle value is authenticated, never trusted.
+    let mut forged = request(&fixture);
+    forged.parent_handle = PARENT_HANDLE + 1;
+    let mut channel = ScriptedChannel::new(frame(&forged), forged.parent, ParentState::Exited);
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.reason, Some(CleanupReason::ForgedChannel));
     assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
 
@@ -257,13 +285,12 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     assert_eq!(completion.reason, Some(CleanupReason::InvalidRequest));
     assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
 
-    // 4. Once the peer matches, a *recycled* pid observed while waiting means
-    //    the recorded parent exited, so cleanup proceeds instead of waiting on
-    //    a process that is not the parent.
-    let temp = TempRoot::new("reused-while-waiting");
+    // 4. A legitimate cleanup is not rejected because the parent exited after it
+    //    signalled: the inherited handle reports `Exited` and removal proceeds.
+    let temp = TempRoot::new("exited-after-signalling");
     let fixture = build_fixture(&temp);
     let valid = request(&fixture);
-    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Reused);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
     let mut fs = trusted_fs(&fixture);
     let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
     assert_eq!(completion.status, CleanupStatus::Complete);
@@ -271,7 +298,6 @@ fn cleanup_rejects_forged_pipe_and_pid_reuse() {
     assert_eq!(completion.removed_directories, 2);
     assert!(!fixture.root.join("versions/1.0.0-test/host.exe").exists());
     assert!(!fixture.root.join("versions").exists());
-    assert!(!fixture.helper.exists(), "the helper deletes itself");
     let framed = written_completion(&channel);
     assert_eq!(framed.status, CleanupStatus::Complete);
 }
@@ -304,6 +330,42 @@ fn cleanup_timeout_never_reports_uninstall_complete() {
     let framed = written_completion(&channel);
     assert_eq!(framed.status, CleanupStatus::CleanupPending);
     assert_eq!(framed.reason, Some(CleanupReason::ParentAlive));
+}
+
+/// The whole run is bounded to ten seconds even when the caller asks for longer:
+/// the frame read already receives the clamped deadline.
+#[test]
+fn cleanup_is_bounded_to_ten_seconds() {
+    let temp = TempRoot::new("bounded");
+    let fixture = build_fixture(&temp);
+    let valid = request(&fixture);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+    let started = Instant::now();
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(60));
+    assert_eq!(
+        completion.status,
+        CleanupStatus::Complete,
+        "fixture is removable"
+    );
+    let read_deadline = channel.read_deadline.get().expect("read deadline was set");
+    assert!(
+        read_deadline <= started + Duration::from_secs(10) + Duration::from_millis(250),
+        "the request read must be bounded by the ten-second ceiling"
+    );
+    // A request that asks for a longer deadline is invalid, not clamped silently.
+    let mut long = request(&fixture);
+    let temp = TempRoot::new("bounded-request");
+    let fixture = build_fixture(&temp);
+    long.root = fixture.root.to_str().expect("utf-8 root").to_owned();
+    long.helper_path = fixture.helper.to_str().expect("utf-8 helper").to_owned();
+    long.helper_sha256 = fixture.helper_sha256;
+    long.entries = fixture.entries.clone();
+    long.deadline_ms = 60_000;
+    let mut channel = ScriptedChannel::new(frame(&long), long.parent, ParentState::Exited);
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+    assert_eq!(completion.reason, Some(CleanupReason::InvalidRequest));
 }
 
 #[test]
@@ -346,4 +408,202 @@ fn cleanup_rejects_a_replaced_helper_image() {
     assert_eq!(completion.removed_files, 0);
     assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
     assert!(fixture.helper.exists());
+}
+
+/// A pre-existing link at a component of the root must not redirect a deletion.
+///
+/// The portable reference refuses to traverse any linked component; the native
+/// adapters hold an opened directory handle and cannot be redirected at all.
+#[test]
+fn cleanup_never_traverses_a_linked_root_component() {
+    #[cfg(unix)]
+    {
+        let temp = TempRoot::new("linked-root");
+        let fixture = build_fixture(&temp);
+        // Replace the whole owned tree with a link to a tree outside the install
+        // root that contains a file with exactly the requested identity.
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(outside.join("1.0.0-test")).expect("outside tree");
+        fs::write(outside.join("1.0.0-test/host.exe"), b"host-image").expect("outside host");
+        fs::remove_dir_all(fixture.root.join("versions")).expect("drop owned tree");
+        std::os::unix::fs::symlink(&outside, fixture.root.join("versions")).expect("planted link");
+
+        let valid = request(&fixture);
+        let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+        let mut fs = trusted_fs(&fixture);
+        let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+        assert_eq!(completion.status, CleanupStatus::CleanupPending);
+        assert!(
+            outside.join("1.0.0-test/host.exe").exists(),
+            "a deletion must never be redirected through a linked component"
+        );
+        assert!(
+            fs::symlink_metadata(fixture.root.join("versions")).is_ok(),
+            "the planted link is preserved, not treated as an owned directory"
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        // Symbolic links are a unix fixture capability here; the native Windows
+        // adapter refuses any reparse point with `UnsafePath` (see the native
+        // test), so there is no portable equivalent on a non-unix host.
+    }
+}
+
+/// The helper never deletes its own image; the installer does, after exit.
+#[test]
+fn cleanup_leaves_the_helper_image_for_the_installer() {
+    let temp = TempRoot::new("helper-image");
+    let fixture = build_fixture(&temp);
+    let valid = request(&fixture);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+    assert_eq!(completion.status, CleanupStatus::Complete);
+    assert!(
+        fixture.helper.exists(),
+        "the helper only exits: its image is removed by the installer"
+    );
+}
+
+struct ScriptedImage {
+    path: PathBuf,
+    remove_fails: bool,
+}
+
+impl HelperImage for ScriptedImage {
+    fn remove(&mut self, _path: &Path) -> std::io::Result<()> {
+        if self.remove_fails {
+            return Err(std::io::Error::other("image is still mapped"));
+        }
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// A helper image the installer cannot delete is a pending cleanup, never a
+/// completed uninstall — and a successful deletion must be observed, not assumed.
+#[test]
+fn cleanup_reports_pending_when_the_helper_image_cannot_be_removed() {
+    let temp = TempRoot::new("pending-image");
+    let fixture = build_fixture(&temp);
+    let valid = request(&fixture);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+    let mut fs = trusted_fs(&fixture);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+    assert_eq!(completion.status, CleanupStatus::Complete);
+
+    // Deletion refused by the OS: pending, and the image is still there.
+    let mut failing = ScriptedImage {
+        path: fixture.helper.clone(),
+        remove_fails: true,
+    };
+    let failure = remove_helper_after_exit(
+        &mut failing,
+        &fixture.helper,
+        &completion,
+        &CAPABILITY,
+        &encode_hex(&TRANSACTION),
+    )
+    .expect_err("an undeletable helper image is a pending cleanup");
+    assert_eq!(
+        failure.code,
+        veles_bridge_installer::FailureCode::CleanupPending
+    );
+    assert!(fixture.helper.exists());
+
+    // Deletion succeeds but the path is still present: also pending.
+    struct Vanishing {
+        path: PathBuf,
+    }
+    impl HelperImage for Vanishing {
+        fn remove(&mut self, _path: &Path) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn exists(&self, _path: &Path) -> std::io::Result<bool> {
+            Ok(self.path.exists())
+        }
+    }
+    let mut vanishing = Vanishing {
+        path: fixture.helper.clone(),
+    };
+    assert_eq!(
+        remove_helper_after_exit(
+            &mut vanishing,
+            &fixture.helper,
+            &completion,
+            &CAPABILITY,
+            &encode_hex(&TRANSACTION),
+        )
+        .expect_err("an image that is still present is not removed")
+        .code,
+        veles_bridge_installer::FailureCode::CleanupPending
+    );
+
+    // Real deletion removes the image and reports success.
+    let mut working = ScriptedImage {
+        path: fixture.helper.clone(),
+        remove_fails: false,
+    };
+    remove_helper_after_exit(
+        &mut working,
+        &fixture.helper,
+        &completion,
+        &CAPABILITY,
+        &encode_hex(&TRANSACTION),
+    )
+    .expect("the installer removes the staged helper image");
+    assert!(!fixture.helper.exists());
+
+    // A pending completion can never remove the image.
+    let mut pending = CleanupCompletion {
+        schema: 1,
+        magic: "veles-cleanup-v1".to_owned(),
+        transaction: completion.transaction.clone(),
+        status: CleanupStatus::CleanupPending,
+        reason: Some(CleanupReason::Leftover),
+        removed_files: 0,
+        removed_directories: 0,
+        preserved: 1,
+        mac: None,
+    };
+    pending.status = CleanupStatus::CleanupPending;
+    assert_eq!(
+        remove_helper_after_exit(
+            &mut working,
+            &fixture.helper,
+            &pending,
+            &CAPABILITY,
+            &encode_hex(&TRANSACTION),
+        )
+        .expect_err("a pending completion never removes the image")
+        .code,
+        veles_bridge_installer::FailureCode::CleanupPending
+    );
+}
+
+/// The signature policy is closed: without an OS assessment a run fails closed.
+#[test]
+fn cleanup_without_signature_evidence_fails_closed() {
+    let temp = TempRoot::new("signature");
+    let fixture = build_fixture(&temp);
+    let valid = request(&fixture);
+    let mut channel = ScriptedChannel::new(frame(&valid), valid.parent, ParentState::Exited);
+    let mut fs = StdCleanupFs::new(fixture.helper.clone());
+    assert_eq!(fs.signature_policy(), SignaturePolicy::Unavailable);
+    let completion = execute_cleanup(&mut channel, &mut fs, Duration::from_secs(1));
+    assert_eq!(completion.status, CleanupStatus::CleanupPending);
+    assert_eq!(completion.reason, Some(CleanupReason::SelfMismatch));
+    assert!(fixture.root.join("versions/1.0.0-test/host.exe").exists());
 }

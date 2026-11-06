@@ -1,33 +1,42 @@
 //! Bounded, single-use cleanup capability for owned-file removal (Task 8).
 //!
-//! Deleting an executing Windows maintenance binary, or removing the last files
-//! of an installation while the installer itself may still hold handles, cannot
-//! be done safely in-process. Instead the installer stages a **signed cleanup
-//! helper** into a private temporary directory outside the removable root, hands
-//! it an inherited pipe and exits. The helper:
+//! Deleting the last files of an installation while the installer itself may
+//! still hold handles cannot be done safely in-process. Instead the installer
+//! stages a **signed cleanup helper** into a private temporary directory outside
+//! the removable root, hands it an inherited request pipe, an inherited
+//! completion pipe and an inherited **parent-process handle**, then exits. The
+//! helper:
 //!
-//! 1. reads one bounded request frame from the inherited pipe (never a path, a
-//!    recursive delete target or a command line);
-//! 2. refuses a channel that is not an inherited OS pipe, or whose peer is not
-//!    the process the request names (a pid is not an identity: the peer's start
-//!    marker must match too, so a reused pid is rejected);
+//! 1. reads one bounded request frame from the inherited pipe, with a deadline
+//!    (never a path, a recursive delete target or a command line);
+//! 2. refuses a channel that is not an inherited OS pipe, or whose inherited
+//!    parent handle does not name the process the request records (a pid is not
+//!    an identity: the handle's process id *and* start marker must match, so a
+//!    reused pid is rejected);
 //! 3. verifies its own absolute path, its own image digest and its own OS
 //!    signature against the request's pinned publisher *before* touching
-//!    anything;
-//! 4. waits for the parent to exit, bounded by [`MAX_CLEANUP_TIMEOUT`] (10s),
-//!    re-reading the recorded parent identity so a reused pid can neither keep
-//!    it waiting nor make it act while the real parent still runs;
-//! 5. deletes only the exact listed owned identities - size and SHA-256 are
-//!    re-checked immediately before each unlink, a missing entry is idempotent,
-//!    a mismatched entry is preserved, and directories are removed only when
-//!    empty (there is no recursive delete anywhere in this module);
-//! 6. arms its own deletion with native OS deletion semantics (on Windows the
-//!    delete-on-close disposition, on macOS `unlink`), and reports
-//!    `cleanup-pending` - never `complete` - when any of that could not be
-//!    established;
-//! 7. writes one authenticated completion frame (HMAC-SHA256 keyed by the
-//!    request's single-use capability) and exits non-zero unless the status is
-//!    `complete`.
+//!    anything, with a bounded hash and a bounded signature assessment;
+//! 4. waits **on that inherited handle** - not by reopening a pid - until it
+//!    signals that the parent exited, bounded by [`MAX_CLEANUP_TIMEOUT`] (10s).
+//!    A parent that exited after signalling therefore lets a legitimate cleanup
+//!    proceed, while a live parent keeps it pending;
+//! 5. opens the install root as an anchored traversal root and deletes only the
+//!    exact listed owned identities **relative to that handle**: every component
+//!    is opened without following links, the leaf's opened identity is compared
+//!    with the one that was hashed, and only then is that exact object unlinked.
+//!    A pre-existing link at `root/versions` therefore cannot redirect a
+//!    deletion, and a leaf swapped between hashing and unlinking is preserved.
+//!    A missing entry is idempotent, a mismatched entry is preserved, and
+//!    directories are removed only when empty (there is no recursive delete
+//!    anywhere in this module);
+//! 6. writes one authenticated completion frame (HMAC-SHA256 keyed by the
+//!    request's single-use capability) with a write deadline and exits non-zero
+//!    unless the status is `complete`.
+//!
+//! The helper never deletes its own image. It only exits; the installer, which
+//! is already waiting, deletes the staged image after observing the exit and
+//! authenticating the completion ([`remove_helper_after_exit`]) and verifies the
+//! path is gone. If that fails, the installer reports `CleanupPending`.
 //!
 //! Nothing here terminates a process, invokes a shell, registers an autostart
 //! task or falls back to reboot-time deletion.
@@ -35,7 +44,6 @@
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -44,13 +52,14 @@ use sha2::{Digest as _, Sha256};
 use crate::inventory::normalize_relative_path;
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, MAX_PATH_BYTES};
 use crate::paths::{MAX_ROOT_BYTES, ROOT_DIR_DEVELOPMENT, ROOT_DIR_FIXTURE, ROOT_DIR_PRODUCTION};
-use crate::platform::{OwnedKind, path_is_within, same_path};
+use crate::platform::OwnedKind;
 
 /// Completed cleanup frames are this schema.
 pub const CLEANUP_SCHEMA_VERSION: u32 = 1;
 /// Wire magic that identifies this protocol generation.
 pub const CLEANUP_MAGIC: &str = "veles-cleanup-v1";
-/// Hard ceiling for one cleanup run.
+/// Hard ceiling for one cleanup run, from the first byte read to the last byte
+/// written. Nothing in this module may extend it.
 pub const MAX_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Bound on one request/completion frame.
 pub const MAX_CLEANUP_FRAME_BYTES: usize = 256 * 1024;
@@ -58,8 +67,13 @@ pub const MAX_CLEANUP_FRAME_BYTES: usize = 256 * 1024;
 pub const MAX_CLEANUP_ENTRIES: usize = 4096;
 /// Bound on the capability/transaction byte strings (hex-encoded 32 bytes).
 const CAPABILITY_BYTES: usize = 32;
-/// Poll interval while waiting for the parent.
-const PARENT_POLL_INTERVAL: Duration = Duration::from_millis(25);
+/// Bounded grace for the one completion write after the work deadline elapsed.
+///
+/// The work deadline (the request's, or the fixed ceiling) bounds waiting and
+/// removal; a run that has to report `ParentAlive` or `Deadline` must still be
+/// able to deliver that verdict. The grace is itself bounded and never extends
+/// past [`MAX_CLEANUP_TIMEOUT`].
+const COMPLETION_WRITE_GRACE: Duration = Duration::from_millis(500);
 
 /// The identity of one OS process: a pid is not enough, because the OS recycles
 /// it. `start` is the OS start marker for that pid.
@@ -78,11 +92,13 @@ pub struct ParentIdentity {
 pub struct CleanupEntry {
     /// `/`-joined path below the install root.
     pub path: String,
-    /// File or directory.
+    /// File, directory or symbolic link.
     pub kind: OwnedKind,
-    /// Exact size for a file (zero for a directory).
+    /// Exact size for a file *and* for a link (the target's byte length); zero
+    /// for a directory.
     pub size: u64,
-    /// Exact SHA-256 for a file (absent for a directory).
+    /// Exact SHA-256 for a file (its content) or for a link (its target bytes);
+    /// absent for a directory.
     pub sha256: Option<Digest>,
 }
 
@@ -111,9 +127,17 @@ pub struct CleanupRequest {
     pub publisher: String,
     /// The installer process that spawned the helper.
     pub parent: ParentIdentity,
+    /// The **inherited handle** naming that exact parent process.
+    ///
+    /// Windows: an inherited `DuplicateHandle`d process handle with
+    /// `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE`. macOS: an inherited
+    /// descriptor of a `socketpair` whose peer is the parent (`LOCAL_PEERPID`).
+    /// The helper authenticates the peer over this handle and waits on it, so it
+    /// never reopens a pid.
+    pub parent_handle: u64,
     /// Deadline in milliseconds, clamped to [`MAX_CLEANUP_TIMEOUT`].
     pub deadline_ms: u64,
-    /// Exact owned entries, files first and directories deepest-first.
+    /// Exact owned entries, leaves first and directories deepest-first.
     pub entries: Vec<CleanupEntry>,
 }
 
@@ -121,8 +145,8 @@ pub struct CleanupRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CleanupStatus {
-    /// Every listed identity was removed (or already absent), the parent exited,
-    /// and the helper's own deletion was armed.
+    /// Every listed identity was removed (or already absent) and the parent
+    /// exited.
     Complete,
     /// Something could not be established; the installer must keep reporting a
     /// pending cleanup and never a completed uninstall.
@@ -135,15 +159,18 @@ pub enum CleanupStatus {
 pub enum CleanupReason {
     /// The request frame was unreadable, oversized or invalid.
     InvalidRequest,
-    /// The channel is not an inherited pipe, or its peer is not the named parent
-    /// (including a reused pid).
+    /// The channel is not an inherited pipe, or its inherited parent handle does
+    /// not name the recorded parent (including a reused pid).
     ForgedChannel,
-    /// The helper's own path, digest or signature did not match the request.
+    /// The helper's own path, digest or signature did not match the request (or
+    /// could not be verified inside the deadline).
     SelfMismatch,
     /// The parent was still alive at the deadline.
     ParentAlive,
-    /// The parent identity could not be read.
+    /// The inherited parent handle could not be used.
     ParentUnavailable,
+    /// The install root could not be opened as an anchored traversal root.
+    RootUnavailable,
     /// The deadline elapsed while removing entries.
     Deadline,
     /// One or more entries were absent/did not match and were preserved.
@@ -227,15 +254,13 @@ impl CleanupCompletion {
     }
 }
 
-/// The state of the recorded parent process.
+/// The state of the process the inherited handle names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentState {
     /// The same process is still alive; the helper must keep waiting.
     Alive,
-    /// The recorded process exited.
+    /// The handle signalled that the recorded process exited.
     Exited,
-    /// The pid now belongs to a different process (the recorded parent exited).
-    Reused,
     /// The OS would not say; the helper must not act.
     Unavailable,
 }
@@ -243,20 +268,22 @@ pub enum ParentState {
 /// The inherited channel the helper reads its request from and writes the
 /// completion to.
 ///
-/// The native implementations also prove that this is an OS pipe and who the peer
-/// is; a test double scripts the same facts.
+/// The native implementations also prove that this is an OS pipe and who the
+/// peer is; a test double scripts the same facts.
 pub trait CleanupChannel {
     /// Whether both ends are inherited anonymous/named pipe handles rather than
     /// a regular file, console or other redirect.
     fn is_inherited_pipe(&self) -> bool;
-    /// The identity of the process at the other end, when the OS reports it.
-    fn peer(&self) -> Option<ParentIdentity>;
-    /// The current state of the recorded parent.
-    fn parent_state(&self, parent: &ParentIdentity) -> ParentState;
-    /// Read one bounded request frame; must stop at the frame bound.
-    fn read_request(&mut self, limit: usize) -> io::Result<Vec<u8>>;
-    /// Write one bounded completion frame.
-    fn write_completion(&mut self, frame: &[u8]) -> io::Result<()>;
+    /// The identity the **inherited parent handle** names, when the OS reports it.
+    fn parent_handle(&self, handle: u64) -> Option<ParentIdentity>;
+    /// Block until the inherited handle signals that process exited, or until
+    /// `deadline`; `Alive` is returned only when the deadline elapsed.
+    fn parent_state(&mut self, handle: u64, deadline: Instant) -> ParentState;
+    /// Read one bounded request frame; must stop at the frame bound *and* at the
+    /// deadline.
+    fn read_request(&mut self, limit: usize, deadline: Instant) -> io::Result<Vec<u8>>;
+    /// Write one bounded completion frame; must stop at the deadline.
+    fn write_completion(&mut self, frame: &[u8], deadline: Instant) -> io::Result<()>;
 }
 
 /// The result of removing one exact entry.
@@ -268,22 +295,52 @@ pub enum RemoveOutcome {
     Absent,
     /// Present but not the exact owned identity: preserved, never deleted.
     Preserved,
+    /// The run deadline elapsed before the work could finish: the entry was not
+    /// (completely) examined, so nothing is claimed about it.
+    Deferred,
+}
+
+/// The install root, opened once as an anchored traversal root.
+///
+/// Every relative removal is performed component by component from this handle
+/// with no-follow opens, and the leaf that is unlinked is the one whose identity
+/// was hashed. A path is never rebuilt and handed to a path-based unlink.
+pub trait CleanupTree {
+    /// Remove one regular file with exactly this size and content digest.
+    ///
+    /// Hashing must stop at `deadline` and return [`RemoveOutcome::Deferred`]: a
+    /// single very large file may not extend the run past its bound.
+    fn remove_file(
+        &mut self,
+        relative: &str,
+        size: u64,
+        sha256: Digest,
+        deadline: Instant,
+    ) -> RemoveOutcome;
+    /// Remove one symbolic link whose target bytes have this size and digest. The
+    /// target is never followed.
+    fn remove_link(
+        &mut self,
+        relative: &str,
+        size: u64,
+        sha256: Digest,
+        deadline: Instant,
+    ) -> RemoveOutcome;
+    /// Remove one directory only when it is empty.
+    fn remove_directory(&mut self, relative: &str) -> RemoveOutcome;
 }
 
 /// The file and self-verification operations the helper needs.
 pub trait CleanupFileSystem {
     /// This process's own absolute image path.
     fn own_path(&self) -> io::Result<PathBuf>;
-    /// SHA-256 of one regular file.
-    fn hash_file(&self, path: &Path) -> io::Result<Digest>;
-    /// Verify one image's OS signature and return its publisher identity.
-    fn signature(&self, path: &Path) -> Result<String, CleanupFailure>;
-    /// Remove one file only when size and content still match.
-    fn remove_file_exact(&mut self, path: &Path, size: u64, sha256: Digest) -> RemoveOutcome;
-    /// Remove one directory only when it is empty.
-    fn remove_directory(&mut self, path: &Path) -> RemoveOutcome;
-    /// Arm this helper's own deletion with native OS semantics.
-    fn arm_self_delete(&mut self, path: &Path) -> Result<(), CleanupFailure>;
+    /// SHA-256 of one regular file, bounded by `deadline`.
+    fn hash_file(&self, path: &Path, deadline: Instant) -> io::Result<Digest>;
+    /// Verify one image's OS signature and return its publisher identity, bounded
+    /// by `deadline`.
+    fn signature(&self, path: &Path, deadline: Instant) -> Result<String, CleanupFailure>;
+    /// Open the install root as an anchored traversal root.
+    fn open_root(&mut self, root: &Path) -> Result<Box<dyn CleanupTree + '_>, CleanupFailure>;
 }
 
 /// A helper-side failure with no partial credit.
@@ -314,9 +371,10 @@ pub fn execute_cleanup<C: CleanupChannel, F: CleanupFileSystem>(
 fn write_completion<C: CleanupChannel>(
     channel: &mut C,
     completion: &CleanupCompletion,
+    deadline: Instant,
 ) -> io::Result<()> {
     let frame = completion_frame(completion)?;
-    channel.write_completion(&frame)
+    channel.write_completion(&frame, deadline)
 }
 
 fn completion_frame(completion: &CleanupCompletion) -> io::Result<Vec<u8>> {
@@ -333,9 +391,13 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
     timeout: Duration,
 ) -> CleanupCompletion {
     let started = Instant::now();
+    // The one hard bound of the work: reading, verification, waiting and removal
+    // all share it. The single completion write gets a bounded grace below.
+    let hard = started + timeout;
+    let write_deadline = (hard + COMPLETION_WRITE_GRACE).min(started + MAX_CLEANUP_TIMEOUT);
 
     // 1. One bounded request frame. Nothing is authenticated before it parses.
-    let bytes = match channel.read_request(MAX_CLEANUP_FRAME_BYTES) {
+    let bytes = match channel.read_request(MAX_CLEANUP_FRAME_BYTES, hard) {
         Ok(bytes) => bytes,
         // No capability was received, so this frame cannot be authenticated; it
         // is still written so the parent can distinguish a refusal from silence.
@@ -344,6 +406,7 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
                 channel,
                 CleanupCompletion::pending("", CleanupReason::InvalidRequest),
                 None,
+                write_deadline,
             );
         }
     };
@@ -354,12 +417,12 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
                 channel,
                 CleanupCompletion::pending("", CleanupReason::InvalidRequest),
                 None,
+                write_deadline,
             );
         }
     };
-    // The caller's bound and the request's own deadline both apply; neither may
-    // extend the fixed ceiling.
-    let deadline = started + timeout.min(Duration::from_millis(request.deadline_ms));
+    // The request's own deadline may shorten the fixed ceiling, never extend it.
+    let deadline = hard.min(started + Duration::from_millis(request.deadline_ms));
     let capability = match decode_hex_32(&request.capability) {
         Some(capability) => capability,
         None => {
@@ -367,94 +430,114 @@ fn run<C: CleanupChannel, F: CleanupFileSystem>(
                 channel,
                 CleanupCompletion::pending(&request.transaction, CleanupReason::InvalidRequest),
                 None,
+                write_deadline,
             );
         }
     };
 
-    // 2. The capability is an inherited pipe from the recorded parent. A file
-    // redirect, console or another process (including a recycled pid) is not.
-    if !channel.is_inherited_pipe() || channel.peer() != Some(request.parent) {
+    // 2. The capability arrived over an inherited pipe, and the inherited parent
+    // handle names exactly the recorded process. A file redirect, console or a
+    // recycled pid (the handle's start marker differs) is not that process.
+    if !channel.is_inherited_pipe()
+        || channel.parent_handle(request.parent_handle) != Some(request.parent)
+    {
         return finish(
             channel,
             CleanupCompletion::pending(&request.transaction, CleanupReason::ForgedChannel),
             Some(&capability),
+            write_deadline,
         );
     }
 
     // 3. The helper is the exact signed image the request names.
-    if !verify_self(&request, fs) {
+    if !verify_self(&request, fs, deadline) {
         return finish(
             channel,
             CleanupCompletion::pending(&request.transaction, CleanupReason::SelfMismatch),
             Some(&capability),
+            write_deadline,
         );
     }
 
-    // 4. Wait for the parent to exit, bounded.
-    match wait_for_parent(channel, &request.parent, deadline) {
-        WaitOutcome::Exited => {}
-        WaitOutcome::Alive => {
+    // 4. Wait on the inherited handle. No pid is reopened, so a parent that
+    // exited after signalling is observed as exited rather than as a stale pid.
+    match channel.parent_state(request.parent_handle, deadline) {
+        ParentState::Exited => {}
+        ParentState::Alive => {
             return finish(
                 channel,
                 CleanupCompletion::pending(&request.transaction, CleanupReason::ParentAlive),
                 Some(&capability),
+                write_deadline,
             );
         }
-        WaitOutcome::Unavailable => {
+        ParentState::Unavailable => {
             return finish(
                 channel,
                 CleanupCompletion::pending(&request.transaction, CleanupReason::ParentUnavailable),
                 Some(&capability),
+                write_deadline,
             );
         }
     }
 
-    // 5. Remove exactly the listed owned identities.
-    let root = Path::new(&request.root);
+    // 5. Remove exactly the listed owned identities, relative to one opened root.
     let mut completion = CleanupCompletion::new(&request.transaction);
+    let mut root = match fs.open_root(Path::new(&request.root)) {
+        Ok(root) => root,
+        Err(_) => {
+            completion.reason = Some(CleanupReason::RootUnavailable);
+            return finish(channel, completion, Some(&capability), write_deadline);
+        }
+    };
     for entry in &request.entries {
         if Instant::now() >= deadline {
             completion.reason = Some(CleanupReason::Deadline);
-            return finish(channel, completion, Some(&capability));
+            return finish(channel, completion, Some(&capability), write_deadline);
         }
-        let Ok(path) = resolved_entry(root, &entry.path) else {
-            // The request validated, so this is a runtime race with the root
-            // itself: preserve rather than delete anything unexpected.
-            completion.preserved += 1;
-            continue;
-        };
-        match entry.kind {
+        let outcome = match entry.kind {
             OwnedKind::File => match entry.sha256 {
-                Some(sha256) => match fs.remove_file_exact(&path, entry.size, sha256) {
-                    RemoveOutcome::Removed | RemoveOutcome::Absent => {
-                        completion.removed_files += 1;
-                    }
-                    RemoveOutcome::Preserved => completion.preserved += 1,
-                },
-                None => completion.preserved += 1,
+                Some(sha256) => root.remove_file(&entry.path, entry.size, sha256, deadline),
+                None => RemoveOutcome::Preserved,
             },
-            OwnedKind::Directory => match fs.remove_directory(&path) {
-                RemoveOutcome::Removed | RemoveOutcome::Absent => {
-                    completion.removed_directories += 1;
-                }
-                RemoveOutcome::Preserved => completion.preserved += 1,
+            OwnedKind::Symlink => match entry.sha256 {
+                Some(sha256) => root.remove_link(&entry.path, entry.size, sha256, deadline),
+                None => RemoveOutcome::Preserved,
             },
+            OwnedKind::Directory => root.remove_directory(&entry.path),
+        };
+        if outcome == RemoveOutcome::Deferred {
+            // The deadline elapsed inside this entry: nothing is claimed about
+            // it, and the completion is a pending `Deadline`.
+            completion.reason = Some(CleanupReason::Deadline);
+            return finish(channel, completion, Some(&capability), write_deadline);
+        }
+        match (outcome, entry.kind.is_directory()) {
+            (RemoveOutcome::Removed | RemoveOutcome::Absent, true) => {
+                completion.removed_directories += 1;
+            }
+            (RemoveOutcome::Removed | RemoveOutcome::Absent, false) => {
+                completion.removed_files += 1;
+            }
+            (RemoveOutcome::Preserved, _) => completion.preserved += 1,
+            (RemoveOutcome::Deferred, _) => unreachable!("handled above"),
         }
     }
+    drop(root);
 
-    // 6. The helper removes itself, outside the removable root, with native OS
-    // deletion semantics. Failing that is pending, never success.
-    if fs.arm_self_delete(Path::new(&request.helper_path)).is_err() {
-        completion.reason = Some(CleanupReason::SelfMismatch);
-        return finish(channel, completion, Some(&capability));
-    }
     completion.reason = (completion.preserved != 0).then_some(CleanupReason::Leftover);
-    completion.status = if completion.preserved == 0 {
+    completion.status = if completion.preserved == 0 && Instant::now() < deadline {
         CleanupStatus::Complete
     } else {
         CleanupStatus::CleanupPending
     };
-    finish(channel, completion, Some(&capability))
+    if completion.status == CleanupStatus::CleanupPending && completion.reason.is_none() {
+        completion.reason = Some(CleanupReason::Deadline);
+    }
+    // The completion write keeps the run's hard ceiling, not the (possibly
+    // already elapsed) work deadline: a run that reports `ParentAlive` must still
+    // be able to deliver that verdict.
+    finish(channel, completion, Some(&capability), write_deadline)
 }
 
 /// Sign (when possible), write and return one completion.
@@ -462,6 +545,7 @@ fn finish<C: CleanupChannel>(
     channel: &mut C,
     mut completion: CleanupCompletion,
     capability: Option<&[u8]>,
+    deadline: Instant,
 ) -> CleanupCompletion {
     if completion.status == CleanupStatus::Complete && completion.reason.is_some() {
         // A completion with a reason is never a success.
@@ -473,7 +557,7 @@ fn finish<C: CleanupChannel>(
             &completion.mac_input(),
         )));
     }
-    if write_completion(channel, &completion).is_err() {
+    if write_completion(channel, &completion, deadline).is_err() {
         // The parent cannot learn of a success that was never delivered.
         completion.status = CleanupStatus::CleanupPending;
         completion.reason = Some(CleanupReason::ChannelFailure);
@@ -482,38 +566,8 @@ fn finish<C: CleanupChannel>(
     completion
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WaitOutcome {
-    Exited,
-    Alive,
-    Unavailable,
-}
-
-fn wait_for_parent<C: CleanupChannel>(
-    channel: &C,
-    parent: &ParentIdentity,
-    deadline: Instant,
-) -> WaitOutcome {
-    loop {
-        match channel.parent_state(parent) {
-            // The recorded process exited, or its pid now belongs to someone
-            // else: in both cases the process that spawned this helper is gone.
-            ParentState::Exited | ParentState::Reused => return WaitOutcome::Exited,
-            ParentState::Unavailable => return WaitOutcome::Unavailable,
-            ParentState::Alive => {
-                if Instant::now() >= deadline {
-                    return WaitOutcome::Alive;
-                }
-                thread::sleep(
-                    PARENT_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
-                );
-            }
-        }
-    }
-}
-
 /// Verify the helper's own path, exact image digest and OS signature.
-fn verify_self<F: CleanupFileSystem>(request: &CleanupRequest, fs: &F) -> bool {
+fn verify_self<F: CleanupFileSystem>(request: &CleanupRequest, fs: &F, deadline: Instant) -> bool {
     let expected = Path::new(&request.helper_path);
     let Ok(own) = fs.own_path() else {
         return false;
@@ -521,28 +575,18 @@ fn verify_self<F: CleanupFileSystem>(request: &CleanupRequest, fs: &F) -> bool {
     let (Ok(own), Ok(expected)) = (canonical(&own), canonical(expected)) else {
         return false;
     };
-    if !same_path(&own, &expected) {
+    if !crate::platform::same_path(&own, &expected) {
         return false;
     }
-    match fs.hash_file(&own) {
+    match fs.hash_file(&own, deadline) {
         Ok(digest) if digest == request.helper_sha256 => {}
         _ => return false,
     }
-    matches!(fs.signature(&own), Ok(publisher) if publisher == request.publisher)
+    matches!(fs.signature(&own, deadline), Ok(publisher) if publisher == request.publisher)
 }
 
 fn canonical(path: &Path) -> Result<PathBuf, CleanupFailure> {
     std::fs::canonicalize(path).map_err(|_| CleanupFailure)
-}
-
-/// Resolve one validated relative entry below the request root.
-fn resolved_entry(root: &Path, relative: &str) -> Result<PathBuf, CleanupFailure> {
-    let normalized = normalize_relative_path(relative).map_err(|_| CleanupFailure)?;
-    let joined = root.join(Path::new(&normalized));
-    if !path_is_within(root, &joined) {
-        return Err(CleanupFailure);
-    }
-    Ok(joined)
 }
 
 /// Parse and strictly validate one request frame.
@@ -560,6 +604,7 @@ pub fn parse_request(bytes: &[u8]) -> InstallResult<CleanupRequest> {
         || request.publisher.len() > crate::model::MAX_PUBLISHER_BYTES
         || request.publisher.chars().any(char::is_control)
         || request.parent.pid == 0
+        || request.parent_handle == 0
         || request.deadline_ms == 0
         || request.deadline_ms > MAX_CLEANUP_TIMEOUT.as_millis() as u64
         || request.entries.len() > MAX_CLEANUP_ENTRIES
@@ -571,7 +616,7 @@ pub fn parse_request(bytes: &[u8]) -> InstallResult<CleanupRequest> {
     if !helper.is_absolute()
         || request.helper_path.len() > MAX_ROOT_BYTES
         || request.helper_path.chars().any(char::is_control)
-        || path_is_within(&root, helper)
+        || crate::platform::path_is_within(&root, helper)
     {
         // The helper always lives outside the removable root.
         return Err(invalid_request());
@@ -586,7 +631,9 @@ pub fn parse_request(bytes: &[u8]) -> InstallResult<CleanupRequest> {
             return Err(invalid_request());
         }
         match entry.kind {
-            OwnedKind::File if entry.sha256.is_none() => return Err(invalid_request()),
+            OwnedKind::File | OwnedKind::Symlink if entry.sha256.is_none() => {
+                return Err(invalid_request());
+            }
             OwnedKind::Directory if entry.sha256.is_some() || entry.size != 0 => {
                 return Err(invalid_request());
             }
@@ -597,7 +644,7 @@ pub fn parse_request(bytes: &[u8]) -> InstallResult<CleanupRequest> {
     // can never ask the helper to delete a file inside an already removed
     // directory (or rely on ordering the helper would have to invent).
     for (index, entry) in request.entries.iter().enumerate() {
-        if entry.kind != OwnedKind::Directory {
+        if !entry.kind.is_directory() {
             continue;
         }
         let prefix = format!("{}/", entry.path);
@@ -697,6 +744,70 @@ pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
 }
 
 // ---------------------------------------------------------------------------
+// The installer-side half: the helper image is *not* deleted by the helper.
+// ---------------------------------------------------------------------------
+
+/// The installer's view of the staged helper image.
+pub trait HelperImage {
+    /// Delete the staged helper image; an absent image is success.
+    fn remove(&mut self, path: &Path) -> io::Result<()>;
+    /// Whether the image still exists (following no links).
+    fn exists(&self, path: &Path) -> io::Result<bool>;
+}
+
+/// The `std` implementation of [`HelperImage`] used by the installer.
+#[derive(Debug, Default)]
+pub struct StdHelperImage;
+
+impl HelperImage for StdHelperImage {
+    fn remove(&mut self, path: &Path) -> io::Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn exists(&self, path: &Path) -> io::Result<bool> {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// The installer-side completion of a cleanup capability.
+///
+/// Called only after the installer observed the helper's exit. It first
+/// authenticates the completion frame against the capability **and** the expected
+/// transaction id, then deletes the staged image and verifies it is gone. The
+/// installer — not the helper — performs that deletion; anything else is
+/// `CleanupPending`, never a completed uninstall.
+pub fn remove_helper_after_exit(
+    image: &mut impl HelperImage,
+    helper_path: &Path,
+    completion: &CleanupCompletion,
+    capability: &[u8],
+    transaction: &str,
+) -> InstallResult<()> {
+    if completion.status != CleanupStatus::Complete
+        || completion.transaction != transaction
+        || !completion.verify(capability)
+    {
+        return Err(InstallFailure::new(FailureCode::CleanupPending));
+    }
+    let verified = image
+        .remove(helper_path)
+        .and_then(|()| image.exists(helper_path))
+        .map_err(|_| InstallFailure::new(FailureCode::CleanupPending))?;
+    if verified {
+        return Err(InstallFailure::new(FailureCode::CleanupPending));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // The portable reference implementation (test-only; never a production path).
 // ---------------------------------------------------------------------------
 
@@ -713,6 +824,10 @@ pub enum SignaturePolicy {
 
 /// A portable [`CleanupFileSystem`] over `std`, used by the portable protocol
 /// tests and the non-product `cargo build` of the helper binary.
+///
+/// Its traversal is a lexical + `lstat` approximation of the anchored native
+/// walk: it is honest test evidence for the *decisions*, not a claim that a
+/// path-based walk is anchored. The production adapters use OS directory handles.
 #[derive(Debug, Clone)]
 pub struct StdCleanupFs {
     own_path: PathBuf,
@@ -738,6 +853,11 @@ impl StdCleanupFs {
             publisher: publisher.into(),
         }
     }
+
+    /// The closed signature policy this reference implementation applies.
+    pub fn signature_policy(&self) -> SignaturePolicy {
+        self.policy
+    }
 }
 
 impl CleanupFileSystem for StdCleanupFs {
@@ -745,53 +865,161 @@ impl CleanupFileSystem for StdCleanupFs {
         Ok(self.own_path.clone())
     }
 
-    fn hash_file(&self, path: &Path) -> io::Result<Digest> {
+    fn hash_file(&self, path: &Path, deadline: Instant) -> io::Result<Digest> {
+        if Instant::now() >= deadline {
+            return Err(io::Error::other("deadline elapsed"));
+        }
         crate::platform::hash_file(path)
             .map_err(|_| io::Error::other("file is not a readable regular file"))
     }
 
-    fn signature(&self, _path: &Path) -> Result<String, CleanupFailure> {
+    fn signature(&self, _path: &Path, deadline: Instant) -> Result<String, CleanupFailure> {
+        if Instant::now() >= deadline {
+            return Err(CleanupFailure);
+        }
         match self.policy {
             SignaturePolicy::TrustedFixture => Ok(self.publisher.clone()),
             SignaturePolicy::Unavailable => Err(CleanupFailure),
         }
     }
 
-    fn remove_file_exact(&mut self, path: &Path, size: u64, sha256: Digest) -> RemoveOutcome {
-        let metadata = match std::fs::symlink_metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return RemoveOutcome::Absent,
+    fn open_root(&mut self, root: &Path) -> Result<Box<dyn CleanupTree + '_>, CleanupFailure> {
+        let metadata = std::fs::symlink_metadata(root).map_err(|_| CleanupFailure)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(CleanupFailure);
+        }
+        Ok(Box::new(StdCleanupTree {
+            root: root.to_path_buf(),
+        }))
+    }
+}
+
+/// SHA-256 of one file with a deadline; `Ok(None)` means the deadline elapsed.
+fn hash_file_with_deadline(path: &Path, deadline: Instant) -> io::Result<Option<Digest>> {
+    use std::io::Read as _;
+
+    let mut file = crate::platform::open_no_follow(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(Some(Digest::from_bytes(hasher.finalize().into())));
+        }
+        hasher.update(&buffer[..read]);
+    }
+}
+
+struct StdCleanupTree {
+    root: PathBuf,
+}
+
+impl StdCleanupTree {
+    /// Resolve one relative entry below the root, refusing a link at every
+    /// component. `None` means "absent" (an idempotent missing entry).
+    fn resolve(&self, relative: &str) -> Result<Option<PathBuf>, CleanupFailure> {
+        let normalized = normalize_relative_path(relative).map_err(|_| CleanupFailure)?;
+        let mut path = self.root.clone();
+        let parts: Vec<&str> = normalized.split('/').collect();
+        for (index, part) in parts.iter().enumerate() {
+            path.push(part);
+            let last = index + 1 == parts.len();
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(_) => return Err(CleanupFailure),
+            };
+            let is_link = metadata.file_type().is_symlink();
+            if last {
+                continue;
+            }
+            if is_link || !metadata.is_dir() {
+                // A link where a directory component is expected is never
+                // traversed; the entry cannot be resolved safely.
+                return Err(CleanupFailure);
+            }
+        }
+        Ok(Some(path))
+    }
+}
+
+impl CleanupTree for StdCleanupTree {
+    fn remove_file(
+        &mut self,
+        relative: &str,
+        size: u64,
+        sha256: Digest,
+        deadline: Instant,
+    ) -> RemoveOutcome {
+        let path = match self.resolve(relative) {
+            Ok(Some(path)) => path,
+            Ok(None) => return RemoveOutcome::Absent,
             Err(_) => return RemoveOutcome::Preserved,
         };
-        // Never follow a link and never remove a non-regular file.
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            return RemoveOutcome::Preserved;
+        };
         if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() != size {
             return RemoveOutcome::Preserved;
         }
-        match crate::platform::hash_file(path) {
-            Ok(digest) if digest == sha256 => {}
-            _ => return RemoveOutcome::Preserved,
+        match hash_file_with_deadline(&path, deadline) {
+            Ok(Some(digest)) if digest == sha256 => {}
+            Ok(Some(_)) => return RemoveOutcome::Preserved,
+            Ok(None) => return RemoveOutcome::Deferred,
+            Err(_) => return RemoveOutcome::Preserved,
         }
-        match std::fs::remove_file(path) {
+        match std::fs::remove_file(&path) {
             Ok(()) => RemoveOutcome::Removed,
             Err(error) if error.kind() == io::ErrorKind::NotFound => RemoveOutcome::Absent,
             Err(_) => RemoveOutcome::Preserved,
         }
     }
 
-    fn remove_directory(&mut self, path: &Path) -> RemoveOutcome {
-        match std::fs::remove_dir(path) {
+    fn remove_link(
+        &mut self,
+        relative: &str,
+        size: u64,
+        sha256: Digest,
+        _deadline: Instant,
+    ) -> RemoveOutcome {
+        let path = match self.resolve(relative) {
+            Ok(Some(path)) => path,
+            Ok(None) => return RemoveOutcome::Absent,
+            Err(_) => return RemoveOutcome::Preserved,
+        };
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            return RemoveOutcome::Preserved;
+        };
+        if !metadata.file_type().is_symlink() || metadata.len() != size {
+            return RemoveOutcome::Preserved;
+        }
+        match crate::platform::link_target_digest(&path) {
+            Ok(digest) if digest == sha256 => {}
+            _ => return RemoveOutcome::Preserved,
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => RemoveOutcome::Removed,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => RemoveOutcome::Absent,
+            Err(_) => RemoveOutcome::Preserved,
+        }
+    }
+
+    fn remove_directory(&mut self, relative: &str) -> RemoveOutcome {
+        let path = match self.resolve(relative) {
+            Ok(Some(path)) => path,
+            Ok(None) => return RemoveOutcome::Absent,
+            // A blocked component (a link where a directory is expected) is
+            // preserved, never reported as an already-absent entry.
+            Err(_) => return RemoveOutcome::Preserved,
+        };
+        match std::fs::remove_dir(&path) {
             Ok(()) => RemoveOutcome::Removed,
             Err(error) if error.kind() == io::ErrorKind::NotFound => RemoveOutcome::Absent,
             // Non-empty (or otherwise not removable): preserve and report.
             Err(_) => RemoveOutcome::Preserved,
-        }
-    }
-
-    fn arm_self_delete(&mut self, path: &Path) -> Result<(), CleanupFailure> {
-        match std::fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(CleanupFailure),
         }
     }
 }
@@ -824,15 +1052,17 @@ mod portable {
             false
         }
 
-        fn peer(&self) -> Option<ParentIdentity> {
+        fn parent_handle(&self, _handle: u64) -> Option<ParentIdentity> {
             None
         }
 
-        fn parent_state(&self, _parent: &ParentIdentity) -> ParentState {
+        fn parent_state(&mut self, _handle: u64, deadline: Instant) -> ParentState {
+            // No process handle exists on a non-product host.
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
             ParentState::Unavailable
         }
 
-        fn read_request(&mut self, limit: usize) -> io::Result<Vec<u8>> {
+        fn read_request(&mut self, limit: usize, _deadline: Instant) -> io::Result<Vec<u8>> {
             let mut bytes = Vec::new();
             io::stdin().take(limit as u64 + 1).read_to_end(&mut bytes)?;
             if bytes.len() > limit {
@@ -841,7 +1071,7 @@ mod portable {
             Ok(bytes)
         }
 
-        fn write_completion(&mut self, frame: &[u8]) -> io::Result<()> {
+        fn write_completion(&mut self, frame: &[u8], _deadline: Instant) -> io::Result<()> {
             let mut stdout = io::stdout();
             stdout.write_all(frame)?;
             stdout.flush()

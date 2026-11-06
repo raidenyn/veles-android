@@ -63,9 +63,11 @@
 
 use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_void};
 use std::fs;
+use std::fs::File;
 use std::io;
 use std::mem::size_of;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::{Path, PathBuf};
 use std::process::{self, Child, Command, ExitStatus, Stdio};
 use std::ptr;
@@ -82,11 +84,14 @@ use super::native::{
 };
 use super::{
     CarrierEntry, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
-    PACKAGE_MACOS_CARRIER, PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage,
-    ProcessObservation, ProcessScope, ProcessTable, Registration,
+    PACKAGE_MACOS_CARRIER, PackageKind, PackageSource, PathKind, Platform, ProcessIdentity,
+    ProcessImage, ProcessObservation, ProcessScope, ProcessTable, Registration,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath, inspect_host_processes,
     path_is_within,
 };
+use sha2::{Digest as _, Sha256};
+
+use crate::cleanup::RemoveOutcome;
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
 
@@ -369,7 +374,9 @@ impl Platform for MacosPlatform {
             return Err(invalid_input());
         }
         path.revalidate()?;
-        NativeFs::create_directory(self, path.rendered())
+        // Created relative to the captured parent handle; the parent is flushed
+        // through that same handle.
+        self.create_directory_at(path)
     }
 
     fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
@@ -1011,6 +1018,191 @@ fn unavailable() -> InstallFailure {
 
 // ---------------------------------------------------------------------------
 // Task 8: native filesystem and metadata-preserving carrier install.
+
+/// Darwin `struct stat`, as the SDK defines it for both architectures.
+///
+/// Only the fields this adapter reads are named; the layout is asserted below so
+/// a wrong definition cannot silently shift `st_size`/`st_ino`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Stat {
+    pub(crate) st_dev: i32,
+    pub(crate) st_mode: u16,
+    pub(crate) st_nlink: u16,
+    pub(crate) st_ino: u64,
+    st_uid: u32,
+    st_gid: u32,
+    st_rdev: i32,
+    st_atime: i64,
+    st_atime_nsec: i64,
+    st_mtime: i64,
+    st_mtime_nsec: i64,
+    st_ctime: i64,
+    st_ctime_nsec: i64,
+    st_birthtime: i64,
+    st_birthtime_nsec: i64,
+    pub(crate) st_size: i64,
+    st_blocks: i64,
+    st_blksize: i32,
+    st_flags: u32,
+    st_gen: u32,
+    st_lspare: i32,
+    st_qspare: [i64; 2],
+}
+
+const _: () = assert!(std::mem::size_of::<Stat>() == 144);
+
+const S_IFMT: u32 = 0o170000;
+const S_IFREG: u32 = 0o100000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFLNK: u32 = 0o120000;
+
+const T8_O_RDONLY: c_int = 0;
+const T8_O_RDWR: c_int = 2;
+const T8_O_CREAT: c_int = 0o200;
+const T8_O_EXCL: c_int = 0o2000;
+const T8_O_TRUNC: c_int = 0o1000;
+const T8_O_DIRECTORY: c_int = 0x10_0000;
+const T8_O_NOFOLLOW: c_int = 0x0100;
+const T8_O_CLOEXEC: c_int = 0x100_0000;
+const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
+const AT_REMOVEDIR: c_int = 0x0080;
+const ENOENT: i32 = 2;
+const ENOTEMPTY: i32 = 66;
+
+unsafe extern "C" {
+    fn open(path: *const c_char, flags: c_int, ...) -> c_int;
+    fn openat(directory: c_int, path: *const c_char, flags: c_int, ...) -> c_int;
+    fn mkdirat(directory: c_int, path: *const c_char, mode: u32) -> c_int;
+    fn renameat(
+        from_directory: c_int,
+        from: *const c_char,
+        to_directory: c_int,
+        to: *const c_char,
+    ) -> c_int;
+    fn unlinkat(directory: c_int, path: *const c_char, flags: c_int) -> c_int;
+    fn symlinkat(target: *const c_char, directory: c_int, path: *const c_char) -> c_int;
+    fn readlinkat(directory: c_int, path: *const c_char, buffer: *mut c_char, size: usize)
+    -> isize;
+    fn fchmodat(directory: c_int, path: *const c_char, mode: u32, flags: c_int) -> c_int;
+    fn fstat(fd: c_int, status: *mut Stat) -> c_int;
+    fn fstatat(directory: c_int, path: *const c_char, status: *mut Stat, flags: c_int) -> c_int;
+    fn fsync(fd: c_int) -> c_int;
+    fn close(fd: c_int) -> c_int;
+    fn dup(fd: c_int) -> c_int;
+    fn fcopyfile(from: c_int, to: c_int, state: *mut c_void, flags: u32) -> c_int;
+}
+
+/// One single component as a NUL-terminated C string.
+fn c_component(name: &OsStr) -> InstallResult<CString> {
+    CString::new(name.as_bytes()).map_err(|_| unsafe_path())
+}
+
+fn stat_of(fd: c_int) -> InstallResult<Stat> {
+    let mut status = std::mem::MaybeUninit::<Stat>::zeroed();
+    // SAFETY: the out-buffer is live and correctly sized.
+    if unsafe { fstat(fd, status.as_mut_ptr()) } != 0 {
+        return Err(io_failure());
+    }
+    // SAFETY: fstat initialized the structure on success.
+    Ok(unsafe { status.assume_init() })
+}
+
+fn stat_at(directory: c_int, name: &CString) -> io::Result<Stat> {
+    let mut status = std::mem::MaybeUninit::<Stat>::zeroed();
+    // SAFETY: the out-buffer is live, `name` is NUL-terminated and the flag makes
+    // the call lstat-like.
+    if unsafe {
+        fstatat(
+            directory,
+            name.as_ptr(),
+            status.as_mut_ptr(),
+            AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fstatat initialized the structure on success.
+    Ok(unsafe { status.assume_init() })
+}
+
+fn mode_of(status: &Stat) -> u32 {
+    u32::from(status.st_mode) & S_IFMT
+}
+
+fn same_object(left: &Stat, right: &Stat) -> bool {
+    left.st_dev == right.st_dev && left.st_ino == right.st_ino
+}
+
+fn fsync_fd(fd: c_int) -> InstallResult<()> {
+    // SAFETY: the descriptor is live for this call.
+    if unsafe { fsync(fd) } != 0 {
+        return Err(io_failure());
+    }
+    Ok(())
+}
+
+/// Open one directory below `parent` without following a final link.
+fn open_dir_below(parent: c_int, name: &OsStr) -> InstallResult<c_int> {
+    let name = c_component(name)?;
+    // SAFETY: `parent` is a live directory descriptor and `name` outlives the
+    // call; no mode argument is read by `open`.
+    let fd = unsafe {
+        openat(
+            parent,
+            name.as_ptr(),
+            T8_O_RDONLY | T8_O_DIRECTORY | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(unsafe_path());
+    }
+    Ok(fd)
+}
+
+/// A duplicated descriptor of a [`DirectoryHandle`](super::native::anchor).
+fn dup_dir(handle: &super::native::anchor::DirectoryHandle) -> InstallResult<c_int> {
+    // SAFETY: the descriptor is live for this call.
+    let fd = unsafe { dup(handle.fd()) };
+    if fd < 0 {
+        return Err(io_failure());
+    }
+    Ok(fd)
+}
+
+/// Open the leaf of one validated path relative to its captured parent.
+///
+/// `flags` must not follow links; the caller verifies the opened object's
+/// identity with [`ValidatedPath::verify_open`] before mutating it.
+fn open_leaf(
+    handle: &super::native::anchor::DirectoryHandle,
+    name: &OsStr,
+    flags: c_int,
+) -> InstallResult<File> {
+    let c_name = c_component(name)?;
+    // SAFETY: the descriptor is live, `c_name` is NUL-terminated and the mode is
+    // only read when the caller sets `O_CREAT`.
+    let fd = unsafe {
+        openat(
+            handle.fd(),
+            c_name.as_ptr(),
+            flags | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+            0o600u32,
+        )
+    };
+    if fd < 0 {
+        return match io::Error::last_os_error().raw_os_error() {
+            Some(ENOENT) => Err(unsafe_path()),
+            _ => Err(io_failure()),
+        };
+    }
+    // SAFETY: the descriptor is freshly opened and owned here.
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: native filesystem and metadata-preserving carrier install.
 // ---------------------------------------------------------------------------
 
 /// `copyfile(3)` metadata classes. `COPYFILE_ALL` covers the ACL, stat,
@@ -1022,74 +1214,112 @@ const COPYFILE_XATTR: u32 = 1 << 2;
 const COPYFILE_DATA: u32 = 1 << 3;
 const COPYFILE_METADATA: u32 = COPYFILE_ACL | COPYFILE_STAT | COPYFILE_XATTR;
 const COPYFILE_ALL: u32 = COPYFILE_METADATA | COPYFILE_DATA;
-/// Refuse to overwrite an existing carrier entry.
-const COPYFILE_EXCL: u32 = 1 << 16;
+/// `copyfile(3)` flag: report what the copy would do and copy nothing.
+const COPYFILE_CHECK: u32 = 1 << 16;
+/// `copyfile(3)` flag: fail if the destination already exists.
+///
+/// From `<copyfile.h>`: `COPYFILE_CHECK` is `1<<16` and `COPYFILE_EXCL` is
+/// `1<<17`. The checked-in binding used `1<<16`, which silently skipped the copy
+/// this adapter claims to make. The value is asserted below, and the copies
+/// themselves are performed with `fcopyfile(3)` on descriptors that this adapter
+/// created with an exclusive anchored `openat(2)` — so the destination can never
+/// exist and no path is re-walked for the copy.
+const COPYFILE_EXCL: u32 = 1 << 17;
+const _: () = assert!(COPYFILE_EXCL == 1 << 17 && COPYFILE_EXCL != COPYFILE_CHECK);
+const _: () = assert!(COPYFILE_ALL == COPYFILE_METADATA | COPYFILE_DATA);
 
-unsafe extern "C" {
-    fn copyfile(from: *const c_char, to: *const c_char, state: *mut c_void, flags: u32) -> c_int;
-    fn fcopyfile(from: c_int, to: c_int, state: *mut c_void, flags: u32) -> c_int;
-}
-
-/// One absolute path as a NUL-terminated C string.
-fn c_path(path: &Path) -> InstallResult<CString> {
-    CString::new(path.as_os_str().as_bytes()).map_err(|_| unsafe_path())
-}
-
-/// Copy one regular file with every metadata class the seal covers.
-fn copy_file_exact(from: &Path, to: &Path) -> InstallResult<()> {
-    let from = c_path(from)?;
-    let to = c_path(to)?;
-    // SAFETY: both paths are NUL-terminated live buffers; no copy state or
-    // callback is requested.
-    let status = unsafe {
-        copyfile(
-            from.as_ptr(),
-            to.as_ptr(),
-            ptr::null_mut(),
-            COPYFILE_ALL | COPYFILE_EXCL,
-        )
-    };
-    if status != 0 {
-        return Err(io_failure());
+/// Copy one regular file into `directory` under `name`, with every metadata class
+/// the seal covers.
+///
+/// The destination is created relative to the anchored directory descriptor with
+/// `O_CREAT | O_EXCL | O_NOFOLLOW`, so an existing entry is never adopted,
+/// truncated or overwritten — the exclusive-create half of `COPYFILE_EXCL`, bound
+/// to a handle instead of a path. `fcopyfile(3)` then copies the data and the
+/// metadata classes from descriptor to descriptor.
+fn copy_file_into(source: &Path, directory: c_int, name: &OsStr) -> InstallResult<()> {
+    let from = fs::File::open(source).map_err(|_| io_failure())?;
+    let metadata = from.metadata().map_err(|_| io_failure())?;
+    if !metadata.is_file() {
+        return Err(unsafe_path());
     }
-    Ok(())
-}
-
-/// Copy one directory's ACL, stat and extended attributes onto an existing
-/// destination directory.
-fn copy_directory_metadata(from: &Path, to: &Path) -> InstallResult<()> {
-    use std::os::unix::io::AsRawFd;
-
-    let from_file = fs::File::open(from).map_err(|_| io_failure())?;
-    let to_file = fs::File::open(to).map_err(|_| io_failure())?;
-    // SAFETY: both descriptors are live for the call; only metadata classes are
-    // requested, so no directory data is read or written as a file.
+    let destination = open_file_new(directory, name)?;
+    // SAFETY: both descriptors are live for the call and no copy state or
+    // callback is requested; `COPYFILE_ALL` is data plus the metadata the seal
+    // covers (ACL, stat, extended attributes, including the resource fork).
     let status = unsafe {
         fcopyfile(
-            from_file.as_raw_fd(),
-            to_file.as_raw_fd(),
+            from.as_raw_fd(),
+            destination.as_raw_fd(),
             ptr::null_mut(),
-            COPYFILE_METADATA,
+            COPYFILE_ALL,
         )
     };
+    if status != 0 {
+        return Err(io_failure());
+    }
+    // The copied bytes are durable before the caller journals the entry.
+    destination.sync_all().map_err(|_| io_failure())
+}
+
+/// Create one new regular file relative to an anchored directory descriptor.
+fn open_file_new(directory: c_int, name: &OsStr) -> InstallResult<File> {
+    let name = c_component(name)?;
+    // SAFETY: the descriptor is live, `name` is NUL-terminated and the mode is
+    // read because `O_CREAT` is set.
+    let fd = unsafe {
+        openat(
+            directory,
+            name.as_ptr(),
+            T8_O_RDWR | T8_O_CREAT | T8_O_EXCL | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+            0o600u32,
+        )
+    };
+    if fd < 0 {
+        return Err(io_failure());
+    }
+    // SAFETY: the descriptor is freshly opened and owned here.
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+/// Copy one directory's ACL, stat and extended attributes between descriptors.
+fn copy_directory_metadata(from: c_int, to: c_int) -> InstallResult<()> {
+    // SAFETY: both descriptors are live for the call; only metadata classes are
+    // requested, so no directory data is read or written as a file.
+    let status = unsafe { fcopyfile(from, to, ptr::null_mut(), COPYFILE_METADATA) };
     if status != 0 {
         return Err(io_failure());
     }
     Ok(())
 }
 
-/// Copy one carrier app bundle entry by entry.
+/// Flush one opened regular file.
+fn sync_opened_file(fd: c_int) -> InstallResult<()> {
+    // SAFETY: the descriptor is live for this call.
+    if unsafe { fsync(fd) } != 0 {
+        return Err(io_failure());
+    }
+    Ok(())
+}
+
+/// Copy one carrier app bundle, entry by entry, anchored at the destination
+/// directory descriptor.
 ///
-/// Bounds are checked before any copy and again per entry, so a package that
-/// grew after enumeration still cannot install an implausible tree. Links are
-/// recreated from their target (never followed) and special files are refused.
+/// * directories are created with `mkdirat(2)` from their parent descriptor, so
+///   no component is re-walked by path;
+/// * symbolic links are recreated from their **recorded target** (never
+///   followed); the target was already proven to stay inside the artifact;
+/// * every copied regular file is flushed, and every directory is flushed
+///   bottom-up after its children and before its own metadata is applied;
+/// * entry/byte bounds are re-checked per entry.
 fn copy_carrier_tree(
-    from: &Path,
-    to: &Path,
+    source: &Path,
+    destination: &Path,
+    relative: &str,
+    destination_dir: c_int,
     entries: &mut usize,
     total: &mut u64,
 ) -> InstallResult<()> {
-    let mut children: Vec<_> = fs::read_dir(from)
+    let mut children: Vec<_> = fs::read_dir(source)
         .map_err(|_| io_failure())?
         .map(|entry| entry.map_err(|_| io_failure()))
         .collect::<Result<_, _>>()?;
@@ -1099,29 +1329,90 @@ fn copy_carrier_tree(
         if *entries > super::MAX_CARRIER_ENTRIES {
             return Err(invalid_package());
         }
+        let name = child.file_name();
+        let path = child.path();
         let file_type = child.file_type().map_err(|_| io_failure())?;
-        let source = child.path();
-        let destination = to.join(child.file_name());
-        if !path_is_within(to, &destination) {
-            return Err(unsafe_path());
-        }
         if file_type.is_symlink() {
-            let target = fs::read_link(&source).map_err(|_| io_failure())?;
-            std::os::unix::fs::symlink(target, &destination).map_err(|_| io_failure())?;
+            let target = fs::read_link(&path).map_err(|_| io_failure())?;
+            if target.to_str().is_none() {
+                return Err(unsafe_path());
+            }
+            let target_text = target.to_str().ok_or_else(unsafe_path)?;
+            let child_relative = if relative.is_empty() {
+                name.to_string_lossy().into_owned()
+            } else {
+                format!("{relative}/{}", name.to_string_lossy())
+            };
+            // Re-prove confinement at install time as well: enumeration and the
+            // copy must agree about what stays inside the bundle.
+            super::confine_link_target(&child_relative, target_text)?;
+            *total = total
+                .checked_add(target_text.len() as u64)
+                .ok_or_else(invalid_package)?;
+            if *total > super::MAX_CARRIER_BYTES as u64 {
+                return Err(invalid_package());
+            }
+            let name = c_component(&name)?;
+            let target = c_component(target.as_os_str())?;
+            // SAFETY: `destination_dir` is a live directory descriptor and both
+            // names are NUL-terminated.
+            if unsafe { symlinkat(target.as_ptr(), destination_dir, name.as_ptr()) } != 0 {
+                return Err(io_failure());
+            }
+            fsync_fd(destination_dir)?;
         } else if file_type.is_dir() {
-            fs::create_dir(&destination).map_err(|_| io_failure())?;
-            set_owner_only(&destination)?;
-            copy_carrier_tree(&source, &destination, entries, total)?;
-            copy_directory_metadata(&source, &destination)?;
+            let name_c = c_component(&name)?;
+            let child_relative = if relative.is_empty() {
+                name.to_string_lossy().into_owned()
+            } else {
+                format!("{relative}/{}", name.to_string_lossy())
+            };
+            // SAFETY: `destination_dir` is live and `name_c` outlives the call.
+            if unsafe { mkdirat(destination_dir, name_c.as_ptr(), 0o700) } != 0 {
+                return Err(io_failure());
+            }
+            let child_dir = open_dir_below(destination_dir, &name)?;
+            let child_destination = destination.join(&name);
+            let source_dir = fs::File::open(&path).map_err(|_| io_failure())?;
+            copy_carrier_tree(
+                &path,
+                &child_destination,
+                &child_relative,
+                child_dir,
+                entries,
+                total,
+            )?;
+            copy_directory_metadata(source_dir.as_raw_fd(), child_dir)?;
+            // Bottom-up flush: the directory's own entries are durable before the
+            // parent records it.
+            fsync_fd(child_dir)?;
+            // SAFETY: `child_dir` was opened here and is owned.
+            unsafe {
+                let _ = close(child_dir);
+            }
         } else if file_type.is_file() {
-            let length = fs::symlink_metadata(&source)
-                .map_err(|_| io_failure())?
-                .len();
+            let length = fs::symlink_metadata(&path).map_err(|_| io_failure())?.len();
             *total = total.checked_add(length).ok_or_else(invalid_package)?;
             if *total > super::MAX_CARRIER_BYTES as u64 {
                 return Err(invalid_package());
             }
-            copy_file_exact(&source, &destination)?;
+            // The copy is anchored: the destination is created relative to this
+            // directory's descriptor and flushed before the directory is.
+            copy_file_into(&path, destination_dir, &name)?;
+            let opened = open_leaf_fd(destination_dir, &name, T8_O_RDONLY)?;
+            if mode_of(&stat_of(opened)?) != S_IFREG {
+                // SAFETY: `opened` was opened here and is owned.
+                unsafe {
+                    let _ = close(opened);
+                }
+                return Err(unsafe_path());
+            }
+            sync_opened_file(opened)?;
+            // SAFETY: `opened` was opened here and is owned.
+            unsafe {
+                let _ = close(opened);
+            }
+            fsync_fd(destination_dir)?;
         } else {
             return Err(unsafe_path());
         }
@@ -1129,11 +1420,339 @@ fn copy_carrier_tree(
     Ok(())
 }
 
+fn open_leaf_fd(directory: c_int, name: &OsStr, flags: c_int) -> InstallResult<c_int> {
+    let name = c_component(name)?;
+    // SAFETY: `directory` is live and `name` is NUL-terminated.
+    let fd = unsafe {
+        openat(
+            directory,
+            name.as_ptr(),
+            flags | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io_failure());
+    }
+    Ok(fd)
+}
+
 /// Apply owner-only permissions to a freshly created directory or file.
 fn set_owner_only(path: &Path) -> InstallResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| io_failure())
+}
+
+// ---------------------------------------------------------------------------
+// Cleanup helper support: an anchored traversal root.
+// ---------------------------------------------------------------------------
+
+/// The install root opened once as the anchor for every helper removal.
+///
+/// Each relative entry is walked from this descriptor with `openat(2)` +
+/// `O_NOFOLLOW`, and each deletion is bound to the identity of the object that
+/// was opened and hashed (`fstat(2)` device/inode compared with the name's
+/// `fstatat(2)` immediately before `unlinkat(2)`). A pre-existing link at a
+/// component is never traversed, and a leaf swapped after hashing is preserved.
+pub struct CleanupRoot {
+    fd: c_int,
+}
+
+impl CleanupRoot {
+    /// Open `root` as a directory without following a final link.
+    pub fn open(root: &Path) -> io::Result<Self> {
+        let name = CString::new(root.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // SAFETY: `name` is NUL-terminated and outlives the call.
+        let fd = unsafe {
+            open(
+                name.as_ptr(),
+                T8_O_RDONLY | T8_O_DIRECTORY | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { fd })
+    }
+
+    /// Open every intermediate component and return the leaf's parent descriptor
+    /// plus the leaf name. `None` means the entry is absent.
+    fn open_parent(&self, relative: &str) -> io::Result<Option<(c_int, CString)>> {
+        let normalized = crate::inventory::normalize_relative_path(relative)
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let parts: Vec<&str> = normalized.split('/').collect();
+        // SAFETY: the descriptor is live for this call.
+        let mut current = unsafe { dup(self.fd) };
+        if current < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        for (index, part) in parts.iter().enumerate() {
+            let last = index + 1 == parts.len();
+            if last {
+                let name = CString::new(part.as_bytes())
+                    .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+                return Ok(Some((current, name)));
+            }
+            let name = CString::new(part.as_bytes())
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+            // SAFETY: `current` is live and `name` is NUL-terminated.
+            let next = unsafe {
+                openat(
+                    current,
+                    name.as_ptr(),
+                    T8_O_RDONLY | T8_O_DIRECTORY | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+                )
+            };
+            // SAFETY: `current` was opened (or duplicated) here and is owned.
+            unsafe {
+                let _ = close(current);
+            }
+            if next < 0 {
+                let error = io::Error::last_os_error();
+                return match error.raw_os_error() {
+                    // An absent component means the entry is already gone (an
+                    // idempotent retry). A component that is a link or not a
+                    // directory is *blocked*, never "absent": it must be
+                    // preserved and reported.
+                    Some(ENOENT) => Ok(None),
+                    _ => Err(error),
+                };
+            }
+            current = next;
+        }
+        // The root itself is not an entry.
+        // SAFETY: `current` was duplicated here and is owned.
+        unsafe {
+            let _ = close(current);
+        }
+        Err(io::Error::from(io::ErrorKind::InvalidInput))
+    }
+
+    /// Remove one regular file with exactly this size and content.
+    pub fn remove_file(
+        &self,
+        relative: &str,
+        size: u64,
+        sha256: Digest,
+        deadline: Instant,
+    ) -> RemoveOutcome {
+        let (parent, name) = match self.open_parent(relative) {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return RemoveOutcome::Absent,
+            Err(_) => return RemoveOutcome::Preserved,
+        };
+        let outcome = self.remove_regular(parent, &name, size, sha256, deadline);
+        // SAFETY: `parent` was opened here and is owned.
+        unsafe {
+            let _ = close(parent);
+        }
+        outcome
+    }
+
+    fn remove_regular(
+        &self,
+        parent: c_int,
+        name: &CString,
+        size: u64,
+        sha256: Digest,
+        deadline: Instant,
+    ) -> RemoveOutcome {
+        // SAFETY: `parent` is live and `name` is NUL-terminated.
+        let fd = unsafe {
+            openat(
+                parent,
+                name.as_ptr(),
+                T8_O_RDONLY | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return match io::Error::last_os_error().raw_os_error() {
+                Some(ENOENT) => RemoveOutcome::Absent,
+                _ => RemoveOutcome::Preserved,
+            };
+        }
+        let outcome = (|| {
+            let Ok(status) = stat_of(fd) else {
+                return RemoveOutcome::Preserved;
+            };
+            if mode_of(&status) != S_IFREG || status.st_size < 0 || status.st_size as u64 != size {
+                return RemoveOutcome::Preserved;
+            }
+            // Hash the descriptor that was opened, not the name.
+            let mut hasher = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            use std::io::Read as _;
+            let mut reader = std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(fd) });
+            loop {
+                if Instant::now() >= deadline {
+                    return RemoveOutcome::Deferred;
+                }
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => hasher.update(&buffer[..read]),
+                    Err(_) => return RemoveOutcome::Preserved,
+                }
+            }
+            if Digest::from_bytes(hasher.finalize().into()) != sha256 {
+                return RemoveOutcome::Preserved;
+            }
+            // Identity binding: the name must still be the object we hashed.
+            let observed = match stat_at(parent, name) {
+                Ok(observed) => observed,
+                Err(error) if error.raw_os_error() == Some(ENOENT) => return RemoveOutcome::Absent,
+                Err(_) => return RemoveOutcome::Preserved,
+            };
+            if !same_object(&status, &observed) {
+                return RemoveOutcome::Preserved;
+            }
+            // SAFETY: `parent` is live and `name` is NUL-terminated.
+            if unsafe { unlinkat(parent, name.as_ptr(), 0) } == 0 {
+                RemoveOutcome::Removed
+            } else if io::Error::last_os_error().raw_os_error() == Some(ENOENT) {
+                RemoveOutcome::Absent
+            } else {
+                RemoveOutcome::Preserved
+            }
+        })();
+        // SAFETY: `fd` was opened here and is owned.
+        unsafe {
+            let _ = close(fd);
+        }
+        outcome
+    }
+
+    /// Remove one symbolic link whose target bytes have this size and digest.
+    ///
+    /// The link is addressed with `AT_SYMLINK_NOFOLLOW` throughout and its target
+    /// is read with `readlinkat(2)`: it is never resolved, so the target is never
+    /// deleted or even opened.
+    pub fn remove_link(
+        &self,
+        relative: &str,
+        size: u64,
+        sha256: Digest,
+        _deadline: Instant,
+    ) -> RemoveOutcome {
+        let (parent, name) = match self.open_parent(relative) {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return RemoveOutcome::Absent,
+            Err(_) => return RemoveOutcome::Preserved,
+        };
+        let outcome = (|| {
+            let Ok(opened) = stat_at(parent, &name) else {
+                return match io::Error::last_os_error().raw_os_error() {
+                    Some(ENOENT) => RemoveOutcome::Absent,
+                    _ => RemoveOutcome::Preserved,
+                };
+            };
+            if mode_of(&opened) != S_IFLNK || opened.st_size < 0 || opened.st_size as u64 != size {
+                return RemoveOutcome::Preserved;
+            }
+            let mut buffer = vec![0u8; size as usize];
+            // SAFETY: `parent` is live, `name` is NUL-terminated and `buffer` is a
+            // live output buffer of exactly the target's recorded length.
+            let read = unsafe {
+                readlinkat(
+                    parent,
+                    name.as_ptr(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                )
+            };
+            if read < 0 || read as usize != buffer.len() {
+                return RemoveOutcome::Preserved;
+            }
+            if Digest::of(&buffer) != sha256 {
+                return RemoveOutcome::Preserved;
+            }
+            // The name must still be the same link object we just read.
+            let Ok(observed) = stat_at(parent, &name) else {
+                return RemoveOutcome::Preserved;
+            };
+            if !same_object(&opened, &observed) {
+                return RemoveOutcome::Preserved;
+            }
+            // SAFETY: `parent` is live and `name` is NUL-terminated.
+            if unsafe { unlinkat(parent, name.as_ptr(), 0) } == 0 {
+                RemoveOutcome::Removed
+            } else if io::Error::last_os_error().raw_os_error() == Some(ENOENT) {
+                RemoveOutcome::Absent
+            } else {
+                RemoveOutcome::Preserved
+            }
+        })();
+        // SAFETY: `parent` was opened here and is owned.
+        unsafe {
+            let _ = close(parent);
+        }
+        outcome
+    }
+
+    /// Remove one *empty* directory.
+    pub fn remove_directory(&self, relative: &str) -> RemoveOutcome {
+        let (parent, name) = match self.open_parent(relative) {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return RemoveOutcome::Absent,
+            Err(_) => return RemoveOutcome::Preserved,
+        };
+        let outcome = (|| {
+            let Ok(opened) = stat_at(parent, &name) else {
+                return match io::Error::last_os_error().raw_os_error() {
+                    Some(ENOENT) => RemoveOutcome::Absent,
+                    _ => RemoveOutcome::Preserved,
+                };
+            };
+            if mode_of(&opened) != S_IFDIR {
+                return RemoveOutcome::Preserved;
+            }
+            // Bind the removal to the opened object, not just the name.
+            // SAFETY: `parent` is live and `name` is NUL-terminated.
+            let fd = unsafe {
+                openat(
+                    parent,
+                    name.as_ptr(),
+                    T8_O_RDONLY | T8_O_DIRECTORY | T8_O_NOFOLLOW | T8_O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return RemoveOutcome::Preserved;
+            }
+            let bound = stat_of(fd).map(|status| same_object(&status, &opened));
+            // SAFETY: `fd` was opened here and is owned.
+            unsafe {
+                let _ = close(fd);
+            }
+            if !matches!(bound, Ok(true)) {
+                return RemoveOutcome::Preserved;
+            }
+            // SAFETY: `parent` is live and `name` is NUL-terminated.
+            if unsafe { unlinkat(parent, name.as_ptr(), AT_REMOVEDIR) } == 0 {
+                RemoveOutcome::Removed
+            } else {
+                match io::Error::last_os_error().raw_os_error() {
+                    Some(ENOENT) => RemoveOutcome::Absent,
+                    // Non-empty: preserved, never a recursive delete.
+                    Some(ENOTEMPTY) => RemoveOutcome::Preserved,
+                    _ => RemoveOutcome::Preserved,
+                }
+            }
+        })();
+        // SAFETY: `parent` was opened here and is owned.
+        unsafe {
+            let _ = close(parent);
+        }
+        outcome
+    }
+}
+
+impl Drop for CleanupRoot {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor is owned by this value.
+        unsafe {
+            let _ = close(self.fd);
+        }
+    }
 }
 
 impl NativeFs for MacosPlatform {
@@ -1168,31 +1787,38 @@ impl NativeFs for MacosPlatform {
         }
     }
 
-    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
-        use std::os::unix::fs::OpenOptionsExt;
+    fn validate_private_directory(&self, path: &Path) -> InstallResult<()> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-        let mut options = fs::OpenOptions::new();
-        options.read(true).write(true);
-        match path.kind() {
-            super::PathKind::NewFile => {
-                options.create_new(true);
-            }
-            super::PathKind::File => {
-                options.truncate(true);
-            }
-            _ => return Err(unsafe_path()),
+        let metadata = fs::symlink_metadata(path).map_err(|_| io_failure())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(unsafe_path());
         }
-        // O_NOFOLLOW makes the final component an error instead of following a
-        // link planted after revalidation.
-        options.mode(0o600).custom_flags(super::NO_FOLLOW);
-        let mut file = options.open(path.rendered()).map_err(|error| {
-            if error.kind() == io::ErrorKind::AlreadyExists || error.raw_os_error() == Some(62) {
-                unsafe_path()
-            } else {
-                io_failure()
-            }
-        })?;
-        if !file.metadata().map_err(|_| io_failure())?.is_file() {
+        if metadata.uid() != super::effective_user_id() {
+            return Err(unsafe_path());
+        }
+        // Group/other access to the install root would let another principal
+        // plant or replace entries the installer later trusts.
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(unsafe_path());
+        }
+        Ok(())
+    }
+
+    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        let handle = path.dir_handle()?;
+        let flags = match path.kind() {
+            PathKind::NewFile => T8_O_RDWR | T8_O_CREAT | T8_O_EXCL,
+            PathKind::File => T8_O_RDWR | T8_O_TRUNC,
+            _ => return Err(unsafe_path()),
+        };
+        let mut file = open_leaf(&handle, path.leaf_name()?, flags)?;
+        let metadata = file.metadata().map_err(|_| io_failure())?;
+        if path.kind() == PathKind::File {
+            // The opened object must be the one validation captured: a name
+            // swapped after validation cannot be written through.
+            path.verify_open(&metadata, &super::identity_of_file(&file)?)?;
+        } else if !metadata.is_file() {
             return Err(unsafe_path());
         }
         use std::io::Write as _;
@@ -1202,9 +1828,31 @@ impl NativeFs for MacosPlatform {
     }
 
     fn replace_file(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
-        // Both siblings are below the same validated anchor, so the rename is a
-        // same-volume atomic directory-entry replacement.
-        fs::rename(staged.rendered(), live.rendered()).map_err(|_| io_failure())
+        let staged_parent = dup_dir(&staged.dir_handle()?)?;
+        let live_parent = dup_dir(&live.dir_handle()?)?;
+        let outcome = (|| {
+            // Verify the staged object is the one validation captured before the
+            // entry is moved.
+            let handle = staged.dir_handle()?;
+            let opened = open_leaf(&handle, staged.leaf_name()?, T8_O_RDONLY)?;
+            let metadata = opened.metadata().map_err(|_| io_failure())?;
+            let identity = super::identity_of_file(&opened)?;
+            drop(opened);
+            staged.verify_open(&metadata, &identity)?;
+            let from = c_component(staged.leaf_name()?)?;
+            let to = c_component(live.leaf_name()?)?;
+            // SAFETY: both descriptors are live and both names are NUL-terminated.
+            if unsafe { renameat(staged_parent, from.as_ptr(), live_parent, to.as_ptr()) } != 0 {
+                return Err(io_failure());
+            }
+            Ok(())
+        })();
+        // SAFETY: both descriptors were duplicated here and are owned.
+        unsafe {
+            let _ = close(staged_parent);
+            let _ = close(live_parent);
+        }
+        outcome
     }
 
     fn read_file(&self, path: &Path) -> InstallResult<Vec<u8>> {
@@ -1215,8 +1863,8 @@ impl NativeFs for MacosPlatform {
         super::hash_file(path)
     }
 
-    fn flush_directory(&self, path: &Path) -> InstallResult<()> {
-        super::flush_directory(path)
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
+        fsync_fd(path.dir_handle()?.fd())
     }
 
     fn create_directory(&self, path: &Path) -> InstallResult<()> {
@@ -1236,19 +1884,113 @@ impl NativeFs for MacosPlatform {
         super::flush_directory(parent)
     }
 
-    fn remove_file(&self, path: &Path) -> InstallResult<()> {
-        fs::remove_file(path).map_err(|_| io_failure())
+    fn create_directory_at(&self, path: &ValidatedPath) -> InstallResult<()> {
+        if path.kind() != PathKind::NewDirectory {
+            return Err(invalid_input());
+        }
+        path.revalidate()?;
+        let handle = path.dir_handle()?;
+        let name = c_component(path.leaf_name()?)?;
+        // SAFETY: the parent descriptor is live and `name` is NUL-terminated.
+        if unsafe { mkdirat(handle.fd(), name.as_ptr(), 0o700) } != 0 {
+            return match io::Error::last_os_error().raw_os_error() {
+                Some(17) => Err(unsafe_path()),
+                _ => Err(io_failure()),
+            };
+        }
+        // SAFETY: `openat` resolves the name we just created beneath the same
+        // descriptor, with no-follow semantics.
+        let created = open_leaf_fd(handle.fd(), path.leaf_name()?, T8_O_RDONLY | T8_O_DIRECTORY)?;
+        // SAFETY: `created` was opened here and is owned.
+        let chmod = unsafe {
+            let result = fchmodat(handle.fd(), name.as_ptr(), 0o700, 0);
+            close(created);
+            result
+        };
+        if chmod != 0 {
+            return Err(io_failure());
+        }
+        fsync_fd(handle.fd())
     }
 
-    fn remove_directory(&self, path: &Path) -> InstallResult<()> {
-        match fs::remove_dir(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {
-                Err(InstallFailure::new(FailureCode::CleanupPending))
+    fn remove_entry(&self, path: &ValidatedPath) -> InstallResult<()> {
+        let handle = path.dir_handle()?;
+        let name = c_component(path.leaf_name()?)?;
+        let parent = dup_dir(&handle)?;
+        let outcome = (|| {
+            match path.kind() {
+                PathKind::File => {
+                    let opened = open_leaf(&handle, path.leaf_name()?, T8_O_RDONLY)?;
+                    let metadata = opened.metadata().map_err(|_| io_failure())?;
+                    let identity = super::identity_of_file(&opened)?;
+                    drop(opened);
+                    path.verify_open(&metadata, &identity)?;
+                }
+                PathKind::Symlink => {
+                    let opened = stat_at(parent, &name).map_err(|_| unsafe_path())?;
+                    if mode_of(&opened) != S_IFLNK {
+                        return Err(unsafe_path());
+                    }
+                    let expected = path.captured_identity().ok_or_else(unsafe_path)?;
+                    if !identity_matches(&opened, expected) {
+                        return Err(unsafe_path());
+                    }
+                }
+                _ => return Err(unsafe_path()),
             }
-            Err(_) => Err(io_failure()),
+            // Identity binding for a regular file: the name must still resolve to
+            // the object that was opened and verified.
+            if path.kind() == PathKind::File {
+                let observed = stat_at(parent, &name).map_err(|_| unsafe_path())?;
+                if let Some(expected) = path.captured_identity()
+                    && !identity_matches(&observed, expected)
+                {
+                    return Err(unsafe_path());
+                }
+            }
+            // SAFETY: `parent` is live and `name` is NUL-terminated.
+            if unsafe { unlinkat(parent, name.as_ptr(), 0) } != 0 {
+                return Err(io_failure());
+            }
+            Ok(())
+        })();
+        // SAFETY: `parent` was duplicated here and is owned.
+        unsafe {
+            let _ = close(parent);
         }
+        outcome
+    }
+
+    fn remove_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        let handle = path.dir_handle()?;
+        let name = c_component(path.leaf_name()?)?;
+        let parent = dup_dir(&handle)?;
+        let outcome = (|| {
+            let observed = stat_at(parent, &name).map_err(|_| unsafe_path())?;
+            if mode_of(&observed) != S_IFDIR {
+                return Err(unsafe_path());
+            }
+            // The name must still be the directory validation captured.
+            if let Some(expected) = path.captured_identity()
+                && !identity_matches(&observed, expected)
+            {
+                return Err(unsafe_path());
+            }
+            // SAFETY: `parent` is live and `name` is NUL-terminated.
+            if unsafe { unlinkat(parent, name.as_ptr(), AT_REMOVEDIR) } != 0 {
+                return match io::Error::last_os_error().raw_os_error() {
+                    Some(ENOENT) => Ok(()),
+                    Some(ENOTEMPTY) => Err(InstallFailure::new(FailureCode::CleanupPending)),
+                    _ => Err(io_failure()),
+                };
+            }
+            Ok(())
+        })();
+        // SAFETY: `parent` was duplicated here and is owned.
+        unsafe {
+            let _ = close(parent);
+        }
+        outcome
     }
 
     fn install_carrier(
@@ -1256,34 +1998,64 @@ impl NativeFs for MacosPlatform {
         source: &PackageSource,
         destination: &ValidatedPath,
     ) -> InstallResult<()> {
+        let handle = destination.dir_handle()?;
         match (source.kind(), destination.kind()) {
-            (PackageKind::File, super::PathKind::NewFile) => {
-                copy_file_exact(source.path(), destination.rendered())?;
-                // Flush the freshly copied file and its directory before the
-                // caller journals the created entry.
-                let file = fs::File::open(destination.rendered()).map_err(|_| io_failure())?;
-                file.sync_all().map_err(|_| io_failure())?;
-                let parent = destination.rendered().parent().ok_or_else(unsafe_path)?;
-                super::flush_directory(parent)
+            (PackageKind::File, PathKind::NewFile) => {
+                copy_file_into(source.path(), handle.fd(), destination.leaf_name()?)?;
+                // Flush the copied image through the anchored parent, then the
+                // directory that now holds it.
+                let opened = open_leaf(&handle, destination.leaf_name()?, T8_O_RDONLY)?;
+                let metadata = opened.metadata().map_err(|_| io_failure())?;
+                if !metadata.is_file() {
+                    return Err(unsafe_path());
+                }
+                opened.sync_all().map_err(|_| io_failure())?;
+                fsync_fd(handle.fd())
             }
-            (PackageKind::Directory, super::PathKind::NewDirectory) => {
-                fs::create_dir(destination.rendered()).map_err(|_| io_failure())?;
-                set_owner_only(destination.rendered())?;
-                let mut entries = 0usize;
-                let mut total = 0u64;
-                copy_carrier_tree(
-                    source.path(),
-                    destination.rendered(),
-                    &mut entries,
-                    &mut total,
+            (PackageKind::Directory, PathKind::NewDirectory) => {
+                let name = c_component(destination.leaf_name()?)?;
+                // SAFETY: the parent descriptor is live and `name` is
+                // NUL-terminated.
+                if unsafe { mkdirat(handle.fd(), name.as_ptr(), 0o700) } != 0 {
+                    return Err(io_failure());
+                }
+                let root = open_leaf_fd(
+                    handle.fd(),
+                    destination.leaf_name()?,
+                    T8_O_RDONLY | T8_O_DIRECTORY,
                 )?;
-                // The bundle root's ACL/stat/xattrs are part of the seal too.
-                copy_directory_metadata(source.path(), destination.rendered())?;
-                super::flush_directory(destination.rendered())?;
-                let parent = destination.rendered().parent().ok_or_else(unsafe_path)?;
-                super::flush_directory(parent)
+                let outcome: InstallResult<()> = (|| {
+                    let mut entries = 0usize;
+                    let mut total = 0u64;
+                    copy_carrier_tree(
+                        source.path(),
+                        destination.rendered(),
+                        "",
+                        root,
+                        &mut entries,
+                        &mut total,
+                    )?;
+                    // The bundle root's ACL/stat/xattrs are part of the seal too.
+                    let source_root = fs::File::open(source.path()).map_err(|_| io_failure())?;
+                    use std::os::unix::io::AsRawFd;
+                    copy_directory_metadata(source_root.as_raw_fd(), root)?;
+                    fsync_fd(root)?;
+                    Ok(())
+                })();
+                // SAFETY: `root` was opened here and is owned.
+                unsafe {
+                    let _ = close(root);
+                }
+                outcome?;
+                fsync_fd(handle.fd())
             }
             _ => Err(invalid_package()),
         }
     }
+}
+
+/// Compare one `struct stat` identity with the captured [`FileIdentity`].
+fn identity_matches(status: &Stat, expected: &super::FileIdentity) -> bool {
+    let super::FileIdentity { device, inode } = expected;
+    i64::from(status.st_dev) as u64 == *device && status.st_ino == *inode
 }

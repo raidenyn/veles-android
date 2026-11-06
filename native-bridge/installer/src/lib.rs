@@ -24,9 +24,10 @@ pub mod transaction;
 
 pub use cleanup::{
     CLEANUP_MAGIC, CLEANUP_SCHEMA_VERSION, CleanupChannel, CleanupCompletion, CleanupEntry,
-    CleanupFailure, CleanupFileSystem, CleanupReason, CleanupRequest, CleanupStatus,
-    MAX_CLEANUP_ENTRIES, MAX_CLEANUP_FRAME_BYTES, MAX_CLEANUP_TIMEOUT, ParentIdentity, ParentState,
-    RemoveOutcome, StdCleanupFs, encode_hex, execute_cleanup, hmac_sha256, parse_request,
+    CleanupFailure, CleanupFileSystem, CleanupReason, CleanupRequest, CleanupStatus, CleanupTree,
+    HelperImage, MAX_CLEANUP_ENTRIES, MAX_CLEANUP_FRAME_BYTES, MAX_CLEANUP_TIMEOUT, ParentIdentity,
+    ParentState, RemoveOutcome, StdCleanupFs, StdHelperImage, encode_hex, execute_cleanup,
+    hmac_sha256, parse_request, remove_helper_after_exit,
 };
 pub use inventory::{
     INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, normalize_relative_path,
@@ -56,7 +57,13 @@ pub use paths::{
     STATE_DIR, VERSIONS_DIR, root_dir_name,
 };
 #[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use platform::MacosCleanupRoot;
+#[cfg(target_os = "macos")]
 pub use platform::MacosPlatform;
+#[cfg(windows)]
+#[doc(hidden)]
+pub use platform::WindowsCleanupRoot;
 #[cfg(windows)]
 pub use platform::WindowsPlatform;
 pub use platform::{

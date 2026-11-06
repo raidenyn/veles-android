@@ -7,12 +7,14 @@
 //! [`TrustProof`] and [`Registration`]. Mutations only accept those handles,
 //! never raw receipt-supplied strings.
 //!
-//! [`ValidatedPath`] captures the identity (device/inode on Unix, canonical path
-//! on other targets) of the anchor and every ancestor. Each mutation revalidates
-//! that ancestry immediately before acting, so a parent swapped for a symlink or
-//! reparse point, or a directory replaced by a different one, fails closed. A
-//! revalidation still cannot prove the absence of every race: the native
-//! adapters (Tasks 4, 5 and 8) use handle-relative no-follow OS calls.
+//! [`ValidatedPath`] captures the identity (device/inode on Unix, volume serial
+//! plus file index on Windows) of the anchor and every ancestor, and of an
+//! existing leaf. Each native mutation then opens that captured chain with
+//! no-follow OS calls, verifies every opened component against the captured
+//! identity and acts **relative to the resulting handle**
+//! (`openat`/`renameat`/`unlinkat` on macOS, `NtCreateFile`/`NtSetInformationFile`
+//! with `RootDirectory` on Windows), so a component swapped after validation
+//! fails closed and a leaf swapped between hashing and unlinking is preserved.
 //!
 //! [`PortablePlatform`] is the std-only implementation used by portable tests on
 //! Linux. It performs real filesystem IO, locking and registration-file reads,
@@ -73,10 +75,19 @@ mod macos_trust;
 mod windows_trust;
 
 #[cfg(target_os = "macos")]
+#[doc(hidden)]
+// Exposed for the native acceptance tests, which prove the anchored traversal
+// and identity-bound deletion directly; not used by the installer engine.
+pub use macos::CleanupRoot as MacosCleanupRoot;
+#[cfg(target_os = "macos")]
 pub use macos::MacosPlatform;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::{macos_process_start, macos_verify_own_signature};
 pub use native::StdNativeFs;
+#[cfg(windows)]
+#[doc(hidden)]
+// Exposed for the native acceptance tests; not used by the installer engine.
+pub use windows::CleanupRoot as WindowsCleanupRoot;
 #[cfg(windows)]
 pub use windows::WindowsPlatform;
 #[cfg(windows)]
@@ -151,6 +162,9 @@ pub enum PathKind {
     File,
     /// An existing directory; its identity is captured.
     Directory,
+    /// An existing symbolic link; the link's own identity is captured and the
+    /// target is never followed. Only a signed carrier bundle may own one.
+    Symlink,
     /// A path that must not exist yet and will be created as a regular file.
     NewFile,
     /// A path that must not exist yet and will be created as a directory.
@@ -561,9 +575,9 @@ fn recheck_candidate(
 
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FileIdentity {
-    device: u64,
-    inode: u64,
+pub(crate) struct FileIdentity {
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
 }
 
 #[cfg(unix)]
@@ -576,17 +590,116 @@ fn identity_of(_path: &Path, metadata: &Metadata) -> InstallResult<FileIdentity>
     })
 }
 
+/// The effective user id of this process (used to prove directory ownership).
+#[cfg(unix)]
+pub(crate) fn effective_user_id() -> u32 {
+    unsafe extern "C" {
+        fn geteuid() -> u32;
+    }
+
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { geteuid() }
+}
+
+/// The identity of one file-system object on Windows: the volume it lives on and
+/// its per-volume file index, both read from an opened handle.
 #[cfg(not(unix))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FileIdentity {
-    canonical: PathBuf,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileIdentity {
+    pub(crate) volume: u32,
+    pub(crate) index: u64,
+}
+
+/// The identity of one object, read from **an opened handle**.
+///
+/// A file index is allocated per volume and is not reused while the object
+/// exists, so it identifies the object the handle was opened on rather than the
+/// string that was walked. This is the identity every mutation is bound to.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg(unix)]
+pub(crate) fn identity_of_file(file: &File) -> InstallResult<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file.metadata().map_err(|_| io_failure())?;
+    Ok(FileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+/// [`identity_of_file`] on Windows: volume serial plus file index.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg(windows)]
+pub(crate) fn identity_of_file(file: &File) -> InstallResult<FileIdentity> {
+    use ::windows::Win32::Foundation::HANDLE;
+    use ::windows::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `file` is a live handle and the out-structure is correctly sized.
+    unsafe {
+        GetFileInformationByHandle(
+            HANDLE(std::os::windows::io::AsRawHandle::as_raw_handle(file)),
+            &mut information,
+        )
+    }
+    .map_err(|_| io_failure())?;
+    let index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    if index == 0 {
+        // A file system that reports no stable index cannot be identity-bound.
+        return Err(unsafe_path());
+    }
+    Ok(FileIdentity {
+        volume: information.dwVolumeSerialNumber,
+        index,
+    })
 }
 
 #[cfg(not(unix))]
 fn identity_of(path: &Path, _metadata: &Metadata) -> InstallResult<FileIdentity> {
-    fs::canonicalize(path)
-        .map(|canonical| FileIdentity { canonical })
-        .map_err(|_| io_failure())
+    use ::windows::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use ::windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use ::windows::core::PCWSTR;
+    use std::os::windows::io::FromRawHandle;
+
+    let wide: Vec<u16> = {
+        use std::os::windows::ffi::OsStrExt;
+
+        path.as_os_str().encode_wide().chain([0]).collect()
+    };
+    // SAFETY: `wide` is NUL-terminated and outlives the call. The reparse-point
+    // flag identifies the link itself for a link, and backup semantics allow a
+    // directory to be opened for its attributes.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+    }
+    .map_err(|error| {
+        if error.code() == ::windows::core::HRESULT::from_win32(2) {
+            unsafe_path()
+        } else {
+            io_failure()
+        }
+    })?;
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io_failure());
+    }
+    // SAFETY: the handle is live and owned here; File closes it exactly once.
+    let file = unsafe { File::from_raw_handle(handle.0) };
+    let identity = identity_of_file(&file)?;
+    Ok(identity)
 }
 
 #[derive(Debug, Clone)]
@@ -601,6 +714,15 @@ struct AncestorIdentity {
 /// registration directory obtained from OS known folders). Every component below
 /// it is traversed without following links, and each mutation revalidates the
 /// captured identities before touching the filesystem.
+///
+/// On the native targets every mutation is performed relative to a **directory
+/// handle opened at mutation time** by walking the captured chain with no-follow
+/// OS calls ([`ValidatedPath::dir_handle`]). Each opened component's identity is
+/// compared with the one validation captured, so a component swapped after
+/// validation fails closed, and the mutation itself addresses the opened object
+/// rather than re-walking the path. The handle is deliberately not cached: a
+/// receipt may claim thousands of entries and holding one descriptor each would
+/// exhaust the process's descriptor limit.
 #[derive(Debug, Clone)]
 pub struct ValidatedPath {
     anchor: PathBuf,
@@ -717,18 +839,57 @@ impl ValidatedPath {
         self.kind
     }
 
+    /// Open the captured parent directory chain and return its handle.
+    ///
+    /// The walk starts at the canonical anchor and opens one component at a time
+    /// with no-follow OS calls; every opened directory is compared with the
+    /// identity captured during validation. A mutation must be performed through
+    /// this handle, never by re-walking the rendered path.
+    #[cfg(any(windows, target_os = "macos"))]
+    pub(crate) fn dir_handle(&self) -> InstallResult<native::anchor::DirectoryHandle> {
+        let identities: Vec<FileIdentity> = self
+            .ancestors
+            .iter()
+            .map(|ancestor| ancestor.identity)
+            .collect();
+        let components: Vec<&str> = self
+            .relative
+            .split('/')
+            .take(self.relative.split('/').count().saturating_sub(1))
+            .collect();
+        let handle = native::anchor::open_chain(&self.anchor, &components, &identities)?;
+        if Some(handle.identity()) != self.ancestors.last().map(|ancestor| &ancestor.identity) {
+            return Err(unsafe_path());
+        }
+        Ok(handle)
+    }
+
+    /// The single leaf component addressed below [`Self::dir_handle`].
+    #[cfg(any(windows, target_os = "macos"))]
+    pub(crate) fn leaf_name(&self) -> InstallResult<&OsStr> {
+        self.rendered.file_name().ok_or_else(unsafe_path)
+    }
+
+    /// The identity captured at validation, if the leaf existed.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn captured_identity(&self) -> Option<&FileIdentity> {
+        self.target.as_ref()
+    }
+
     /// Revalidate the full ancestry and the leaf.
     pub fn revalidate(&self) -> InstallResult<()> {
         self.revalidate_ancestors()?;
         match self.kind {
-            PathKind::File | PathKind::Directory => {
+            PathKind::File | PathKind::Directory | PathKind::Symlink => {
                 let metadata = fs::symlink_metadata(&self.rendered).map_err(|_| unsafe_path())?;
-                if is_link_like(&metadata) {
+                if self.kind != PathKind::Symlink && is_link_like(&metadata) {
                     return Err(unsafe_path());
                 }
                 let type_matches = match self.kind {
                     PathKind::File => metadata.is_file(),
                     PathKind::Directory => metadata.is_dir(),
+                    // A link's own type, never the type it points at.
+                    PathKind::Symlink => metadata.file_type().is_symlink(),
                     _ => false,
                 };
                 if !type_matches {
@@ -747,6 +908,33 @@ impl ValidatedPath {
             }
         }
         Ok(())
+    }
+
+    /// Verify the metadata of an **already opened** leaf against this handle.
+    ///
+    /// This is the identity half of an anchored mutation: the adapter opens the
+    /// leaf relative to the captured parent handle with no-follow semantics and
+    /// compares what the OS opened with what validation captured. A name swapped
+    /// after validation therefore cannot lend its identity to the operation.
+    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    pub(crate) fn verify_open(
+        &self,
+        metadata: &Metadata,
+        identity: &FileIdentity,
+    ) -> InstallResult<()> {
+        let type_matches = match self.kind {
+            PathKind::File => !is_link_like(metadata) && metadata.is_file(),
+            PathKind::Directory => !is_link_like(metadata) && metadata.is_dir(),
+            PathKind::Symlink => metadata.file_type().is_symlink(),
+            PathKind::NewFile | PathKind::NewDirectory => false,
+        };
+        if !type_matches {
+            return Err(unsafe_path());
+        }
+        match &self.target {
+            Some(expected) if expected == identity => Ok(()),
+            _ => Err(unsafe_path()),
+        }
     }
 
     fn revalidate_ancestors(&self) -> InstallResult<()> {
@@ -802,12 +990,13 @@ impl ValidatedPath {
             }
             match fs::symlink_metadata(&rendered) {
                 Ok(metadata) => {
-                    if is_link_like(&metadata) {
+                    if kind != PathKind::Symlink && is_link_like(&metadata) {
                         return Err(unsafe_path());
                     }
                     let type_matches = match kind {
                         PathKind::File => metadata.is_file(),
                         PathKind::Directory => metadata.is_dir(),
+                        PathKind::Symlink => metadata.file_type().is_symlink(),
                         PathKind::NewFile | PathKind::NewDirectory => false,
                     };
                     if !type_matches {
@@ -816,7 +1005,10 @@ impl ValidatedPath {
                     target = Some(identity_of(&rendered, &metadata)?);
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    if matches!(kind, PathKind::File | PathKind::Directory) {
+                    if matches!(
+                        kind,
+                        PathKind::File | PathKind::Directory | PathKind::Symlink
+                    ) {
                         return Err(io_failure());
                     }
                 }
@@ -1290,14 +1482,46 @@ impl OwnedClaim {
             sha256: None,
         }
     }
+
+    /// A symbolic-link claim bound to the exact bytes of its target path.
+    pub fn symlink(path: impl Into<String>, target: &str) -> Self {
+        Self {
+            path: path.into(),
+            kind: OwnedKind::Symlink,
+            sha256: Some(Digest::of(target.as_bytes())),
+        }
+    }
 }
 
-/// Whether an owned entry is a file or a directory.
+/// Whether an owned entry is a file, a directory or a symbolic link.
+///
+/// A symlink claim is bound to the exact bytes of its target path (its content
+/// digest) and is always removed as a link: the target is never followed, so an
+/// owned bundle link can never become a delete outside the install root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OwnedKind {
     File,
     Directory,
+    /// A symbolic link whose target bytes are the owned content.
+    Symlink,
+}
+
+impl OwnedKind {
+    /// Whether entries of this kind are removed *after* every leaf below them.
+    pub fn is_directory(self) -> bool {
+        matches!(self, Self::Directory)
+    }
+
+    /// Whether the owned content is the exact bytes of a link target.
+    pub fn is_link(self) -> bool {
+        matches!(self, Self::Symlink)
+    }
+
+    /// Whether this kind carries a content digest.
+    pub fn has_digest(self) -> bool {
+        matches!(self, Self::File | Self::Symlink)
+    }
 }
 
 /// The ownership section of a committed receipt.
@@ -1346,6 +1570,7 @@ impl OwnershipRecord {
             }
             match claim.kind {
                 OwnedKind::File if claim.sha256.is_none() => return Err(invalid_input()),
+                OwnedKind::Symlink if claim.sha256.is_none() => return Err(invalid_input()),
                 OwnedKind::Directory if claim.sha256.is_some() => return Err(invalid_input()),
                 _ => {}
             }
@@ -1419,6 +1644,9 @@ impl OwnedEntry {
         }
         let path = match kind {
             OwnedKind::File => ValidatedPath::new(paths, Path::new(&normalized), PathKind::File)?,
+            OwnedKind::Symlink => {
+                ValidatedPath::new(paths, Path::new(&normalized), PathKind::Symlink)?
+            }
             OwnedKind::Directory => {
                 ValidatedPath::new(paths, Path::new(&normalized), PathKind::Directory)?
             }
@@ -1428,6 +1656,7 @@ impl OwnedEntry {
             kind,
             sha256: match kind {
                 OwnedKind::File => Some(hash_file(path.rendered())?),
+                OwnedKind::Symlink => Some(link_target_digest(path.rendered())?),
                 OwnedKind::Directory => None,
             },
         };
@@ -1455,24 +1684,38 @@ impl OwnedEntry {
         }
         let kind = match claim.kind {
             OwnedKind::File => PathKind::File,
+            OwnedKind::Symlink => PathKind::Symlink,
             OwnedKind::Directory => PathKind::Directory,
         };
         let path = ValidatedPath::new(paths, Path::new(&normalized), kind)?;
         let mut short = false;
-        if claim.kind == OwnedKind::File {
-            let expected = claim.sha256.ok_or_else(foreign_state)?;
-            let length = fs::symlink_metadata(path.rendered())
-                .map_err(|_| io_failure())?
-                .len();
-            if let Some(expected_size) = incomplete_size
-                && length < expected_size
-            {
-                short = true;
-            } else if hash_file(path.rendered())? != expected {
-                return Err(foreign_state());
+        match claim.kind {
+            OwnedKind::File => {
+                let expected = claim.sha256.ok_or_else(foreign_state)?;
+                let length = fs::symlink_metadata(path.rendered())
+                    .map_err(|_| io_failure())?
+                    .len();
+                if let Some(expected_size) = incomplete_size
+                    && length < expected_size
+                {
+                    short = true;
+                } else if hash_file(path.rendered())? != expected {
+                    return Err(foreign_state());
+                }
             }
-        } else if incomplete_size.is_some() {
-            return Err(invalid_input());
+            // A link is bound to the exact bytes of its target: the link is never
+            // followed, so a redirected target cannot lend a foreign inode ours.
+            OwnedKind::Symlink => {
+                let expected = claim.sha256.ok_or_else(foreign_state)?;
+                if incomplete_size.is_some() || link_target_digest(path.rendered())? != expected {
+                    return Err(foreign_state());
+                }
+            }
+            OwnedKind::Directory => {
+                if incomplete_size.is_some() {
+                    return Err(invalid_input());
+                }
+            }
         }
         Ok(Some(Self {
             path,
@@ -1578,6 +1821,9 @@ fn is_private_artifact(normalized: &str, kind: OwnedKind) -> bool {
         OwnedKind::Directory => PRIVATE_LAYOUT_DIRECTORIES
             .iter()
             .any(|candidate| same(candidate)),
+        // The private layout never contains a link of its own; a link at a fixed
+        // slot is foreign content and is preserved.
+        OwnedKind::Symlink => false,
     }
 }
 
@@ -1760,6 +2006,8 @@ pub struct CarrierEntry {
     kind: OwnedKind,
     size: u64,
     sha256: Option<Digest>,
+    /// Exact link target for a [`OwnedKind::Symlink`] entry.
+    target: Option<String>,
 }
 
 impl CarrierEntry {
@@ -1773,6 +2021,10 @@ impl CarrierEntry {
         size: u64,
         sha256: Option<Digest>,
     ) -> InstallResult<Self> {
+        if kind == OwnedKind::Symlink {
+            // A link's content is its target: use [`CarrierEntry::link`].
+            return Err(invalid_input());
+        }
         if relative.len() > MAX_PATH_BYTES {
             return Err(unsafe_path());
         }
@@ -1792,6 +2044,29 @@ impl CarrierEntry {
             kind,
             size,
             sha256,
+            target: None,
+        })
+    }
+
+    /// Construct one validated symbolic-link entry.
+    ///
+    /// The link content is its target path, so the entry's digest and size are
+    /// derived from the target bytes. `target` must already have been proven to
+    /// stay inside the artifact root (see [`confine_link_target`]).
+    pub fn link(relative: &str, target: &str) -> InstallResult<Self> {
+        if relative.is_empty() || target.is_empty() || target.len() > MAX_PATH_BYTES {
+            return Err(unsafe_path());
+        }
+        let normalized = normalize_relative_path(relative).map_err(|_| unsafe_path())?;
+        if normalized != relative {
+            return Err(unsafe_path());
+        }
+        Ok(Self {
+            relative: relative.to_owned(),
+            kind: OwnedKind::Symlink,
+            size: target.len() as u64,
+            sha256: Some(Digest::of(target.as_bytes())),
+            target: Some(target.to_owned()),
         })
     }
 
@@ -1805,14 +2080,19 @@ impl CarrierEntry {
         self.kind
     }
 
-    /// The file size (zero for directories).
+    /// The file size (zero for directories, the target length for links).
     pub fn size(&self) -> u64 {
         self.size
     }
 
-    /// The file content digest (`None` for directories).
+    /// The content digest (`None` for directories).
     pub fn sha256(&self) -> Option<Digest> {
         self.sha256
+    }
+
+    /// The exact target of a symbolic-link entry.
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
     }
 }
 /// Upper bound on directory entries walked while checking a package payload tree.
@@ -3132,7 +3412,7 @@ fn open_for_write(path: &ValidatedPath) -> io::Result<File> {
         PathKind::File => {
             options.truncate(true);
         }
-        PathKind::Directory | PathKind::NewDirectory => {
+        PathKind::Directory | PathKind::NewDirectory | PathKind::Symlink => {
             return Err(io::Error::from(io::ErrorKind::InvalidInput));
         }
     }
@@ -3211,7 +3491,9 @@ fn read_no_follow(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(crate) fn hash_file(path: &Path) -> InstallResult<Digest> {
+/// Open one file for reading without following a final symbolic link or reparse
+/// point. Shared by the hashing paths and the bounded cleanup helper.
+pub(crate) fn open_no_follow(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -3220,7 +3502,28 @@ pub(crate) fn hash_file(path: &Path) -> InstallResult<Digest> {
 
         options.custom_flags(NO_FOLLOW);
     }
-    let mut file = options.open(path).map_err(|_| io_failure())?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // `FILE_FLAG_OPEN_REPARSE_POINT`: open a link itself instead of its
+        // target; the caller then refuses the reparse attribute explicitly.
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options.open(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        if file.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+    }
+    Ok(file)
+}
+
+pub(crate) fn hash_file(path: &Path) -> InstallResult<Digest> {
+    let mut file = open_no_follow(path).map_err(|_| io_failure())?;
     if !file.metadata().map_err(|_| io_failure())?.is_file() {
         return Err(unsafe_path());
     }
@@ -3234,6 +3537,42 @@ pub(crate) fn hash_file(path: &Path) -> InstallResult<Digest> {
         hasher.update(&buffer[..read]);
     }
     Ok(Digest::from_bytes(hasher.finalize().into()))
+}
+
+/// The exact bytes a symbolic link stores as its target.
+///
+/// A link's content *is* its target path: hashing those bytes is how an owned
+/// link claim is verified without ever resolving (and therefore following) it.
+pub(crate) fn link_target_bytes(target: &OsStr) -> InstallResult<Vec<u8>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        Ok(target.as_bytes().to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        target
+            .to_str()
+            .map(|text| text.as_bytes().to_vec())
+            .ok_or_else(unsafe_path)
+    }
+}
+
+/// SHA-256 of one symbolic link's target bytes (never the target's content).
+pub(crate) fn link_target_digest(path: &Path) -> InstallResult<Digest> {
+    let target = fs::read_link(path).map_err(|_| unsafe_path())?;
+    Ok(Digest::of(&link_target_bytes(target.as_os_str())?))
+}
+
+/// The recorded target of one symbolic link, or `None` when it is not UTF-8.
+///
+/// Carrier links are recorded as text because the journal and the ownership
+/// record are JSON; a non-UTF-8 target is refused by the enumeration instead of
+/// being stored lossily.
+pub(crate) fn link_target_text(path: &Path) -> InstallResult<String> {
+    let target = fs::read_link(path).map_err(|_| unsafe_path())?;
+    target.to_str().map(str::to_owned).ok_or_else(unsafe_path)
 }
 
 fn replace_manifest_checked(staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
@@ -3454,6 +3793,44 @@ fn carrier_entries_checked(source: &PackageSource) -> InstallResult<Vec<CarrierE
     carrier_entries_with(source, hash_file)
 }
 
+/// Prove that a link target stays inside the artifact root.
+///
+/// The target is interpreted the way the OS will interpret it — relative to the
+/// link's own directory — and every `..` is resolved against that directory. A
+/// target that climbs above the artifact root, or that is absolute (including a
+/// Windows drive/UNC/verbatim form), is refused: a copied link must never point
+/// a later reader outside the signed bundle.
+fn confine_link_target(relative: &str, target: &str) -> InstallResult<()> {
+    if target.is_empty() || target.len() > MAX_PATH_BYTES || target.chars().any(char::is_control) {
+        return Err(unsafe_path());
+    }
+    if target.starts_with('/') || target.starts_with('\\') || target.contains(':') {
+        return Err(unsafe_path());
+    }
+    let parent = match relative.rfind('/') {
+        Some(index) => &relative[..index],
+        None => "",
+    };
+    let mut depth: Vec<&str> = if parent.is_empty() {
+        Vec::new()
+    } else {
+        parent.split('/').collect()
+    };
+    for part in target.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if depth.pop().is_none() {
+                    return Err(unsafe_path());
+                }
+            }
+            other if other.contains('\\') => return Err(unsafe_path()),
+            other => depth.push(other),
+        }
+    }
+    Ok(())
+}
+
 /// [`carrier_entries_checked`] over a caller-supplied content hash.
 ///
 /// The native adapters pass their own no-follow hasher so enumeration and
@@ -3522,10 +3899,20 @@ fn walk_carrier(
         };
         let path = child.path();
         let metadata = fs::symlink_metadata(&path).map_err(|_| io_failure())?;
-        if is_link_like(&metadata) {
-            return Err(unsafe_path());
-        }
-        if metadata.is_dir() {
+        if metadata.file_type().is_symlink() {
+            // A bundle link is recorded as a link entry, never followed: the
+            // exact target bytes are the owned content and the target must stay
+            // inside the artifact root.
+            let target = link_target_text(&path)?;
+            confine_link_target(&child_relative, &target)?;
+            *total = total
+                .checked_add(target.len() as u64)
+                .ok_or_else(invalid_package)?;
+            if *total > MAX_CARRIER_BYTES as u64 {
+                return Err(invalid_package());
+            }
+            entries.push(CarrierEntry::link(&child_relative, &target)?);
+        } else if metadata.is_dir() {
             entries.push(CarrierEntry::new(
                 &child_relative,
                 OwnedKind::Directory,
@@ -3611,10 +3998,21 @@ fn copy_carrier_tree(
         }
         let path = child.path();
         let metadata = fs::symlink_metadata(&path).map_err(|_| io_failure())?;
-        if is_link_like(&metadata) {
-            return Err(unsafe_path());
-        }
-        if metadata.is_dir() {
+        if metadata.file_type().is_symlink() {
+            // The fake recreates the link from its recorded target and never
+            // follows it. Link creation is a unix-only capability here; the fake
+            // is contract-test scaffolding, not a product adapter.
+            #[cfg(unix)]
+            {
+                let recorded = fs::read_link(&path).map_err(|_| io_failure())?;
+                std::os::unix::fs::symlink(recorded, &target).map_err(|_| io_failure())?;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = &target;
+                return Err(InstallFailure::new(FailureCode::UnsupportedTarget));
+            }
+        } else if metadata.is_dir() {
             fs::create_dir(&target).map_err(|_| io_failure())?;
             copy_carrier_tree(&path, &target, entries, total)?;
         } else if metadata.is_file() {
@@ -3648,6 +4046,15 @@ fn remove_owned_entry(entry: &OwnedEntry) -> InstallResult<()> {
                 None => false,
             };
             if !short && hash_file(entry.path.rendered())? != expected {
+                return Err(foreign_state());
+            }
+            fs::remove_file(entry.path.rendered()).map_err(|_| io_failure())?;
+        }
+        // The link itself is unlinked after its exact target bytes were verified;
+        // the target's content is never read or removed.
+        OwnedKind::Symlink => {
+            let expected = entry.claim.sha256.ok_or_else(foreign_state)?;
+            if link_target_digest(entry.path.rendered())? != expected {
                 return Err(foreign_state());
             }
             fs::remove_file(entry.path.rendered()).map_err(|_| io_failure())?;
