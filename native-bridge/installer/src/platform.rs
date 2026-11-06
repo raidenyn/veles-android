@@ -1226,7 +1226,7 @@ fn normalize_relative(relative: &Path) -> InstallResult<String> {
     normalize_relative_path(&parts.join("/")).map_err(|_| unsafe_path())
 }
 
-fn is_link_like(metadata: &Metadata) -> bool {
+pub(crate) fn is_link_like(metadata: &Metadata) -> bool {
     if metadata.file_type().is_symlink() {
         return true;
     }

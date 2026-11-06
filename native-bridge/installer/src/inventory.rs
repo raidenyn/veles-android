@@ -18,6 +18,7 @@ use crate::model::{
     Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry, MAX_DOCUMENT_BYTES,
     MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES, canonical_json,
 };
+use crate::platform::{is_link_like, open_no_follow};
 
 /// The only supported package-inventory document schema generation.
 pub const INVENTORY_SCHEMA_VERSION: u32 = 1;
@@ -160,33 +161,63 @@ fn validate_entries(entries: &[InventoryEntry]) -> InstallResult<Vec<String>> {
     Ok(normalized_paths)
 }
 
-fn verify_entry(root: &Path, relative: &str, entry: &InventoryEntry) -> InstallResult<()> {
-    let path = root.join(relative);
-    let metadata = fs::symlink_metadata(&path).map_err(|error| match error.kind() {
+/// Open one inventory entry for reading, walking every component below `root`.
+///
+/// Each ancestor (and the leaf) is inspected with `symlink_metadata` before it is
+/// descended into or opened: a link, junction or reparse point at *any* level is
+/// `UnsafePath`, so a directory that merely resolves outside `root` can never be
+/// read through. The leaf is then opened without following a final link and the
+/// open handle must itself be a regular file. A missing component is
+/// `InvalidPackage` (the inventory names something the package does not hold).
+pub(crate) fn open_entry(root: &Path, relative: &str) -> InstallResult<File> {
+    let parts: Vec<&str> = relative.split('/').collect();
+    let mut current = root.to_path_buf();
+    for (index, part) in parts.iter().enumerate() {
+        current.push(part);
+        let metadata = fs::symlink_metadata(&current).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => invalid_package(),
+            _ => io_failure(),
+        })?;
+        if is_link_like(&metadata) {
+            return Err(unsafe_path());
+        }
+        let is_leaf = index + 1 == parts.len();
+        if (is_leaf && !metadata.file_type().is_file())
+            || (!is_leaf && !metadata.file_type().is_dir())
+        {
+            return Err(unsafe_path());
+        }
+    }
+    let file = open_no_follow(&current).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => invalid_package(),
         _ => io_failure(),
     })?;
-    if !metadata.file_type().is_file() {
+    if !file.metadata().map_err(|_| io_failure())?.is_file() {
         return Err(unsafe_path());
     }
+    Ok(file)
+}
+
+fn verify_entry(root: &Path, relative: &str, entry: &InventoryEntry) -> InstallResult<()> {
+    let mut file = open_entry(root, relative)?;
+    let metadata = file.metadata().map_err(|_| io_failure())?;
     if metadata.len() != entry.size {
         return Err(invalid_package());
     }
-    if hash_file(&path)? != entry.sha256 {
+    if hash_open_file(&mut file, entry.size)? != entry.sha256 {
         return Err(invalid_package());
     }
     Ok(())
 }
 
-fn hash_file(path: &Path) -> InstallResult<Digest> {
-    let mut file = File::open(path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => invalid_package(),
-        _ => io_failure(),
-    })?;
+/// SHA-256 of at most `limit + 1` bytes from an already open handle: the work is
+/// bounded by the declared size even if the file grows while it is hashed.
+fn hash_open_file(file: &mut File, limit: u64) -> InstallResult<Digest> {
+    let mut reader = file.take(limit.saturating_add(1));
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(|_| io_failure())?;
+        let read = reader.read(&mut buffer).map_err(|_| io_failure())?;
         if read == 0 {
             break;
         }

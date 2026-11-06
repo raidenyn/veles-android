@@ -885,3 +885,44 @@ impl Drop for TempRoot {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+/// F8: the inventory primitive itself must refuse a path that reaches a regular
+/// file *through* a linked ancestor, and must do so before reading the target.
+#[test]
+fn inventory_verification_rejects_an_escaping_ancestor_link() {
+    let temp = TempRoot::new();
+    let outside = temp.path.join("outside");
+    fs::create_dir_all(&outside).expect("outside directory");
+    fs::write(outside.join("host"), b"outside host").expect("outside file");
+    let package = temp.path.join("package");
+    fs::create_dir_all(&package).expect("package root");
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, package.join("dir")).expect("ancestor symlink");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&outside, package.join("dir")).expect("ancestor link");
+
+    let entries = [InventoryEntry {
+        path: "dir/host".to_owned(),
+        size: b"outside host".len() as u64,
+        sha256: Digest::of(b"outside host"),
+        executable: true,
+    }];
+    assert_eq!(
+        failure_code(verify_inventory(&package, &entries)),
+        FailureCode::UnsafePath,
+        "an inventory path through a linked ancestor escapes the package root"
+    );
+
+    // A contained directory chain still verifies.
+    fs::create_dir_all(package.join("real/inner")).expect("real chain");
+    fs::write(package.join("real/inner/host"), b"outside host").expect("contained file");
+    verify_inventory(
+        &package,
+        &[InventoryEntry {
+            path: "real/inner/host".to_owned(),
+            ..entries[0].clone()
+        }],
+    )
+    .expect("a contained path verifies");
+}
