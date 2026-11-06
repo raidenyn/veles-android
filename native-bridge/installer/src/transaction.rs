@@ -457,6 +457,10 @@ pub(crate) fn activate_retained(
     }
 
     let version_relative = paths.version_dir_relative(&version, prior.payload_id);
+    // The policy this rollback composes against is the committed installation's,
+    // stored in an editable receipt: prove it is not weaker than what the installed
+    // release's own signed carrier requires before composing anything with it.
+    authenticate_enforced_policy(platform, paths, &current)?;
     // Retained content is authenticated exactly like a fresh install (see
     // `authenticate_release_in_place`): the OS verifies the signed carrier
     // already installed inside the immutable version directory, and neither the
@@ -472,8 +476,8 @@ pub(crate) fn activate_retained(
         &current.ownership,
         &prior.version,
         prior.payload_id,
-        prior.carrier_sha256,
-        &current.release_policy,
+        Some(prior.carrier_sha256),
+        Some(&current.release_policy),
         Some(&parse_version(&current.version)?),
         FailureCode::NoRollback,
     )?;
@@ -588,6 +592,41 @@ pub(crate) fn activate_retained(
     }
 }
 
+/// Authenticate the release a committed receipt names and require the policy the
+/// receipt records to be no broader than the policy that release's signed carrier
+/// carries.
+///
+/// The recorded policy is installer state, never evidence: it is the operand every
+/// rollback composes against. The release's own signed descriptor (covered by the
+/// OS-verified carrier) is the evidence that bounds it, because every composition of
+/// a committed policy only tightens what the installed release signed. State that
+/// has lost a signed restriction, or whose release cannot be authenticated, fails
+/// closed.
+fn authenticate_enforced_policy(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    receipt: &Receipt,
+) -> InstallResult<()> {
+    let evidence = authenticate_release_in_place(
+        platform,
+        paths,
+        &receipt.ownership,
+        &receipt.version,
+        receipt.payload_id,
+        None,
+        None,
+        None,
+        FailureCode::RecoveryRequired,
+    )?;
+    if !is_no_broader_than(
+        &receipt.release_policy,
+        &evidence.contents.descriptor.policy,
+    ) {
+        return Err(recovery_required());
+    }
+    Ok(())
+}
+
 /// What the OS authenticated about one installed release.
 struct ReleaseEvidence {
     /// The receipt/journal-claimed retained metadata (a reference, never trust).
@@ -622,8 +661,8 @@ fn authenticate_release_in_place(
     ownership: &OwnershipRecord,
     version_text: &str,
     payload_id: Digest,
-    carrier_sha256: Digest,
-    anchor_policy: &ReleasePolicy,
+    carrier_sha256: Option<Digest>,
+    anchor_policy: Option<&ReleasePolicy>,
     must_precede: Option<&Version>,
     unprovable: FailureCode,
 ) -> InstallResult<ReleaseEvidence> {
@@ -654,6 +693,10 @@ fn authenticate_release_in_place(
     }
     let carrier_source =
         PackageSource::open(&paths.root().join(&version_relative)).map_err(|_| unprovable())?;
+    // `None` anchors the release to the policy its own signed descriptor carries:
+    // the descriptor is covered by the OS-verified carrier (equality is enforced
+    // below), so that is signed evidence, unlike any policy read back from state.
+    let anchor_policy = anchor_policy.unwrap_or(&descriptor.policy);
     let anchor = ReleaseDescriptor {
         target: paths.target(),
         channel: paths.channel(),
@@ -685,7 +728,7 @@ fn authenticate_release_in_place(
         return Err(InstallFailure::new(FailureCode::TrustDenied));
     }
     if Digest::of(proof.carrier()) != retained.carrier_sha256
-        || retained.carrier_sha256 != carrier_sha256
+        || carrier_sha256.is_some_and(|expected| retained.carrier_sha256 != expected)
     {
         return Err(InstallFailure::new(FailureCode::TrustDenied));
     }
@@ -1128,7 +1171,10 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
 /// 2. the journal's identity, carrier digest and descriptor against that carrier;
 /// 3. the effective policy, recomputed from the policy the committed installation
 ///    enforced and the authenticated descriptor's policy, and compared with the
-///    journal's;
+///    journal's. The committed policy is itself receipt state, so it is first bounded
+///    by the signed carrier of the release it belongs to (before the receipt: the
+///    release still installed; after it: the release the rollback replaced, which
+///    stays retained as the receipt's prior);
 /// 4. the complete installed inventory (canonical, and sealed when the carrier
 ///    asserts one) against every claim and every file on disk;
 /// 5. the exact manifest the journal publishes, rebuilt from the authenticated
@@ -1159,8 +1205,8 @@ fn authenticate_for_completion(
         &ownership,
         &journal.version,
         journal.payload_id,
-        journal.policy.carrier_sha256,
-        &journal.release_policy,
+        Some(journal.policy.carrier_sha256),
+        Some(&journal.release_policy),
         None,
         FailureCode::RecoveryRequired,
     )?;
@@ -1203,6 +1249,11 @@ fn authenticate_for_completion(
             {
                 return Err(recovery_required());
             }
+            // The operand is receipt state. Authenticate it against the signed
+            // carrier of the release still installed, so an edit that removes
+            // a restriction that release signs is not recomposed into a "valid"
+            // policy.
+            authenticate_enforced_policy(platform, paths, current)?;
             effective_policy(
                 &current.release_policy,
                 &descriptor.policy,
@@ -1217,6 +1268,34 @@ fn authenticate_for_completion(
         // have produced. State that cannot be bounded fails closed.
         (Operation::Rollback, Some(committed), _) => {
             if !is_no_broader_than(&committed.release_policy, &descriptor.policy) {
+                return Err(recovery_required());
+            }
+            // Composition evidence survives the commitment in the release the
+            // rollback replaced: it is the receipt's prior, its signed carrier stays
+            // retained, and the operand the composition started from was bounded by
+            // it. A restriction only that release signs therefore still binds.
+            let replaced = committed.prior.as_ref().ok_or_else(recovery_required)?;
+            if journal.old_version.as_deref() != Some(replaced.version.as_str())
+                || journal.old_payload_id != Some(replaced.payload_id)
+                || journal.old_carrier_sha256 != Some(replaced.carrier_sha256)
+            {
+                return Err(recovery_required());
+            }
+            let replaced_evidence = authenticate_release_in_place(
+                platform,
+                paths,
+                &committed.ownership,
+                &replaced.version,
+                replaced.payload_id,
+                Some(replaced.carrier_sha256),
+                None,
+                None,
+                FailureCode::RecoveryRequired,
+            )?;
+            if !is_no_broader_than(
+                &committed.release_policy,
+                &replaced_evidence.contents.descriptor.policy,
+            ) {
                 return Err(recovery_required());
             }
             committed.release_policy.clone()

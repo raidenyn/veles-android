@@ -3254,6 +3254,11 @@ pub struct Faults {
     pub host_state: HostState,
     /// Trust proof returned by `verify_trust` (`TrustUnavailable` by default).
     pub trust: Option<TrustProof>,
+    /// Proofs for installed carriers, one per release. A real OS verifies the carrier
+    /// artifact it is handed, so `verify_retained` returns the proof whose carrier
+    /// equals the carrier installed in the version directory; `trust` is the fallback
+    /// when none matches (the single-release case).
+    pub trust_by_carrier: Vec<TrustProof>,
     /// Force `verify_trust` to report an explicit OS denial/revocation.
     pub trust_denied: bool,
     /// Simulate a process death at the N-th state mutation (1-based).
@@ -3316,6 +3321,7 @@ impl Default for Faults {
             lock_busy: false,
             host_state: HostState::Unknown,
             trust: None,
+            trust_by_carrier: Vec::new(),
             trust_denied: false,
             panic_at_mutation: None,
             tear_at_mutation: None,
@@ -3697,6 +3703,15 @@ impl Platform for FakePlatform {
         }
         if self.faults.trust_denied {
             return Err(InstallFailure::new(FailureCode::TrustDenied));
+        }
+        if let Ok(installed) = fs::read(&carrier)
+            && let Some(proof) = self
+                .faults
+                .trust_by_carrier
+                .iter()
+                .find(|proof| proof.carrier() == installed.as_slice())
+        {
+            return Ok(proof.clone());
         }
         self.faults
             .trust

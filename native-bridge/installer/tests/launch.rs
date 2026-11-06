@@ -357,7 +357,17 @@ fn rollback_reassesses_the_retained_host() {
     }
     let live_before = fs::read(paths.registration_path()).expect("live registration");
 
-    let refusing = denied_host(&v1, HostFault::Denied);
+    // The OS verifies whichever installed carrier a rollback hands it: the release
+    // being replaced (whose signed policy bounds the receipt) and the target.
+    let both = vec![v1.proof.clone(), v2.proof.clone()];
+    let refusing = platform(
+        &v1,
+        Faults {
+            host: Some(HostFault::Denied),
+            trust_by_carrier: both.clone(),
+            ..Faults::default()
+        },
+    );
     let failure = run_operation(&refusing, &paths, Operation::Rollback, None)
         .expect_err("the retained host is no longer acceptable");
     assert_eq!(failure.code, FailureCode::TrustDenied);
@@ -367,7 +377,13 @@ fn rollback_reassesses_the_retained_host() {
         "a refused rollback leaves the live registration alone"
     );
 
-    let good = platform(&v1, Faults::default());
+    let good = platform(
+        &v1,
+        Faults {
+            trust_by_carrier: both,
+            ..Faults::default()
+        },
+    );
     let report = run_operation(&good, &paths, Operation::Rollback, None).expect("rolls back");
     assert_eq!(report.state, STATE_ROLLED_BACK);
     assert!(

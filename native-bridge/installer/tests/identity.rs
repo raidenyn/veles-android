@@ -419,7 +419,14 @@ fn rollback_reverifies_a_sealed_release_across_both_identities() {
     )
     .expect("v2 installs");
 
-    let report = run_operation(&platform_for(&v1), &paths, Operation::Rollback, None)
+    // The OS verifies whichever installed carrier a rollback hands it.
+    let both = FakePlatform::with_faults(Faults {
+        trust: Some(v1.proof.clone()),
+        trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+        host_state: HostState::Quiescent,
+        ..Faults::default()
+    });
+    let report = run_operation(&both, &paths, Operation::Rollback, None)
         .expect("the retained signed release is re-verified and re-activated");
     assert_eq!(report.state, STATE_ROLLED_BACK);
     assert_eq!(report.active_payload, Some(v1.descriptor.payload_id));
