@@ -240,6 +240,11 @@
             <details id="diagnostics">
                 <summary>Diagnostics (Latest 50 entries)</summary>
                 <ol id="diagnostics-list"></ol>
+                <h2>Synthetic clipboard test</h2>
+                <p>Copies only the fixed test code 012345, never raw record contents.</p>
+                <button id="synthetic-copy-button" type="button">Copy synthetic code</button>
+                <button id="synthetic-copy-arm" type="button">Arm one background copy</button>
+                <p id="synthetic-copy-status" role="status" aria-live="polite"></p>
             </details>
         </main>
         <script type="module" src="./src/connector.ts"></script>

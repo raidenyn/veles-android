@@ -10,7 +10,12 @@ describe('extension manifest', () => {
         expect(m.manifest_version).toBe(3);
         expect(m.name).toBe('Veles OTP');
         expect(m.version).toBe(pkg.version);
-        expect(m.permissions).toEqual(['storage', 'nativeMessaging']);
+        expect(m.permissions).toEqual([
+            'storage',
+            'nativeMessaging',
+            'offscreen',
+            'clipboardWrite',
+        ]);
         expect(m).not.toHaveProperty('host_permissions');
         expect(m).not.toHaveProperty('web_accessible_resources');
         expect(m.background?.service_worker).toBe('background.js');

@@ -10,6 +10,8 @@
 // read-only active-peer hints and hints never establish identity.
 
 import { ConnectorController } from './connector/controller';
+import { gateNativePort } from './connector/lifecycle';
+import { BootstrapLifecycle, activateGeneration } from './connector/bootstrap-lifecycle';
 import {
     synthesizeMissingHost,
     synthesizePortClosed,
@@ -1083,8 +1085,22 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
         return null;
     }
 
+    const guard = new BootstrapLifecycle(
+        (name, callback) => {
+            if (name === 'freeze' || name === 'resume') document.addEventListener(name, callback);
+            else window.addEventListener(name, callback);
+        },
+        () => window.location.reload(),
+    );
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted && guard.ended) window.location.reload();
+    });
     const ownership = createChromeConnectorOwnership();
     const ownershipResult = await ownership.claim();
+    guard.cleanup(() => {
+        void ownership.release();
+    });
+    if (guard.ended) return null;
     if (!ownershipResult.owner) {
         renderSecondaryPage(document, ownershipResult);
         return null;
@@ -1102,9 +1118,44 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
         });
     }
 
+    const token = await activateGeneration(
+        () => chrome.runtime.sendMessage({ type: 'veles.lifecycle.activate' }),
+        () => ownership.release(),
+    );
+    if (guard.ended) return null;
+    if (typeof token !== 'string') {
+        await ownership.release();
+        const status = document.getElementById('status');
+        if (status) status.textContent = 'Connector lifecycle unavailable. Reload to retry.';
+        document
+            .getElementById('reconnect-button')
+            ?.addEventListener('click', () => window.location.reload());
+        return null;
+    }
+    let ended = false;
+    let port: NativePortLike | null = null;
     const controller = new ConnectorController({
-        connectNative: (hostName: string) =>
-            chrome.runtime.connectNative(hostName) as unknown as NativePortLike,
+        connectNative: (hostName: string) => {
+            if (ended) throw new Error('Connector generation ended');
+            port = gateNativePort(
+                chrome.runtime.connectNative(hostName) as unknown as NativePortLike,
+                async () => {
+                    if (ended) return false;
+                    const result: unknown = await chrome.runtime.sendMessage({
+                        type: 'veles.lifecycle.check',
+                        token,
+                    });
+                    return (
+                        !ended &&
+                        typeof result === 'object' &&
+                        result !== null &&
+                        (result as { ok?: unknown }).ok === true
+                    );
+                },
+                () => chrome.runtime.lastError,
+            );
+            return port;
+        },
         lastError: () => chrome.runtime.lastError,
     });
     const app = new ConnectorApp({
@@ -1112,12 +1163,77 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
         view: new DocumentConnectorView(document),
         trustSource: createChromeTrustHintSource(),
     });
+    const copyStatus = document.getElementById('synthetic-copy-status');
+    const copyButton = document.getElementById('synthetic-copy-button');
+    const armButton = document.getElementById('synthetic-copy-arm');
+    let armed = false;
+    let copying = false;
+    const copy = async (): Promise<void> => {
+        if (ended || copying) return;
+        copying = true;
+        if (copyStatus) copyStatus.textContent = 'Copying synthetic test code…';
+        try {
+            const result: unknown = await chrome.runtime.sendMessage({
+                type: 'veles.clipboard.copy',
+                token,
+                code: '012345',
+            });
+            if (!ended && copyStatus)
+                copyStatus.textContent =
+                    typeof result === 'object' &&
+                    result !== null &&
+                    (result as { ok?: unknown }).ok === true
+                        ? 'Synthetic code copied.'
+                        : 'Copy failed. Transport remains connected; retry explicitly.';
+        } catch {
+            if (!ended && copyStatus)
+                copyStatus.textContent =
+                    'Copy failed. Transport remains connected; retry explicitly.';
+        } finally {
+            copying = false;
+        }
+    };
+    copyButton?.addEventListener('click', () => void copy());
+    armButton?.addEventListener('click', () => {
+        if (ended) return;
+        armed = true;
+        if (copyStatus)
+            copyStatus.textContent = 'Armed: next raw message copies synthetic code 012345 once.';
+    });
+    const stopRecords = controller.onRecord(() => {
+        // Diagnostic only: never interpret or copy raw record bytes as OTP data.
+        if (!armed || ended) return;
+        armed = false;
+        void copy();
+    });
+    const stopStatus = controller.onChange((snapshot) => {
+        if (!ended)
+            void chrome.runtime
+                .sendMessage({
+                    type: 'veles.lifecycle.status',
+                    token,
+                    connected: snapshot.connections.some(
+                        (connection) => connection.status === 'connected',
+                    ),
+                })
+                .catch(() => undefined);
+    });
     const onPageHide = (): void => {
+        if (ended) return;
+        ended = true;
+        armed = false;
+        // Invalidate synchronously before awaiting worker I/O or processing callbacks.
+        port?.disconnect();
+        stopRecords();
+        stopStatus();
         app.dispose();
+        productionApp = null;
+        void chrome.runtime
+            .sendMessage({ type: 'veles.lifecycle.end', token })
+            .catch(() => undefined);
         void ownership.release();
     };
-    window.addEventListener('pagehide', onPageHide, { once: true });
-    window.addEventListener('beforeunload', onPageHide, { once: true });
+    guard.cleanup(onPageHide);
     productionApp = app;
     void app.start();
     return app;
