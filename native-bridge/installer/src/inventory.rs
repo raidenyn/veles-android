@@ -11,12 +11,34 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::model::{
-    Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry, MAX_INVENTORY_BYTES,
-    MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES,
+    Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry, MAX_DOCUMENT_BYTES,
+    MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES, canonical_json,
 };
+
+/// The only supported package-inventory document schema generation.
+pub const INVENTORY_SCHEMA_VERSION: u32 = 1;
+/// Package inventory document file name at the package root.
+pub const PACKAGE_INVENTORY_FILE: &str = "inventory.json";
+/// Payload directory name at the package root.
+pub const PACKAGE_PAYLOAD_DIR: &str = "payload";
+
+/// The strict package-inventory document.
+///
+/// The descriptor's `payload_id` is the SHA-256 of the *exact bytes* of this
+/// document as produced by [`write_inventory`]; readers never re-serialize
+/// untrusted input to recompute it. No public constructor exists, so an
+/// inventory document cannot be assembled without the same normalization and
+/// bound checks `verify_inventory` applies.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InventoryDocument {
+    schema: u32,
+    entries: Vec<InventoryEntry>,
+}
 
 /// Normalize and validate one relative inventory path.
 ///
@@ -60,12 +82,62 @@ pub fn normalize_relative_path(path: &str) -> InstallResult<String> {
 /// `entries` slice verifies against any directory. A caller that needs "the root
 /// holds exactly this inventory" - for example to reject a planted DLL next to
 /// the executable - must enumerate the tree itself and compare it with
-/// `entries`; extra-file and enumeration checks are the caller's obligation.
+/// `entries`; extra-file and enumeration checks are the caller's obligation
+/// (`authenticate_package` in Task 4 does this for the package payload).
 ///
 /// Structural violations (path policy, counts, total size) are rejected before
 /// any file access; then each declared size and SHA-256 must match the file on
 /// disk. Symlinks and non-regular files are never opened.
 pub fn verify_inventory(root: &Path, entries: &[InventoryEntry]) -> InstallResult<()> {
+    let normalized_paths = validate_entries(entries)?;
+
+    let root_metadata = fs::symlink_metadata(root).map_err(|_| io_failure())?;
+    if !root_metadata.is_dir() {
+        return Err(io_failure());
+    }
+
+    for (entry, relative) in entries.iter().zip(normalized_paths) {
+        verify_entry(root, &relative, entry)?;
+    }
+    Ok(())
+}
+
+/// Serialize the canonical package-inventory document for `entries`.
+///
+/// The returned exact bytes are the input whose SHA-256 is the release
+/// descriptor's `payload_id`; this is the single document writer so packaging
+/// and authentication cannot disagree about the encoding.
+pub fn write_inventory(entries: &[InventoryEntry]) -> InstallResult<Vec<u8>> {
+    validate_entries(entries)?;
+    canonical_json(&InventoryDocument {
+        schema: INVENTORY_SCHEMA_VERSION,
+        entries: entries.to_vec(),
+    })
+}
+
+/// Strictly parse a package-inventory document.
+///
+/// The document is data, never code. Unknown/duplicate fields, another schema,
+/// out-of-bound counts/totals and non-canonical paths are rejected before any
+/// filesystem access. The caller must bind the exact document bytes to an
+/// authenticated digest before trusting the listed content.
+pub fn parse_inventory(bytes: &[u8]) -> InstallResult<Vec<InventoryEntry>> {
+    if bytes.is_empty() || bytes.len() > MAX_DOCUMENT_BYTES {
+        return Err(invalid_package());
+    }
+    let document: InventoryDocument =
+        serde_json::from_slice(bytes).map_err(|_| invalid_package())?;
+    if document.schema != INVENTORY_SCHEMA_VERSION {
+        return Err(invalid_package());
+    }
+    validate_entries(&document.entries)?;
+    Ok(document.entries)
+}
+
+/// Structural validation shared by every inventory reader/writer.
+///
+/// Returns the normalized `/`-joined paths in declaration order.
+fn validate_entries(entries: &[InventoryEntry]) -> InstallResult<Vec<String>> {
     if entries.len() > MAX_INVENTORY_ENTRIES {
         return Err(invalid_input());
     }
@@ -85,16 +157,7 @@ pub fn verify_inventory(root: &Path, entries: &[InventoryEntry]) -> InstallResul
         }
         normalized_paths.push(normalized);
     }
-
-    let root_metadata = fs::symlink_metadata(root).map_err(|_| io_failure())?;
-    if !root_metadata.is_dir() {
-        return Err(io_failure());
-    }
-
-    for (entry, relative) in entries.iter().zip(normalized_paths) {
-        verify_entry(root, &relative, entry)?;
-    }
-    Ok(())
+    Ok(normalized_paths)
 }
 
 fn verify_entry(root: &Path, relative: &str, entry: &InventoryEntry) -> InstallResult<()> {

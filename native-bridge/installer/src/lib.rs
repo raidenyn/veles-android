@@ -15,7 +15,10 @@ pub mod paths;
 pub mod platform;
 pub mod policy;
 
-pub use inventory::{normalize_relative_path, verify_inventory};
+pub use inventory::{
+    INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, normalize_relative_path,
+    parse_inventory, verify_inventory, write_inventory,
+};
 pub use model::{
     Channel, ChannelIdentity, DEVELOPMENT_HOST_NAME, Digest, FIXTURE_HOST_NAME, FailureCode,
     InstallFailure, InstallReport, InstallResult, InventoryEntry, MAX_API_VERSION,
@@ -30,14 +33,20 @@ pub use paths::{
     RECEIPT_FILE, ROOT_DIR_DEVELOPMENT, ROOT_DIR_FIXTURE, ROOT_DIR_PRODUCTION, STAGING_DIR,
     STATE_DIR, VERSIONS_DIR, root_dir_name,
 };
+#[cfg(target_os = "macos")]
+pub use platform::MacosPlatform;
+#[cfg(windows)]
+pub use platform::WindowsPlatform;
 pub use platform::{
-    FakePlatform, Faults, HostState, InstallLock, MAX_MANIFEST_PATH_BYTES, NativeManifest,
-    OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageKind,
-    PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, Registration, TrustProof,
-    ValidatedPath, WindowsPreimage, claim_owned_entries, claim_owned_registration, parse_manifest,
-    path_is_within,
+    AuthenticatedPackage, AuthenticatedSource, FakePlatform, Faults, HostState, InstallLock,
+    MAX_MANIFEST_PATH_BYTES, NativeManifest, OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry,
+    OwnedKind, OwnershipRecord, PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PackageKind,
+    PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, Registration,
+    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
+    ValidatedPath, WindowsPreimage, authenticate_package, claim_owned_entries,
+    claim_owned_registration, is_accepted_assessment, parse_manifest, path_is_within,
 };
 pub use policy::{
-    CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, effective_policy, parse_descriptor,
-    read_carrier, write_carrier,
+    CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, authorize_package_policy, effective_policy,
+    parse_descriptor, read_carrier, write_carrier,
 };

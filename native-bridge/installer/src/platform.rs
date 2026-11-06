@@ -21,6 +21,7 @@
 //! fail closed until Tasks 4, 5 and 8 implement them. [`FakePlatform`] wraps the
 //! same primitives with fault injection and call recording.
 
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
@@ -30,15 +31,33 @@ use std::sync::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::inventory::normalize_relative_path;
+use crate::inventory::{
+    PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, normalize_relative_path, parse_inventory,
+    verify_inventory,
+};
 use crate::model::{
-    Channel, Digest, FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES,
-    MAX_INVENTORY_ENTRIES, MAX_PUBLISHER_BYTES, ReleaseDescriptor, Target, validate_extension_id,
+    Channel, Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry,
+    MAX_DOCUMENT_BYTES, MAX_INVENTORY_ENTRIES, MAX_PUBLISHER_BYTES, ReleaseDescriptor, Target,
+    validate_extension_id,
 };
 use crate::paths::{
     InstallPaths, MAINTENANCE_DIR, MAX_ROOT_BYTES, STAGING_DIR, STATE_DIR, VERSIONS_DIR,
 };
-use crate::policy::CARRIER_HEADER_LEN;
+use crate::policy::{CARRIER_HEADER_LEN, read_carrier};
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(windows)]
+mod windows;
+// The PE carrier-resource parser is Windows-only in production but portable in
+// tests, so its coverage checks are exercised on every host.
+#[cfg(any(windows, test))]
+mod pe;
+
+#[cfg(target_os = "macos")]
+pub use macos::MacosPlatform;
+#[cfg(windows)]
+pub use windows::WindowsPlatform;
 
 /// The only ownership-record schema generation supported at this boundary.
 pub const OWNERSHIP_SCHEMA_VERSION: u32 = 1;
@@ -1058,6 +1077,320 @@ impl TrustProof {
     }
 }
 
+/// Native assessment verdict: WinVerifyTrust accepted the Authenticode
+/// signature, its certificate chain and the chain's revocation state.
+pub const TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE: &str = "windows-authenticode-trusted";
+/// Native assessment verdict: the macOS adapter accepted the strict
+/// code/resource seal, the Team-ID-pinned designated requirement and the
+/// Gatekeeper assessment.
+pub const TRUST_ASSESSMENT_MACOS_GATEKEEPER: &str = "macos-gatekeeper-assessed";
+/// Windows package member holding the Authenticode-signed policy carrier binary.
+pub const PACKAGE_WINDOWS_CARRIER: &str = "carrier.exe";
+/// macOS package member holding the sealed signed policy-carrier app bundle.
+pub const PACKAGE_MACOS_CARRIER: &str = "carrier.app";
+/// Upper bound on directory entries walked while checking a package payload tree.
+const MAX_PACKAGE_TREE_ENTRIES: usize = 1 << 20;
+
+/// Whether a [`TrustProof`] assessment verdict is one this engine accepts.
+///
+/// The vocabulary is closed: only a native adapter can produce these values, and
+/// any other string (including an adapter-specific "revoked"/"unsigned" string or
+/// a future verdict this build does not understand) fails closed.
+pub fn is_accepted_assessment(assessment: &str) -> bool {
+    matches!(
+        assessment,
+        TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE | TRUST_ASSESSMENT_MACOS_GATEKEEPER
+    )
+}
+
+/// One payload file of an [`AuthenticatedPackage`], bound to its exact content.
+///
+/// The handle is created only after the inventory document was authenticated by
+/// the descriptor digest and every declared file matched size and SHA-256. It
+/// names the package source, not a destination: staging (Task 6) must call
+/// [`AuthenticatedSource::revalidate`] immediately before copying, because the
+/// package directory is user-writable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedSource {
+    relative: String,
+    path: PathBuf,
+    size: u64,
+    sha256: Digest,
+    executable: bool,
+}
+
+impl AuthenticatedSource {
+    /// Normalized `/`-joined payload path (the installed inventory path).
+    pub fn relative(&self) -> &str {
+        &self.relative
+    }
+
+    /// Absolute path of the package source file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Authenticated file size.
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// Authenticated content digest.
+    pub fn sha256(&self) -> Digest {
+        self.sha256
+    }
+
+    /// Whether the authenticated inventory marks this file executable.
+    pub fn executable(&self) -> bool {
+        self.executable
+    }
+
+    /// Re-hash the source file immediately before copying it.
+    ///
+    /// A missing, replaced, linked or content-changed source is a failure; the
+    /// caller must never stage bytes that no longer match the authenticated
+    /// inventory.
+    pub fn revalidate(&self) -> InstallResult<()> {
+        let metadata = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(foreign_state()),
+            Err(_) => return Err(io_failure()),
+        };
+        if is_link_like(&metadata) || !metadata.is_file() {
+            return Err(unsafe_path());
+        }
+        if metadata.len() != self.size || hash_file(&self.path)? != self.sha256 {
+            return Err(foreign_state());
+        }
+        Ok(())
+    }
+}
+
+/// A package whose OS signature, embedded policy carrier, descriptor, publisher
+/// and complete payload inventory were verified against a caller-authorized
+/// release descriptor.
+///
+/// There is deliberately no public constructor: every value comes from
+/// [`authenticate_package`], which is the only place that turns injected OS
+/// evidence into package authority.
+#[derive(Debug, Clone)]
+pub struct AuthenticatedPackage {
+    source: PackageSource,
+    proof: TrustProof,
+    descriptor: ReleaseDescriptor,
+    payload: Vec<AuthenticatedSource>,
+}
+
+impl AuthenticatedPackage {
+    /// The canonical package root the evidence was gathered from.
+    pub fn package(&self) -> &PackageSource {
+        &self.source
+    }
+
+    /// The exact authenticated OS evidence and carrier bytes.
+    pub fn proof(&self) -> &TrustProof {
+        &self.proof
+    }
+
+    /// The authenticated descriptor (equal to the caller-authorized descriptor).
+    pub fn descriptor(&self) -> &ReleaseDescriptor {
+        &self.descriptor
+    }
+
+    /// The OS-verified signer identity (an exact publisher-policy string).
+    pub fn signer(&self) -> &str {
+        self.proof.signer()
+    }
+
+    /// The OS assessment verdict.
+    pub fn assessment(&self) -> &str {
+        self.proof.assessment()
+    }
+
+    /// The complete authenticated payload inventory with source handles.
+    pub fn payload(&self) -> &[AuthenticatedSource] {
+        &self.payload
+    }
+
+    /// The authenticated payload identity.
+    pub fn payload_id(&self) -> Digest {
+        self.descriptor.payload_id
+    }
+}
+
+/// Authenticate one extracted engine package against a caller-authorized release.
+///
+/// Contract, in order:
+///
+/// 1. The caller-supplied `expected` descriptor is structurally valid and is the
+///    release authorization anchor.
+/// 2. `package` is an existing directory and the platform adapter authenticates
+///    its own signed policy carrier (`carrier.exe` on Windows, `carrier.app` on
+///    macOS) and returns the OS signer/assessment plus the authenticated carrier
+///    bytes. Any OS denial (`TrustDenied`) or unavailable required assessment
+///    (`TrustUnavailable`) is returned unchanged.
+/// 3. The assessment verdict is in the closed native vocabulary, the carrier
+///    parses, its descriptor equals `expected` exactly, and the OS-verified signer
+///    is listed in that authenticated policy's publishers. Any mismatch is
+///    `TrustDenied`.
+/// 4. `<package>/inventory.json` hashes to `descriptor.payload_id`, parses
+///    strictly, matches every payload file's size and SHA-256, and `<package>/payload`
+///    holds exactly the inventoried tree (no unreferenced, linked or special
+///    file). A tampered payload is `TrustDenied`.
+///
+/// The function is read-only: it never locks, writes, publishes or removes and
+/// cannot change a prior installation. Failures never claim a fresh security
+/// assessment of a prior install (`prior_usable` stays unset for the operation
+/// layer to decide from receipts).
+pub fn authenticate_package(
+    platform: &impl Platform,
+    package: &Path,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<AuthenticatedPackage> {
+    expected.validate()?;
+    let source = PackageSource::open(package)?;
+    if source.kind() != PackageKind::Directory {
+        return Err(invalid_package());
+    }
+
+    let proof = platform.verify_trust(&source, expected)?;
+    let descriptor = authenticated_descriptor(&proof, expected)?;
+    let payload = authenticated_payload(&source, &descriptor)?;
+
+    Ok(AuthenticatedPackage {
+        source,
+        proof,
+        descriptor,
+        payload,
+    })
+}
+
+fn authenticated_descriptor(
+    proof: &TrustProof,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<ReleaseDescriptor> {
+    if !is_accepted_assessment(proof.assessment()) {
+        return Err(trust_denied());
+    }
+    let descriptor = read_carrier(proof.carrier()).map_err(|_| trust_denied())?;
+    if &descriptor != expected {
+        return Err(trust_denied());
+    }
+    if !descriptor
+        .policy
+        .publishers
+        .iter()
+        .any(|publisher| publisher == proof.signer())
+    {
+        return Err(trust_denied());
+    }
+    Ok(descriptor)
+}
+
+fn authenticated_payload(
+    source: &PackageSource,
+    descriptor: &ReleaseDescriptor,
+) -> InstallResult<Vec<AuthenticatedSource>> {
+    let payload_root = source.path().join(PACKAGE_PAYLOAD_DIR);
+    let inventory_path = source.path().join(PACKAGE_INVENTORY_FILE);
+    let bytes = match read_no_follow(&inventory_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(invalid_package()),
+        Err(_) => return Err(io_failure()),
+    };
+    if bytes.len() > MAX_DOCUMENT_BYTES {
+        return Err(invalid_package());
+    }
+    // The descriptor (itself signature-covered) authenticates the exact document
+    // bytes; no caller argument can substitute another inventory.
+    if Digest::of(&bytes) != descriptor.payload_id {
+        return Err(trust_denied());
+    }
+    let entries = parse_inventory(&bytes)?;
+    verify_inventory(&payload_root, &entries).map_err(|failure| match failure.code {
+        FailureCode::InvalidPackage => trust_denied(),
+        _ => failure,
+    })?;
+    verify_closed_payload_tree(&payload_root, &entries)?;
+
+    let mut payload = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let relative = normalize_relative_path(&entry.path)?;
+        payload.push(AuthenticatedSource {
+            path: payload_root.join(Path::new(&relative)),
+            relative,
+            size: entry.size,
+            sha256: entry.sha256,
+            executable: entry.executable,
+        });
+    }
+    Ok(payload)
+}
+
+/// Reject an unreferenced, linked or special file below the package payload.
+///
+/// `verify_inventory` only checks declared entries; the package itself can still
+/// hide a planted DLL next to the host. This walk requires the payload tree to be
+/// exactly the inventoried one, so an extra byte never reaches staging.
+fn verify_closed_payload_tree(root: &Path, entries: &[InventoryEntry]) -> InstallResult<()> {
+    let metadata = fs::symlink_metadata(root).map_err(|_| invalid_package())?;
+    if is_link_like(&metadata) || !metadata.is_dir() {
+        return Err(invalid_package());
+    }
+
+    let mut expected_files: HashSet<String> = HashSet::with_capacity(entries.len());
+    let mut expected_directories: HashSet<String> = HashSet::with_capacity(entries.len());
+    for entry in entries {
+        let normalized = normalize_relative_path(&entry.path)?;
+        expected_files.insert(normalized.clone());
+        let parts: Vec<&str> = normalized.split('/').collect();
+        let mut prefix = String::new();
+        for part in &parts[..parts.len() - 1] {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            expected_directories.insert(prefix.clone());
+        }
+    }
+
+    let mut stack = vec![(root.to_path_buf(), String::new())];
+    let mut visited = 0usize;
+    while let Some((directory, prefix)) = stack.pop() {
+        for entry in fs::read_dir(&directory).map_err(|_| io_failure())? {
+            let entry = entry.map_err(|_| io_failure())?;
+            visited += 1;
+            if visited > MAX_PACKAGE_TREE_ENTRIES {
+                return Err(invalid_package());
+            }
+            let name = entry.file_name();
+            let name = name.to_str().ok_or_else(unsafe_path)?;
+            let relative = if prefix.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let metadata = fs::symlink_metadata(entry.path()).map_err(|_| io_failure())?;
+            if is_link_like(&metadata) {
+                return Err(unsafe_path());
+            }
+            if metadata.is_file() {
+                if !expected_files.contains(&relative) {
+                    return Err(trust_denied());
+                }
+            } else if metadata.is_dir() {
+                if !expected_directories.contains(&relative) {
+                    return Err(trust_denied());
+                }
+                stack.push((entry.path(), relative));
+            } else {
+                return Err(unsafe_path());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The injected OS boundary. Tasks 4, 5 and 8 implement the native adapters.
 pub trait Platform {
     /// Acquire the exclusive per-user installer lock (nonblocking).
@@ -1087,6 +1420,17 @@ pub trait Platform {
     /// Classify whether an owned host is running.
     fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState>;
     /// Verify the OS signer/assessment and authenticated carrier coverage.
+    ///
+    /// `source` is the canonical engine package root (a directory). The adapter
+    /// locates its own signed policy carrier inside it (`carrier.exe` on Windows,
+    /// `carrier.app` on macOS), proves the OS signature and assessment, extracts
+    /// the embedded carrier bytes, and returns them with the OS-verified signer
+    /// identity and assessment verdict. It performs no filesystem mutation.
+    ///
+    /// Classification is part of the contract: an explicit OS denial or
+    /// revocation is `TrustDenied`; a required assessment that cannot be formed
+    /// (offline revocation data unavailable, broken OS trust environment) is
+    /// `TrustUnavailable`. Neither may be reported as success with a warning.
     fn verify_trust(
         &self,
         source: &PackageSource,
@@ -1155,7 +1499,9 @@ impl Platform for PortablePlatform {
         _source: &PackageSource,
         _expected: &ReleaseDescriptor,
     ) -> InstallResult<TrustProof> {
-        // Task 4 supplies WinVerifyTrust/Security.framework evidence.
+        // OS trust evidence is available only through the native adapters
+        // (`WindowsPlatform`/`MacosPlatform`); the portable adapter never
+        // fabricates a verdict.
         Err(InstallFailure::new(FailureCode::TrustUnavailable))
     }
 
@@ -1183,6 +1529,8 @@ pub struct Faults {
     pub host_state: HostState,
     /// Trust proof returned by `verify_trust` (`TrustUnavailable` by default).
     pub trust: Option<TrustProof>,
+    /// Force `verify_trust` to report an explicit OS denial/revocation.
+    pub trust_denied: bool,
 }
 
 impl Default for Faults {
@@ -1194,6 +1542,7 @@ impl Default for Faults {
             lock_busy: false,
             host_state: HostState::Unknown,
             trust: None,
+            trust_denied: false,
         }
     }
 }
@@ -1369,6 +1718,9 @@ impl Platform for FakePlatform {
         _expected: &ReleaseDescriptor,
     ) -> InstallResult<TrustProof> {
         self.observe(PlatformCall::VerifyTrust);
+        if self.faults.trust_denied {
+            return Err(InstallFailure::new(FailureCode::TrustDenied));
+        }
         self.faults
             .trust
             .clone()
@@ -1754,4 +2106,8 @@ fn io_failure() -> InstallFailure {
 
 fn foreign_state() -> InstallFailure {
     InstallFailure::new(FailureCode::ForeignState)
+}
+
+fn trust_denied() -> InstallFailure {
+    InstallFailure::new(FailureCode::TrustDenied)
 }

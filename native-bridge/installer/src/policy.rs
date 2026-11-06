@@ -13,6 +13,7 @@ use crate::model::{
     FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor,
     ReleasePolicy,
 };
+use crate::platform::AuthenticatedPackage;
 
 /// Carrier magic; the trailing `1` is the container family, not the version.
 pub const CARRIER_MAGIC: [u8; 8] = *b"VELESPC1";
@@ -146,6 +147,24 @@ pub fn effective_policy(
             merge(current, incoming)
         }
     }
+}
+
+/// Compose the policy an *authenticated* package may apply to `operation`.
+///
+/// The incoming policy is read from the authenticated descriptor owned by
+/// [`AuthenticatedPackage`], never from a caller-supplied argument, so a caller
+/// cannot supply a fresher policy than the signature actually covers. The
+/// conservative [`effective_policy`] rules then apply: repair must stay at the
+/// live epoch and may only tighten; rollback intersects publisher/rollback
+/// eligibility and accumulates denials; install requires an equal-or-higher
+/// epoch. A stale but correctly signed policy is `PolicyDenied`, never a
+/// success with a warning.
+pub fn authorize_package_policy(
+    package: &AuthenticatedPackage,
+    current: &ReleasePolicy,
+    operation: Operation,
+) -> InstallResult<ReleasePolicy> {
+    effective_policy(current, &package.descriptor().policy, operation)
 }
 
 fn merge(current: &ReleasePolicy, incoming: &ReleasePolicy) -> InstallResult<ReleasePolicy> {
