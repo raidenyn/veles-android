@@ -11,7 +11,11 @@
 use std::ffi::OsString;
 use std::io::Read;
 use std::path::Path;
-use std::time::Duration;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use super::TrustVerdict;
 use crate::model::Channel;
@@ -27,14 +31,15 @@ pub(super) const TEAM_PUBLISHER_PREFIX: &str = "team:";
 /// the executable or be re-parsed as an option.
 pub(super) const SPCTL_PATH: &str = "/usr/sbin/spctl";
 
-/// Upper bound on one Gatekeeper assessment.
+/// Upper bound on one Gatekeeper assessment, end to end (spawn, run, drain).
 ///
 /// The assessment can consult the network (notarization and revocation data), so
-/// the bound is generous, but an installer must never wait forever.
-pub(super) const SPCTL_TIMEOUT: Duration = Duration::from_secs(60);
+/// the bound is not tiny, but an installer must never wait forever.
+pub(super) const SPCTL_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Bound on captured `spctl` stdout/stderr (both are drained, but not retained
-/// beyond this many bytes per stream).
+/// Bound on captured `spctl` output: one budget shared by stdout and stderr
+/// together. Both streams are drained concurrently and completely so the child
+/// never blocks on a full pipe, but no more than this many bytes are retained.
 pub(super) const MAX_SPCTL_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// The Team ID named by a `team:<ID>` publisher, when it is well formed.
@@ -148,25 +153,133 @@ pub(super) fn classify_assessment(status: Option<i32>, output: &[u8]) -> SpctlOu
     }
 }
 
-/// Read at most `limit` bytes from `reader`, discarding the rest.
+/// Poll interval while waiting for the assessment child.
+#[cfg_attr(not(any(target_os = "macos", unix)), allow(dead_code))]
+const POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// What one bounded child run produced.
+#[cfg_attr(not(any(target_os = "macos", unix)), allow(dead_code))]
+pub(super) struct Captured {
+    /// The exit status, or `None` when the child could not be waited for or was
+    /// killed at the deadline (no verdict may be invented from that).
+    pub(super) status: Option<ExitStatus>,
+    /// Captured stdout followed by stderr.
+    pub(super) output: Vec<u8>,
+}
+
+/// Claim up to `want` bytes of the shared capture budget.
+#[cfg_attr(not(any(target_os = "macos", unix)), allow(dead_code))]
+fn claim(budget: &AtomicUsize, want: usize) -> usize {
+    let mut current = budget.load(Ordering::Relaxed);
+    loop {
+        let take = current.min(want);
+        if take == 0 {
+            return 0;
+        }
+        match budget.compare_exchange(current, current - take, Ordering::AcqRel, Ordering::Relaxed)
+        {
+            Ok(_) => return take,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
+/// Drain `reader` to the end, retaining only what the shared `budget` allows.
 ///
-/// A child process must be fully drained (a full pipe would block it), so the
-/// reader keeps reading after the retained buffer is full rather than stopping.
-pub(super) fn read_bounded(reader: &mut impl Read, limit: usize) -> Vec<u8> {
+/// A child must be drained completely (a full pipe blocks it in `write`), so the
+/// reader keeps reading after the budget is spent and simply discards the rest.
+#[cfg_attr(not(any(target_os = "macos", unix)), allow(dead_code))]
+fn drain(reader: &mut impl Read, budget: &AtomicUsize) -> Vec<u8> {
     let mut retained = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
         match reader.read(&mut chunk) {
             Ok(0) => return retained,
             Ok(read) => {
-                let room = limit.saturating_sub(retained.len());
-                let keep = room.min(read);
+                let keep = claim(budget, read);
                 retained.extend_from_slice(&chunk[..keep]);
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => return retained,
         }
     }
+}
+
+/// Run `command` to completion within `timeout`, capturing at most `budget` bytes
+/// of stdout and stderr **combined**.
+///
+/// Both pipes are drained concurrently while the child runs, so output larger
+/// than a pipe buffer cannot stall it. One deadline covers the whole run: at
+/// expiry the child is killed and reaped, and collecting the captured output
+/// never waits past it, even when a grandchild keeps a pipe open.
+#[cfg_attr(not(any(target_os = "macos", unix)), allow(dead_code))]
+pub(super) fn run_bounded(
+    command: &mut Command,
+    timeout: Duration,
+    budget: usize,
+) -> std::io::Result<Captured> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let deadline = Instant::now() + timeout;
+    let mut child = command.spawn()?;
+
+    let budget = Arc::new(AtomicUsize::new(budget));
+    let (sender, receiver) = mpsc::channel::<(bool, Vec<u8>)>();
+    let mut readers = 0usize;
+    if let Some(mut stdout) = child.stdout.take() {
+        let (budget, sender) = (Arc::clone(&budget), sender.clone());
+        thread::spawn(move || {
+            let _ = sender.send((true, drain(&mut stdout, &budget)));
+        });
+        readers += 1;
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let (budget, sender) = (Arc::clone(&budget), sender.clone());
+        thread::spawn(move || {
+            let _ = sender.send((false, drain(&mut stderr, &budget)));
+        });
+        readers += 1;
+    }
+    drop(sender);
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                thread::sleep(POLL_INTERVAL);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    for _ in 0..readers {
+        let wait = deadline.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(wait) {
+            Ok((true, bytes)) => stdout = bytes,
+            Ok((false, bytes)) => stderr = bytes,
+            // The deadline passed (or a reader is gone): keep what exists. A
+            // reader still blocked on a pipe some other process holds open is
+            // abandoned, never joined.
+            Err(_) => break,
+        }
+    }
+    stdout.extend(stderr);
+    Ok(Captured {
+        status,
+        output: stdout,
+    })
 }
 
 // CSCommon.h OSStatus values. The SecBase certificate values
@@ -428,16 +541,104 @@ mod tests {
     fn captured_output_is_bounded_and_fully_drained() {
         let payload = vec![b'x'; MAX_SPCTL_OUTPUT_BYTES + 128];
         let mut reader = Cursor::new(payload);
-        let captured = read_bounded(&mut reader, MAX_SPCTL_OUTPUT_BYTES);
+        let budget = AtomicUsize::new(MAX_SPCTL_OUTPUT_BYTES);
+        let captured = drain(&mut reader, &budget);
         assert_eq!(captured.len(), MAX_SPCTL_OUTPUT_BYTES);
         assert_eq!(reader.position(), (MAX_SPCTL_OUTPUT_BYTES + 128) as u64);
         assert!(captured.iter().all(|byte| *byte == b'x'));
 
         let mut small = Cursor::new(b"carrier.app: accepted\n".to_vec());
+        let budget = AtomicUsize::new(MAX_SPCTL_OUTPUT_BYTES);
+        assert_eq!(drain(&mut small, &budget), b"carrier.app: accepted\n");
+    }
+
+    #[cfg(unix)]
+    fn shell(script: &str) -> Command {
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(script);
+        command
+    }
+
+    #[cfg(unix)]
+    fn sleeper() -> Command {
+        let mut command = Command::new("/bin/sleep");
+        command.arg("30");
+        command
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_fills_either_pipe_is_drained_while_it_runs() {
+        // Sixteen megabytes on one stream overflow any pipe buffer (the kernel here buffers a few megabytes before blocking a writer): a parent that only
+        // reads after the child exits leaves it blocked in write(2) until the
+        // deadline, and the otherwise assessable result becomes "unavailable".
+        for (stream, script) in [
+            ("stdout", "head -c 16777216 /dev/zero"),
+            ("stderr", "head -c 16777216 /dev/zero >&2"),
+        ] {
+            let started = Instant::now();
+            let captured = run_bounded(
+                &mut shell(script),
+                Duration::from_secs(5),
+                MAX_SPCTL_OUTPUT_BYTES,
+            )
+            .expect("spawns");
+            assert!(
+                started.elapsed() < Duration::from_secs(4),
+                "{stream}: the child stalled on a full pipe until the deadline"
+            );
+            let status = captured.status.expect("the child exited on its own");
+            assert_eq!(status.code(), Some(0), "{stream}");
+            assert_eq!(
+                captured.output.len(),
+                MAX_SPCTL_OUTPUT_BYTES,
+                "{stream}: capture stops at the budget"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn both_streams_share_one_capture_budget() {
+        // Each stream stays below any pipe buffer, so nothing can stall: the only
+        // thing under test is that the budget covers stdout and stderr together.
+        let captured = run_bounded(
+            &mut shell("head -c 60000 /dev/zero; head -c 60000 /dev/zero >&2"),
+            Duration::from_secs(5),
+            MAX_SPCTL_OUTPUT_BYTES,
+        )
+        .expect("spawns");
+        assert_eq!(captured.status.expect("exited").code(), Some(0));
         assert_eq!(
-            read_bounded(&mut small, MAX_SPCTL_OUTPUT_BYTES),
-            b"carrier.app: accepted\n"
+            captured.output.len(),
+            MAX_SPCTL_OUTPUT_BYTES,
+            "captured {} bytes against a {MAX_SPCTL_OUTPUT_BYTES} byte budget for both streams",
+            captured.output.len()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_deadline_is_end_to_end_and_kills_the_child() {
+        let started = Instant::now();
+        let captured = run_bounded(
+            &mut sleeper(),
+            Duration::from_millis(300),
+            MAX_SPCTL_OUTPUT_BYTES,
+        )
+        .expect("spawns");
+        assert!(captured.status.is_none(), "a killed child has no verdict");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the run outlived its deadline: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn gatekeeper_limits_match_the_plan() {
+        assert_eq!(SPCTL_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(MAX_SPCTL_OUTPUT_BYTES, 64 * 1024);
     }
 
     #[test]

@@ -69,10 +69,9 @@ use std::mem::size_of;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::{Path, PathBuf};
-use std::process::{self, Child, Command, ExitStatus, Stdio};
+use std::process::{self, Command};
 use std::ptr;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::macos_trust as policy;
 use super::native::{
@@ -99,8 +98,6 @@ use crate::paths::InstallPaths;
 const CARRIER_RESOURCE_RELATIVE: &str = "Resources/veles-policy-carrier";
 /// Bound on the sealed carrier bytes (`TrustProof` enforces the same limit).
 const MAX_CARRIER_BYTES: usize = crate::policy::MAX_CARRIER_DOCUMENT_BYTES;
-/// Poll interval while waiting for the bounded Gatekeeper assessment.
-const SPCTL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 
@@ -640,9 +637,6 @@ fn check_gatekeeper(carrier: &Path) -> InstallResult<()> {
     let mut command = Command::new(policy::SPCTL_PATH);
     command
         .args(policy::assessment_argv(carrier))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
         // Loader injection cannot change which program runs (the path is
         // absolute), but the variables are removed anyway; any assessment the
         // tool cannot form is a fail-closed `TrustUnavailable`.
@@ -652,56 +646,19 @@ fn check_gatekeeper(carrier: &Path) -> InstallResult<()> {
         .env_remove("DYLD_PRINT_TO_FILE")
         .env("LC_ALL", "C");
 
-    let mut child = command.spawn().map_err(|_| unavailable())?;
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let status = wait_bounded(&mut child);
-
-    let mut output = Vec::new();
-    if let Some(mut stdout) = stdout {
-        output.extend(policy::read_bounded(
-            &mut stdout,
-            policy::MAX_SPCTL_OUTPUT_BYTES,
-        ));
-    }
-    if let Some(mut stderr) = stderr {
-        output.extend(policy::read_bounded(
-            &mut stderr,
-            policy::MAX_SPCTL_OUTPUT_BYTES,
-        ));
-    }
-
-    let code = status.and_then(|status| status.code());
-    match policy::classify_assessment(code, &output) {
+    // One 30-second end-to-end deadline and one 64 KiB capture budget shared by
+    // both streams, drained concurrently (see [`policy::run_bounded`]).
+    let captured = policy::run_bounded(
+        &mut command,
+        policy::SPCTL_TIMEOUT,
+        policy::MAX_SPCTL_OUTPUT_BYTES,
+    )
+    .map_err(|_| unavailable())?;
+    let code = captured.status.and_then(|status| status.code());
+    match policy::classify_assessment(code, &captured.output) {
         policy::SpctlOutcome::Accepted => Ok(()),
         policy::SpctlOutcome::Denied => Err(trust_denied()),
         policy::SpctlOutcome::Unavailable => Err(unavailable()),
-    }
-}
-
-/// Wait for the assessment, bounded by [`policy::SPCTL_TIMEOUT`].
-///
-/// Returns `None` for a timeout or wait failure after killing and reaping the
-/// child, so no process is left behind and no verdict is invented.
-fn wait_bounded(child: &mut Child) -> Option<ExitStatus> {
-    let deadline = Instant::now() + policy::SPCTL_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                thread::sleep(SPCTL_POLL_INTERVAL);
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
     }
 }
 
