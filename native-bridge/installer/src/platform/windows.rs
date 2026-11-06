@@ -96,8 +96,8 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN,
     FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_BASIC_INFO, FILE_BEGIN,
-    FILE_DISPOSITION_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FileBasicInfo, FileDispositionInfo, FlushFileBuffers,
+    FILE_DISPOSITION_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileBasicInfo, FileDispositionInfo, FlushFileBuffers,
     GETFINALPATHNAMEBYHANDLE_FLAGS, GetFileInformationByHandleEx, GetFileSizeEx, OPEN_EXISTING,
     ReadFile, SetFileInformationByHandle, SetFilePointerEx, WriteFile,
 };
@@ -599,7 +599,9 @@ fn verify_host(
     // The anchored, no-follow handle the containment walk produced is the very
     // handle WinVerifyTrust assesses: the host is not reopened by pathname.
     let path = root.join(&relative);
-    let handle = ReadOnlyFile::adopt(crate::inventory::open_entry(root, &relative)?);
+    let handle = ReadOnlyFile::adopt(crate::inventory::open_entry_for_assessment(
+        root, &relative,
+    )?);
     let wide = wide_path(&path)?;
     let signer = authenticate_file(&handle, &wide)?;
     HostAssessment::new(signer, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE)
@@ -1516,6 +1518,29 @@ fn open_below_status(
     options: NTCREATEFILE_CREATE_OPTIONS,
     security: *const SECURITY_DESCRIPTOR,
 ) -> Result<File, NTSTATUS> {
+    open_below_shared(
+        parent,
+        name,
+        access,
+        disposition,
+        options,
+        security,
+        FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+    )
+}
+
+/// [`open_below_status`] with an explicit share mode. The permissive default lets
+/// the installer walk and mutate its own trees; a handle whose byte-stability is
+/// part of a trust claim passes `FILE_SHARE_READ` alone.
+fn open_below_shared(
+    parent: HANDLE,
+    name: &OsStr,
+    access: u32,
+    disposition: NTCREATEFILE_CREATE_DISPOSITION,
+    options: NTCREATEFILE_CREATE_OPTIONS,
+    security: *const SECURITY_DESCRIPTOR,
+    share: FILE_SHARE_MODE,
+) -> Result<File, NTSTATUS> {
     let wide: Vec<u16> = name.encode_wide().collect();
     if wide.is_empty() || wide.contains(&0) {
         return Err(NTSTATUS(STATUS_OBJECT_NAME_INVALID as i32));
@@ -1545,7 +1570,7 @@ fn open_below_status(
             &mut status_block,
             None,
             Default::default(),
-            FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+            share,
             disposition,
             options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
             None,
@@ -1574,6 +1599,37 @@ pub(crate) fn anchored_open_regular_below(
     parts: &[&str],
     between: &mut dyn FnMut(),
 ) -> InstallResult<File> {
+    anchored_open_below(
+        root,
+        parts,
+        between,
+        FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+    )
+}
+
+/// [`anchored_open_regular_below`] for a file WinVerifyTrust is about to assess.
+///
+/// The lookup is the same anchored, no-follow walk, but the final file is opened
+/// with `FILE_SHARE_READ` only - the sharing the pre-anchoring assessment handle
+/// ([`ReadOnlyFile::open`]) had - so no writer, deleter or renamer can change the
+/// assessed bytes while the handle is held, and a concurrently writable host is
+/// refused. Ancestor directories stay permissive: they are anchors, not content.
+///
+/// NOT RUN on this host: it compiles for `x86_64-pc-windows-msvc` only.
+pub(crate) fn anchored_open_assessment_below(
+    root: &Path,
+    parts: &[&str],
+    between: &mut dyn FnMut(),
+) -> InstallResult<File> {
+    anchored_open_below(root, parts, between, FILE_SHARE_READ)
+}
+
+fn anchored_open_below(
+    root: &Path,
+    parts: &[&str],
+    between: &mut dyn FnMut(),
+    leaf_share: FILE_SHARE_MODE,
+) -> InstallResult<File> {
     use std::os::windows::fs::OpenOptionsExt;
 
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
@@ -1597,13 +1653,19 @@ pub(crate) fn anchored_open_regular_below(
         } else {
             FILE_NON_DIRECTORY_FILE
         };
-        let file = open_below_status(
+        let share = if directory {
+            FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE
+        } else {
+            leaf_share
+        };
+        let file = open_below_shared(
             HANDLE(parent.as_raw_handle()),
             OsStr::new(name),
             GENERIC_READ.0,
             NT_FILE_OPEN,
             kind | FILE_OPEN_FOR_BACKUP_INTENT,
             ptr::null(),
+            share,
         )
         .map_err(|status| {
             if nt_status_is_absent(status) {

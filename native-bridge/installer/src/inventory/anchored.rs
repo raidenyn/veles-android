@@ -38,6 +38,19 @@ pub(super) fn open_regular_below(
     imp::open_regular_below(root, parts, between)
 }
 
+/// [`open_regular_below`] for a file an OS trust assessment will read through the
+/// returned handle. The walk is identical; where the OS has sharing modes
+/// (Windows) the final file is held `FILE_SHARE_READ`-only so its bytes cannot
+/// change under the assessment.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(super) fn open_for_assessment_below(
+    root: &Path,
+    parts: &[&str],
+    between: &mut dyn FnMut(),
+) -> InstallResult<File> {
+    imp::open_for_assessment_below(root, parts, between)
+}
+
 // The `open(2)`/`errno` constants below are written out per target because this
 // crate takes no `libc` dependency. They are listed only for the Linux
 // architectures whose values were checked (the asm-generic set, plus the 32/64-bit
@@ -180,6 +193,16 @@ mod imp {
         }
         Ok(file)
     }
+
+    /// Unix has no sharing modes: the assessment handle is the anchored handle.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn open_for_assessment_below(
+        root: &Path,
+        parts: &[&str],
+        between: &mut dyn FnMut(),
+    ) -> InstallResult<File> {
+        open_regular_below(root, parts, between)
+    }
 }
 
 #[cfg(windows)]
@@ -195,6 +218,14 @@ mod imp {
         between: &mut dyn FnMut(),
     ) -> InstallResult<File> {
         crate::platform::anchored_open_regular_below(root, parts, between)
+    }
+
+    pub(super) fn open_for_assessment_below(
+        root: &Path,
+        parts: &[&str],
+        between: &mut dyn FnMut(),
+    ) -> InstallResult<File> {
+        crate::platform::anchored_open_assessment_below(root, parts, between)
     }
 }
 
@@ -264,6 +295,7 @@ mod unsupported {
 )))]
 mod imp {
     pub(super) use super::unsupported::open_regular_below;
+    pub(super) use super::unsupported::open_regular_below as open_for_assessment_below;
 }
 
 #[cfg(test)]

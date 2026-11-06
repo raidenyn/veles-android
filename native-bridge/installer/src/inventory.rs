@@ -348,6 +348,16 @@ pub(crate) fn open_entry_with(
     anchored::open_regular_below(root, &parts, between)
 }
 
+/// [`open_entry`] for a file an OS trust assessment will read through the returned
+/// handle (the Windows host assessment). Same anchored walk and failure vocabulary;
+/// on Windows the final file is additionally held `FILE_SHARE_READ`-only so no
+/// writer, deleter or renamer can change the assessed bytes while it is held.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn open_entry_for_assessment(root: &Path, relative: &str) -> InstallResult<File> {
+    let parts: Vec<&str> = relative.split('/').collect();
+    anchored::open_for_assessment_below(root, &parts, &mut || {})
+}
+
 fn verify_entry(root: &Path, relative: &str, entry: &InventoryEntry) -> InstallResult<()> {
     let mut file = open_entry(root, relative)?;
     let metadata = file.metadata().map_err(|_| io_failure())?;
@@ -540,6 +550,103 @@ mod tests {
                 "the read followed the swapped ancestor out of the payload root"
             ),
         }
+    }
+
+    /// The host-assessment open is the same anchored walk: an ancestor swapped after
+    /// it was checked cannot redirect it, and every refusal keeps its code. (On
+    /// Windows it additionally holds the leaf `FILE_SHARE_READ`-only; that is
+    /// covered by the Windows-only test below, which this host cannot run.)
+    #[cfg(unix)]
+    #[test]
+    fn the_assessment_open_keeps_the_anchored_walk() {
+        use std::os::unix::fs::symlink;
+
+        let base = std::env::temp_dir().join(format!("veles-assess-anchor-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("payload");
+        std::fs::create_dir_all(root.join("dir")).expect("tree");
+        std::fs::create_dir_all(base.join("outside")).expect("outside");
+        std::fs::write(root.join("dir/host"), b"the package's host").expect("host");
+        std::fs::write(base.join("outside/host"), b"attacker-chosen bytes").expect("outside");
+        symlink(base.join("outside/host"), root.join("dir/linked")).expect("link");
+
+        let mut bytes = Vec::new();
+        open_entry_for_assessment(&root, "dir/host")
+            .expect("an ordinary host opens")
+            .read_to_end(&mut bytes)
+            .expect("read");
+        assert_eq!(bytes, b"the package's host");
+        assert_eq!(
+            open_entry_for_assessment(&root, "dir/linked")
+                .expect_err("a linked leaf")
+                .code,
+            FailureCode::UnsafePath
+        );
+        assert_eq!(
+            open_entry_for_assessment(&root, "dir/absent")
+                .expect_err("absent")
+                .code,
+            FailureCode::InvalidPackage
+        );
+
+        // The same swap as the R4 test, through the assessment entry point.
+        let parts = ["dir", "host"];
+        let swap_root = root.clone();
+        let outside = base.join("outside");
+        let outcome = anchored::open_for_assessment_below(&root, &parts, &mut || {
+            std::fs::rename(swap_root.join("dir"), swap_root.join("dir.moved")).expect("move");
+            symlink(&outside, swap_root.join("dir")).expect("link");
+        });
+        let content = outcome.map(|mut file| {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).expect("read");
+            bytes
+        });
+        let _ = std::fs::remove_dir_all(&base);
+        if let Ok(bytes) = content {
+            assert_eq!(
+                bytes, b"the package's host",
+                "followed the swapped ancestor"
+            );
+        }
+    }
+
+    /// N4 (Windows only - NOT RUN on this Linux host): the handle a host is assessed
+    /// through excludes writers, deleters and renamers for as long as it is held, as
+    /// the pre-anchoring `ReadOnlyFile::open` handle did, while the plain anchored
+    /// read open (hashing) deliberately does not.
+    #[cfg(windows)]
+    #[test]
+    fn the_assessment_handle_excludes_writers_deleters_and_renamers() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let base = std::env::temp_dir().join(format!("veles-assess-share-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("payload");
+        std::fs::create_dir_all(&root).expect("tree");
+        let host = root.join("host.exe");
+        std::fs::write(&host, b"host bytes").expect("host");
+
+        let held = open_entry_for_assessment(&root, "host.exe").expect("assessment handle");
+        let writer = std::fs::OpenOptions::new().write(true).open(&host);
+        assert!(
+            writer.is_err(),
+            "a writer was admitted beside the assessment"
+        );
+        let deleter = std::fs::OpenOptions::new()
+            .access_mode(0x0001_0000) // DELETE
+            .open(&host);
+        assert!(
+            deleter.is_err(),
+            "a deleter was admitted beside the assessment"
+        );
+        assert!(std::fs::remove_file(&host).is_err());
+        assert!(std::fs::rename(&host, root.join("renamed.exe")).is_err());
+        drop(held);
+        // Control: once the assessment handle is released the file is writable again,
+        // so the refusals above come from the held handle and nothing else.
+        assert!(std::fs::OpenOptions::new().write(true).open(&host).is_ok());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// The anchored walk keeps the failure vocabulary the callers (and the
