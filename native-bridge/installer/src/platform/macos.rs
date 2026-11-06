@@ -83,7 +83,7 @@ use super::native::{
     read_back, require_published_manifest,
 };
 use super::{
-    CarrierEntry, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
+    CarrierEntry, HostAssessment, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
     PACKAGE_MACOS_CARRIER, PackageKind, PackageSource, PathKind, Platform, ProcessIdentity,
     ProcessImage, ProcessObservation, ProcessScope, ProcessTable, Registration,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath, inspect_host_processes,
@@ -434,6 +434,18 @@ impl Platform for MacosPlatform {
         verify_trust(source, expected)
     }
 
+    /// Strict signature, designated requirement, resource seal and Gatekeeper
+    /// assessment of the **host** code: the enclosing `.app` bundle with all
+    /// nested code (or the bare Mach-O), never only the carrier.
+    fn verify_host(
+        &self,
+        root: &Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<HostAssessment> {
+        verify_host(root, executable, expected)
+    }
+
     fn carrier_entries(&self, source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
         native_carrier_entries(self, source)
     }
@@ -511,6 +523,69 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
         TRUST_ASSESSMENT_MACOS_GATEKEEPER,
         carrier_bytes,
     )
+}
+
+/// The code object the OS must assess for a host executable: the outermost
+/// `*.app` bundle containing it (validated as a whole, nested code included), or
+/// the executable itself when it is not inside a bundle.
+fn host_subject(root: &Path, relative: &str) -> std::path::PathBuf {
+    let mut subject = root.to_path_buf();
+    for component in relative.split('/') {
+        subject.push(component);
+        if component.len() > 4 && component.ends_with(".app") {
+            return subject;
+        }
+    }
+    root.join(relative)
+}
+
+/// Assess the host code with the same strict path the carrier takes.
+///
+/// The requirement is built only from a Team ID the authenticated release policy
+/// already lists, `SecStaticCodeCheckValidity` runs with the shared strict flags
+/// (nested code and the resource seal included, revocation never bypassed) and
+/// the Gatekeeper execution assessment must accept the same subject.
+fn verify_host(
+    root: &Path,
+    executable: &str,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<HostAssessment> {
+    if expected.target != Target::MacosArm64 {
+        return Err(unsupported());
+    }
+    let relative = crate::inventory::normalize_relative_path(executable)?;
+    // Containment (no linked ancestor or leaf) and regular-file proof.
+    drop(crate::inventory::open_entry(root, &relative)?);
+    let subject = host_subject(root, &relative);
+    let url = file_url(&subject)?;
+
+    let mut static_code: SecStaticCodeRef = ptr::null();
+    // SAFETY: `url` is a live CFURL for the host code path.
+    let status = unsafe { SecStaticCodeCreateWithPath(url.0, 0, &mut static_code) };
+    if status != 0 {
+        return Err(classify(status));
+    }
+    let static_code = Cf::new(static_code).ok_or_else(unavailable)?;
+
+    let team_id = observed_team_id(&static_code)?;
+    if !policy::is_authorized_team(&expected.policy.publishers, &team_id) {
+        return Err(trust_denied());
+    }
+    let requirement_text =
+        policy::publisher_requirement(expected.channel, &team_id).ok_or_else(trust_denied)?;
+    let requirement_text = cf_string_value(&requirement_text)?;
+    let mut requirement: SecRequirementRef = ptr::null();
+    // SAFETY: the CFString is live and `requirement` is a live out-parameter.
+    let status = unsafe { SecRequirementCreateWithString(requirement_text.0, 0, &mut requirement) };
+    if status != 0 {
+        return Err(classify(status));
+    }
+    let requirement = Cf::new(requirement).ok_or_else(trust_denied)?;
+
+    validate(&static_code, &requirement)?;
+    check_gatekeeper(&subject)?;
+
+    HostAssessment::new(format!("team:{team_id}"), TRUST_ASSESSMENT_MACOS_GATEKEEPER)
 }
 
 /// The OS-observed Team ID, shape-checked.

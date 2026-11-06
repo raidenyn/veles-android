@@ -58,14 +58,14 @@ use crate::journal::{
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry,
-    MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor, WarningCode, canonical_json,
+    MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor, ReleasePolicy, WarningCode, canonical_json,
     extension_origin, parse_version,
 };
 use crate::paths::{InstallPaths, VERSIONS_DIR};
 use crate::platform::{
     AuthenticatedPackage, CarrierEntry, MAX_CARRIER_BYTES, MAX_CARRIER_ENTRIES, NativeManifest,
     OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageSource,
-    PathKind, Platform, Registration, StateDocument, ValidatedPath, WindowsPreimage,
+    PathKind, Platform, Registration, StateDocument, ValidatedPath, WindowsPreimage, assess_host,
     claim_owned_entries, claim_owned_registration, is_accepted_assessment, package_carrier_name,
     parse_manifest, read_no_follow, registration_is_owned, require_quiescent,
     require_quiescent_within,
@@ -112,6 +112,10 @@ struct Plan {
     /// The signed carrier artifact's installed root, relative to the install
     /// root (`versions/<version>-<payload-id>/carrier.exe|carrier.app`).
     carrier_relative: String,
+    /// The immutable version directory, relative to the install root.
+    version_relative: String,
+    /// The one executable the manifest selects, relative to the version directory.
+    host_relative: String,
 }
 
 /// Install one authenticated package.
@@ -505,7 +509,12 @@ pub(crate) fn activate_retained(
     // Durable intent before the activation mutation.
     journal.write(platform, paths)?;
 
-    match run_retained(platform, paths, &journal, &current, quiescence) {
+    let host = InstalledHost {
+        version_relative: &version_relative,
+        executable_relative: &executable.path,
+        descriptor,
+    };
+    match run_retained(platform, paths, &journal, &current, quiescence, &host) {
         Ok(()) => Ok(completed_report(&journal).with_warnings(warnings)),
         Err(failure) => settle_failed_install(platform, paths, &journal, failure),
     }
@@ -650,6 +659,13 @@ fn current_api_window(paths: &InstallPaths, current: &Receipt) -> Option<(u32, u
         .map(|retained| retained.api_window())
 }
 
+/// Where the installed host of a retained release lives and which release it is.
+struct InstalledHost<'a> {
+    version_relative: &'a str,
+    executable_relative: &'a str,
+    descriptor: &'a ReleaseDescriptor,
+}
+
 /// The rollback transaction body, after the Prepared journal is durable.
 fn run_retained(
     platform: &impl Platform,
@@ -657,7 +673,17 @@ fn run_retained(
     journal: &Journal,
     current: &Receipt,
     quiescence: Duration,
+    host: &InstalledHost<'_>,
 ) -> InstallResult<()> {
+    // The retained host is re-assessed in its installed form like a fresh one.
+    verify_installed_host(
+        platform,
+        paths,
+        host.version_relative,
+        host.executable_relative,
+        host.descriptor,
+        &journal.release_policy,
+    )?;
     require_quiescent_within(platform, paths, quiescence)?;
     let registration = registration_from(&journal.manifest, journal.preimage.as_ref())?;
     platform.publish_manifest(paths, &registration)?;
@@ -1166,6 +1192,8 @@ impl Plan {
             retained_relative,
             retained,
             carrier_relative,
+            version_relative,
+            host_relative: executable.relative().to_owned(),
         })
     }
 }
@@ -1185,6 +1213,17 @@ fn run(
         .with_completed_claims()
         .with_phase(Phase::Staged);
     journal.write(platform, paths)?;
+
+    // The installed host, not just the package copy, must be launchable and
+    // assessable by the OS before the manifest may select it.
+    verify_installed_host(
+        platform,
+        paths,
+        &plan.version_relative,
+        &plan.host_relative,
+        package.descriptor(),
+        &journal.release_policy,
+    )?;
 
     // Recheck quiescence immediately before the activation mutation.
     require_quiescent(platform, paths)?;
@@ -1235,6 +1274,38 @@ fn run(
     Journal::clear(platform, paths)
 }
 
+/// Prove the **installed** host is launchable and OS-assessed before activation.
+///
+/// Two independent facts, both checked on the installed object: the executable
+/// carries the owner-only launch permission the authenticated inventory recorded,
+/// and the OS assesses the installed host code (and, on macOS, its bundle and
+/// nested code) as acceptable for a publisher the effective policy lists. A
+/// denial or an unavailable assessment is returned unchanged and nothing has been
+/// activated.
+fn verify_installed_host(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    version_relative: &str,
+    executable_relative: &str,
+    descriptor: &ReleaseDescriptor,
+    policy: &ReleasePolicy,
+) -> InstallResult<()> {
+    let relative = format!("{version_relative}/{executable_relative}");
+    let handle = ValidatedPath::new(paths, Path::new(&relative), PathKind::File)?;
+    platform.check_launch_permissions(&handle, true)?;
+    let anchor = ReleaseDescriptor {
+        policy: policy.clone(),
+        ..descriptor.clone()
+    };
+    assess_host(
+        platform,
+        &paths.root().join(version_relative),
+        executable_relative,
+        &anchor,
+        &policy.publishers,
+    )
+}
+
 /// Stage every authenticated payload file into the immutable version directory.
 ///
 /// The directory is on the destination volume (inside the fixed root) and is
@@ -1258,6 +1329,11 @@ fn stage_payload(
         let bytes = source.read_verified()?;
         let target = ValidatedPath::new(paths, Path::new(relative), PathKind::NewFile)?;
         platform.write_durable(&target, &bytes)?;
+        // The authenticated inventory's `executable` bit crosses the platform
+        // boundary here: applied and verified through the written file's own
+        // handle, flushed, before anything can select it.
+        let written = target.adopt(PathKind::File)?;
+        platform.apply_launch_permissions(&written, source.executable())?;
     }
     let target = ValidatedPath::new(
         paths,

@@ -634,6 +634,31 @@ impl Platform for RelaunchingPlatform {
         })
     }
 
+    fn apply_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.apply_launch_permissions(path, executable)
+    }
+
+    fn check_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.check_launch_permissions(path, executable)
+    }
+
+    fn verify_host(
+        &self,
+        root: &std::path::Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<veles_bridge_installer::HostAssessment> {
+        self.inner.verify_host(root, executable, expected)
+    }
+
     fn verify_trust(
         &self,
         source: &veles_bridge_installer::PackageSource,
@@ -769,6 +794,31 @@ impl Platform for InterveningPlatform {
                 .expect("intervening registration");
         }
         Ok(state)
+    }
+
+    fn apply_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.apply_launch_permissions(path, executable)
+    }
+
+    fn check_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.check_launch_permissions(path, executable)
+    }
+
+    fn verify_host(
+        &self,
+        root: &std::path::Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<veles_bridge_installer::HostAssessment> {
+        self.inner.verify_host(root, executable, expected)
     }
 
     fn verify_trust(
@@ -958,6 +1008,31 @@ impl Platform for HookedPlatform {
             _ => {}
         }
         Ok(state)
+    }
+
+    fn apply_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.apply_launch_permissions(path, executable)
+    }
+
+    fn check_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.check_launch_permissions(path, executable)
+    }
+
+    fn verify_host(
+        &self,
+        root: &std::path::Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<veles_bridge_installer::HostAssessment> {
+        self.inner.verify_host(root, executable, expected)
     }
 
     fn verify_trust(

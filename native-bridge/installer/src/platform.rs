@@ -2040,6 +2040,77 @@ impl TrustProof {
     }
 }
 
+/// OS-verified signer/assessment evidence for the **host** executable or bundle.
+///
+/// Distinct from [`TrustProof`] on purpose: it proves nothing about policy and
+/// carries no carrier bytes. It answers one question - did the OS assess this
+/// host code (its signature, publisher, resource seal and execution assessment)
+/// as acceptable - and the engine then checks the signer against the
+/// authenticated publisher policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAssessment {
+    signer: String,
+    assessment: String,
+}
+
+impl HostAssessment {
+    /// Construct host evidence from the OS signer identity and verdict.
+    pub fn new(signer: impl Into<String>, assessment: impl Into<String>) -> InstallResult<Self> {
+        let signer = signer.into();
+        let assessment = assessment.into();
+        if signer.is_empty()
+            || signer.len() > MAX_PUBLISHER_BYTES
+            || signer.chars().any(char::is_control)
+            || assessment.is_empty()
+            || assessment.len() > MAX_PUBLISHER_BYTES
+            || assessment.chars().any(char::is_control)
+        {
+            return Err(invalid_input());
+        }
+        Ok(Self { signer, assessment })
+    }
+
+    /// The OS-verified signer/publisher identity of the host code.
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+
+    /// The OS assessment verdict for the host code.
+    pub fn assessment(&self) -> &str {
+        &self.assessment
+    }
+}
+
+/// Require the OS to assess the host code under `root` and the engine to accept
+/// the result.
+///
+/// `root` is the directory the host lives in - the package `payload/` directory
+/// before install, the immutable version directory after it - and `executable`
+/// the normalized relative path of the one executable the manifest will select.
+/// The adapter assesses that file (and, on macOS, the enclosing bundle with all
+/// nested code). Denial and unavailability are returned unchanged; an assessment
+/// that is not this target's accepted verdict, or a signer the authenticated
+/// publisher policy does not list, is `TrustDenied`. Nothing is mutated.
+pub fn assess_host(
+    platform: &impl Platform,
+    root: &Path,
+    executable: &str,
+    expected: &ReleaseDescriptor,
+    publishers: &[String],
+) -> InstallResult<()> {
+    let assessment = platform.verify_host(root, executable, expected)?;
+    if !is_accepted_assessment(assessment.assessment(), expected.target) {
+        return Err(trust_denied());
+    }
+    if !publishers
+        .iter()
+        .any(|publisher| publisher == assessment.signer())
+    {
+        return Err(trust_denied());
+    }
+    Ok(())
+}
+
 /// Native assessment verdict: WinVerifyTrust accepted the Authenticode
 /// signature, its certificate chain and the chain's revocation state.
 pub const TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE: &str = "windows-authenticode-trusted";
@@ -2409,6 +2480,20 @@ pub fn authenticate_package(
     let (payload, canonical_inventory, sealed_inventory) =
         authenticated_payload(&source, &contents.descriptor, contents.sealed_inventory)?;
 
+    // The carrier's signature authenticates the policy, not the code that will
+    // run. The one executable the manifest will select is assessed by the OS in
+    // its package form and by a publisher the authenticated policy lists.
+    let mut executables = payload.iter().filter(|source| source.executable());
+    if let (Some(host), None) = (executables.next(), executables.next()) {
+        assess_host(
+            platform,
+            &source.path().join(PACKAGE_PAYLOAD_DIR),
+            host.relative(),
+            &contents.descriptor,
+            &contents.descriptor.policy.publishers,
+        )?;
+    }
+
     Ok(AuthenticatedPackage {
         source,
         proof,
@@ -2603,6 +2688,56 @@ pub trait Platform {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock>;
     /// Write all bytes, flush and read the exact bytes back.
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()>;
+    /// Apply and verify the launch permission of one staged payload file.
+    ///
+    /// `path` is the handle of a file this transaction just wrote (adopted as
+    /// [`PathKind::File`] so its identity is captured). The implementation opens
+    /// the leaf without following links, verifies the opened object against the
+    /// captured identity, sets owner-only permissions through that handle
+    /// (`0700` when `executable`, `0600` otherwise on Unix), flushes, and reads
+    /// the final permission back from the handle. On Windows launch is decided by
+    /// the user-only ACL the file was created with, so the call verifies the
+    /// object and changes nothing.
+    fn apply_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        apply_launch_permissions_checked(path, executable)
+    }
+    /// Re-verify (without changing anything) that `path` is launchable exactly as
+    /// the authenticated inventory says. Run immediately before the activation
+    /// mutation, so a permission lost between staging and activation fails closed.
+    fn check_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        check_launch_permissions_checked(path, executable)
+    }
+    /// Verify the OS signature, publisher and execution assessment of the **host**
+    /// code, not the policy carrier.
+    ///
+    /// `root` is the directory holding the host (`payload/` of a package, or the
+    /// immutable version directory of an installed release) and `executable` the
+    /// normalized relative path of the executable the manifest selects. On macOS
+    /// the adapter must assess the enclosing `.app` bundle with all nested code
+    /// and its resource seal; on Windows the Authenticode signature, chain and
+    /// revocation state of the executable. An explicit OS denial is `TrustDenied`,
+    /// an assessment that cannot be formed is `TrustUnavailable`; neither may be
+    /// reported as success. The adapter performs no filesystem mutation.
+    ///
+    /// The default fails closed so a platform without a real host assessment can
+    /// never authorize an installation.
+    fn verify_host(
+        &self,
+        root: &Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<HostAssessment> {
+        let _ = (root, executable, expected);
+        Err(InstallFailure::new(FailureCode::TrustUnavailable))
+    }
     /// Replace one owned file's bytes without writing through its inode.
     ///
     /// Unlike [`Platform::write_durable`] on an existing path, this stages the
@@ -2949,6 +3084,23 @@ pub struct Faults {
     /// Fail the N-th state-document read (1-based); read faults are modelable
     /// because every state read goes through the platform boundary.
     pub fail_state_read_at: Option<usize>,
+    /// Make `apply_launch_permissions` a no-op, as a platform that failed to
+    /// carry the executable bit would: the pre-activation check must then refuse.
+    pub skip_launch_permissions: bool,
+    /// Host assessment returned by `verify_host`. `None` derives it from the
+    /// injected `trust` proof (the host is signed like the carrier).
+    pub host: Option<HostFault>,
+}
+
+/// What an injected `verify_host` reports.
+#[derive(Debug, Clone)]
+pub enum HostFault {
+    /// The OS denies the host code (unsigned, revoked, bad seal, wrong signer).
+    Denied,
+    /// The OS cannot form an assessment (offline revocation data, helper failure).
+    Unavailable,
+    /// The OS assesses the host with this signer and verdict.
+    Assessed { signer: String, assessment: String },
 }
 
 impl Default for Faults {
@@ -2965,6 +3117,8 @@ impl Default for Faults {
             tear_at_mutation: None,
             fail_flush_after_state_write_at: None,
             fail_state_read_at: None,
+            skip_launch_permissions: false,
+            host: None,
         }
     }
 }
@@ -2986,8 +3140,11 @@ pub enum PlatformCall {
     InspectHosts,
     VerifyTrust,
     VerifyRetained,
+    VerifyHost,
     CarrierEntries,
     InstallCarrier,
+    SetLaunchPermissions,
+    CheckLaunchPermissions,
     RemoveOwned,
     FlushParent,
 }
@@ -3006,6 +3163,7 @@ impl PlatformCall {
                 | Self::QuarantineStateDocument
                 | Self::CreateDirectory
                 | Self::InstallCarrier
+                | Self::SetLaunchPermissions
                 | Self::ReplaceManifest
                 | Self::PublishManifest
                 | Self::PublishRegistration
@@ -3024,6 +3182,7 @@ struct FakeState {
     state_reads: usize,
     published_preimages: Vec<Option<WindowsPreimage>>,
     retained_verifications: Vec<PathBuf>,
+    host_verifications: Vec<(PathBuf, String)>,
 }
 
 /// A fault-injectable [`Platform`] over the portable primitives.
@@ -3073,6 +3232,11 @@ impl FakePlatform {
     /// The Windows preimage carried by every registration publication call.
     pub fn published_preimages(&self) -> Vec<Option<WindowsPreimage>> {
         self.fake_state().published_preimages.clone()
+    }
+
+    /// The `(root, executable)` pairs handed to `verify_host`, in order.
+    pub fn host_verifications(&self) -> Vec<(PathBuf, String)> {
+        self.fake_state().host_verifications.clone()
     }
 
     /// The version directories handed to `verify_retained`, in order.
@@ -3291,6 +3455,69 @@ impl Platform for FakePlatform {
             .trust
             .clone()
             .ok_or_else(|| InstallFailure::new(FailureCode::TrustUnavailable))
+    }
+
+    fn apply_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.begin_mutation(PlatformCall::SetLaunchPermissions)?;
+        if self.faults.skip_launch_permissions {
+            return Ok(());
+        }
+        apply_launch_permissions_checked(path, executable)
+    }
+
+    fn check_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.observe(PlatformCall::CheckLaunchPermissions);
+        check_launch_permissions_checked(path, executable)
+    }
+
+    fn verify_host(
+        &self,
+        root: &Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<HostAssessment> {
+        self.observe(PlatformCall::VerifyHost);
+        self.fake_state()
+            .host_verifications
+            .push((root.to_path_buf(), executable.to_owned()));
+        if self.faults.trust_denied {
+            return Err(InstallFailure::new(FailureCode::TrustDenied));
+        }
+        match &self.faults.host {
+            Some(HostFault::Denied) => Err(InstallFailure::new(FailureCode::TrustDenied)),
+            Some(HostFault::Unavailable) => Err(InstallFailure::new(FailureCode::TrustUnavailable)),
+            Some(HostFault::Assessed { signer, assessment }) => {
+                HostAssessment::new(signer.clone(), assessment.clone())
+            }
+            // No scripted host verdict: the fake host is signed like the carrier
+            // when carrier evidence was injected, and otherwise by the first
+            // publisher the authenticated policy lists, with this target's
+            // accepted verdict. Tests that need a denial, an outage or a foreign
+            // signer script it with [`HostFault`].
+            None => match self.faults.trust.as_ref() {
+                Some(proof) => HostAssessment::new(proof.signer(), proof.assessment()),
+                None => {
+                    let signer = expected
+                        .policy
+                        .publishers
+                        .first()
+                        .ok_or_else(|| InstallFailure::new(FailureCode::TrustUnavailable))?;
+                    let assessment = match expected.target {
+                        Target::WindowsX64 => TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
+                        Target::MacosArm64 => TRUST_ASSESSMENT_MACOS_GATEKEEPER,
+                    };
+                    HostAssessment::new(signer.clone(), assessment)
+                }
+            },
+        }
     }
 
     fn carrier_entries(&self, source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
@@ -3805,6 +4032,67 @@ pub(crate) fn link_target_digest(path: &Path) -> InstallResult<Digest> {
 pub(crate) fn link_target_text(path: &Path) -> InstallResult<String> {
     let target = fs::read_link(path).map_err(|_| unsafe_path())?;
     target.to_str().map(str::to_owned).ok_or_else(unsafe_path)
+}
+
+/// Owner-only permission for a staged payload file.
+#[cfg(unix)]
+const fn launch_mode(executable: bool) -> u32 {
+    if executable { 0o700 } else { 0o600 }
+}
+
+/// Open the leaf of `path` without following links and prove it is the object
+/// validation captured.
+fn open_verified_leaf(path: &ValidatedPath) -> InstallResult<File> {
+    path.revalidate()?;
+    let file = open_no_follow(path.rendered()).map_err(|_| unsafe_path())?;
+    let metadata = file.metadata().map_err(|_| io_failure())?;
+    if !metadata.is_file() {
+        return Err(unsafe_path());
+    }
+    path.verify_open(&metadata, &identity_of_file(&file)?)?;
+    Ok(file)
+}
+
+fn apply_launch_permissions_checked(path: &ValidatedPath, executable: bool) -> InstallResult<()> {
+    let file = open_verified_leaf(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        // `fchmod` on the verified handle: never a path that could be swapped.
+        file.set_permissions(fs::Permissions::from_mode(launch_mode(executable)))
+            .map_err(|_| io_failure())?;
+        file.sync_all().map_err(|_| io_failure())?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = executable;
+        drop(file);
+    }
+    check_launch_permissions_checked(path, executable)
+}
+
+fn check_launch_permissions_checked(path: &ValidatedPath, executable: bool) -> InstallResult<()> {
+    let file = open_verified_leaf(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = file
+            .metadata()
+            .map_err(|_| io_failure())?
+            .permissions()
+            .mode()
+            & 0o777;
+        if mode != launch_mode(executable) {
+            return Err(io_failure());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (executable, file);
+    }
+    Ok(())
 }
 
 fn replace_manifest_checked(staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {

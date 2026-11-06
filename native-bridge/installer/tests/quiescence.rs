@@ -329,6 +329,31 @@ impl Platform for ScriptedPlatform {
         Ok(inspect_host_processes(paths, &self.table))
     }
 
+    fn apply_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.apply_launch_permissions(path, executable)
+    }
+
+    fn check_launch_permissions(
+        &self,
+        path: &ValidatedPath,
+        executable: bool,
+    ) -> InstallResult<()> {
+        self.inner.check_launch_permissions(path, executable)
+    }
+
+    fn verify_host(
+        &self,
+        root: &std::path::Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<veles_bridge_installer::HostAssessment> {
+        self.inner.verify_host(root, executable, expected)
+    }
+
     fn verify_trust(
         &self,
         source: &PackageSource,

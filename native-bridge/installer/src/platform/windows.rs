@@ -124,11 +124,11 @@ use super::native::{
 use super::pe;
 use super::windows_trust as trust_status;
 use super::{
-    CarrierEntry, HostState, ImageClass, InstallLock, MAX_MANIFEST_PATH_BYTES, OwnedEntry,
-    OwnedImages, PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource, PathKind, Platform,
-    ProcessIdentity, ProcessImage, ProcessObservation, ProcessScope, ProcessTable, Registration,
-    TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath, WindowsPreimage,
-    inspect_host_processes, path_is_within,
+    CarrierEntry, HostAssessment, HostState, ImageClass, InstallLock, MAX_MANIFEST_PATH_BYTES,
+    OwnedEntry, OwnedImages, PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource, PathKind,
+    Platform, ProcessIdentity, ProcessImage, ProcessObservation, ProcessScope, ProcessTable,
+    Registration, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath,
+    WindowsPreimage, inspect_host_processes, path_is_within,
 };
 use crate::cleanup::RemoveOutcome;
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
@@ -524,6 +524,17 @@ impl Platform for WindowsPlatform {
         verify_trust(source, expected)
     }
 
+    /// Authenticode over the **host executable** itself (package or installed
+    /// form), through the same chain/revocation path as the carrier.
+    fn verify_host(
+        &self,
+        root: &Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<HostAssessment> {
+        verify_host(root, executable, expected)
+    }
+
     fn carrier_entries(&self, source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
         native_carrier_entries(self, source)
     }
@@ -569,6 +580,30 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
         TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
         carrier_bytes.to_vec(),
     )
+}
+
+/// Assess one host executable with WinVerifyTrust.
+///
+/// The path is walked component by component with no-follow semantics before it
+/// is opened (a linked ancestor or leaf is `UnsafePath`), the verification runs
+/// over the handle that was opened, and revocation checking is never disabled.
+fn verify_host(
+    root: &Path,
+    executable: &str,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<HostAssessment> {
+    if expected.target != Target::WindowsX64 {
+        return Err(unsupported());
+    }
+    let relative = crate::inventory::normalize_relative_path(executable)?;
+    // Containment and regular-file proof; the handle itself is dropped before the
+    // trust handle is opened below.
+    drop(crate::inventory::open_entry(root, &relative)?);
+    let path = root.join(&relative);
+    let handle = ReadOnlyFile::open(&path)?;
+    let wide = wide_path(&path)?;
+    let signer = authenticate_file(&handle, &wide)?;
+    HostAssessment::new(signer, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE)
 }
 
 /// The Windows process table.

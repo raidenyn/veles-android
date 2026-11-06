@@ -577,6 +577,16 @@ impl<'a> RepairPlan<'a> {
                 file.source.sha256(),
                 &bytes,
             )?;
+            // Intact bytes with a lost launch permission are damage too: the
+            // authenticated inventory's `executable` bit is re-applied through
+            // the file's own handle.
+            let handle = ValidatedPath::new(paths, Path::new(&file.relative), PathKind::File)?;
+            if platform
+                .check_launch_permissions(&handle, file.source.executable())
+                .is_err()
+            {
+                platform.apply_launch_permissions(&handle, file.source.executable())?;
+            }
         }
         restore_bytes(
             platform,
