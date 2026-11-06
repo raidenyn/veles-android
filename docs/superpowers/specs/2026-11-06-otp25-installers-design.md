@@ -1,7 +1,8 @@
 # OTP-25: Signed per-user native-bridge installers
 
-Status: **Draft — awaiting owner approval.** Design only; no implementation or
-release acceptance is authorized by this document.
+Status: **Approach 1 approved for planning, 2026-11-06.** The owner requested
+“Approve approach 1. Generate the plan and stop.” No implementation or release
+acceptance is authorized by this document.
 
 ## Intent and authority
 
@@ -17,9 +18,9 @@ and its OTP-25 acceptance criteria. Preserve the separate acceptance obligations
 in #94, #102, #103, #125 and #127. Earlier feasibility results are not installer
 acceptance.
 
-The owner requested a design first after the standalone approach was proposed.
-Detailed tool and transaction choices below are **designer recommendations**,
-not previously approved owner decisions.
+The owner requested a design first, then approved the standalone approach for
+planning. Detailed tool and transaction choices below are **designer choices**,
+not individually specified owner requirements.
 
 ## Existing system
 
@@ -57,7 +58,7 @@ silently treating implementation/CI success as physical or release acceptance.
 
 ## Approaches
 
-1. **Standalone platform installers — recommended.** Pinned NSIS on Windows and
+1. **Standalone platform installers — selected by the owner.** Pinned NSIS on Windows and
    a small signed/notarized macOS installer application distributed in a stapled
    DMG, sharing a Rust transaction engine. Explicit per-user behavior, modest
    runtime surface, no Tauri. Costs: native UI/build glue and transaction tests.
@@ -68,7 +69,7 @@ silently treating implementation/CI success as physical or release acceptance.
    an adequate signed end-user install/repair/uninstall experience or acceptance
    substitute. Retain only as a separate development workflow.
 
-Select approach 1 for this draft. A system-wide macOS PKG is deliberately not
+Approach 1 is selected. A system-wide macOS PKG is deliberately not
 selected: a root installer script must not guess which user's home to mutate.
 
 ## Components and ownership
@@ -378,5 +379,6 @@ installation or weakening acceptance requires a new explicit owner decision.
 - [x] Fresh-context builder check and resolve material planning questions.
   Reviewer asked for offline/revocation semantics; the policy above records the
   designer's resolution and its offline-freshness limitation.
-- [ ] Owner approval of this design.
-- [ ] Implementation plan (only after approval); no implementation in this change.
+- [x] Owner approval of approach 1 for planning; no implementation authorization.
+- [x] Implementation plan: `../plans/2026-11-06-otp25-installers.md`.
+  No implementation in this change.
