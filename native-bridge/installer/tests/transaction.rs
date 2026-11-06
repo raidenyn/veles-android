@@ -677,9 +677,88 @@ fn crash_before_every_platform_mutation() {
     }
 }
 
-/// Dies at every durable boundary *inside* the platform primitives: after a file
-/// is created, after its bytes are written, after the flush, after the read-back,
-/// around every rename, directory flush, unlink and registration removal.
+const WRITE_DURABLE_POINTS: [&str; 4] = [
+    "write_durable: created, empty",
+    "write_durable: written, not flushed",
+    "write_durable: flushed, not read back",
+    "write_durable: verified, parent entry not flushed",
+];
+const REPLACE_FILE_POINTS: [&str; 2] = [
+    "replace_file: revalidated, live entry untouched",
+    "replace_file: renamed, parent not flushed",
+];
+
+/// The named crash points each mutation of a clean **install** crosses on the
+/// portable adapter, written out by hand. This is the inventory the crash test is
+/// held to; it is deliberately independent of the implementation's own counting.
+///
+/// Explicitly *not* covered, so the test makes no claim about them:
+/// * `PublishRegistration` - the portable adapter has no durable registry
+///   primitive (registration is the manifest file, written by `PublishManifest`);
+///   native HKCU publication is a Windows-only adapter and NOT RUN on this host.
+/// * the bundle-tree (`.app`) form of `InstallCarrier` - the fixture carrier is a
+///   single file; the native metadata-preserving copies are NOT RUN.
+/// * removal, quarantine and uninstall primitives - the install transaction does
+///   not cross them; an unclassified call fails the test rather than passing it.
+fn expected_boundaries(call: PlatformCall) -> Vec<&'static str> {
+    match call {
+        PlatformCall::WriteDurable | PlatformCall::InstallCarrier => WRITE_DURABLE_POINTS.to_vec(),
+        PlatformCall::WriteStateDocument | PlatformCall::PublishManifest => WRITE_DURABLE_POINTS
+            .into_iter()
+            .chain(REPLACE_FILE_POINTS)
+            .collect(),
+        PlatformCall::CreateDirectory => {
+            vec!["create_directory: created, permissions not yet applied"]
+        }
+        #[cfg(unix)]
+        PlatformCall::SetLaunchPermissions => vec![
+            "apply_launch_permissions: opened, mode unchanged",
+            "apply_launch_permissions: mode set, not flushed",
+            "apply_launch_permissions: mode flushed, not re-checked",
+        ],
+        // No permission bits to set on a non-Unix portable adapter.
+        #[cfg(not(unix))]
+        PlatformCall::SetLaunchPermissions => Vec::new(),
+        PlatformCall::PublishRegistration => Vec::new(),
+        other => panic!("the install inventory does not classify {other:?}"),
+    }
+}
+
+/// Every mutation's crossings, in order, equal the hand-written inventory.
+fn assert_boundary_inventory(platform: &FakePlatform, label: &str) {
+    let mutations = platform.mutations();
+    let log = platform.boundary_log();
+    for (index, call) in mutations.iter().enumerate() {
+        let observed: Vec<String> = log
+            .iter()
+            .filter(|crossing| crossing.mutation == index + 1)
+            .map(|crossing| {
+                assert_eq!(
+                    crossing.call, *call,
+                    "{label}: crossing attributed to a call"
+                );
+                format!("{}: {}", crossing.primitive, crossing.point)
+            })
+            .collect();
+        assert_eq!(
+            observed,
+            expected_boundaries(*call),
+            "{label}: mutation {} ({call:?}) crossed an unexpected set of crash points",
+            index + 1
+        );
+    }
+    assert!(
+        log.iter()
+            .all(|crossing| crossing.mutation >= 1 && crossing.mutation <= mutations.len()),
+        "{label}: a crash point was crossed outside any mutation"
+    );
+}
+
+/// Dies at every named durable boundary *inside* the platform primitives that a
+/// clean install crosses on the portable adapter (see [`expected_boundaries`] for
+/// the hand-written inventory and for what it does not cover): after a file is
+/// created, written, flushed, read back, renamed, after a directory is created and
+/// around the launch-permission change.
 #[test]
 fn crash_inside_every_durable_primitive() {
     for scenario in [Scenario::Fresh, Scenario::Upgrade] {
@@ -688,11 +767,18 @@ fn crash_inside_every_durable_primitive() {
         let platform = counted.platform();
         install(&platform, &counted.paths, counted.package.clone()).expect("clean install");
         let total = platform.boundary_count();
-        assert!(
-            total >= 3 * platform.mutations().len(),
-            "{}: several boundaries per platform mutation ({total} for {} mutations)",
-            scenario.label(),
-            platform.mutations().len()
+        // The oracle is the explicit inventory below, not a count the implementation
+        // produced: an omitted crash point changes the named sequence and fails.
+        assert_boundary_inventory(&platform, scenario.label());
+        assert_eq!(
+            total,
+            platform
+                .mutations()
+                .iter()
+                .map(|call| expected_boundaries(*call).len())
+                .sum::<usize>(),
+            "{}: every boundary is accounted for",
+            scenario.label()
         );
 
         let mut observed = std::collections::BTreeSet::new();

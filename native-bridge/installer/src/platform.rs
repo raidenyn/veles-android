@@ -45,7 +45,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -3098,23 +3097,58 @@ impl Platform for PortablePlatform {
     }
 }
 
-thread_local! {
-    /// The armed crash-boundary probe of the [`FakePlatform`] call in progress.
-    static PROBE: std::cell::RefCell<Option<(Arc<AtomicUsize>, Option<usize>)>> =
-        const { std::cell::RefCell::new(None) };
+/// One crossing of a crash point, as recorded by an armed probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundaryCrossing {
+    /// 1-based ordinal of the platform mutation attempt that crossed it.
+    pub mutation: usize,
+    /// The platform call that was in progress.
+    pub call: PlatformCall,
+    /// The durable primitive containing the crash point (e.g. `write_durable`).
+    pub primitive: &'static str,
+    /// The named point inside that primitive (e.g. `written, not flushed`).
+    pub point: &'static str,
 }
 
-/// A point inside a durable primitive at which a process could die.
+/// The armed probe: where crossings are logged, which crossing dies, and the call
+/// in progress.
+struct Probe {
+    log: Arc<Mutex<Vec<BoundaryCrossing>>>,
+    panic_at: Option<usize>,
+    mutation: usize,
+    call: PlatformCall,
+}
+
+thread_local! {
+    /// The armed crash-boundary probe of the [`FakePlatform`] call in progress.
+    static PROBE: std::cell::RefCell<Option<Probe>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A named point inside a durable primitive at which a process could die.
 ///
 /// A no-op unless a [`FakePlatform`] armed the probe for the current call. When
-/// armed, every crossing is counted, and the crossing numbered `panic_at_boundary`
-/// panics - a simulated process death *inside* a file creation, write, flush,
-/// rename, directory flush or removal, with no caller cleanup running.
-fn crash_point() {
+/// armed, every crossing is logged (primitive and point by name, so a test can
+/// compare the log with an explicit inventory instead of a count the
+/// implementation produced), and the crossing numbered `panic_at_boundary` panics:
+/// a simulated process death *inside* a file creation, write, flush, rename,
+/// directory flush or removal, with no caller cleanup running.
+fn crash_point(primitive: &'static str, point: &'static str) {
     PROBE.with(|probe| {
-        if let Some((counter, panic_at)) = probe.borrow().as_ref() {
-            let crossing = counter.fetch_add(1, AtomicOrdering::SeqCst) + 1;
-            if *panic_at == Some(crossing) {
+        if let Some(probe) = probe.borrow().as_ref() {
+            let crossing = {
+                let mut log = probe
+                    .log
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                log.push(BoundaryCrossing {
+                    mutation: probe.mutation,
+                    call: probe.call,
+                    primitive,
+                    point,
+                });
+                log.len()
+            };
+            if probe.panic_at == Some(crossing) {
                 panic!("injected process death at durable boundary {crossing}");
             }
         }
@@ -3126,8 +3160,20 @@ fn crash_point() {
 struct ProbeGuard;
 
 impl ProbeGuard {
-    fn arm(counter: &Arc<AtomicUsize>, panic_at: Option<usize>) -> Self {
-        PROBE.with(|probe| *probe.borrow_mut() = Some((Arc::clone(counter), panic_at)));
+    fn arm(
+        log: &Arc<Mutex<Vec<BoundaryCrossing>>>,
+        panic_at: Option<usize>,
+        mutation: usize,
+        call: PlatformCall,
+    ) -> Self {
+        PROBE.with(|probe| {
+            *probe.borrow_mut() = Some(Probe {
+                log: Arc::clone(log),
+                panic_at,
+                mutation,
+                call,
+            });
+        });
         Self
     }
 }
@@ -3308,7 +3354,7 @@ struct FakeState {
 pub struct FakePlatform {
     faults: Faults,
     state: Mutex<FakeState>,
-    boundaries: Arc<AtomicUsize>,
+    boundaries: Arc<Mutex<Vec<BoundaryCrossing>>>,
 }
 
 impl FakePlatform {
@@ -3320,18 +3366,39 @@ impl FakePlatform {
         Self {
             faults,
             state: Mutex::new(FakeState::default()),
-            boundaries: Arc::new(AtomicUsize::new(0)),
+            boundaries: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     /// How many durable boundaries the primitives crossed so far.
     pub fn boundary_count(&self) -> usize {
-        self.boundaries.load(AtomicOrdering::SeqCst)
+        self.boundary_log().len()
+    }
+
+    /// Every named crash point crossed so far, in order.
+    pub fn boundary_log(&self) -> Vec<BoundaryCrossing> {
+        self.boundaries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Run one platform call with the crash-boundary probe armed.
+    ///
+    /// Called right after `begin_mutation`, so the last recorded call and the
+    /// mutation counter name the call whose primitive is about to run.
     fn probed<R>(&self, call: impl FnOnce() -> R) -> R {
-        let _armed = ProbeGuard::arm(&self.boundaries, self.faults.panic_at_boundary);
+        let (mutation, current) = {
+            let state = self.fake_state();
+            (state.mutations, state.calls.last().copied())
+        };
+        let current = current.unwrap_or(PlatformCall::Lock);
+        let _armed = ProbeGuard::arm(
+            &self.boundaries,
+            self.faults.panic_at_boundary,
+            mutation,
+            current,
+        );
         call()
     }
 
@@ -3711,7 +3778,7 @@ fn create_private_directory(path: &ValidatedPath) -> InstallResult<()> {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(unsafe_path()),
         Err(_) => return Err(io_failure()),
     }
-    crash_point(); // created, permissions not yet applied
+    crash_point("create_directory", "created, permissions not yet applied");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -3739,7 +3806,7 @@ fn write_durable_checked(
             io_failure()
         }
     })?;
-    crash_point(); // created, empty
+    crash_point("write_durable", "created, empty");
 
     let mut short_writes = 0;
     match short_write_limit {
@@ -3752,16 +3819,16 @@ fn write_durable_checked(
             write_all_retrying(&mut writer, bytes, &mut short_writes).map_err(|_| io_failure())?;
         }
     }
-    crash_point(); // written, not flushed
+    crash_point("write_durable", "written, not flushed");
     file.sync_all().map_err(|_| io_failure())?;
     drop(file);
-    crash_point(); // flushed, not read back
+    crash_point("write_durable", "flushed, not read back");
 
     let readback = read_no_follow(path.rendered(), bytes.len() as u64).map_err(|_| io_failure())?;
     if corrupt_readback || readback != bytes {
         return Err(io_failure());
     }
-    crash_point(); // verified, parent entry not flushed
+    crash_point("write_durable", "verified, parent entry not flushed");
     if let Some(parent) = path.rendered().parent() {
         flush_directory(parent)?;
     }
@@ -3810,13 +3877,13 @@ fn replace_durable_checked(path: &ValidatedPath, bytes: &[u8]) -> InstallResult<
             io_failure()
         }
     })?;
-    crash_point(); // staging sibling created, empty
+    crash_point("replace_durable", "staging sibling created, empty");
     let mut short_writes = 0;
     {
         let mut writer = &file;
         write_all_retrying(&mut writer, bytes, &mut short_writes).map_err(|_| io_failure())?;
     }
-    crash_point(); // staging bytes written, not flushed
+    crash_point("replace_durable", "staging bytes written, not flushed");
     file.sync_all().map_err(|_| io_failure())?;
     drop(file);
 
@@ -3833,12 +3900,15 @@ fn replace_durable_checked(path: &ValidatedPath, bytes: &[u8]) -> InstallResult<
     }
     // Revalidate immediately before the rename so a swapped ancestor fails closed.
     path.revalidate()?;
-    crash_point(); // staged and verified, live entry untouched
+    crash_point(
+        "replace_durable",
+        "staged and verified, live entry untouched",
+    );
     fs::rename(&staging, live).map_err(|_| {
         let _ = fs::remove_file(&staging);
         io_failure()
     })?;
-    crash_point(); // renamed, parent not flushed
+    crash_point("replace_durable", "renamed, parent not flushed");
     flush_directory(parent)
 }
 
@@ -4249,10 +4319,13 @@ fn apply_launch_permissions_checked(path: &ValidatedPath, executable: bool) -> I
     {
         use std::os::unix::fs::PermissionsExt;
 
+        crash_point("apply_launch_permissions", "opened, mode unchanged");
         // `fchmod` on the verified handle: never a path that could be swapped.
         file.set_permissions(fs::Permissions::from_mode(launch_mode(executable)))
             .map_err(|_| io_failure())?;
+        crash_point("apply_launch_permissions", "mode set, not flushed");
         file.sync_all().map_err(|_| io_failure())?;
+        crash_point("apply_launch_permissions", "mode flushed, not re-checked");
     }
     #[cfg(not(unix))]
     {
@@ -4308,9 +4381,9 @@ fn replace_file_checked(staged: &ValidatedPath, live: &ValidatedPath) -> Install
 
     #[cfg(unix)]
     {
-        crash_point(); // revalidated, live entry untouched
+        crash_point("replace_file", "revalidated, live entry untouched");
         fs::rename(staged.rendered(), live.rendered()).map_err(|_| io_failure())?;
-        crash_point(); // renamed, parent not flushed
+        crash_point("replace_file", "renamed, parent not flushed");
         if let Some(parent) = live.rendered().parent() {
             flush_directory(parent)?;
         }
@@ -4489,9 +4562,9 @@ fn remove_registration_checked(paths: &InstallPaths, expected: &Registration) ->
     }
     let live = ValidatedPath::registration(paths, PathKind::File)?;
     live.revalidate()?;
-    crash_point(); // verified, still registered
+    crash_point("remove_registration", "verified, still registered");
     fs::remove_file(live.rendered()).map_err(|_| io_failure())?;
-    crash_point(); // unregistered, parent not flushed
+    crash_point("remove_registration", "unregistered, parent not flushed");
     if let Some(parent) = live.rendered().parent() {
         flush_directory(parent)?;
     }
@@ -4769,7 +4842,7 @@ fn copy_carrier_tree(
 
 fn remove_owned_entry(entry: &OwnedEntry) -> InstallResult<()> {
     entry.path.revalidate()?;
-    crash_point(); // verified, still present
+    crash_point("remove_owned", "verified, still present");
     match entry.claim.kind {
         OwnedKind::File => {
             let expected = entry.claim.sha256.ok_or_else(foreign_state)?;
@@ -4805,7 +4878,7 @@ fn remove_owned_entry(entry: &OwnedEntry) -> InstallResult<()> {
             Err(_) => return Err(io_failure()),
         },
     }
-    crash_point(); // unlinked, parent not flushed
+    crash_point("remove_owned", "unlinked, parent not flushed");
     if let Some(parent) = entry.path.rendered().parent() {
         flush_directory(parent)?;
     }
