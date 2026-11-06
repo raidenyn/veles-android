@@ -61,7 +61,9 @@ use crate::platform::{
 };
 use crate::policy::authorize_package_policy;
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
-use crate::transaction::{STATE_INSTALLED, activate_retained, install, manifest_for};
+use crate::transaction::{
+    STATE_INSTALLED, activate_retained, install, manifest_for, verify_installed_host,
+};
 
 /// Nothing of this product is installed.
 pub const STATE_ABSENT: &str = "absent";
@@ -393,6 +395,19 @@ fn repair(
     // A repair mutates the installed tree, so it requires quiescence first.
     require_quiescent_within(platform, paths, quiescence)?;
     plan.restore(platform, paths)?;
+
+    // The restored host is what Chrome will launch. Package-form approval was an
+    // assessment of the *package* copy; the installed form is assessed here, under
+    // the composed policy, before any registration is published and before success
+    // can be reported - including a repair that publishes nothing.
+    verify_installed_host(
+        platform,
+        paths,
+        &version_relative,
+        executable.relative(),
+        descriptor,
+        &policy,
+    )?;
 
     // Publication is conditional on the observed preimage. A registration that
     // appeared, disappeared or changed during the quiescence wait is a conflict:

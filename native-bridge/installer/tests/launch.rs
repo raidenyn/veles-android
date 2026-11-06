@@ -377,3 +377,140 @@ fn rollback_reassesses_the_retained_host() {
             .any(|(root, executable)| root == &version_dir(&paths, &v1) && executable == "host.exe")
     );
 }
+
+/// Install `package` on a fresh layout with an accepting platform.
+fn installed(
+    temp: &Temp,
+    package: &Package,
+) -> (InstallPaths, veles_bridge_installer::AuthenticatedPackage) {
+    let paths = paths(temp);
+    let good = platform(package, Faults::default());
+    let authenticated =
+        authenticate_package(&good, &package.root, &package.descriptor).expect("authenticates");
+    install(&good, &paths, authenticated.clone()).expect("installs");
+    (paths, authenticated)
+}
+
+/// R5: a repair restores files and may republish the registration, so it is bound
+/// by the same contract as install and rollback: the *installed* form of the host
+/// is assessed by the OS under the composed policy before anything is published and
+/// before success is reported. Package-form approval does not stand in for it (the
+/// package here authenticates on an accepting platform; only the repair platform
+/// refuses the installed copy).
+#[test]
+fn repair_refuses_an_installed_host_the_os_would_refuse() {
+    let temp = Temp::new();
+    let package = build(&temp, "repair-refused");
+    for (name, host, expected) in [
+        ("denied", HostFault::Denied, FailureCode::TrustDenied),
+        (
+            "unavailable",
+            HostFault::Unavailable,
+            FailureCode::TrustUnavailable,
+        ),
+        (
+            "unlisted signer",
+            HostFault::Assessed {
+                signer: "Somebody Else".to_owned(),
+                assessment: TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE.to_owned(),
+            },
+            FailureCode::TrustDenied,
+        ),
+    ] {
+        let (paths, authenticated) = installed(&temp, &package);
+        // Damage the install so the repair has to restore a file *and* republish a
+        // live registration: both are publications the assessment must precede.
+        let version = version_dir(&paths, &package);
+        fs::write(version.join("licenses/NOTICE"), b"tampered").expect("damage a file");
+        fs::remove_file(paths.registration_path()).expect("remove live registration");
+
+        let refusing = denied_host(&package, host);
+        let failure = run_operation(
+            &refusing,
+            &paths,
+            Operation::Repair,
+            Some(authenticated.clone()),
+        )
+        .expect_err(name);
+        assert_eq!(failure.code, expected, "{name}");
+
+        let calls = refusing.calls();
+        assert!(
+            calls.contains(&PlatformCall::VerifyHost),
+            "{name}: the installed host was assessed"
+        );
+        assert!(
+            !calls.contains(&PlatformCall::PublishManifest)
+                && !calls.contains(&PlatformCall::PublishRegistration),
+            "{name}: nothing was published for an unassessed host: {calls:?}"
+        );
+        assert!(
+            !paths.registration_path().exists(),
+            "{name}: no registration appeared"
+        );
+        assert_eq!(
+            refusing.host_verifications(),
+            vec![(version.clone(), "host.exe".to_owned())],
+            "{name}: exactly the installed form (version directory), not the package form"
+        );
+        fs::remove_dir_all(paths.root()).expect("reset the layout");
+    }
+}
+
+#[test]
+fn repair_assesses_the_installed_host_before_it_publishes_and_before_it_reports() {
+    let temp = Temp::new();
+    let package = build(&temp, "repair-ordered");
+    let (paths, authenticated) = installed(&temp, &package);
+    let version = version_dir(&paths, &package);
+    fs::write(version.join("licenses/NOTICE"), b"tampered").expect("damage a file");
+    fs::remove_file(paths.registration_path()).expect("remove live registration");
+
+    let good = platform(&package, Faults::default());
+    let report = run_operation(&good, &paths, Operation::Repair, Some(authenticated))
+        .expect("repair succeeds on an accepted host");
+    assert_eq!(report.state, STATE_REPAIRED);
+    assert_eq!(
+        good.host_verifications(),
+        vec![(version, "host.exe".to_owned())]
+    );
+    let calls = good.calls();
+    let assessed = calls
+        .iter()
+        .position(|call| *call == PlatformCall::VerifyHost)
+        .expect("installed assessment");
+    let published = calls
+        .iter()
+        .position(|call| *call == PlatformCall::PublishManifest)
+        .expect("publication");
+    assert!(
+        assessed < published,
+        "assessed before the manifest is published"
+    );
+}
+
+#[test]
+fn a_repair_that_publishes_nothing_still_assesses_before_it_reports_success() {
+    let temp = Temp::new();
+    let package = build(&temp, "repair-no-publish");
+    let (paths, authenticated) = installed(&temp, &package);
+    let version = version_dir(&paths, &package);
+    // Only a payload file is damaged: the committed registration is still live, so
+    // the repair publishes nothing - and must still not report success for a host
+    // the OS refuses.
+    fs::write(version.join("licenses/NOTICE"), b"tampered").expect("damage a file");
+
+    let refusing = denied_host(&package, HostFault::Denied);
+    let failure = run_operation(
+        &refusing,
+        &paths,
+        Operation::Repair,
+        Some(authenticated.clone()),
+    )
+    .expect_err("no success for an unassessed host");
+    assert_eq!(failure.code, FailureCode::TrustDenied);
+
+    let good = platform(&package, Faults::default());
+    run_operation(&good, &paths, Operation::Repair, Some(authenticated)).expect("accepted");
+    assert_eq!(good.host_verifications().len(), 1);
+}

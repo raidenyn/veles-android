@@ -1648,8 +1648,9 @@ fn run(
 /// and the OS assesses the installed host code (and, on macOS, its bundle and
 /// nested code) as acceptable for a publisher the effective policy lists. A
 /// denial or an unavailable assessment is returned unchanged and nothing has been
-/// activated.
-fn verify_installed_host(
+/// activated. Install, rollback, recovery **and repair** call this before they
+/// publish a registration or report success.
+pub(crate) fn verify_installed_host(
     platform: &impl Platform,
     paths: &InstallPaths,
     version_relative: &str,
