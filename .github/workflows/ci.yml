@@ -128,7 +128,11 @@ jobs:
 
   web-extension:
     name: web-extension
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the browser check below installs the Playwright
+    # Chromium build, and the pinned Playwright rejects Ubuntu 26.04
+    # ("Playwright does not support chromium on ubuntu26.04-x64"). Move this to
+    # ubuntu-latest only after the Playwright version supports that image.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
