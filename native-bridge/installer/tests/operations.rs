@@ -4432,6 +4432,343 @@ fn cleanup_never_deletes_through_a_swapped_ancestor() {
     assert!(receipt(paths).is_none());
 }
 
+/// Policy evidence that a rollback replaced a newer release must not depend on the
+/// editable `operation` tags. Every case below mutates ONLY operation tags and
+/// policy/epoch fields of an honest v2 -> v1 rollback (v1 signs no denial at epoch 1,
+/// v2 signs `denied` at epoch 2) and must be refused with nothing written:
+///
+/// * a live install over the rolled-back receipt, tag changed to `Install` and the
+///   v2-only denial removed while the epoch-2 stays (an epoch-2 v3 without the
+///   denial would otherwise pass);
+/// * a live repair of v1 against a receipt whose tag, epoch and policy are v1's;
+/// * recovery after the receipt commit with BOTH operation tags changed to `Install`
+///   and both persisted policies/epochs set to v1's signed policy; and
+/// * recovery before the receipt commit with the journal tag changed to `Install`
+///   and the journal policy set to v1's.
+fn n6_denied() -> Digest {
+    Digest::of(b"a payload only the newer release denies")
+}
+
+/// v1 (epoch 1, no denial) and v2 (epoch 2, signs `n6_denied`).
+fn n6_build(fixture: &Fixture) -> (Package, Package) {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), vec![p1]),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, vec![n6_denied()], vec![p1]),
+    );
+    (v1, v2)
+}
+
+#[test]
+fn an_edited_operation_tag_cannot_hide_the_release_a_rollback_replaced_in_a_live_install() {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let denied = n6_denied();
+    let build = n6_build;
+    {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let (v1, v2) = build(&fixture);
+        // Same epoch as the rollback receipt, the replaced release's denial absent.
+        let v3 = fixture.package(
+            "v3",
+            "3.0.0",
+            HOST_V3,
+            NOTICE_V3,
+            policy(2, Vec::new(), vec![p1]),
+        );
+        fixture.install(&v1);
+        fixture.install(&v2);
+        run_operation(
+            &fixture.platform_trusting(&v1.proof),
+            paths,
+            Operation::Rollback,
+            Some(authenticate(&v1)),
+        )
+        .expect("the honest rollback completes");
+        let honest = receipt(paths).expect("receipt");
+        assert!(honest.release_policy.denies(&denied), "rollback kept it");
+        assert_eq!(honest.release_policy.epoch, 2);
+
+        // Install: only the tag and the denial are edited; the epoch stays 2.
+        let mut forged = honest.clone();
+        forged.operation = Operation::Install;
+        forged
+            .release_policy
+            .denied_payloads
+            .retain(|d| *d != denied);
+        forged.write(&fixture.platform(), paths).expect("forged");
+        let before = snapshot(fixture.temp.path());
+        let platform = fixture.platform();
+        let outcome = run_operation(
+            &platform,
+            paths,
+            Operation::Install,
+            Some(authenticate(&v3)),
+        );
+        assert_eq!(
+            failure_code(outcome),
+            FailureCode::RecoveryRequired,
+            "install over a receipt whose tag and policy were edited"
+        );
+        assert!(platform.mutations().is_empty());
+        assert_eq!(snapshot(fixture.temp.path()), before);
+
+        // The recorded prior is as editable as the tag: naming an older release
+        // there cannot hide that the receipt still owns the newer one's directory.
+        forged
+            .prior
+            .as_mut()
+            .expect("a rollback has a prior")
+            .version = "0.5.0".to_owned();
+        forged.write(&fixture.platform(), paths).expect("forged");
+        let before = snapshot(fixture.temp.path());
+        let platform = fixture.platform();
+        let outcome = run_operation(
+            &platform,
+            paths,
+            Operation::Install,
+            Some(authenticate(&v3)),
+        );
+        assert_eq!(
+            failure_code(outcome),
+            FailureCode::RecoveryRequired,
+            "install over a receipt whose tag, policy and prior were edited"
+        );
+        assert!(platform.mutations().is_empty());
+        assert_eq!(snapshot(fixture.temp.path()), before);
+
+        // And the other way round: the recorded prior is honest (strictly newer) but
+        // the receipt no longer owns the newer release's directory.
+        forged.prior = honest.prior.clone();
+        let newer = format!("versions/2.0.0-{}", v2.descriptor.payload_id.to_hex());
+        forged
+            .ownership
+            .owned
+            .retain(|claim| claim.path != newer && !claim.path.starts_with(&format!("{newer}/")));
+        forged.write(&fixture.platform(), paths).expect("forged");
+        let before = snapshot(fixture.temp.path());
+        let platform = fixture.platform();
+        let outcome = run_operation(
+            &platform,
+            paths,
+            Operation::Install,
+            Some(authenticate(&v3)),
+        );
+        assert_eq!(
+            failure_code(outcome),
+            FailureCode::RecoveryRequired,
+            "install over a receipt whose tag, policy and claims were edited"
+        );
+        assert!(platform.mutations().is_empty());
+        assert_eq!(snapshot(fixture.temp.path()), before);
+    }
+
+    // --- control: the honest receipt still lets a higher-epoch release in -------
+    {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let (v1, v2) = build(&fixture);
+        let v3 = fixture.package(
+            "v3",
+            "3.0.0",
+            HOST_V3,
+            NOTICE_V3,
+            policy(3, Vec::new(), vec![p1]),
+        );
+        fixture.install(&v1);
+        fixture.install(&v2);
+        run_operation(
+            &fixture.platform_trusting(&v1.proof),
+            paths,
+            Operation::Rollback,
+            Some(authenticate(&v1)),
+        )
+        .expect("the honest rollback completes");
+        run_operation(
+            &fixture.platform(),
+            paths,
+            Operation::Install,
+            Some(authenticate(&v3)),
+        )
+        .expect("a higher-epoch release installs over the honest rollback receipt");
+    }
+}
+
+#[test]
+fn an_edited_operation_tag_cannot_hide_the_release_a_rollback_replaced_in_a_repair() {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let denied = n6_denied();
+    {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let (v1, v2) = n6_build(&fixture);
+        fixture.install(&v1);
+        fixture.install(&v2);
+        run_operation(
+            &fixture.platform_trusting(&v1.proof),
+            paths,
+            Operation::Rollback,
+            Some(authenticate(&v1)),
+        )
+        .expect("the honest rollback completes");
+        let mut forged = receipt(paths).expect("receipt");
+        assert!(forged.release_policy.denies(&denied), "rollback kept it");
+        forged.operation = Operation::Install;
+        // Repair: tag, epoch and policy all become v1's own signed policy.
+        forged.release_policy = v1.descriptor.policy.clone();
+        forged.policy.epoch = v1.descriptor.policy.epoch;
+        forged.write(&fixture.platform(), paths).expect("forged");
+        fs::remove_file(version_dir(paths, "1.0.0", p1).join("licenses/NOTICE"))
+            .expect("damage the installed release");
+        let before = snapshot(fixture.temp.path());
+        let platform = fixture.platform();
+        let outcome = run_operation(&platform, paths, Operation::Repair, Some(authenticate(&v1)));
+        assert_eq!(
+            failure_code(outcome),
+            FailureCode::RecoveryRequired,
+            "repair over a receipt whose tag, epoch and policy were edited"
+        );
+        assert!(platform.mutations().is_empty());
+        assert_eq!(snapshot(fixture.temp.path()), before);
+    }
+}
+
+#[test]
+fn an_edited_operation_tag_cannot_hide_the_release_a_rollback_replaced_in_recovery() {
+    let denied = n6_denied();
+    let _ = denied;
+    let build = n6_build;
+    // --- recovery of an interrupted rollback, tags and policies edited ----------
+    let trusting = |v1: &Package, v2: &Package, panic_at: Option<usize>| {
+        FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust: Some(v1.proof.clone()),
+            trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+            panic_at_mutation: panic_at,
+            ..Faults::default()
+        })
+    };
+    let probe = Fixture::windows();
+    let (probe_v1, probe_v2) = build(&probe);
+    probe.install(&probe_v1);
+    probe.install(&probe_v2);
+    let counting = trusting(&probe_v1, &probe_v2, None);
+    run_operation(
+        &counting,
+        &probe.paths,
+        Operation::Rollback,
+        Some(authenticate(&probe_v1)),
+    )
+    .expect("the unedited rollback completes");
+    let total = counting.mutations().len();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut after_receipt = 0;
+    let mut before_receipt = 0;
+    for attempt in 1..=total {
+        for forge in [false, true] {
+            let fixture = Fixture::windows();
+            let paths = &fixture.paths;
+            let (v1, v2) = build(&fixture);
+            fixture.install(&v1);
+            fixture.install(&v2);
+            let crashing = trusting(&v1, &v2, Some(attempt));
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                run_operation(
+                    &crashing,
+                    paths,
+                    Operation::Rollback,
+                    Some(authenticate(&v1)),
+                )
+            }));
+            assert!(outcome.is_err(), "attempt {attempt}: the death interrupts");
+            let JournalState::Pending(journal) = journal_state(paths) else {
+                continue;
+            };
+            let current = receipt(paths).expect("a receipt always exists");
+            let committed = current.payload_id == v1.descriptor.payload_id;
+            let activated =
+                !committed && Digest::of(&fixture.registration()) == journal.manifest.sha256();
+            if !committed && !activated {
+                continue;
+            }
+            let context = format!(
+                "attempt {attempt} ({}, {})",
+                if committed {
+                    "receipt committed"
+                } else {
+                    "activated, no receipt"
+                },
+                if forge {
+                    "tags and policy edited"
+                } else {
+                    "control"
+                }
+            );
+            if forge {
+                let writer = trusting(&v1, &v2, None);
+                let mut forged_journal = (*journal).clone();
+                forged_journal.operation = Operation::Install;
+                forged_journal.release_policy = v1.descriptor.policy.clone();
+                forged_journal.policy.epoch = v1.descriptor.policy.epoch;
+                forged_journal
+                    .write(&writer, paths)
+                    .expect("forged journal");
+                if committed {
+                    let mut forged_receipt = current.clone();
+                    forged_receipt.operation = Operation::Install;
+                    forged_receipt.release_policy = v1.descriptor.policy.clone();
+                    forged_receipt.policy.epoch = v1.descriptor.policy.epoch;
+                    forged_receipt
+                        .write(&writer, paths)
+                        .expect("forged receipt");
+                }
+            }
+            let before = snapshot(fixture.temp.path());
+            let recovering = trusting(&v1, &v2, None);
+            match (forge, recover(&recovering, paths)) {
+                (false, Err(failure)) => wrong.push(format!(
+                    "{context}: honest recovery was refused: {:?}",
+                    failure.code
+                )),
+                (false, Ok(_)) => {}
+                (true, Ok(report)) => wrong.push(format!(
+                    "{context}: recovery completed on edited tags and policy: {:?}",
+                    report.state
+                )),
+                (true, Err(_)) => {
+                    if !recovering.mutations().is_empty() || snapshot(fixture.temp.path()) != before
+                    {
+                        wrong.push(format!("{context}: a refused recovery changed state"));
+                    }
+                }
+            }
+            if forge {
+                if committed {
+                    after_receipt += 1;
+                } else {
+                    before_receipt += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        before_receipt >= 1 && after_receipt >= 1,
+        "both windows were exercised: before={before_receipt} after={after_receipt}"
+    );
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// Two different signed releases may share identical canonical payload bytes (for
 /// example a policy-only maintenance release): the payload id hashes the inventory,
 /// while version and policy live in the separately signed descriptor and carrier. The
@@ -4618,4 +4955,113 @@ fn releases_sharing_a_payload_roll_back_recover_and_upgrade() {
         after_receipt >= 1 && substituted >= 1,
         "the post-receipt windows were exercised: recovered={after_receipt} refused={substituted}"
     );
+}
+
+/// A committed receipt carries the operation of the very transaction that wrote it.
+/// Retagging only ONE of the two selects the install-completion branch (journal) or
+/// leaves a rollback history tagged as an install (receipt); both are refused with
+/// nothing written, in every post-receipt crash window.
+#[test]
+fn a_journal_and_receipt_that_disagree_on_the_operation_are_refused() {
+    #[derive(Clone, Copy, Debug)]
+    enum Retag {
+        /// Journal tag and both policies are edited; the receipt keeps `Rollback`.
+        JournalOnly,
+        /// Only the receipt tag is edited.
+        ReceiptOnly,
+    }
+    let trusting = |v1: &Package, v2: &Package, panic_at: Option<usize>| {
+        FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust: Some(v1.proof.clone()),
+            trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+            panic_at_mutation: panic_at,
+            ..Faults::default()
+        })
+    };
+    let probe = Fixture::windows();
+    let (probe_v1, probe_v2) = n6_build(&probe);
+    probe.install(&probe_v1);
+    probe.install(&probe_v2);
+    let counting = trusting(&probe_v1, &probe_v2, None);
+    run_operation(
+        &counting,
+        &probe.paths,
+        Operation::Rollback,
+        Some(authenticate(&probe_v1)),
+    )
+    .expect("the unedited rollback completes");
+    let total = counting.mutations().len();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut exercised = 0;
+    for attempt in 1..=total {
+        for retag in [Retag::JournalOnly, Retag::ReceiptOnly] {
+            let fixture = Fixture::windows();
+            let paths = &fixture.paths;
+            let (v1, v2) = n6_build(&fixture);
+            fixture.install(&v1);
+            fixture.install(&v2);
+            let crashing = trusting(&v1, &v2, Some(attempt));
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                run_operation(
+                    &crashing,
+                    paths,
+                    Operation::Rollback,
+                    Some(authenticate(&v1)),
+                )
+            }));
+            assert!(outcome.is_err(), "attempt {attempt}: the death interrupts");
+            let JournalState::Pending(journal) = journal_state(paths) else {
+                continue;
+            };
+            let current = receipt(paths).expect("a receipt always exists");
+            if current.payload_id != v1.descriptor.payload_id {
+                continue;
+            }
+            let writer = trusting(&v1, &v2, None);
+            match retag {
+                Retag::JournalOnly => {
+                    let mut forged_journal = (*journal).clone();
+                    forged_journal.operation = Operation::Install;
+                    forged_journal.release_policy = v1.descriptor.policy.clone();
+                    forged_journal.policy.epoch = v1.descriptor.policy.epoch;
+                    forged_journal
+                        .write(&writer, paths)
+                        .expect("forged journal");
+                    let mut forged_receipt = current.clone();
+                    forged_receipt.release_policy = v1.descriptor.policy.clone();
+                    forged_receipt.policy.epoch = v1.descriptor.policy.epoch;
+                    forged_receipt
+                        .write(&writer, paths)
+                        .expect("forged receipt");
+                }
+                Retag::ReceiptOnly => {
+                    let mut forged_receipt = current.clone();
+                    forged_receipt.operation = Operation::Install;
+                    forged_receipt
+                        .write(&writer, paths)
+                        .expect("forged receipt");
+                }
+            }
+            let before = snapshot(fixture.temp.path());
+            let recovering = trusting(&v1, &v2, None);
+            let context = format!("attempt {attempt} ({retag:?})");
+            match recover(&recovering, paths) {
+                Ok(report) => wrong.push(format!(
+                    "{context}: recovery completed over disagreeing tags: {:?}",
+                    report.state
+                )),
+                Err(_) => {
+                    if !recovering.mutations().is_empty() || snapshot(fixture.temp.path()) != before
+                    {
+                        wrong.push(format!("{context}: a refused recovery changed state"));
+                    }
+                }
+            }
+            exercised += 1;
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(exercised >= 2, "the post-receipt window was exercised");
 }

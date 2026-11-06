@@ -50,6 +50,7 @@
 //! version is never removed by this task - an upgrade retains it for repair,
 //! rollback and uninstall.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -637,23 +638,51 @@ pub(crate) fn authenticate_enforced_policy(
 /// A rollback composes the target's policy with the replaced release's, so the
 /// committed policy carries denials the now-installed (older) release never signed.
 /// They are backed only by the replaced release, which stays retained as the
-/// receipt's prior, and the receipt's own policy is no evidence of them. Any other
-/// receipt has nothing to add: an install adopts the installed release's policy.
-/// The replaced release must be strictly newer than the installed one and must be
-/// authenticated in place; when it cannot be, the policy is unproven. Releases are
-/// ordered by version, never by payload id: distinct signed releases may carry
-/// byte-identical payloads.
+/// receipt's prior, and the receipt's own policy is no evidence of them.
+///
+/// Whether a receipt is rollback-produced is NOT read from its `operation` tag: the
+/// tag is as editable as the policy it would excuse. The history decides, from
+/// version ordering that the receipt's own claims fix: a receipt whose recorded prior
+/// is strictly newer than the installed release, or that still owns the version
+/// directory of a strictly newer release, replaced a newer release - whatever its tag
+/// says. Such a receipt MUST carry the `Rollback` tag (anything else is a
+/// contradictory history and fails closed), and it is then bounded by the replaced
+/// release, which must be strictly newer, be the only newer release the receipt
+/// owns, and be authenticated in place. Only a receipt with no newer release in its
+/// history has nothing to add: an install adopts the installed release's policy.
+///
+/// Release versions order the two releases; payload ids do not, because distinct
+/// signed releases may carry byte-identical payloads. The authenticated carrier
+/// (which fixes the version) and the retained descriptor bind the identity.
 pub(crate) fn bound_by_replaced_release(
     platform: &impl Platform,
     paths: &InstallPaths,
     receipt: &Receipt,
 ) -> InstallResult<()> {
+    let installed = parse_version(&receipt.version)?;
+    let prior_is_newer = match receipt.prior.as_ref() {
+        Some(prior) => parse_version(&prior.version)? > installed,
+        None => false,
+    };
+    let newer_owned = owned_releases_newer_than(&receipt.ownership, &installed);
     if receipt.operation != Operation::Rollback {
-        return Ok(());
+        return if receipt_replaced_a_newer_release(receipt)? {
+            // A newer release was replaced, yet the tag says nothing was rolled
+            // back: the tag or the history was edited.
+            Err(recovery_required())
+        } else {
+            Ok(())
+        };
     }
     let replaced = receipt.prior.as_ref().ok_or_else(recovery_required)?;
-    if parse_version(&replaced.version)? <= parse_version(&receipt.version)?
-        || replaced.carrier_sha256 == receipt.policy.carrier_sha256
+    if !prior_is_newer || replaced.carrier_sha256 == receipt.policy.carrier_sha256 {
+        return Err(recovery_required());
+    }
+    let replaced_directory =
+        paths.version_dir_relative(&parse_version(&replaced.version)?, replaced.payload_id);
+    if newer_owned
+        .iter()
+        .any(|directory| *directory != replaced_directory)
     {
         return Err(recovery_required());
     }
@@ -675,6 +704,35 @@ pub(crate) fn bound_by_replaced_release(
         return Err(recovery_required());
     }
     Ok(())
+}
+
+/// Whether a receipt's own history shows that it replaced a strictly newer release.
+fn receipt_replaced_a_newer_release(receipt: &Receipt) -> InstallResult<bool> {
+    let installed = parse_version(&receipt.version)?;
+    let prior_is_newer = match receipt.prior.as_ref() {
+        Some(prior) => parse_version(&prior.version)? > installed,
+        None => false,
+    };
+    Ok(prior_is_newer || !owned_releases_newer_than(&receipt.ownership, &installed).is_empty())
+}
+
+/// The version directories a receipt owns for releases strictly newer than `version`.
+///
+/// Directory names are `versions/<version>-<payload id>`, fixed by the layout and
+/// checked against the disk whenever a claim is used, so a newer release the receipt
+/// still owns is evidence of a downgrade that no tag can hide.
+fn owned_releases_newer_than(ownership: &OwnershipRecord, version: &Version) -> BTreeSet<String> {
+    let prefix = format!("{VERSIONS_DIR}/");
+    ownership
+        .owned
+        .iter()
+        .filter_map(|claim| {
+            let directory = claim.path.strip_prefix(&prefix)?.split('/').next()?;
+            let (text, identity) = directory.rsplit_once('-')?;
+            (identity.len() == 64 && Version::parse(text).is_ok_and(|owned| owned > *version))
+                .then(|| format!("{prefix}{directory}"))
+        })
+        .collect()
 }
 
 /// What the OS authenticated about one installed release.
@@ -1268,6 +1326,21 @@ fn authenticate_for_completion(
     // The effective policy is recomputed from authenticated evidence, never read
     // back from state. Journal and receipt are both installer state: that they agree
     // with each other proves nothing about what the signature covers.
+    //
+    // The operation tags select which evidence a branch demands, so they are held to
+    // the history rather than trusted: the committed receipt of this very transaction
+    // carries the transaction's own operation, and a non-rollback transaction never
+    // completes over a history in which a newer release was replaced. Without both,
+    // retagging a rollback as an install would skip every replaced-release proof.
+    if let Some(committed) = committed_here {
+        if committed.operation != journal.operation {
+            return Err(recovery_required());
+        }
+        if journal.operation != Operation::Rollback && receipt_replaced_a_newer_release(committed)?
+        {
+            return Err(recovery_required());
+        }
+    }
     let expected_policy = match (journal.operation, committed_here, receipt) {
         // An install enforces exactly the incoming signed policy, whatever it was
         // composed against (`effective_policy(Install)` returns the incoming
