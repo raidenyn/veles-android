@@ -1871,6 +1871,19 @@ pub trait Platform {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock>;
     /// Write all bytes, flush and read the exact bytes back.
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()>;
+    /// Create one private directory below the fixed install root.
+    ///
+    /// `path` is a validated [`PathKind::NewDirectory`] handle that was absent
+    /// when it was validated; an existing leaf is `UnsafePath` rather than a
+    /// silent adoption. Each ancestor is revalidated, the directory is created
+    /// with owner-only permissions and its parent is flushed.
+    ///
+    /// The portable primitive is the default because directory creation is not
+    /// OS-specific; a native adapter overrides it only to apply per-user ACLs
+    /// (Task 8).
+    fn create_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        create_private_directory(path)
+    }
     /// Atomically replace the one manifest that selects the executable.
     fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()>;
     /// Read the live registration exactly, or `None` when absent.
@@ -2065,6 +2078,12 @@ pub struct Faults {
     pub trust: Option<TrustProof>,
     /// Force `verify_trust` to report an explicit OS denial/revocation.
     pub trust_denied: bool,
+    /// Simulate a process death at the N-th state mutation (1-based).
+    ///
+    /// Unlike `fail_mutation_at` this panics instead of returning an error, so
+    /// no caller error path or cleanup runs: the transaction is left exactly as
+    /// a killed installer would leave it.
+    pub panic_at_mutation: Option<usize>,
 }
 
 impl Default for Faults {
@@ -2077,6 +2096,7 @@ impl Default for Faults {
             host_state: HostState::Unknown,
             trust: None,
             trust_denied: false,
+            panic_at_mutation: None,
         }
     }
 }
@@ -2086,6 +2106,7 @@ impl Default for Faults {
 pub enum PlatformCall {
     Lock,
     WriteDurable,
+    CreateDirectory,
     ReplaceManifest,
     ReadRegistration,
     PublishRegistration,
@@ -2106,6 +2127,7 @@ impl PlatformCall {
         matches!(
             self,
             Self::WriteDurable
+                | Self::CreateDirectory
                 | Self::ReplaceManifest
                 | Self::PublishRegistration
                 | Self::RemoveRegistration
@@ -2182,6 +2204,15 @@ impl FakePlatform {
         if self.faults.fail_mutation_at == Some(state.mutations) {
             return Err(io_failure());
         }
+        if self.faults.panic_at_mutation == Some(state.mutations) {
+            // A simulated process death: the guard is dropped by unwinding, the
+            // mutex is left poisoned (the accessor recovers it) and no caller
+            // error path or cleanup runs.
+            panic!(
+                "injected process death at state mutation {}",
+                state.mutations
+            );
+        }
         Ok(())
     }
 }
@@ -2211,6 +2242,11 @@ impl Platform for FakePlatform {
         )?;
         self.fake_state().short_writes += short;
         Ok(())
+    }
+
+    fn create_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
+        self.begin_mutation(PlatformCall::CreateDirectory)?;
+        create_private_directory(path)
     }
 
     fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
@@ -2270,6 +2306,44 @@ impl Platform for FakePlatform {
         self.observe(PlatformCall::FlushParent);
         flush_parent_checked(path)
     }
+}
+
+/// Create one owner-only directory below a trusted anchor.
+///
+/// The handle must be a `NewDirectory` (absent when validated): adopting an
+/// existing directory is a separate decision, never a side effect of creating
+/// one. The parent is flushed so the new name survives a crash.
+fn create_private_directory(path: &ValidatedPath) -> InstallResult<()> {
+    if path.kind() != PathKind::NewDirectory {
+        return Err(invalid_input());
+    }
+    path.revalidate()?;
+    #[cfg(unix)]
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+
+        builder.mode(0o700);
+    }
+    match builder.create(path.rendered()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(unsafe_path()),
+        Err(_) => return Err(io_failure()),
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path.rendered(), fs::Permissions::from_mode(0o700))
+            .map_err(|_| io_failure())?;
+    }
+    if let Some(parent) = path.rendered().parent() {
+        flush_directory(parent)?;
+    }
+    Ok(())
 }
 
 fn write_durable_checked(
@@ -2535,6 +2609,18 @@ fn publish_registration_checked(paths: &InstallPaths, value: &Registration) -> I
     let staged = staged.adopt(PathKind::File)?;
     let live = registration_target(paths)?;
     replace_manifest_checked(&staged, &live)
+}
+
+/// Whether `value` is a registration this installer owns for `paths`.
+///
+/// A registration is owned only when it names this channel's host and selects an
+/// executable inside the fixed root's `versions/` or `maintenance/` scope. The
+/// check is lexical (the previous executable need not still exist) and
+/// read-only; [`Platform::publish_registration`] applies the same rule before it
+/// replaces anything. The transaction layer uses it to decide whether the live
+/// registration it found is its own before it reports a recovery verdict.
+pub fn registration_is_owned(paths: &InstallPaths, value: &Registration) -> bool {
+    is_owned_registration_preimage(paths, value)
 }
 
 /// Whether an existing live registration is a previously published manifest of

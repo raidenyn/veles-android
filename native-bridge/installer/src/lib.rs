@@ -10,14 +10,21 @@
 //! perform native installation, signing or acceptance.
 
 pub mod inventory;
+pub mod journal;
 pub mod model;
 pub mod paths;
 pub mod platform;
 pub mod policy;
+pub mod transaction;
 
 pub use inventory::{
     INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, normalize_relative_path,
     parse_inventory, verify_inventory, write_inventory,
+};
+pub use journal::{
+    JOURNAL_SCHEMA_VERSION, Journal, MAX_JOURNAL_MANIFEST_BYTES, ManifestSnapshot, Phase,
+    PolicyCarrierRefs, PriorInstall, RECEIPT_SCHEMA_VERSION, Receipt, RegistrationPreimage,
+    TRANSACTION_ID_BYTES, transaction_id,
 };
 pub use model::{
     Channel, ChannelIdentity, DEVELOPMENT_HOST_NAME, Digest, FIXTURE_HOST_NAME, FailureCode,
@@ -46,9 +53,13 @@ pub use platform::{
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
     ValidatedPath, WindowsPreimage, assessment_target, authenticate_package, claim_owned_entries,
     claim_owned_registration, inspect_host_processes, is_accepted_assessment, parse_manifest,
-    path_is_within, require_quiescent, require_quiescent_within,
+    path_is_within, registration_is_owned, require_quiescent, require_quiescent_within,
 };
 pub use policy::{
     CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, authorize_package_policy, effective_policy,
     parse_descriptor, read_carrier, write_carrier,
+};
+pub use transaction::{
+    STATE_CLEAN, STATE_INSTALLED, STATE_RECOVERED_ACTIVE, STATE_RECOVERED_PREVIOUS, install,
+    recover,
 };
