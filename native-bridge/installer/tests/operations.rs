@@ -4779,7 +4779,9 @@ fn an_edited_operation_tag_cannot_hide_the_release_a_rollback_replaced_in_recove
 /// * recovery of the interrupted rollback must complete in EVERY crash window, and
 ///   the installation must then still accept that upgrade; and
 /// * rewriting the replaced release as the target itself (the N5 substitution) must
-///   still be refused after the receipt commit, by the version ordering alone.
+///   still be refused after the receipt commit. The version ordering and the carrier
+///   inequality both refuse it; the ordering is defence in depth, not shown to be
+///   independently necessary (removing it leaves this suite passing).
 #[test]
 fn releases_sharing_a_payload_roll_back_recover_and_upgrade() {
     let p = payload_id(HOST_V1, NOTICE_V1);
@@ -4881,8 +4883,9 @@ fn releases_sharing_a_payload_roll_back_recover_and_upgrade() {
             let context = format!("attempt {attempt} (committed={committed}, rewrite={rewrite})");
             if rewrite {
                 // The N5 substitution: the denial removed and the replaced release
-                // rewritten as the target itself. The payload ids now agree, so only
-                // the version ordering can refuse it.
+                // rewritten as the target itself. The payload ids now agree, so the
+                // refusal rests on the combined version-ordering and carrier-identity
+                // guards, neither of which is shown to be necessary on its own.
                 let writer = trusting(&fixture, None);
                 let mut forged_journal = (*journal).clone();
                 let mut forged_receipt = current.clone();
@@ -5064,4 +5067,150 @@ fn a_journal_and_receipt_that_disagree_on_the_operation_are_refused() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
     assert!(exercised >= 2, "the post-receipt window was exercised");
+}
+
+/// The history a rollback leaves must be read from authenticated versions, never from
+/// a receipt field that nothing authenticates, and never without the journal's own
+/// downgrade record.
+///
+/// After a v2 -> v1 rollback interrupted after the receipt commit, both operation tags
+/// are retagged `Install` and both policies/epochs set to v1's (the exact edit round 5
+/// closed), AND one more edit is made so the receipt no longer shows the downgrade:
+///
+/// * `VersionMasked` (N6-A): ONLY `receipt.version` becomes `3.0.0`. Every claim, the
+///   recorded prior and the whole v2 directory stay. Judged against v3, neither the
+///   prior v2 nor the owned v2 directory is "newer", yet the journal authenticates v1.
+/// * `HistoryRemoved` (N6-B): `receipt.version` stays honest, but `receipt.prior` and
+///   every ownership claim under v2's version directory are removed. The journal still
+///   records `old_version = 2.0.0`, the old manifest and the complete v2 directory.
+///
+/// * `VersionMaskedJournalLowered`: `VersionMasked` and the journal's `old_version`
+///   lowered too. Every v2 reference in the receipt stays; only the unauthenticated
+///   receipt version hides them, so the receipt must be made to name the release the
+///   journal authenticates.
+///
+/// All must be refused before any mutation, in every post-receipt crash window.
+#[test]
+fn a_receipt_edited_to_hide_the_downgrade_cannot_make_recovery_install_the_older_release() {
+    #[derive(Clone, Copy, Debug)]
+    enum Mask {
+        VersionMasked,
+        HistoryRemoved,
+        /// `VersionMasked` plus the journal's `old_version` lowered, so the journal's
+        /// own downgrade record is gone too. The receipt still owns v2 and records it
+        /// as the prior: only the receipt's unauthenticated version hides them.
+        VersionMaskedJournalLowered,
+    }
+    let trusting = |v1: &Package, v2: &Package, panic_at: Option<usize>| {
+        FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust: Some(v1.proof.clone()),
+            trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+            panic_at_mutation: panic_at,
+            ..Faults::default()
+        })
+    };
+    let probe = Fixture::windows();
+    let (probe_v1, probe_v2) = n6_build(&probe);
+    probe.install(&probe_v1);
+    probe.install(&probe_v2);
+    let counting = trusting(&probe_v1, &probe_v2, None);
+    run_operation(
+        &counting,
+        &probe.paths,
+        Operation::Rollback,
+        Some(authenticate(&probe_v1)),
+    )
+    .expect("the unedited rollback completes");
+    let total = counting.mutations().len();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut exercised = [0usize; 3];
+    for attempt in 1..=total {
+        for (index, mask) in [
+            Mask::VersionMasked,
+            Mask::HistoryRemoved,
+            Mask::VersionMaskedJournalLowered,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::windows();
+            let paths = &fixture.paths;
+            let (v1, v2) = n6_build(&fixture);
+            fixture.install(&v1);
+            fixture.install(&v2);
+            let crashing = trusting(&v1, &v2, Some(attempt));
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                run_operation(
+                    &crashing,
+                    paths,
+                    Operation::Rollback,
+                    Some(authenticate(&v1)),
+                )
+            }));
+            assert!(outcome.is_err(), "attempt {attempt}: the death interrupts");
+            let JournalState::Pending(journal) = journal_state(paths) else {
+                continue;
+            };
+            let current = receipt(paths).expect("a receipt always exists");
+            if current.payload_id != v1.descriptor.payload_id {
+                continue;
+            }
+            let writer = trusting(&v1, &v2, None);
+            let mut forged_journal = (*journal).clone();
+            forged_journal.operation = Operation::Install;
+            forged_journal.release_policy = v1.descriptor.policy.clone();
+            forged_journal.policy.epoch = v1.descriptor.policy.epoch;
+            if matches!(mask, Mask::VersionMaskedJournalLowered) {
+                forged_journal.old_version = Some("0.5.0".to_owned());
+            }
+            forged_journal
+                .write(&writer, paths)
+                .expect("forged journal");
+            let mut forged_receipt = current.clone();
+            forged_receipt.operation = Operation::Install;
+            forged_receipt.release_policy = v1.descriptor.policy.clone();
+            forged_receipt.policy.epoch = v1.descriptor.policy.epoch;
+            match mask {
+                Mask::VersionMasked | Mask::VersionMaskedJournalLowered => {
+                    forged_receipt.version = "3.0.0".to_owned();
+                }
+                Mask::HistoryRemoved => {
+                    forged_receipt.prior = None;
+                    forged_receipt
+                        .ownership
+                        .owned
+                        .retain(|claim| !claim.path.starts_with("versions/2.0.0-"));
+                }
+            }
+            forged_receipt
+                .write(&writer, paths)
+                .expect("forged receipt");
+            // The evidence the edits must not have disturbed.
+            assert_eq!(journal.old_version.as_deref(), Some("2.0.0"));
+            let before = snapshot(fixture.temp.path());
+            let recovering = trusting(&v1, &v2, None);
+            let context = format!("attempt {attempt} ({mask:?})");
+            match recover(&recovering, paths) {
+                Ok(report) => wrong.push(format!(
+                    "{context}: recovery installed the older release over a recorded \
+                     downgrade: {:?}",
+                    report.state
+                )),
+                Err(_) => {
+                    if !recovering.mutations().is_empty() || snapshot(fixture.temp.path()) != before
+                    {
+                        wrong.push(format!("{context}: a refused recovery changed state"));
+                    }
+                }
+            }
+            exercised[index] += 1;
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(
+        exercised.iter().all(|count| *count >= 1),
+        "the post-receipt window was exercised for every edit: {exercised:?}"
+    );
 }

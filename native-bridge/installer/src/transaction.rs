@@ -1332,8 +1332,30 @@ fn authenticate_for_completion(
     // carries the transaction's own operation, and a non-rollback transaction never
     // completes over a history in which a newer release was replaced. Without both,
     // retagging a rollback as an install would skip every replaced-release proof.
+    //
+    // Neither is the receipt's NAME of its own release trusted. The journal's version,
+    // payload and carrier were authenticated against the signed carrier above; the
+    // receipt's `version` is a bare editable field that the history classification
+    // below compares every other version with. A committed receipt of this very
+    // transaction must therefore name exactly the release just authenticated, or an
+    // edited version could make a recorded downgrade look like a forward install.
+    // And whatever the receipt shows, the journal records the release this transaction
+    // replaced: a non-rollback transaction whose journal says it replaced a strictly
+    // newer release is a downgrade no install label can excuse. (An honest install
+    // never replaces a newer release; `install` refuses that before it journals.)
+    let authenticated_version = descriptor.parsed_version()?;
+    if journal.operation != Operation::Rollback
+        && let Some(old_version) = journal.old_version.as_deref()
+        && parse_version(old_version)? > authenticated_version
+    {
+        return Err(recovery_required());
+    }
     if let Some(committed) = committed_here {
-        if committed.operation != journal.operation {
+        if committed.operation != journal.operation
+            || committed.version != journal.version
+            || committed.payload_id != journal.payload_id
+            || committed.policy.carrier_sha256 != journal.policy.carrier_sha256
+        {
             return Err(recovery_required());
         }
         if journal.operation != Operation::Rollback && receipt_replaced_a_newer_release(committed)?
