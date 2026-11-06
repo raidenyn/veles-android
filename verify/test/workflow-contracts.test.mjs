@@ -495,6 +495,129 @@ test('macOS native workflow packages its installer in one job under the pinned X
   assert.doesNotMatch(jobBlock, /export DEVELOPER_DIR/, 'macOS Xcode selection must not depend on a per-step shell export');
 });
 
+// OTP-25 Task 1: the standalone installer toolchain is pinned independently of
+// the runner labels. These tests read the checked-in tool lock directly (they do
+// not shell out to the Python validator) and tie each pinned identity back to the
+// workflow that has to enforce it.
+const INSTALLER_LOCK = 'native-bridge/installer/config/tools.lock.json';
+const INSTALLER_TOOLCHAIN = 'native-bridge/installer/rust-toolchain.toml';
+const REVIEWED_NSIS_URL = 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-3/nsis-3.zip';
+const REVIEWED_NSIS_SHA256 = '1bb9fc85ee5b220d3869325dbb9d191dfe6537070f641c30fbb275c97051fd0c';
+const INEXACT_PIN_VALUES = new Set(['', '*', 'latest', 'current', 'stable', 'nightly', 'any', 'unspecified', 'tbd', 'todo']);
+
+async function installerToolLock() {
+  return JSON.parse(await readFile(new URL(INSTALLER_LOCK, root), 'utf8'));
+}
+
+// Every string (keys included) in a nested JSON value, as `path=value` entries.
+function jsonStrings(value, path = '') {
+  if (Array.isArray(value)) return value.flatMap((item, index) => jsonStrings(item, `${path}[${index}]`));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, item]) => [
+      `${path}.${key}=${key}`,
+      ...jsonStrings(item, `${path}.${key}`),
+    ]);
+  }
+  return [`${path}=${value}`];
+}
+
+test('installer tool lock pins exact NSIS, Rust and Xcode/SDK identities', async () => {
+  const lock = await installerToolLock();
+  assert.equal(lock.schema, 1, 'the installer tool lock must declare schema 1');
+
+  // Exactly one archive, the reviewed NSIS mirror. No WiX, no Tauri plugin.
+  assert.deepEqual(Object.keys(lock.archives), ['nsis'], 'the lock must pin exactly the reviewed NSIS archive');
+  const nsis = lock.archives.nsis;
+  assert.equal(nsis.url, REVIEWED_NSIS_URL, 'NSIS must come from the reviewed archive URL');
+  assert.equal(nsis.sha256, REVIEWED_NSIS_SHA256, 'NSIS must be pinned to the reviewed SHA-256');
+  assert.equal(nsis.version, '3.08', 'the reviewed NSIS archive is 3.08');
+  assert.equal(nsis.extract_root, 'nsis-3.08', 'the archive extracts under nsis-3.08/');
+  assert.equal(nsis.makensis, 'nsis-3.08/makensis.exe', 'the locked compiler path must be explicit');
+
+  // No pin may be a wildcard, placeholder or "latest" alias.
+  for (const entry of jsonStrings(lock)) {
+    const value = entry.slice(entry.indexOf('=') + 1);
+    assert.ok(!value.includes('*'), `installer tool pin must not contain a wildcard: ${entry}`);
+    assert.ok(!INEXACT_PIN_VALUES.has(value.toLowerCase()), `installer tool pin must be exact: ${entry}`);
+  }
+  const lockText = await readFile(new URL(INSTALLER_LOCK, root), 'utf8');
+  assert.doesNotMatch(lockText, /wix|nsis_tauri_utils/i, 'the standalone installer lock must not name WiX or the Tauri NSIS plugin');
+
+  // Runner labels are recorded for provenance, but they are not the pin: the
+  // compiler/SDK identities below carry the contract.
+  assert.deepEqual(Object.keys(lock.targets).sort(), ['macos-arm64', 'windows-x86_64']);
+  assert.equal(lock.targets['windows-x86_64'].runner, 'windows-2025');
+  assert.equal(lock.targets['windows-x86_64'].build_target, 'x86_64-pc-windows-msvc');
+  assert.equal(lock.targets['macos-arm64'].runner, 'macos-26');
+  assert.equal(lock.targets['macos-arm64'].build_target, 'aarch64-apple-darwin');
+
+  // A recorded identity the workflow does not actually enforce would be fiction:
+  // each pin must appear in the workflow that builds that target.
+  const windows = await workflow('build-native-windows.yml');
+  assert.match(windows, new RegExp(`runs-on:\\s*${lock.targets['windows-x86_64'].runner}\\b`), 'the Windows producer must run on the locked runner');
+  const macos = await workflow('build-native-macos.yml');
+  assert.match(macos, new RegExp(`runs-on:\\s*${lock.targets['macos-arm64'].runner}\\b`), 'the macOS producer must run on the locked runner');
+  const xcode = lock.tools.xcode.identity;
+  const sdk = lock.tools.macos_sdk.identity;
+  assert.equal(xcode.build, '17F113', 'the locked Xcode build must be the reviewed 17F113');
+  assert.equal(xcode.version, '26.6');
+  assert.equal(sdk.version, 'macosx26.5');
+  assert.match(macos, /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.6\.app/, 'the macOS producer must select the locked Xcode');
+  assert.ok(macos.includes(xcode.build), 'the macOS producer must enforce the locked Xcode build');
+  assert.ok(macos.includes(sdk.version), 'the macOS producer must enforce the locked macOS SDK');
+
+  // Rust is pinned by rust-toolchain.toml and the lock must agree with it.
+  const toolchain = await readFile(new URL(INSTALLER_TOOLCHAIN, root), 'utf8');
+  const rust = lock.tools.rust.identity;
+  assert.equal(rust.channel, '1.98.0', 'the installer crate pins Rust 1.98.0');
+  assert.match(toolchain, /^\[toolchain\]$/m, 'the installer crate must carry rust-toolchain.toml');
+  assert.match(toolchain, new RegExp(`channel\\s*=\\s*"${rust.channel.replace(/\./g, '\\.')}"`), 'rust-toolchain.toml must pin the locked Rust channel');
+  assert.match(toolchain, /profile\s*=\s*"minimal"/, 'the installer crate must use the minimal Rust profile');
+  for (const component of rust.components.split(',')) {
+    assert.match(toolchain, new RegExp(`components\\s*=\\s*\\[[^\\]]*"${component}"`), `rust-toolchain.toml must declare ${component}`);
+  }
+  for (const target of rust.targets.split(',')) {
+    assert.match(toolchain, new RegExp(`targets\\s*=\\s*\\[[^\\]]*"${target.replace(/\./g, '\\.')}"`), `rust-toolchain.toml must declare the ${target} target`);
+  }
+});
+
+test('installer tool lock fails closed until the Windows compiler and SDK identities exist', async () => {
+  const lock = await installerToolLock();
+  const expectations = {
+    msvc: ['cl_version', 'linker_version', 'msvc_toolset_version'],
+    windows_sdk: ['windows_sdk_version', 'ucrt_version'],
+  };
+  for (const [tool, required] of Object.entries(expectations)) {
+    const entry = lock.tools[tool];
+    assert.ok(entry, `the lock must record the ${tool} tool`);
+    assert.deepEqual(entry.targets, ['windows-x86_64'], `${tool} applies to the Windows target only`);
+    assert.ok(entry.required_unresolved, `${tool} must be recorded as required but unresolved`);
+    assert.equal(entry.identity, undefined, `${tool} must not carry an invented identity`);
+    assert.ok(entry.required_unresolved.reason.trim(), `${tool} must explain why its identity is unresolved`);
+    assert.match(entry.required_unresolved.reason, /windows-2025/, `${tool} must name the runner whose inventory is missing`);
+    for (const field of required) {
+      assert.ok(entry.required_unresolved.must_supply.includes(field), `${tool} must require ${field}`);
+    }
+    assert.ok(
+      entry.required_unresolved.must_supply.some((field) => field.endsWith('_sha256')),
+      `${tool} must require a file digest, not only a version`,
+    );
+    // No fabricated digest may stand in for the missing identity.
+    for (const value of jsonStrings(entry)) {
+      assert.doesNotMatch(value.slice(value.indexOf('=') + 1), /^[0-9a-f]{64}$/, `${tool} must not contain a fabricated hash: ${value}`);
+    }
+  }
+
+  // Every Windows-target tool is either a pinned identity or explicitly unresolved;
+  // there is no third, silently permissive state.
+  for (const [tool, entry] of Object.entries(lock.tools)) {
+    if (!entry.targets.includes('windows-x86_64')) continue;
+    const resolved = entry.identity !== undefined;
+    const unresolved = entry.required_unresolved !== undefined;
+    assert.ok(resolved !== unresolved, `${tool} must be exactly one of pinned or required_unresolved`);
+  }
+});
+
 test('producer workflows never invoke reproducibility verifiers or A/B machinery', async () => {
   for (const name of ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-native-windows.yml', 'build-native-macos.yml', 'build-supply-chain.yml']) {
     const source = await workflow(name);
