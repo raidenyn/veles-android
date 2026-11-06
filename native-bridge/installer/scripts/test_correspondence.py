@@ -1885,6 +1885,48 @@ class PortableFindingTests(WorkDir):
         self.assertEqual(correspondence.main(["--unsigned", str(tree), "--signed", str(tree), "--kind", "tree", "--rep", str(report)]), 2)
 
 
+class Round2FatOrderTests(WorkDir):
+    """Re-review N1: the physical order of fat slices is compared, not only the table order."""
+
+    def images(self):
+        arm_u, _ = build_macho()
+        x86_u, _ = build_macho(cputype=CPU_X86_64)
+        arm_s, _ = build_signed_macho()
+        x86_s, _ = build_signed_macho(cputype=CPU_X86_64)
+        return arm_u, x86_u, arm_s, x86_s
+
+    @staticmethod
+    def with_table_swapped(blob):
+        """Exchange the two 20-byte table entries (offsets travel with their entry)."""
+        swapped = bytearray(blob)
+        swapped[8:28], swapped[28:48] = blob[28:48], blob[8:28]
+        return bytes(swapped)
+
+    def test_n1_reversing_the_physical_slice_order_while_restoring_the_table_order_fails(self):
+        arm_u, x86_u, arm_s, x86_s = self.images()
+        fat_u = build_fat([(CPU_ARM64, 0, arm_u, 14), (CPU_X86_64, 3, x86_u, 12)])
+        self.assertEqual(self.compare_bytes("macho", fat_u, build_fat([(CPU_ARM64, 0, arm_s, 14), (CPU_X86_64, 3, x86_s, 12)]))["verdict"], "PASS")
+        # Signed: x86_64 then arm64 in the file, then the table entries exchanged so the table reads arm64, x86_64.
+        relocated = self.with_table_swapped(build_fat([(CPU_X86_64, 3, x86_s, 12), (CPU_ARM64, 0, arm_s, 14)]))
+        self.assertEqual(struct.unpack_from(">iiIII", relocated, 8)[0] & 0xFFFFFFFF, CPU_ARM64)  # the table order is restored
+        self.assertGreater(struct.unpack_from(">I", relocated, 8 + 8)[0], struct.unpack_from(">I", relocated, 28 + 8)[0])
+        report = self.compare_bytes("macho", fat_u, relocated)
+        self.assertEqual(report["verdict"], "FAIL")
+        self.assertEqual(report["allowed_differences"], [])
+        self.assertEqual(self.codes(report), ["macho-fat-physical-order-changed"], report["differences"])
+        # The unsigned side being the physically reordered one is the same change.
+        reordered_unsigned = self.with_table_swapped(build_fat([(CPU_X86_64, 3, x86_u, 12), (CPU_ARM64, 0, arm_u, 14)]))
+        report = self.compare_bytes("macho", reordered_unsigned, build_fat([(CPU_ARM64, 0, arm_s, 14), (CPU_X86_64, 3, x86_s, 12)]))
+        self.assertEqual(self.codes(report), ["macho-fat-physical-order-changed"], report["differences"])
+
+    def test_n1_a_consistent_physical_order_that_differs_from_the_table_order_is_still_supported(self):
+        arm_u, x86_u, arm_s, x86_s = self.images()
+        unsigned = self.with_table_swapped(build_fat([(CPU_X86_64, 3, x86_u, 12), (CPU_ARM64, 0, arm_u, 14)]))
+        signed = self.with_table_swapped(build_fat([(CPU_X86_64, 3, x86_s, 12), (CPU_ARM64, 0, arm_s, 14)]))
+        report = self.compare_bytes("macho", unsigned, signed)
+        self.assertEqual(report["verdict"], "PASS", report["differences"])
+
+
 class CommandLineTests(WorkDir):
     def run_cli(self, *args):
         return subprocess.run(

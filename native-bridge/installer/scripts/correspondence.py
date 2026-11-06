@@ -1101,10 +1101,11 @@ def fat_table_entry(arch: FatArch) -> dict:
     return {"cputype": f"{arch.cputype & 0xFFFFFFFF:#010x}", "cpusubtype": f"{arch.cpusubtype & 0xFFFFFFFF:#010x}", "align": arch.align}
 
 
-def parse_macho_container(data: bytes) -> tuple[str, list[tuple[FatArch | None, MachSlice]]]:
+def parse_macho_container(data: bytes) -> tuple[str, list[tuple[FatArch | None, MachSlice]], list[int]]:
+    """``(kind, slices in table order, table indices in physical (file) order)``."""
     magic = data[:4]
     if magic == MH_MAGIC_64 or magic in OTHER_THIN_MAGICS:
-        return "thin", [(None, MachSlice(data))]
+        return "thin", [(None, MachSlice(data))], [0]
     if magic in (FAT_MAGIC_64,) + FAT_MAGIC_SWAPPED:
         raise Reject("macho-unsupported-format", "only 32-bit-offset big-endian fat headers are supported")
     if magic != FAT_MAGIC:
@@ -1121,6 +1122,7 @@ def parse_macho_container(data: bytes) -> tuple[str, list[tuple[FatArch | None, 
     table_end = 8 + 20 * count
     cursor = table_end
     slices: dict[int, MachSlice] = {}
+    physical: list[int] = []
     # Physical layout is judged in file order. A signing step may grow slices, so offsets legitimately
     # move, but only to the one deterministic place: each slice at its own alignment boundary directly
     # after the previous slice (the first after the table). Any other offset is relocation or extra padding.
@@ -1138,10 +1140,11 @@ def parse_macho_container(data: bytes) -> tuple[str, list[tuple[FatArch | None, 
         if (slice_.cputype & 0xFFFFFFFF, slice_.cpusubtype & 0x00FFFFFF) != arch.key:
             raise Reject("macho-invalid-fat", "fat header architecture disagrees with the slice header")
         slices[index] = slice_
+        physical.append(index)
         cursor = arch.offset + arch.size
     if cursor != len(data):
         raise Reject("macho-trailing-data", "bytes follow the last fat slice")
-    return "fat", [(arch, slices[index]) for index, arch in enumerate(arches)]  # table order, as written
+    return "fat", [(arch, slices[index]) for index, arch in enumerate(arches)], physical  # table order, as written
 
 
 def compare_slice(u: MachSlice, s: MachSlice, policy: "Policy", index: int | None):
@@ -1289,7 +1292,7 @@ def compare_macho(unsigned: bytes, signed: bytes, policy: Policy) -> tuple[list,
     differences: list[dict] = []
     allowed: list[dict] = []
     hashes = {"unsigned_sha256": sha256(unsigned), "signed_sha256": sha256(signed)}
-    containers: dict[str, tuple[str, list]] = {}
+    containers: dict[str, tuple[str, list, list[int]]] = {}
     for side, data in (("unsigned", unsigned), ("signed", signed)):
         try:
             containers[side] = parse_macho_container(data)
@@ -1298,7 +1301,7 @@ def compare_macho(unsigned: bytes, signed: bytes, policy: Policy) -> tuple[list,
     hashes["signed_matches_invariant"] = False
     if len(containers) != 2:
         return differences, allowed, hashes, []
-    (kind_u, slices_u), (kind_s, slices_s) = containers["unsigned"], containers["signed"]
+    (kind_u, slices_u, order_u), (kind_s, slices_s, order_s) = containers["unsigned"], containers["signed"]
     if kind_u != kind_s:
         differences.append(difference("macho-container-kind-changed", f"unsigned is {kind_u}, signed is {kind_s}"))
         return differences, allowed, hashes, []
@@ -1317,6 +1320,20 @@ def compare_macho(unsigned: bytes, signed: bytes, policy: Policy) -> tuple[list,
                 region="fat-table",
                 unsigned=table_u,
                 signed=table_s,
+            )
+        )
+        return differences, allowed, hashes, []
+    # The table entries now agree, so the same table index names the same architecture on both sides: comparing
+    # the file-order permutation of indices compares which architecture sits where. A signing step grows slices
+    # in place; it never moves one architecture past another. (Offsets then follow from the packing rule.)
+    if order_u != order_s:
+        differences.append(
+            difference(
+                "macho-fat-physical-order-changed",
+                "the slices are stored in a different physical order than in the unsigned input",
+                region="fat-layout",
+                unsigned=order_u,
+                signed=order_s,
             )
         )
         return differences, allowed, hashes, []
