@@ -124,6 +124,23 @@ table without promoting its simulated or historical results.
   two-phone delivery and helper-copy evidence over a conservative 741-second
   interval, with prompt host shutdown and phone stop witnesses. Its clipboard
   already held the fixed value, so it did not show an OS clipboard transition.
+- **Windows prewarm (current build):** after the replacement-event fix and a
+  focus-interrupted attempt, a clean original-host run passed its full browser
+  assertions over a conservative 720.085-second interval: both source-bound
+  4096-byte records arrived at 640.2 s and 662.0 s, the copy completed at 640.2 s
+  with zero helper contexts, and samplers started before backgrounding recorded
+  721 foreground/active/unlocked OS samples and 719 of 720 fully valid
+  zero-connection TCP samples (one transient CIM failure where .NET still
+  reported zero). Sampled evidence, and the OS clipboard already held the fixed
+  value, so no false→true transition is claimed.
+- **Clipboard denial (new):** an identical build with only `clipboardWrite`
+  removed reported permissions `["nativeMessaging","offscreen","storage"]`; the
+  copy failed visibly, both links stayed connected, no helper remained, and both
+  phones still answered diagnostic requests. Restoring the manifest returned the
+  same build to a successful copy.
+- **Aggregate acceptance:** recorded separately in
+  `docs/otp-08-acceptance-2026-11-06.md`, which was corrected twice under
+  independent review before sign-off. It is a scoped OTP-08 verdict, not Gate B.
 - **Mac:** the user independently verified the host's ED25519 fingerprint;
   it now matches the stored key and current SSH presentation. The earlier
   different presented key was not accepted and its cause remains unknown.
