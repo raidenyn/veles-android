@@ -419,6 +419,60 @@ class ValidateToolsTests(unittest.TestCase):
         errors = release_config.validate_lock(unknown)
         self.assertTrue(any("clang" in error for error in errors), errors)
 
+    def test_windows_sdk_and_ucrt_versions_accept_four_components(self):
+        """Real Windows SDK/UCRT fingerprints are four-component versions."""
+        lock = load_lock()
+        filled = fill_unresolved(lock)
+        filled["tools"]["msvc"]["identity"].update(
+            {
+                "cl_version": "19.44.35211.0",
+                "linker_version": "14.44.35211.0",
+                "msvc_toolset_version": "14.44.35207",
+            }
+        )
+        filled["tools"]["windows_sdk"]["identity"].update(
+            {
+                "windows_sdk_version": "10.0.26100.0",
+                "ucrt_version": "10.0.26100.0",
+            }
+        )
+        self.assertEqual(
+            release_config.validate_lock(filled),
+            [],
+            "realistic four-component Windows compiler/SDK fingerprints must be accepted",
+        )
+
+        observed = complete_observation(filled, "windows-x86_64")
+        self.assertEqual(
+            release_config.validate_tools(filled, observed),
+            [],
+            "a Windows inventory reporting 10.0.26100.0 for the SDK and UCRT must validate",
+        )
+        self.assertEqual(observed["tools"]["windows_sdk"]["windows_sdk_version"], "10.0.26100.0")
+
+        # Malformed versions must still be rejected for every Windows field,
+        # including the four-component ones.
+        for tool, fields in (
+            ("msvc", ("cl_version", "linker_version", "msvc_toolset_version")),
+            ("windows_sdk", ("windows_sdk_version", "ucrt_version")),
+        ):
+            for field in fields:
+                for malformed in (
+                    "10..26100",
+                    "10.0.26100.0.1",
+                    "10.0.26100.x",
+                    "10.0.26100.",
+                    ".10.0.26100",
+                    "latest",
+                ):
+                    broken = copy.deepcopy(filled)
+                    broken["tools"][tool]["identity"][field] = malformed
+                    errors = release_config.validate_lock(broken)
+                    self.assertTrue(
+                        any(field in error for error in errors),
+                        f"{tool}.{field}={malformed!r} must be rejected: {errors}",
+                    )
+
     def test_lock_rejects_wildcards_placeholders_and_unknown_fields(self):
         lock = load_lock()
         for mutate in (

@@ -74,6 +74,12 @@ FORBIDDEN_PAYLOAD_TOKENS = ("wix", "nsis_tauri_utils")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+# Windows compiler/SDK versions are not three-component semvers: the Windows SDK
+# and UCRT report four components ("10.0.26100.0") and so do cl.exe/link.exe
+# ("19.44.35211.0"), while some MSVC toolsets still report three
+# ("14.44.35207"). Accept exactly three or four numeric components, so a real
+# inventory from the approved runner can satisfy the lock.
+_WINDOWS_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:\.\d+)?$")
 _BUILD_ID = re.compile(r"^[0-9A-Za-z]+$")
 _APPLE_VERSION = re.compile(r"^[0-9A-Za-z]+(?:[._][0-9A-Za-z]+)*$")
 
@@ -104,17 +110,17 @@ REQUIRED_TOOLS: dict[str, dict[str, Any]] = {
     "msvc": {
         "targets": ("windows-x86_64",),
         "fingerprints": {
-            "cl_version": _SEMVER,
-            "linker_version": _SEMVER,
-            "msvc_toolset_version": _SEMVER,
+            "cl_version": _WINDOWS_VERSION,
+            "linker_version": _WINDOWS_VERSION,
+            "msvc_toolset_version": _WINDOWS_VERSION,
             "msvc_toolset_sha256": _HEX64,
         },
     },
     "windows_sdk": {
         "targets": ("windows-x86_64",),
         "fingerprints": {
-            "windows_sdk_version": _SEMVER,
-            "ucrt_version": _SEMVER,
+            "windows_sdk_version": _WINDOWS_VERSION,
+            "ucrt_version": _WINDOWS_VERSION,
             "windows_sdk_sha256": _HEX64,
         },
     },
