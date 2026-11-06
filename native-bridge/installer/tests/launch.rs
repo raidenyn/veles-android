@@ -18,7 +18,6 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(unix)]
 use veles_bridge_installer::STATE_REPAIRED;
 use veles_bridge_installer::{
     Channel, Digest, FailureCode, FakePlatform, Faults, HostFault, HostState, InstallPaths,
