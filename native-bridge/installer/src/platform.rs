@@ -130,9 +130,9 @@ pub enum HostState {
 /// The per-user install root is private to the installing user (`0700` on Unix,
 /// the user's own ACLs on Windows), so a process positively attributed to another
 /// user cannot execute an owned image. Attribution is only consulted for a
-/// process that could still be ours: an image path that resolves *outside* the
-/// owned trees is ruled out first, so an unrelated protected system process never
-/// has to be attributed to a user and never blocks the installer.
+/// process that could still be ours: an image that resolves *outside* the owned
+/// trees is ruled out first, so an unrelated protected system process never has
+/// to be attributed to a user and never blocks the installer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessScope {
     /// Runs as the installing user: may execute files in the per-user root.
@@ -147,6 +147,32 @@ pub enum ProcessScope {
     /// image could not be resolved either, and then it blocks instead of being
     /// treated as another user's process.
     Unknown,
+}
+
+/// What the OS established about one process's executable image.
+///
+/// The variants are *evidence*, never a decision: the classifier applies the same
+/// owned-tree rules to every value. The distinction between a resolved path and a
+/// bare image name exists because the native adapters must not need a process
+/// handle for every process on the machine. A system, protected (PPL) or
+/// higher-privilege process may be impossible to open for a non-elevated
+/// installer, and that must not make every install report
+/// [`HostState::Unknown`] forever.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessImage {
+    /// The absolute executable file path, resolved through a process handle
+    /// (Windows `QueryFullProcessImageNameW`, macOS `proc_pidpath`).
+    Path(PathBuf),
+    /// Only the OS-reported image *name* is known, because no process handle was
+    /// opened.
+    ///
+    /// Windows reports this base name - never a full path - in
+    /// `SystemProcessInformation.ImageName` for every process. It is enough to
+    /// rule a process out (a process executing an owned image always reports that
+    /// image's file name), but never enough to prove the image is ours.
+    Name(OsString),
+    /// The OS could not resolve the image at all.
+    Unresolved,
 }
 
 /// Identity of one OS process.
@@ -171,13 +197,13 @@ pub struct ProcessObservation {
     pub identity: ProcessIdentity,
     /// The user the OS attributed the process to, when it could.
     pub scope: ProcessScope,
-    /// The OS-resolved absolute executable image path, never a display name.
+    /// What the OS could establish about the executable image.
     ///
-    /// `None` means the OS could not resolve it. For a process that is not
-    /// positively another user's, that is a potential owned host, so it blocks as
-    /// [`HostState::Unknown`] - unless the image resolves outside the owned trees,
-    /// which rules the process out whatever its user.
-    pub image: Option<PathBuf>,
+    /// [`ProcessImage::Unresolved`] (and [`ProcessImage::Name`] for a process that
+    /// is not positively another user's) is a potential owned host, so it blocks
+    /// as [`HostState::Unknown`] - unless the image resolves outside the owned
+    /// trees, which rules the process out whatever its user.
+    pub image: ProcessImage,
 }
 
 /// Upper bound on one process-table snapshot; a larger table is untrustworthy.
@@ -185,10 +211,11 @@ const MAX_PROCESS_OBSERVATIONS: usize = 1 << 16;
 
 /// The OS process table, as the injected boundary for host inspection.
 ///
-/// Native adapters implement this with the Windows Toolhelp/token/process-image
-/// APIs and with macOS `libproc`; the portable tests inject a scripted table.
-/// Adapters report the user scope they could read and leave `image` unresolved
-/// rather than guessing an executable path.
+/// Native adapters implement this with Windows
+/// `NtQuerySystemInformation(SystemProcessInformation)`/token/process-image calls
+/// and with macOS `libproc`; the portable tests inject a scripted table. Adapters
+/// report what they could read (a resolved path, or only the OS image name when no
+/// handle was opened) rather than guessing an executable path.
 pub trait ProcessTable {
     /// One snapshot of the process table.
     ///
@@ -233,20 +260,30 @@ enum Rechecked {
 }
 
 /// The owned executable bases (`versions/` and `maintenance/`) with canonical
-/// aliases.
+/// aliases, plus the base names of the files below them.
 ///
 /// macOS reports a process image through the resolved filesystem (`/var` is a
 /// symlink to `/private/var`), so the lexical base and its canonical form are
 /// both accepted there. Windows compares the verbatim `\\?\` prefix with the DOS
 /// prefix by normalising it in [`comparable_components`], so a canonicalised
 /// base is a usable second spelling on every target. A matching *file name* is
-/// never evidence: only containment below an owned tree is.
+/// never evidence: only containment below an owned tree is. The collected names
+/// are used the other way round - to rule a process out - because a Windows
+/// process that cannot be opened is only reported by its image file name.
 pub(crate) struct OwnedImages {
     bases: Vec<PathBuf>,
+    /// Base names of the files below the owned trees, as the OS stores them.
+    names: Vec<OsString>,
 }
 
 impl OwnedImages {
-    pub(crate) fn capture(paths: &InstallPaths) -> Self {
+    /// Capture the owned bases and the base names of the files below them.
+    ///
+    /// Fails when the owned trees cannot be enumerated: the name set is what lets
+    /// a protected process be ruled out without opening it, so an incomplete set
+    /// could rule a live host out. Callers turn the error into
+    /// [`HostState::Unknown`].
+    pub(crate) fn capture(paths: &InstallPaths) -> io::Result<Self> {
         let mut bases = Vec::with_capacity(4);
         for base in [paths.versions(), paths.maintenance()] {
             bases.push(base.to_path_buf());
@@ -256,7 +293,10 @@ impl OwnedImages {
                 bases.push(canonical);
             }
         }
-        Self { bases }
+        Ok(Self {
+            bases,
+            names: owned_image_names(paths)?,
+        })
     }
 
     pub(crate) fn classify(&self, image: Option<&Path>) -> ImageClass {
@@ -273,6 +313,90 @@ impl OwnedImages {
             ImageClass::Foreign
         }
     }
+
+    /// Whether an OS-reported image *name* could be the name of an owned host.
+    ///
+    /// Windows reports a process it could not open by its
+    /// `SystemProcessInformation.ImageName`, which is the base name of the image
+    /// file (never a full path) and, when the kernel has to fall back to the
+    /// legacy `EPROCESS.ImageFileName`, only its first 15 characters. A reported
+    /// name is therefore at most a *prefix* of the name an owned host would
+    /// report, and a process is ruled out only when no owned executable's name
+    /// starts with it.
+    ///
+    /// An empty name means the OS reports no image file at all (the idle process
+    /// and other kernel-created processes), so the process cannot be executing a
+    /// file below the owned trees.
+    pub(crate) fn may_be_owned_name(&self, reported: &OsStr) -> bool {
+        let reported = reported.to_string_lossy();
+        // The contract is a bare file name; a path-shaped value is reduced to its
+        // last component instead of being silently ruled out.
+        let reported = reported.rsplit(['\\', '/']).next().unwrap_or_default();
+        if reported.is_empty() {
+            return false;
+        }
+        self.names
+            .iter()
+            .any(|name| name_starts_with(&name.to_string_lossy(), reported))
+    }
+}
+
+/// Upper bound on the owned files whose names are collected.
+const MAX_OWNED_IMAGE_NAMES: usize = 1 << 12;
+/// Upper bound on the owned-tree walk depth.
+const MAX_OWNED_IMAGE_DEPTH: usize = 16;
+
+/// The base names of every non-directory entry below `versions/` and
+/// `maintenance/`.
+///
+/// The walk is read-only, bounded and never follows a link: an owned tree that
+/// contains one, or an entry it cannot read, is not the private tree this
+/// installer wrote, so no name list can be trusted and the inspection fails
+/// closed instead of ruling a live host out.
+fn owned_image_names(paths: &InstallPaths) -> io::Result<Vec<OsString>> {
+    let mut names = Vec::new();
+    let mut pending = vec![
+        (paths.versions().to_path_buf(), 0usize),
+        (paths.maintenance().to_path_buf(), 0),
+    ];
+    while let Some((directory, depth)) = pending.pop() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            // A tree that does not exist yet holds no executable.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(io::Error::other("owned image directory is unreadable")),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|_| io::Error::other("owned image entry is unreadable"))?;
+            if names.len() >= MAX_OWNED_IMAGE_NAMES {
+                return Err(io::Error::other("implausible owned image tree"));
+            }
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|_| io::Error::other("owned image entry is unreadable"))?;
+            if is_link_like(&metadata) {
+                return Err(io::Error::other("owned image tree contains a link"));
+            }
+            if metadata.is_dir() {
+                if depth >= MAX_OWNED_IMAGE_DEPTH {
+                    return Err(io::Error::other("owned image tree is too deep"));
+                }
+                pending.push((entry.path(), depth + 1));
+            } else {
+                names.push(entry.file_name());
+            }
+        }
+    }
+    Ok(names)
+}
+
+/// Whether `name` begins with `prefix`, ignoring ASCII case.
+fn name_starts_with(name: &str, prefix: &str) -> bool {
+    if prefix.chars().count() > name.chars().count() {
+        return false;
+    }
+    name.chars()
+        .zip(prefix.chars())
+        .all(|(name, prefix)| name.eq_ignore_ascii_case(&prefix))
 }
 
 /// Whether one observation could be a process executing an owned image.
@@ -281,13 +405,28 @@ impl OwnedImages {
 /// point: a process whose image is outside the owned trees cannot be executing an
 /// owned host whatever user it runs as, so an unrelated process that the OS will
 /// not attribute (a hardened or system process) must not block the installer.
-/// Only an owned image - or an image that could not be resolved at all - still
-/// needs the attribution; there, a positive "another user" rules the process out
-/// while "installing user" or "unknown" leaves it a potential host.
+/// Only an owned image - or an image that could not be resolved, or a process that
+/// could not be opened at all and therefore only has a name - still needs the
+/// attribution; there, a positive "another user" rules the process out while
+/// "installing user" or "unknown" leaves it a potential host.
 fn is_candidate(owned: &OwnedImages, observation: &ProcessObservation) -> bool {
-    match owned.classify(observation.image.as_deref()) {
-        ImageClass::Foreign => false,
-        ImageClass::Owned | ImageClass::Unresolved => observation.scope != ProcessScope::OtherUser,
+    match &observation.image {
+        // A resolved path inside the trees is a host once the user allows it; a
+        // path outside them rules the process out without any attribution.
+        ProcessImage::Path(image) => match owned.classify(Some(image)) {
+            ImageClass::Foreign => false,
+            ImageClass::Owned | ImageClass::Unresolved => {
+                observation.scope != ProcessScope::OtherUser
+            }
+        },
+        // No handle was opened, so the OS-reported file name is the only evidence:
+        // a name that no owned executable has rules the process out, and a name an
+        // owned executable could have cannot.
+        ProcessImage::Name(name) => {
+            owned.may_be_owned_name(name) && observation.scope != ProcessScope::OtherUser
+        }
+        // Nothing resolved: it cannot be ruled out.
+        ProcessImage::Unresolved => observation.scope != ProcessScope::OtherUser,
     }
 }
 
@@ -307,12 +446,17 @@ pub fn inspect_host_processes(paths: &InstallPaths, table: &impl ProcessTable) -
     let observations = match table.observe(paths) {
         Ok(observations) if observations.len() <= MAX_PROCESS_OBSERVATIONS => observations,
         // An unreadable or implausibly large process table cannot prove
-        // quiescence. (An adapter rules irrelevant processes out before it
+        // quiescence. (An adapter may rule irrelevant processes out before it
         // returns, so an empty result is legitimate; an empty OS snapshot is the
         // adapter's own error.)
         _ => return HostState::Unknown,
     };
-    let owned = OwnedImages::capture(paths);
+    let owned = match OwnedImages::capture(paths) {
+        Ok(owned) => owned,
+        // Without the owned file names a protected process cannot be ruled out,
+        // so quiescence cannot be claimed.
+        Err(_) => return HostState::Unknown,
+    };
     let mut unknown = false;
     for observation in &observations {
         if !is_candidate(&owned, observation) {
@@ -356,11 +500,16 @@ fn recheck_candidate(
         // A PID recycled by a foreign image or another user's process.
         return Rechecked::Inactive;
     }
-    match owned.classify(current.image.as_deref()) {
-        ImageClass::Owned => Rechecked::Active,
-        // `is_candidate` already ruled a foreign image out.
-        ImageClass::Foreign => Rechecked::Inactive,
-        ImageClass::Unresolved => Rechecked::Unknown,
+    match &current.image {
+        ProcessImage::Path(image) => match owned.classify(Some(image)) {
+            ImageClass::Owned => Rechecked::Active,
+            // `is_candidate` already ruled a foreign image out.
+            ImageClass::Foreign => Rechecked::Inactive,
+            ImageClass::Unresolved => Rechecked::Unknown,
+        },
+        // Still no handle: the name allows the process to be ours, so it cannot
+        // be ruled out, and a nameless or unreadable image is no better.
+        ProcessImage::Name(_) | ProcessImage::Unresolved => Rechecked::Unknown,
     }
 }
 

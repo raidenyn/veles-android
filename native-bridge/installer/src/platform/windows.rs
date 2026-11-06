@@ -30,20 +30,24 @@
 //!
 //! ## Host inspection (Task 5)
 //!
-//! [`WindowsPlatform::inspect_hosts`] walks the Toolhelp process snapshot and
-//! resolves each process image with `QueryFullProcessImageNameW` (through a
-//! `PROCESS_QUERY_LIMITED_INFORMATION` handle, which is granted for
-//! higher-privilege processes). An image outside the owned trees rules it out
-//! immediately, so an unrelated service never needs a readable token. The session
-//! is deliberately not an ownership filter - a service-session process running as
-//! the installing user can still read `%LOCALAPPDATA%` and execute an owned image,
+//! [`WindowsPlatform::inspect_hosts`] enumerates processes with
+//! `NtQuerySystemInformation(SystemProcessInformation)`, which reports every
+//! process's id and its image *file name* without opening anything. That name is
+//! the first decision point: a process that could not be executing a file below
+//! the owned `versions/`/`maintenance/` trees is reported by that name and ruled
+//! out without any handle being opened, so the protected system processes a
+//! non-elevated installer cannot open (the `System` pseudo-process, `Memory
+//! Compression`, PPL services) never become blocking candidates. Only a process
+//! whose name could be an owned executable's is opened, for the exact image path
+//! and the token user SID. The session is deliberately not an ownership filter -
+//! a service-session process running as the installing user can still read `%LOCALAPPDATA%` and execute an owned image,
 //! and the same user may be logged on in a second session. For a process that
 //! could be ours, the token user SID decides: a matching SID is the installing
 //! user's process, a different SID is skipped, and a token or SID that cannot be
 //! read is unattributed (not "another user"), so it stays a potential owned host
-//! and blocks. Every candidate is re-read by PID before the decision and the
-//! process now holding the PID is classified, so a recycled PID is neither
-//! trusted nor able to hide a host.
+//! and blocks. Every candidate is re-read by PID from a fresh enumeration before
+//! the decision and the process now holding the PID is classified, so a recycled
+//! PID is neither trusted nor able to hide a host.
 
 use std::ffi::OsString;
 use std::fs;
@@ -54,8 +58,10 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::ptr;
 
+use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, GENERIC_READ, HANDLE, HWND,
+    CloseHandle, ERROR_INVALID_PARAMETER, GENERIC_READ, HANDLE, HWND, STATUS_INFO_LENGTH_MISMATCH,
+    STATUS_SUCCESS,
 };
 use windows::Win32::Security::Cryptography::CERT_CONTEXT;
 use windows::Win32::Security::WinTrust::{
@@ -72,22 +78,20 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_READ, GetFileSizeEx, OPEN_EXISTING,
     ReadFile, SetFilePointerEx,
 };
-use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
-};
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
+use windows::Win32::System::WindowsProgramming::SYSTEM_PROCESS_INFORMATION;
 use windows::core::{HRESULT, PCWSTR, PWSTR};
 
 use super::pe;
 use super::windows_trust as trust_status;
 use super::{
     HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages, PACKAGE_WINDOWS_CARRIER,
-    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessObservation, ProcessScope,
-    ProcessTable, Registration, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath,
-    inspect_host_processes, path_is_within,
+    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage, ProcessObservation,
+    ProcessScope, ProcessTable, Registration, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
+    ValidatedPath, inspect_host_processes, path_is_within,
 };
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
@@ -101,6 +105,13 @@ const MAX_CARRIER_BYTES: usize =
     crate::policy::CARRIER_HEADER_LEN + crate::model::MAX_DOCUMENT_BYTES;
 /// Bound on the snapshot entry list; a larger table is untrustworthy.
 const MAX_PROCESS_SNAPSHOT_ENTRIES: usize = 1 << 16;
+/// First `SystemProcessInformation` buffer size requested from the kernel.
+const INITIAL_PROCESS_LIST_BYTES: usize = 256 * 1024;
+/// Hard cap on the `SystemProcessInformation` buffer: a larger process table is
+/// untrustworthy and is reported as an inspection failure, never as "no host".
+const MAX_PROCESS_LIST_BYTES: usize = 32 * 1024 * 1024;
+/// Bound on `STATUS_INFO_LENGTH_MISMATCH` retries.
+const MAX_PROCESS_LIST_ATTEMPTS: usize = 8;
 /// Bound for one process image path (32767 WCHARs plus the terminator).
 const MAX_PROCESS_IMAGE_CHARS: usize = 32_768;
 
@@ -238,51 +249,220 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
 
 /// The Windows process table.
 ///
-/// The image is resolved before the token: a process executing a path outside the
-/// owned trees cannot be an owned host whatever user or session it belongs to, so
-/// an unrelated service never needs its token read. Attribution is the token user
-/// SID, never the session: a service-session process running as the installing
-/// user can still read `%LOCALAPPDATA%` and execute an owned image, and the same
-/// user may be logged on in more than one session. A process whose token cannot
-/// be read is unattributed and blocks.
+/// Processes are enumerated with `NtQuerySystemInformation(SystemProcessInformation)`,
+/// which reports each process's id and image *file name* without opening it. That
+/// name decides whether a handle is needed at all: a process whose name no
+/// executable below the owned trees has is reported by that name and the
+/// classifier rules it out, so the protected system processes a non-elevated
+/// installer cannot open never become blocking candidates. Only a process whose
+/// name could be an owned executable's is opened, for the exact image path and the
+/// token user SID: the image is resolved before the token, and attribution is the
+/// token user SID, never the session (a service-session process running as the
+/// installing user can still read `%LOCALAPPDATA%` and execute an owned image, and
+/// the same user may be logged on in more than one session).
 #[derive(Debug, Default)]
 struct WindowsProcessTable;
 
 impl ProcessTable for WindowsProcessTable {
     fn observe(&self, paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
-        let owned = OwnedImages::capture(paths);
+        self.snapshot(paths)
+    }
+
+    /// A fresh enumeration by pid.
+    ///
+    /// The evidence of the process that holds the pid now decides, so a recycled
+    /// pid is neither trusted nor able to hide a host. `None` means the pid is no
+    /// longer present, which is the only thing that may be read as "exited".
+    fn recheck(&self, paths: &InstallPaths, pid: u32) -> io::Result<Option<ProcessObservation>> {
+        Ok(self
+            .snapshot(paths)?
+            .into_iter()
+            .find(|observation| observation.identity.pid == pid))
+    }
+}
+
+impl WindowsProcessTable {
+    /// Read the process table once and report every present process as evidence.
+    ///
+    /// The listed image name decides only whether a handle is needed: a process
+    /// whose name no executable below the owned trees has is reported as
+    /// [`ProcessImage::Name`] and never opened, and the classifier rules it out.
+    /// A process that could be executing an owned image is opened for its exact
+    /// path and token, and one that cannot be opened is reported by its name too -
+    /// the classifier can only treat that as a potential host, so it blocks
+    /// instead of being written off as another user's process.
+    fn snapshot(&self, paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
+        let owned = OwnedImages::capture(paths)?;
         let own = CurrentUser::capture()?;
-        let snapshot = ToolhelpSnapshot::capture()?;
-        let entries = snapshot.entries()?;
-        let mut observations = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let pid = entry.th32ProcessID;
-            if pid == 0 || pid == process::id() {
+        let mut observations = Vec::new();
+        for listed in list_processes()? {
+            if listed.pid == 0 || listed.pid == process::id() {
                 continue;
             }
-            match open_process(pid) {
-                OpenedProcess::Handle(handle) => {
-                    observations.push(observe_open_process(pid, &handle, &own, &owned));
+            let observation = if needs_inspection(&owned, &listed) {
+                match open_process(listed.pid) {
+                    OpenedProcess::Handle(handle) => {
+                        observe_open_process(&listed, &handle, &own, &owned)
+                    }
+                    // It could be executing an owned image and this installer may
+                    // not open it, so it cannot be attributed: it stays a
+                    // potential host.
+                    OpenedProcess::Denied => name_only(&listed),
+                    // The process exited after the list was taken.
+                    OpenedProcess::Gone => continue,
                 }
-                // The process exists but this installer may not open it, so it
-                // cannot be attributed and remains a potential owned host.
-                OpenedProcess::Denied => observations.push(unattributed(pid)),
-                // A snapshot entry whose process already exited is not live.
-                OpenedProcess::Gone => {}
-            }
+            } else {
+                // Nothing below the owned trees has this name, so no handle, token
+                // or block is needed for it.
+                name_only(&listed)
+            };
+            observations.push(observation);
         }
         Ok(observations)
     }
+}
 
-    fn recheck(&self, paths: &InstallPaths, pid: u32) -> io::Result<Option<ProcessObservation>> {
-        let owned = OwnedImages::capture(paths);
-        let own = CurrentUser::capture()?;
-        Ok(match open_process(pid) {
-            OpenedProcess::Handle(handle) => Some(observe_open_process(pid, &handle, &own, &owned)),
-            OpenedProcess::Denied => Some(unattributed(pid)),
-            OpenedProcess::Gone => None,
-        })
+/// One process as `SystemProcessInformation` reported it.
+struct ListedProcess {
+    pid: u32,
+    /// The image *file name* only: the kernel never reports the directory here,
+    /// and reports an empty name for a process that executes no image file.
+    image_name: OsString,
+}
+
+/// Whether this installer has to open the listed process.
+///
+/// This decides only whether a handle is needed, never whether the process is
+/// reported: a name that no executable below the owned trees has cannot be an
+/// owned host, so that process is reported by its name and never opened. An empty
+/// name rules nothing out on its own - the kernel reports it for a process that
+/// executes no image file, but the exact path is better evidence - so such a
+/// process is opened and decided exactly when that is possible. Only an empty name
+/// on a process this installer cannot open falls back to the inference in
+/// [`ProcessImage::Name`].
+fn needs_inspection(owned: &OwnedImages, listed: &ListedProcess) -> bool {
+    listed.image_name.is_empty() || owned.may_be_owned_name(&listed.image_name)
+}
+
+/// Enumerate every process and its image file name.
+///
+/// `SystemProcessInformation` is a linked list of variable-length entries in one
+/// caller-allocated buffer. The required length is not known in advance, so a
+/// `STATUS_INFO_LENGTH_MISMATCH` retries with the reported (and a geometric)
+/// growth, bounded by [`MAX_PROCESS_LIST_BYTES`] and
+/// [`MAX_PROCESS_LIST_ATTEMPTS`]. Every failure is an error, never an empty list:
+/// a table that could not be read must not look like "no host".
+///
+/// The entry layout is the 64-bit one (`SYSTEM_PROCESS_INFORMATION` is 256 bytes,
+/// `ImageName` at 56 and `UniqueProcessId` at 80), which is what this adapter's
+/// only supported target (`Target::WindowsX64`) gets from the kernel.
+fn list_processes() -> io::Result<Vec<ListedProcess>> {
+    let mut bytes = INITIAL_PROCESS_LIST_BYTES;
+    for _ in 0..MAX_PROCESS_LIST_ATTEMPTS {
+        let words = bytes.div_ceil(size_of::<usize>());
+        let mut buffer = vec![0usize; words];
+        let size = words * size_of::<usize>();
+        let size = u32::try_from(size).map_err(|_| io::Error::other("implausible process list"))?;
+        let mut required = 0u32;
+        // SAFETY: the buffer is live, word-aligned and `size` bytes long, and
+        // `required` is a live out-parameter. The kernel writes at most `size`.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SystemProcessInformation,
+                buffer.as_mut_ptr().cast(),
+                size,
+                &mut required,
+            )
+        };
+        if status == STATUS_SUCCESS {
+            return parse_process_list(&buffer, size as usize);
+        }
+        if status != STATUS_INFO_LENGTH_MISMATCH {
+            return Err(io::Error::other("process list unavailable"));
+        }
+        // The kernel reports the required length, but it can be stale or zero, so
+        // the buffer also grows geometrically.
+        let next = (required as usize).max(bytes.saturating_mul(2));
+        if next > MAX_PROCESS_LIST_BYTES {
+            return Err(io::Error::other("implausible process list"));
+        }
+        bytes = next;
     }
+    Err(io::Error::other("process list kept changing"))
+}
+
+/// Walk one `SystemProcessInformation` list.
+///
+/// A success status means the kernel wrote the complete list, which ends with an
+/// entry whose `NextEntryOffset` is zero; `length` is the buffer it was allowed to
+/// fill and bounds every read, including the image-name buffers.
+fn parse_process_list(buffer: &[usize], length: usize) -> io::Result<Vec<ListedProcess>> {
+    if length == 0 || length > size_of_val(buffer) {
+        return Err(io::Error::other("truncated process list"));
+    }
+    let base = buffer.as_ptr().cast::<u8>();
+    let entry_size = size_of::<SYSTEM_PROCESS_INFORMATION>();
+    let mut offset = 0usize;
+    let mut processes = Vec::new();
+    loop {
+        if processes.len() >= MAX_PROCESS_SNAPSHOT_ENTRIES {
+            return Err(io::Error::other("implausible process list"));
+        }
+        if length.saturating_sub(offset) < entry_size {
+            return Err(io::Error::other("truncated process list"));
+        }
+        // SAFETY: the entry was bounds-checked above; `read_unaligned` copies it
+        // out without assuming an alignment the documented list does not promise.
+        let entry =
+            unsafe { ptr::read_unaligned(base.add(offset).cast::<SYSTEM_PROCESS_INFORMATION>()) };
+        let next = entry.NextEntryOffset as usize;
+        processes.push(ListedProcess {
+            pid: entry.UniqueProcessId.0 as usize as u32,
+            image_name: image_name_of(&entry, base, length)?,
+        });
+        if next == 0 {
+            return Ok(processes);
+        }
+        // Every entry must advance by at least one structure.
+        if next < entry_size {
+            return Err(io::Error::other("malformed process list"));
+        }
+        offset = offset
+            .checked_add(next)
+            .ok_or_else(|| io::Error::other("malformed process list"))?;
+        if offset >= length {
+            return Err(io::Error::other("truncated process list"));
+        }
+    }
+}
+
+/// The image file name of one entry, validated against the buffer the kernel
+/// filled, so a layout surprise fails the inspection instead of being parsed.
+fn image_name_of(
+    entry: &SYSTEM_PROCESS_INFORMATION,
+    base: *const u8,
+    length: usize,
+) -> io::Result<OsString> {
+    let bytes = entry.ImageName.Length as usize;
+    // A process that executes no image file (the idle process and other
+    // kernel-created processes) has a zero-length name.
+    if bytes == 0 {
+        return Ok(OsString::new());
+    }
+    if !bytes.is_multiple_of(2) || entry.ImageName.Buffer.0.is_null() {
+        return Err(io::Error::other("malformed image name"));
+    }
+    let start = entry.ImageName.Buffer.0 as usize;
+    let offset = start
+        .checked_sub(base as usize)
+        .ok_or_else(|| io::Error::other("malformed image name"))?;
+    if offset.checked_add(bytes).is_none_or(|end| end > length) {
+        return Err(io::Error::other("malformed image name"));
+    }
+    // SAFETY: the name lies inside the buffer the kernel filled, in whole UTF-16
+    // code units.
+    let wide = unsafe { std::slice::from_raw_parts(entry.ImageName.Buffer.0, bytes / 2) };
+    Ok(OsString::from_wide(wide))
 }
 
 /// The installing user's token user SID.
@@ -299,12 +479,13 @@ impl CurrentUser {
     }
 }
 
-/// A process that cannot be attributed, so it cannot be ruled out.
-fn unattributed(pid: u32) -> ProcessObservation {
+/// An observation for a process that could be executing an owned image but that
+/// this installer may not open.
+fn name_only(listed: &ListedProcess) -> ProcessObservation {
     ProcessObservation {
-        identity: ProcessIdentity { pid },
+        identity: ProcessIdentity { pid: listed.pid },
         scope: ProcessScope::Unknown,
-        image: None,
+        image: ProcessImage::Name(listed.image_name.clone()),
     }
 }
 
@@ -314,16 +495,20 @@ fn unattributed(pid: u32) -> ProcessObservation {
 /// whatever its user, which is recorded as an unattributed scope so the token is
 /// never read. Otherwise a token or SID that cannot be read keeps the process
 /// unattributed, which the classifier treats as a potential host instead of
-/// "another user".
+/// "another user". When the exact path cannot be queried, the listed image name
+/// is the remaining evidence and stays a name-only observation.
 fn observe_open_process(
-    pid: u32,
+    listed: &ListedProcess,
     handle: &OwnedHandle,
     own: &CurrentUser,
     owned: &OwnedImages,
 ) -> ProcessObservation {
-    let image = image_path(handle);
-    let scope = match image.as_deref() {
-        Some(path) if owned.classify(Some(path)) == ImageClass::Foreign => {
+    let image = match image_path(handle) {
+        Some(path) => ProcessImage::Path(path),
+        None => ProcessImage::Name(listed.image_name.clone()),
+    };
+    let scope = match &image {
+        ProcessImage::Path(path) if owned.classify(Some(path)) == ImageClass::Foreign => {
             // Outside the owned trees: irrelevant whatever its user, so the
             // token is never read. `Unknown` records that it was not attributed.
             ProcessScope::Unknown
@@ -338,7 +523,7 @@ fn observe_open_process(
         },
     };
     ProcessObservation {
-        identity: ProcessIdentity { pid },
+        identity: ProcessIdentity { pid: listed.pid },
         scope,
         image,
     }
@@ -468,53 +653,6 @@ impl Drop for OwnedHandle {
         // ownership to the caller.
         unsafe {
             let _ = CloseHandle(self.0);
-        }
-    }
-}
-
-/// A Toolhelp process snapshot, closed on drop.
-struct ToolhelpSnapshot(OwnedHandle);
-
-impl ToolhelpSnapshot {
-    fn capture() -> io::Result<Self> {
-        // SAFETY: `TH32CS_SNAPPROCESS` takes no target process id.
-        let handle = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
-            .map_err(|error| io::Error::other(error.message()))?;
-        Ok(Self(OwnedHandle::new(handle).ok_or_else(|| {
-            io::Error::other("invalid Toolhelp snapshot handle")
-        })?))
-    }
-
-    fn entries(&self) -> io::Result<Vec<PROCESSENTRY32W>> {
-        let mut entry = PROCESSENTRY32W {
-            dwSize: size_of::<PROCESSENTRY32W>() as u32,
-            ..PROCESSENTRY32W::default()
-        };
-        let mut entries = Vec::new();
-        // SAFETY: `entry` is a live, correctly sized out-parameter.
-        match unsafe { Process32FirstW(self.0.0, &mut entry) } {
-            Ok(()) => {}
-            // An empty snapshot on a running system means the table could not be
-            // read, which must not look like "no owned host".
-            Err(error) if error.code() == HRESULT::from_win32(ERROR_NO_MORE_FILES.0) => {
-                return Err(io::Error::other("empty process snapshot"));
-            }
-            Err(error) => return Err(io::Error::other(error.message())),
-        }
-        loop {
-            entries.push(entry);
-            if entries.len() > MAX_PROCESS_SNAPSHOT_ENTRIES {
-                return Err(io::Error::other("implausible process table"));
-            }
-            entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-            // SAFETY: as above; the final call reports ERROR_NO_MORE_FILES.
-            match unsafe { Process32NextW(self.0.0, &mut entry) } {
-                Ok(()) => {}
-                Err(error) if error.code() == HRESULT::from_win32(ERROR_NO_MORE_FILES.0) => {
-                    return Ok(entries);
-                }
-                Err(error) => return Err(io::Error::other(error.message())),
-            }
         }
     }
 }

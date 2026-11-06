@@ -22,9 +22,12 @@ sha2 = "=0.10.9"
 
 # Windows-only OS trust evidence (Task 4) and host process inspection (Task 5).
 # Exact pin and features reviewed as in the host crate; only the trust/
-# cryptography, file-system, process and threading surface is enabled.
+# cryptography, file-system, process, threading and process-list surface is
+# enabled (`Wdk_System_SystemInformation` is `NtQuerySystemInformation`,
+# `Win32_System_WindowsProgramming` is `SYSTEM_PROCESS_INFORMATION`).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "=0.62.2", features = [
+    "Wdk_System_SystemInformation",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Cryptography",
@@ -32,7 +35,7 @@ windows = { version = "=0.62.2", features = [
     "Win32_Security_Cryptography_Sip",
     "Win32_Security_WinTrust",
     "Win32_Storage_FileSystem",
-    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
     "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
 ] }

@@ -75,9 +75,9 @@ use std::time::{Duration, Instant};
 use super::macos_trust as policy;
 use super::{
     HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages, PACKAGE_MACOS_CARRIER,
-    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessObservation, ProcessScope,
-    ProcessTable, Registration, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath,
-    inspect_host_processes, path_is_within,
+    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage, ProcessObservation,
+    ProcessScope, ProcessTable, Registration, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof,
+    ValidatedPath, inspect_host_processes, path_is_within,
 };
 use crate::model::{FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
@@ -564,7 +564,7 @@ struct MacosProcessTable;
 
 impl ProcessTable for MacosProcessTable {
     fn observe(&self, paths: &InstallPaths) -> io::Result<Vec<ProcessObservation>> {
-        let owned = OwnedImages::capture(paths);
+        let owned = OwnedImages::capture(paths)?;
         let pids = process_ids()?;
         let mut observations = Vec::new();
         for pid in pids {
@@ -587,7 +587,7 @@ impl ProcessTable for MacosProcessTable {
     }
 
     fn recheck(&self, paths: &InstallPaths, pid: u32) -> io::Result<Option<ProcessObservation>> {
-        let owned = OwnedImages::capture(paths);
+        let owned = OwnedImages::capture(paths)?;
         let image = image_path(pid as i32);
         if let Some(path) = image.as_deref()
             && owned.classify(Some(path)) == ImageClass::Foreign
@@ -598,7 +598,7 @@ impl ProcessTable for MacosProcessTable {
             return Ok(Some(ProcessObservation {
                 identity: ProcessIdentity { pid },
                 scope: ProcessScope::Unknown,
-                image,
+                image: process_image(image),
             }));
         }
         let scope = owner_scope(pid as i32);
@@ -613,8 +613,16 @@ impl ProcessTable for MacosProcessTable {
         Ok(Some(ProcessObservation {
             identity: ProcessIdentity { pid },
             scope,
-            image,
+            image: process_image(image),
         }))
+    }
+}
+
+/// `proc_pidpath` resolved the image path, or the process has no readable one.
+fn process_image(image: Option<PathBuf>) -> ProcessImage {
+    match image {
+        Some(path) => ProcessImage::Path(path),
+        None => ProcessImage::Unresolved,
     }
 }
 
@@ -623,7 +631,7 @@ fn candidate_observation(pid: i32, image: Option<PathBuf>) -> ProcessObservation
     ProcessObservation {
         identity: ProcessIdentity { pid: pid as u32 },
         scope: owner_scope(pid),
-        image,
+        image: process_image(image),
     }
 }
 

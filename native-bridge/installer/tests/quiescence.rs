@@ -2,12 +2,13 @@
 //!
 //! These tests exercise the *classification and bounded-wait* layer with
 //! injected process observations: a [`ProcessTable`] stands in for what the
-//! native adapters enumerate with the Windows Toolhelp/token/process-image APIs
+//! native adapters enumerate with the Windows
+//! `NtQuerySystemInformation(SystemProcessInformation)`/token/process-image APIs
 //! or with macOS `libproc`. No Windows or macOS process API runs here, so a
 //! passing test is portable quiescence-policy evidence only and is never
 //! represented as native process-inspection proof.
 //!
-//! The four named tests pin the rules the installer must not weaken:
+//! The named tests pin the rules the installer must not weaken:
 //!
 //! * every Chrome profile and every *retained prior version* counts, so a host
 //!   executing any owned image blocks mutation;
@@ -15,6 +16,11 @@
 //!   (blocks), never `Quiescent`, while a process positively attributed to
 //!   another user does not have to be readable at all - and an image outside the
 //!   owned trees rules a process out before its user is ever consulted;
+//! * a process the installer cannot open at all is decided from the OS-reported
+//!   image *name*: when no executable below the owned trees has that name the
+//!   process is ruled out, so the protected system processes of a stock machine
+//!   (`System`, `Memory Compression`, PPL services) cannot block every install,
+//!   while a name an owned executable does have still blocks;
 //! * process identity is the executable image (not a name) and is rechecked
 //!   against PID reuse, so a recycled PID neither keeps blocking on its own nor
 //!   hides an owned image that now runs under it;
@@ -31,6 +37,7 @@
 //! recorded in the Task 5 report and not simulated here.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -41,9 +48,10 @@ use std::time::{Duration, Instant};
 
 use veles_bridge_installer::{
     Channel, FailureCode, FakePlatform, HostState, InstallLock, InstallPaths, InstallResult,
-    OwnedEntry, PackageSource, Platform, PlatformCall, ProcessIdentity, ProcessObservation,
-    ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration, ReleaseDescriptor, Target,
-    TrustProof, ValidatedPath, inspect_host_processes, require_quiescent, require_quiescent_within,
+    OwnedEntry, PackageSource, Platform, PlatformCall, ProcessIdentity, ProcessImage,
+    ProcessObservation, ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration,
+    ReleaseDescriptor, Target, TrustProof, ValidatedPath, inspect_host_processes,
+    require_quiescent, require_quiescent_within,
 };
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -103,7 +111,7 @@ fn owned(pid: u32, image: &Path) -> ProcessObservation {
     ProcessObservation {
         identity: ProcessIdentity { pid },
         scope: ProcessScope::InstallingUser,
-        image: Some(image.to_path_buf()),
+        image: ProcessImage::Path(image.to_path_buf()),
     }
 }
 
@@ -111,7 +119,7 @@ fn foreign_image(pid: u32, image: &Path) -> ProcessObservation {
     ProcessObservation {
         identity: ProcessIdentity { pid },
         scope: ProcessScope::InstallingUser,
-        image: Some(fs::canonicalize(image).expect("canonical foreign image")),
+        image: ProcessImage::Path(fs::canonicalize(image).expect("canonical foreign image")),
     }
 }
 
@@ -120,7 +128,7 @@ fn unresolved(pid: u32) -> ProcessObservation {
     ProcessObservation {
         identity: ProcessIdentity { pid },
         scope: ProcessScope::InstallingUser,
-        image: None,
+        image: ProcessImage::Unresolved,
     }
 }
 
@@ -129,7 +137,7 @@ fn other_user(pid: u32) -> ProcessObservation {
     ProcessObservation {
         identity: ProcessIdentity { pid },
         scope: ProcessScope::OtherUser,
-        image: None,
+        image: ProcessImage::Unresolved,
     }
 }
 
@@ -138,7 +146,20 @@ fn unattributed(pid: u32, image: Option<&Path>) -> ProcessObservation {
     ProcessObservation {
         identity: ProcessIdentity { pid },
         scope: ProcessScope::Unknown,
-        image: image.map(Path::to_path_buf),
+        image: image.map_or(ProcessImage::Unresolved, |path| {
+            ProcessImage::Path(path.to_path_buf())
+        }),
+    }
+}
+
+/// A process the OS could not attribute *and* the installer could not open, so
+/// only the OS-reported image file name exists (Windows
+/// `SystemProcessInformation.ImageName`; empty for a process with no image file).
+fn name_only(pid: u32, name: &str) -> ProcessObservation {
+    ProcessObservation {
+        identity: ProcessIdentity { pid },
+        scope: ProcessScope::Unknown,
+        image: ProcessImage::Name(OsString::from(name)),
     }
 }
 
@@ -479,6 +500,94 @@ fn foreign_image_is_decided_before_user_attribution() {
     assert_eq!(
         inspect_host_processes(&paths, &reused_owned),
         HostState::Active
+    );
+}
+
+#[test]
+fn unopenable_process_without_an_owned_image_name_does_not_block() {
+    let temp = TempRoot::new();
+    let paths = windows_paths(&temp);
+
+    // A non-elevated installer cannot open the `System` pseudo-process, `Memory
+    // Compression` or a PPL service. The OS still reports their image file names,
+    // and an empty owned root contains no executable with those names, so they are
+    // ruled out without a handle: the stock-machine case must not be permanently
+    // `InspectionDenied`.
+    let stock_machine = ScriptedTable::new(vec![vec![
+        name_only(4, "System"),
+        name_only(5_020, "MemCompression"),
+        name_only(5_030, "svchost.exe"),
+        name_only(5_040, ""),
+    ]]);
+    assert_eq!(
+        inspect_host_processes(&paths, &stock_machine),
+        HostState::Quiescent
+    );
+
+    // A populated root changes nothing for those names: none of them is an owned
+    // executable, so no handle is opened and nothing blocks.
+    let current = version_image(&paths, "5.0.0-11111111", "host");
+    let long_name = write_executable(
+        &paths
+            .versions()
+            .join("5.0.0-11111111")
+            .join("veles-bridge-host.exe"),
+    );
+    assert_eq!(
+        inspect_host_processes(&paths, &stock_machine),
+        HostState::Quiescent
+    );
+
+    // The kernel's legacy `ImageFileName` fallback truncates to 15 characters, so a
+    // prefix of an owned executable's name is still a possible owned host.
+    let truncated = ScriptedTable::new(vec![vec![name_only(5_100, "veles-bridge-ho")]]);
+    assert_eq!(
+        inspect_host_processes(&paths, &truncated),
+        HostState::Unknown
+    );
+
+    // A name an owned executable actually has cannot be ruled out: the process may
+    // be executing it, and being unable to open it is not evidence to the contrary.
+    let matching_name = ScriptedTable::new(vec![vec![name_only(5_200, "host")]]);
+    assert_eq!(
+        inspect_host_processes(&paths, &matching_name),
+        HostState::Unknown
+    );
+    let platform = ScriptedPlatform::new(ScriptedTable::new(vec![vec![name_only(5_200, "host")]]));
+    let failure = require_quiescent_within(&platform, &paths, Duration::from_millis(100))
+        .expect_err("an unopenable process with an owned image name must block");
+    assert_eq!(failure.code, FailureCode::InspectionDenied);
+    assert!(platform.only_inspected());
+    assert_eq!(platform.mutation_count(), 0);
+
+    // The safety property is unchanged for a resolved image: an owned-root image
+    // whose user cannot be attributed is an active host, not a name to ignore.
+    let owned_unknown_user = ScriptedTable::new(vec![vec![unattributed(5_300, Some(&current))]]);
+    assert_eq!(
+        inspect_host_processes(&paths, &owned_unknown_user),
+        HostState::Active
+    );
+
+    // A name-only candidate whose PID was recycled by an unrelated program stops
+    // blocking, so a stale name cannot pin the installer forever either.
+    let foreign = temp.path().join("bin").join("host");
+    fs::create_dir_all(foreign.parent().expect("foreign parent")).expect("foreign parent");
+    fs::write(&foreign, b"unrelated").expect("foreign image");
+    let recycled = ScriptedTable::new(vec![vec![name_only(5_400, "host")]])
+        .with_recheck(5_400, Some(foreign_image(5_400, &foreign)));
+    assert_eq!(
+        inspect_host_processes(&paths, &recycled),
+        HostState::Quiescent
+    );
+
+    // Nothing above mutated a possibly live payload.
+    assert_eq!(
+        fs::read(&current).expect("current payload"),
+        b"owned payload"
+    );
+    assert_eq!(
+        fs::read(&long_name).expect("long payload"),
+        b"owned payload"
     );
 }
 

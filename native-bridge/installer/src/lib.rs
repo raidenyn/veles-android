@@ -42,7 +42,7 @@ pub use platform::{
     MAX_MANIFEST_PATH_BYTES, NativeManifest, OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry,
     OwnedKind, OwnershipRecord, PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PackageKind,
     PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, ProcessIdentity,
-    ProcessObservation, ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration,
+    ProcessImage, ProcessObservation, ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
     ValidatedPath, WindowsPreimage, assessment_target, authenticate_package, claim_owned_entries,
     claim_owned_registration, inspect_host_processes, is_accepted_assessment, parse_manifest,
