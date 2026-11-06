@@ -1281,6 +1281,18 @@ fn authenticate_for_completion(
             {
                 return Err(recovery_required());
             }
+            // Two editable references agreeing with each other is not evidence. A
+            // rollback replaces a STRICTLY NEWER release, so a "replaced" release that
+            // is the activated target (same or older version, same payload or carrier)
+            // can never have been replaced by this transaction: it would make the
+            // target its own policy evidence and leave the real replaced release's
+            // restrictions unestablished.
+            if parse_version(&replaced.version)? <= descriptor.parsed_version()?
+                || replaced.payload_id == journal.payload_id
+                || replaced.carrier_sha256 == journal.policy.carrier_sha256
+            {
+                return Err(recovery_required());
+            }
             let replaced_evidence = authenticate_release_in_place(
                 platform,
                 paths,
@@ -1292,6 +1304,17 @@ fn authenticate_for_completion(
                 None,
                 FailureCode::RecoveryRequired,
             )?;
+            // The authenticated identity must be the release the journalled old
+            // registration manifest actually selected, and the receipt's recorded
+            // digest of that manifest must be the journal's.
+            if !old_manifest_selects_release(
+                paths,
+                journal.old_manifest.as_ref(),
+                replaced.manifest_sha256,
+                &replaced_evidence,
+            ) {
+                return Err(recovery_required());
+            }
             if !is_no_broader_than(
                 &committed.release_policy,
                 &replaced_evidence.contents.descriptor.policy,
@@ -1361,6 +1384,44 @@ fn authenticate_for_completion(
         descriptor,
         &journal.release_policy,
     )
+}
+
+/// Whether the registration manifest a rollback journalled as the one it replaced
+/// is the registration of the authenticated `evidence` release: its host executable
+/// lies inside that release's immutable version directory, its single allowed
+/// origin is the origin of that release's extension, and the digest the receipt
+/// recorded for the replaced registration is the journalled manifest's.
+///
+/// This ties the authenticated identity to bytes that were live while that release
+/// was active. It cannot make rewritten history trustworthy on its own: an editor
+/// who rewrites the manifest too is stopped only by the version ordering that
+/// callers apply first.
+fn old_manifest_selects_release(
+    paths: &InstallPaths,
+    old_manifest: Option<&ManifestSnapshot>,
+    recorded_digest: Option<Digest>,
+    evidence: &ReleaseEvidence,
+) -> bool {
+    let Some(old_manifest) = old_manifest else {
+        return false;
+    };
+    if recorded_digest != Some(old_manifest.sha256()) {
+        return false;
+    }
+    let descriptor = &evidence.contents.descriptor;
+    let (Ok(manifest), Ok(version), Ok(origin)) = (
+        parse_manifest(old_manifest.bytes()),
+        descriptor.parsed_version(),
+        extension_origin(&descriptor.extension_id),
+    ) else {
+        return false;
+    };
+    let Ok(executable) = manifest.executable() else {
+        return false;
+    };
+    manifest.allowed_origins == [origin]
+        && executable.starts_with(paths.version_dir(&version, descriptor.payload_id))
+        && executable != paths.version_dir(&version, descriptor.payload_id)
 }
 
 /// `NoRollback` is the rollback operation's word for "cannot be proven"; recovery

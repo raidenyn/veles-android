@@ -2482,6 +2482,185 @@ fn a_denial_only_the_replaced_release_signs_cannot_be_edited_out_of_state() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// N5: after an interrupted v2 -> v1 rollback has committed its receipt, the evidence
+/// that v2 was replaced is `receipt.prior` and `journal.old_*`. An editor who also
+/// removes v2's only denial can rewrite BOTH to name v1: the two editable references
+/// still agree, so a recovery that accepts their agreement authenticates v1 twice,
+/// never establishes v2's restrictions, and completes with the denial gone. This
+/// mutates the denial (as the existing regression does) and, jointly, ONLY the
+/// identities of the replaced release - plus, in the second form, the old-manifest
+/// evidence rewritten to match, which only the strict ordering can then refuse.
+#[test]
+fn a_rollback_target_cannot_be_rewritten_as_the_release_it_replaced() {
+    #[derive(Clone, Copy, Debug)]
+    enum Rewrite {
+        /// Honest state: recovery must complete.
+        Control,
+        /// Denial removed; `receipt.prior` and `journal.old_*` both name v1.
+        Identities,
+        /// As above, and the old-manifest evidence (journal bytes, preimage digest and
+        /// `receipt.prior.manifest_sha256`) is rewritten to v1's own manifest.
+        IdentitiesAndManifest,
+        /// Nothing but the old-manifest evidence changes: the replaced release is still
+        /// honestly v2 (strictly newer than the target), yet the journalled manifest
+        /// selects v1. Only the binding of the authenticated identity to that manifest
+        /// can refuse this.
+        ManifestOnly,
+    }
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let denied = Digest::of(b"a payload only the newer release denies");
+    let build = |fixture: &Fixture| {
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), vec![p1]),
+        );
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V2,
+            NOTICE_V2,
+            policy(2, vec![denied], vec![p1]),
+        );
+        (v1, v2)
+    };
+    let trusting = |v1: &Package, v2: &Package, panic_at: Option<usize>| {
+        FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            trust: Some(v1.proof.clone()),
+            trust_by_carrier: vec![v1.proof.clone(), v2.proof.clone()],
+            panic_at_mutation: panic_at,
+            ..Faults::default()
+        })
+    };
+
+    let probe = Fixture::windows();
+    let (probe_v1, probe_v2) = build(&probe);
+    probe.install(&probe_v1);
+    probe.install(&probe_v2);
+    let counting = trusting(&probe_v1, &probe_v2, None);
+    run_operation(
+        &counting,
+        &probe.paths,
+        Operation::Rollback,
+        Some(authenticate(&probe_v1)),
+    )
+    .expect("the unedited rollback completes");
+    let total = counting.mutations().len();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut exercised = 0;
+    for attempt in 1..=total {
+        for rewrite in [
+            Rewrite::Control,
+            Rewrite::Identities,
+            Rewrite::IdentitiesAndManifest,
+            Rewrite::ManifestOnly,
+        ] {
+            let fixture = Fixture::windows();
+            let paths = &fixture.paths;
+            let (v1, v2) = build(&fixture);
+            fixture.install(&v1);
+            fixture.install(&v2);
+            let crashing = trusting(&v1, &v2, Some(attempt));
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                run_operation(
+                    &crashing,
+                    paths,
+                    Operation::Rollback,
+                    Some(authenticate(&v1)),
+                )
+            }));
+            assert!(outcome.is_err(), "attempt {attempt}: the death interrupts");
+            let JournalState::Pending(journal) = journal_state(paths) else {
+                continue;
+            };
+            let current = receipt(paths).expect("a receipt always exists");
+            // Only the window after the receipt names the replaced release.
+            if current.payload_id != v1.descriptor.payload_id {
+                continue;
+            }
+            let context = format!("attempt {attempt} ({rewrite:?})");
+            if !matches!(rewrite, Rewrite::Control) {
+                let writer = trusting(&v1, &v2, None);
+                let mut forged_journal = (*journal).clone();
+                let mut forged_receipt = current.clone();
+                let prior = forged_receipt
+                    .prior
+                    .as_mut()
+                    .expect("a rollback has a prior");
+                if !matches!(rewrite, Rewrite::ManifestOnly) {
+                    forged_journal
+                        .release_policy
+                        .denied_payloads
+                        .retain(|d| *d != denied);
+                    forged_receipt
+                        .release_policy
+                        .denied_payloads
+                        .retain(|d| *d != denied);
+                    forged_journal.old_version = Some(v1.descriptor.version.clone());
+                    forged_journal.old_payload_id = Some(v1.descriptor.payload_id);
+                    forged_journal.old_carrier_sha256 = Some(Digest::of(v1.proof.carrier()));
+                    prior.version = v1.descriptor.version.clone();
+                    prior.payload_id = v1.descriptor.payload_id;
+                    prior.carrier_sha256 = Digest::of(v1.proof.carrier());
+                }
+                if matches!(
+                    rewrite,
+                    Rewrite::IdentitiesAndManifest | Rewrite::ManifestOnly
+                ) {
+                    let own = fixture.registration();
+                    let snapshot = veles_bridge_installer::ManifestSnapshot::new(own)
+                        .expect("v1's own manifest");
+                    prior.manifest_sha256 = Some(snapshot.sha256());
+                    forged_journal
+                        .preimage
+                        .as_mut()
+                        .expect("a rollback journals a preimage")
+                        .manifest_sha256 = snapshot.sha256();
+                    forged_journal.old_manifest = Some(snapshot);
+                }
+                forged_journal
+                    .write(&writer, paths)
+                    .expect("forged journal");
+                forged_receipt
+                    .write(&writer, paths)
+                    .expect("forged receipt");
+            }
+            let before = snapshot(fixture.temp.path());
+            let recovering = trusting(&v1, &v2, None);
+            let result = recover(&recovering, paths);
+            match (rewrite, result) {
+                (Rewrite::Control, Err(failure)) => wrong.push(format!(
+                    "{context}: honest recovery was refused: {:?}",
+                    failure.code
+                )),
+                (Rewrite::Control, Ok(_)) => {}
+                (_, Ok(report)) => wrong.push(format!(
+                    "{context}: recovery completed on rewritten history: {:?}",
+                    report.state
+                )),
+                (_, Err(_)) => {
+                    if !recovering.mutations().is_empty() || snapshot(fixture.temp.path()) != before
+                    {
+                        wrong.push(format!("{context}: a refused recovery changed state"));
+                    }
+                }
+            }
+            if !matches!(rewrite, Rewrite::Control) {
+                exercised += 1;
+            }
+        }
+    }
+    assert!(
+        exercised >= 2,
+        "the post-receipt window was exercised: {exercised}"
+    );
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// N2, no crash needed: editing the one committed receipt must not let an ordinary
 /// rollback compose against a policy that forgot the current release's signed denial.
 #[test]
