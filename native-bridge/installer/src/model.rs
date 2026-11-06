@@ -33,6 +33,8 @@ pub const MAX_PUBLISHERS: usize = 64;
 pub const MAX_PUBLISHER_BYTES: usize = 512;
 /// A policy may deny or permit at most 4096 payload digests in one list.
 pub const MAX_POLICY_DIGESTS: usize = 4096;
+/// An operation report carries at most this many warning codes.
+pub const MAX_REPORT_WARNINGS: usize = 8;
 /// Lowest supported host API generation.
 pub const MIN_API_VERSION: u32 = 1;
 /// Highest host API generation a descriptor may name (fail closed above it).
@@ -570,6 +572,41 @@ pub struct InventoryEntry {
     pub executable: bool,
 }
 
+/// Additive, bounded warnings attached to an operation report.
+///
+/// Warnings never change a failure classification: a warning describes something
+/// the user must know about a successful (or explicitly pending) operation. The
+/// vocabulary is closed so a frontend can render guidance deterministically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WarningCode {
+    /// The installed or re-activated host API window does not overlap the
+    /// release this installation was tested against.
+    CompatibilityWindow,
+    /// Files this product does not own remain inside its private layout; they
+    /// were preserved and reported, never deleted.
+    LeftoverFiles,
+    /// Removal or cleanup could not be completed; retry the operation.
+    CleanupPending,
+}
+
+impl WarningCode {
+    /// Stable wire/display name; identical to the serde representation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CompatibilityWindow => "compatibility-window",
+            Self::LeftoverFiles => "leftover-files",
+            Self::CleanupPending => "cleanup-pending",
+        }
+    }
+}
+
+impl fmt::Display for WarningCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Safe operation report emitted by the engine (one bounded JSON document).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -579,6 +616,44 @@ pub struct InstallReport {
     pub prior_usable: bool,
     pub active_payload: Option<Digest>,
     pub failure: Option<FailureCode>,
+    /// Additive, bounded guidance for a report that is not a plain success.
+    #[serde(default, deserialize_with = "deserialize_warnings")]
+    pub warnings: Vec<WarningCode>,
+}
+
+impl InstallReport {
+    /// Attach warnings, preserving order but removing duplicates and enforcing
+    /// the documented bound. A caller cannot make the report document unbounded.
+    pub fn with_warnings(mut self, warnings: impl IntoIterator<Item = WarningCode>) -> Self {
+        for warning in warnings {
+            if !self.warnings.contains(&warning) && self.warnings.len() < MAX_REPORT_WARNINGS {
+                self.warnings.push(warning);
+            }
+        }
+        self
+    }
+
+    /// Whether the report carries `warning`.
+    pub fn warns(&self, warning: WarningCode) -> bool {
+        self.warnings.contains(&warning)
+    }
+}
+
+fn deserialize_warnings<'de, D>(deserializer: D) -> Result<Vec<WarningCode>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let warnings = Vec::<WarningCode>::deserialize(deserializer)?;
+    if warnings.len() > MAX_REPORT_WARNINGS {
+        return Err(de::Error::custom("too many installer report warnings"));
+    }
+    let mut seen = HashSet::with_capacity(warnings.len());
+    for warning in &warnings {
+        if !seen.insert(*warning) {
+            return Err(de::Error::custom("duplicate installer report warning"));
+        }
+    }
+    Ok(warnings)
 }
 
 /// Deterministic compact UTF-8 JSON: sorted object keys and a trailing newline.

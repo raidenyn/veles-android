@@ -18,6 +18,7 @@ pub mod operations;
 pub mod paths;
 pub mod platform;
 pub mod policy;
+pub mod retained;
 pub mod transaction;
 
 pub use inventory::{
@@ -33,9 +34,9 @@ pub use model::{
     Channel, ChannelIdentity, DEVELOPMENT_HOST_NAME, Digest, FIXTURE_HOST_NAME, FailureCode,
     InstallFailure, InstallReport, InstallResult, InventoryEntry, MAX_API_VERSION,
     MAX_DOCUMENT_BYTES, MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES,
-    MAX_POLICY_DIGESTS, MAX_PUBLISHER_BYTES, MAX_PUBLISHERS, MIN_API_VERSION, Operation,
-    PLACEHOLDER_EXTENSION_ID, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy,
-    SCHEMA_VERSION, Target, Version, canonical_json, extension_origin, parse_version,
+    MAX_POLICY_DIGESTS, MAX_PUBLISHER_BYTES, MAX_PUBLISHERS, MAX_REPORT_WARNINGS, MIN_API_VERSION,
+    Operation, PLACEHOLDER_EXTENSION_ID, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy,
+    SCHEMA_VERSION, Target, Version, WarningCode, canonical_json, extension_origin, parse_version,
     validate_extension_id,
 };
 pub use operations::{
@@ -66,6 +67,9 @@ pub use platform::{
 pub use policy::{
     CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, authorize_package_policy, effective_policy,
     parse_descriptor, read_carrier, write_carrier,
+};
+pub use retained::{
+    MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, RetainedInstall,
 };
 pub use transaction::{
     STATE_CLEAN, STATE_INSTALLED, STATE_RECOVERED_ACTIVE, STATE_RECOVERED_PREVIOUS,

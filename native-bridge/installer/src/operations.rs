@@ -21,15 +21,19 @@
 //!   reported (`ForeignState`) and never overwritten; repair never re-assesses
 //!   trust of local content and never trusts the damaged tree.
 //! * **Rollback** re-activates the one retained, verified prior version from the
-//!   authenticated older package, after composing the persisted and retained
-//!   policies. Denials accumulate: a correctly signed stale package cannot erase
-//!   a recorded denial.
+//!   authenticated carrier and API metadata retained inside that immutable
+//!   version directory, after composing its policy with the persisted one.
+//!   Denials accumulate: a correctly signed stale package cannot erase a
+//!   recorded denial, and its signer must be authorized under both policies. A
+//!   supplied package may only select the recorded prior release; it is never
+//!   the retained carrier authority.
 //! * **Uninstall** removes only paths the committed receipt owns: the
 //!   registration first (after ownership and quiescence validation), then files
 //!   and finally the emptied directories, then the receipt. A partially removed
 //!   installation is journaled, retried idempotently, and reported
 //!   `CleanupPending` - never as a completed uninstall while an owned host or a
-//!   deferred deletion remains.
+//!   deferred deletion remains. A terminal quiescence check runs after deletion
+//!   and before success; unowned files are preserved and reported as warnings.
 //!
 //! Nothing here is trust: a receipt authorizes removal of the exact paths it
 //! claims and nothing else, and every claim is re-normalized, scope-checked and
@@ -47,15 +51,16 @@ use crate::journal::{
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry, Operation,
-    canonical_json, parse_version,
+    WarningCode, canonical_json, parse_version,
 };
-use crate::paths::InstallPaths;
+use crate::paths::{InstallPaths, LOCK_FILE};
 use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, OWNERSHIP_SCHEMA_VERSION, OwnedEntry, OwnedKind,
     OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration, StateDocument,
     ValidatedPath, parse_manifest, registration_is_owned, require_quiescent_within,
 };
 use crate::policy::authorize_package_policy;
+use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
 use crate::transaction::{STATE_INSTALLED, activate_retained, install, manifest_for};
 
 /// Nothing of this product is installed.
@@ -73,8 +78,11 @@ pub const STATE_RECOVERY_REQUIRED: &str = "recovery-required";
 
 /// Run one installer operation.
 ///
-/// `package` is required by install, repair and rollback and ignored by inspect
-/// and uninstall: those two need no new package and never authenticate one.
+/// `package` is required by install and repair, and ignored by inspect and
+/// uninstall. Rollback does not require it: the authenticated carrier and API
+/// metadata of the prior release are retained inside its immutable version
+/// directory, and a supplied package may only select that already retained
+/// prior release. A package never becomes the prior carrier authority.
 pub fn run_operation(
     platform: &impl Platform,
     paths: &InstallPaths,
@@ -133,10 +141,7 @@ fn dispatch(
                 package.ok_or_else(|| InstallFailure::new(FailureCode::RepairPackageRequired))?;
             repair(platform, paths, &package, quiescence)
         }
-        Operation::Rollback => {
-            let package = package.ok_or_else(|| InstallFailure::new(FailureCode::NoRollback))?;
-            activate_retained(platform, paths, &package, quiescence)
-        }
+        Operation::Rollback => activate_retained(platform, paths, package.as_ref(), quiescence),
         Operation::Uninstall => uninstall(platform, paths, quiescence),
     }
 }
@@ -369,27 +374,35 @@ fn repair(
     require_quiescent_within(platform, paths, quiescence)?;
     plan.restore(platform, paths)?;
 
-    // Restore the exact committed registration only when it is absent. Its
-    // bytes are rebuilt deterministically and checked against the committed
-    // digest, so a repair can never publish a different manifest.
-    if live.is_none() {
-        let manifest = manifest_for(
-            paths,
-            &paths
-                .version_dir(&version, receipt.payload_id)
-                .join(executable.relative()),
-            &descriptor.extension_id,
-        )?;
-        if manifest.sha256() != receipt.manifest_sha256 {
-            return Err(foreign_state());
+    // Publication is conditional on the observed preimage. A registration that
+    // appeared, disappeared or changed during the quiescence wait is a conflict:
+    // it is reported and never published over on the strength of a stale
+    // observation.
+    let observed = live.as_ref().map(Registration::manifest_digest);
+    match (observed, platform.read_registration(paths)?) {
+        (Some(expected), Some(current)) if current.manifest_digest() == expected => {
+            // The exact committed registration is still live; nothing to publish.
         }
-        let registration = Registration::new(manifest.bytes().to_vec())?;
-        platform.publish_manifest(paths, &registration)?;
-        platform.publish_registration(paths, &registration)?;
-        let restored = platform.read_registration(paths)?.ok_or_else(io_failure)?;
-        if restored.manifest_digest() != receipt.manifest_sha256 {
-            return Err(io_failure());
+        (None, None) => {
+            let manifest = manifest_for(
+                paths,
+                &paths
+                    .version_dir(&version, receipt.payload_id)
+                    .join(executable.relative()),
+                &descriptor.extension_id,
+            )?;
+            if manifest.sha256() != receipt.manifest_sha256 {
+                return Err(foreign_state());
+            }
+            let registration = Registration::new(manifest.bytes().to_vec())?;
+            platform.publish_manifest(paths, &registration)?;
+            platform.publish_registration(paths, &registration)?;
+            let restored = platform.read_registration(paths)?.ok_or_else(io_failure)?;
+            if restored.manifest_digest() != receipt.manifest_sha256 {
+                return Err(io_failure());
+            }
         }
+        _ => return Err(foreign_state()),
     }
 
     // Persist a strictly tighter composed policy: denials accumulate even across
@@ -430,6 +443,8 @@ struct RepairPlan<'a> {
     files: Vec<RepairedFile<'a>>,
     inventory_relative: String,
     inventory: Vec<u8>,
+    retained_relative: String,
+    retained: Vec<u8>,
 }
 
 impl<'a> RepairPlan<'a> {
@@ -496,6 +511,16 @@ impl<'a> RepairPlan<'a> {
             }
         }
 
+        let retained_relative = format!("{version_relative}/{RETAINED_FILE_NAME}");
+        let retained = RetainedInstall::from_package(package)?.to_bytes()?;
+        if !claimed(
+            &retained_relative,
+            OwnedKind::File,
+            Some(Digest::of(&retained)),
+        ) {
+            return Err(foreign_state());
+        }
+
         let mut files = Vec::with_capacity(package.payload().len());
         for source in package.payload() {
             let relative = format!("{version_relative}/{}", source.relative());
@@ -510,6 +535,8 @@ impl<'a> RepairPlan<'a> {
             files,
             inventory_relative,
             inventory,
+            retained_relative,
+            retained,
         })
     }
 
@@ -547,6 +574,14 @@ impl<'a> RepairPlan<'a> {
             self.inventory.len() as u64,
             Digest::of(&self.inventory),
             &self.inventory,
+        )?;
+        restore_bytes(
+            platform,
+            paths,
+            &self.retained_relative,
+            self.retained.len() as u64,
+            Digest::of(&self.retained),
+            &self.retained,
         )
     }
 }
@@ -582,15 +617,25 @@ fn restore_bytes(
         }
         Err(_) => return Err(io_failure()),
     };
-    platform.write_durable(&handle, bytes)
+    // Never truncate an existing inode: a managed path replaced by a hard link
+    // must not rewrite the linked data. `replace_durable` stages new bytes into a
+    // fresh sibling and renames it over the target.
+    platform.replace_durable(&handle, bytes)
 }
 
 /// Re-read an authenticated package source immediately before restoring it.
+///
+/// A repair source that disappeared or no longer matches its authenticated
+/// identity is not damaged local content and is not trust: the correct guidance
+/// is a fresh signed download, with the prior installation untouched.
 fn read_source(source: &AuthenticatedSource) -> InstallResult<Vec<u8>> {
-    source.revalidate()?;
-    let bytes = fs::read(source.path()).map_err(|_| io_failure())?;
+    source
+        .revalidate()
+        .map_err(|_| InstallFailure::new(FailureCode::RepairPackageRequired))?;
+    let bytes = fs::read(source.path())
+        .map_err(|_| InstallFailure::new(FailureCode::RepairPackageRequired))?;
     if bytes.len() as u64 != source.size() || Digest::of(&bytes) != source.sha256() {
-        return Err(foreign_state());
+        return Err(InstallFailure::new(FailureCode::RepairPackageRequired));
     }
     Ok(bytes)
 }
@@ -645,13 +690,21 @@ fn uninstall(
                 }
                 // An owned registration without a receipt is ambiguous state.
                 Some(_) => Err(recovery_required()),
-                None => Ok(report(
-                    Operation::Uninstall,
-                    STATE_UNINSTALLED,
-                    None,
-                    false,
-                    None,
-                )),
+                None => {
+                    // Nothing is installed, but a removal is only established
+                    // after the terminal inspection: an owned host may still be
+                    // executing a payload that no receipt can claim.
+                    require_quiescent_within(platform, paths, quiescence).map_err(deferred)?;
+                    let warnings = final_layout_cleanup(paths);
+                    Ok(report_with_warnings(
+                        Operation::Uninstall,
+                        STATE_UNINSTALLED,
+                        None,
+                        false,
+                        None,
+                        warnings,
+                    ))
+                }
             };
         }
     };
@@ -727,20 +780,86 @@ fn uninstall(
         }
     }
 
-    // The receipt is released before the journal: a crash in between leaves a
-    // journal whose claims are all absent, so the retry finishes idempotently.
+    // Terminal quiescence: a host may have (re)launched while the payload was
+    // being deleted. Removal is established only after the last inspection, and
+    // a late launch defers the completion with the durable intent retained.
+    if let Err(failure) = require_quiescent_within(platform, paths, quiescence) {
+        return Err(deferred(failure));
+    }
+
+    // Release the durable intent only after removal is proven. The receipt is
+    // released before the journal: a crash in between leaves a journal whose
+    // claims are all absent, so the retry finishes idempotently.
     platform.write_state(paths, StateDocument::Receipt, &[])?;
     if journal.is_some() {
         Journal::clear(platform, paths)?;
     }
 
-    Ok(report(
+    // Final private-layout cleanup is attempted only after the product is gone.
+    // Foreign files are preserved and reported; they never make the installer
+    // delete something it does not own.
+    let warnings = final_layout_cleanup(paths);
+    Ok(report_with_warnings(
         Operation::Uninstall,
         STATE_UNINSTALLED,
         None,
         false,
         None,
+        warnings,
     ))
+}
+
+/// Best-effort removal of the installer's own state artifacts and empty private
+/// directories, then report files this product does not own.
+///
+/// The held lock file, the `state/` directory and the fixed root cannot be
+/// removed while this process still holds the lock; they are the fixed layout,
+/// not leftovers. Everything else that remains below `versions/`,
+/// `maintenance/` or `state/` is foreign, is preserved, and is reported.
+fn final_layout_cleanup(paths: &InstallPaths) -> Vec<WarningCode> {
+    for file in [paths.journal_path(), paths.receipt_path()] {
+        remove_file_if_present(file);
+    }
+    remove_file_if_present(&paths.staging().join("registration.json"));
+    remove_directory_if_empty(paths.staging());
+    remove_directory_if_empty(paths.versions());
+    remove_directory_if_empty(paths.maintenance());
+    if layout_has_leftovers(paths) {
+        vec![WarningCode::LeftoverFiles]
+    } else {
+        Vec::new()
+    }
+}
+
+fn remove_file_if_present(path: &Path) {
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn remove_directory_if_empty(path: &Path) {
+    let _ = fs::remove_dir(path);
+}
+
+/// Whether anything this product does not own remains inside its private layout.
+fn layout_has_leftovers(paths: &InstallPaths) -> bool {
+    for directory in [paths.versions(), paths.maintenance(), paths.staging()] {
+        if directory_has_entries(directory) {
+            return true;
+        }
+    }
+    if let Ok(entries) = fs::read_dir(paths.state()) {
+        for entry in entries.flatten() {
+            if entry.file_name() != LOCK_FILE {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn directory_has_entries(directory: &Path) -> bool {
+    fs::read_dir(directory).is_ok_and(|mut entries| entries.next().is_some())
 }
 
 /// Require the live registration to be exactly the committed one.
@@ -878,7 +997,19 @@ fn report(
         prior_usable,
         active_payload,
         failure,
+        warnings: Vec::new(),
     }
+}
+
+fn report_with_warnings(
+    operation: Operation,
+    state: &str,
+    active_payload: Option<Digest>,
+    prior_usable: bool,
+    failure: Option<FailureCode>,
+    warnings: Vec<WarningCode>,
+) -> InstallReport {
+    report(operation, state, active_payload, prior_usable, failure).with_warnings(warnings)
 }
 
 fn path_depth(path: &str) -> usize {

@@ -296,6 +296,10 @@ impl Platform for ScriptedPlatform {
         self.inner.write_durable(path, bytes)
     }
 
+    fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        self.inner.replace_durable(path, bytes)
+    }
+
     fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
         self.inner.replace_manifest(staged, live)
     }

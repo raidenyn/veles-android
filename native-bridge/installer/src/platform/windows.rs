@@ -139,6 +139,11 @@ impl Platform for WindowsPlatform {
         Err(unsupported())
     }
 
+    fn replace_durable(&self, _path: &ValidatedPath, _bytes: &[u8]) -> InstallResult<()> {
+        // The native atomic replacement belongs to the Task 8 adapter.
+        Err(unsupported())
+    }
+
     fn write_state(
         &self,
         _paths: &InstallPaths,

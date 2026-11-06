@@ -1947,6 +1947,17 @@ pub trait Platform {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock>;
     /// Write all bytes, flush and read the exact bytes back.
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()>;
+    /// Replace one owned file's bytes without writing through its inode.
+    ///
+    /// Unlike [`Platform::write_durable`] on an existing path, this stages the
+    /// bytes into a fresh sibling file with `create_new`, flushes and reads them
+    /// back, then renames the sibling over the target and flushes the parent. A
+    /// target that was replaced by a hard link therefore cannot rewrite the
+    /// linked data: only the destination directory entry is replaced. A missing
+    /// target is created directly (still `create_new`, never an overwrite).
+    fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        replace_durable_checked(path, bytes)
+    }
     /// Atomically replace one installer state document.
     ///
     /// The bytes are staged into a sibling file on the same volume, flushed and
@@ -2409,6 +2420,11 @@ impl Platform for FakePlatform {
         Ok(())
     }
 
+    fn replace_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        self.begin_mutation(PlatformCall::WriteDurable)?;
+        replace_durable_checked(path, bytes)
+    }
+
     fn write_state(
         &self,
         paths: &InstallPaths,
@@ -2610,6 +2626,76 @@ fn write_durable_checked(
         flush_directory(parent)?;
     }
     Ok(short_writes)
+}
+
+/// Replace one owned file without writing through the existing inode.
+///
+/// The new bytes are staged into a fresh sibling with `create_new` (so a planted
+/// link or directory can never be adopted), flushed and read back, then renamed
+/// over the destination entry. A destination that is a hard link keeps every
+/// other name untouched: only this directory entry is replaced.
+fn replace_durable_checked(path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+    path.revalidate()?;
+    if path.kind() == PathKind::NewFile {
+        return write_durable_checked(path, bytes, None, false).map(|_| ());
+    }
+    if path.kind() != PathKind::File {
+        return Err(unsafe_path());
+    }
+    let live = path.rendered();
+    let parent = live.parent().ok_or_else(unsafe_path)?;
+    let name = live.file_name().ok_or_else(unsafe_path)?;
+    let staging = parent.join(format!(".{}.installer-new", name.to_string_lossy()));
+    match fs::symlink_metadata(&staging) {
+        Ok(metadata) if is_link_like(&metadata) || !metadata.is_file() => {
+            return Err(unsafe_path());
+        }
+        Ok(_) => fs::remove_file(&staging).map_err(|_| io_failure())?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Err(io_failure()),
+    }
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600).custom_flags(NO_FOLLOW);
+    }
+    let file = options.open(&staging).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            unsafe_path()
+        } else {
+            io_failure()
+        }
+    })?;
+    let mut short_writes = 0;
+    {
+        let mut writer = &file;
+        write_all_retrying(&mut writer, bytes, &mut short_writes).map_err(|_| io_failure())?;
+    }
+    file.sync_all().map_err(|_| io_failure())?;
+    drop(file);
+
+    let readback = match read_no_follow(&staging) {
+        Ok(readback) => readback,
+        Err(_) => {
+            let _ = fs::remove_file(&staging);
+            return Err(io_failure());
+        }
+    };
+    if readback != bytes {
+        let _ = fs::remove_file(&staging);
+        return Err(io_failure());
+    }
+    // Revalidate immediately before the rename so a swapped ancestor fails closed.
+    path.revalidate()?;
+    fs::rename(&staging, live).map_err(|_| {
+        let _ = fs::remove_file(&staging);
+        io_failure()
+    })?;
+    flush_directory(parent)
 }
 
 /// Write the first half of `bytes` durably, then return: a process that dies
