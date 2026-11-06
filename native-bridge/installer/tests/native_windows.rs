@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use veles_bridge_installer::cleanup::{
     CleanupReason, CleanupStatus, HelperRun, run_cleanup_helper_detailed,
+    run_cleanup_helper_via_launcher,
 };
 use veles_bridge_installer::{
     Channel, Digest, FailureCode, InstallPaths, NativeManifest, PRODUCTION_HOST_NAME,
@@ -712,4 +713,70 @@ fn an_unsigned_well_formed_executable_is_denied_as_carrier_and_as_host() {
             .code,
         FailureCode::TrustDenied
     );
+}
+
+/// Task 10: the same real helper, started through the short-lived **launcher**
+/// (this product's maintenance binary in its internal launcher mode).
+///
+/// The launcher is the helper's recorded parent and exits at once, so the helper
+/// observes a real parent exit while this process stays alive. With a **signed**
+/// helper (`VELES_TEST_HELPER_PUBLISHER`) the run therefore reaches `complete`,
+/// the installer deletes the staged image and observes it gone. With the
+/// unsigned fixture the helper refuses to vouch for itself (`SelfMismatch`) - and
+/// the point of this test is that the reason is never `ParentAlive` any more.
+///
+/// NOT RUN on the Linux development host: it needs a Windows runner (and, for the
+/// `complete` half, the Task 13 signing credentials).
+#[test]
+fn launcher_lets_the_helper_observe_its_parents_exit_while_the_installer_stays_alive() {
+    let temp = TempRoot::new("launcher-handoff");
+    let staged = temp.path().join("private").join("veles-cleanup.exe");
+    fs::create_dir_all(staged.parent().expect("helper parent")).expect("helper dir");
+    fs::copy(env!("CARGO_BIN_EXE_veles-bridge-cleanup"), &staged).expect("stage the helper");
+    let launcher = Path::new(env!("CARGO_BIN_EXE_veles-bridge-maintenance"));
+
+    let root = temp.path().join("Veles").join("NativeBridge");
+    fs::create_dir_all(&root).expect("cleanup root");
+
+    let transaction = "33".repeat(32);
+    let capability = [0x44u8; 32];
+    let publisher = std::env::var("VELES_TEST_HELPER_PUBLISHER")
+        .unwrap_or_else(|_| "unsigned-fixture".to_owned());
+    let run = HelperRun {
+        helper_path: &staged,
+        helper_sha256: Digest::of(&fs::read(&staged).expect("helper bytes")),
+        publisher: &publisher,
+        transaction: &transaction,
+        capability: &capability,
+        root: &root,
+        entries: Vec::new(),
+        timeout: Duration::from_secs(8),
+    };
+    let started = Instant::now();
+    let (completion, verdict) = run_cleanup_helper_via_launcher(&run, launcher);
+    assert!(
+        started.elapsed() <= Duration::from_secs(12),
+        "the whole handoff is bounded"
+    );
+    let completion = completion.expect("the real helper writes an authenticated completion");
+    assert!(completion.verify(&capability));
+    assert_eq!(completion.transaction, transaction);
+    match completion.status {
+        CleanupStatus::Complete => {
+            verdict.expect("complete is only reported once the image is gone");
+            assert!(!staged.exists(), "the installer removed the staged image");
+        }
+        CleanupStatus::CleanupPending => {
+            assert_ne!(
+                completion.reason,
+                Some(CleanupReason::ParentAlive),
+                "the launcher exited, so the parent is not alive"
+            );
+            assert_eq!(
+                verdict.expect_err("pending is never success").code,
+                FailureCode::CleanupPending
+            );
+            assert!(staged.exists(), "a pending cleanup never removes the image");
+        }
+    }
 }

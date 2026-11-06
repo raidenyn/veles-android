@@ -8,10 +8,14 @@
 //! operation layer ([`operations::run_operation`]) for inspect, install, repair,
 //! rollback and uninstall over the journaled transaction.
 //!
+//! Task 10 adds the closed command-line surface ([`cli`]) the native frontends
+//! drive, and the short-lived cleanup launcher.
+//!
 //! This crate currently produces portable contract evidence only. It does not
 //! perform native installation, signing or acceptance.
 
 pub mod cleanup;
+pub mod cli;
 pub mod inventory;
 pub mod journal;
 pub mod model;
@@ -23,12 +27,13 @@ pub mod retained;
 pub mod transaction;
 
 pub use cleanup::{
-    CLEANUP_MAGIC, CLEANUP_SCHEMA_VERSION, CleanupChannel, CleanupCompletion, CleanupEntry,
-    CleanupFailure, CleanupFileSystem, CleanupReason, CleanupRequest, CleanupStatus, CleanupTree,
-    HelperImage, HelperRun, MAX_CLEANUP_ENTRIES, MAX_CLEANUP_FRAME_BYTES, MAX_CLEANUP_TIMEOUT,
-    ParentEvidence, ParentIdentity, ParentState, RemoveOutcome, StdCleanupFs, StdHelperImage,
-    encode_hex, execute_cleanup, hmac_sha256, parent_identity, parse_request,
+    CLEANUP_LAUNCHER_ARG, CLEANUP_MAGIC, CLEANUP_SCHEMA_VERSION, CleanupChannel, CleanupCompletion,
+    CleanupEntry, CleanupFailure, CleanupFileSystem, CleanupReason, CleanupRequest, CleanupStatus,
+    CleanupTree, HelperImage, HelperRun, MAX_CLEANUP_ENTRIES, MAX_CLEANUP_FRAME_BYTES,
+    MAX_CLEANUP_TIMEOUT, ParentEvidence, ParentIdentity, ParentState, RemoveOutcome, StdCleanupFs,
+    StdHelperImage, encode_hex, execute_cleanup, hmac_sha256, parent_identity, parse_request,
     remove_helper_after_exit, run_cleanup_helper, run_cleanup_helper_detailed,
+    run_cleanup_helper_via_launcher, run_cleanup_launcher,
 };
 pub use inventory::{
     INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, SEALED_INVENTORY_FILE,

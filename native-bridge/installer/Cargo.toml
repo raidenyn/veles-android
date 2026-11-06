@@ -42,6 +42,11 @@ windows = { version = "=0.62.2", features = [
     "Win32_Security_WinTrust",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
+    # Task 10: the fixed per-user layout comes from the Known Folders API
+    # (`SHGetKnownFolderPath`) and its COM-allocated string is freed with
+    # `CoTaskMemFree`; no environment variable is consulted.
+    "Win32_System_Com",
+    "Win32_UI_Shell",
     # Task 8: HKCU Native Messaging publication (`RegCreateKeyExW` and friends),
     # the bounded cleanup helper's inherited pipe (`CreateNamedPipeW`/
     # `GetNamedPipeClientProcessId`, anonymous-pipe peer attribution), its own

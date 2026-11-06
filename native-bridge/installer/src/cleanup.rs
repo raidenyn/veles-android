@@ -73,6 +73,13 @@ use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, MAX_PATH_
 use crate::paths::{MAX_ROOT_BYTES, ROOT_DIR_DEVELOPMENT, ROOT_DIR_FIXTURE, ROOT_DIR_PRODUCTION};
 use crate::platform::OwnedKind;
 
+mod launcher;
+
+pub use launcher::{
+    CLEANUP_LAUNCHER_ARG, LAUNCH_MAGIC, LAUNCH_SCHEMA_VERSION, LAUNCH_STATUS_MAGIC, LaunchRequest,
+    LaunchStatus, MAX_LAUNCH_FRAME_BYTES, MAX_LAUNCH_STATUS_BYTES,
+};
+
 /// Completed cleanup frames are this schema.
 pub const CLEANUP_SCHEMA_VERSION: u32 = 1;
 /// Wire magic that identifies this protocol generation.
@@ -1007,6 +1014,70 @@ pub fn run_cleanup_helper_detailed(
         run.transaction,
     );
     (Some(completion), verdict)
+}
+
+/// Run one cleanup capability through a short-lived **launcher**, so the helper
+/// can observe its recorded parent's exit while the installer stays alive.
+///
+/// This is the parent side [`run_cleanup_helper`] documents as missing. The
+/// installer spawns its own image (`launcher`, the fixed argument
+/// [`CLEANUP_LAUNCHER_ARG`] and nothing else) with the launch frame on a pipe;
+/// the launcher starts the staged helper with *its own* process as the recorded
+/// parent and exits at once. The installer then, all bounded by the run
+/// deadline: waits for the launcher's exit, waits for the helper's exit, reads
+/// the one completion frame, authenticates it against the capability and
+/// transaction, deletes the helper image and verifies it is gone
+/// ([`remove_helper_after_exit`]). Any deviation is `CleanupPending`; nothing is
+/// ever reported complete on partial evidence and nothing is terminated.
+///
+/// Native execution is Windows-only here and is **BLOCKED** on the Linux
+/// development host (it compiles for `x86_64-pc-windows-msvc` only). Every other
+/// host answers `CleanupPending`, the fail-closed verdict.
+pub fn run_cleanup_helper_via_launcher(
+    run: &HelperRun<'_>,
+    launcher: &Path,
+) -> (Option<CleanupCompletion>, InstallResult<()>) {
+    let completion = match launch_helper(run, launcher) {
+        Ok(completion) => completion,
+        Err(failure) => return (None, Err(failure)),
+    };
+    let mut image = StdHelperImage;
+    let verdict = remove_helper_after_exit(
+        &mut image,
+        run.helper_path,
+        &completion,
+        run.capability,
+        run.transaction,
+    );
+    (Some(completion), verdict)
+}
+
+/// The launcher process entry: read one launch frame, start the helper, report
+/// its identity, exit. Returns the process exit status (0 only when the helper
+/// was started and reported).
+///
+/// Takes no argument. A host without a native launcher refuses at once and
+/// reads nothing.
+pub fn run_cleanup_launcher() -> i32 {
+    #[cfg(windows)]
+    {
+        native::run_launcher()
+    }
+    #[cfg(not(windows))]
+    {
+        1
+    }
+}
+
+#[cfg(windows)]
+fn launch_helper(run: &HelperRun<'_>, launcher: &Path) -> InstallResult<CleanupCompletion> {
+    native::launch_helper(run, launcher)
+}
+
+#[cfg(not(windows))]
+fn launch_helper(_run: &HelperRun<'_>, _launcher: &Path) -> InstallResult<CleanupCompletion> {
+    // No native launcher on this host: fail closed, never claim a cleanup.
+    Err(InstallFailure::new(FailureCode::CleanupPending))
 }
 
 /// The start marker of one process, where the host can report one.

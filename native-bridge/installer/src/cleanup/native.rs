@@ -157,6 +157,10 @@ fn native_fs(own: PathBuf) -> MacosCleanupFs {
 
 #[cfg(windows)]
 mod windows_impl {
+    use super::super::{
+        CLEANUP_LAUNCHER_ARG, LaunchRequest, LaunchStatus, MAX_LAUNCH_FRAME_BYTES,
+        MAX_LAUNCH_STATUS_BYTES,
+    };
     use super::*;
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::{
@@ -550,6 +554,7 @@ mod windows_impl {
         // the very descriptors named here.
         let child = spawn_child(
             run.helper_path,
+            None,
             child_request.raw(),
             child_completion.raw(),
             &[
@@ -603,6 +608,222 @@ mod windows_impl {
             return Err(pending());
         }
         Ok(completion)
+    }
+
+    // -----------------------------------------------------------------------
+    // The launcher (Task 10): a short-lived process the helper watches instead
+    // of the installer. NATIVE EXECUTION IS BLOCKED on the Linux development host.
+    // -----------------------------------------------------------------------
+
+    /// The launcher process entry: read one launch frame, start the helper with
+    /// *this process* as the recorded parent, report the helper's identity and
+    /// exit. Returns the process exit status.
+    pub(super) fn run_launcher() -> i32 {
+        i32::from(launch().is_err())
+    }
+
+    fn launch() -> Result<(), ()> {
+        let deadline = Instant::now() + MAX_CLEANUP_TIMEOUT;
+        let stdin = HANDLE(std::io::stdin().as_raw_handle());
+        let stdout = HANDLE(std::io::stdout().as_raw_handle());
+        // The frame and the status travel on inherited pipes only: a launcher
+        // started from a console or a file refuses before reading anything.
+        if !is_pipe(stdin) || !is_pipe(stdout) {
+            return Err(());
+        }
+        let frame = read_frame_bounded(stdin, MAX_LAUNCH_FRAME_BYTES, deadline).map_err(|_| ())?;
+        let launch = LaunchRequest::parse(&frame).map_err(|_| ())?;
+        let completion = handle_of(launch.completion_handle).ok_or(())?;
+        // The completion channel must be the inherited pipe, not some other
+        // object that happens to carry that handle value.
+        if !is_pipe(completion) {
+            return Err(());
+        }
+        let helper_path = PathBuf::from(&launch.request.helper_path);
+
+        // This process is the recorded parent: its pid and start marker, and a
+        // handle that names exactly this process (query + synchronize only).
+        let launcher = ParentIdentity {
+            // SAFETY: no arguments; returns this process's id.
+            pid: unsafe { GetCurrentProcessId() },
+            start: process_start(0).ok_or(())?,
+        };
+        let (child_request, parent_request) = create_pipe().map_err(|_| ())?;
+        let (child_release, parent_release) = create_pipe().map_err(|_| ())?;
+        parent_request.disinherit();
+        parent_release.disinherit();
+        let launcher_process = duplicate_process_handle().map_err(|_| ())?;
+
+        let request = launch
+            .into_helper_request(
+                launcher,
+                launcher_process.raw().0 as u64,
+                child_release.raw().0 as u64,
+            )
+            .map_err(|_| ())?;
+
+        // The helper inherits exactly these handles; its standard output is the
+        // installer's completion pipe, handed through unchanged.
+        let child = spawn_child(
+            &helper_path,
+            None,
+            child_request.raw(),
+            completion,
+            &[
+                child_request.raw(),
+                completion,
+                child_release.raw(),
+                launcher_process.raw(),
+            ],
+        )
+        .map_err(|_| ())?;
+        // SAFETY: `child.handle()` is the live process handle just created.
+        let helper_pid = unsafe { GetProcessId(child.handle()) };
+        let helper_start = handle_start(child.handle()).ok_or(())?;
+        drop(child_request);
+        drop(child_release);
+
+        // Request, then the release byte; the launcher stops mutating here and
+        // exits right after reporting, which is the event the helper waits for.
+        write_frame_bounded(parent_request.raw(), &request, deadline).map_err(|_| ())?;
+        drop(parent_request);
+        write_frame_bounded(parent_release.raw(), &[1u8], deadline).map_err(|_| ())?;
+        drop(parent_release);
+
+        let status = LaunchStatus::new(helper_pid, helper_start)
+            .encode()
+            .map_err(|_| ())?;
+        write_frame_bounded(stdout, &status, deadline).map_err(|_| ())
+    }
+
+    /// The installer side of the launcher handoff: spawn `launcher` (this
+    /// product's own image), let it start the helper and exit, then wait for the
+    /// helper's exit and read the one authenticated completion. Every step is
+    /// bounded by the run deadline; nothing is terminated.
+    pub(super) fn launch_helper(
+        run: &HelperRun<'_>,
+        launcher: &Path,
+    ) -> crate::model::InstallResult<CleanupCompletion> {
+        let pending =
+            || crate::model::InstallFailure::new(crate::model::FailureCode::CleanupPending);
+        let deadline = Instant::now() + run.timeout.min(MAX_CLEANUP_TIMEOUT);
+
+        // The installer keeps the read end of the completion pipe for the whole
+        // run; only the write end travels (installer -> launcher -> helper).
+        let (parent_completion, child_completion) = create_pipe().map_err(|_| pending())?;
+        parent_completion.disinherit();
+        let (child_launch, parent_launch) = create_pipe().map_err(|_| pending())?;
+        parent_launch.disinherit();
+        let (parent_status, child_status) = create_pipe().map_err(|_| pending())?;
+        parent_status.disinherit();
+
+        let frame = LaunchRequest::for_run(run, child_completion.raw().0 as u64)
+            .encode()
+            .map_err(|_| pending())?;
+        // The installer validates exactly what the launcher will validate.
+        LaunchRequest::parse(&frame)?;
+
+        let mut launcher_process = spawn_child(
+            launcher,
+            Some(CLEANUP_LAUNCHER_ARG),
+            child_launch.raw(),
+            child_status.raw(),
+            &[
+                child_launch.raw(),
+                child_status.raw(),
+                child_completion.raw(),
+            ],
+        )
+        .map_err(|_| pending())?;
+        drop(child_launch);
+        drop(child_status);
+        drop(child_completion);
+
+        write_frame_bounded(parent_launch.raw(), &frame, deadline).map_err(|_| pending())?;
+        drop(parent_launch);
+
+        // The status frame ends at EOF, which is the launcher closing its end as
+        // it exits. Then the launcher's exit status itself is checked: a launcher
+        // that failed after starting the helper is not a proven handoff.
+        let status = read_frame_bounded(parent_status.raw(), MAX_LAUNCH_STATUS_BYTES, deadline)
+            .map_err(|_| pending())?;
+        let remaining_ms = remaining_millis(deadline);
+        if launcher_process.wait(remaining_ms) != Some(0) {
+            return Err(pending());
+        }
+        let status = LaunchStatus::parse(&status)?;
+
+        let code = wait_for_helper(&status, deadline)?;
+
+        let frame = read_frame_bounded(parent_completion.raw(), MAX_CLEANUP_FRAME_BYTES, deadline)
+            .map_err(|_| pending())?;
+        let completion = accept_completion(&frame, run.capability, run.transaction)?;
+        // A successful completion must also be the helper's own exit status when
+        // the OS still let us read it.
+        if completion.status == CleanupStatus::Complete && code.is_some_and(|code| code != 0) {
+            return Err(pending());
+        }
+        Ok(completion)
+    }
+
+    /// Wait for the helper named by `(pid, start)` to exit.
+    ///
+    /// The helper may already be gone by the time this runs. `(pid, start)` is an
+    /// identity: a pid that no longer exists, or that now carries another start
+    /// marker, is a process that has exited. Anything that cannot be established
+    /// (an access error, an unreadable start marker, a helper that is still alive
+    /// at the deadline) is `CleanupPending`, never an assumed exit.
+    fn wait_for_helper(
+        status: &LaunchStatus,
+        deadline: Instant,
+    ) -> crate::model::InstallResult<Option<u32>> {
+        use windows::Win32::Foundation::ERROR_INVALID_PARAMETER;
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        let pending =
+            || crate::model::InstallFailure::new(crate::model::FailureCode::CleanupPending);
+        let access =
+            PROCESS_ACCESS_RIGHTS(PROCESS_QUERY_LIMITED_INFORMATION.0 | SYNCHRONIZE_ACCESS);
+        // SAFETY: a plain open-by-pid with query + synchronize access only.
+        let opened = unsafe { OpenProcess(access, false, status.helper_pid) };
+        let process = match opened {
+            Ok(process) => Handle(process),
+            Err(error)
+                if error.code()
+                    == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) =>
+            {
+                // No process has this pid any more: the helper exited.
+                return Ok(None);
+            }
+            Err(_) => return Err(pending()),
+        };
+        match handle_start(process.raw()) {
+            Some(start) if start == status.helper_start => {}
+            // The pid now belongs to another process: the helper is gone.
+            Some(_) => return Ok(None),
+            None => return Err(pending()),
+        }
+        if wait_child(process.raw(), deadline) != ParentState::Exited {
+            return Err(pending());
+        }
+        let mut code = 0u32;
+        // SAFETY: the process exited and `code` is a live out-parameter.
+        let code = unsafe { GetExitCodeProcess(process.raw(), &mut code) }
+            .ok()
+            .map(|()| code);
+        Ok(code)
+    }
+
+    /// Milliseconds left until `deadline`, as a bounded wait argument.
+    fn remaining_millis(deadline: Instant) -> u32 {
+        u32::try_from(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .as_millis(),
+        )
+        .unwrap_or(u32::MAX - 1)
     }
 
     /// One owned Win32 handle, closed exactly once on every path.
@@ -724,6 +945,7 @@ mod windows_impl {
     /// Start the helper with exactly the listed inherited handles.
     fn spawn_child(
         helper: &Path,
+        arguments: Option<&str>,
         stdin: HANDLE,
         stdout: HANDLE,
         inheritable: &[HANDLE],
@@ -731,11 +953,21 @@ mod windows_impl {
         use windows::Win32::System::Threading::PROCESS_CREATION_FLAGS;
 
         let application = wide(helper.as_os_str());
-        let mut command_line = wide(helper.as_os_str());
+        let mut command_line = match arguments {
+            // The cleanup helper takes no arguments: its request is the inherited
+            // pipe. Only the launcher mode passes one fixed word.
+            None => wide(helper.as_os_str()),
+            Some(arguments) => {
+                let mut line = std::ffi::OsString::from("\"");
+                line.push(helper.as_os_str());
+                line.push("\" ");
+                line.push(arguments);
+                wide(&line)
+            }
+        };
         if command_line.is_empty() {
             return Err(windows::core::Error::empty());
         }
-        // The command line has no arguments: the request is the inherited pipe.
         let mut info = STARTUPINFOEXW::default();
         info.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
         info.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -1554,4 +1786,17 @@ pub(super) fn spawn_helper(run: &HelperRun<'_>) -> crate::model::InstallResult<C
 #[cfg(windows)]
 pub(super) fn process_start(pid: u32) -> Option<u64> {
     windows_impl::process_start(pid)
+}
+
+#[cfg(windows)]
+pub(super) fn launch_helper(
+    run: &HelperRun<'_>,
+    launcher: &Path,
+) -> crate::model::InstallResult<CleanupCompletion> {
+    windows_impl::launch_helper(run, launcher)
+}
+
+#[cfg(windows)]
+pub(super) fn run_launcher() -> i32 {
+    windows_impl::run_launcher()
 }
