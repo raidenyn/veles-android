@@ -47,6 +47,7 @@ sys.path.insert(0, str(HERE))
 import correspondence  # noqa: E402  (sibling module, imported after sys.path setup)
 import correspondence_fixtures as fx  # noqa: E402
 import package_inputs  # noqa: E402
+import test_package_inputs as raw_zip  # noqa: E402  (shared raw-ZIP header helpers, no TestCase imported)
 
 SCRIPT = HERE / "correspondence.py"
 
@@ -1044,6 +1045,33 @@ class TreeCorrespondenceTests(WorkDir):
         self.assertEqual(report["verdict"], "PASS", report["differences"])
         report = correspondence.compare(unsigned, zipped(signed, "s2.zip", (2024, 2, 2, 2, 2, 2)), "tree")
         self.assertEqual(report["verdict"], "PASS", report["differences"])
+
+    def test_tree_archive_with_content_beyond_its_declared_size_never_passes(self):
+        """Review F7 end to end: a 1 MiB payload declared as 1 byte must not compare equal to a genuine 1-byte file."""
+        import zlib
+
+        genuine = self.put("genuine.zip", raw_zip.make_codec_zip([("payload", b"x")], zipfile.ZIP_DEFLATED))
+        for label, method in (("lzma", zipfile.ZIP_LZMA), ("deflate", zipfile.ZIP_DEFLATED)):
+            with self.subTest(codec=label):
+                hidden = raw_zip.patch_member(
+                    raw_zip.make_codec_zip([("payload", b"x" * (1 << 20))], method), 0, crc=zlib.crc32(b"x"), usize=1
+                )
+                self.assertLess(len(hidden), 4096)
+                for first, second in ((genuine, self.put(f"hidden-{label}.zip", hidden)), (self.put(f"hidden2-{label}.zip", hidden), genuine)):
+                    report = correspondence.compare(first, second, "tree")
+                    self.assertEqual(report["verdict"], "FAIL")
+                    self.assertEqual(report["allowed_differences"], [])
+                    self.assertEqual(len(report["differences"]), 1, report["differences"])
+                    self.assertIn(report["differences"][0]["code"], ("unsupported-compression", "malformed-archive"))
+        # Through the CLI it is a non-zero exit with a FAIL document, never exit 0.
+        out = self.base / "report.json"
+        result = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--unsigned", str(genuine), "--signed", str(self.base / "hidden-lzma.zip"), "--kind", "tree", "--report", str(out)],
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(json.loads(out.read_text())["verdict"], "FAIL")
 
     def test_tree_delegates_pe_files_and_keeps_other_files_byte_identical(self):
         unsigned_pe, meta = build_pe()
