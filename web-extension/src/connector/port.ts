@@ -37,10 +37,11 @@ import {
 export type { ConnectorFailure, ConnectorFailureCode } from './errors';
 
 export interface NativePortLike {
+    cancelRequest?(requestId: string): void;
     postMessage(message: unknown): void;
     disconnect(): void;
     onMessage: { addListener(listener: (message: unknown) => void): void };
-    onDisconnect: { addListener(listener: () => void): void };
+    onDisconnect: { addListener(listener: (error?: { message?: string }) => void): void };
 }
 
 export type WireErrorEvent = Extract<WireEvent, { type: 'error' }>;
@@ -311,7 +312,7 @@ export class NativeConnectorPort {
         }
         this.port = port;
         port.onMessage.addListener((message) => this.handleMessage(generation, message));
-        port.onDisconnect.addListener(() => this.handleDisconnect(generation));
+        port.onDisconnect.addListener((error) => this.handleDisconnect(generation, error));
     }
 
     hello(): Promise<ConnectorResult<Extract<WireEvent, { type: 'ready' }>>> {
@@ -614,6 +615,7 @@ export class NativeConnectorPort {
     private completePending(entry: PendingEntry, event: WireEvent): void {
         if (this.pending.get(entry.requestId) !== entry) return;
         this.pending.delete(entry.requestId);
+        this.port?.cancelRequest?.(entry.requestId);
         this.clearEntryTimer(entry);
         this.tombstones.add(entry.requestId);
         if (event.type === 'error') {
@@ -626,6 +628,7 @@ export class NativeConnectorPort {
     private failPending(entry: PendingEntry, failure: ConnectorFailure): void {
         if (this.pending.get(entry.requestId) !== entry) return;
         this.pending.delete(entry.requestId);
+        this.port?.cancelRequest?.(entry.requestId);
         this.clearEntryTimer(entry);
         this.tombstones.add(entry.requestId);
         const local: ConnectorFailure = { ...failure, request_id: entry.requestId };
@@ -639,9 +642,9 @@ export class NativeConnectorPort {
         entry.timer = undefined;
     }
 
-    private handleDisconnect(generation: number): void {
+    private handleDisconnect(generation: number, capturedError?: { message?: string }): void {
         if (generation !== this.generation) return;
-        const lastError = this.readLastError();
+        const lastError = capturedError ?? this.readLastError();
         const missingHost = this.phase === 'pre_ready' && isMissingHostMessage(lastError?.message);
 
         this.port = null;

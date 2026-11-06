@@ -10,10 +10,16 @@ describe('manifest baseline guard (exact match)', () => {
         expect(buildExtensionManifest().manifest_version).toBe(3);
     });
 
-    it('requests only storage and nativeMessaging', () => {
+    it('requests only connector storage/transport and offscreen clipboard permissions', () => {
         const m = buildExtensionManifest();
         expect(m).toHaveProperty('permissions');
-        expect(m.permissions).toEqual(['storage', 'nativeMessaging']);
+        expect(m.permissions).toEqual([
+            'storage',
+            'nativeMessaging',
+            'offscreen',
+            'clipboardWrite',
+        ]);
+        expect(m.minimum_chrome_version).toBe('132');
     });
 
     it('does not request tabs, activeTab, or host permissions', () => {

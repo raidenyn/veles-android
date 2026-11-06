@@ -23,6 +23,7 @@ describe('dist/ contents (post-build artifact)', () => {
         const files = walk(DIST).sort();
         expect(files).toEqual([
             'background.js',
+            'chunks/clipboard-DE1lG-x_.js',
             'chunks/modulepreload-polyfill-DaKOjhqt.js',
             'chunks/ownership-BOcJ26Iv.js',
             'chunks/storage-DOMCF8BZ.js',
@@ -30,6 +31,8 @@ describe('dist/ contents (post-build artifact)', () => {
             'connector.js',
             'content.js',
             'manifest.json',
+            'offscreen.html',
+            'offscreen.js',
             'options.html',
             'options.js',
             'popup.html',

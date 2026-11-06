@@ -32,6 +32,7 @@ export default defineConfig({
             input: {
                 background: resolve(__dirname, 'src/background.ts'),
                 connector: resolve(__dirname, 'connector.html'),
+                offscreen: resolve(__dirname, 'offscreen.html'),
                 content: resolve(__dirname, 'src/content.ts'),
                 options: resolve(__dirname, 'options.html'),
                 popup: resolve(__dirname, 'popup.html'),

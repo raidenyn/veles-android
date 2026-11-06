@@ -1,4 +1,4 @@
-/* global document, window */
+/* global document, window, chrome, Event */
 // Packaged-browser evidence for OTP-07.
 //
 // This loads the built extension in Chromium. One page exercises the real
@@ -17,6 +17,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { build } from 'vite';
+import { execFileSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const root = resolve(import.meta.dirname, '..');
 const dist = join(root, 'dist');
@@ -45,6 +47,14 @@ if (existsSync(join(dist, 'browser-harness.js'))) {
 const temporary = await mkdtemp(join(tmpdir(), 'veles-connector-browser-'));
 const extension = join(temporary, 'extension');
 let context;
+let remoteBrowser;
+let remoteExtensionSession;
+let loadedExtensionId;
+const remote = process.env.VELES_BROWSER_CDP;
+const syncRemote = () =>
+    execFileSync('homepc', ['--host', 'mac', 'sync', extension, 'otp08-browser-fixture'], {
+        stdio: 'inherit',
+    });
 
 async function nextPost(page) {
     return page.evaluate(() => window.__velesConnectorHarness.nextPosted());
@@ -166,34 +176,47 @@ try {
     // Leave the packaged connector.html untouched for the real-runtime test.
     // The harness page is an ephemeral copy with the test-only module inserted
     // before the unchanged production entry.
-    await writeFile(
-        join(extension, 'harness.html'),
-        connectorHtml.replace(
-            productionScript,
-            `<script type="module" crossorigin src="/browser-harness.js"></script>\n        ${productionScript}`,
-        ),
+    const harnessHtml = connectorHtml.replace(
+        productionScript,
+        `<script type="module" crossorigin src="/browser-harness.js"></script>\n        ${productionScript}`,
     );
 
     const executablePath =
         process.env.VELES_TEST_CHROMIUM ??
         (existsSync(chromium.executablePath()) ? chromium.executablePath() : undefined);
-    if (executablePath === undefined) {
+    if (executablePath === undefined && !remote) {
         throw new Error(
             'Chromium is unavailable. Set VELES_TEST_CHROMIUM or install Playwright Chromium.',
         );
     }
 
-    context = await chromium.launchPersistentContext(join(temporary, 'profile'), {
-        executablePath,
-        headless: true,
-        args: [
-            `--disable-extensions-except=${extension}`,
-            `--load-extension=${extension}`,
-            '--no-sandbox',
-        ],
-    });
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
-    const extensionId = new URL(worker.url()).host;
+    if (remote) {
+        syncRemote();
+        remoteBrowser = await chromium.connectOverCDP(remote);
+        remoteExtensionSession = await remoteBrowser.newBrowserCDPSession();
+        ({ id: loadedExtensionId } = await remoteExtensionSession.send('Extensions.loadUnpacked', {
+            path: '/Users/raiden/homepc/work/otp08-browser-fixture',
+        }));
+        context = remoteBrowser.contexts()[0];
+    } else
+        context = await chromium.launchPersistentContext(join(temporary, 'profile'), {
+            executablePath,
+            headless: true,
+            args: [
+                `--disable-extensions-except=${extension}`,
+                `--load-extension=${extension}`,
+                '--no-sandbox',
+            ],
+        });
+    const worker =
+        context
+            .serviceWorkers()
+            .find((item) => !loadedExtensionId || new URL(item.url()).host === loadedExtensionId) ??
+        (await context.waitForEvent('serviceworker', {
+            predicate: (item) =>
+                !loadedExtensionId || new URL(item.url()).host === loadedExtensionId,
+        }));
+    const extensionId = loadedExtensionId ?? new URL(worker.url()).host;
 
     // 1. Real production bundle, no host registered, real Chrome runtime.
     const production = await context.newPage();
@@ -220,9 +243,14 @@ try {
     assert.equal(missingHost.retryDisabled, false);
     await production.close();
 
+    // Keep the genuine connector path: lifecycle authorization intentionally
+    // rejects other extension pages. Modify only this ephemeral test copy.
+    await writeFile(join(extension, 'connector.html'), harnessHtml);
+    if (remote) syncRemote();
+
     // 2. Real built HTML/UI with a simulated Native Port in the test copy.
     const page = await context.newPage();
-    await page.goto(`chrome-extension://${extensionId}/harness.html`);
+    await page.goto(`chrome-extension://${extensionId}/connector.html`);
     await waitForHarness(page);
 
     const hello = await nextPost(page);
@@ -326,8 +354,20 @@ try {
     // Whole-record boundary through the real packaged controller/UI: a 4096-byte
     // record is accepted and diagnosed, while 4097 bytes fails closed visibly.
     const exact = Buffer.alloc(4096, 0x33).toString('base64');
+    await page.locator('#diagnostics').evaluate((element) => {
+        element.open = true;
+    });
+    await page.click('#synthetic-copy-arm');
     await emit(page, message(CONNECTION_A, exact));
     await waitForText(page, '#diagnostics-list', 'bytes=4096');
+    await waitForText(page, '#synthetic-copy-status', 'Synthetic code copied.');
+    assert.equal(
+        await page.evaluate(
+            async () =>
+                (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })).length,
+        ),
+        0,
+    );
     const oversized = Buffer.alloc(4097, 0x44).toString('base64');
     await emit(page, message(CONNECTION_A, oversized));
     await waitForText(page, '#error-banner', 'unexpected or correlated-invalid');
@@ -355,7 +395,7 @@ try {
     // the duplicate stays visibly secondary and creates none.
     await page.close();
     const ownerPage = await context.newPage();
-    await ownerPage.goto(`chrome-extension://${extensionId}/harness.html`);
+    await ownerPage.goto(`chrome-extension://${extensionId}/connector.html`);
     await waitForHarness(ownerPage);
     const ownerHello = await nextPost(ownerPage);
     assert.equal(ownerHello.type, 'hello');
@@ -364,7 +404,7 @@ try {
     assert.equal(await ownerPage.evaluate(() => window.__velesConnectorHarness.portCount()), 1);
 
     const duplicate = await context.newPage();
-    await duplicate.goto(`chrome-extension://${extensionId}/harness.html`);
+    await duplicate.goto(`chrome-extension://${extensionId}/connector.html`);
     await waitForText(duplicate, '#status', 'already open in another tab');
     assert.match(
         await duplicate.evaluate(() => document.querySelector('#host-guidance')?.textContent ?? ''),
@@ -385,8 +425,8 @@ try {
     // Owner closure releases ownership; a replacement document becomes the
     // sole owner and the only new port.
     await ownerPage.close();
-    const replacementPage = await context.newPage();
-    await replacementPage.goto(`chrome-extension://${extensionId}/harness.html`);
+    let replacementPage = await context.newPage();
+    await replacementPage.goto(`chrome-extension://${extensionId}/connector.html`);
     await waitForHarness(replacementPage);
     const replacementHello = await nextPost(replacementPage);
     assert.equal(replacementHello.type, 'hello');
@@ -394,12 +434,148 @@ try {
         await replacementPage.evaluate(() => window.__velesConnectorHarness.portCount()),
         1,
     );
+
+    // OTP-08: real browser freeze/discard transitions, real service worker and
+    // real offscreen clipboard; transport alone is simulated in this fixture.
+    await emit(replacementPage, readyFor(replacementHello.request_id));
+    await waitForText(replacementPage, '#status', 'Connector ready.');
+    let tabId = await replacementPage.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+    let generationKey = `veles.lifecycle.${tabId}`;
+    const oldGeneration = await worker.evaluate(
+        async (key) => (await chrome.storage.session.get(key))[key],
+        generationKey,
+    );
+    assert.equal(typeof oldGeneration.token, 'string');
+    const ordinary = await context.newPage();
+    await ordinary.goto('about:blank');
+    await ordinary.bringToFront();
+    const lifecycleSession = await context.newCDPSession(replacementPage);
+    await lifecycleSession.send('Page.setWebLifecycleState', { state: 'frozen' });
+    const observedFreeze = await worker.evaluate(
+        async (id) => (await chrome.tabs.get(id)).frozen,
+        tabId,
+    );
+    if (!observedFreeze) {
+        console.log(
+            'BLOCKED: CDP freeze returned success but tabs.get reports frozen=false for this extension page. Following freeze/resume checks use explicit DOM event injection, not physical freeze acceptance.',
+        );
+        await replacementPage.evaluate(() => document.dispatchEvent(new Event('freeze')));
+    }
+    const waitForRevocation = async () => {
+        for (let i = 0; i < 100; i++) {
+            const state = await worker.evaluate(
+                async ({ key, tabId }) => ({
+                    generation: (await chrome.storage.session.get(key))[key],
+                    badge: await chrome.action.getBadgeText({ tabId }).catch(() => ''),
+                    exists: await chrome.tabs.get(tabId).then(
+                        () => true,
+                        () => false,
+                    ),
+                }),
+                { key: generationKey, tabId },
+            );
+            if ((state.generation == null || !state.exists) && state.badge === '') return;
+            await delay(50);
+        }
+        const observed = await worker.evaluate(
+            async ({ key, tabId }) => ({
+                hasGeneration: (await chrome.storage.session.get(key))[key] != null,
+                badge: await chrome.action.getBadgeText({ tabId }).catch(() => ''),
+                tab: await chrome.tabs.get(tabId).catch(() => ({})),
+            }),
+            { key: generationKey, tabId },
+        );
+        throw new Error(
+            `worker did not revoke generation: ${JSON.stringify({ hasGeneration: observed.hasGeneration, badge: observed.badge, frozen: observed.tab.frozen, discarded: observed.tab.discarded })}`,
+        );
+    };
+    await waitForRevocation();
+    const resumedLoad = replacementPage.waitForEvent('load');
+    if (observedFreeze)
+        await lifecycleSession.send('Page.setWebLifecycleState', { state: 'active' });
+    else await replacementPage.evaluate(() => document.dispatchEvent(new Event('resume')));
+    await resumedLoad;
+    await waitForHarness(replacementPage);
+    const resumedHello = await nextPost(replacementPage);
+    assert.equal(resumedHello.type, 'hello');
+    // Request IDs are process-local and may restart at c1; the authority token
+    // below, not a request-ID string, proves the new document generation.
+    const resumedGeneration = await worker.evaluate(
+        async (key) => (await chrome.storage.session.get(key))[key],
+        generationKey,
+    );
+    assert.notEqual(resumedGeneration.token, oldGeneration.token);
+    await emit(replacementPage, readyFor(resumedHello.request_id));
+    await waitForText(replacementPage, '#status', 'Connector ready.');
+
+    await ordinary.bringToFront();
+    const discardResult = await worker.evaluate(async (id) => {
+        try {
+            const result = await chrome.tabs.discard(id);
+            return { discarded: result?.discarded, frozen: result?.frozen };
+        } catch (error) {
+            return { error: String(error) };
+        }
+    }, tabId);
+    console.log(
+        `Discard observation: ${JSON.stringify(discardResult)}, prior target closed=${replacementPage.isClosed()}`,
+    );
+    const observedDiscard = discardResult.discarded === true;
+    if (!observedDiscard) {
+        console.log(
+            'BLOCKED: Chrome did not discard the extension page. Worker transition handling remains covered by injected API regressions; following reload is not discard acceptance.',
+        );
+        await replacementPage.evaluate(() => document.dispatchEvent(new Event('freeze')));
+    }
+    await waitForRevocation();
+    if (observedDiscard && replacementPage.isClosed()) {
+        const newTarget = context.waitForEvent('page');
+        const restored = await worker.evaluate(async (id) => {
+            try {
+                await chrome.tabs.update(id, { active: true });
+                return true;
+            } catch {
+                return false;
+            }
+        }, tabId);
+        if (restored) replacementPage = await newTarget;
+        else {
+            void newTarget.catch(() => undefined);
+            console.log(
+                'BLOCKED: discarded target/tab was removed rather than resumable; reopening a connector proves new-document recovery only.',
+            );
+            replacementPage = await context.newPage();
+            await replacementPage.goto(`chrome-extension://${extensionId}/connector.html`);
+        }
+    } else {
+        const discardedLoad = replacementPage.waitForEvent('load');
+        if (observedDiscard) await replacementPage.bringToFront();
+        else await replacementPage.reload();
+        await discardedLoad;
+    }
+    await waitForHarness(replacementPage);
+    const discardedHello = await nextPost(replacementPage);
+    assert.equal(discardedHello.type, 'hello');
+    tabId = await replacementPage.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+    generationKey = `veles.lifecycle.${tabId}`;
+    const discardedGeneration = await worker.evaluate(
+        async (key) => (await chrome.storage.session.get(key))[key],
+        generationKey,
+    );
+    assert.notEqual(discardedGeneration.token, resumedGeneration.token);
     await replacementPage.close();
+    await waitForRevocation();
+    await ordinary.close();
 
     console.log(
-        'Packaged browser: production missing-host UX, API v1/v2 overlap, one scan/two phones, per-device connect/disconnect routing, 4096/4097 boundaries, DOM focus preservation, and duplicate-document single ownership passed.',
+        'Packaged browser: missing-host UX, API overlap, simulated two-phone routing/bounds, real offscreen synthetic copy/cleanup, singleton ownership, lifecycle fresh-generation recovery and removal invalidation passed. See explicit BLOCKED lines for unobserved browser transitions. Not physical BLE or strict background acceptance.',
     );
 } finally {
-    await context?.close();
+    if (remoteExtensionSession && loadedExtensionId)
+        await remoteExtensionSession
+            .send('Extensions.uninstall', { id: loadedExtensionId })
+            .catch(() => undefined);
+    if (remoteBrowser) await remoteBrowser.close();
+    else await context?.close();
     await rm(temporary, { recursive: true, force: true });
 }

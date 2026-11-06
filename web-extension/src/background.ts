@@ -1,5 +1,6 @@
 import { setupOwnership, type OwnershipRuntimeApi } from './connector/ownership';
 import { ChromeLocalStore } from './trust/storage';
+import { setupBackgroundServices } from './background/services';
 
 // Restrict on every worker load, not only installation/update. Repository
 // operations independently await restriction before reading or writing trust.
@@ -364,6 +365,15 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage && chrome.tabs &&
 // MV3 service worker entry.
 if (typeof chrome !== 'undefined' && chrome.action?.onClicked) {
     setupLauncher(chrome as unknown as LauncherChrome);
+}
+
+if (
+    typeof chrome !== 'undefined' &&
+    chrome.tabs?.onUpdated &&
+    chrome.offscreen &&
+    chrome.storage?.session
+) {
+    setupBackgroundServices(chrome);
 }
 
 // The chrome-global guard exists so vitest (Node environment) can import this
