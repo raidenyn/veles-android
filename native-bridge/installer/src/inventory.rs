@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -143,31 +143,64 @@ pub fn parse_inventory(bytes: &[u8]) -> InstallResult<Vec<InventoryEntry>> {
     Ok(document.entries)
 }
 
-/// Bytes of a file head that classify a PE / Mach-O image.
-pub(crate) const SIGNABLE_HEAD_BYTES: u64 = 4096;
-
-/// Whether `head` (the first bytes of a file) starts a PE or Mach-O image, the only
-/// formats a code-signing step rewrites in place.
+/// Whether the image behind `reader` (whose total length is `len`) is a PE or
+/// Mach-O image, the only formats a code-signing step rewrites in place.
 ///
 /// This is a classification, not a parser: it decides whether a changed digest is
 /// *allowed to be* a signing mutation. Whether the change is exactly the
 /// documented signature mutation is the release-time correspondence report's job
 /// (`scripts/correspondence.py`); whether the signature is trusted is the OS's.
-pub fn is_signable_image(head: &[u8]) -> bool {
-    if head.len() >= 0x40 && head.starts_with(b"MZ") {
+///
+/// The work is bounded regardless of the file: at most 64 bytes of head, and for a
+/// DOS (`MZ`) image one 4-byte read at the declared PE offset. The offset is a
+/// `u32` the file itself supplies, so it is validated against `len` (the opened
+/// handle's real size) *before* any seek; an offset whose signature would not fit
+/// inside the file is simply "not a PE". A legitimate linker may place the PE
+/// header anywhere the DOS stub leaves room for, including past the first page, so
+/// no fixed prefix length is assumed.
+pub fn is_signable_image<R: Read + Seek>(reader: &mut R, len: u64) -> InstallResult<bool> {
+    reader.seek(SeekFrom::Start(0)).map_err(|_| io_failure())?;
+    let mut head = [0u8; DOS_HEADER_BYTES];
+    let available = len.min(DOS_HEADER_BYTES as u64) as usize;
+    reader
+        .read_exact(&mut head[..available])
+        .map_err(|_| io_failure())?;
+    let head = &head[..available];
+
+    if head.len() >= DOS_HEADER_BYTES && head.starts_with(b"MZ") {
         let mut raw = [0u8; 4];
         raw.copy_from_slice(&head[0x3c..0x40]);
-        let pe_offset = u32::from_le_bytes(raw) as usize;
-        return head
-            .get(pe_offset..pe_offset.saturating_add(4))
-            .is_some_and(|signature| signature == b"PE\0\0");
+        let pe_offset = u64::from(u32::from_le_bytes(raw));
+        // `pe_offset + 4 <= len`, written without overflow.
+        if len < 4 || pe_offset > len - 4 {
+            return Ok(false);
+        }
+        reader
+            .seek(SeekFrom::Start(pe_offset))
+            .map_err(|_| io_failure())?;
+        let mut signature = [0u8; 4];
+        reader
+            .read_exact(&mut signature)
+            .map_err(|_| io_failure())?;
+        return Ok(&signature == b"PE\0\0");
     }
-    matches!(
+    Ok(matches!(
         head.get(..4),
         Some([0xcf, 0xfa, 0xed, 0xfe])
             | Some([0xfe, 0xed, 0xfa, 0xcf])
             | Some([0xca, 0xfe, 0xba, 0xbe])
-    )
+    ))
+}
+
+/// Bytes of the DOS header that locate the PE header (`e_lfanew` at `0x3c`).
+const DOS_HEADER_BYTES: usize = 0x40;
+
+/// [`is_signable_image`] for one inventory entry, read through the anchored
+/// traversal of [`open_entry`] on the opened handle itself.
+pub(crate) fn entry_is_signable_image(root: &Path, relative: &str) -> InstallResult<bool> {
+    let mut file = open_entry(root, relative)?;
+    let len = file.metadata().map_err(|_| io_failure())?.len();
+    is_signable_image(&mut file, len)
 }
 
 /// Whether `path` is a signature artifact a macOS signing step *adds*: the bundle
@@ -326,17 +359,6 @@ pub(crate) fn open_entry(root: &Path, relative: &str) -> InstallResult<File> {
     Ok(file)
 }
 
-/// The first `limit` bytes of one inventory entry (a file-format classification
-/// input), read through the anchored traversal of [`open_entry`].
-pub(crate) fn read_entry_head(root: &Path, relative: &str, limit: u64) -> InstallResult<Vec<u8>> {
-    let file = open_entry(root, relative)?;
-    let mut head = Vec::new();
-    file.take(limit)
-        .read_to_end(&mut head)
-        .map_err(|_| io_failure())?;
-    Ok(head)
-}
-
 fn verify_entry(root: &Path, relative: &str, entry: &InventoryEntry) -> InstallResult<()> {
     let mut file = open_entry(root, relative)?;
     let metadata = file.metadata().map_err(|_| io_failure())?;
@@ -379,4 +401,115 @@ fn unsafe_path() -> InstallFailure {
 
 fn io_failure() -> InstallFailure {
     InstallFailure::new(FailureCode::Io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    /// A synthetic image of `len` bytes that never materializes its content and
+    /// counts every byte it is asked to produce.
+    struct Synthetic {
+        len: u64,
+        position: u64,
+        pe_offset: u32,
+        served: u64,
+    }
+
+    impl Read for Synthetic {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let mut produced = 0;
+            while produced < buffer.len() && self.position < self.len {
+                let at = self.position;
+                buffer[produced] = match at {
+                    0 => b'M',
+                    1 => b'Z',
+                    0x3c..=0x3f => self.pe_offset.to_le_bytes()[(at - 0x3c) as usize],
+                    _ => {
+                        let relative = at.wrapping_sub(u64::from(self.pe_offset));
+                        if at >= u64::from(self.pe_offset) && relative < 4 {
+                            b"PE\0\0"[relative as usize]
+                        } else {
+                            0
+                        }
+                    }
+                };
+                self.position += 1;
+                produced += 1;
+            }
+            self.served += produced as u64;
+            Ok(produced)
+        }
+    }
+
+    impl Seek for Synthetic {
+        fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+            match to {
+                SeekFrom::Start(offset) => self.position = offset,
+                _ => return Err(io::ErrorKind::Unsupported.into()),
+            }
+            Ok(self.position)
+        }
+    }
+
+    #[test]
+    fn classifying_a_pe_reads_a_constant_number_of_bytes_wherever_the_header_is() {
+        for pe_offset in [0x40u32, 0x1000, 0x10_0000, 0x4000_0000] {
+            let len = u64::from(pe_offset) + 0x200;
+            let mut image = Synthetic {
+                len,
+                position: 0,
+                pe_offset,
+                served: 0,
+            };
+            assert!(is_signable_image(&mut image, len).expect("classified"));
+            assert!(
+                image.served <= (DOS_HEADER_BYTES as u64) + 4,
+                "classification of a {len}-byte image read {} bytes",
+                image.served
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_whose_signature_does_not_fit_in_the_file_is_not_read_or_followed() {
+        for (len, pe_offset) in [
+            (0x40u64, 0x40u32),
+            (0x80, 0x7e),
+            (0x80, 0x7d),
+            (0x80, u32::MAX),
+        ] {
+            let mut image = Synthetic {
+                len,
+                position: 0,
+                pe_offset,
+                served: 0,
+            };
+            let outcome = is_signable_image(&mut image, len).expect("classified");
+            // Only offsets with four bytes of room inside the file can be a PE.
+            assert_eq!(
+                outcome,
+                u64::from(pe_offset) + 4 <= len,
+                "{len}/{pe_offset}"
+            );
+            assert!(image.served <= DOS_HEADER_BYTES as u64 + 4);
+        }
+    }
+
+    #[test]
+    fn short_and_foreign_files_are_not_signable() {
+        for bytes in [
+            &b""[..],
+            b"M",
+            b"MZ",
+            b"#!/bin/sh\n",
+            &[0xcf, 0xfa, 0xed][..],
+        ] {
+            let mut cursor = io::Cursor::new(bytes.to_vec());
+            assert!(!is_signable_image(&mut cursor, bytes.len() as u64).expect("classified"));
+        }
+        let mut macho = io::Cursor::new(vec![0xcf, 0xfa, 0xed, 0xfe, 0, 0]);
+        assert!(is_signable_image(&mut macho, 6).expect("classified"));
+    }
 }

@@ -54,9 +54,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::inventory::{
-    PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, SEALED_INVENTORY_FILE, SIGNABLE_HEAD_BYTES,
-    is_signable_image, normalize_relative_path, parse_inventory, read_entry_head,
-    verify_correspondence, verify_inventory,
+    PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, SEALED_INVENTORY_FILE, entry_is_signable_image,
+    normalize_relative_path, parse_inventory, verify_correspondence, verify_inventory,
 };
 use crate::model::{
     Channel, Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry,
@@ -2616,8 +2615,7 @@ fn authenticated_payload(
             }
             let sealed = parse_inventory(&bytes)?;
             verify_correspondence(&canonical, &sealed, |relative| {
-                let head = read_entry_head(&payload_root, relative, SIGNABLE_HEAD_BYTES)?;
-                Ok(is_signable_image(&head))
+                entry_is_signable_image(&payload_root, relative)
             })
             .map_err(|_| trust_denied())?;
             (sealed, Some(bytes))

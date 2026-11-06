@@ -56,8 +56,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::inventory::{
-    PACKAGE_INVENTORY_FILE, SEALED_INVENTORY_FILE, SIGNABLE_HEAD_BYTES, is_signable_image,
-    parse_inventory, read_entry_head, verify_correspondence,
+    PACKAGE_INVENTORY_FILE, SEALED_INVENTORY_FILE, entry_is_signable_image, parse_inventory,
+    verify_correspondence,
 };
 use crate::journal::{
     JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot, Phase,
@@ -772,8 +772,7 @@ fn retained_inventory(
             let sealed = parse_inventory(&sealed).map_err(|_| no_rollback())?;
             let root = paths.root().join(version_relative);
             verify_correspondence(&canonical, &sealed, |relative| {
-                read_entry_head(&root, relative, SIGNABLE_HEAD_BYTES)
-                    .map(|head| is_signable_image(&head))
+                entry_is_signable_image(&root, relative)
             })
             .map_err(|_| no_rollback())?;
             sealed

@@ -60,6 +60,17 @@ fn pe_image(tail: &[u8]) -> Vec<u8> {
     image
 }
 
+/// A PE whose header lives at `offset` (a real linker may place it anywhere the
+/// DOS stub leaves room for, including past the first page).
+fn pe_image_at(offset: usize, tail: &[u8]) -> Vec<u8> {
+    let mut image = vec![0u8; offset + 0x40];
+    image[..2].copy_from_slice(b"MZ");
+    image[0x3c..0x40].copy_from_slice(&(offset as u32).to_le_bytes());
+    image[offset..offset + 4].copy_from_slice(b"PE\0\0");
+    image.extend_from_slice(tail);
+    image
+}
+
 fn entry(path: &str, bytes: &[u8], executable: bool) -> InventoryEntry {
     InventoryEntry {
         path: path.to_owned(),
@@ -105,6 +116,8 @@ struct Mutations {
     tamper_host_after_sealing: bool,
     /// A later policy generation that keeps this earlier release rollback-eligible.
     upgrade_from: Option<Digest>,
+    /// Place the host's PE header at this offset instead of 0x40.
+    pe_header_at: Option<usize>,
 }
 
 struct Package {
@@ -122,9 +135,13 @@ fn build(temp: &Temp, name: &str, version: &str, mutations: &Mutations) -> Packa
     let payload = root.join("payload");
     fs::create_dir_all(payload.join("licenses")).expect("payload tree");
 
-    let unsigned_host = pe_image(format!("compiled host {version}").as_bytes());
+    let image = |tail: &[u8]| match mutations.pe_header_at {
+        Some(offset) => pe_image_at(offset, tail),
+        None => pe_image(tail),
+    };
+    let unsigned_host = image(format!("compiled host {version}").as_bytes());
     // Signing appends a certificate table and rewrites the checksum.
-    let signed_host = pe_image(format!("compiled host {version} + signature").as_bytes());
+    let signed_host = image(format!("compiled host {version} + signature").as_bytes());
     let signed_notice: Vec<u8> = if mutations.change_notice {
         b"licence notice (edited while signing)".to_vec()
     } else {
@@ -251,6 +268,100 @@ fn signed_host_authenticates_against_canonical_identity_and_sealed_bytes() {
         .expect("host entry");
     assert_eq!(host.sha256(), Digest::of(&package.signed_host));
     assert_ne!(host.sha256(), Digest::of(&package.unsigned_host));
+}
+
+/// R2 regression: the first fix round classified a PE from a fixed 4 KiB prefix, so
+/// a valid signed image whose `e_lfanew` points past it was "not signable" and the
+/// whole package was denied.
+#[test]
+fn a_signed_pe_whose_header_lies_past_the_first_page_authenticates() {
+    let temp = Temp::new();
+    for (name, offset) in [
+        ("at-4096", 0x1000usize),
+        ("at-64k", 0x1_0000),
+        ("at-1m", 0x10_0000),
+    ] {
+        let package = build(
+            &temp,
+            name,
+            "1.0.0",
+            &Mutations {
+                pe_header_at: Some(offset),
+                ..Mutations::default()
+            },
+        );
+        authenticate(&package).unwrap_or_else(|failure| {
+            panic!("a PE with its header at {offset:#x} is a signable image: {failure:?}")
+        });
+    }
+}
+
+/// The widened read is still a classification of a *PE*: a header offset outside the
+/// file, or an `MZ` file with no `PE\0\0` where it points, is not signable, so a
+/// changed digest is refused.
+#[test]
+fn a_dos_header_that_does_not_lead_to_a_pe_signature_is_not_signable() {
+    let temp = Temp::new();
+    for (name, host) in [
+        ("offset-past-eof", {
+            let mut image = pe_image(b"x");
+            image[0x3c..0x40].copy_from_slice(&0x00ff_ffffu32.to_le_bytes());
+            image
+        }),
+        ("offset-u32-max", {
+            let mut image = pe_image(b"x");
+            image[0x3c..0x40].copy_from_slice(&u32::MAX.to_le_bytes());
+            image
+        }),
+        ("no-signature-at-offset", {
+            let mut image = pe_image_at(0x1000, b"x");
+            image[0x1000..0x1004].copy_from_slice(b"NOPE");
+            image
+        }),
+        ("offset-straddles-eof", {
+            let mut image = pe_image(b"");
+            let at = image.len() - 2;
+            image[0x3c..0x40].copy_from_slice(&(at as u32).to_le_bytes());
+            image
+        }),
+    ] {
+        let package = build(&temp, name, "1.0.0", &Mutations::default());
+        // Overwrite the shipped host with the malformed image and re-seal so only the
+        // signable classification can refuse it.
+        let canonical_host = pe_image(b"canonical");
+        let canonical = write_inventory(&[
+            entry("host.exe", &canonical_host, true),
+            entry("licenses/NOTICE", NOTICE, false),
+        ])
+        .expect("canonical");
+        let sealed = write_inventory(&[
+            entry("host.exe", &host, true),
+            entry("licenses/NOTICE", NOTICE, false),
+        ])
+        .expect("sealed");
+        fs::write(package.root.join("payload/host.exe"), &host).expect("host");
+        fs::write(package.root.join("inventory.json"), &canonical).expect("canonical doc");
+        fs::write(package.root.join("sealed-inventory.json"), &sealed).expect("sealed doc");
+        let mut descriptor = package.descriptor.clone();
+        descriptor.payload_id = Digest::of(&canonical);
+        descriptor.policy.rollback_payloads = vec![Digest::of(&canonical)];
+        let carrier = carrier_bytes(&descriptor, Some(Digest::of(&sealed)));
+        fs::write(package.root.join("carrier.exe"), &carrier).expect("carrier");
+        let proof = TrustProof::new(PUBLISHER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, carrier)
+            .expect("proof");
+        let platform = FakePlatform::with_faults(Faults {
+            trust: Some(proof),
+            host_state: HostState::Quiescent,
+            ..Faults::default()
+        });
+        assert_eq!(
+            authenticate_package(&platform, &package.root, &descriptor)
+                .expect_err(name)
+                .code,
+            FailureCode::TrustDenied,
+            "{name}"
+        );
+    }
 }
 
 #[test]
