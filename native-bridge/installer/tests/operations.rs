@@ -93,16 +93,6 @@ impl Drop for TempRoot {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(out, "{byte:02x}").expect("hex encoding");
-    }
-    out
-}
-
 /// A valid owned manifest selecting `executable`, as an injected registration
 /// would carry it.
 fn manifest_selecting(paths: &InstallPaths, executable: &Path) -> Vec<u8> {
@@ -652,6 +642,21 @@ impl Platform for RelaunchingPlatform {
         self.inner.verify_trust(source, expected)
     }
 
+    fn carrier_entries(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+    ) -> InstallResult<Vec<veles_bridge_installer::CarrierEntry>> {
+        self.inner.carrier_entries(source)
+    }
+
+    fn install_carrier(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+        destination: &ValidatedPath,
+    ) -> InstallResult<()> {
+        self.inner.install_carrier(source, destination)
+    }
+
     fn remove_owned(&self, entry: &veles_bridge_installer::OwnedEntry) -> InstallResult<()> {
         self.inner.remove_owned(entry)
     }
@@ -774,6 +779,21 @@ impl Platform for InterveningPlatform {
         self.inner.verify_trust(source, expected)
     }
 
+    fn carrier_entries(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+    ) -> InstallResult<Vec<veles_bridge_installer::CarrierEntry>> {
+        self.inner.carrier_entries(source)
+    }
+
+    fn install_carrier(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+        destination: &ValidatedPath,
+    ) -> InstallResult<()> {
+        self.inner.install_carrier(source, destination)
+    }
+
     fn remove_owned(&self, entry: &veles_bridge_installer::OwnedEntry) -> InstallResult<()> {
         self.inner.remove_owned(entry)
     }
@@ -798,6 +818,11 @@ enum Hook {
     /// Replace `state/staging` with a symlink to `outside` before inspection `at`.
     #[cfg(unix)]
     SymlinkStaging { outside: PathBuf, at: usize },
+    /// Replace `state/staging` with a regular file before inspection `at`.
+    ReplaceStagingWithFile { at: usize },
+    /// Replace `state/staging` with a symlink to `target` before inspection `at`.
+    #[cfg(unix)]
+    SymlinkStagingTo { target: PathBuf, at: usize },
 }
 
 /// A [`Platform`] that delegates every call to [`FakePlatform`] and applies one
@@ -919,6 +944,17 @@ impl Platform for HookedPlatform {
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(outside, staging).expect("staging symlink");
             }
+            Hook::ReplaceStagingWithFile { at } if inspection == *at => {
+                let staging = paths.staging();
+                fs::remove_dir(staging).expect("remove the empty staging directory");
+                fs::write(staging, b"foreign staging path").expect("staging file");
+            }
+            #[cfg(unix)]
+            Hook::SymlinkStagingTo { target, at } if inspection == *at => {
+                let staging = paths.staging();
+                fs::remove_dir(staging).expect("remove the empty staging directory");
+                std::os::unix::fs::symlink(target, staging).expect("staging symlink");
+            }
             _ => {}
         }
         Ok(state)
@@ -930,6 +966,21 @@ impl Platform for HookedPlatform {
         expected: &ReleaseDescriptor,
     ) -> InstallResult<TrustProof> {
         self.inner.verify_trust(source, expected)
+    }
+
+    fn carrier_entries(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+    ) -> InstallResult<Vec<veles_bridge_installer::CarrierEntry>> {
+        self.inner.carrier_entries(source)
+    }
+
+    fn install_carrier(
+        &self,
+        source: &veles_bridge_installer::PackageSource,
+        destination: &ValidatedPath,
+    ) -> InstallResult<()> {
+        self.inner.install_carrier(source, destination)
     }
 
     fn verify_retained(
@@ -2554,9 +2605,9 @@ fn forged_retained_metadata_and_receipt_hash_is_rejected() {
     let genuine_receipt = receipt(paths).expect("receipt");
 
     // Forge the metadata to claim a different publisher set and a matching,
-    // self-consistent carrier, then rewrite the receipt's claim digest for that
-    // file. Only fresh OS verification of the retained signed carrier can tell
-    // this apart from the real release.
+    // self-consistent carrier digest, then rewrite the receipt's claim digest
+    // for that file. Only fresh OS verification of the in-place retained carrier
+    // can tell this apart from the real release.
     let mut forged_descriptor = v1.descriptor.clone();
     forged_descriptor
         .policy
@@ -2568,7 +2619,13 @@ fn forged_retained_metadata_and_receipt_hash_is_rejected() {
     let forged = RetainedInstall {
         schema: RETAINED_SCHEMA_VERSION,
         descriptor: forged_descriptor,
-        carrier_hex: hex(&forged_carrier),
+        carrier_path: paths
+            .root()
+            .join(format!("versions/1.0.0-{}/carrier.exe", p1.to_hex()))
+            .to_str()
+            .expect("UTF-8 fixture path")
+            .to_owned(),
+        carrier_sha256: Digest::of(&forged_carrier),
     };
     let forged_bytes = forged.to_bytes().expect("forged metadata bytes");
     fs::write(&retained_path, &forged_bytes).expect("forged retained metadata");
@@ -2620,6 +2677,158 @@ fn forged_retained_metadata_and_receipt_hash_is_rejected() {
     assert!(platform.mutations().is_empty());
 }
 
+/// The retained metadata references the carrier installed *in place* inside the
+/// immutable version directory. A rollback verifies that exact artifact - never
+/// a copy and never the original download.
+#[test]
+fn rollback_verifies_the_installed_carrier_in_place() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), vec![p1]),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), vec![p1]),
+    );
+    fixture.install(&v1);
+    fixture.install(&v2);
+
+    // The retained document names the carrier already installed in the version
+    // directory; it stores no second copy of its bytes.
+    let retained_relative = format!("versions/1.0.0-{}/{}", p1.to_hex(), RETAINED_FILE_NAME);
+    let retained_bytes = fs::read(paths.root().join(&retained_relative))
+        .expect("the retained metadata is installed");
+    let retained = RetainedInstall::parse(&retained_bytes).expect("valid retained metadata");
+    let installed_carrier = version_dir(paths, "1.0.0", p1).join("carrier.exe");
+    assert_eq!(retained.schema, RETAINED_SCHEMA_VERSION);
+    assert_eq!(
+        retained.carrier_path,
+        installed_carrier
+            .to_str()
+            .expect("UTF-8 fixture path")
+            .to_owned(),
+        "the retained metadata references the in-place carrier"
+    );
+    assert_eq!(
+        retained.carrier_sha256,
+        Digest::of(v1.proof.carrier()),
+        "the retained digest is the authenticated carrier document"
+    );
+    assert!(
+        !String::from_utf8_lossy(&retained_bytes).contains("carrier_hex"),
+        "the metadata embeds no carrier copy"
+    );
+    assert_eq!(
+        fs::read(&installed_carrier).expect("the installed carrier exists"),
+        v1.proof.carrier(),
+        "the installed artifact is the authenticated carrier"
+    );
+
+    // Remove the original package's carrier: a rollback that needed the
+    // download, or a copy of it, could not succeed now.
+    fs::remove_file(v1.root.join("carrier.exe")).expect("drop the original carrier artifact");
+
+    let platform = fixture.platform_trusting(&v1.proof);
+    let report = run_operation(&platform, paths, Operation::Rollback, None)
+        .expect("the in-place carrier still verifies");
+    assert_eq!(report.state, STATE_ROLLED_BACK);
+    assert_eq!(report.active_payload, Some(p1));
+    assert!(
+        platform.calls().contains(&PlatformCall::VerifyRetained),
+        "rollback re-runs the OS verification path"
+    );
+    assert!(!platform.calls().contains(&PlatformCall::VerifyTrust));
+    assert!(
+        !platform.mutations().contains(&PlatformCall::InstallCarrier),
+        "rollback installs or copies no carrier"
+    );
+    assert_eq!(
+        platform.retained_verifications(),
+        vec![version_dir(paths, "1.0.0", p1)],
+        "the OS path receives the version directory holding the in-place carrier"
+    );
+    assert_eq!(
+        fs::read(&installed_carrier).expect("the in-place carrier survives"),
+        v1.proof.carrier()
+    );
+}
+
+/// A carrier that was replaced after install cannot be authenticated in place:
+/// the rollback is refused before any mutation.
+#[test]
+fn replaced_installed_carrier_is_rejected_before_rollback() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), vec![p1]),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), vec![p1]),
+    );
+    fixture.install(&v1);
+    fixture.install(&v2);
+
+    let installed_carrier = version_dir(paths, "1.0.0", p1).join("carrier.exe");
+    fs::write(&installed_carrier, b"replaced carrier artifact").expect("replaced carrier");
+
+    let registration = fixture.registration();
+    let saved_receipt = receipt(paths).expect("receipt");
+    let before = snapshot(fixture.temp.path());
+    let platform = fixture.platform_trusting(&v1.proof);
+    let failure = run_operation(&platform, paths, Operation::Rollback, None)
+        .expect_err("a replaced in-place carrier is not a rollback target");
+    assert_eq!(failure.code, FailureCode::NoRollback);
+    assert!(failure.prior_usable, "the installed release stays usable");
+    assert!(platform.mutations().is_empty());
+    assert_eq!(snapshot(fixture.temp.path()), before);
+    assert_eq!(fixture.registration(), registration);
+    assert_eq!(receipt(paths).expect("receipt"), saved_receipt);
+}
+
+/// The portable platform cannot install a carrier: a byte copy would drop the
+/// metadata the platform signature covers, so the default fails closed before
+/// any transaction starts.
+#[test]
+fn portable_platform_refuses_to_install_a_carrier() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let failure =
+        veles_bridge_installer::install(&PortablePlatform::new(), paths, authenticate(&v1))
+            .expect_err("the portable adapter has no carrier install implementation");
+    assert_eq!(failure.code, FailureCode::UnsupportedTarget);
+    assert!(
+        !paths.versions().exists()
+            || fs::read_dir(paths.versions()).expect("versions").count() == 0,
+        "nothing was staged before the refusal"
+    );
+    assert!(matches!(journal_state(paths), JournalState::None));
+}
+
 /// F6: an owned staging artifact that cannot be deleted is a pending cleanup,
 /// never a completed uninstall, and the durable receipt/journal survive so the
 /// retry can finish.
@@ -2664,6 +2873,78 @@ fn uninstall_reports_cleanup_pending_for_an_owned_staging_artifact() {
     );
     assert!(receipt(paths).is_none());
     assert!(matches!(journal_state(paths), JournalState::None));
+}
+
+/// A staging path replaced while the uninstall runs is foreign content: it is
+/// preserved *and* reported, never silently counted as an empty private slot.
+#[test]
+fn replaced_staging_paths_are_reported_as_leftovers() {
+    // A regular file at `state/staging` is not an empty directory.
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let platform = HookedPlatform::new(Hook::ReplaceStagingWithFile { at: 1 });
+    let report = run_operation_within(&platform, paths, Operation::Uninstall, None, SHORT_WAIT)
+        .expect("a foreign staging file does not block the owned removal");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(
+        report.warns(WarningCode::LeftoverFiles),
+        "a replaced staging path is a leftover: {:?}",
+        report.warnings
+    );
+    let replaced = fs::symlink_metadata(paths.staging()).expect("the foreign staging path remains");
+    assert!(replaced.is_file(), "the foreign staging file is preserved");
+    assert_eq!(
+        fs::read(paths.staging()).expect("foreign staging bytes"),
+        b"foreign staging path"
+    );
+
+    // A symlink to an *empty* directory is a link, not an empty owned directory.
+    #[cfg(unix)]
+    {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), Vec::new()),
+        );
+        fixture.install(&v1);
+        let outside = fixture.temp.path().join("empty-outside");
+        fs::create_dir_all(&outside).expect("empty outside directory");
+        let platform = HookedPlatform::new(Hook::SymlinkStagingTo {
+            target: outside.clone(),
+            at: 1,
+        });
+        let report = run_operation_within(&platform, paths, Operation::Uninstall, None, SHORT_WAIT)
+            .expect("a foreign staging link does not block the owned removal");
+        assert_eq!(report.state, STATE_UNINSTALLED);
+        assert!(
+            report.warns(WarningCode::LeftoverFiles),
+            "a staging symlink is a leftover even when its target is empty: {:?}",
+            report.warnings
+        );
+        let metadata =
+            fs::symlink_metadata(paths.staging()).expect("the foreign staging link remains");
+        assert!(
+            metadata.file_type().is_symlink(),
+            "the staging path stays a link, never an owned directory"
+        );
+        assert_eq!(
+            fs::read_dir(&outside).expect("outside directory").count(),
+            0,
+            "nothing was written through the link"
+        );
+    }
 }
 
 /// F6: foreign content inside a claimed version directory is preserved and

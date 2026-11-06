@@ -74,10 +74,11 @@ use std::time::{Duration, Instant};
 
 use super::macos_trust as policy;
 use super::{
-    HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages, PACKAGE_MACOS_CARRIER,
-    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage, ProcessObservation,
-    ProcessScope, ProcessTable, Registration, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof,
-    ValidatedPath, inspect_host_processes, path_is_within,
+    CarrierEntry, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
+    PACKAGE_MACOS_CARRIER, PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage,
+    ProcessObservation, ProcessScope, ProcessTable, Registration,
+    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath, inspect_host_processes,
+    path_is_within,
 };
 use crate::model::{FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
@@ -409,6 +410,24 @@ impl Platform for MacosPlatform {
         expected: &ReleaseDescriptor,
     ) -> InstallResult<TrustProof> {
         verify_trust(source, expected)
+    }
+
+    /// BLOCKED (Task 8): a metadata-preserving `carrier.app` install.
+    ///
+    /// The portable engine cannot copy the bundle without dropping the extended
+    /// attributes and link targets Gatekeeper covers, so this adapter must fail
+    /// closed until Task 8 installs it with `copyfile(3)`.
+    fn carrier_entries(&self, _source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
+        Err(unsupported())
+    }
+
+    /// BLOCKED (Task 8): see [`Platform::install_carrier`].
+    fn install_carrier(
+        &self,
+        _source: &PackageSource,
+        _destination: &ValidatedPath,
+    ) -> InstallResult<()> {
+        Err(unsupported())
     }
 
     fn remove_owned(&self, _entry: &OwnedEntry) -> InstallResult<()> {

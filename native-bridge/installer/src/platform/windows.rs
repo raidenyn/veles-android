@@ -88,10 +88,11 @@ use windows::core::{HRESULT, PCWSTR, PWSTR};
 use super::pe;
 use super::windows_trust as trust_status;
 use super::{
-    HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages, PACKAGE_WINDOWS_CARRIER,
-    PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage, ProcessObservation,
-    ProcessScope, ProcessTable, Registration, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
-    ValidatedPath, inspect_host_processes, path_is_within,
+    CarrierEntry, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
+    PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource, Platform, ProcessIdentity, ProcessImage,
+    ProcessObservation, ProcessScope, ProcessTable, Registration,
+    TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof, ValidatedPath, inspect_host_processes,
+    path_is_within,
 };
 use crate::model::{Digest, FailureCode, InstallFailure, InstallResult, ReleaseDescriptor, Target};
 use crate::paths::InstallPaths;
@@ -224,6 +225,24 @@ impl Platform for WindowsPlatform {
         expected: &ReleaseDescriptor,
     ) -> InstallResult<TrustProof> {
         verify_trust(source, expected)
+    }
+
+    /// BLOCKED (Task 8): a metadata-preserving `carrier.exe` install.
+    ///
+    /// A portable byte copy would drop the extended attributes the signature
+    /// assessment covers, so this adapter must fail closed until Task 8 installs
+    /// it with `CopyFile2`.
+    fn carrier_entries(&self, _source: &PackageSource) -> InstallResult<Vec<CarrierEntry>> {
+        Err(unsupported())
+    }
+
+    /// BLOCKED (Task 8): see [`Platform::install_carrier`].
+    fn install_carrier(
+        &self,
+        _source: &PackageSource,
+        _destination: &ValidatedPath,
+    ) -> InstallResult<()> {
+        Err(unsupported())
     }
 
     fn remove_owned(&self, _entry: &OwnedEntry) -> InstallResult<()> {

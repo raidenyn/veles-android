@@ -1,39 +1,45 @@
 //! Retained release metadata for rollback.
 //!
 //! A rollback must not depend on the user still having the older signed
-//! download: the authenticated carrier and the API metadata of every installed
-//! release are persisted *inside that release's immutable version directory* at
-//! install time. The committed receipt claims that exact file, so a later
-//! rollback can verify the retained bytes against the installation it already
-//! committed and re-derive the release identity without trusting a package the
-//! caller supplies now.
+//! download, and it must not authenticate a *copy* of the signed carrier: a
+//! portable byte copy drops the metadata the platform signature covers
+//! (extended attributes, resource forks, link targets), so a carrier that
+//! authenticates at its source can fail verification after being copied.
 //!
-//! The document is data, never code: it carries the exact carrier bytes (hex) and
-//! the strict descriptor. It deliberately carries **no** signer or assessment
-//! string: those are trust verdicts, and a rollback re-establishes them by
-//! running the same OS signature/assessment path over the signed carrier artifact
-//! retained next to this document (see
-//! [`crate::platform::Platform::verify_retained`]). The locally stored carrier is
-//! only cross-checked against that fresh OS evidence; it can never authorize a
-//! signer by itself.
+//! The carrier artifact is therefore installed once, in place, inside the
+//! immutable version directory by [`crate::platform::Platform::install_carrier`],
+//! and this document *references* that installed artifact: its absolute path
+//! inside the version directory and the digest of the authenticated carrier
+//! document the OS path produced. The committed receipt claims both this
+//! document and the installed carrier, so a later rollback can verify the exact
+//! artifact already on disk against the installation it committed.
+//!
+//! The document is data, never code, and deliberately carries **no** signer or
+//! assessment string: those are trust verdicts, and a rollback re-establishes
+//! them by running the same OS signature/assessment path over the installed
+//! carrier artifact (see [`crate::platform::Platform::verify_retained`]).
+
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES, ReleaseDescriptor,
-    canonical_json,
+    Digest, FailureCode, InstallFailure, InstallResult, MAX_PATH_BYTES, ReleaseDescriptor,
+    canonical_json, parse_version,
 };
-use crate::policy::{CARRIER_HEADER_LEN, read_carrier};
+use crate::paths::InstallPaths;
+use crate::platform::{AuthenticatedPackage, package_carrier_name};
 
 /// The only supported retained-metadata schema generation.
 ///
-/// Generation 2 removed the stored signer/assessment strings: a rollback must
-/// derive them from fresh OS verification of the retained signed carrier, never
-/// from this document.
-pub const RETAINED_SCHEMA_VERSION: u32 = 2;
+/// Generation 2 removed the stored signer/assessment strings. Generation 3
+/// replaced the embedded carrier *bytes* with a reference to the carrier
+/// artifact installed inside the version directory, so no copy is ever required
+/// and the artifact keeps the metadata its platform signature covers.
+pub const RETAINED_SCHEMA_VERSION: u32 = 3;
 /// File name of the retained release metadata inside a version directory.
 pub const RETAINED_FILE_NAME: &str = "installer-retained.json";
-/// The retained document is bounded to 1 MiB (a carrier and its descriptor).
+/// The retained document is bounded to 1 MiB (a descriptor and a path).
 pub const MAX_RETAINED_BYTES: usize = 1024 * 1024;
 
 /// Authenticated release metadata retained with an immutable version.
@@ -43,26 +49,54 @@ pub struct RetainedInstall {
     pub schema: u32,
     /// The strict authenticated release descriptor.
     pub descriptor: ReleaseDescriptor,
-    /// The exact authenticated carrier bytes, lowercase hex encoded.
-    pub carrier_hex: String,
+    /// Absolute path of the signed carrier artifact installed inside this
+    /// release's immutable version directory.
+    pub carrier_path: String,
+    /// SHA-256 of the authenticated policy-carrier document the OS path
+    /// extracted from that artifact. It binds the in-place artifact to the
+    /// policy evidence the installation committed.
+    pub carrier_sha256: Digest,
 }
 
 impl RetainedInstall {
-    /// Capture the authenticated metadata of `package`.
-    pub fn from_package(package: &crate::platform::AuthenticatedPackage) -> InstallResult<Self> {
+    /// Capture the authenticated metadata of `package`, referencing the carrier
+    /// artifact installed below `version_relative`.
+    pub fn from_package(
+        paths: &InstallPaths,
+        version_relative: &str,
+        package: &AuthenticatedPackage,
+    ) -> InstallResult<Self> {
+        let absolute = paths
+            .root()
+            .join(version_relative)
+            .join(package_carrier_name(paths.target()));
+        let carrier_path = absolute.to_str().ok_or_else(invalid_package)?.to_owned();
         let value = Self {
             schema: RETAINED_SCHEMA_VERSION,
             descriptor: package.descriptor().clone(),
-            carrier_hex: encode_hex(package.proof().carrier()),
+            carrier_path,
+            carrier_sha256: Digest::of(package.proof().carrier()),
         };
         value.validate()?;
         Ok(value)
     }
 
-    /// The exact authenticated carrier bytes, decoded.
-    pub fn carrier(&self) -> InstallResult<Vec<u8>> {
-        decode_hex(&self.carrier_hex)
-            .ok_or_else(|| InstallFailure::new(FailureCode::InvalidPackage))
+    /// The installed carrier path this document names, relative to the root.
+    ///
+    /// A reference is accepted only when it is exactly *this* release's
+    /// installed carrier artifact: a document naming any other file, or a
+    /// relative/escaping path, is not a rollback authority.
+    pub fn carrier_relative(&self, paths: &InstallPaths) -> InstallResult<String> {
+        let version = parse_version(&self.descriptor.version)?;
+        let relative = format!(
+            "{}/{}",
+            paths.version_dir_relative(&version, self.descriptor.payload_id),
+            package_carrier_name(paths.target())
+        );
+        if Path::new(&self.carrier_path) != paths.root().join(&relative) {
+            return Err(invalid_package());
+        }
+        Ok(relative)
     }
 
     /// The host API window this retained release supports.
@@ -70,17 +104,17 @@ impl RetainedInstall {
         (self.descriptor.api_min, self.descriptor.api_max)
     }
 
-    /// Validate bounds and re-derive the authentication binding.
+    /// Validate bounds and the shape of the in-place carrier reference.
     pub fn validate(&self) -> InstallResult<()> {
         if self.schema != RETAINED_SCHEMA_VERSION {
             return Err(invalid_package());
         }
         self.descriptor.validate()?;
-        let carrier = self.carrier()?;
-        if carrier.len() > CARRIER_HEADER_LEN + MAX_DOCUMENT_BYTES {
-            return Err(invalid_package());
-        }
-        if read_carrier(&carrier)? != self.descriptor {
+        if self.carrier_path.is_empty()
+            || self.carrier_path.len() > MAX_PATH_BYTES
+            || self.carrier_path.chars().any(char::is_control)
+            || !Path::new(&self.carrier_path).is_absolute()
+        {
             return Err(invalid_package());
         }
         if self.to_bytes()?.len() > MAX_RETAINED_BYTES {
@@ -106,42 +140,6 @@ impl RetainedInstall {
             return Err(invalid_package());
         }
         Ok(bytes)
-    }
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return None;
-    }
-    let bytes = text.as_bytes();
-    let (pairs, remainder) = bytes.as_chunks::<2>();
-    if !remainder.is_empty() {
-        return None;
-    }
-    let mut out = Vec::with_capacity(pairs.len());
-    for pair in pairs {
-        let high = hex_value(pair[0])?;
-        let low = hex_value(pair[1])?;
-        out.push((high << 4) | low);
-    }
-    Some(out)
-}
-
-const fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
     }
 }
 

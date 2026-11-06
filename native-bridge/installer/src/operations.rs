@@ -20,10 +20,10 @@
 //!   committed registration. A registration this installer does not own is
 //!   reported (`ForeignState`) and never overwritten; repair never re-assesses
 //!   trust of local content and never trusts the damaged tree.
-//! * **Rollback** re-activates the one retained, verified prior version from the
-//!   authenticated carrier and API metadata retained inside that immutable
-//!   version directory, after composing its policy with the persisted one.
-//!   Denials accumulate: a correctly signed stale package cannot erase a
+//! * **Rollback** re-activates the one retained, verified prior version after
+//!   authenticating the signed carrier artifact installed *in place* inside that
+//!   immutable version directory, after composing its policy with the persisted
+//!   one. Denials accumulate: a correctly signed stale package cannot erase a
 //!   recorded denial, and its signer must be authorized under both policies. A
 //!   supplied package may only select the recorded prior release; it is never
 //!   the retained carrier authority.
@@ -61,9 +61,7 @@ use crate::platform::{
 };
 use crate::policy::authorize_package_policy;
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
-use crate::transaction::{
-    CarrierFile, STATE_INSTALLED, activate_retained, install, manifest_for, read_retained_carrier,
-};
+use crate::transaction::{STATE_INSTALLED, activate_retained, install, manifest_for};
 
 /// Nothing of this product is installed.
 pub const STATE_ABSENT: &str = "absent";
@@ -447,8 +445,6 @@ struct RepairPlan<'a> {
     inventory: Vec<u8>,
     retained_relative: String,
     retained: Vec<u8>,
-    /// Signed carrier artifact files the version directory must still hold.
-    carrier_files: Vec<CarrierFile>,
 }
 
 impl<'a> RepairPlan<'a> {
@@ -516,7 +512,8 @@ impl<'a> RepairPlan<'a> {
         }
 
         let retained_relative = format!("{version_relative}/{RETAINED_FILE_NAME}");
-        let retained = RetainedInstall::from_package(package)?.to_bytes()?;
+        let retained =
+            RetainedInstall::from_package(paths, version_relative, package)?.to_bytes()?;
         if !claimed(
             &retained_relative,
             OwnedKind::File,
@@ -525,31 +522,13 @@ impl<'a> RepairPlan<'a> {
             return Err(foreign_state());
         }
 
-        // The signed carrier artifact is part of the immutable version: repair
-        // restores it when missing or damaged, exactly like the payload. The
-        // package's authenticated carrier document must still be the one the
-        // receipt committed (a same-release source never swaps the policy).
+        // The installed carrier artifact is not restored by a repair: it is
+        // installed once, in place, by the platform boundary, and only that
+        // boundary can reinstall it with its signature-bearing metadata intact.
+        // A replaced carrier therefore stays unverifiable and rollback reports
+        // `NoRollback` instead of a repair silently claiming success.
         if Digest::of(package.proof().carrier()) != receipt.policy.carrier_sha256 {
             return Err(foreign_state());
-        }
-        let (carrier_directories, carrier_files) =
-            read_retained_carrier(version_relative, paths.target(), package)?;
-        for directory in &carrier_directories {
-            if !claimed(directory, OwnedKind::Directory, None) {
-                return Err(foreign_state());
-            }
-            if !directories.contains(directory) {
-                directories.push(directory.clone());
-            }
-        }
-        for file in &carrier_files {
-            if !claimed(
-                &file.relative,
-                OwnedKind::File,
-                Some(Digest::of(&file.bytes)),
-            ) {
-                return Err(foreign_state());
-            }
         }
 
         let mut files = Vec::with_capacity(package.payload().len());
@@ -568,7 +547,6 @@ impl<'a> RepairPlan<'a> {
             inventory,
             retained_relative,
             retained,
-            carrier_files,
         })
     }
 
@@ -615,16 +593,6 @@ impl<'a> RepairPlan<'a> {
             Digest::of(&self.retained),
             &self.retained,
         )?;
-        for file in &self.carrier_files {
-            restore_bytes(
-                platform,
-                paths,
-                &file.relative,
-                file.bytes.len() as u64,
-                Digest::of(&file.bytes),
-                &file.bytes,
-            )?;
-        }
         Ok(())
     }
 }
@@ -922,37 +890,72 @@ fn remove_private_file(
         // The path (or its ancestry) is no longer the installer's own file: it
         // is foreign content now, preserved and reported rather than deleted.
         Err(failure) if failure.code == FailureCode::UnsafePath => Ok(()),
-        Err(failure) => Err(deferred_removal(failure)),
+        Err(failure) => {
+            // A staging path replaced by a regular file makes the artifact
+            // unreachable (`ENOTDIR`) rather than absent. It is foreign content
+            // the leftover report describes, not a deferred owned deletion.
+            let unreachable = matches!(
+                fs::symlink_metadata(paths.root().join(relative)),
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound
+                        || error.kind() == io::ErrorKind::NotADirectory
+            );
+            if unreachable {
+                Ok(())
+            } else {
+                Err(deferred_removal(failure))
+            }
+        }
     }
 }
 
 /// Whether anything this product does not own remains inside its private layout.
 fn layout_has_leftovers(paths: &InstallPaths) -> bool {
     for directory in [paths.versions(), paths.maintenance(), paths.staging()] {
-        if directory_has_entries(directory) {
+        if private_path_has_entries(directory) {
             return true;
         }
     }
-    if let Ok(entries) = fs::read_dir(paths.state()) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            // The lock and the released (empty) journal/receipt slots are the
-            // fixed state layout, not leftovers. A quarantined or any other
-            // document is foreign and is reported.
-            if name != LOCK_FILE
-                && name != JOURNAL_FILE
-                && name != RECEIPT_FILE
-                && name != STAGING_DIR
-            {
-                return true;
-            }
+    let entries = match fs::read_dir(paths.state()) {
+        Ok(entries) => entries,
+        // A state directory that cannot be read is not provably clean: report a
+        // leftover rather than claim a completed removal.
+        Err(_) => return true,
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return true,
+        };
+        let name = entry.file_name();
+        // The lock and the released (empty) journal/receipt slots are the fixed
+        // state layout, not leftovers. A quarantined or any other document is
+        // foreign and is reported.
+        if name != LOCK_FILE && name != JOURNAL_FILE && name != RECEIPT_FILE && name != STAGING_DIR
+        {
+            return true;
         }
     }
     false
 }
 
-fn directory_has_entries(directory: &Path) -> bool {
-    fs::read_dir(directory).is_ok_and(|mut entries| entries.next().is_some())
+/// Whether `path` is absent-or-an-empty directory, and provably so.
+///
+/// A path replaced by a regular file, a symlink (even one pointing at an empty
+/// directory) or a special file is foreign content and is reported. So is a
+/// directory whose listing fails: "cannot read" is never "empty".
+fn private_path_has_entries(path: &Path) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => match fs::read_dir(path) {
+            Ok(mut entries) => entries.next().is_some(),
+            Err(_) => true,
+        },
+        // A symlink to an empty directory is still a symlink, not an empty
+        // installer-owned directory.
+        Ok(_) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
 }
 
 /// Require the live registration to be exactly the committed one.

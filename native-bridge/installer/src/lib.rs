@@ -53,15 +53,16 @@ pub use platform::MacosPlatform;
 #[cfg(windows)]
 pub use platform::WindowsPlatform;
 pub use platform::{
-    AuthenticatedPackage, AuthenticatedSource, FakePlatform, Faults, HostState, InstallLock,
-    MAX_MANIFEST_PATH_BYTES, NativeManifest, OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry,
-    OwnedKind, OwnershipRecord, PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PackageKind,
-    PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, ProcessIdentity,
-    ProcessImage, ProcessObservation, ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration,
-    StateDocument, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
-    TrustProof, ValidatedPath, WindowsPreimage, assessment_target, authenticate_package,
-    claim_owned_entries, claim_owned_registration, inspect_host_processes, is_accepted_assessment,
-    package_carrier_name, parse_manifest, path_is_within, registration_is_owned, require_quiescent,
+    AuthenticatedPackage, AuthenticatedSource, CarrierEntry, FakePlatform, Faults, HostState,
+    InstallLock, MAX_CARRIER_BYTES, MAX_CARRIER_ENTRIES, MAX_MANIFEST_PATH_BYTES, NativeManifest,
+    OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord,
+    PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource, PathKind, Platform,
+    PlatformCall, PortablePlatform, ProcessIdentity, ProcessImage, ProcessObservation,
+    ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration, StateDocument,
+    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
+    ValidatedPath, WindowsPreimage, assessment_target, authenticate_package, claim_owned_entries,
+    claim_owned_registration, inspect_host_processes, is_accepted_assessment, package_carrier_name,
+    parse_manifest, path_is_within, registration_is_owned, require_quiescent,
     require_quiescent_within,
 };
 pub use policy::{

@@ -59,10 +59,11 @@ use crate::model::{
 };
 use crate::paths::{InstallPaths, VERSIONS_DIR};
 use crate::platform::{
-    AuthenticatedPackage, AuthenticatedSource, NativeManifest, OWNERSHIP_SCHEMA_VERSION,
-    OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageSource, PathKind, Platform,
-    Registration, StateDocument, ValidatedPath, WindowsPreimage, claim_owned_entries,
-    claim_owned_registration, is_accepted_assessment, parse_manifest, registration_is_owned,
+    AuthenticatedPackage, AuthenticatedSource, CarrierEntry, MAX_CARRIER_BYTES,
+    MAX_CARRIER_ENTRIES, NativeManifest, OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry,
+    OwnedKind, OwnershipRecord, PackageSource, PathKind, Platform, Registration, StateDocument,
+    ValidatedPath, WindowsPreimage, claim_owned_entries, claim_owned_registration,
+    is_accepted_assessment, package_carrier_name, parse_manifest, registration_is_owned,
     require_quiescent, require_quiescent_within,
 };
 use crate::policy::{authorize_package_policy, effective_policy, read_carrier};
@@ -100,20 +101,10 @@ struct Plan {
     /// Authenticated carrier/API metadata retained with this version.
     retained_relative: String,
     retained: Vec<u8>,
-    /// The signed carrier artifact copied from the package into the version.
-    carrier_files: Vec<CarrierFile>,
+    /// The signed carrier artifact's installed root, relative to the install
+    /// root (`versions/<version>-<payload-id>/carrier.exe|carrier.app`).
+    carrier_relative: String,
 }
-
-/// One file of the retained signed carrier artifact.
-pub(crate) struct CarrierFile {
-    pub(crate) relative: String,
-    pub(crate) bytes: Vec<u8>,
-}
-
-/// Bound on the number of entries retained from a signed carrier artifact.
-const MAX_RETAINED_CARRIER_ENTRIES: usize = 4096;
-/// Bound on the bytes retained from a signed carrier artifact (64 MiB).
-const MAX_RETAINED_CARRIER_BYTES: usize = 64 * 1024 * 1024;
 
 /// Install one authenticated package.
 ///
@@ -334,11 +325,23 @@ pub(crate) fn activate_retained(
     }
 
     // Retained content is authenticated exactly like a fresh install: the same
-    // OS signature/Gatekeeper path runs over the signed carrier artifact copied
-    // into the immutable version directory. The locally stored metadata is only
-    // cross-checked against that evidence; it can never supply a signer, an
-    // assessment or a policy of its own. The OS-derived carrier bytes must also
-    // match the digest the committed receipt claims for the retained release.
+    // OS signature/Gatekeeper path runs over the signed carrier artifact already
+    // installed inside the immutable version directory. The locally stored
+    // metadata is only a reference to that artifact plus the authenticated
+    // carrier digest; it can never supply a signer, an assessment or a policy of
+    // its own. A carrier that was replaced after install - or whose installed
+    // form cannot be verified in place - is not a rollback target.
+    let carrier_relative = retained
+        .carrier_relative(paths)
+        .map_err(|_| no_rollback())?;
+    if carrier_relative
+        != format!(
+            "{version_relative}/{}",
+            package_carrier_name(paths.target())
+        )
+    {
+        return Err(no_rollback());
+    }
     let carrier_source =
         PackageSource::open(&paths.root().join(&version_relative)).map_err(|_| no_rollback())?;
     let anchor = ReleaseDescriptor {
@@ -347,7 +350,23 @@ pub(crate) fn activate_retained(
         policy: current.release_policy.clone(),
         ..descriptor.clone()
     };
-    let proof = platform.verify_retained(&carrier_source, &anchor)?;
+    let proof = match platform.verify_retained(&carrier_source, &anchor) {
+        Ok(proof) => proof,
+        // The OS refused the installed artifact, or no assessment could be
+        // formed: report that verdict, never a generic unverifiable target.
+        Err(failure)
+            if matches!(
+                failure.code,
+                FailureCode::TrustDenied | FailureCode::TrustUnavailable
+            ) =>
+        {
+            return Err(failure);
+        }
+        // The installed form cannot be verified in place (missing, wrong kind,
+        // links, an adapter that cannot verify it): repair guidance, not a
+        // rollback and not `ForeignState`.
+        Err(_) => return Err(no_rollback()),
+    };
     if !is_accepted_assessment(proof.assessment(), paths.target()) {
         return Err(InstallFailure::new(FailureCode::TrustDenied));
     }
@@ -356,9 +375,8 @@ pub(crate) fn activate_retained(
     if &os_descriptor != descriptor {
         return Err(InstallFailure::new(FailureCode::TrustDenied));
     }
-    let retained_carrier = retained.carrier()?;
-    if proof.carrier() != retained_carrier.as_slice()
-        || Digest::of(proof.carrier()) != prior.carrier_sha256
+    if Digest::of(proof.carrier()) != retained.carrier_sha256
+        || retained.carrier_sha256 != prior.carrier_sha256
     {
         return Err(InstallFailure::new(FailureCode::TrustDenied));
     }
@@ -925,15 +943,28 @@ impl Plan {
                 true,
             ));
         }
-        // Retain the exact signed carrier artifact next to the payload. A later
-        // rollback runs the same OS signature/Gatekeeper path over this copy as a
-        // fresh install does; the metadata document is never the authority.
-        let (carrier_directories, carrier_files) =
-            read_retained_carrier(&version_relative, paths.target(), package)?;
-        for directory in carrier_directories {
-            if !directories.contains(&directory) {
-                directories.push(directory);
-            }
+        // The signed carrier artifact is installed once, in place, inside the
+        // immutable version directory. The engine never copies or walks its
+        // bytes: the platform boundary enumerates the exact entries (journalled
+        // before the first mutation) and installs them with the metadata the
+        // platform signature covers intact.
+        let carrier_name = package_carrier_name(paths.target());
+        let carrier_relative = format!("{version_relative}/{carrier_name}");
+        let carrier_source = PackageSource::open(&package.package().path().join(carrier_name))
+            .map_err(|_| invalid_package())?;
+        let carrier_entries = carrier_entries_for(platform, &carrier_source, paths.target())?;
+        let mut carrier_claims = Vec::with_capacity(carrier_entries.len());
+        for entry in &carrier_entries {
+            let relative = carrier_entry_path(&carrier_relative, entry);
+            carrier_claims.push(match entry.kind() {
+                OwnedKind::File => JournalClaim::file(
+                    relative,
+                    entry.sha256().ok_or_else(invalid_package)?,
+                    entry.size(),
+                    true,
+                ),
+                OwnedKind::Directory => JournalClaim::directory(relative),
+            });
         }
         directories.sort_by(|left, right| {
             path_depth(left)
@@ -941,9 +972,10 @@ impl Plan {
                 .then_with(|| left.cmp(right))
         });
         let inventory_relative = format!("{version_relative}/{PACKAGE_INVENTORY_FILE}");
-        // Retain the authenticated carrier and API metadata inside the immutable
-        // version itself, so a later rollback never needs the original download.
-        let retained = RetainedInstall::from_package(package)?;
+        // Retain the authenticated carrier reference and API metadata inside the
+        // immutable version itself, so a later rollback never needs the original
+        // download and never has to copy the signed artifact.
+        let retained = RetainedInstall::from_package(paths, &version_relative, package)?;
         let retained = retained.to_bytes()?;
         let retained_relative = format!("{version_relative}/{RETAINED_FILE_NAME}");
 
@@ -1020,14 +1052,7 @@ impl Plan {
             retained.len() as u64,
             true,
         ));
-        for file in &carrier_files {
-            created.push(JournalClaim::file(
-                &file.relative,
-                Digest::of(&file.bytes),
-                file.bytes.len() as u64,
-                true,
-            ));
-        }
+        created.extend(carrier_claims);
 
         let journal = Journal {
             schema: JOURNAL_SCHEMA_VERSION,
@@ -1068,7 +1093,7 @@ impl Plan {
             inventory,
             retained_relative,
             retained,
-            carrier_files,
+            carrier_relative,
         })
     }
 }
@@ -1169,116 +1194,73 @@ fn stage_payload(
     platform.write_durable(&target, &plan.inventory)?;
     let target = ValidatedPath::new(paths, Path::new(&plan.retained_relative), PathKind::NewFile)?;
     platform.write_durable(&target, &plan.retained)?;
-    for file in &plan.carrier_files {
-        let target = ValidatedPath::new(paths, Path::new(&file.relative), PathKind::NewFile)?;
-        platform.write_durable(&target, &file.bytes)?;
-    }
+    // Install the signed carrier artifact at its final in-place path. The
+    // platform preserves the metadata the OS signature covers; the engine never
+    // copies or walks those bytes itself.
+    let carrier_source = PackageSource::open(
+        &package
+            .package()
+            .path()
+            .join(package_carrier_name(paths.target())),
+    )
+    .map_err(|_| invalid_package())?;
+    let carrier_kind = match paths.target() {
+        crate::model::Target::WindowsX64 => PathKind::NewFile,
+        crate::model::Target::MacosArm64 => PathKind::NewDirectory,
+    };
+    let target = ValidatedPath::new(paths, Path::new(&plan.carrier_relative), carrier_kind)?;
+    platform.install_carrier(&carrier_source, &target)?;
     Ok(())
 }
 
-/// Read the signed carrier artifact from the authenticated package and lay it out
-/// inside the immutable version directory.
+/// Validate the platform-reported entries of one signed carrier artifact.
 ///
-/// The package root already passed OS verification (it holds the carrier the
-/// native adapter authenticated). The copy is retained so a later rollback can
-/// re-run the identical OS check without the original download. Links and
-/// special files are refused: only plain carrier bytes are ever retained.
-pub(crate) fn read_retained_carrier(
-    version_relative: &str,
+/// The root entry must be the artifact itself, the set must be bounded, and the
+/// paths must not alias each other case-insensitively (the same rule every owned
+/// path follows).
+fn carrier_entries_for(
+    platform: &impl Platform,
+    source: &PackageSource,
     target: crate::model::Target,
-    package: &AuthenticatedPackage,
-) -> InstallResult<(Vec<String>, Vec<CarrierFile>)> {
-    let name = crate::platform::package_carrier_name(target);
-    let source = package.package().path().join(name);
-    let root_relative = format!("{version_relative}/{name}");
-    let metadata = fs::symlink_metadata(&source).map_err(|_| invalid_package())?;
-    if metadata.file_type().is_symlink() {
-        return Err(unsafe_path());
+) -> InstallResult<Vec<CarrierEntry>> {
+    let entries = platform.carrier_entries(source)?;
+    let expected_root = match target {
+        crate::model::Target::WindowsX64 => OwnedKind::File,
+        crate::model::Target::MacosArm64 => OwnedKind::Directory,
+    };
+    let root = entries.first().ok_or_else(invalid_package)?;
+    if !root.relative().is_empty() || root.kind() != expected_root {
+        return Err(invalid_package());
     }
-    let mut directories = Vec::new();
-    let mut files = Vec::new();
-    let mut total = 0usize;
-    match target {
-        crate::model::Target::WindowsX64 => {
-            if !metadata.is_file() {
-                return Err(invalid_package());
-            }
-            let bytes = fs::read(&source).map_err(|_| io_failure())?;
-            if bytes.is_empty() || bytes.len() > MAX_RETAINED_CARRIER_BYTES {
-                return Err(invalid_package());
-            }
-            files.push(CarrierFile {
-                relative: root_relative,
-                bytes,
-            });
+    if source.kind() == crate::platform::PackageKind::File && entries.len() != 1 {
+        return Err(invalid_package());
+    }
+    if entries.len() > MAX_CARRIER_ENTRIES {
+        return Err(invalid_package());
+    }
+    let mut total = 0u64;
+    let mut seen = std::collections::HashSet::with_capacity(entries.len());
+    for entry in &entries {
+        if !seen.insert(entry.relative().to_lowercase()) {
+            return Err(unsafe_path());
         }
-        crate::model::Target::MacosArm64 => {
-            if !metadata.is_dir() {
-                return Err(invalid_package());
-            }
-            directories.push(root_relative.clone());
-            walk_retained_carrier(
-                &source,
-                &root_relative,
-                &mut directories,
-                &mut files,
-                &mut total,
-            )?;
+        total = total
+            .checked_add(entry.size())
+            .ok_or_else(invalid_package)?;
+        if total > MAX_CARRIER_BYTES as u64 {
+            return Err(invalid_package());
         }
     }
-    Ok((directories, files))
+    Ok(entries)
 }
 
-/// Walk one signed carrier bundle, collecting plain directories and files.
-fn walk_retained_carrier(
-    directory: &Path,
-    relative: &str,
-    directories: &mut Vec<String>,
-    files: &mut Vec<CarrierFile>,
-    total: &mut usize,
-) -> InstallResult<()> {
-    let mut entries: Vec<_> = fs::read_dir(directory)
-        .map_err(|_| io_failure())?
-        .map(|entry| entry.map_err(|_| io_failure()))
-        .collect::<Result<_, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        if directories.len() + files.len() >= MAX_RETAINED_CARRIER_ENTRIES {
-            return Err(invalid_package());
-        }
-        let name = entry
-            .file_name()
-            .to_str()
-            .ok_or_else(unsafe_path)?
-            .to_owned();
-        let path = entry.path();
-        let child_relative = format!("{relative}/{name}");
-        let metadata = fs::symlink_metadata(&path).map_err(|_| io_failure())?;
-        if metadata.file_type().is_symlink() {
-            // A carrier bundle containing links cannot be retained through the
-            // validated no-follow boundary; the native adapter must implement a
-            // link-preserving copy when a release bundle needs one.
-            return Err(unsafe_path());
-        }
-        if metadata.is_dir() {
-            directories.push(child_relative.clone());
-            walk_retained_carrier(&path, &child_relative, directories, files, total)?;
-            continue;
-        }
-        if !metadata.is_file() {
-            return Err(unsafe_path());
-        }
-        let size = metadata.len() as usize;
-        *total = total.saturating_add(size);
-        if *total > MAX_RETAINED_CARRIER_BYTES {
-            return Err(invalid_package());
-        }
-        files.push(CarrierFile {
-            relative: child_relative,
-            bytes: fs::read(&path).map_err(|_| io_failure())?,
-        });
+/// The full install-root path of one carrier entry.
+fn carrier_entry_path(root_relative: &str, entry: &CarrierEntry) -> String {
+    if entry.relative().is_empty() {
+        root_relative.to_owned()
+    } else {
+        format!("{root_relative}/{}", entry.relative())
     }
-    Ok(())
 }
 
 /// Read authenticated source bytes and re-check the authenticated identity.
