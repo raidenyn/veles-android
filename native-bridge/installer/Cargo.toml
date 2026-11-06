@@ -1,0 +1,21 @@
+[package]
+name = "veles-bridge-installer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+autoexamples = false
+description = "OTP-25 standalone per-user installer engine: strict package identity, inventory and policy carrier"
+
+# Standalone workspace: the installer engine is deliberately not linked into the
+# production host crate. Dependencies are the reviewed pins from the plan.
+[workspace]
+
+[lib]
+name = "veles_bridge_installer"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
