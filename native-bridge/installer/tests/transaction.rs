@@ -18,14 +18,14 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use veles_bridge_installer::{
-    Channel, Digest, FailureCode, FakePlatform, Faults, HostState, InstallPaths, InventoryEntry,
-    JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot, NativeManifest,
-    Operation, PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall, PolicyCarrierRefs,
-    PortablePlatform, Receipt, ReceiptState, RegistrationPreimage, ReleaseDescriptor,
-    ReleasePolicy, STATE_CLEAN, STATE_INSTALLED, STATE_RECOVERED_ACTIVE, STATE_RECOVERED_PREVIOUS,
-    StateDocument, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof, Version,
-    WindowsPreimage, authenticate_package, canonical_json, extension_origin, install,
-    parse_manifest, path_is_within, recover, write_carrier, write_inventory,
+    Channel, Digest, FailureCode, FakePlatform, Faults, HostFault, HostState, InstallPaths,
+    InventoryEntry, JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot,
+    NativeManifest, Operation, PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall,
+    PolicyCarrierRefs, PortablePlatform, Receipt, ReceiptState, RegistrationPreimage,
+    ReleaseDescriptor, ReleasePolicy, STATE_CLEAN, STATE_INSTALLED, STATE_RECOVERED_ACTIVE,
+    STATE_RECOVERED_PREVIOUS, StateDocument, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target,
+    TrustProof, Version, WindowsPreimage, authenticate_package, canonical_json, extension_origin,
+    install, parse_manifest, path_is_within, recover, write_carrier, write_inventory,
 };
 
 const EXTENSION_ID: &str = "mnopabcdefghijklmnopabcdefghijkl";
@@ -1383,7 +1383,11 @@ fn torn_journal_is_reconciled_quarantined_and_lets_the_next_run_start() {
 }
 
 #[test]
-fn torn_receipt_is_quarantined_and_rebuilt_from_the_pending_journal() {
+fn torn_receipt_of_an_upgrade_is_not_rebuilt_from_an_unverifiable_journal() {
+    // The previous receipt carries the policy the committed installation
+    // enforced. With it unreadable, the journal's composed policy cannot be
+    // re-derived from authenticated inputs, so recovery fails closed instead of
+    // rebuilding a receipt on the journal's say-so (it used to).
     let fixture = Fixture::new(Scenario::Upgrade);
     let sequence = clean_mutations(Scenario::Upgrade);
     let registry = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
@@ -1395,17 +1399,40 @@ fn torn_receipt_is_quarantined_and_rebuilt_from_the_pending_journal() {
         install(&platform, &fixture.paths, fixture.package.clone())
     }));
     assert!(outcome.is_err(), "the manifest was activated");
-    // The durable journal and the new live manifest are complete; only the prior
-    // receipt's bytes are damaged (as a non-atomic writer could leave them).
     fs::write(fixture.paths.receipt_path(), b"{\"schema\":1,\"transac").expect("torn receipt");
-    assert!(matches!(
-        Receipt::load(&PortablePlatform::new(), &fixture.paths).expect("bytes readable"),
-        ReceiptState::Unreadable
-    ));
+    let before = snapshot(fixture.temp.path());
+
+    let platform = fixture.platform();
+    assert_eq!(
+        failure_code(recover(&platform, &fixture.paths)),
+        FailureCode::RecoveryRequired
+    );
+    assert!(platform.mutations().is_empty());
+    assert_eq!(snapshot(fixture.temp.path()), before);
+    assert!(matches!(fixture.journal_state(), JournalState::Pending(_)));
+}
+
+#[test]
+fn torn_receipt_of_a_first_install_is_quarantined_and_rebuilt_from_the_pending_journal() {
+    // A first install has no previous policy to compose against: the
+    // authenticated descriptor's own policy is the expectation, so the pending
+    // journal can be completed and the damaged receipt preserved.
+    let fixture = Fixture::new(Scenario::Fresh);
+    let sequence = clean_mutations(Scenario::Fresh);
+    let registry = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
+    let platform = fixture.platform_with(Faults {
+        panic_at_mutation: Some(registry),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        install(&platform, &fixture.paths, fixture.package.clone())
+    }));
+    assert!(outcome.is_err(), "the manifest was activated");
+    fs::write(fixture.paths.receipt_path(), b"{\"schema\":1,\"transac").expect("torn receipt");
 
     let platform = fixture.platform();
     let report = recover(&platform, &fixture.paths)
-        .expect("the pending journal is authoritative for the committed transaction");
+        .expect("the authenticated staged release completes the first install");
     assert_eq!(report.state, STATE_RECOVERED_ACTIVE);
     let receipt = fixture.receipt().expect("the receipt was rebuilt");
     assert_eq!(receipt.payload_id, fixture.payload_id());
@@ -1580,4 +1607,224 @@ fn state_read_faults_are_modelable_through_the_boundary() {
         FailureCode::Io,
         "a state read fault surfaces as an IO failure"
     );
+}
+
+// ---------------------------------------------------------------------------
+// F1: recovery authenticates what it completes. F2: damage is never "usable".
+// ---------------------------------------------------------------------------
+
+/// Crash right after the registry publication, before the receipt write: the new
+/// manifest is live, the journal says `registration-published` and nothing has
+/// been committed. This is the state recovery must NOT complete on the strength
+/// of the journal alone.
+fn crash_before_receipt(scenario: Scenario) -> Fixture {
+    let registry = position_of(
+        &clean_mutations(scenario),
+        PlatformCall::PublishRegistration,
+    );
+    let fixture = Fixture::new(scenario);
+    let platform = fixture.platform_with(Faults {
+        panic_at_mutation: Some(registry + 3),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        install(&platform, &fixture.paths, fixture.package.clone())
+    }));
+    assert!(
+        outcome.is_err(),
+        "the injected death interrupts the install"
+    );
+    assert!(
+        matches!(fixture.journal_state(), JournalState::Pending(_)),
+        "the journal is pending"
+    );
+    assert_ne!(
+        fixture.receipt().map(|receipt| receipt.payload_id),
+        Some(fixture.payload_id()),
+        "the new release is not committed"
+    );
+    fixture
+}
+
+#[test]
+fn recovery_preserves_an_os_denial_of_the_staged_release() {
+    for scenario in [Scenario::Fresh, Scenario::Upgrade] {
+        let fixture = crash_before_receipt(scenario);
+        let live_before = fixture.registration();
+        let before = snapshot(fixture.temp.path());
+
+        // The OS no longer accepts the staged carrier: nothing may be completed.
+        let denied = fixture.platform_with(Faults {
+            trust_denied: true,
+            ..Faults::default()
+        });
+        assert_eq!(
+            failure_code(recover(&denied, &fixture.paths)),
+            FailureCode::TrustDenied,
+            "{}: a denial is preserved, not completed over",
+            scenario.label()
+        );
+
+        // The assessment cannot be formed (offline revocation data): same rule.
+        let unavailable = FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            ..Faults::default()
+        });
+        assert_eq!(
+            failure_code(recover(&unavailable, &fixture.paths)),
+            FailureCode::TrustUnavailable,
+            "{}",
+            scenario.label()
+        );
+
+        assert!(denied.mutations().is_empty(), "{}", scenario.label());
+        assert!(unavailable.mutations().is_empty(), "{}", scenario.label());
+        assert_eq!(fixture.registration(), live_before, "{}", scenario.label());
+        assert_eq!(
+            snapshot(fixture.temp.path()),
+            before,
+            "{}: a refused recovery changes nothing on disk",
+            scenario.label()
+        );
+        assert!(matches!(fixture.journal_state(), JournalState::Pending(_)));
+    }
+}
+
+#[test]
+fn recovery_does_not_complete_a_release_the_os_did_not_authenticate_for_this_journal() {
+    let fixture = crash_before_receipt(Scenario::Upgrade);
+
+    // A genuinely signed carrier - of a different release - is not evidence for
+    // this journal's payload.
+    let other = build_package(
+        &fixture.temp,
+        "other",
+        "9.0.0",
+        b"other host",
+        b"other notice",
+    );
+    let before = snapshot(fixture.temp.path());
+    let platform = FakePlatform::with_faults(Faults {
+        host_state: HostState::Quiescent,
+        trust: Some(other.proof.clone()),
+        ..Faults::default()
+    });
+    assert_eq!(
+        failure_code(recover(&platform, &fixture.paths)),
+        FailureCode::TrustDenied
+    );
+    assert!(platform.mutations().is_empty());
+    let after = snapshot(fixture.temp.path());
+    let changed: Vec<&String> = after
+        .keys()
+        .chain(before.keys())
+        .filter(|key| after.get(*key) != before.get(*key))
+        .collect();
+    assert!(
+        changed.is_empty(),
+        "a refused recovery changed: {changed:?}"
+    );
+}
+
+#[test]
+fn recovery_rederives_the_effective_policy_instead_of_trusting_the_journal() {
+    let fixture = crash_before_receipt(Scenario::Fresh);
+    let platform = fixture.platform();
+    let JournalState::Pending(journal) = fixture.journal_state() else {
+        panic!("pending journal");
+    };
+    // A journal that claims a wider publisher set than the authenticated
+    // descriptor's policy: self-consistent, but not what the signature covers.
+    let mut forged = (*journal).clone();
+    forged
+        .release_policy
+        .publishers
+        .push("Attacker Publisher".to_owned());
+    forged
+        .write(&platform, &fixture.paths)
+        .expect("forged journal written");
+
+    let recovering = fixture.platform();
+    let failure = recover(&recovering, &fixture.paths).expect_err("a forged policy is refused");
+    assert_eq!(failure.code, FailureCode::RecoveryRequired);
+    assert!(
+        fixture.receipt().is_none(),
+        "nothing was committed on the forged journal's authority"
+    );
+}
+
+#[test]
+fn recovery_reassesses_the_installed_host_before_completing() {
+    let fixture = crash_before_receipt(Scenario::Fresh);
+    let platform = fixture.platform_with(Faults {
+        host: Some(HostFault::Denied),
+        ..Faults::default()
+    });
+    assert_eq!(
+        failure_code(recover(&platform, &fixture.paths)),
+        FailureCode::TrustDenied
+    );
+    assert!(fixture.receipt().is_none());
+}
+
+#[test]
+fn recover_without_a_journal_does_not_call_a_damaged_installation_usable() {
+    let fixture = Fixture::new(Scenario::Fresh);
+    install(&fixture.platform(), &fixture.paths, fixture.package.clone()).expect("installs");
+    let healthy = recover(&fixture.platform(), &fixture.paths).expect("healthy layout");
+    assert_eq!(healthy.state, STATE_CLEAN);
+    assert!(healthy.prior_usable);
+
+    // The selected host disappears; registration and receipt are intact.
+    fs::remove_file(fixture.new_version_dir.join("host.exe")).expect("delete the host");
+    let report = recover(&fixture.platform(), &fixture.paths).expect("a report, not a fault");
+    assert_ne!(report.state, STATE_CLEAN, "{report:?}");
+    assert!(!report.prior_usable, "{report:?}");
+    assert_eq!(report.failure, Some(FailureCode::RepairPackageRequired));
+}
+
+#[test]
+fn a_missing_dependency_is_damage_too() {
+    let fixture = Fixture::new(Scenario::Fresh);
+    install(&fixture.platform(), &fixture.paths, fixture.package.clone()).expect("installs");
+    fs::remove_file(fixture.new_version_dir.join("licenses/NOTICE")).expect("delete a resource");
+    let report = recover(&fixture.platform(), &fixture.paths).expect("a report");
+    assert!(!report.prior_usable, "{report:?}");
+    assert_ne!(report.state, STATE_CLEAN);
+}
+
+#[test]
+fn an_unverified_previous_release_never_clears_recovery_intent() {
+    for damage in ["delete host", "alter host", "delete resource"] {
+        let scenario = Scenario::Upgrade;
+        let sequence = clean_mutations(scenario);
+        let publish = position_of(&sequence, PlatformCall::PublishManifest);
+        let fixture = Fixture::new(scenario);
+        let platform = fixture.platform_with(Faults {
+            // Dies at the manifest replacement: the OLD manifest is still live
+            // and the journal is pending.
+            panic_at_mutation: Some(publish + 1),
+            ..Faults::default()
+        });
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            install(&platform, &fixture.paths, fixture.package.clone())
+        }));
+        assert!(outcome.is_err(), "{damage}");
+        let previous = fixture.prior_version_dir.clone().expect("previous version");
+        match damage {
+            "delete host" => fs::remove_file(previous.join("host.exe")).expect("delete"),
+            "alter host" => fs::write(previous.join("host.exe"), b"tampered").expect("alter"),
+            _ => fs::remove_file(previous.join("licenses/NOTICE")).expect("delete"),
+        }
+
+        let recovering = fixture.platform();
+        let failure = recover(&recovering, &fixture.paths)
+            .expect_err("the previous release cannot be shown to work");
+        assert_eq!(failure.code, FailureCode::RecoveryRequired, "{damage}");
+        assert!(!failure.prior_usable, "{damage}");
+        assert!(
+            matches!(fixture.journal_state(), JournalState::Pending(_)),
+            "{damage}: recovery intent is kept"
+        );
+    }
 }

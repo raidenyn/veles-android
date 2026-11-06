@@ -2019,8 +2019,10 @@ fn interrupted_rollback_keeps_the_retained_payload_and_settles() {
             "{context}: the retained rollback target survives"
         );
 
-        // A fresh process reconciles to exactly one complete installation.
-        let recovering = fixture.platform();
+        // A fresh process reconciles to exactly one complete installation. A
+        // recovery that completes a release re-authenticates it, so the OS
+        // evidence of the release being re-activated is supplied.
+        let recovering = fixture.platform_trusting(&v1.proof);
         let report = recover(&recovering, paths)
             .unwrap_or_else(|failure| panic!("{context}: recovery failed: {failure:?}"));
         assert!(report.failure.is_none(), "{context}: {report:?}");
@@ -3215,7 +3217,7 @@ fn recovery_prunes_superseded_versions_before_it_commits() {
         "2.0.0"
     );
 
-    let recovering = fixture.platform();
+    let recovering = fixture.platform_trusting(&v3.proof);
     let report = recover(&recovering, paths).expect("recovery completes the interrupted install");
     assert_eq!(report.state, veles_bridge_installer::STATE_RECOVERED_ACTIVE);
     let committed = receipt(paths).expect("recovery commits the new receipt");

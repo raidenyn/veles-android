@@ -58,19 +58,22 @@ use crate::journal::{
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry,
-    MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor, ReleasePolicy, WarningCode, canonical_json,
-    extension_origin, parse_version,
+    MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor, ReleasePolicy, Version, WarningCode,
+    canonical_json, extension_origin, parse_version,
 };
+use crate::operations::STATE_DAMAGED;
 use crate::paths::{InstallPaths, MAINTENANCE_DIR, VERSIONS_DIR};
 use crate::platform::{
     AuthenticatedPackage, CarrierEntry, MAX_CARRIER_BYTES, MAX_CARRIER_ENTRIES, NativeManifest,
     OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageSource,
-    PathKind, Platform, Registration, StateDocument, ValidatedPath, WindowsPreimage, assess_host,
-    claim_owned_entries, claim_owned_registration, is_accepted_assessment, package_carrier_name,
-    parse_manifest, read_no_follow, registration_is_owned, require_quiescent,
+    PathKind, Platform, Registration, StateDocument, TrustProof, ValidatedPath, WindowsPreimage,
+    assess_host, claim_owned_entries, claim_owned_registration, is_accepted_assessment,
+    package_carrier_name, parse_manifest, read_no_follow, registration_is_owned, require_quiescent,
     require_quiescent_within,
 };
-use crate::policy::{authorize_package_policy, effective_policy, read_carrier_contents};
+use crate::policy::{
+    CarrierContents, authorize_package_policy, effective_policy, read_carrier_contents,
+};
 use crate::retained::{MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RetainedInstall};
 
 /// The report state of a completed install.
@@ -257,7 +260,126 @@ fn previous_is_verified(platform: &impl Platform, paths: &InstallPaths, journal:
     let Ok(Some(live)) = platform.read_registration(paths) else {
         return false;
     };
-    live.manifest_digest() == old.sha256() && manifest_selects_a_file(old).unwrap_or(false)
+    if live.manifest_digest() != old.sha256() {
+        return false;
+    }
+    previous_release(platform, paths, journal)
+        .is_ok_and(|prior| release_is_usable(platform, paths, &prior, Some(&live)))
+}
+
+/// The committed receipt of the release this transaction would restore.
+///
+/// It must be the receipt that was durable when the transaction began: not this
+/// transaction's own, and bound to the journaled old identity and manifest. An
+/// absent, unreadable or mismatched receipt means the previous release cannot be
+/// shown to exist, and nothing may be restored on the journal's say-so.
+fn previous_release(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    journal: &Journal,
+) -> InstallResult<Receipt> {
+    let (Some(old), Some(old_version), Some(old_payload)) = (
+        journal.old_manifest.as_ref(),
+        journal.old_version.as_ref(),
+        journal.old_payload_id,
+    ) else {
+        return Err(recovery_required());
+    };
+    let ReceiptState::Committed(prior) = Receipt::load(platform, paths)? else {
+        return Err(recovery_required());
+    };
+    if prior.transaction_id == journal.transaction_id
+        || prior.manifest_sha256 != old.sha256()
+        || prior.payload_id != old_payload
+        || &prior.version != old_version
+    {
+        return Err(recovery_required());
+    }
+    Ok(*prior)
+}
+
+/// Whether the release a committed receipt names is complete and launchable now.
+///
+/// This is the one definition of "usable" shared by recovery reports, the
+/// `prior_usable` flag and the restore path. It requires, all together: the
+/// installed canonical inventory (and the sealed one when the receipt claims it)
+/// to be the claimed documents; every inventory entry to be a receipt claim with
+/// its exact digest and to verify on disk through validated handles (a missing
+/// dependency or an altered executable is damage); the single inventory
+/// executable to be launchable; and, when a live registration is supplied, that
+/// registration to be the committed manifest selecting exactly that executable.
+/// It performs no OS trust assessment: it never claims a release was newly
+/// security-certified, only that what the committed installation recorded is
+/// still whole.
+fn release_is_usable(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    receipt: &Receipt,
+    live: Option<&Registration>,
+) -> bool {
+    release_is_usable_inner(platform, paths, receipt, live).is_ok()
+}
+
+fn release_is_usable_inner(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    receipt: &Receipt,
+    live: Option<&Registration>,
+) -> InstallResult<()> {
+    let version = parse_version(&receipt.version)?;
+    let version_relative = paths.version_dir_relative(&version, receipt.payload_id);
+    let ownership = &receipt.ownership;
+    let canonical = retained_document(
+        paths,
+        ownership,
+        &format!("{version_relative}/{PACKAGE_INVENTORY_FILE}"),
+        receipt.payload_id,
+    )?;
+    let sealed_relative = format!("{version_relative}/{SEALED_INVENTORY_FILE}");
+    let entries = match ownership
+        .owned
+        .iter()
+        .find(|claim| claim.kind == OwnedKind::File && claim.path == sealed_relative)
+    {
+        None => parse_inventory(&canonical)?,
+        Some(claim) => {
+            let digest = claim.sha256.ok_or_else(no_rollback)?;
+            parse_inventory(&retained_document(
+                paths,
+                ownership,
+                &sealed_relative,
+                digest,
+            )?)?
+        }
+    };
+    let mut executables = entries.iter().filter(|entry| entry.executable);
+    let (Some(executable), None) = (executables.next(), executables.next()) else {
+        return Err(no_rollback());
+    };
+    // Every claim of the version, re-verified by content through validated handles.
+    retained_claims(
+        paths,
+        &entries,
+        &version_relative,
+        receipt.payload_id,
+        ownership,
+    )?;
+    let executable_relative = format!("{version_relative}/{}", executable.path);
+    let handle = ValidatedPath::new(paths, Path::new(&executable_relative), PathKind::File)?;
+    platform.check_launch_permissions(&handle, true)?;
+    if let Some(live) = live {
+        if live.manifest_digest() != receipt.manifest_sha256 {
+            return Err(recovery_required());
+        }
+        let selected = fs::canonicalize(parse_manifest(live.manifest())?.executable()?)
+            .map_err(|_| unsafe_path())?;
+        let expected =
+            fs::canonicalize(paths.root().join(&executable_relative)).map_err(|_| unsafe_path())?;
+        if selected != expected {
+            return Err(recovery_required());
+        }
+    }
+    Ok(())
 }
 
 /// Re-activate an already retained, verified immutable version (Task 7 rollback).
@@ -326,96 +448,28 @@ pub(crate) fn activate_retained(
     }
 
     let version_relative = paths.version_dir_relative(&version, prior.payload_id);
-    let retained_relative = format!("{version_relative}/{RETAINED_FILE_NAME}");
-    // The retained metadata is a receipt claim of the immutable version. A
-    // missing, changed or unparsable document means the target cannot be proven:
-    // repair guidance (`NoRollback`), with the installation left untouched.
-    let retained = load_retained(paths, &current.ownership, &retained_relative)?;
+    // Retained content is authenticated exactly like a fresh install (see
+    // `authenticate_release_in_place`): the OS verifies the signed carrier
+    // already installed inside the immutable version directory, and neither the
+    // locally stored metadata nor the receipt can supply a signer, an assessment
+    // or a policy of its own.
+    let ReleaseEvidence {
+        retained,
+        proof,
+        contents: os_contents,
+    } = authenticate_release_in_place(
+        platform,
+        paths,
+        &current.ownership,
+        &prior.version,
+        prior.payload_id,
+        prior.carrier_sha256,
+        &current.release_policy,
+        Some(&parse_version(&current.version)?),
+        FailureCode::NoRollback,
+    )?;
     let descriptor = &retained.descriptor;
-    if descriptor.version != prior.version
-        || descriptor.payload_id != prior.payload_id
-        || descriptor.target != paths.target()
-        || descriptor.channel != paths.channel()
-        || version >= parse_version(&current.version)?
-    {
-        return Err(no_rollback());
-    }
 
-    // Retained content is authenticated exactly like a fresh install: the same
-    // OS signature/Gatekeeper path runs over the signed carrier artifact already
-    // installed inside the immutable version directory. The locally stored
-    // metadata is only a reference to that artifact plus the authenticated
-    // carrier digest; it can never supply a signer, an assessment or a policy of
-    // its own. A carrier that was replaced after install - or whose installed
-    // form cannot be verified in place - is not a rollback target.
-    let carrier_relative = retained
-        .carrier_relative(paths)
-        .map_err(|_| no_rollback())?;
-    if carrier_relative
-        != format!(
-            "{version_relative}/{}",
-            package_carrier_name(paths.target())
-        )
-    {
-        return Err(no_rollback());
-    }
-    let carrier_source =
-        PackageSource::open(&paths.root().join(&version_relative)).map_err(|_| no_rollback())?;
-    let anchor = ReleaseDescriptor {
-        target: paths.target(),
-        channel: paths.channel(),
-        policy: current.release_policy.clone(),
-        ..descriptor.clone()
-    };
-    let proof = match platform.verify_retained(&carrier_source, &anchor) {
-        Ok(proof) => proof,
-        // The OS refused the installed artifact, or no assessment could be
-        // formed: report that verdict, never a generic unverifiable target.
-        Err(failure)
-            if matches!(
-                failure.code,
-                FailureCode::TrustDenied | FailureCode::TrustUnavailable
-            ) =>
-        {
-            return Err(failure);
-        }
-        // The installed form cannot be verified in place (missing, wrong kind,
-        // links, an adapter that cannot verify it): repair guidance, not a
-        // rollback and not `ForeignState`.
-        Err(_) => return Err(no_rollback()),
-    };
-    if !is_accepted_assessment(proof.assessment(), paths.target()) {
-        return Err(InstallFailure::new(FailureCode::TrustDenied));
-    }
-    let os_contents = read_carrier_contents(proof.carrier())
-        .map_err(|_| InstallFailure::new(FailureCode::TrustDenied))?;
-    let os_descriptor = os_contents.descriptor;
-    if &os_descriptor != descriptor {
-        return Err(InstallFailure::new(FailureCode::TrustDenied));
-    }
-    if Digest::of(proof.carrier()) != retained.carrier_sha256
-        || retained.carrier_sha256 != prior.carrier_sha256
-    {
-        return Err(InstallFailure::new(FailureCode::TrustDenied));
-    }
-
-    // The OS-verified signer must be authorized under BOTH policies, not merely
-    // belong to a non-empty publisher intersection. A retained artifact signed by
-    // a publisher the persisted policy has revoked must stay denied.
-    let signer = proof.signer();
-    if !current
-        .release_policy
-        .publishers
-        .iter()
-        .any(|publisher| publisher == signer)
-        || !os_descriptor
-            .policy
-            .publishers
-            .iter()
-            .any(|publisher| publisher == signer)
-    {
-        return Err(InstallFailure::new(FailureCode::PolicyDenied));
-    }
     let policy = effective_policy(
         &current.release_policy,
         &descriptor.policy,
@@ -523,6 +577,131 @@ pub(crate) fn activate_retained(
         Ok(()) => Ok(completed_report(&journal).with_warnings(warnings)),
         Err(failure) => settle_failed_install(platform, paths, &journal, failure),
     }
+}
+
+/// What the OS authenticated about one installed release.
+struct ReleaseEvidence {
+    /// The receipt/journal-claimed retained metadata (a reference, never trust).
+    retained: RetainedInstall,
+    /// The OS-verified signer and assessment of the installed carrier artifact.
+    proof: TrustProof,
+    /// The carrier document the OS path extracted from that artifact.
+    contents: CarrierContents,
+}
+
+/// Authenticate an installed release **in place**, as data.
+///
+/// This is the single authentication used by rollback and by crash recovery. The
+/// release is identified by the claimed `version`/`payload_id`; its retained
+/// metadata must be a claim in `ownership`; and the signed carrier artifact
+/// installed inside the immutable version directory is handed to the platform's
+/// OS verification ([`Platform::verify_retained`]) - the stored metadata can never
+/// supply a signer, assessment or policy. The extracted descriptor must equal the
+/// retained one, the carrier digest must equal the digest the caller recorded, and
+/// the OS-verified signer must be listed by BOTH `anchor_policy` and the
+/// authenticated descriptor's own policy.
+///
+/// `unprovable` is reported when the installed form cannot be established
+/// (missing or changed claims, an artifact the adapter cannot verify in place);
+/// an explicit OS denial or an unavailable assessment is always returned as
+/// `TrustDenied` / `TrustUnavailable`, and a policy refusal as `PolicyDenied`.
+/// `must_precede` rejects a release that is not older than the given version.
+#[allow(clippy::too_many_arguments)]
+fn authenticate_release_in_place(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    ownership: &OwnershipRecord,
+    version_text: &str,
+    payload_id: Digest,
+    carrier_sha256: Digest,
+    anchor_policy: &ReleasePolicy,
+    must_precede: Option<&Version>,
+    unprovable: FailureCode,
+) -> InstallResult<ReleaseEvidence> {
+    let version = parse_version(version_text)?;
+    let unprovable = || InstallFailure::new(unprovable);
+    let version_relative = paths.version_dir_relative(&version, payload_id);
+    let retained_relative = format!("{version_relative}/{RETAINED_FILE_NAME}");
+    // The retained metadata is a claim of the immutable version. A missing,
+    // changed or unparsable document means the release cannot be proven.
+    let retained = load_retained(paths, ownership, &retained_relative).map_err(|_| unprovable())?;
+    let descriptor = &retained.descriptor;
+    if descriptor.version != version_text
+        || descriptor.payload_id != payload_id
+        || descriptor.target != paths.target()
+        || descriptor.channel != paths.channel()
+        || must_precede.is_some_and(|limit| &version >= limit)
+    {
+        return Err(unprovable());
+    }
+    let carrier_relative = retained.carrier_relative(paths).map_err(|_| unprovable())?;
+    if carrier_relative
+        != format!(
+            "{version_relative}/{}",
+            package_carrier_name(paths.target())
+        )
+    {
+        return Err(unprovable());
+    }
+    let carrier_source =
+        PackageSource::open(&paths.root().join(&version_relative)).map_err(|_| unprovable())?;
+    let anchor = ReleaseDescriptor {
+        target: paths.target(),
+        channel: paths.channel(),
+        policy: anchor_policy.clone(),
+        ..descriptor.clone()
+    };
+    let proof = match platform.verify_retained(&carrier_source, &anchor) {
+        Ok(proof) => proof,
+        // The OS refused the installed artifact, or no assessment could be
+        // formed: report that verdict, never a generic unverifiable release.
+        Err(failure)
+            if matches!(
+                failure.code,
+                FailureCode::TrustDenied | FailureCode::TrustUnavailable
+            ) =>
+        {
+            return Err(failure);
+        }
+        // The installed form cannot be verified in place (missing, wrong kind,
+        // links, an adapter that cannot verify it).
+        Err(_) => return Err(unprovable()),
+    };
+    if !is_accepted_assessment(proof.assessment(), paths.target()) {
+        return Err(InstallFailure::new(FailureCode::TrustDenied));
+    }
+    let contents = read_carrier_contents(proof.carrier())
+        .map_err(|_| InstallFailure::new(FailureCode::TrustDenied))?;
+    if &contents.descriptor != descriptor {
+        return Err(InstallFailure::new(FailureCode::TrustDenied));
+    }
+    if Digest::of(proof.carrier()) != retained.carrier_sha256
+        || retained.carrier_sha256 != carrier_sha256
+    {
+        return Err(InstallFailure::new(FailureCode::TrustDenied));
+    }
+    // The OS-verified signer must be authorized under BOTH policies, not merely
+    // belong to a non-empty publisher intersection. A retained artifact signed by
+    // a publisher the persisted policy has revoked must stay denied.
+    let signer = proof.signer();
+    if !anchor_policy
+        .publishers
+        .iter()
+        .any(|publisher| publisher == signer)
+        || !contents
+            .descriptor
+            .policy
+            .publishers
+            .iter()
+            .any(|publisher| publisher == signer)
+    {
+        return Err(InstallFailure::new(FailureCode::PolicyDenied));
+    }
+    Ok(ReleaseEvidence {
+        retained,
+        proof,
+        contents,
+    })
 }
 
 /// Read the receipt-claimed retained metadata of one immutable version.
@@ -892,6 +1071,7 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
     if committed || matches!(receipt, ReceiptState::Unreadable) {
         // The receipt is (or may be) the commit point: never restore.
         return if activation_verified {
+            authenticate_for_completion(platform, paths, &journal, &receipt)?;
             complete_forward(platform, paths, &journal)
         } else {
             Err(InstallFailure::new(FailureCode::RecoveryRequired))
@@ -905,6 +1085,7 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
     }
 
     if activation_verified {
+        authenticate_for_completion(platform, paths, &journal, &receipt)?;
         return complete_forward(platform, paths, &journal);
     }
 
@@ -926,6 +1107,130 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
         failure: None,
         warnings: Vec::new(),
     })
+}
+
+/// Authenticate the staged (or committed) release before recovery completes it.
+///
+/// A journal, a receipt and the files they claim are installer state: they are
+/// never authority to publish a registration or commit a receipt. Completion
+/// therefore re-establishes, from authenticated inputs only:
+///
+/// 1. the OS verdict over the signed carrier installed in the version directory
+///    (denial and unavailability are returned unchanged, with nothing mutated);
+/// 2. the journal's identity, carrier digest and descriptor against that carrier;
+/// 3. the effective policy, recomputed from the policy the committed installation
+///    enforced and the authenticated descriptor's policy, and compared with the
+///    journal's;
+/// 4. the complete installed inventory (canonical, and sealed when the carrier
+///    asserts one) against every claim and every file on disk;
+/// 5. the exact manifest the journal publishes, rebuilt from the authenticated
+///    descriptor and the inventory's executable; and
+/// 6. the installed host's launch permission and OS assessment.
+fn authenticate_for_completion(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    journal: &Journal,
+    receipt: &ReceiptState,
+) -> InstallResult<()> {
+    // The claims describing the release: the receipt that names this very
+    // transaction, otherwise the journal's created set.
+    let committed_here = match receipt {
+        ReceiptState::Committed(receipt) if receipt.transaction_id == journal.transaction_id => {
+            Some(receipt)
+        }
+        _ => None,
+    };
+    let ownership = match committed_here {
+        Some(receipt) => receipt.ownership.clone(),
+        None => journal.ownership_record(),
+    };
+
+    let evidence = authenticate_release_in_place(
+        platform,
+        paths,
+        &ownership,
+        &journal.version,
+        journal.payload_id,
+        journal.policy.carrier_sha256,
+        &journal.release_policy,
+        None,
+        FailureCode::RecoveryRequired,
+    )?;
+    let descriptor = &evidence.retained.descriptor;
+    if journal.policy.descriptor_sha256 != Digest::of(&canonical_json(descriptor)?) {
+        return Err(recovery_required());
+    }
+
+    // The effective policy is recomputed, never read back from the journal.
+    let expected_policy = match (committed_here, receipt) {
+        (Some(receipt), _) => receipt.release_policy.clone(),
+        (None, ReceiptState::Committed(prior)) => {
+            effective_policy(&prior.release_policy, &descriptor.policy, journal.operation)?
+        }
+        (None, ReceiptState::None | ReceiptState::Unreadable)
+            if journal.old_payload_id.is_none() =>
+        {
+            descriptor.policy.clone()
+        }
+        // An upgrade whose previous receipt is gone, unreadable or unsupported
+        // has nothing to compose the policy against.
+        _ => return Err(recovery_required()),
+    };
+    if expected_policy != journal.release_policy {
+        return Err(recovery_required());
+    }
+    if journal.release_policy.denies(&journal.payload_id) {
+        return Err(InstallFailure::new(FailureCode::PolicyDenied));
+    }
+
+    let version = parse_version(&journal.version)?;
+    let version_relative = paths.version_dir_relative(&version, journal.payload_id);
+    let entries = retained_inventory(
+        paths,
+        &ownership,
+        &version_relative,
+        journal.payload_id,
+        evidence.contents.sealed_inventory,
+    )
+    .map_err(unprovable_as_recovery)?;
+    retained_claims(
+        paths,
+        &entries,
+        &version_relative,
+        journal.payload_id,
+        &ownership,
+    )
+    .map_err(unprovable_as_recovery)?;
+    let executable = entries
+        .iter()
+        .find(|entry| entry.executable)
+        .ok_or_else(recovery_required)?;
+    let manifest = manifest_for(
+        paths,
+        &paths.root().join(&version_relative).join(&executable.path),
+        &descriptor.extension_id,
+    )?;
+    if manifest.sha256() != journal.manifest.sha256() {
+        return Err(recovery_required());
+    }
+    verify_installed_host(
+        platform,
+        paths,
+        &version_relative,
+        &executable.path,
+        descriptor,
+        &journal.release_policy,
+    )
+}
+
+/// `NoRollback` is the rollback operation's word for "cannot be proven"; recovery
+/// reports the same condition as `RecoveryRequired`.
+fn unprovable_as_recovery(failure: InstallFailure) -> InstallFailure {
+    if failure.code == FailureCode::NoRollback {
+        recovery_required()
+    } else {
+        failure
+    }
 }
 
 /// Reconcile an unparsable journal against verified live state.
@@ -1481,6 +1786,16 @@ fn restore_previous(
     let live = platform.read_registration(paths)?;
     let live_digest = live.as_ref().map(Registration::manifest_digest);
 
+    // Never claim a restoration, republish a registration or clear recovery
+    // intent for a previous release that cannot be shown to be whole: a live old
+    // manifest is no proof that its executable, resources or inventory survive.
+    if journal.old_manifest.is_some() {
+        let prior = previous_release(platform, paths, journal)?;
+        if !release_is_usable(platform, paths, &prior, None) {
+            return Err(recovery_required());
+        }
+    }
+
     match (journal.old_manifest.as_ref(), live_digest) {
         (Some(old), found) if found == Some(old.sha256()) => {
             // The previous registration is already live.
@@ -1491,12 +1806,6 @@ fn restore_previous(
                     || !registration_is_owned(paths, live))
             {
                 return Err(foreign_state());
-            }
-            if !manifest_selects_a_file(old)? {
-                // The journaled preimage would name a missing executable: never
-                // publish a registration that cannot work. The journal stays for
-                // recovery guidance (repair needs a fresh signed package).
-                return Err(recovery_required());
             }
             // Re-publish the exact journaled bytes through the same two ordered
             // platform calls the activation used. The manifest file is restored
@@ -1519,19 +1828,6 @@ fn restore_previous(
 
     remove_created_assets(platform, paths, journal)?;
     Journal::clear(platform, paths)
-}
-
-/// Whether the manifest selects an executable that is present as a regular file.
-fn manifest_selects_a_file(manifest: &ManifestSnapshot) -> InstallResult<bool> {
-    let parsed = parse_manifest(manifest.bytes())?;
-    let executable = parsed.executable()?;
-    match fs::symlink_metadata(executable) {
-        Ok(metadata) => Ok(metadata.is_file()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        // A permission or IO failure is not "missing": it cannot prove the
-        // preimage is unusable, but it also cannot prove it is usable.
-        Err(_) => Err(io_failure()),
-    }
 }
 
 /// Remove versions that are neither the active one nor its retained prior.
@@ -1768,6 +2064,18 @@ fn clean_report(platform: &impl Platform, paths: &InstallPaths) -> InstallResult
             if live.manifest_digest() != receipt.manifest_sha256 {
                 // Our receipt, but another manifest is live: ambiguous.
                 return Err(recovery_required());
+            }
+            // "Clean" and "usable" are claims about the installed tree, not about
+            // the receipt: a deleted host or missing dependency is damage.
+            if !release_is_usable(platform, paths, &receipt, Some(&live)) {
+                return Ok(InstallReport {
+                    operation: Operation::Install,
+                    state: STATE_DAMAGED.to_owned(),
+                    prior_usable: false,
+                    active_payload: Some(receipt.payload_id),
+                    failure: Some(FailureCode::RepairPackageRequired),
+                    warnings: Vec::new(),
+                });
             }
             (STATE_CLEAN, true, Some(receipt.payload_id))
         }
