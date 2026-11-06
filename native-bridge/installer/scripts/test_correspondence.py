@@ -1780,6 +1780,29 @@ class PortableFindingTests(WorkDir):
             path.chmod(mode)
         return root
 
+    def test_f10_truncated_or_invalid_pe_candidates_in_a_tree_are_rejected(self):
+        valid_header = b"MZ" + b"\0" * 0x3A
+        candidates = {
+            "mz-only": b"MZ" + b"\0" * 30,
+            "oversized-lfanew": valid_header + struct.pack("<I", 0x7FFFFFFF) + b"\0" * 64,
+            "lfanew-inside-the-dos-header": valid_header + struct.pack("<I", 0x10) + b"\0" * 64,
+            "no-pe-signature": valid_header + struct.pack("<I", 0x40) + b"NOPE" + b"\0" * 64,
+        }
+        for name, data in candidates.items():
+            with self.subTest(name=name):
+                files = {"bin/tool.exe": (data, 0o755), "docs/readme.txt": (b"hello", 0o644)}
+                report = correspondence.compare(self.tree(f"u-{name}", files), self.tree(f"s-{name}", files), "tree")
+                self.assertEqual(report["verdict"], "FAIL")
+                self.assertEqual(report["allowed_differences"], [])
+                self.assertIn(("tree-unparseable-executable", "bin/tool.exe"), [(d["code"], d.get("path")) for d in report["differences"]])
+        # A PE extension makes a non-executable file a candidate too; plain data that merely starts "MZ" is a resource.
+        dll = {"lib/x.dll": (b"MZ" + b"\0" * 30, 0o644)}
+        self.assertEqual(correspondence.compare(self.tree("u-dll", dll), self.tree("s-dll", dll), "tree")["verdict"], "FAIL")
+        # Audit addition: the execute bit alone makes an MZ file an executable candidate, whatever its name.
+        bare = {"bin/tool": (b"MZ" + b"\0" * 30, 0o755)}
+        self.assertEqual(correspondence.compare(self.tree("u-bare", bare), self.tree("s-bare", bare), "tree")["verdict"], "FAIL")
+        plain = {"notes/mz.dat": (b"MZ these are my notes", 0o644)}
+        self.assertEqual(correspondence.compare(self.tree("u-plain", plain), self.tree("s-plain", plain), "tree")["verdict"], "PASS")
 
 
 class CommandLineTests(WorkDir):

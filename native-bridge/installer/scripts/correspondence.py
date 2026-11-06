@@ -1318,12 +1318,25 @@ def _tree_roles(path: str) -> tuple[str, str] | None:
     return None
 
 
-def _image_kind(data: bytes) -> str | None:
+PE_SUFFIXES = (".exe", ".dll", ".sys", ".ocx", ".scr", ".cpl", ".efi", ".drv")
+
+
+def _image_kind(data: bytes, path: str, executable: bool) -> str | None:
+    """'macho' / 'pe' for anything that claims to be an executable image, else ``None`` (an ordinary resource).
+
+    A *candidate* is classified by what it claims to be, not by whether it parses: an ``MZ`` file that
+    is named like a PE or carries the execute bit is delegated to the strict reader, which rejects it
+    if unreadable. Downgrading it to an ordinary resource would let a truncated executable skip the
+    signing check entirely.
+    """
     if data[:4] in (MH_MAGIC_64, FAT_MAGIC) + OTHER_THIN_MAGICS + (FAT_MAGIC_64,) + FAT_MAGIC_SWAPPED:
         return "macho"
-    if data[:2] == b"MZ" and len(data) >= 0x40:
-        lfanew = struct.unpack_from("<I", data, 0x3C)[0]
-        if 0x40 <= lfanew <= len(data) - 4 and data[lfanew : lfanew + 4] == b"PE\x00\x00":
+    if data[:2] == b"MZ":
+        if len(data) >= 0x40:
+            lfanew = struct.unpack_from("<I", data, 0x3C)[0]
+            if 0x40 <= lfanew <= len(data) - 4 and data[lfanew : lfanew + 4] == b"PE\x00\x00":
+                return "pe"
+        if executable or path.lower().endswith(PE_SUFFIXES):
             return "pe"
     return None
 
@@ -1400,7 +1413,7 @@ def compare_tree(unsigned_path: Path, signed_path: Path, policy: Policy) -> tupl
             differences.append(difference("tree-missing-in-signed", "path exists only in the unsigned tree", path=path))
             continue
         data = u.read(path)
-        kind = _image_kind(data)
+        kind = _image_kind(data, path, left["executable"])
         if kind is None:
             if (left["sha256"], left["size"]) != (right["sha256"], right["size"]):
                 differences.append(difference("tree-content-changed", "file content differs", path=path))
