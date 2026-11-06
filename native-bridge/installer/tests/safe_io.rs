@@ -141,7 +141,6 @@ fn ancestor_swap_and_symlink_block() {
         "../escape.json",
         "state/../../escape.json",
         "/etc/passwd",
-        "state\\alias.json",
         "state/x:y",
     ] {
         assert_eq!(
@@ -150,9 +149,35 @@ fn ancestor_swap_and_symlink_block() {
             "path {bad:?} must be rejected"
         );
     }
+    // A backslash is an ordinary filename byte on Unix, where the fixed layout
+    // only accepts canonical `/` separators. On Windows `Path::components`
+    // treats it as a separator, so the same input is not an alias for an unsafe
+    // location but the safe in-root `state/alias.json`. Assert each platform's
+    // semantics explicitly instead of claiming one reject rule is portable.
+    #[cfg(unix)]
+    assert_eq!(
+        failure_code(ValidatedPath::new_file(
+            &paths,
+            Path::new("state\\alias.json")
+        )),
+        FailureCode::UnsafePath,
+        "a backslash is not a canonical separator on Unix"
+    );
+    #[cfg(windows)]
+    {
+        let alias = ValidatedPath::new_file(&paths, Path::new("state\\alias.json"))
+            .expect("Windows splits the separator alias into safe components");
+        let canonical = ValidatedPath::new_file(&paths, Path::new("state/alias.json"))
+            .expect("the canonical in-root path");
+        assert_eq!(alias.relative(), "state/alias.json");
+        assert_eq!(
+            alias.rendered(),
+            canonical.rendered(),
+            "the separator alias renders to the same in-root path"
+        );
+        assert_eq!(alias.rendered(), paths.state().join("alias.json"));
+    }
 
-    let staged = ValidatedPath::new_file(&paths, Path::new("state/staging/manifest.json"))
-        .expect("validated staged path");
     assert!(
         ValidatedPath::within(
             &paths,
@@ -171,14 +196,16 @@ fn ancestor_swap_and_symlink_block() {
         FailureCode::UnsafePath,
         "an absolute path outside the root never becomes a handle"
     );
-    let state = paths.state().to_path_buf();
-    let moved_state = paths.root().join("state-real");
-    fs::rename(&state, &moved_state).expect("move the real state directory aside");
-    let outside = temp.path().join("outside");
-    fs::create_dir_all(&outside).expect("outside directory");
-
     #[cfg(unix)]
     {
+        let staged = ValidatedPath::new_file(&paths, Path::new("state/staging/manifest.json"))
+            .expect("validated staged path");
+        let state = paths.state().to_path_buf();
+        let moved_state = paths.root().join("state-real");
+        fs::rename(&state, &moved_state).expect("move the real state directory aside");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&outside).expect("outside directory");
+
         // A parent swapped for a symlink after validation must fail on the next
         // mutation and must never write through the link.
         std::os::unix::fs::symlink(&outside, &state).expect("symlink state");
@@ -251,11 +278,53 @@ fn ancestor_swap_and_symlink_block() {
             "the symlink target remains untouched"
         );
     }
+}
 
-    #[cfg(not(unix))]
-    {
-        let _ = (&outside, &staged);
-    }
+/// Windows reparse points are the platform analogue of Unix symlinks. The
+/// portable suite runs on the Linux host, so this named assertion is visible
+/// but unexecuted until Task 8 records native Windows evidence.
+#[cfg(not(unix))]
+#[test]
+#[ignore = "requires Windows runner; Task 8 native evidence"]
+fn windows_reparse_point_ancestor_is_rejected() {
+    let temp = TempRoot::new();
+    let paths = windows_paths(&temp, Channel::Production);
+    let platform = FakePlatform::new();
+    let _lock = platform
+        .lock(&paths)
+        .expect("lock creates the private layout");
+    let staged = ValidatedPath::new_file(&paths, Path::new("state/staging/manifest.json"))
+        .expect("validated staged path");
+
+    let state = paths.state().to_path_buf();
+    let moved_state = paths.root().join("state-real");
+    fs::rename(&state, &moved_state).expect("move the real state directory aside");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&outside).expect("outside directory");
+
+    // A directory junction is a reparse point and, unlike a file symlink, needs
+    // no developer mode or administrator privilege to create at a fixed path.
+    let status = process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&state)
+        .arg(&outside)
+        .status()
+        .expect("run mklink /J");
+    assert!(status.success(), "create a directory junction at `state`");
+
+    assert_eq!(
+        failure_code(platform.write_durable(&staged, b"escaped\n")),
+        FailureCode::UnsafePath,
+        "a reparse-point ancestor is rejected before any write"
+    );
+    assert!(
+        !outside.join("manifest.json").exists(),
+        "nothing may be written through the swapped reparse point"
+    );
+    assert!(
+        !moved_state.join("manifest.json").exists(),
+        "nothing may be written into the moved directory either"
+    );
 }
 
 #[test]

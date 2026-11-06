@@ -258,6 +258,9 @@ fn foreign_registration_is_not_claimed_from_receipt() {
 
     // Positive control: the same receipt claims a registration whose manifest
     // points inside a version directory, and removal requires the exact bytes.
+    // The foreign registration above must first be resolved explicitly (an
+    // operator or a prior uninstall); publish itself must never overwrite it.
+    fs::remove_file(paths.registration_path()).expect("resolve the foreign registration");
     let owned_manifest = manifest_bytes(&paths, &owned_executable);
     let registration = Registration::new(owned_manifest.clone()).expect("bounded");
     platform
@@ -296,5 +299,90 @@ fn foreign_registration_is_not_claimed_from_receipt() {
     assert!(
         platform.read_registration(&paths).expect("read").is_none(),
         "the owned registration is gone"
+    );
+}
+
+#[test]
+fn owned_publish_over_foreign_registration_is_refused() {
+    let temp = TempRoot::new();
+    let paths = windows_paths(&temp);
+    let platform = FakePlatform::new();
+    let _lock = platform
+        .lock(&paths)
+        .expect("lock creates the private layout");
+
+    // Our own payload exists and is publishable in isolation.
+    let owned_relative = format!(
+        "versions/1.2.3-{}/host.exe",
+        Digest::of(b"owned-host").to_hex()
+    );
+    let owned_executable = paths.versions().join(
+        owned_relative
+            .strip_prefix("versions/")
+            .expect("versions-relative fixture"),
+    );
+    fs::create_dir_all(owned_executable.parent().expect("version directory"))
+        .expect("version directory");
+    fs::write(&owned_executable, b"owned-host").expect("owned fixture executable");
+
+    // The live registration at our fixed path already belongs to another
+    // product: its target is outside our root.
+    let foreign_directory = temp.path().join("foreign");
+    fs::create_dir_all(&foreign_directory).expect("foreign directory");
+    let foreign_executable = foreign_directory.join("host.exe");
+    fs::write(&foreign_executable, b"foreign-host").expect("foreign executable");
+    let foreign_manifest = manifest_bytes(&paths, &foreign_executable);
+    fs::write(paths.registration_path(), &foreign_manifest).expect("foreign live registration");
+
+    let owned_manifest = manifest_bytes(&paths, &owned_executable);
+    let owned = Registration::new(owned_manifest.clone()).expect("bounded");
+    let before = snapshot(temp.path());
+    assert_eq!(
+        failure_code(platform.publish_registration(&paths, &owned)),
+        FailureCode::ForeignState,
+        "an owned manifest may not replace a foreign live registration"
+    );
+    assert_eq!(
+        snapshot(temp.path()),
+        before,
+        "the refused publish changes no bytes anywhere, including the live path"
+    );
+    assert_eq!(
+        fs::read(paths.registration_path()).expect("foreign registration survives"),
+        foreign_manifest,
+        "the foreign registration stays byte-for-byte intact"
+    );
+
+    // Once the foreign registration is explicitly resolved, an owned publish
+    // succeeds, and a later owned release may replace that owned preimage.
+    fs::remove_file(paths.registration_path()).expect("remove the foreign registration");
+    platform
+        .publish_registration(&paths, &owned)
+        .expect("a clean path accepts the owned manifest");
+    assert_eq!(
+        fs::read(paths.registration_path()).expect("published manifest"),
+        owned_manifest
+    );
+
+    let next_relative = format!(
+        "versions/1.2.4-{}/host.exe",
+        Digest::of(b"next-owned-host").to_hex()
+    );
+    let next_executable = paths.versions().join(
+        next_relative
+            .strip_prefix("versions/")
+            .expect("versions-relative fixture"),
+    );
+    fs::create_dir_all(next_executable.parent().expect("version directory"))
+        .expect("version directory");
+    fs::write(&next_executable, b"next-owned-host").expect("next fixture executable");
+    let next_manifest = manifest_bytes(&paths, &next_executable);
+    let next = Registration::new(next_manifest.clone()).expect("bounded");
+    platform
+        .publish_registration(&paths, &next)
+        .expect("an owned preimage is replaceable by an upgrade");
+    assert_eq!(
+        fs::read(paths.registration_path()).expect("upgraded manifest"),
+        next_manifest
     );
 }

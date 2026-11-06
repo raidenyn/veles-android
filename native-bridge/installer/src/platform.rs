@@ -1071,9 +1071,11 @@ pub trait Platform {
     /// Publish exact manifest bytes (and, natively on Windows, the HKCU value).
     ///
     /// The manifest must name this channel and an executable inside an owned
-    /// `versions/` or `maintenance/` directory. The caller must establish
-    /// ownership of any pre-existing registration (see
-    /// [`claim_owned_registration`]) before asking to replace it.
+    /// `versions/` or `maintenance/` directory. A live registration may be
+    /// replaced only when its exact bytes equal `value` (idempotent republish)
+    /// or it is a previously published owned manifest (an upgrade). Any other
+    /// live registration yields `ForeignState` and is left byte-for-byte
+    /// intact; this layer never assumes the caller established ownership.
     fn publish_registration(&self, paths: &InstallPaths, value: &Registration)
     -> InstallResult<()>;
     /// Remove only the registration whose exact bytes match `expected`.
@@ -1623,6 +1625,15 @@ fn executable_in_owned_scope(paths: &InstallPaths, executable: &Path) -> Install
 
 fn publish_registration_checked(paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
     validate_registration_manifest(paths, value.manifest())?;
+    // A publish may replace our own previous manifest (an upgrade), but it must
+    // never silently steal a registration another product owns. Check the live
+    // manifest before staging anything so a refusal mutates nothing.
+    if let Some(live) = read_registration_from(paths.registration_path())?
+        && !value.matches_published(&live)
+        && !is_owned_registration_preimage(paths, &live)
+    {
+        return Err(foreign_state());
+    }
     ensure_layout(paths)?;
     let staged_relative = format!("{STATE_DIR}/{STAGING_DIR}/registration.json");
     // A previous attempt may have left the staging file behind. Re-adopt it as
@@ -1638,6 +1649,38 @@ fn publish_registration_checked(paths: &InstallPaths, value: &Registration) -> I
     let staged = staged.adopt(PathKind::File)?;
     let live = registration_target(paths)?;
     replace_manifest_checked(&staged, &live)
+}
+
+/// Whether an existing live registration is a previously published manifest of
+/// this installer (an upgrade preimage) rather than a foreign product's.
+///
+/// A preimage is accepted only when it names this channel and selects an
+/// executable inside the fixed root's owned `versions/` or `maintenance/`
+/// scope. The check is lexical, so it does not require the previous executable
+/// to still exist: a partial upgrade can leave a manifest whose payload was
+/// already removed, and that manifest is still ours to replace. The root is
+/// also compared in canonical form when it resolves, so a trusted-ancestor
+/// alias (for example macOS `/var` -> `/private/var`) does not make our own
+/// manifest look foreign.
+fn is_owned_registration_preimage(paths: &InstallPaths, live: &Registration) -> bool {
+    let Ok(manifest) = parse_manifest(live.manifest()) else {
+        return false;
+    };
+    if manifest.name != paths.registration_name() {
+        return false;
+    }
+    let Ok(executable) = manifest.executable() else {
+        return false;
+    };
+    let owned_under = |root: &Path| {
+        relative_to_root(root, &executable)
+            .and_then(|relative| normalize_relative(&relative).ok())
+            .is_some_and(|normalized| is_owned_executable_scope(&normalized))
+    };
+    owned_under(paths.root())
+        || fs::canonicalize(paths.root())
+            .map(|root| owned_under(&root))
+            .unwrap_or(false)
 }
 
 fn remove_registration_checked(paths: &InstallPaths, expected: &Registration) -> InstallResult<()> {
