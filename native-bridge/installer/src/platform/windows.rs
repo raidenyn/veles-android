@@ -73,8 +73,8 @@ use windows::Wdk::Storage::FileSystem::{
 use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER, ERROR_PATH_NOT_FOUND, GENERIC_READ,
-    GENERIC_WRITE, HANDLE, HLOCAL, HWND, LocalFree, NTSTATUS, OBJ_CASE_INSENSITIVE,
-    STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
+    HANDLE, HLOCAL, HWND, LocalFree, NTSTATUS, OBJ_CASE_INSENSITIVE, STATUS_INFO_LENGTH_MISMATCH,
+    STATUS_SUCCESS, UNICODE_STRING,
 };
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -93,11 +93,13 @@ use windows::Win32::Security::{
 };
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR};
 use windows::Win32::Storage::FileSystem::{
-    COPY_FILE_FAIL_IF_EXISTS, COPYFILE2_EXTENDED_PARAMETERS, CopyFile2, CreateFileW,
-    FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BEGIN,
-    FILE_DISPOSITION_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    FileDispositionInfo, FlushFileBuffers, GETFINALPATHNAMEBYHANDLE_FLAGS, GetFileSizeEx,
-    OPEN_EXISTING, ReadFile, SetFileInformationByHandle, SetFilePointerEx,
+    CreateFileW, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN,
+    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_BASIC_INFO, FILE_BEGIN,
+    FILE_DISPOSITION_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FileBasicInfo, FileDispositionInfo, FlushFileBuffers,
+    GETFINALPATHNAMEBYHANDLE_FLAGS, GetFileInformationByHandleEx, GetFileSizeEx, OPEN_EXISTING,
+    ReadFile, SetFileInformationByHandle, SetFilePointerEx, WriteFile,
 };
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
 use windows::Win32::System::Registry::{
@@ -150,6 +152,25 @@ const MAX_PROCESS_LIST_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PROCESS_LIST_ATTEMPTS: usize = 8;
 /// Bound for one process image path (32767 WCHARs plus the terminator).
 const MAX_PROCESS_IMAGE_CHARS: usize = 32_768;
+/// Chunk size for the carrier data copy.
+///
+/// The destination is created by this adapter and filled through `WriteFile`, so
+/// the copy is bounded per call instead of being handed to a path-based
+/// `CopyFile2`.
+const CARRIER_COPY_CHUNK: usize = 1024 * 1024;
+/// Attribute bits carried from the package source to the installed carrier.
+///
+/// `FILE_ATTRIBUTE_READONLY` is deliberately **not** carried: every entry in the
+/// installer-owned tree must stay removable by the journaled cleanup (and by the
+/// install's own failure discard), so a read-only carrier image would leave an
+/// uninstallable file. The namespace/filesystem bits (`FILE_ATTRIBUTE_DIRECTORY`,
+/// `FILE_ATTRIBUTE_REPARSE_POINT`, compressed/encrypted/sparse) never describe the
+/// regular file created here and are not settable through `FileBasicInfo`.
+const COPIED_ATTRIBUTE_MASK: u32 = FILE_ATTRIBUTE_ARCHIVE.0
+    | FILE_ATTRIBUTE_HIDDEN.0
+    | FILE_ATTRIBUTE_SYSTEM.0
+    | FILE_ATTRIBUTE_TEMPORARY.0
+    | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED.0;
 
 /// The HKCU key Native Messaging publication uses in production.
 ///
@@ -2292,131 +2313,251 @@ impl NativeFs for WindowsPlatform {
         if source.kind() != PackageKind::File || destination.kind() != PathKind::NewFile {
             return Err(invalid_package());
         }
-        // The mutation must be anchored: the destination's whole parent chain is
-        // opened and identity-checked **first**, and the path handed to the
-        // path-based `CopyFile2` is then rebuilt from that opened handle (the
-        // volume path Windows reports for it) plus the single validated leaf
-        // name. A swapped ancestor therefore cannot redirect the copy: the
-        // anchor is verified immediately before the mutation, and a name that is
-        // not a plain child of it is `ForeignState`.
-        //
-        // `CopyFile2` is still path-based, so it resolves the name a second time
-        // inside the call. That is accepted under the recorded same-user scope
-        // (a same-user attacker inside the private root is out of scope); the
-        // copy is nevertheless re-verified: the identity of the object it created
-        // is read from the opened destination handle, the whole captured chain is
-        // opened again, the anchor's identity must be the same object, and the
-        // directory's rendered path must still be the one the copy used. On a
-        // redirect only the **exact object whose identity was recorded** is
-        // removed (never whatever else occupies the name), and the install
-        // reports `ForeignState` instead of adopting a file from outside the
-        // validated tree. Residual, documented: an attacker who redirects a path
-        // and restores it before the re-check can still make the copy land
-        // elsewhere — that requires write access to the installer's private tree
-        // and is out of scope by policy.
+        // The destination's whole parent chain is opened and identity-checked
+        // **first**, and the leaf is then created **relative to that handle** with
+        // `FILE_CREATE` (exclusive, no follow). The handle returned by the create
+        // *is* the object this install owns, from the first instant: no name is
+        // resolved again to learn what was created, so a redirected path can never
+        // make the installer label somebody else's occupant "the copy's file".
         let handle = destination.dir_handle()?;
         let anchor_path = final_path_of(handle.handle())?;
         let leaf = destination.leaf_name()?.to_os_string();
-        let expected = anchor_path.join(&leaf);
-        if !crate::platform::same_path(&expected, destination.rendered()) {
-            // The anchored parent does not render to the validated path: refuse
-            // before anything is copied.
+        // The anchored parent must still render to the validated path, so the
+        // path the journal records is the one the object is created at. This is a
+        // consistency assertion, not the mutation: the create below is relative to
+        // `handle` and no path is handed to the OS for it.
+        if !crate::platform::same_path(&anchor_path.join(&leaf), destination.rendered()) {
             return Err(foreign_state());
         }
-        let from = wide_path(source.path())?;
-        let to = wide_path(&expected)?;
-        let parameters = COPYFILE2_EXTENDED_PARAMETERS {
-            dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32,
-            dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS,
-            ..Default::default()
-        };
-        // CopyFile2 copies the complete file including every data stream and
-        // extended attribute (it is the documented superset of CopyFileEx), so
-        // the Authenticode signature and its secondary data survive the install.
-        // SAFETY: both paths are NUL-terminated live buffers and `parameters` is
-        // a correctly sized, fully initialized structure.
-        unsafe {
-            CopyFile2(
-                PCWSTR(from.as_ptr()),
-                PCWSTR(to.as_ptr()),
-                Some(&parameters),
-            )
-        }
-        .map_err(|_| io_failure())?;
-        // Record the identity of the object the copy created **from the opened
-        // destination handle**, relative to the anchored parent and before the
-        // anchor re-check. That identity — not the name — is the only thing a
-        // later discard may delete: an occupant that appeared at the leaf is not
-        // provably ours. If the leaf cannot be opened at all, there is no identity
-        // to bind and the install reports `ForeignState` without removing
-        // anything.
-        let created_file = match open_below(
+        let mut created_file = open_below(
             handle.handle(),
             &leaf,
-            GENERIC_READ.0 | GENERIC_WRITE.0,
-            NT_FILE_OPEN,
+            ACCESS_RWD,
+            NT_FILE_CREATE,
             FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT,
-        ) {
-            Ok(file) => file,
-            Err(_) => return Err(foreign_state()),
-        };
-        let metadata = created_file.metadata().map_err(|_| io_failure())?;
-        if !metadata.is_file()
-            || metadata.len() == 0
-            || is_reparse(&created_file).map_err(|_| io_failure())?
-        {
-            return Err(unsafe_path());
-        }
+        )?;
+        // The identity is read from **that created handle**, not from a later open
+        // of the name.
         let created = crate::platform::identity_of_file(&created_file)?;
-        // The anchor must still be the object (and the path) the copy was built
-        // from; otherwise the copy is not adopted. The only thing that may then be
-        // removed is the exact object whose identity was just recorded.
-        if !anchor_still_names(destination, &handle, &anchor_path) {
+        let outcome = (|| {
+            let metadata = created_file.metadata().map_err(|_| io_failure())?;
+            if !metadata.is_file()
+                || metadata.len() != 0
+                || is_reparse(&created_file).map_err(|_| io_failure())?
+            {
+                return Err(unsafe_path());
+            }
+            // The created object is populated through its own handle: the source
+            // image is opened separately (no link followed, no writer admitted)
+            // and the bytes are transferred with `WriteFile` in bounded chunks,
+            // so no path is resolved for the copy.
+            let mut source_file = open_carrier_source(source.path())?;
+            let expected = source_file.metadata().map_err(|_| io_failure())?.len();
+            if expected == 0 || expected > crate::platform::MAX_CARRIER_BYTES as u64 {
+                return Err(invalid_package());
+            }
+            if copy_carrier_stream(&mut source_file, &mut created_file)? != expected {
+                return Err(io_failure());
+            }
+            // Basic metadata (attributes and timestamps) is applied to the same
+            // created handle; `CopyFile2` used to carry it implicitly.
+            copy_carrier_metadata(&source_file, &created_file)?;
+            // The copied bytes and the applied metadata are durable before the
+            // destination may be journalled.
+            created_file.sync_all().map_err(|_| io_failure())?;
+            Ok(())
+        })();
+        if let Err(failure) = outcome {
+            // Remove only the object this call created, through the name the
+            // identity recorded is checked against. A refused removal leaves a
+            // leftover that the journaled cleanup reports.
+            drop(created_file);
+            match discard_created_leaf(&handle, &leaf, created) {
+                Err(discard) if discard.code == FailureCode::CleanupPending => return Err(discard),
+                _ => return Err(failure),
+            }
+        }
+        // The install may only claim the destination if the captured ancestor
+        // chain still names the validated anchor **and** the destination name
+        // still names the object this call created. A mismatch is never success:
+        // the object is discarded only when the name still holds it, and the
+        // install reports `ForeignState` (or `CleanupPending` when it cannot be
+        // removed).
+        if !anchor_still_names(destination, &handle) || !leaf_still_names(&handle, &leaf, created) {
             drop(created_file);
             return discard_created_leaf(&handle, &leaf, created);
         }
-        // The copied object is verified **through the anchored handle**: it is the
-        // plain regular file opened above, and it is flushed while still writable.
-        created_file.sync_all().map_err(|_| io_failure())?;
         drop(created_file);
         NativeFs::flush_parent(self, destination)
     }
 }
 
-/// Re-check the carrier copy's anchor after the path-based copy.
+/// Re-check the carrier install's anchor after populating the destination.
 ///
-/// The captured ancestor chain is opened a second time (every identity
-/// compared), the anchor must be the same object the copy was built from, and
-/// the directory's rendered path must still equal the path handed to
-/// `CopyFile2`. `false` means the copy may have landed outside the validated
-/// tree and must not be adopted.
+/// The captured ancestor chain is opened a second time; `dir_handle` compares
+/// every opened ancestor with the identity validation captured, and the anchor
+/// must still be the same object the destination leaf was created under. `false`
+/// means the destination is no longer anchored to the validated tree. No
+/// rendered-path comparison is needed any more: the creation was relative to this
+/// handle, so no pathname was ever handed to the OS for the mutation.
 fn anchor_still_names(
     destination: &ValidatedPath,
     before: &super::native::anchor::DirectoryHandle,
-    anchor_path: &Path,
 ) -> bool {
-    let Ok(after) = destination.dir_handle() else {
-        return false;
-    };
-    if after.identity() != before.identity() {
-        return false;
-    }
-    match final_path_of(after.handle()) {
-        Ok(now) => crate::platform::same_path(&now, anchor_path),
+    match destination.dir_handle() {
+        Ok(after) => after.identity() == before.identity(),
         Err(_) => false,
     }
 }
 
-/// Remove the leaf this call created, **only** when it is still the object whose
-/// identity was recorded from the destination handle.
+/// Whether the destination name still holds exactly the object this install
+/// created.
 ///
-/// Only called when the post-copy anchor re-check failed. The entry is opened
-/// with no-follow semantics relative to the anchored directory handle, must be a
-/// plain regular file, and its **current identity** must equal the identity the
-/// copy recorded; only then is it deleted with the handle-bound
-/// `FileDispositionInfo`. An occupant that is not that object is left untouched
-/// and reported as `ForeignState` (the journaled cleanup then reports the
-/// leftover), and a refused deletion of the proven object is `CleanupPending`.
+/// The leaf is opened relative to the anchored parent with no-follow semantics and
+/// as a plain regular file, so a link, a directory or a replaced file all answer
+/// `false` and are never adopted.
+fn leaf_still_names(
+    handle: &super::native::anchor::DirectoryHandle,
+    leaf: &OsStr,
+    created: crate::platform::FileIdentity,
+) -> bool {
+    match open_created_leaf(handle, leaf) {
+        Ok(current) => matches!(
+            crate::platform::identity_of_file(&current),
+            Ok(identity) if identity == created
+        ),
+        Err(_) => false,
+    }
+}
+
+/// Open the package carrier image for reading.
+///
+/// `FILE_SHARE_READ` only, so no writer can change the bytes while they are
+/// copied; `FILE_FLAG_OPEN_REPARSE_POINT` opens a link as itself and the caller
+/// refuses it rather than following it.
+fn open_carrier_source(path: &Path) -> InstallResult<File> {
+    let wide = wide_path(path)?;
+    // SAFETY: `wide` is NUL-terminated and outlives the call.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            GENERIC_READ.0,
+            FILE_SHARE_READ,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+    }
+    .map_err(|_| io_failure())?;
+    // SAFETY: CreateFileW transferred ownership of the handle.
+    let file = unsafe { File::from_raw_handle(handle.0) };
+    if is_reparse(&file).map_err(|_| io_failure())? {
+        return Err(unsafe_path());
+    }
+    if !file.metadata().map_err(|_| io_failure())?.is_file() {
+        return Err(unsafe_path());
+    }
+    Ok(file)
+}
+
+/// Copy one opened source stream into the opened destination handle.
+///
+/// Fixed-size chunks, both handles already opened: the byte count is bounded by
+/// the length the caller checked, and a short write is an I/O failure rather than
+/// a silently truncated image.
+fn copy_carrier_stream(source: &mut File, destination: &mut File) -> InstallResult<u64> {
+    let mut buffer = vec![0u8; CARRIER_COPY_CHUNK];
+    let mut total = 0u64;
+    loop {
+        let mut read = 0u32;
+        // SAFETY: both handles are live for the call and the buffer and
+        // out-parameter outlive it.
+        unsafe {
+            ReadFile(
+                HANDLE(source.as_raw_handle()),
+                Some(buffer.as_mut_slice()),
+                Some(&mut read),
+                None,
+            )
+        }
+        .map_err(|_| io_failure())?;
+        if read == 0 {
+            return Ok(total);
+        }
+        total = total.saturating_add(u64::from(read));
+        if total > crate::platform::MAX_CARRIER_BYTES as u64 {
+            return Err(invalid_package());
+        }
+        let mut written = 0u32;
+        // SAFETY: both handles are live for the call and the slice and
+        // out-parameter outlive it.
+        unsafe {
+            WriteFile(
+                HANDLE(destination.as_raw_handle()),
+                Some(&buffer[..read as usize]),
+                Some(&mut written),
+                None,
+            )
+        }
+        .map_err(|_| io_failure())?;
+        if written != read {
+            return Err(io_failure());
+        }
+    }
+}
+
+/// Apply the source image's attributes and timestamps to the created destination.
+///
+/// `SetFileInformationByHandle(FileBasicInfo)` is called on the very handle this
+/// install created. `ChangeTime` is zero (leave unchanged: it is not settable
+/// through this information class) and `FILE_ATTRIBUTE_READONLY` is not carried
+/// (see [`COPIED_ATTRIBUTE_MASK`]); everything else that can describe the created
+/// regular file is copied.
+fn copy_carrier_metadata(source: &File, destination: &File) -> InstallResult<()> {
+    let mut source_info = FILE_BASIC_INFO::default();
+    // SAFETY: `source` is a live handle and the out-structure is correctly sized.
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(source.as_raw_handle()),
+            FileBasicInfo,
+            (&mut source_info as *mut FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    }
+    .map_err(|_| io_failure())?;
+    let mut applied = FILE_BASIC_INFO {
+        CreationTime: source_info.CreationTime,
+        LastAccessTime: source_info.LastAccessTime,
+        LastWriteTime: source_info.LastWriteTime,
+        ChangeTime: 0,
+        FileAttributes: source_info.FileAttributes & COPIED_ATTRIBUTE_MASK,
+    };
+    // SAFETY: `destination` is the live handle this install created with write
+    // access and `applied` is a correctly sized FILE_BASIC_INFO.
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(destination.as_raw_handle()),
+            FileBasicInfo,
+            (&mut applied as *mut FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    }
+    .map_err(|_| io_failure())
+}
+
+/// Remove the leaf this call created, **only** when it is still the object whose
+/// identity was recorded from the creation handle.
+///
+/// The entry is opened with no-follow semantics relative to the anchored
+/// directory handle, must be a plain regular file, and its **current identity**
+/// must equal the identity read from the handle this install created; only then
+/// is it deleted with the handle-bound `FileDispositionInfo`. An occupant that is
+/// not that object is left untouched and reported as `ForeignState` (the journaled
+/// cleanup then reports the leftover), and a refused deletion of the proven object
+/// is `CleanupPending`. The portable helper always returns an error: this is the
+/// failure path of a carrier install, so a successful removal still must not be
+/// reported as a successful install.
 fn discard_created_leaf(
     handle: &super::native::anchor::DirectoryHandle,
     leaf: &OsStr,
@@ -2459,8 +2600,9 @@ fn open_created_leaf(
 
 /// The volume path Windows reports for one opened handle.
 ///
-/// Used to rebuild a destination path from an already-anchored directory handle
-/// instead of trusting the rendered path for a path-based mutation.
+/// Used to assert that the anchored parent handle names the validated path the
+/// journal records. The mutation itself is performed relative to the handle, so
+/// this path is never handed to the OS for the create or the write.
 fn final_path_of(handle: HANDLE) -> InstallResult<PathBuf> {
     use windows::Win32::Storage::FileSystem::{
         FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW, VOLUME_NAME_DOS,

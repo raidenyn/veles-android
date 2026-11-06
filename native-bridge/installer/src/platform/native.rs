@@ -49,9 +49,8 @@
 //! attacker can still rename a verified entry between the identity re-read and
 //! the following name-based deletion on macOS (there is no `funlinkat`), and the
 //! installer deliberately does not try to win that race. It verifies identity
-//! immediately before the deletion (and again after the one path-based copy),
-//! refuses to overwrite an unexpected entry, and reports the mismatch instead of
-//! claiming atomicity the OS does not offer.
+//! immediately before the deletion, refuses to overwrite an unexpected entry, and
+//! reports the mismatch instead of claiming atomicity the OS does not offer.
 //!
 //! # Durability
 //!

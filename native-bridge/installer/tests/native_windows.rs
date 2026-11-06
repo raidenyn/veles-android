@@ -20,9 +20,9 @@ use veles_bridge_installer::cleanup::{
     CleanupReason, CleanupStatus, HelperRun, run_cleanup_helper_detailed,
 };
 use veles_bridge_installer::{
-    Channel, Digest, FailureCode, InstallPaths, NativeManifest, PathKind, Platform, Registration,
-    RegistryView, RemoveOutcome, StateDocument, Target, ValidatedPath, WindowsCleanupRoot,
-    WindowsPlatform, extension_origin,
+    Channel, Digest, FailureCode, InstallPaths, NativeManifest, PackageSource, PathKind, Platform,
+    Registration, RegistryView, RemoveOutcome, StateDocument, Target, ValidatedPath,
+    WindowsCleanupRoot, WindowsPlatform, extension_origin,
 };
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -543,6 +543,73 @@ fn cleanup_root_does_not_follow_a_planted_reparse_point() {
     assert!(
         WindowsCleanupRoot::open(&linked_parent.join("NativeBridge")).is_err(),
         "a junction above the cleanup root is refused, never followed"
+    );
+}
+
+/// The carrier install creates and populates its own destination object.
+///
+/// The destination leaf is created with an exclusive `NtCreateFile(FILE_CREATE)`
+/// relative to the anchored parent, so the identity the install records comes
+/// from the handle it created — never from a later open of the name — and the
+/// image is written through that same handle in bounded chunks. The source bytes
+/// and its last-write time reach the created file, and an existing destination
+/// object is refused and left byte-for-byte intact instead of being adopted or
+/// overwritten.
+#[test]
+fn carrier_install_creates_its_own_destination_object() {
+    let temp = TempRoot::new("carrier");
+    let paths = windows_paths(&temp);
+    let platform = test_platform();
+    let _lock = platform.lock(&paths).expect("lock");
+
+    let directory = ValidatedPath::new_directory(&paths, Path::new("versions/1.0.0-aaaa"))
+        .expect("version dir");
+    platform.create_directory(&directory).expect("version dir");
+
+    let source_path = temp.path().join("package").join("carrier.exe");
+    fs::create_dir_all(source_path.parent().expect("package dir")).expect("package dir");
+    // Larger than one copy chunk, so the bounded-chunk loop is exercised.
+    let bytes: Vec<u8> = (0..(2 * 1024 * 1024 + 7))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    fs::write(&source_path, &bytes).expect("source image");
+    let source = PackageSource::open(&source_path).expect("package source");
+    let source_modified = fs::metadata(&source_path)
+        .expect("source metadata")
+        .modified()
+        .expect("source last-write time");
+
+    let destination = ValidatedPath::new_file(&paths, Path::new("versions/1.0.0-aaaa/carrier.exe"))
+        .expect("destination handle");
+    platform
+        .install_carrier(&source, &destination)
+        .expect("carrier install");
+    let installed = paths.root().join("versions/1.0.0-aaaa/carrier.exe");
+    assert_eq!(fs::read(&installed).expect("installed bytes"), bytes);
+    assert_eq!(
+        fs::metadata(&installed)
+            .expect("installed metadata")
+            .modified()
+            .expect("installed last-write time"),
+        source_modified,
+        "the source last-write time is applied through the created handle"
+    );
+
+    // A pre-existing object at a validated fresh name is never adopted: the
+    // install refuses (the fresh-name revalidation fails before the anchored
+    // exclusive create can even be attempted) and the occupant keeps its bytes.
+    let occupied = ValidatedPath::new_file(&paths, Path::new("versions/1.0.0-aaaa/occupied.exe"))
+        .expect("fresh destination handle");
+    let occupied_path = paths.root().join("versions/1.0.0-aaaa/occupied.exe");
+    fs::write(&occupied_path, b"foreign occupant").expect("foreign occupant");
+    let failure = platform
+        .install_carrier(&source, &occupied)
+        .expect_err("an existing destination object is never adopted");
+    assert_eq!(failure.code, FailureCode::UnsafePath);
+    assert_eq!(
+        fs::read(&occupied_path).expect("preserved occupant"),
+        b"foreign occupant",
+        "the occupant is byte-for-byte intact"
     );
 }
 

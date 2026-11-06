@@ -17,13 +17,13 @@
 //!
 //! The guarantee is: every mutation is performed relative to an opened,
 //! identity-verified directory handle, the identity is checked **immediately
-//! before** the mutation, and a mismatch aborts instead of proceeding. The one
-//! mutation whose OS primitive re-resolves a pathname (the Windows carrier copy)
-//! re-verifies the anchor immediately **after** the call and removes the copy on
-//! a mismatch. A component above the anchor is opened with
-//! `O_NOFOLLOW`/`FILE_OPEN_REPARSE_POINT`; a link there is refused, never
-//! followed, and the path is never canonicalised first (a canonicalised walk
-//! would silently accept a tree the link points at).
+//! before** the mutation, and a mismatch aborts instead of proceeding. Creation
+//! and population are handle-relative too: the Windows carrier destination is
+//! created with an exclusive `NtCreateFile` below the anchored parent and filled
+//! through that handle, so no pathname is resolved for it. A component above the
+//! anchor is opened with `O_NOFOLLOW`/`FILE_OPEN_REPARSE_POINT`; a link there is
+//! refused, never followed, and the path is never canonicalised first (a
+//! canonicalised walk would silently accept a tree the link points at).
 //!
 //! **Out of scope (Task 2 policy, reconfirmed for this task):** a *same-user*
 //! attacker who can already write inside the private `0700` root. On macOS
@@ -33,8 +33,8 @@
 //! to win that race: it verifies identity immediately before the deletion,
 //! refuses to overwrite an unexpected entry where the OS allows it, and reports
 //! the mismatch rather than claiming atomicity it cannot provide. (On Windows
-//! the deletion itself is handle-bound; the residual there is the path-based
-//! `CopyFile2` in the carrier install, documented on that function.) The threats
+//! the deletion itself is handle-bound, and the carrier destination is created
+//! through the anchor, so the same residual does not exist there.) The threats
 //! actually defended against are a *different* principal, a link planted in place
 //! of an installer-owned directory, and a crash between steps — not a malicious
 //! same-user administrator.

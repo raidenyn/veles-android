@@ -17,14 +17,15 @@
 //! fails closed and a leaf swapped between hashing and unlinking is preserved.
 //!
 //! The guarantee is stated exactly: identity is verified immediately before each
-//! mutation (and again after the one primitive that re-resolves a pathname, the
-//! Windows carrier copy) and a mismatch aborts, removing only what the call
-//! created. A **same-user** attacker who can already write inside the private
-//! `0700` root is deliberately out of scope (the Task 2 policy): on macOS it can
-//! rename an entry between the identity re-read and the name-based `unlinkat`,
-//! and the platform offers no `funlinkat` that would close that window. The
-//! installer reports the mismatch instead of claiming atomicity it does not have.
-//! A path above the mutation anchor is walked with
+//! mutation and a mismatch aborts, removing only what the call created. Creation
+//! is handle-relative as well (the Windows carrier destination is created with an
+//! exclusive `NtCreateFile` below the anchored parent and populated through that
+//! handle), so no pathname is re-resolved for it. A **same-user** attacker who can
+//! already write inside the private `0700` root is deliberately out of scope (the
+//! Task 2 policy): on macOS it can rename an entry between the identity re-read
+//! and the name-based `unlinkat`, and the platform offers no `funlinkat` that would
+//! close that window. The installer reports the mismatch instead of claiming
+//! atomicity it does not have. A path above the mutation anchor is walked with
 //! no-follow/`FILE_OPEN_REPARSE_POINT` semantics and is never canonicalised
 //! first, so a link planted there is refused rather than resolved into a tree the
 //! installer did not create.
@@ -687,21 +688,27 @@ pub(crate) fn identity_of_file(file: &File) -> InstallResult<FileIdentity> {
     })
 }
 
-/// Discard exactly one leaf that a path-based carrier copy created.
+/// Discard exactly one leaf that a carrier install created.
 ///
-/// `created` is the identity recorded from the **destination handle** right
-/// after the copy; `current` re-reads what now occupies the leaf (relative to
-/// the same anchored parent) and `delete` removes the object that was re-read.
-/// Only the recorded object may be removed:
+/// `created` is the identity read from the handle that created the destination;
+/// `current` re-reads what now occupies the leaf (relative to the same anchored
+/// parent) and `delete` removes the object that was re-read. Only the recorded
+/// object may be removed:
 ///
 /// * the leaf no longer holds that object (a file that appeared at the name, a
 ///   link, a directory, an unreadable identity) → nothing is deleted and the
-///   install reports `ForeignState`; the journaled cleanup then reports the
+///   caller is told `ForeignState`; the journaled cleanup then reports the
 ///   leftover (`LeftoverFiles` / `CleanupPending`) instead of this call
 ///   destroying foreign content;
 /// * the leaf still holds it but the deletion is refused → the leftover is
 ///   reported as `CleanupPending`;
-/// * otherwise the object is removed and the call succeeds.
+/// * the object is removed → the caller is still told `ForeignState`.
+///
+/// This function is **only** usable on a carrier install's failure path: it
+/// exists because the destination could not be proven to be the object the
+/// install created, so it never reports success. A successful removal must not
+/// turn a detected mismatch into a successful installation — the caller has to
+/// surface `ForeignState` and let the transaction roll back.
 #[cfg(any(windows, test))]
 pub(crate) fn discard_created_leaf<C, D>(
     created: FileIdentity,
@@ -714,9 +721,14 @@ where
 {
     let current = current().ok().flatten();
     if current != Some(created) {
-        return Err(InstallFailure::new(FailureCode::ForeignState));
+        return Err(foreign_state());
     }
-    delete().map_err(|_| InstallFailure::new(FailureCode::CleanupPending))
+    match delete() {
+        // The object was removed, but the install still failed: deleting our own
+        // half-written carrier is not evidence that the destination is ours.
+        Ok(()) => Err(foreign_state()),
+        Err(_) => Err(InstallFailure::new(FailureCode::CleanupPending)),
+    }
 }
 
 #[cfg(not(unix))]
@@ -2640,13 +2652,15 @@ pub trait Platform {
     /// directory (`carrier.exe` as a `NewFile`, `carrier.app` as a
     /// `NewDirectory`). The implementation must preserve everything the OS
     /// signature assessment covers - extended attributes, resource forks and
-    /// link targets on macOS, Authenticode and extended attributes on Windows -
-    /// so the installed artifact still verifies in place later.
+    /// link targets on macOS, the Authenticode image plus file attributes and
+    /// timestamps on Windows - so the installed artifact still verifies in place
+    /// later.
     ///
     /// The default fails closed ([`FailureCode::UnsupportedTarget`]): a portable
     /// byte copy would authenticate at its source and then fail the retained
     /// verification, so only a native adapter may install a carrier. Task 8
-    /// implements it with `CopyFile2`/`copyfile(3)`.
+    /// implements it with an exclusive anchored create plus a bounded write and
+    /// `SetFileInformationByHandle` on Windows, and `copyfile(3)` on macOS.
     fn install_carrier(
         &self,
         source: &PackageSource,
@@ -4199,11 +4213,11 @@ mod tests {
         ));
     }
 
-    /// A leaf that no longer holds the object the carrier copy created is never
-    /// deleted: the install reports `ForeignState` and the file is preserved, so
-    /// the journaled cleanup reports the leftover instead of this call destroying
-    /// foreign content. A refused deletion of the proven object is
-    /// `CleanupPending`, and an unreadable identity is treated as foreign.
+    /// A leaf that no longer holds the object the carrier install created is
+    /// never deleted: the install reports `ForeignState` and the file is
+    /// preserved, so the journaled cleanup reports the leftover instead of this
+    /// call destroying foreign content. An unreadable identity is equally
+    /// foreign.
     #[test]
     fn mismatched_leaf_identity_is_foreign_and_preserved() {
         use super::{discard_created_leaf, identity_of_file};
@@ -4215,8 +4229,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("carrier");
 
-        // The object the copy created.
-        std::fs::write(&path, b"created by the copy").expect("created file");
+        // The object the install created.
+        std::fs::write(&path, b"created by the install").expect("created file");
         let created = {
             let file = std::fs::File::open(&path).expect("open created");
             identity_of_file(&file).expect("created identity")
@@ -4265,27 +4279,48 @@ mod tests {
         );
         assert!(!deleted);
 
-        // The object whose identity was recorded is the one that may be removed.
-        let ours_path = dir.join("carrier-ours");
-        std::fs::write(&ours_path, b"ours").expect("ours");
+        std::fs::remove_dir_all(&dir).expect("temp dir cleanup");
+    }
+
+    /// A discard never turns a detected mismatch into a successful install.
+    ///
+    /// Removing the object the install itself created is the expected outcome,
+    /// and it must still be reported as `ForeignState`: the destination could not
+    /// be proven to be that object, so the carrier install may not return `Ok`.
+    /// A refused removal is `CleanupPending` (the leftover must be cleaned up),
+    /// never `ForeignState` and never `Ok`.
+    #[test]
+    fn discard_never_reports_the_install_as_successful() {
+        use super::{discard_created_leaf, identity_of_file};
+        use crate::model::{FailureCode, InstallFailure};
+
+        let unique = format!("veles-platform-discard-refusal-{}", std::process::id());
+        let dir = std::env::temp_dir().join(unique);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("carrier");
+        std::fs::write(&path, b"ours").expect("ours");
         let ours = {
-            let file = std::fs::File::open(&ours_path).expect("open ours");
+            let file = std::fs::File::open(&path).expect("open ours");
             identity_of_file(&file).expect("ours identity")
         };
+
+        // The recorded object is removed, and the install still fails.
         let mut removed = false;
-        discard_created_leaf(
+        let failure = discard_created_leaf(
             ours,
             || Ok(Some(ours)),
             || {
                 removed = true;
-                std::fs::remove_file(&ours_path).map_err(|_| InstallFailure::new(FailureCode::Io))
+                std::fs::remove_file(&path).map_err(|_| InstallFailure::new(FailureCode::Io))
             },
         )
-        .expect("the recorded object is discarded");
-        assert!(removed);
-        assert!(!ours_path.exists());
+        .expect_err("a successful discard is not a successful install");
+        assert_eq!(failure.code, FailureCode::ForeignState);
+        assert!(removed, "the recorded object is removed");
+        assert!(!path.exists());
 
-        // Ours, but the deletion is refused: a pending cleanup, not `ForeignState`.
+        // Ours, but the deletion is refused: the leftover is pending cleanup.
         assert_eq!(
             discard_created_leaf(
                 ours,
