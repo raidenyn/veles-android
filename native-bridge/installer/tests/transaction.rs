@@ -19,11 +19,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use veles_bridge_installer::{
     Channel, Digest, FailureCode, FakePlatform, Faults, HostState, InstallPaths, InventoryEntry,
-    JOURNAL_SCHEMA_VERSION, Journal, ManifestSnapshot, NativeManifest, Operation, OwnedClaim,
-    PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall, PolicyCarrierRefs, Receipt,
-    RegistrationPreimage, ReleaseDescriptor, ReleasePolicy, STATE_CLEAN, STATE_INSTALLED,
-    STATE_RECOVERED_ACTIVE, STATE_RECOVERED_PREVIOUS, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
-    Target, TrustProof, Version, authenticate_package, canonical_json, extension_origin, install,
+    JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot, NativeManifest,
+    Operation, PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall, PolicyCarrierRefs,
+    PortablePlatform, Receipt, ReceiptState, RegistrationPreimage, ReleaseDescriptor,
+    ReleasePolicy, STATE_CLEAN, STATE_INSTALLED, STATE_RECOVERED_ACTIVE, STATE_RECOVERED_PREVIOUS,
+    StateDocument, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof, Version,
+    WindowsPreimage, authenticate_package, canonical_json, extension_origin, install,
     parse_manifest, path_is_within, recover, write_carrier, write_inventory,
 };
 
@@ -290,7 +291,25 @@ impl Fixture {
     }
 
     fn receipt(&self) -> Option<Receipt> {
-        Receipt::load(&self.paths).expect("the committed receipt is readable")
+        match Receipt::load(&PortablePlatform::new(), &self.paths)
+            .expect("the committed receipt is readable")
+        {
+            ReceiptState::None => None,
+            ReceiptState::Committed(receipt) => Some(*receipt),
+            ReceiptState::Unreadable => panic!("the committed receipt must be interpretable"),
+        }
+    }
+
+    /// The durable journal slot, read through the platform boundary.
+    fn journal_state(&self) -> JournalState {
+        Journal::load(&PortablePlatform::new(), &self.paths).expect("the journal is readable")
+    }
+
+    fn assert_journal_closed(&self, context: &str) {
+        assert!(
+            matches!(self.journal_state(), JournalState::None),
+            "{context}: the transaction is closed"
+        );
     }
 
     fn assert_previous_complete(&self, context: &str) {
@@ -394,12 +413,7 @@ impl Fixture {
             }
         }
 
-        assert!(
-            Journal::load(&self.paths)
-                .expect("the journal is readable")
-                .is_none(),
-            "{context}: the transaction is closed after recovery"
-        );
+        self.assert_journal_closed(context);
     }
 
     /// Pre-existing files this installer does not own; the fixed root layout
@@ -442,12 +456,28 @@ impl Fixture {
     /// A journal a crashed process could have left behind: it claims this
     /// installer owns the registration preimage and is mid-activation.
     fn crafted_journal(&self, preimage: &[u8]) -> Journal {
+        self.crafted_journal_with_windows(preimage, None)
+    }
+
+    /// The same crafted journal with an explicit HKCU preimage, as a native
+    /// Windows adapter would have journaled it.
+    fn crafted_journal_with_windows(
+        &self,
+        preimage: &[u8],
+        windows: Option<(&str, Option<&str>)>,
+    ) -> Journal {
         let executable = self
             .prior_version_dir
             .as_ref()
             .expect("the upgrade fixture has a previous version")
             .join("host.exe");
         let next_manifest = manifest_bytes(&self.paths, &executable, "crashed transaction");
+        let registration_preimage = match windows {
+            Some((key, value)) => RegistrationPreimage::new(Digest::of(preimage))
+                .with_windows(key.to_owned(), value.map(str::to_owned))
+                .expect("bounded Windows preimage"),
+            None => RegistrationPreimage::new(Digest::of(preimage)),
+        };
         Journal {
             schema: JOURNAL_SCHEMA_VERSION,
             transaction_id: "0123456789abcdef0123456789abcdef".to_owned(),
@@ -467,7 +497,7 @@ impl Fixture {
             old_payload_id: self.prior_payload_id,
             manifest: ManifestSnapshot::new(next_manifest).expect("bounded manifest"),
             old_manifest: Some(ManifestSnapshot::new(preimage.to_vec()).expect("bounded manifest")),
-            preimage: Some(RegistrationPreimage::new(Digest::of(preimage))),
+            preimage: Some(registration_preimage),
             policy: PolicyCarrierRefs::new(
                 Digest::of(b"descriptor"),
                 Digest::of(b"carrier"),
@@ -476,9 +506,11 @@ impl Fixture {
                 1,
             )
             .expect("bounded policy references"),
-            created: vec![OwnedClaim::file(
+            created: vec![JournalClaim::file(
                 format!("versions/2.0.0-{}/host.exe", self.payload_id().to_hex()),
                 Digest::of(HOST_V2),
+                HOST_V2.len() as u64,
+                false,
             )],
         }
     }
@@ -506,10 +538,14 @@ fn crash_at_every_durable_boundary() {
     for scenario in [Scenario::Fresh, Scenario::Upgrade] {
         let sequence = clean_mutations(scenario);
         let total = sequence.len();
-        // Every durable step class the brief names must actually be crossed.
+        // Every durable step class the brief names must actually be crossed,
+        // including the two separately journaled publication steps and state
+        // document replacement.
         for call in [
             PlatformCall::WriteDurable,
+            PlatformCall::WriteStateDocument,
             PlatformCall::CreateDirectory,
+            PlatformCall::PublishManifest,
             PlatformCall::PublishRegistration,
         ] {
             assert!(
@@ -553,10 +589,7 @@ fn crash_at_every_durable_boundary() {
                     "{context}: the injected death interrupts the transaction"
                 );
                 assert!(
-                    attempt == 1
-                        || Journal::load(&fixture.paths)
-                            .expect("the journal is readable")
-                            .is_some(),
+                    attempt == 1 || !matches!(fixture.journal_state(), JournalState::None),
                     "{context}: durable journal intent precedes the first asset mutation"
                 );
 
@@ -696,7 +729,8 @@ fn journal_claim_cannot_override_foreign_live_manifest() {
 }
 
 /// The journal is a closed document: unknown phases and schemas are rejected, a
-/// manifest digest must bind its bytes, and an unreadable document fails closed.
+/// manifest digest must bind its bytes, and an uninterpretable document is a
+/// distinct slot recovery can reconcile.
 #[test]
 fn journal_rejects_unknown_phase_and_unbound_manifest() {
     let temp = TempRoot::new();
@@ -743,8 +777,13 @@ fn journal_rejects_unknown_phase_and_unbound_manifest() {
         )
         .expect("bounded policy references"),
         created: vec![
-            OwnedClaim::directory(version_directory.clone()),
-            OwnedClaim::file(format!("{version_directory}/host.exe"), Digest::of(b"host")),
+            JournalClaim::directory(version_directory.clone()),
+            JournalClaim::file(
+                format!("{version_directory}/host.exe"),
+                Digest::of(b"host"),
+                4,
+                true,
+            ),
         ],
     };
 
@@ -790,35 +829,35 @@ fn journal_rejects_unknown_phase_and_unbound_manifest() {
         FailureCode::InvalidInput
     );
 
-    // An empty journal is "no transaction"; an unreadable one is not.
+    // An empty journal is "no transaction"; an uninterpretable one is a distinct
+    // slot that recovery reconciles instead of failing forever.
     fs::write(paths.journal_path(), b"").expect("empty journal");
-    assert!(
-        Journal::load(&paths)
-            .expect("an empty journal is not a document")
-            .is_none()
-    );
+    assert!(matches!(
+        Journal::load(&platform, &paths).expect("an empty journal is not a document"),
+        JournalState::None
+    ));
     fs::write(paths.journal_path(), b"{\"schema\":1}\n").expect("unreadable journal");
-    assert_eq!(
-        failure_code(Journal::load(&paths)),
-        FailureCode::RecoveryRequired,
-        "an uninterpretable journal fails closed with recovery guidance"
-    );
+    assert!(matches!(
+        Journal::load(&platform, &paths).expect("a torn journal is still readable bytes"),
+        JournalState::Unreadable
+    ));
 }
 
 #[test]
 fn registry_publish_failure_restores_preimage() {
-    // A first install that cannot publish removes only the assets it created.
+    // A first install whose manifest publication fails removes only the assets
+    // it created.
     {
         let fixture = Fixture::new(Scenario::Fresh);
         let unrelated = fixture.seed_unrelated_assets("seed unrelated assets");
         let sequence = clean_mutations(Scenario::Fresh);
-        let publish = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
+        let publish = position_of(&sequence, PlatformCall::PublishManifest) + 1;
         let platform = fixture.platform_with(Faults {
             fail_mutation_at: Some(publish),
             ..Faults::default()
         });
         let failure = install(&platform, &fixture.paths, fixture.package.clone())
-            .expect_err("a failed registry publication fails the install");
+            .expect_err("a failed manifest publication fails the install");
         assert_eq!(
             failure.code,
             FailureCode::Io,
@@ -840,12 +879,7 @@ fn registry_publish_failure_restores_preimage() {
             fixture.receipt().is_none(),
             "no receipt is committed for a failed first install"
         );
-        assert!(
-            Journal::load(&fixture.paths)
-                .expect("journal readable")
-                .is_none(),
-            "the rolled-back transaction releases its journal"
-        );
+        fixture.assert_journal_closed("failed first install");
         fixture.assert_unrelated_assets(&unrelated, "failed first install");
 
         // Recovery after the documented failure is a no-op, not a repair.
@@ -860,18 +894,19 @@ fn registry_publish_failure_restores_preimage() {
         );
     }
 
-    // An upgrade that cannot publish restores the exact previous manifest bytes.
+    // An upgrade whose manifest publication fails restores the exact previous
+    // manifest bytes.
     {
         let fixture = Fixture::new(Scenario::Upgrade);
         let preimage = fixture.registration().expect("previous registration bytes");
         let sequence = clean_mutations(Scenario::Upgrade);
-        let publish = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
+        let publish = position_of(&sequence, PlatformCall::PublishManifest) + 1;
         let platform = fixture.platform_with(Faults {
             fail_mutation_at: Some(publish),
             ..Faults::default()
         });
         let failure = install(&platform, &fixture.paths, fixture.package.clone())
-            .expect_err("a failed registry publication fails the upgrade");
+            .expect_err("a failed manifest publication fails the upgrade");
         assert_eq!(failure.code, FailureCode::Io);
         assert!(
             failure.prior_usable,
@@ -895,17 +930,62 @@ fn registry_publish_failure_restores_preimage() {
             fixture.payload_id(),
             "the failed upgrade does not commit a receipt for the new payload"
         );
-        assert!(
-            Journal::load(&fixture.paths)
-                .expect("journal readable")
-                .is_none(),
-            "the rolled-back transaction releases its journal"
-        );
+        fixture.assert_journal_closed("failed upgrade");
 
         let platform = fixture.platform();
         let report = recover(&platform, &fixture.paths).expect("nothing is pending");
         assert_eq!(report.state, STATE_CLEAN);
         assert_eq!(report.active_payload, fixture.prior_payload_id);
+    }
+
+    // The real partial-publication shape: the manifest was already replaced when
+    // the separate registry publication failed. The upgrade must still restore
+    // the old manifest bytes, and the previous version must stay usable.
+    {
+        let fixture = Fixture::new(Scenario::Upgrade);
+        let preimage = fixture.registration().expect("previous registration bytes");
+        let sequence = clean_mutations(Scenario::Upgrade);
+        let registry = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
+        let platform = fixture.platform_with(Faults {
+            fail_mutation_at: Some(registry),
+            ..Faults::default()
+        });
+        let failure = install(&platform, &fixture.paths, fixture.package.clone())
+            .expect_err("a failed registry publication fails the upgrade");
+        assert_eq!(failure.code, FailureCode::Io);
+        assert!(
+            failure.prior_usable,
+            "the previous installation stays complete and usable"
+        );
+        // The failure genuinely happened after the manifest rename: the forward
+        // publication ran, then rollback republished both halves.
+        let mutations = platform.mutations();
+        assert!(
+            mutations
+                .iter()
+                .filter(|call| **call == PlatformCall::PublishManifest)
+                .count()
+                >= 2,
+            "the manifest was replaced before the registry failure: {mutations:?}"
+        );
+        assert_eq!(
+            fixture.registration().expect("registration restored"),
+            preimage,
+            "the partial publication is rolled back to the exact previous bytes"
+        );
+        fixture.assert_previous_complete("partial publication");
+        assert!(
+            !fixture.new_version_dir.exists(),
+            "the failed upgrade removes only its newly staged version"
+        );
+        assert_ne!(
+            fixture
+                .receipt()
+                .expect("the previous receipt survives")
+                .payload_id,
+            fixture.payload_id()
+        );
+        fixture.assert_journal_closed("partial publication");
     }
 
     // An interrupted activation whose staged payload no longer verifies is
@@ -914,9 +994,9 @@ fn registry_publish_failure_restores_preimage() {
         let fixture = Fixture::new(Scenario::Upgrade);
         let preimage = fixture.registration().expect("previous registration bytes");
         let sequence = clean_mutations(Scenario::Upgrade);
-        let publish = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
+        let registry = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
         let platform = fixture.platform_with(Faults {
-            panic_at_mutation: Some(publish + 1),
+            panic_at_mutation: Some(registry),
             ..Faults::default()
         });
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
@@ -924,7 +1004,7 @@ fn registry_publish_failure_restores_preimage() {
         }));
         assert!(
             outcome.is_err(),
-            "the death is injected after the manifest was activated"
+            "the death is injected after the manifest was activated but before the registry step"
         );
         let live = parse_manifest(
             &fs::read(fixture.paths.registration_path()).expect("the new manifest is live"),
@@ -957,11 +1037,527 @@ fn registry_publish_failure_restores_preimage() {
             !fixture.new_version_dir.exists(),
             "the unverifiable staged version is removed"
         );
+        fixture.assert_journal_closed("restored preimage");
+    }
+}
+
+/// 1-based mutation index of the first call of `call` after `after` (0-based).
+fn mutation_after(mutations: &[PlatformCall], after: usize, call: PlatformCall) -> usize {
+    mutations[after..]
+        .iter()
+        .position(|candidate| *candidate == call)
+        .map(|offset| after + offset + 1)
+        .unwrap_or_else(|| {
+            panic!("the clean transaction crosses {call:?} after {after}: {mutations:?}")
+        })
+}
+
+/// Whether an install failure is the documented post-commit outcome.
+fn assert_committed_or_cleanup_pending<T: std::fmt::Debug>(
+    result: &Result<T, veles_bridge_installer::InstallFailure>,
+    context: &str,
+) {
+    if let Err(failure) = result {
+        assert_eq!(
+            failure.code,
+            FailureCode::CleanupPending,
+            "{context}: a committed install only ever reports cleanup-pending, never a rollback: {failure:?}"
+        );
         assert!(
-            Journal::load(&fixture.paths)
-                .expect("journal readable")
-                .is_none(),
-            "the restored transaction releases its journal"
+            failure.prior_usable,
+            "{context}: a committed install never reports prior_usable == false: {failure:?}"
         );
     }
+}
+
+#[test]
+fn committed_install_is_never_rolled_back_by_post_receipt_errors() {
+    // Error injection (not process death) at every post-receipt boundary: the
+    // journal phase writes and the journal release. The receipt is the commit
+    // point, so the install must finish forward and never restore the previous
+    // version.
+    for scenario in [Scenario::Fresh, Scenario::Upgrade] {
+        let sequence = clean_mutations(scenario);
+        let registry = position_of(&sequence, PlatformCall::PublishRegistration);
+        // After the registry mutation: registration-published journal, receipt,
+        // receipt-committed journal, cleanup-pending journal, journal release.
+        // Offsets are 1-based mutation indices relative to the 0-based registry
+        // position, so 4..=6 are the post-commit boundaries.
+        for offset in [4usize, 5, 6] {
+            let fixture = Fixture::new(scenario);
+            let context = format!(
+                "{}: error at post-receipt boundary {offset}",
+                scenario.label()
+            );
+            let platform = fixture.platform_with(Faults {
+                fail_mutation_at: Some(registry + offset),
+                ..Faults::default()
+            });
+            let result = install(&platform, &fixture.paths, fixture.package.clone());
+            assert_committed_or_cleanup_pending(&result, &context);
+
+            // Either outcome leaves the new payload live and the receipt naming
+            // it; the previous version is retained for an upgrade.
+            let receipt = fixture
+                .receipt()
+                .unwrap_or_else(|| panic!("{context}: the committed receipt is durable"));
+            assert_eq!(receipt.payload_id, fixture.payload_id(), "{context}");
+            assert_eq!(
+                receipt.manifest_sha256,
+                Digest::of(&fixture.registration().expect("the new manifest is live")),
+                "{context}: the receipt names the live manifest bytes"
+            );
+            fixture.assert_new_complete(&context);
+            if scenario == Scenario::Upgrade {
+                fixture.assert_previous_complete(&context);
+            }
+
+            // A following recovery converges (completes or is a no-op).
+            let platform = fixture.platform();
+            let report = recover(&platform, &fixture.paths)
+                .unwrap_or_else(|failure| panic!("{context}: recovery failed: {failure:?}"));
+            assert!(
+                report.state == STATE_CLEAN
+                    || report.state == STATE_RECOVERED_ACTIVE
+                    || report.state == STATE_RECOVERED_PREVIOUS,
+                "{context}: recovery converges: {report:?}"
+            );
+            fixture.assert_journal_closed(&context);
+        }
+
+        // The receipt write itself is still before the commit point (the fault
+        // happens before the write): the previous state is restored.
+        let fixture = Fixture::new(scenario);
+        let context = format!("{}: error at the receipt write", scenario.label());
+        let previous_registration = fixture.registration();
+        let platform = fixture.platform_with(Faults {
+            fail_mutation_at: Some(registry + 3),
+            ..Faults::default()
+        });
+        let failure = install(&platform, &fixture.paths, fixture.package.clone())
+            .expect_err("a failed receipt write is a pre-commit failure");
+        assert_eq!(failure.code, FailureCode::Io, "{context}");
+        match scenario {
+            Scenario::Fresh => {
+                assert_eq!(
+                    fixture.receipt(),
+                    None,
+                    "{context}: no receipt was committed"
+                );
+                assert_eq!(
+                    fixture.registration(),
+                    None,
+                    "{context}: a first install rolls back"
+                );
+            }
+            Scenario::Upgrade => {
+                assert_ne!(
+                    fixture
+                        .receipt()
+                        .expect("previous receipt survives")
+                        .payload_id,
+                    fixture.payload_id(),
+                    "{context}: no receipt for the new payload"
+                );
+                assert_eq!(
+                    fixture.registration(),
+                    previous_registration,
+                    "{context}: the previous manifest is restored"
+                );
+                fixture.assert_previous_complete(&context);
+            }
+        }
+        fixture.assert_journal_closed(&context);
+    }
+}
+
+#[test]
+fn durable_replacement_whose_flush_fails_is_treated_as_committed() {
+    // The state write replaced the document but reported an error: the receipt is
+    // durable, so the install must finish forward, never roll back.
+    for index in [5usize, 8] {
+        // 5 = receipt write, 8 = journal release on a fresh transaction.
+        let fixture = Fixture::new(Scenario::Fresh);
+        let context = format!("state write {index} fails after its rename");
+        let platform = fixture.platform_with(Faults {
+            fail_flush_after_state_write_at: Some(index),
+            ..Faults::default()
+        });
+        let result = install(&platform, &fixture.paths, fixture.package.clone());
+        assert_committed_or_cleanup_pending(&result, &context);
+        let receipt = fixture
+            .receipt()
+            .unwrap_or_else(|| panic!("{context}: the receipt is durable"));
+        assert_eq!(receipt.payload_id, fixture.payload_id(), "{context}");
+        assert_eq!(
+            fixture.registration().expect("the new manifest is live"),
+            manifest_bytes(
+                &fixture.paths,
+                &fixture.new_version_dir.join("host.exe"),
+                "Veles bridge native messaging host"
+            ),
+            "{context}: the new registration was never rolled back"
+        );
+
+        let platform = fixture.platform();
+        let report = recover(&platform, &fixture.paths)
+            .unwrap_or_else(|failure| panic!("{context}: recovery failed: {failure:?}"));
+        assert_eq!(
+            report.active_payload,
+            Some(fixture.payload_id()),
+            "{context}: the committed payload stays active"
+        );
+        fixture.assert_journal_closed(&context);
+    }
+}
+
+#[test]
+fn tear_mid_payload_write_converges_and_second_run_succeeds() {
+    for scenario in [Scenario::Fresh, Scenario::Upgrade] {
+        let fixture = Fixture::new(scenario);
+        let context = format!("{}: torn payload write", scenario.label());
+        let sequence = clean_mutations(scenario);
+        // The first payload write: the version directory was created before it.
+        let host_write = position_of(&sequence, PlatformCall::WriteDurable) + 1;
+        let platform = fixture.platform_with(Faults {
+            tear_at_mutation: Some(host_write),
+            ..Faults::default()
+        });
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            install(&platform, &fixture.paths, fixture.package.clone())
+        }));
+        assert!(outcome.is_err(), "{context}: the injected death interrupts");
+        // The staged file is a short prefix of the authenticated bytes.
+        let staged = fixture.new_version_dir.join("host.exe");
+        let length = fs::metadata(&staged)
+            .unwrap_or_else(|_| panic!("{context}: the partial payload exists"))
+            .len();
+        assert!(
+            length > 0 && length < HOST_V2.len() as u64,
+            "{context}: the file is short ({length} of {})",
+            HOST_V2.len()
+        );
+        assert!(matches!(fixture.journal_state(), JournalState::Pending(_)));
+
+        let platform = fixture.platform();
+        let report = recover(&platform, &fixture.paths)
+            .unwrap_or_else(|failure| panic!("{context}: recovery failed: {failure:?}"));
+        if scenario == Scenario::Upgrade {
+            assert_eq!(report.state, STATE_RECOVERED_PREVIOUS, "{context}");
+            fixture.assert_previous_complete(&context);
+        } else {
+            assert_eq!(report.state, STATE_CLEAN, "{context}");
+        }
+        assert!(
+            !fixture.new_version_dir.exists(),
+            "{context}: the short staging write is removable"
+        );
+        fixture.assert_journal_closed(&context);
+
+        // A second run converges instead of blocking forever.
+        let platform = fixture.platform();
+        let report = install(&platform, &fixture.paths, fixture.package.clone())
+            .unwrap_or_else(|failure| panic!("{context}: second install failed: {failure:?}"));
+        assert_eq!(report.state, STATE_INSTALLED, "{context}");
+        fixture.assert_journal_closed(&context);
+    }
+}
+
+#[test]
+fn tear_mid_state_write_keeps_a_complete_previous_journal() {
+    let fixture = Fixture::new(Scenario::Upgrade);
+    let sequence = clean_mutations(Scenario::Upgrade);
+    // Tear the journal at the Staged phase write: staging is complete, but the
+    // journal a reader sees is still the complete Prepared document.
+    let staged_write = mutation_after(
+        &sequence,
+        sequence
+            .iter()
+            .rposition(|call| *call == PlatformCall::WriteDurable)
+            .expect("payload writes"),
+        PlatformCall::WriteStateDocument,
+    );
+    let platform = fixture.platform_with(Faults {
+        tear_at_mutation: Some(staged_write),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        install(&platform, &fixture.paths, fixture.package.clone())
+    }));
+    assert!(outcome.is_err());
+    let JournalState::Pending(journal) = fixture.journal_state() else {
+        panic!("the previous complete journal is still readable");
+    };
+    assert_eq!(
+        journal.phase,
+        Phase::Prepared,
+        "the torn staging sibling never replaced the live journal"
+    );
+    assert!(
+        journal
+            .created
+            .iter()
+            .all(|claim| claim.incomplete
+                || claim.kind == veles_bridge_installer::OwnedKind::Directory),
+        "a Prepared journal marks file staging incomplete"
+    );
+
+    let platform = fixture.platform();
+    let report = recover(&platform, &fixture.paths).expect("recovery converges");
+    assert_eq!(report.state, STATE_RECOVERED_PREVIOUS);
+    assert!(!fixture.new_version_dir.exists());
+    fixture.assert_journal_closed("torn state write");
+
+    let platform = fixture.platform();
+    install(&platform, &fixture.paths, fixture.package.clone())
+        .expect("the next run converges after recovery");
+}
+
+#[test]
+fn torn_journal_is_reconciled_quarantined_and_lets_the_next_run_start() {
+    // A fresh layout: the torn journal cannot be interpreted, and verified live
+    // state is empty, so recovery quarantines it and reports a clean layout.
+    let fixture = Fixture::new(Scenario::Fresh);
+    let platform = fixture.platform();
+    let lock = platform.lock(&fixture.paths).expect("lock");
+    drop(lock);
+    let torn = b"{\"schema\":1,\"transaction_id\":\"0123456789abcdef";
+    fs::write(fixture.paths.journal_path(), torn).expect("torn journal");
+    assert!(matches!(
+        Journal::load(&PortablePlatform::new(), &fixture.paths).expect("bytes readable"),
+        JournalState::Unreadable
+    ));
+
+    // An install refuses to stack a transaction on top of it (only the lock).
+    let before = snapshot(fixture.temp.path());
+    let refused = fixture.platform();
+    assert_eq!(
+        failure_code(install(&refused, &fixture.paths, fixture.package.clone())),
+        FailureCode::RecoveryRequired
+    );
+    assert!(
+        refused.mutations().is_empty(),
+        "a pending (here torn) journal blocks the install before mutation: {:?}",
+        refused.mutations()
+    );
+    assert_eq!(
+        snapshot(fixture.temp.path()),
+        before,
+        "a refusal mutates nothing"
+    );
+
+    let report = recover(&fixture.platform(), &fixture.paths)
+        .expect("a torn journal with unambiguous live state is reconciled");
+    assert_eq!(report.state, STATE_CLEAN);
+    assert!(matches!(fixture.journal_state(), JournalState::None));
+    assert!(
+        fixture
+            .paths
+            .state()
+            .join(StateDocument::Journal.quarantine_file_name())
+            .exists(),
+        "the uninterpretable bytes are preserved in quarantine"
+    );
+    install(&fixture.platform(), &fixture.paths, fixture.package.clone())
+        .expect("the next run starts after quarantine");
+}
+
+#[test]
+fn torn_receipt_is_quarantined_and_rebuilt_from_the_pending_journal() {
+    let fixture = Fixture::new(Scenario::Upgrade);
+    let sequence = clean_mutations(Scenario::Upgrade);
+    let registry = position_of(&sequence, PlatformCall::PublishRegistration) + 1;
+    let platform = fixture.platform_with(Faults {
+        panic_at_mutation: Some(registry),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        install(&platform, &fixture.paths, fixture.package.clone())
+    }));
+    assert!(outcome.is_err(), "the manifest was activated");
+    // The durable journal and the new live manifest are complete; only the prior
+    // receipt's bytes are damaged (as a non-atomic writer could leave them).
+    fs::write(fixture.paths.receipt_path(), b"{\"schema\":1,\"transac").expect("torn receipt");
+    assert!(matches!(
+        Receipt::load(&PortablePlatform::new(), &fixture.paths).expect("bytes readable"),
+        ReceiptState::Unreadable
+    ));
+
+    let platform = fixture.platform();
+    let report = recover(&platform, &fixture.paths)
+        .expect("the pending journal is authoritative for the committed transaction");
+    assert_eq!(report.state, STATE_RECOVERED_ACTIVE);
+    let receipt = fixture.receipt().expect("the receipt was rebuilt");
+    assert_eq!(receipt.payload_id, fixture.payload_id());
+    assert!(
+        fixture
+            .paths
+            .state()
+            .join(StateDocument::Receipt.quarantine_file_name())
+            .exists(),
+        "the torn receipt bytes are preserved"
+    );
+    fixture.assert_journal_closed("torn receipt");
+}
+
+#[test]
+fn crash_during_recover_plus_second_recovery_converges() {
+    let fixture = Fixture::new(Scenario::Upgrade);
+    let sequence = clean_mutations(Scenario::Upgrade);
+    let publish = position_of(&sequence, PlatformCall::PublishManifest) + 1;
+    let platform = fixture.platform_with(Faults {
+        panic_at_mutation: Some(publish),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        install(&platform, &fixture.paths, fixture.package.clone())
+    }));
+    assert!(outcome.is_err(), "the install died before activation");
+
+    // A valid pending journal blocks another install before any mutation.
+    let refused = fixture.platform();
+    assert_eq!(
+        failure_code(install(&refused, &fixture.paths, fixture.package.clone())),
+        FailureCode::RecoveryRequired,
+        "an install refuses to stack on a pending transaction"
+    );
+    assert!(
+        refused.mutations().is_empty(),
+        "the refusal happens before mutation: {:?}",
+        refused.mutations()
+    );
+
+    // The first recovery dies before its first removal; the pending journal is
+    // unchanged and the second recovery completes.
+    let crashing = fixture.platform_with(Faults {
+        panic_at_mutation: Some(1),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| recover(&crashing, &fixture.paths)));
+    assert!(outcome.is_err(), "the recovery itself was interrupted");
+    assert!(matches!(fixture.journal_state(), JournalState::Pending(_)));
+
+    let platform = fixture.platform();
+    let report = recover(&platform, &fixture.paths).expect("the second recovery converges");
+    assert_eq!(report.state, STATE_RECOVERED_PREVIOUS);
+    fixture.assert_previous_complete("second recovery");
+    assert!(!fixture.new_version_dir.exists());
+    fixture.assert_journal_closed("second recovery");
+
+    install(&fixture.platform(), &fixture.paths, fixture.package.clone())
+        .expect("the install succeeds after recovery");
+}
+
+#[test]
+fn preimage_with_a_missing_executable_is_not_published() {
+    let fixture = Fixture::new(Scenario::Upgrade);
+    let missing = fixture
+        .paths
+        .versions()
+        .join("1.0.0-deadbeef")
+        .join("host.exe");
+    let old_manifest = manifest_bytes(&fixture.paths, &missing, "missing preimage");
+    let mut journal = fixture.crafted_journal(&old_manifest);
+    // The journaled preimage names a manifest whose executable is gone.
+    fs::write(
+        fixture.paths.journal_path(),
+        journal.to_bytes().expect("bounded journal"),
+    )
+    .expect("plant journal");
+    // The live registration is absent so recovery takes the restore path.
+    fs::remove_file(fixture.paths.registration_path()).expect("remove live registration");
+    journal.old_manifest = Some(ManifestSnapshot::new(old_manifest).expect("bounded"));
+
+    let platform = fixture.platform();
+    assert_eq!(
+        failure_code(recover(&platform, &fixture.paths)),
+        FailureCode::RecoveryRequired,
+        "a preimage that cannot work is never published"
+    );
+    assert!(
+        platform.mutations().is_empty(),
+        "the refusal mutates nothing: {:?}",
+        platform.mutations()
+    );
+    assert!(
+        matches!(fixture.journal_state(), JournalState::Pending(_)),
+        "the journal is retained for repair guidance"
+    );
+}
+
+#[test]
+fn windows_preimage_round_trips_through_the_platform_boundary() {
+    let fixture = Fixture::new(Scenario::Upgrade);
+    let old_bytes = fixture.registration().expect("previous registration bytes");
+    let journal = fixture.crafted_journal_with_windows(
+        &old_bytes,
+        Some(("Software\\Veles\\Host", Some("old-value"))),
+    );
+    fs::write(
+        fixture.paths.journal_path(),
+        journal.to_bytes().expect("bounded journal"),
+    )
+    .expect("plant journal");
+    // The new manifest was activated, then the transaction died; recovery must
+    // restore the journaled preimage, carrying the HKCU record into the platform
+    // call rather than writing registry values itself.
+    fs::write(fixture.paths.registration_path(), journal.manifest.bytes())
+        .expect("new manifest live");
+
+    let platform = fixture.platform();
+    let report = recover(&platform, &fixture.paths).expect("recovery restores the preimage");
+    assert_eq!(report.state, STATE_RECOVERED_PREVIOUS);
+    assert_eq!(
+        fixture.registration().expect("old manifest restored"),
+        old_bytes
+    );
+    let preimages = platform.published_preimages();
+    let last = preimages.last().expect("publication was called");
+    let expected = WindowsPreimage::new(
+        "Software\\Veles\\Host".to_owned(),
+        Some("old-value".to_owned()),
+    )
+    .expect("bounded preimage");
+    assert_eq!(
+        last.as_ref(),
+        Some(&expected),
+        "the journaled Windows preimage is republished through the platform call"
+    );
+    fixture.assert_journal_closed("windows preimage");
+}
+
+#[test]
+fn short_write_limit_still_produces_complete_state_and_payloads() {
+    let fixture = Fixture::new(Scenario::Upgrade);
+    let platform = fixture.platform_with(Faults {
+        short_write_limit: Some(1),
+        ..Faults::default()
+    });
+    let report = install(&platform, &fixture.paths, fixture.package.clone())
+        .expect("short writes are retried, never truncating a document");
+    assert_eq!(report.state, STATE_INSTALLED);
+    assert!(
+        platform.short_write_count() > 0,
+        "the fixture actually exercised short writes"
+    );
+    fixture.assert_new_complete("short writes");
+    let receipt = fixture.receipt().expect("a complete receipt is durable");
+    assert_eq!(receipt.payload_id, fixture.payload_id());
+    fixture.assert_journal_closed("short writes");
+    let report = recover(&fixture.platform(), &fixture.paths).expect("nothing is pending");
+    assert_eq!(report.state, STATE_CLEAN);
+}
+
+#[test]
+fn state_read_faults_are_modelable_through_the_boundary() {
+    let fixture = Fixture::new(Scenario::Fresh);
+    let platform = FakePlatform::with_faults(Faults {
+        fail_state_read_at: Some(1),
+        ..Faults::default()
+    });
+    assert_eq!(
+        failure_code(Journal::load(&platform, &fixture.paths)),
+        FailureCode::Io,
+        "a state read fault surfaces as an IO failure"
+    );
 }

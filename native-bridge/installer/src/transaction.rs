@@ -5,9 +5,9 @@
 //! ```text
 //! Prepared  -> durable intent, before the first staging mutation
 //! Staged    -> every authenticated payload file and the inventory are durable
-//! ManifestActivated -> durable activation intent, then the platform replaces
-//!                       the one manifest that selects the executable
-//! RegistrationPublished -> the publication call returned (fixed HKCU on Windows)
+//! ManifestActivated -> the manifest file that selects the executable was
+//!                       replaced (the durable intent is the Staged journal)
+//! RegistrationPublished -> the separate registry publication returned
 //! ReceiptCommitted -> the receipt is durable; the active payload is verified
 //! CleanupPending -> transactional cleanup, then the journal is released
 //! ```
@@ -15,15 +15,27 @@
 //! Nothing in the immutable version directory is reachable by Chrome before the
 //! manifest replacement, so a staged-but-unactivated payload cannot be executed
 //! and an interrupted transaction never exposes a partial host. Every write goes
-//! through the injected [`Platform`] boundary, which writes all bytes, flushes,
-//! reads them back and flushes the parent directory, so the only durable states
-//! are "step k did not happen" and "step k happened".
+//! through the injected [`Platform`] boundary: payload staging writes all bytes,
+//! flushes and reads them back, and state documents (journal, receipt) are
+//! replaced atomically, so the only durable states are "step k did not happen"
+//! and "step k happened".
+//!
+//! # The commit point
+//!
+//! A durable receipt naming this transaction is the commit point. Before it,
+//! failure rolls back to the journaled previous state; after it, the installer
+//! only moves forward - it re-publishes the manifest/registration idempotently,
+//! leaves a `CleanupPending` journal for [`recover`], and reports success or
+//! cleanup-pending. It never rolls a committed install back and never reports the
+//! previous installation as unusable once the new host is live.
 //!
 //! [`recover`] never trusts a phase marker. It compares the journal with the
 //! verified live registration and the verified staged inventory, then either
 //! completes the authenticated staged activation or restores the journaled
 //! preimage. A live registration that is not ours, or live bytes that match
-//! neither recorded manifest, fails closed with guidance instead of guessing.
+//! neither recorded manifest, fails closed with guidance instead of guessing. A
+//! journal that cannot be interpreted is reconciled against verified live state
+//! and quarantined, so a torn write cannot block every later run.
 //!
 //! Retained inputs: the previous version's files and the previous manifest bytes
 //! are verified (and journaled) before the first mutation, and the previous
@@ -31,23 +43,25 @@
 //! rollback and uninstall.
 
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use crate::inventory::{PACKAGE_INVENTORY_FILE, write_inventory};
 use crate::journal::{
-    JOURNAL_SCHEMA_VERSION, Journal, ManifestSnapshot, Phase, PolicyCarrierRefs, PriorInstall,
-    RECEIPT_SCHEMA_VERSION, Receipt, RegistrationPreimage, transaction_id,
+    JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot, Phase,
+    PolicyCarrierRefs, PriorInstall, RECEIPT_SCHEMA_VERSION, Receipt, ReceiptState,
+    RegistrationPreimage, transaction_id,
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry, Operation,
-    canonical_json, extension_origin,
+    canonical_json, extension_origin, parse_version,
 };
-use crate::paths::{InstallPaths, VERSIONS_DIR};
+use crate::paths::InstallPaths;
 use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, NativeManifest, OWNERSHIP_SCHEMA_VERSION,
     OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PathKind, Platform, Registration,
-    ValidatedPath, WindowsPreimage, claim_owned_entries, claim_owned_registration, parse_manifest,
-    registration_is_owned, require_quiescent,
+    StateDocument, ValidatedPath, WindowsPreimage, claim_owned_entries, claim_owned_registration,
+    parse_manifest, registration_is_owned, require_quiescent,
 };
 
 /// The report state of a completed install.
@@ -77,7 +91,6 @@ struct Plan {
     /// The authenticated inventory document, staged with the payload.
     inventory_relative: String,
     inventory: Vec<u8>,
-    payload_id: Digest,
 }
 
 /// Install one authenticated package.
@@ -85,9 +98,9 @@ struct Plan {
 /// The previous installation is preserved: the payload is staged into its own
 /// immutable version directory, the manifest is replaced atomically, and the
 /// receipt is committed only after the registration and the staged inventory are
-/// read back and verified. A failure restores the previous state; only a
-/// first-install failure removes assets, and only the ones this transaction
-/// created.
+/// read back and verified. A pre-commit failure restores the previous state; only
+/// a first-install failure removes assets, and only the ones this transaction
+/// created. A post-commit failure is finished forward instead.
 pub fn install(
     platform: &impl Platform,
     paths: &InstallPaths,
@@ -95,9 +108,13 @@ pub fn install(
 ) -> InstallResult<InstallReport> {
     let _lock = platform.lock(paths)?;
 
-    // Never proceed on top of an interrupted transaction: reconcile first.
-    if Journal::load(paths)?.is_some() {
-        return Err(InstallFailure::new(FailureCode::RecoveryRequired));
+    // Never proceed on top of an interrupted transaction: reconcile first. An
+    // uninterpretable journal is equally a pending transaction.
+    match Journal::load(platform, paths)? {
+        JournalState::None => {}
+        JournalState::Pending(_) | JournalState::Unreadable => {
+            return Err(recovery_required());
+        }
     }
 
     let plan = Plan::prepare(platform, paths, &package)?;
@@ -105,24 +122,96 @@ pub fn install(
     plan.journal.write(platform, paths)?;
 
     match run(platform, paths, &plan, &package) {
-        Ok(()) => Ok(InstallReport {
-            operation: Operation::Install,
-            state: STATE_INSTALLED.to_owned(),
-            prior_usable: true,
-            active_payload: Some(plan.payload_id),
-            failure: None,
-        }),
-        Err(failure) => {
-            // Report the primary failure unchanged, but first put the previous
-            // state back so the user is never left without a complete
-            // registration. If that also fails, the journal stays pending and the
-            // next install asks for recovery instead of stacking another
-            // transaction on top of this one.
-            let _ = abort_transaction(platform, paths);
-            let prior_usable = previous_is_verified(platform, paths, &plan.journal);
-            Err(failure.with_prior_usable(prior_usable))
-        }
+        Ok(()) => Ok(installed_report(&plan.journal)),
+        Err(failure) => settle_failed_install(platform, paths, &plan, failure),
     }
+}
+
+/// The success report for a transaction whose receipt is committed.
+fn installed_report(journal: &Journal) -> InstallReport {
+    InstallReport {
+        operation: Operation::Install,
+        state: STATE_INSTALLED.to_owned(),
+        prior_usable: true,
+        active_payload: Some(journal.payload_id),
+        failure: None,
+    }
+}
+
+/// Reconcile a failed transaction without ever rolling a committed one back.
+///
+/// The durable receipt naming this transaction is the commit point. Only when the
+/// receipt is absent, names another transaction or cannot be read as ours may the
+/// previous state be restored; after the commit point the installer finishes
+/// forward and reports success or `CleanupPending`, never a rolled-back install
+/// with `prior_usable == false`.
+fn settle_failed_install(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    plan: &Plan,
+    failure: InstallFailure,
+) -> InstallResult<InstallReport> {
+    // The durable journal is authoritative for the phase that was reached; the
+    // in-memory plan is the durable intent when the slot is unreadable or was
+    // already released by a state write whose parent flush failed.
+    let journal = match Journal::load(platform, paths) {
+        Ok(JournalState::Pending(journal)) => *journal,
+        _ => plan.journal.clone(),
+    };
+    let prior_usable = previous_is_verified(platform, paths, &journal);
+    let receipt = match Receipt::load(platform, paths) {
+        Ok(state) => state,
+        // A receipt read fault cannot prove the install is uncommitted: never
+        // roll back on it, and leave the journal for recovery.
+        Err(_) => return Err(failure.with_prior_usable(prior_usable)),
+    };
+    match receipt {
+        ReceiptState::Committed(receipt) if receipt.transaction_id == journal.transaction_id => {
+            // The commit point is durable. Finish forward; if even that cannot be
+            // completed, leave the journal for recover and report cleanup-pending.
+            match finish_committed(platform, paths, &journal) {
+                Ok(()) => Ok(installed_report(&journal)),
+                Err(_) => {
+                    // Best effort: record cleanup intent so the next recover
+                    // finishes forward from a journal rather than phase guessing.
+                    let _ = journal
+                        .with_phase(Phase::CleanupPending)
+                        .write(platform, paths);
+                    Err(InstallFailure::new(FailureCode::CleanupPending).with_prior_usable(true))
+                }
+            }
+        }
+        // Cannot prove this is not the commit point: do not roll back.
+        ReceiptState::Unreadable => Err(failure.with_prior_usable(prior_usable)),
+        _ => match restore_previous(platform, paths, &journal) {
+            Ok(()) => {
+                Err(failure.with_prior_usable(previous_is_verified(platform, paths, &journal)))
+            }
+            // Surface the rollback failure: it is the actionable state, and the
+            // pending journal makes the next install ask for recovery.
+            Err(rollback) => {
+                Err(rollback.with_prior_usable(previous_is_verified(platform, paths, &journal)))
+            }
+        },
+    }
+}
+
+/// Finish a committed transaction: durably record cleanup intent, then release.
+fn finish_committed(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    journal: &Journal,
+) -> InstallResult<()> {
+    let live = platform.read_registration(paths)?;
+    if live.as_ref().map(Registration::manifest_digest) != Some(journal.manifest.sha256()) {
+        // The receipt is committed but the live registration no longer names it:
+        // ambiguous, never silently cleared.
+        return Err(recovery_required());
+    }
+    journal
+        .with_phase(Phase::CleanupPending)
+        .write(platform, paths)?;
+    Journal::clear(platform, paths)
 }
 
 /// Whether the previous installation is live and complete right now.
@@ -141,6 +230,7 @@ fn previous_is_verified(platform: &impl Platform, paths: &InstallPaths, journal:
 
 /// Reconcile a pending transaction with verified live state.
 ///
+/// * A committed receipt is finished forward, whatever the journal phase says.
 /// * A live, complete activation is finished (publication, receipt, cleanup).
 /// * A live previous state is restored and the transaction's own assets removed.
 /// * A live registration this installer does not own is `ForeignState`; live
@@ -149,8 +239,10 @@ fn previous_is_verified(platform: &impl Platform, paths: &InstallPaths, journal:
 pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<InstallReport> {
     let _lock = platform.lock(paths)?;
 
-    let Some(journal) = Journal::load(paths)? else {
-        return clean_report(platform, paths);
+    let journal = match Journal::load(platform, paths)? {
+        JournalState::None => return clean_report(platform, paths),
+        JournalState::Unreadable => return recover_unreadable_journal(platform, paths),
+        JournalState::Pending(journal) => *journal,
     };
 
     let live = platform.read_registration(paths)?;
@@ -164,15 +256,32 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
     let live_digest = live.as_ref().map(Registration::manifest_digest);
     let new_digest = journal.manifest.sha256();
     let old_digest = journal.old_manifest.as_ref().map(ManifestSnapshot::sha256);
+    // Verify the created inventory once; completion must not repeat the walk.
+    let activation_verified =
+        live_digest == Some(new_digest) && verify_created_assets(paths, &journal).is_ok();
 
-    // A complete activation is finished, whichever phase was recorded.
-    if live_digest == Some(new_digest) && created_assets_verified(paths, &journal) {
-        return complete_forward(platform, paths, &journal);
+    let receipt = Receipt::load(platform, paths)?;
+    let committed = matches!(
+        &receipt,
+        ReceiptState::Committed(receipt) if receipt.transaction_id == journal.transaction_id
+    );
+    if committed || matches!(receipt, ReceiptState::Unreadable) {
+        // The receipt is (or may be) the commit point: never restore.
+        return if activation_verified {
+            complete_forward(platform, paths, &journal)
+        } else {
+            Err(InstallFailure::new(FailureCode::RecoveryRequired))
+        };
     }
+
     // Anything that is neither the recorded previous state nor the recorded new
     // state is ambiguous.
     if live_digest.is_some() && live_digest != old_digest && live_digest != Some(new_digest) {
         return Err(InstallFailure::new(FailureCode::RecoveryRequired));
+    }
+
+    if activation_verified {
+        return complete_forward(platform, paths, &journal);
     }
 
     // The activation did not happen, or its staged payload no longer verifies:
@@ -187,10 +296,44 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
         } else {
             STATE_CLEAN.to_owned()
         },
-        prior_usable: journal.old_manifest.is_some(),
+        // The same live read `install` uses, never an assumption from the phase.
+        prior_usable: previous_is_verified(platform, paths, &journal),
         active_payload: journal.old_payload_id,
         failure: None,
     })
+}
+
+/// Reconcile an unparsable journal against verified live state.
+///
+/// A torn journal must not block every later run. When the live registration and
+/// the committed receipt agree (or both are absent), the live state is complete
+/// and unambiguous: the rejected bytes are quarantined and the reported state is
+/// the verified one. Anything else stays `RecoveryRequired` with zero mutations,
+/// because there is no honest rollback target.
+fn recover_unreadable_journal(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+) -> InstallResult<InstallReport> {
+    let live = platform.read_registration(paths)?;
+    if let Some(live) = live.as_ref()
+        && !registration_is_owned(paths, live)
+    {
+        return Err(InstallFailure::new(FailureCode::ForeignState));
+    }
+    let receipt = Receipt::load(platform, paths)?;
+    let reconciled = match (&live, &receipt) {
+        (None, ReceiptState::None) => true,
+        (None, ReceiptState::Committed(_)) => true,
+        (Some(live), ReceiptState::Committed(receipt)) => {
+            receipt.manifest_sha256 == live.manifest_digest()
+        }
+        _ => false,
+    };
+    if !reconciled {
+        return Err(InstallFailure::new(FailureCode::RecoveryRequired));
+    }
+    platform.quarantine_state(paths, StateDocument::Journal)?;
+    clean_report(platform, paths)
 }
 
 impl Plan {
@@ -244,11 +387,14 @@ impl Plan {
 
         // An immutable version directory is created once and never reused; a
         // same-identity directory is Task 7's repair decision, not an overwrite.
-        let version_directory = paths.version_dir(&version, payload_id);
-        if fs::symlink_metadata(&version_directory).is_ok() {
-            return Err(foreign_state());
+        let version_relative = paths.version_dir_relative(&version, payload_id);
+        let version_directory = paths.root().join(&version_relative);
+        match fs::symlink_metadata(&version_directory) {
+            Ok(_) => return Err(foreign_state()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            // Permission or IO failures are not "absent": never stage over them.
+            Err(_) => return Err(io_failure()),
         }
-        let version_relative = format!("{VERSIONS_DIR}/{version}-{}", payload_id.to_hex());
 
         let mut directories = vec![version_relative.clone()];
         let mut files = Vec::with_capacity(package.payload().len());
@@ -265,7 +411,12 @@ impl Plan {
             }
             let relative = format!("{version_relative}/{}", source.relative());
             files.push(relative.clone());
-            file_claims.push(OwnedClaim::file(relative, source.sha256()));
+            file_claims.push(JournalClaim::file(
+                relative,
+                source.sha256(),
+                source.size(),
+                true,
+            ));
         }
         directories.sort_by(|left, right| {
             path_depth(left)
@@ -282,7 +433,11 @@ impl Plan {
 
         // Retained inputs: the last committed receipt and the live registration
         // must still describe the installation we are about to upgrade.
-        let prior = Receipt::load(paths)?;
+        let prior = match Receipt::load(platform, paths)? {
+            ReceiptState::None => None,
+            ReceiptState::Committed(receipt) => Some(*receipt),
+            ReceiptState::Unreadable => return Err(recovery_required()),
+        };
         let live = platform.read_registration(paths)?;
         let mut old_manifest = None;
         let mut preimage = None;
@@ -313,12 +468,15 @@ impl Plan {
             descriptor.policy.epoch,
         )?;
 
-        let mut created: Vec<OwnedClaim> = directories
-            .iter()
-            .map(|directory| OwnedClaim::directory(directory.clone()))
-            .collect();
+        let mut created: Vec<JournalClaim> =
+            directories.iter().map(JournalClaim::directory).collect();
         created.extend(file_claims);
-        created.push(OwnedClaim::file(&inventory_relative, payload_id));
+        created.push(JournalClaim::file(
+            &inventory_relative,
+            payload_id,
+            inventory.len() as u64,
+            true,
+        ));
 
         let journal = Journal {
             schema: JOURNAL_SCHEMA_VERSION,
@@ -355,7 +513,6 @@ impl Plan {
             files,
             inventory_relative,
             inventory,
-            payload_id,
         })
     }
 }
@@ -368,39 +525,47 @@ fn run(
     package: &AuthenticatedPackage,
 ) -> InstallResult<()> {
     stage_payload(platform, paths, plan, package)?;
-    plan.journal
-        .with_phase(Phase::Staged)
-        .write(platform, paths)?;
+    // Every staging write completed and read back: no file may have been left as
+    // a short prefix any more.
+    let journal = plan
+        .journal
+        .with_completed_claims()
+        .with_phase(Phase::Staged);
+    journal.write(platform, paths)?;
 
     // Recheck quiescence immediately before the activation mutation.
     require_quiescent(platform, paths)?;
 
-    // Durable activation intent, then the single atomic replacement of the
-    // manifest that selects the executable (and the fixed HKCU publication on
-    // Windows).
-    plan.journal
+    let registration = registration_from(&journal.manifest, journal.preimage.as_ref())?;
+    // Publication is two separately journaled steps, manifest first. The Staged
+    // journal is the durable intent for the manifest replacement.
+    platform.publish_manifest(paths, &registration)?;
+    journal
         .with_phase(Phase::ManifestActivated)
         .write(platform, paths)?;
-    let registration = registration_from(&plan.journal.manifest, plan.journal.preimage.as_ref())?;
+    // Then the registry/manifest-registration publication. A crash between the
+    // two leaves the new manifest with the old registry value; recover completes
+    // forward from verified live state.
     platform.publish_registration(paths, &registration)?;
-    plan.journal
+    journal
         .with_phase(Phase::RegistrationPublished)
         .write(platform, paths)?;
 
     // Read the registration back exactly and verify the staged payload before
     // committing anything.
     let live = platform.read_registration(paths)?.ok_or_else(io_failure)?;
-    if live.manifest_digest() != plan.journal.manifest.sha256() {
+    if live.manifest_digest() != journal.manifest.sha256() {
         return Err(io_failure());
     }
-    verify_created_assets(paths, &plan.journal)?;
+    verify_created_assets(paths, &journal)?;
 
-    let receipt = build_receipt(paths, &plan.journal, plan.prior.as_ref())?;
+    let receipt = build_receipt(paths, &journal, plan.prior.as_ref())?;
+    // The receipt is the commit point.
     receipt.write(platform, paths)?;
-    plan.journal
+    journal
         .with_phase(Phase::ReceiptCommitted)
         .write(platform, paths)?;
-    plan.journal
+    journal
         .with_phase(Phase::CleanupPending)
         .write(platform, paths)?;
     // Transactional cleanup removes no payload: the previous version is retained
@@ -412,8 +577,8 @@ fn run(
 /// Stage every authenticated payload file into the immutable version directory.
 ///
 /// The directory is on the destination volume (inside the fixed root) and is
-/// unreachable until the manifest names it, which is what makes the single
-/// manifest replacement the activation point. Each source is re-authenticated
+/// unreachable until the manifest names it, which is what makes the manifest
+/// replacement the activation point. Each source is re-authenticated
 /// immediately before its bytes are read, so a package that changed after
 /// authentication is never staged.
 fn stage_payload(
@@ -475,11 +640,13 @@ fn restore_previous(
                 // recovery guidance (repair needs a fresh signed package).
                 return Err(recovery_required());
             }
-            // Re-publish the exact journaled bytes; publication applies the same
-            // owned-preimage rule as the activation did, so a journal that claims
-            // a manifest this layout would refuse cannot restore anything.
-            platform
-                .publish_registration(paths, &registration_from(old, journal.preimage.as_ref())?)?;
+            // Re-publish the exact journaled bytes through the same two ordered
+            // platform calls the activation used. The manifest file is restored
+            // first, then the registry/manifest-registration publication (which
+            // carries the journaled Windows preimage for a native adapter).
+            let value = registration_from(old, journal.preimage.as_ref())?;
+            platform.publish_manifest(paths, &value)?;
+            platform.publish_registration(paths, &value)?;
         }
         (None, Some(found)) if found == journal.manifest.sha256() => {
             // First install: remove the registration this transaction created.
@@ -500,21 +667,50 @@ fn restore_previous(
 fn manifest_selects_a_file(manifest: &ManifestSnapshot) -> InstallResult<bool> {
     let parsed = parse_manifest(manifest.bytes())?;
     let executable = parsed.executable()?;
-    Ok(fs::symlink_metadata(executable).is_ok_and(|metadata| metadata.is_file()))
+    match fs::symlink_metadata(executable) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        // A permission or IO failure is not "missing": it cannot prove the
+        // preimage is unusable, but it also cannot prove it is usable.
+        Err(_) => Err(io_failure()),
+    }
 }
 
 /// Remove every path this transaction created, after rechecking quiescence.
 ///
 /// Files go first and directories deepest-first, so each directory is empty when
-/// its own removal is attempted. `claim_owned_entries` drops claims whose path is
-/// already absent (idempotent) and refuses a present path whose content changed.
+/// its own removal is attempted. A file claim the journal marked incomplete may
+/// be a short prefix of this transaction's own staging write; it is removable
+/// without a digest match, but only inside this transaction's own version
+/// directory and only when it is genuinely shorter than the recorded size.
 fn remove_created_assets(
     platform: &impl Platform,
     paths: &InstallPaths,
     journal: &Journal,
 ) -> InstallResult<()> {
     require_quiescent(platform, paths)?;
-    let entries = claim_owned_entries(paths, &journal.ownership_record())?;
+    let own_prefix = format!(
+        "{}/",
+        paths.version_dir_relative(&parse_version(&journal.version)?, journal.payload_id)
+    );
+
+    let mut entries = Vec::with_capacity(journal.created.len());
+    for claim in &journal.created {
+        let entry = if claim.incomplete {
+            if claim.kind != OwnedKind::File || !claim.path.starts_with(&own_prefix) {
+                // Only this transaction's own files may be removed without a
+                // digest match.
+                return Err(foreign_state());
+            }
+            let size = claim.size.ok_or_else(foreign_state)?;
+            OwnedEntry::incomplete_file(paths, &claim.as_owned(), size)?
+        } else {
+            OwnedEntry::from_claim(paths, &claim.as_owned())?
+        };
+        if let Some(entry) = entry {
+            entries.push(entry);
+        }
+    }
 
     let mut files: Vec<&OwnedEntry> = entries
         .iter()
@@ -540,25 +736,23 @@ fn remove_created_assets(
     Ok(())
 }
 
-/// Abort the pending transaction recorded on disk, if any.
-fn abort_transaction(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<()> {
-    let Some(journal) = Journal::load(paths)? else {
-        return Ok(());
-    };
-    restore_previous(platform, paths, &journal)
-}
-
 /// Finish an activation whose staged payload and live registration verify.
+///
+/// The caller already verified the created inventory exactly once.
 fn complete_forward(
     platform: &impl Platform,
     paths: &InstallPaths,
     journal: &Journal,
 ) -> InstallResult<InstallReport> {
-    verify_created_assets(paths, journal)?;
-    platform.publish_registration(
-        paths,
-        &registration_from(&journal.manifest, journal.preimage.as_ref())?,
-    )?;
+    let registration = registration_from(&journal.manifest, journal.preimage.as_ref())?;
+    let live = platform.read_registration(paths)?;
+    if live.as_ref().map(Registration::manifest_digest) != Some(journal.manifest.sha256()) {
+        // Only republish the manifest when it is not already the live one.
+        platform.publish_manifest(paths, &registration)?;
+    }
+    // The registry half is always republished idempotently so a crash between
+    // the two publication calls is healed.
+    platform.publish_registration(paths, &registration)?;
     let live = platform.read_registration(paths)?.ok_or_else(io_failure)?;
     if live.manifest_digest() != journal.manifest.sha256() {
         return Err(io_failure());
@@ -584,7 +778,12 @@ fn complete_forward(
 
 /// The report for a layout with no pending transaction.
 fn clean_report(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<InstallReport> {
-    let receipt = Receipt::load(paths)?;
+    let receipt = match Receipt::load(platform, paths)? {
+        ReceiptState::None => None,
+        ReceiptState::Committed(receipt) => Some(*receipt),
+        // No journal is available to reconstruct what was installed.
+        ReceiptState::Unreadable => return Err(recovery_required()),
+    };
     let live = platform.read_registration(paths)?;
     let (state, prior_usable, active_payload) = match (receipt, live) {
         (Some(receipt), Some(live)) => {
@@ -618,12 +817,23 @@ fn clean_report(platform: &impl Platform, paths: &InstallPaths) -> InstallResult
 }
 
 /// Write the receipt for `journal` unless the matching one is already durable.
+///
+/// An uninterpretable receipt is quarantined and rebuilt from the pending
+/// journal, which is authoritative for this transaction. (Atomic replacement
+/// means this only arises from external corruption.)
 fn ensure_receipt(
     platform: &impl Platform,
     paths: &InstallPaths,
     journal: &Journal,
 ) -> InstallResult<()> {
-    let existing = Receipt::load(paths)?;
+    let existing = match Receipt::load(platform, paths)? {
+        ReceiptState::None => None,
+        ReceiptState::Committed(receipt) => Some(*receipt),
+        ReceiptState::Unreadable => {
+            platform.quarantine_state(paths, StateDocument::Receipt)?;
+            None
+        }
+    };
     if let Some(existing) = existing.as_ref()
         && existing.transaction_id == journal.transaction_id
     {
@@ -654,7 +864,7 @@ fn build_receipt(
             owned.push(entry.claim().clone());
         }
     }
-    owned.extend(journal.created.iter().cloned());
+    owned.extend(journal.created.iter().map(JournalClaim::as_owned));
     owned.sort_by(|left, right| left.path.cmp(&right.path));
     owned.dedup_by(|left, right| left.path == right.path);
 
@@ -712,11 +922,6 @@ fn verify_created_assets(
         return Err(invalid_package());
     }
     Ok(entries)
-}
-
-/// Whether every path the journal created is still present and verified.
-fn created_assets_verified(paths: &InstallPaths, journal: &Journal) -> bool {
-    verify_created_assets(paths, journal).is_ok()
 }
 
 /// A [`Registration`] carrying the journaled Windows preimage, when there is one.

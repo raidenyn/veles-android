@@ -22,9 +22,9 @@ pub use inventory::{
     parse_inventory, verify_inventory, write_inventory,
 };
 pub use journal::{
-    JOURNAL_SCHEMA_VERSION, Journal, MAX_JOURNAL_MANIFEST_BYTES, ManifestSnapshot, Phase,
-    PolicyCarrierRefs, PriorInstall, RECEIPT_SCHEMA_VERSION, Receipt, RegistrationPreimage,
-    TRANSACTION_ID_BYTES, transaction_id,
+    JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, MAX_JOURNAL_MANIFEST_BYTES,
+    ManifestSnapshot, Phase, PolicyCarrierRefs, PriorInstall, RECEIPT_SCHEMA_VERSION, Receipt,
+    ReceiptState, RegistrationPreimage, TRANSACTION_ID_BYTES, transaction_id,
 };
 pub use model::{
     Channel, ChannelIdentity, DEVELOPMENT_HOST_NAME, Digest, FIXTURE_HOST_NAME, FailureCode,
@@ -50,10 +50,11 @@ pub use platform::{
     OwnedKind, OwnershipRecord, PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PackageKind,
     PackageSource, PathKind, Platform, PlatformCall, PortablePlatform, ProcessIdentity,
     ProcessImage, ProcessObservation, ProcessScope, ProcessTable, QUIESCENCE_TIMEOUT, Registration,
-    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, TrustProof,
-    ValidatedPath, WindowsPreimage, assessment_target, authenticate_package, claim_owned_entries,
-    claim_owned_registration, inspect_host_processes, is_accepted_assessment, parse_manifest,
-    path_is_within, registration_is_owned, require_quiescent, require_quiescent_within,
+    StateDocument, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
+    TrustProof, ValidatedPath, WindowsPreimage, assessment_target, authenticate_package,
+    claim_owned_entries, claim_owned_registration, inspect_host_processes, is_accepted_assessment,
+    parse_manifest, path_is_within, registration_is_owned, require_quiescent,
+    require_quiescent_within,
 };
 pub use policy::{
     CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, authorize_package_policy, effective_policy,

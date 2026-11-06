@@ -327,6 +327,35 @@ impl Platform for MacosPlatform {
         Err(unsupported())
     }
 
+    fn write_state(
+        &self,
+        _paths: &InstallPaths,
+        _document: super::StateDocument,
+        _bytes: &[u8],
+    ) -> InstallResult<()> {
+        Err(unsupported())
+    }
+
+    fn read_state(
+        &self,
+        _paths: &InstallPaths,
+        _document: super::StateDocument,
+    ) -> InstallResult<Option<Vec<u8>>> {
+        Err(unsupported())
+    }
+
+    fn quarantine_state(
+        &self,
+        _paths: &InstallPaths,
+        _document: super::StateDocument,
+    ) -> InstallResult<()> {
+        Err(unsupported())
+    }
+
+    fn publish_manifest(&self, _paths: &InstallPaths, _value: &Registration) -> InstallResult<()> {
+        Err(unsupported())
+    }
+
     fn replace_manifest(
         &self,
         _staged: &ValidatedPath,

@@ -222,6 +222,12 @@ impl InstallPaths {
             .join(format!("{version}-{}", payload_id.to_hex()))
     }
 
+    /// `<root>/versions/<version>-<payload-id>` as the normalized relative form
+    /// every owned claim and journal record uses.
+    pub fn version_dir_relative(&self, version: &Version, payload_id: Digest) -> String {
+        format!("{VERSIONS_DIR}/{version}-{}", payload_id.to_hex())
+    }
+
     fn validate_rendering(&self) -> InstallResult<()> {
         for path in [
             &self.root,

@@ -46,7 +46,8 @@ use crate::model::{
     validate_extension_id,
 };
 use crate::paths::{
-    InstallPaths, MAINTENANCE_DIR, MAX_ROOT_BYTES, STAGING_DIR, STATE_DIR, VERSIONS_DIR,
+    InstallPaths, JOURNAL_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE, STAGING_DIR,
+    STATE_DIR, VERSIONS_DIR,
 };
 use crate::policy::{CARRIER_HEADER_LEN, read_carrier};
 
@@ -97,6 +98,39 @@ const NO_FOLLOW: i32 = 0;
 
 #[cfg(windows)]
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+
+/// One installer state document addressed through the platform boundary.
+///
+/// State documents are replaced atomically (stage, flush, rename, flush the
+/// parent) so a process death can leave the previous document or the new one,
+/// never a truncated JSON envelope. Reads also go through the boundary so a
+/// test can model a read fault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StateDocument {
+    /// The transaction journal (`state/journal.json`).
+    Journal,
+    /// The committed receipt (`state/receipt.json`).
+    Receipt,
+}
+
+impl StateDocument {
+    /// The fixed file name below `state/`.
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::Journal => JOURNAL_FILE,
+            Self::Receipt => RECEIPT_FILE,
+        }
+    }
+
+    /// The durable quarantine name an uninterpretable document is moved to.
+    ///
+    /// The fixed layout has no unlink primitive for state documents; keeping the
+    /// rejected bytes under a distinct name preserves them for diagnostics while
+    /// releasing the live slot.
+    pub fn quarantine_file_name(self) -> String {
+        format!("{}.quarantine", self.file_name())
+    }
+}
 
 /// Classification of a validated path at construction time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1287,6 +1321,10 @@ impl OwnershipRecord {
 pub struct OwnedEntry {
     path: ValidatedPath,
     claim: OwnedClaim,
+    /// For a file this transaction may have been writing when the process died:
+    /// the exact size a complete write would produce. A shorter file is a prefix
+    /// of our own staged bytes and may be removed without a digest match.
+    incomplete_size: Option<u64>,
 }
 
 impl OwnedEntry {
@@ -1296,6 +1334,33 @@ impl OwnedEntry {
     /// files are idempotent). A present path whose kind, content or ancestry does
     /// not match the claim is `ForeignState`/`UnsafePath` and is never deleted.
     pub fn from_claim(paths: &InstallPaths, claim: &OwnedClaim) -> InstallResult<Option<Self>> {
+        Self::from_claim_allowing_short(paths, claim, None)
+    }
+
+    /// Turn a claim the journal marked incomplete into a removable handle.
+    ///
+    /// Staging writes the bytes sequentially, so a process death mid-write leaves
+    /// a strict prefix of the staged file: the path may be removed when its
+    /// current size is *smaller* than `expected_size`. An equal-size file is
+    /// still held to the exact digest, and a longer file is foreign. The caller
+    /// must additionally constrain the path to this transaction's own version
+    /// directory.
+    pub fn incomplete_file(
+        paths: &InstallPaths,
+        claim: &OwnedClaim,
+        expected_size: u64,
+    ) -> InstallResult<Option<Self>> {
+        if claim.kind != OwnedKind::File {
+            return Err(invalid_input());
+        }
+        Self::from_claim_allowing_short(paths, claim, Some(expected_size))
+    }
+
+    fn from_claim_allowing_short(
+        paths: &InstallPaths,
+        claim: &OwnedClaim,
+        incomplete_size: Option<u64>,
+    ) -> InstallResult<Option<Self>> {
         let normalized = normalize_relative_path(&claim.path).map_err(|_| unsafe_path())?;
         if !is_owned_claim_scope(&normalized) {
             return Err(unsafe_path());
@@ -1311,15 +1376,26 @@ impl OwnedEntry {
             OwnedKind::Directory => PathKind::Directory,
         };
         let path = ValidatedPath::new(paths, Path::new(&normalized), kind)?;
+        let mut short = false;
         if claim.kind == OwnedKind::File {
             let expected = claim.sha256.ok_or_else(foreign_state)?;
-            if hash_file(path.rendered())? != expected {
+            let length = fs::symlink_metadata(path.rendered())
+                .map_err(|_| io_failure())?
+                .len();
+            if let Some(expected_size) = incomplete_size
+                && length < expected_size
+            {
+                short = true;
+            } else if hash_file(path.rendered())? != expected {
                 return Err(foreign_state());
             }
+        } else if incomplete_size.is_some() {
+            return Err(invalid_input());
         }
         Ok(Some(Self {
             path,
             claim: claim.clone(),
+            incomplete_size: if short { incomplete_size } else { None },
         }))
     }
 
@@ -1871,6 +1947,33 @@ pub trait Platform {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock>;
     /// Write all bytes, flush and read the exact bytes back.
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()>;
+    /// Atomically replace one installer state document.
+    ///
+    /// The bytes are staged into a sibling file on the same volume, flushed and
+    /// read back, then renamed onto the fixed state path and the parent directory
+    /// is flushed. A reader (and a crash) therefore observes the previous
+    /// document or the complete new one, never a partially written envelope. An
+    /// empty byte slice durably releases the document.
+    fn write_state(
+        &self,
+        paths: &InstallPaths,
+        document: StateDocument,
+        bytes: &[u8],
+    ) -> InstallResult<()> {
+        write_state_atomic(paths, document, bytes, None, false, false).map(|_| ())
+    }
+    /// Read one installer state document exactly, or `None` when absent/empty.
+    fn read_state(
+        &self,
+        paths: &InstallPaths,
+        document: StateDocument,
+    ) -> InstallResult<Option<Vec<u8>>> {
+        read_state_document(paths, document)
+    }
+    /// Move an uninterpretable state document to its fixed quarantine name.
+    fn quarantine_state(&self, paths: &InstallPaths, document: StateDocument) -> InstallResult<()> {
+        quarantine_state_document(paths, document)
+    }
     /// Create one private directory below the fixed install root.
     ///
     /// `path` is a validated [`PathKind::NewDirectory`] handle that was absent
@@ -1887,8 +1990,13 @@ pub trait Platform {
     /// Atomically replace the one manifest that selects the executable.
     fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()>;
     /// Read the live registration exactly, or `None` when absent.
+    ///
+    /// A native Windows adapter populates the returned [`Registration`] with the
+    /// HKCU key and previous default value it captured before publication (see
+    /// [`WindowsPreimage`]), so the transaction can journal a complete preimage.
+    /// The portable adapter has no registry and leaves it `None`.
     fn read_registration(&self, paths: &InstallPaths) -> InstallResult<Option<Registration>>;
-    /// Publish exact manifest bytes (and, natively on Windows, the HKCU value).
+    /// Publish the manifest file that selects the executable (step one).
     ///
     /// The manifest must name this channel and an executable inside an owned
     /// `versions/` or `maintenance/` directory. A live registration may be
@@ -1896,6 +2004,24 @@ pub trait Platform {
     /// or it is a previously published owned manifest (an upgrade). Any other
     /// live registration yields `ForeignState` and is left byte-for-byte
     /// intact; this layer never assumes the caller established ownership.
+    ///
+    /// Publication is split in two ordered calls so each is a separately
+    /// journaled step: this call replaces the manifest file, and
+    /// [`Platform::publish_registration`] then publishes the OS registration
+    /// (HKCU on Windows). The transaction journals between them, so a crash leaves
+    /// either the old manifest, the new manifest with the old registry value, or
+    /// both new - never bytes that disagree with the registry.
+    fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+        publish_manifest_checked(paths, value)
+    }
+    /// Publish the OS registration for an already-published manifest (step two).
+    ///
+    /// On Windows this writes the fixed HKCU value that points Chrome at the
+    /// manifest; the portable adapter has no registry and only verifies that the
+    /// manifest selected by `value` is already live, so the ordering is modelled
+    /// on every host. The owned-preimage refusal is applied here as well: a live
+    /// manifest this installer does not own is `ForeignState` and nothing is
+    /// written.
     fn publish_registration(&self, paths: &InstallPaths, value: &Registration)
     -> InstallResult<()>;
     /// Remove only the registration whose exact bytes match `expected`.
@@ -2024,7 +2150,7 @@ impl Platform for PortablePlatform {
         paths: &InstallPaths,
         value: &Registration,
     ) -> InstallResult<()> {
-        publish_registration_checked(paths, value)
+        publish_registry_checked(paths, value)
     }
 
     fn remove_registration(
@@ -2084,6 +2210,20 @@ pub struct Faults {
     /// no caller error path or cleanup runs: the transaction is left exactly as
     /// a killed installer would leave it.
     pub panic_at_mutation: Option<usize>,
+    /// Simulate a process death *during* the N-th durable write (1-based).
+    ///
+    /// The first half of the bytes is written and flushed, then the process dies.
+    /// For a payload file that leaves a short file; for an atomic state document
+    /// it leaves the previous document and a torn staging sibling.
+    pub tear_at_mutation: Option<usize>,
+    /// Fail the N-th state-document write *after* its rename succeeded (1-based).
+    ///
+    /// Models a durable replacement whose parent flush failed: the new bytes are
+    /// live, but the call reports an error.
+    pub fail_flush_after_state_write_at: Option<usize>,
+    /// Fail the N-th state-document read (1-based); read faults are modelable
+    /// because every state read goes through the platform boundary.
+    pub fail_state_read_at: Option<usize>,
 }
 
 impl Default for Faults {
@@ -2097,6 +2237,9 @@ impl Default for Faults {
             trust: None,
             trust_denied: false,
             panic_at_mutation: None,
+            tear_at_mutation: None,
+            fail_flush_after_state_write_at: None,
+            fail_state_read_at: None,
         }
     }
 }
@@ -2106,9 +2249,13 @@ impl Default for Faults {
 pub enum PlatformCall {
     Lock,
     WriteDurable,
+    WriteStateDocument,
+    ReadStateDocument,
+    QuarantineStateDocument,
     CreateDirectory,
     ReplaceManifest,
     ReadRegistration,
+    PublishManifest,
     PublishRegistration,
     RemoveRegistration,
     InspectHosts,
@@ -2127,8 +2274,11 @@ impl PlatformCall {
         matches!(
             self,
             Self::WriteDurable
+                | Self::WriteStateDocument
+                | Self::QuarantineStateDocument
                 | Self::CreateDirectory
                 | Self::ReplaceManifest
+                | Self::PublishManifest
                 | Self::PublishRegistration
                 | Self::RemoveRegistration
                 | Self::RemoveOwned
@@ -2141,6 +2291,9 @@ struct FakeState {
     calls: Vec<PlatformCall>,
     mutations: usize,
     short_writes: usize,
+    state_writes: usize,
+    state_reads: usize,
+    published_preimages: Vec<Option<WindowsPreimage>>,
 }
 
 /// A fault-injectable [`Platform`] over the portable primitives.
@@ -2187,6 +2340,11 @@ impl FakePlatform {
         self.fake_state().short_writes
     }
 
+    /// The Windows preimage carried by every registration publication call.
+    pub fn published_preimages(&self) -> Vec<Option<WindowsPreimage>> {
+        self.fake_state().published_preimages.clone()
+    }
+
     fn fake_state(&self) -> MutexGuard<'_, FakeState> {
         self.state
             .lock()
@@ -2197,23 +2355,26 @@ impl FakePlatform {
         self.fake_state().calls.push(call);
     }
 
-    fn begin_mutation(&self, call: PlatformCall) -> InstallResult<()> {
+    fn begin_mutation(&self, call: PlatformCall) -> InstallResult<usize> {
         let mut state = self.fake_state();
         state.calls.push(call);
         state.mutations += 1;
-        if self.faults.fail_mutation_at == Some(state.mutations) {
+        let mutation = state.mutations;
+        if self.faults.fail_mutation_at == Some(mutation) {
             return Err(io_failure());
         }
-        if self.faults.panic_at_mutation == Some(state.mutations) {
+        if self.faults.panic_at_mutation == Some(mutation) {
             // A simulated process death: the guard is dropped by unwinding, the
             // mutex is left poisoned (the accessor recovers it) and no caller
             // error path or cleanup runs.
-            panic!(
-                "injected process death at state mutation {}",
-                state.mutations
-            );
+            panic!("injected process death at state mutation {mutation}");
         }
-        Ok(())
+        Ok(mutation)
+    }
+
+    /// Whether this mutation is the one that dies after a partial write.
+    fn tears_at(&self, mutation: usize) -> bool {
+        self.faults.tear_at_mutation == Some(mutation)
     }
 }
 
@@ -2233,7 +2394,11 @@ impl Platform for FakePlatform {
     }
 
     fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
-        self.begin_mutation(PlatformCall::WriteDurable)?;
+        let mutation = self.begin_mutation(PlatformCall::WriteDurable)?;
+        if self.tears_at(mutation) {
+            let _ = write_partial(path, bytes);
+            panic!("injected partial payload write at state mutation {mutation}");
+        }
         let short = write_durable_checked(
             path,
             bytes,
@@ -2242,6 +2407,60 @@ impl Platform for FakePlatform {
         )?;
         self.fake_state().short_writes += short;
         Ok(())
+    }
+
+    fn write_state(
+        &self,
+        paths: &InstallPaths,
+        document: StateDocument,
+        bytes: &[u8],
+    ) -> InstallResult<()> {
+        let mutation = self.begin_mutation(PlatformCall::WriteStateDocument)?;
+        let write_index = {
+            let mut state = self.fake_state();
+            state.state_writes += 1;
+            state.state_writes
+        };
+        if self.tears_at(mutation) {
+            // A non-atomic writer would have torn the live document; the atomic
+            // boundary only leaves a torn staging sibling. The panic models the
+            // process death either way.
+            let _ = tear_state_staging(paths, document, bytes);
+            panic!("injected partial state write at state mutation {mutation}");
+        }
+        let fail_after_rename = self.faults.fail_flush_after_state_write_at == Some(write_index);
+        let short = write_state_atomic(
+            paths,
+            document,
+            bytes,
+            self.faults.short_write_limit,
+            self.faults.corrupt_readback,
+            fail_after_rename,
+        )?;
+        self.fake_state().short_writes += short;
+        Ok(())
+    }
+
+    fn read_state(
+        &self,
+        paths: &InstallPaths,
+        document: StateDocument,
+    ) -> InstallResult<Option<Vec<u8>>> {
+        self.observe(PlatformCall::ReadStateDocument);
+        let read_index = {
+            let mut state = self.fake_state();
+            state.state_reads += 1;
+            state.state_reads
+        };
+        if self.faults.fail_state_read_at == Some(read_index) {
+            return Err(io_failure());
+        }
+        read_state_document(paths, document)
+    }
+
+    fn quarantine_state(&self, paths: &InstallPaths, document: StateDocument) -> InstallResult<()> {
+        self.begin_mutation(PlatformCall::QuarantineStateDocument)?;
+        quarantine_state_document(paths, document)
     }
 
     fn create_directory(&self, path: &ValidatedPath) -> InstallResult<()> {
@@ -2259,13 +2478,21 @@ impl Platform for FakePlatform {
         read_registration_from(paths.registration_path())
     }
 
+    fn publish_manifest(&self, paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+        self.begin_mutation(PlatformCall::PublishManifest)?;
+        publish_manifest_checked(paths, value)
+    }
+
     fn publish_registration(
         &self,
         paths: &InstallPaths,
         value: &Registration,
     ) -> InstallResult<()> {
         self.begin_mutation(PlatformCall::PublishRegistration)?;
-        publish_registration_checked(paths, value)
+        self.fake_state()
+            .published_preimages
+            .push(value.windows_preimage().cloned());
+        publish_registry_checked(paths, value)
     }
 
     fn remove_registration(
@@ -2383,6 +2610,121 @@ fn write_durable_checked(
         flush_directory(parent)?;
     }
     Ok(short_writes)
+}
+
+/// Write the first half of `bytes` durably, then return: a process that dies
+/// here leaves exactly the short file a non-atomic writer would.
+fn write_partial(path: &ValidatedPath, bytes: &[u8]) -> io::Result<()> {
+    path.revalidate()
+        .map_err(|_| io::Error::other("partial write revalidation"))?;
+    let file = open_for_write(path)?;
+    let half = bytes.len() / 2;
+    (&file).write_all(&bytes[..half])?;
+    file.sync_all()
+}
+
+/// Render one state-document path below `state/`.
+fn state_relative(document: StateDocument) -> std::path::PathBuf {
+    Path::new(STATE_DIR).join(document.file_name())
+}
+
+/// Render the staging sibling used to replace a state document atomically.
+fn state_staging_relative(document: StateDocument) -> std::path::PathBuf {
+    Path::new(STATE_DIR).join(format!("{}.tmp", document.file_name()))
+}
+
+/// Open one state path as a validated handle: an existing regular file, or a
+/// path that must not exist yet. A link, directory or unreadable metadata is a
+/// typed failure, never "absent".
+fn state_handle(paths: &InstallPaths, relative: &Path) -> InstallResult<ValidatedPath> {
+    let absolute = paths.root().join(relative);
+    match fs::symlink_metadata(&absolute) {
+        Ok(metadata) if is_link_like(&metadata) || !metadata.is_file() => Err(unsafe_path()),
+        Ok(_) => ValidatedPath::new(paths, relative, PathKind::File),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            ValidatedPath::new(paths, relative, PathKind::NewFile)
+        }
+        Err(_) => Err(io_failure()),
+    }
+}
+
+/// Atomically replace one installer state document.
+///
+/// The bytes are written to a sibling staging file on the same volume (all
+/// bytes, flush, read-back), renamed onto the live path and the parent directory
+/// is flushed. A crash therefore leaves the previous complete document or the
+/// new complete one; the staging sibling is inert and is re-adopted next time.
+fn write_state_atomic(
+    paths: &InstallPaths,
+    document: StateDocument,
+    bytes: &[u8],
+    short_write_limit: Option<usize>,
+    corrupt_readback: bool,
+    fail_after_rename: bool,
+) -> InstallResult<usize> {
+    let staging_relative = state_staging_relative(document);
+    let staging = state_handle(paths, &staging_relative)?;
+    let short = write_durable_checked(&staging, bytes, short_write_limit, corrupt_readback)?;
+    let staging = staging.adopt(PathKind::File)?;
+    let live = state_handle(paths, &state_relative(document))?;
+    replace_file_checked(&staging, &live)?;
+    if fail_after_rename {
+        // The replacement is durable, but the caller observes a failure: this is
+        // the parent-flush-after-rename shape the transaction must treat as a
+        // possible commit, never as licence to roll back.
+        return Err(io_failure());
+    }
+    Ok(short)
+}
+
+/// Write half of a state document to its staging sibling, modelling a process
+/// death in the middle of the (atomic) replacement. The live path is untouched.
+fn tear_state_staging(
+    paths: &InstallPaths,
+    document: StateDocument,
+    bytes: &[u8],
+) -> InstallResult<()> {
+    let staging = state_handle(paths, &state_staging_relative(document))?;
+    write_partial(&staging, bytes).map_err(|_| io_failure())
+}
+
+/// Read one installer state document exactly, rejecting links and non-files.
+///
+/// An absent document is `None`; a present but empty document is reported as
+/// `Some(empty)` so the caller can apply its own "released" convention.
+fn read_state_document(
+    paths: &InstallPaths,
+    document: StateDocument,
+) -> InstallResult<Option<Vec<u8>>> {
+    let absolute = paths.root().join(state_relative(document));
+    match fs::symlink_metadata(&absolute) {
+        Ok(metadata) if is_link_like(&metadata) || !metadata.is_file() => Err(unsafe_path()),
+        Ok(_) => read_no_follow(&absolute)
+            .map(Some)
+            .map_err(|_| io_failure()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(io_failure()),
+    }
+}
+
+/// Move an uninterpretable state document to its fixed quarantine name.
+///
+/// The rename is atomic on one volume, so the live slot is released without an
+/// unlink primitive and the rejected bytes stay available for diagnostics.
+fn quarantine_state_document(paths: &InstallPaths, document: StateDocument) -> InstallResult<()> {
+    let live_relative = state_relative(document);
+    match fs::symlink_metadata(paths.root().join(&live_relative)) {
+        Ok(metadata) if is_link_like(&metadata) || !metadata.is_file() => {
+            return Err(unsafe_path());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(io_failure()),
+    }
+    let live = ValidatedPath::new(paths, &live_relative, PathKind::File)?;
+    let quarantine_relative = Path::new(STATE_DIR).join(document.quarantine_file_name());
+    let quarantine = state_handle(paths, &quarantine_relative)?;
+    replace_file_checked(&live, &quarantine)
 }
 
 fn open_for_write(path: &ValidatedPath) -> io::Result<File> {
@@ -2506,6 +2848,17 @@ fn replace_manifest_checked(staged: &ValidatedPath, live: &ValidatedPath) -> Ins
     if !matches!(live.kind(), PathKind::File | PathKind::NewFile) {
         return Err(unsafe_path());
     }
+    replace_file_checked(staged, live)
+}
+
+/// Atomically rename one validated file onto another, flushing the destination
+/// directory.
+///
+/// `staged` must be an existing regular file; `live` may be absent (a first
+/// publication) or an existing regular file (a replacement, an upgrade or an
+/// atomic state-document update). Both handles are revalidated immediately
+/// before the rename, so a swapped ancestor fails closed.
+fn replace_file_checked(staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
     staged.revalidate()?;
     live.revalidate()?;
 
@@ -2583,7 +2936,7 @@ fn executable_in_owned_scope(paths: &InstallPaths, executable: &Path) -> Install
     Ok(normalized)
 }
 
-fn publish_registration_checked(paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+fn publish_manifest_checked(paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
     validate_registration_manifest(paths, value.manifest())?;
     // A publish may replace our own previous manifest (an upgrade), but it must
     // never silently steal a registration another product owns. Check the live
@@ -2609,6 +2962,30 @@ fn publish_registration_checked(paths: &InstallPaths, value: &Registration) -> I
     let staged = staged.adopt(PathKind::File)?;
     let live = registration_target(paths)?;
     replace_manifest_checked(&staged, &live)
+}
+
+/// The registry/manifest-registration half of publication.
+///
+/// The portable adapter has no registry, so this step verifies the ordering the
+/// native adapters rely on: the manifest `value` names must already be the live
+/// registration. Anything else means the two halves ran out of order (or another
+/// writer intervened) and no registry value may be written.
+fn publish_registry_checked(paths: &InstallPaths, value: &Registration) -> InstallResult<()> {
+    validate_registration_manifest(paths, value.manifest())?;
+    let Some(live) = read_registration_from(paths.registration_path())? else {
+        return Err(io_failure());
+    };
+    // The same owned-preimage rule as the manifest step: never write the registry
+    // for a manifest another product owns.
+    if !value.matches_published(&live) {
+        if !is_owned_registration_preimage(paths, &live) {
+            return Err(foreign_state());
+        }
+        // Ours, but not the manifest that was just published: the two ordered
+        // steps ran out of order (or another writer intervened).
+        return Err(io_failure());
+    }
+    Ok(())
 }
 
 /// Whether `value` is a registration this installer owns for `paths`.
@@ -2678,7 +3055,16 @@ fn remove_owned_entry(entry: &OwnedEntry) -> InstallResult<()> {
     match entry.claim.kind {
         OwnedKind::File => {
             let expected = entry.claim.sha256.ok_or_else(foreign_state)?;
-            if hash_file(entry.path.rendered())? != expected {
+            let short = match entry.incomplete_size {
+                Some(expected_size) => {
+                    let length = fs::symlink_metadata(entry.path.rendered())
+                        .map_err(|_| io_failure())?
+                        .len();
+                    length < expected_size
+                }
+                None => false,
+            };
+            if !short && hash_file(entry.path.rendered())? != expected {
                 return Err(foreign_state());
             }
             fs::remove_file(entry.path.rendered()).map_err(|_| io_failure())?;

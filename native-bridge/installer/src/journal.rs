@@ -4,8 +4,9 @@
 //! a process that dies mid-transaction can be reconciled afterwards: it records
 //! the exact intent (operation, phase, old/new payload identities, old/new
 //! manifest bytes, the owned registration preimage, the policy-carrier
-//! references and the inventory of paths the transaction created) *before* the
-//! matching mutation.
+//! references and the inventory of paths the transaction created) before the
+//! first mutation, and the completion of each separately journaled publication
+//! step afterwards.
 //!
 //! A journal is never authority on its own. Recovery compares it with verified
 //! live state (see [`crate::transaction::recover`]); a phase marker alone never
@@ -19,27 +20,29 @@
 //!   [`MAX_JOURNAL_MANIFEST_BYTES`] so the whole document stays inside
 //!   [`MAX_DOCUMENT_BYTES`]; a Native Messaging manifest is a few hundred bytes.
 //! * The created-path inventory must be a well-formed owned claim set for this
-//!   root and channel (the same rules a committed receipt is held to).
-//! * An empty journal file means "no transaction in flight". The fixed layout
-//!   has no unlink primitive for state files, so a finished transaction clears
-//!   its journal by durably truncating it to zero bytes; that write is atomic
-//!   from a reader's point of view (the file is either the old document or
-//!   empty).
-
-use std::fs;
-use std::io;
-use std::path::Path;
+//!   root and channel (the same rules a committed receipt is held to). Each file
+//!   claim records its exact size and, while the journal is `Prepared`, an
+//!   `incomplete` marker so rollback can remove a short prefix left by a process
+//!   that died mid-write.
+//! * An empty journal file means "no transaction in flight". State documents are
+//!   replaced atomically through the [`Platform`] boundary (stage, flush, rename,
+//!   flush the parent), so a reader sees the previous complete document or the
+//!   new complete one - never a torn JSON envelope. A finished transaction
+//!   releases its journal by atomically replacing it with zero bytes; an
+//!   uninterpretable document is quarantined by recovery instead of blocking
+//!   forever.
 
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::model::{
     Channel, Digest, FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES,
-    MAX_INVENTORY_ENTRIES, MAX_PUBLISHER_BYTES, Operation, Target, canonical_json, parse_version,
+    MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PUBLISHER_BYTES, Operation, Target,
+    canonical_json, parse_version,
 };
-use crate::paths::{InstallPaths, JOURNAL_FILE, MAX_ROOT_BYTES, RECEIPT_FILE, STATE_DIR};
+use crate::paths::{InstallPaths, MAX_ROOT_BYTES};
 use crate::platform::{
-    OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnershipRecord, PathKind, Platform, ValidatedPath,
+    OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedKind, OwnershipRecord, Platform, StateDocument,
 };
 
 /// The only supported journal document schema generation.
@@ -57,11 +60,12 @@ pub const TRANSACTION_ID_BYTES: usize = 16;
 
 /// The committed phase of a transaction.
 ///
-/// The order is the transition order. `ManifestActivated` records the durable
-/// *intent* immediately before the platform's activation mutation: with the
-/// pinned [`Platform`] surface, publication replaces the manifest file and (on
-/// Windows) sets the fixed HKCU value in the same call, so the two phases bracket
-/// that call and recovery must inspect live state instead of trusting either.
+/// The order is the transition order. `Prepared` and `Staged` are durable intent
+/// written *before* the mutation they authorize; `ManifestActivated` and
+/// `RegistrationPublished` record that the matching publication step returned,
+/// so the journal separates the manifest replacement from the registry
+/// publication. Recovery never trusts a phase and always inspects verified live
+/// state instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Phase {
@@ -69,9 +73,9 @@ pub enum Phase {
     Prepared,
     /// Every authenticated payload file and the inventory are staged.
     Staged,
-    /// Activation intent recorded; the live manifest may be old or new.
+    /// The manifest file that selects the executable may be old or new.
     ManifestActivated,
-    /// The publication call returned; registration and HKCU may be live.
+    /// The OS registration publication returned.
     RegistrationPublished,
     /// The committed receipt is durable.
     ReceiptCommitted,
@@ -287,6 +291,116 @@ impl RegistrationPreimage {
     }
 }
 
+/// One path a transaction created, with the staging metadata recovery needs.
+///
+/// The claim set is journaled before the first staging write. While the journal
+/// is still `Prepared` every file claim is `incomplete`: staging writes the bytes
+/// sequentially, so a process death can leave a strict prefix of the recorded
+/// file, and rollback must be able to remove that prefix without a digest match
+/// (a complete file is still held to its exact digest). The `Staged` journal
+/// clears the marker once every file has been written and read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalClaim {
+    /// Normalized relative path below the install root.
+    pub path: String,
+    pub kind: OwnedKind,
+    /// Exact content digest for files; `None` for directories.
+    pub sha256: Option<Digest>,
+    /// The exact byte size a complete staging write produces (files only).
+    pub size: Option<u64>,
+    /// Whether a process may have died part-way through writing this file.
+    pub incomplete: bool,
+}
+
+impl JournalClaim {
+    /// A claim for a file this transaction is about to write.
+    pub fn file(path: impl Into<String>, sha256: Digest, size: u64, incomplete: bool) -> Self {
+        Self {
+            path: path.into(),
+            kind: OwnedKind::File,
+            sha256: Some(sha256),
+            size: Some(size),
+            incomplete,
+        }
+    }
+
+    /// A claim for a directory this transaction creates.
+    pub fn directory(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            kind: OwnedKind::Directory,
+            sha256: None,
+            size: None,
+            incomplete: false,
+        }
+    }
+
+    /// The claim as the ownership record represents it.
+    pub fn as_owned(&self) -> OwnedClaim {
+        OwnedClaim {
+            path: self.path.clone(),
+            kind: self.kind,
+            sha256: self.sha256,
+        }
+    }
+
+    /// The same claim with staging complete.
+    pub fn completed(&self) -> Self {
+        Self {
+            incomplete: false,
+            ..self.clone()
+        }
+    }
+
+    fn validate(&self) -> InstallResult<()> {
+        if self.path.is_empty() {
+            return Err(invalid_input());
+        }
+        match self.kind {
+            OwnedKind::File => {
+                if self.sha256.is_none() {
+                    return Err(invalid_input());
+                }
+                if self.size.is_none_or(|size| size > MAX_INVENTORY_BYTES) {
+                    return Err(invalid_input());
+                }
+            }
+            OwnedKind::Directory => {
+                if self.sha256.is_some() || self.size.is_some() || self.incomplete {
+                    return Err(invalid_input());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The durable journal slot, as found by [`Journal::load`].
+#[derive(Debug, Clone)]
+pub enum JournalState {
+    /// No transaction is in flight (absent or durably released).
+    None,
+    /// A complete, valid pending journal.
+    Pending(Box<Journal>),
+    /// Present bytes that cannot be interpreted (a torn write or foreign bytes).
+    ///
+    /// Recovery reconciles from verified live state and quarantines the bytes
+    /// instead of failing forever; an install refuses to start.
+    Unreadable,
+}
+
+/// The durable receipt slot, as found by [`Receipt::load`].
+#[derive(Debug, Clone)]
+pub enum ReceiptState {
+    /// No receipt is committed.
+    None,
+    /// A complete committed receipt.
+    Committed(Box<Receipt>),
+    /// Present bytes that cannot be interpreted.
+    Unreadable,
+}
+
 /// The journal v1 document.
 ///
 /// Fields are public so a test or a later task can inspect the durable record;
@@ -319,7 +433,7 @@ pub struct Journal {
     pub preimage: Option<RegistrationPreimage>,
     pub policy: PolicyCarrierRefs,
     /// Paths this transaction created, relative to the root.
-    pub created: Vec<OwnedClaim>,
+    pub created: Vec<JournalClaim>,
 }
 
 impl Journal {
@@ -327,6 +441,13 @@ impl Journal {
     pub fn with_phase(&self, phase: Phase) -> Self {
         let mut next = self.clone();
         next.phase = phase;
+        next
+    }
+
+    /// The same transaction with every staging write complete.
+    pub fn with_completed_claims(&self) -> Self {
+        let mut next = self.clone();
+        next.created = next.created.iter().map(JournalClaim::completed).collect();
         next
     }
 
@@ -342,7 +463,7 @@ impl Journal {
             channel: self.channel,
             root: self.root.clone(),
             manifest_sha256: self.manifest.sha256(),
-            owned: self.created.clone(),
+            owned: self.created.iter().map(JournalClaim::as_owned).collect(),
         }
     }
 
@@ -372,10 +493,18 @@ impl Journal {
             preimage.validate()?;
         }
         self.policy.validate()?;
+        for claim in &self.created {
+            claim.validate()?;
+        }
         // The created inventory is validated exactly like a receipt's owned set:
         // in-root, in-scope (`versions/`/`maintenance/`), bounded, duplicate-free
         // and kind/digest consistent.
         self.ownership_record().validate(paths)?;
+        // The claim set contributes to the document bound: a journal whose
+        // inventory would not fit is invalid, not merely unwritable.
+        if self.to_bytes()?.len() > MAX_DOCUMENT_BYTES {
+            return Err(invalid_input());
+        }
         Ok(())
     }
 
@@ -398,48 +527,35 @@ impl Journal {
         Ok(bytes)
     }
 
-    /// Durably record this journal (validated first).
+    /// Durably record this journal (validated first) as one atomic replacement.
     pub fn write(&self, platform: &impl Platform, paths: &InstallPaths) -> InstallResult<()> {
         self.validate(paths)?;
         let bytes = self.to_bytes()?;
-        let target = state_target(paths, JOURNAL_FILE)?;
-        platform.write_durable(&target, &bytes)
+        platform.write_state(paths, StateDocument::Journal, &bytes)
     }
 
-    /// Read the pending journal, if any.
+    /// Read the pending journal slot.
     ///
-    /// An absent or empty journal means no transaction is in flight. An
-    /// unreadable or invalid document is `RecoveryRequired`: it cannot be
-    /// interpreted, so no operation may proceed on top of it.
-    pub fn load(paths: &InstallPaths) -> InstallResult<Option<Self>> {
-        let Some(bytes) = read_state_file(paths.journal_path())? else {
-            return Ok(None);
+    /// An absent or empty journal means no transaction is in flight. A present
+    /// document that cannot be parsed is reported as [`JournalState::Unreadable`]
+    /// so recovery can reconcile it against verified live state instead of
+    /// blocking forever; an install refuses to proceed on either.
+    pub fn load(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<JournalState> {
+        let Some(bytes) = platform.read_state(paths, StateDocument::Journal)? else {
+            return Ok(JournalState::None);
         };
         if bytes.is_empty() {
-            return Ok(None);
+            return Ok(JournalState::None);
         }
-        Self::parse(&bytes, paths)
-            .map(Some)
-            .map_err(|_| recovery_required())
+        Ok(match Self::parse(&bytes, paths) {
+            Ok(journal) => JournalState::Pending(Box::new(journal)),
+            Err(_) => JournalState::Unreadable,
+        })
     }
 
-    /// Durably release the transaction, leaving no journal behind.
+    /// Durably release the transaction by atomically replacing it with nothing.
     pub fn clear(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<()> {
-        match fs::symlink_metadata(paths.journal_path()) {
-            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-                Err(unsafe_path())
-            }
-            Ok(_) => {
-                let target = ValidatedPath::new(
-                    paths,
-                    Path::new(STATE_DIR).join(JOURNAL_FILE).as_path(),
-                    PathKind::File,
-                )?;
-                platform.write_durable(&target, &[])
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(io_failure()),
-        }
+        platform.write_state(paths, StateDocument::Journal, &[])
     }
 }
 
@@ -511,28 +627,31 @@ impl Receipt {
         Ok(bytes)
     }
 
-    /// Durably write the committed receipt (validated first).
+    /// Durably write the committed receipt (validated first) atomically.
     pub fn write(&self, platform: &impl Platform, paths: &InstallPaths) -> InstallResult<()> {
         self.validate(paths)?;
         let bytes = self.to_bytes()?;
-        let target = state_target(paths, RECEIPT_FILE)?;
-        platform.write_durable(&target, &bytes)
+        platform.write_state(paths, StateDocument::Receipt, &bytes)
     }
 
-    /// Read the committed receipt, if any.
+    /// Read the committed receipt slot.
     ///
-    /// A present but invalid receipt is `RecoveryRequired`: it is ambiguous
-    /// state, not a licence to guess what was installed.
-    pub fn load(paths: &InstallPaths) -> InstallResult<Option<Self>> {
-        let Some(bytes) = read_state_file(paths.receipt_path())? else {
-            return Ok(None);
+    /// A present but uninterpretable receipt is reported as
+    /// [`ReceiptState::Unreadable`], never as a licence to guess what was
+    /// installed. Atomic replacement means this only arises from external
+    /// corruption; recovery can quarantine it when a pending journal is
+    /// authoritative for the same transaction.
+    pub fn load(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<ReceiptState> {
+        let Some(bytes) = platform.read_state(paths, StateDocument::Receipt)? else {
+            return Ok(ReceiptState::None);
         };
         if bytes.is_empty() {
-            return Ok(None);
+            return Ok(ReceiptState::None);
         }
-        Self::parse(&bytes, paths)
-            .map(Some)
-            .map_err(|_| recovery_required())
+        Ok(match Self::parse(&bytes, paths) {
+            Ok(receipt) => ReceiptState::Committed(Box::new(receipt)),
+            Err(_) => ReceiptState::Unreadable,
+        })
     }
 }
 
@@ -581,30 +700,6 @@ fn is_transaction_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-/// A validated handle for one installer state file, creating it when absent.
-fn state_target(paths: &InstallPaths, name: &str) -> InstallResult<ValidatedPath> {
-    let relative = Path::new(STATE_DIR).join(name);
-    match fs::symlink_metadata(paths.root().join(&relative)) {
-        Ok(_) => ValidatedPath::new(paths, &relative, PathKind::File),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            ValidatedPath::new(paths, &relative, PathKind::NewFile)
-        }
-        Err(_) => Err(io_failure()),
-    }
-}
-
-/// Read one state file, rejecting links and non-regular files.
-fn read_state_file(path: &Path) -> InstallResult<Option<Vec<u8>>> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(unsafe_path())
-        }
-        Ok(_) => fs::read(path).map(Some).map_err(|_| io_failure()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(_) => Err(io_failure()),
-    }
-}
-
 fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -647,16 +742,4 @@ fn invalid_input() -> InstallFailure {
 
 fn invalid_package() -> InstallFailure {
     InstallFailure::new(FailureCode::InvalidPackage)
-}
-
-fn unsafe_path() -> InstallFailure {
-    InstallFailure::new(FailureCode::UnsafePath)
-}
-
-fn io_failure() -> InstallFailure {
-    InstallFailure::new(FailureCode::Io)
-}
-
-fn recovery_required() -> InstallFailure {
-    InstallFailure::new(FailureCode::RecoveryRequired)
 }

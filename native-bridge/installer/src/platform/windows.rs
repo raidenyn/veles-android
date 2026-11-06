@@ -139,6 +139,34 @@ impl Platform for WindowsPlatform {
         Err(unsupported())
     }
 
+    fn write_state(
+        &self,
+        _paths: &InstallPaths,
+        _document: super::StateDocument,
+        _bytes: &[u8],
+    ) -> InstallResult<()> {
+        Err(unsupported())
+    }
+    fn read_state(
+        &self,
+        _paths: &InstallPaths,
+        _document: super::StateDocument,
+    ) -> InstallResult<Option<Vec<u8>>> {
+        Err(unsupported())
+    }
+
+    fn quarantine_state(
+        &self,
+        _paths: &InstallPaths,
+        _document: super::StateDocument,
+    ) -> InstallResult<()> {
+        Err(unsupported())
+    }
+
+    fn publish_manifest(&self, _paths: &InstallPaths, _value: &Registration) -> InstallResult<()> {
+        Err(unsupported())
+    }
+
     fn replace_manifest(
         &self,
         _staged: &ValidatedPath,
@@ -147,6 +175,10 @@ impl Platform for WindowsPlatform {
         Err(unsupported())
     }
 
+    /// Task 8 reads the manifest file and the fixed HKCU value together and
+    /// returns a [`Registration`] carrying the exact HKCU key and previous
+    /// default value as its [`WindowsPreimage`](super::WindowsPreimage), so the
+    /// transaction can journal a complete restore preimage.
     fn read_registration(&self, _paths: &InstallPaths) -> InstallResult<Option<Registration>> {
         Err(unsupported())
     }

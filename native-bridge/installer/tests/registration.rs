@@ -243,11 +243,11 @@ fn foreign_registration_is_not_claimed_from_receipt() {
         .validate(&paths)
         .expect("a version directory claim is in scope");
 
-    // Publish refuses a manifest naming a foreign executable and leaves the
-    // registration absent.
+    // Manifest publication refuses a manifest naming a foreign executable and
+    // leaves the registration absent.
     let foreign_registration = Registration::new(foreign_manifest.clone()).expect("bounded");
     assert_eq!(
-        failure_code(platform.publish_registration(&paths, &foreign_registration)),
+        failure_code(platform.publish_manifest(&paths, &foreign_registration)),
         FailureCode::UnsafePath
     );
     assert_eq!(
@@ -264,8 +264,11 @@ fn foreign_registration_is_not_claimed_from_receipt() {
     let owned_manifest = manifest_bytes(&paths, &owned_executable);
     let registration = Registration::new(owned_manifest.clone()).expect("bounded");
     platform
-        .publish_registration(&paths, &registration)
+        .publish_manifest(&paths, &registration)
         .expect("publishing an owned manifest succeeds");
+    platform
+        .publish_registration(&paths, &registration)
+        .expect("the registry step accepts the published manifest");
     assert_eq!(
         fs::read(paths.registration_path()).expect("published manifest"),
         owned_manifest
@@ -338,9 +341,14 @@ fn owned_publish_over_foreign_registration_is_refused() {
     let owned = Registration::new(owned_manifest.clone()).expect("bounded");
     let before = snapshot(temp.path());
     assert_eq!(
-        failure_code(platform.publish_registration(&paths, &owned)),
+        failure_code(platform.publish_manifest(&paths, &owned)),
         FailureCode::ForeignState,
         "an owned manifest may not replace a foreign live registration"
+    );
+    assert_eq!(
+        failure_code(platform.publish_registration(&paths, &owned)),
+        FailureCode::ForeignState,
+        "the registry step applies the same owned-preimage refusal"
     );
     assert_eq!(
         snapshot(temp.path()),
@@ -357,8 +365,11 @@ fn owned_publish_over_foreign_registration_is_refused() {
     // succeeds, and a later owned release may replace that owned preimage.
     fs::remove_file(paths.registration_path()).expect("remove the foreign registration");
     platform
-        .publish_registration(&paths, &owned)
+        .publish_manifest(&paths, &owned)
         .expect("a clean path accepts the owned manifest");
+    platform
+        .publish_registration(&paths, &owned)
+        .expect("the registry step accepts the published manifest");
     assert_eq!(
         fs::read(paths.registration_path()).expect("published manifest"),
         owned_manifest
@@ -379,10 +390,71 @@ fn owned_publish_over_foreign_registration_is_refused() {
     let next_manifest = manifest_bytes(&paths, &next_executable);
     let next = Registration::new(next_manifest.clone()).expect("bounded");
     platform
-        .publish_registration(&paths, &next)
+        .publish_manifest(&paths, &next)
         .expect("an owned preimage is replaceable by an upgrade");
+    platform
+        .publish_registration(&paths, &next)
+        .expect("the registry step accepts the upgraded manifest");
     assert_eq!(
         fs::read(paths.registration_path()).expect("upgraded manifest"),
         next_manifest
+    );
+}
+
+/// Publication is two ordered platform calls: the manifest file first, then the
+/// registry/manifest-registration step. The registry step must never accept a
+/// manifest that is not already live.
+#[test]
+fn registry_step_requires_the_published_manifest() {
+    let temp = TempRoot::new();
+    let paths = windows_paths(&temp);
+    let platform = FakePlatform::new();
+    let _lock = platform
+        .lock(&paths)
+        .expect("lock creates the private layout");
+
+    let owned_relative = format!(
+        "versions/1.2.3-{}/host.exe",
+        Digest::of(b"ordered-host").to_hex()
+    );
+    let owned_executable = paths.versions().join(
+        owned_relative
+            .strip_prefix("versions/")
+            .expect("versions-relative fixture"),
+    );
+    fs::create_dir_all(owned_executable.parent().expect("version directory"))
+        .expect("version directory");
+    fs::write(&owned_executable, b"ordered-host").expect("owned fixture executable");
+
+    let manifest = manifest_bytes(&paths, &owned_executable);
+    let registration = Registration::new(manifest.clone()).expect("bounded");
+    assert_eq!(
+        failure_code(platform.publish_registration(&paths, &registration)),
+        FailureCode::Io,
+        "the registry step refuses before the manifest is live"
+    );
+    assert!(
+        platform.read_registration(&paths).expect("read").is_none(),
+        "the registry step wrote nothing"
+    );
+
+    platform
+        .publish_manifest(&paths, &registration)
+        .expect("the manifest step publishes");
+    platform
+        .publish_registration(&paths, &registration)
+        .expect("the registry step accepts the live manifest");
+    let mutations = platform.mutations();
+    assert_eq!(
+        &mutations[mutations.len() - 2..],
+        &[
+            PlatformCall::PublishManifest,
+            PlatformCall::PublishRegistration
+        ],
+        "the two publication steps are separately observable and ordered"
+    );
+    assert_eq!(
+        fs::read(paths.registration_path()).expect("published manifest"),
+        manifest
     );
 }

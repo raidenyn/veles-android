@@ -128,7 +128,8 @@ fn assert_no_registration_writes(platform: &FakePlatform) {
         assert!(
             !matches!(
                 call,
-                PlatformCall::PublishRegistration
+                PlatformCall::PublishManifest
+                    | PlatformCall::PublishRegistration
                     | PlatformCall::RemoveRegistration
                     | PlatformCall::ReplaceManifest
                     | PlatformCall::ReadRegistration
