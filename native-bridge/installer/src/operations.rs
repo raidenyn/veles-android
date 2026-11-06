@@ -44,14 +44,14 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::inventory::{PACKAGE_INVENTORY_FILE, write_inventory};
+use crate::inventory::{PACKAGE_INVENTORY_FILE, SEALED_INVENTORY_FILE};
 use crate::journal::{
     JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot, Phase,
     PolicyCarrierRefs, Receipt, ReceiptState,
 };
 use crate::model::{
-    Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry, Operation,
-    WarningCode, canonical_json, parse_version,
+    Digest, FailureCode, InstallFailure, InstallReport, InstallResult, Operation, WarningCode,
+    canonical_json, parse_version,
 };
 use crate::paths::{InstallPaths, JOURNAL_FILE, LOCK_FILE, RECEIPT_FILE, STAGING_DIR, STATE_DIR};
 use crate::platform::{
@@ -443,6 +443,8 @@ struct RepairPlan<'a> {
     files: Vec<RepairedFile<'a>>,
     inventory_relative: String,
     inventory: Vec<u8>,
+    sealed_relative: String,
+    sealed: Option<Vec<u8>>,
     retained_relative: String,
     retained: Vec<u8>,
 }
@@ -462,21 +464,18 @@ impl<'a> RepairPlan<'a> {
                 })
             };
 
-        // The installed inventory is the installed payload identity: a package
-        // whose inventory document is not the committed payload is not a repair
-        // source for this installation.
-        let entries: Vec<InventoryEntry> = package
-            .payload()
-            .iter()
-            .map(|source| InventoryEntry {
-                path: source.relative().to_owned(),
-                size: source.size(),
-                sha256: source.sha256(),
-                executable: source.executable(),
-            })
-            .collect();
-        let inventory = write_inventory(&entries)?;
+        // The installed `inventory.json` is the unsigned canonical payload
+        // identity: a package whose canonical inventory is not the committed
+        // payload is not a repair source for this installation.
+        let inventory = package.canonical_inventory().to_vec();
         if Digest::of(&inventory) != receipt.payload_id {
+            return Err(foreign_state());
+        }
+        let sealed = package.sealed_inventory().map(<[u8]>::to_vec);
+        let sealed_relative = format!("{version_relative}/{SEALED_INVENTORY_FILE}");
+        if let Some(sealed) = sealed.as_ref()
+            && !claimed(&sealed_relative, OwnedKind::File, Some(Digest::of(sealed)))
+        {
             return Err(foreign_state());
         }
         let inventory_relative = format!("{version_relative}/{PACKAGE_INVENTORY_FILE}");
@@ -545,6 +544,8 @@ impl<'a> RepairPlan<'a> {
             files,
             inventory_relative,
             inventory,
+            sealed_relative,
+            sealed,
             retained_relative,
             retained,
         })
@@ -585,6 +586,16 @@ impl<'a> RepairPlan<'a> {
             Digest::of(&self.inventory),
             &self.inventory,
         )?;
+        if let Some(sealed) = self.sealed.as_ref() {
+            restore_bytes(
+                platform,
+                paths,
+                &self.sealed_relative,
+                sealed.len() as u64,
+                Digest::of(sealed),
+                sealed,
+            )?;
+        }
         restore_bytes(
             platform,
             paths,

@@ -98,8 +98,7 @@ use crate::paths::InstallPaths;
 /// Sealed carrier resource, relative to the bundle's `Contents` directory.
 const CARRIER_RESOURCE_RELATIVE: &str = "Resources/veles-policy-carrier";
 /// Bound on the sealed carrier bytes (`TrustProof` enforces the same limit).
-const MAX_CARRIER_BYTES: usize =
-    crate::policy::CARRIER_HEADER_LEN + crate::model::MAX_DOCUMENT_BYTES;
+const MAX_CARRIER_BYTES: usize = crate::policy::MAX_CARRIER_DOCUMENT_BYTES;
 /// Poll interval while waiting for the bounded Gatekeeper assessment.
 const SPCTL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 

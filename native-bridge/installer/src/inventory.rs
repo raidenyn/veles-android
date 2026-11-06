@@ -26,6 +26,14 @@ pub const INVENTORY_SCHEMA_VERSION: u32 = 1;
 pub const PACKAGE_INVENTORY_FILE: &str = "inventory.json";
 /// Payload directory name at the package root.
 pub const PACKAGE_PAYLOAD_DIR: &str = "payload";
+/// Sealed signed-byte inventory document at the package root.
+///
+/// Present exactly when signing changed the bytes of at least one payload file.
+/// `inventory.json` is then still the *unsigned canonical* identity (its digest
+/// is the descriptor's `payload_id`); this document lists the bytes actually
+/// shipped and installed, and its digest is asserted by the OS-authenticated
+/// carrier. See [`verify_correspondence`].
+pub const SEALED_INVENTORY_FILE: &str = "sealed-inventory.json";
 
 /// The strict package-inventory document.
 ///
@@ -135,6 +143,126 @@ pub fn parse_inventory(bytes: &[u8]) -> InstallResult<Vec<InventoryEntry>> {
     Ok(document.entries)
 }
 
+/// Bytes of a file head that classify a PE / Mach-O image.
+pub(crate) const SIGNABLE_HEAD_BYTES: u64 = 4096;
+
+/// Whether `head` (the first bytes of a file) starts a PE or Mach-O image, the only
+/// formats a code-signing step rewrites in place.
+///
+/// This is a classification, not a parser: it decides whether a changed digest is
+/// *allowed to be* a signing mutation. Whether the change is exactly the
+/// documented signature mutation is the release-time correspondence report's job
+/// (`scripts/correspondence.py`); whether the signature is trusted is the OS's.
+pub fn is_signable_image(head: &[u8]) -> bool {
+    if head.len() >= 0x40 && head.starts_with(b"MZ") {
+        let mut raw = [0u8; 4];
+        raw.copy_from_slice(&head[0x3c..0x40]);
+        let pe_offset = u32::from_le_bytes(raw) as usize;
+        return head
+            .get(pe_offset..pe_offset.saturating_add(4))
+            .is_some_and(|signature| signature == b"PE\0\0");
+    }
+    matches!(
+        head.get(..4),
+        Some([0xcf, 0xfa, 0xed, 0xfe])
+            | Some([0xfe, 0xed, 0xfa, 0xcf])
+            | Some([0xca, 0xfe, 0xba, 0xbe])
+    )
+}
+
+/// Whether `path` is a signature artifact a macOS signing step *adds*: the bundle
+/// seal `Contents/_CodeSignature/CodeResources` or a stapled ticket
+/// `Contents/CodeResources` inside a `*.app` bundle. These are the only paths the
+/// Task 9 tree comparator allows to exist on the signed side only.
+fn signature_artifact_kind(path: &str) -> Option<(String, bool)> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let count = parts.len();
+    let is_bundle = |name: &str| name.len() > 4 && name.ends_with(".app");
+    if count >= 4
+        && parts[count - 1] == "CodeResources"
+        && parts[count - 2] == "_CodeSignature"
+        && parts[count - 3] == "Contents"
+        && is_bundle(parts[count - 4])
+    {
+        return Some((parts[..count - 3].join("/"), true));
+    }
+    if count >= 3
+        && parts[count - 1] == "CodeResources"
+        && parts[count - 2] == "Contents"
+        && is_bundle(parts[count - 3])
+    {
+        return Some((parts[..count - 2].join("/"), false));
+    }
+    None
+}
+
+/// Verify that `sealed` (the signed bytes) corresponds to `canonical` (the
+/// unsigned identity) in the only ways a signing step may change a package.
+///
+/// * Every canonical path exists in the sealed inventory with the same
+///   `executable` bit; nothing is dropped or renamed.
+/// * A path whose size or digest differs must be a signable image
+///   (`is_signable_image`, queried on the *signed* file through `signable`).
+/// * A path present only in the sealed inventory must be a bundle seal or a
+///   stapled ticket beside a seal, and is never executable.
+///
+/// The check is structural on purpose. Neither inventory contains the unsigned
+/// file bytes after signing, so the engine cannot prove the byte-level mutation
+/// is exactly an Authenticode/Mach-O signature - that proof is the signing
+/// gate's correspondence report. What the engine adds is the binding: the
+/// canonical identity is authenticated by the descriptor, the sealed digest by the
+/// carrier, and the two cannot disagree about which files exist, which are
+/// executable, or which kinds of file changed.
+pub fn verify_correspondence(
+    canonical: &[InventoryEntry],
+    sealed: &[InventoryEntry],
+    mut signable: impl FnMut(&str) -> InstallResult<bool>,
+) -> InstallResult<()> {
+    validate_entries(canonical)?;
+    validate_entries(sealed)?;
+    let sealed_by_path: std::collections::HashMap<&str, &InventoryEntry> = sealed
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect();
+    let canonical_paths: HashSet<&str> =
+        canonical.iter().map(|entry| entry.path.as_str()).collect();
+
+    for entry in canonical {
+        let Some(signed) = sealed_by_path.get(entry.path.as_str()) else {
+            return Err(invalid_package());
+        };
+        if signed.executable != entry.executable {
+            return Err(invalid_package());
+        }
+        if (signed.size, signed.sha256) != (entry.size, entry.sha256) && !signable(&entry.path)? {
+            return Err(invalid_package());
+        }
+    }
+
+    let mut seals: HashSet<String> = HashSet::new();
+    let mut tickets: Vec<String> = Vec::new();
+    for entry in sealed {
+        if canonical_paths.contains(entry.path.as_str()) {
+            continue;
+        }
+        let Some((bundle, is_seal)) = signature_artifact_kind(&entry.path) else {
+            return Err(invalid_package());
+        };
+        if entry.executable {
+            return Err(invalid_package());
+        }
+        if is_seal {
+            seals.insert(bundle);
+        } else {
+            tickets.push(bundle);
+        }
+    }
+    if tickets.iter().any(|bundle| !seals.contains(bundle)) {
+        return Err(invalid_package());
+    }
+    Ok(())
+}
+
 /// Structural validation shared by every inventory reader/writer.
 ///
 /// Returns the normalized `/`-joined paths in declaration order.
@@ -196,6 +324,17 @@ pub(crate) fn open_entry(root: &Path, relative: &str) -> InstallResult<File> {
         return Err(unsafe_path());
     }
     Ok(file)
+}
+
+/// The first `limit` bytes of one inventory entry (a file-format classification
+/// input), read through the anchored traversal of [`open_entry`].
+pub(crate) fn read_entry_head(root: &Path, relative: &str, limit: u64) -> InstallResult<Vec<u8>> {
+    let file = open_entry(root, relative)?;
+    let mut head = Vec::new();
+    file.take(limit)
+        .read_to_end(&mut head)
+        .map_err(|_| io_failure())?;
+    Ok(head)
 }
 
 fn verify_entry(root: &Path, relative: &str, entry: &InventoryEntry) -> InstallResult<()> {

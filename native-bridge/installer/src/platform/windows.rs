@@ -139,8 +139,7 @@ const CARRIER_RESOURCE_NAME: &str = "VELES_POLICY_CARRIER";
 /// Bound on the signed carrier image read for resource extraction.
 const MAX_CARRIER_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 /// Bound on the extracted carrier bytes (`TrustProof` enforces the same limit).
-const MAX_CARRIER_BYTES: usize =
-    crate::policy::CARRIER_HEADER_LEN + crate::model::MAX_DOCUMENT_BYTES;
+const MAX_CARRIER_BYTES: usize = crate::policy::MAX_CARRIER_DOCUMENT_BYTES;
 /// Bound on the snapshot entry list; a larger table is untrustworthy.
 const MAX_PROCESS_SNAPSHOT_ENTRIES: usize = 1 << 16;
 /// First `SystemProcessInformation` buffer size requested from the kernel.

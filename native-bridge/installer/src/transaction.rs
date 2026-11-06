@@ -47,7 +47,10 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::inventory::{PACKAGE_INVENTORY_FILE, parse_inventory, write_inventory};
+use crate::inventory::{
+    PACKAGE_INVENTORY_FILE, SEALED_INVENTORY_FILE, SIGNABLE_HEAD_BYTES, is_signable_image,
+    parse_inventory, read_entry_head, verify_correspondence,
+};
 use crate::journal::{
     JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot, Phase,
     PolicyCarrierRefs, PriorInstall, RECEIPT_SCHEMA_VERSION, Receipt, ReceiptState,
@@ -67,7 +70,7 @@ use crate::platform::{
     parse_manifest, read_no_follow, registration_is_owned, require_quiescent,
     require_quiescent_within,
 };
-use crate::policy::{authorize_package_policy, effective_policy, read_carrier};
+use crate::policy::{authorize_package_policy, effective_policy, read_carrier_contents};
 use crate::retained::{MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RetainedInstall};
 
 /// The report state of a completed install.
@@ -99,6 +102,10 @@ struct Plan {
     /// The authenticated inventory document, staged with the payload.
     inventory_relative: String,
     inventory: Vec<u8>,
+    /// The sealed signed-byte inventory, staged beside `inventory.json` when
+    /// signing changed any payload file.
+    sealed_relative: String,
+    sealed: Option<Vec<u8>>,
     /// Authenticated carrier/API metadata retained with this version.
     retained_relative: String,
     retained: Vec<u8>,
@@ -371,8 +378,9 @@ pub(crate) fn activate_retained(
     if !is_accepted_assessment(proof.assessment(), paths.target()) {
         return Err(InstallFailure::new(FailureCode::TrustDenied));
     }
-    let os_descriptor =
-        read_carrier(proof.carrier()).map_err(|_| InstallFailure::new(FailureCode::TrustDenied))?;
+    let os_contents = read_carrier_contents(proof.carrier())
+        .map_err(|_| InstallFailure::new(FailureCode::TrustDenied))?;
+    let os_descriptor = os_contents.descriptor;
     if &os_descriptor != descriptor {
         return Err(InstallFailure::new(FailureCode::TrustDenied));
     }
@@ -426,6 +434,7 @@ pub(crate) fn activate_retained(
         &current.ownership,
         &version_relative,
         prior.payload_id,
+        os_contents.sealed_inventory,
     )?;
     let mut executables = entries.iter().filter(|entry| entry.executable);
     let executable = executables.next().ok_or_else(invalid_package)?;
@@ -531,32 +540,72 @@ fn load_retained(
 }
 
 /// Read and verify the retained inventory of one immutable version.
+///
+/// Returns the **installed-byte** entries: the canonical (unsigned) inventory
+/// when the OS-authenticated carrier asserts no sealed digest, otherwise the
+/// sealed inventory that digest authenticates, after proving it corresponds to
+/// the canonical identity the descriptor binds.
 fn retained_inventory(
     paths: &InstallPaths,
     ownership: &OwnershipRecord,
     version_relative: &str,
     payload_id: Digest,
+    sealed_digest: Option<Digest>,
 ) -> InstallResult<Vec<InventoryEntry>> {
-    let relative = format!("{version_relative}/{PACKAGE_INVENTORY_FILE}");
+    let canonical = retained_document(
+        paths,
+        ownership,
+        &format!("{version_relative}/{PACKAGE_INVENTORY_FILE}"),
+        payload_id,
+    )?;
+    let canonical = parse_inventory(&canonical).map_err(|_| no_rollback())?;
+    let entries = match sealed_digest {
+        None => canonical,
+        Some(asserted) => {
+            let sealed = retained_document(
+                paths,
+                ownership,
+                &format!("{version_relative}/{SEALED_INVENTORY_FILE}"),
+                asserted,
+            )?;
+            let sealed = parse_inventory(&sealed).map_err(|_| no_rollback())?;
+            let root = paths.root().join(version_relative);
+            verify_correspondence(&canonical, &sealed, |relative| {
+                read_entry_head(&root, relative, SIGNABLE_HEAD_BYTES)
+                    .map(|head| is_signable_image(&head))
+            })
+            .map_err(|_| no_rollback())?;
+            sealed
+        }
+    };
+    if entries.iter().filter(|entry| entry.executable).count() != 1 {
+        return Err(no_rollback());
+    }
+    Ok(entries)
+}
+
+/// One receipt-claimed document of a retained version, bound to `expected`.
+fn retained_document(
+    paths: &InstallPaths,
+    ownership: &OwnershipRecord,
+    relative: &str,
+    expected: Digest,
+) -> InstallResult<Vec<u8>> {
     if !ownership.owned.iter().any(|claim| {
-        claim.kind == OwnedKind::File && claim.path == relative && claim.sha256 == Some(payload_id)
+        claim.kind == OwnedKind::File && claim.path == relative && claim.sha256 == Some(expected)
     }) {
         return Err(no_rollback());
     }
-    let absolute = paths.root().join(&relative);
+    let absolute = paths.root().join(relative);
     match fs::symlink_metadata(&absolute) {
         Ok(metadata) if metadata.is_file() => {}
         _ => return Err(no_rollback()),
     }
     let bytes = read_no_follow(&absolute, MAX_DOCUMENT_BYTES as u64).map_err(|_| no_rollback())?;
-    if Digest::of(&bytes) != payload_id {
+    if Digest::of(&bytes) != expected {
         return Err(no_rollback());
     }
-    let entries = parse_inventory(&bytes).map_err(|_| no_rollback())?;
-    if entries.iter().filter(|entry| entry.executable).count() != 1 {
-        return Err(no_rollback());
-    }
-    Ok(entries)
+    Ok(bytes)
 }
 
 /// The API-window warning for a rollback, when the retained release does not
@@ -907,22 +956,15 @@ impl Plan {
             return Err(invalid_package());
         }
 
-        // The installed inventory document must reproduce the authenticated
-        // payload identity; otherwise the staged tree is not the released one.
-        let entries: Vec<InventoryEntry> = package
-            .payload()
-            .iter()
-            .map(|source| InventoryEntry {
-                path: source.relative().to_owned(),
-                size: source.size(),
-                sha256: source.sha256(),
-                executable: source.executable(),
-            })
-            .collect();
-        let inventory = write_inventory(&entries)?;
+        // The installed `inventory.json` is the unsigned canonical identity the
+        // descriptor authenticates; the files are the shipped (possibly signed)
+        // bytes, listed by the sealed inventory when signing changed any. Both
+        // documents were authenticated against the signature-covered carrier.
+        let inventory = package.canonical_inventory().to_vec();
         if Digest::of(&inventory) != payload_id {
             return Err(invalid_package());
         }
+        let sealed = package.sealed_inventory().map(<[u8]>::to_vec);
 
         // An immutable version directory is created once and never reused; a
         // same-identity directory is Task 7's repair decision, not an overwrite.
@@ -991,6 +1033,7 @@ impl Plan {
                 .then_with(|| left.cmp(right))
         });
         let inventory_relative = format!("{version_relative}/{PACKAGE_INVENTORY_FILE}");
+        let sealed_relative = format!("{version_relative}/{SEALED_INVENTORY_FILE}");
         // Retain the authenticated carrier reference and API metadata inside the
         // immutable version itself, so a later rollback never needs the original
         // download and never has to copy the signed artifact.
@@ -1065,6 +1108,14 @@ impl Plan {
             inventory.len() as u64,
             true,
         ));
+        if let Some(sealed) = sealed.as_ref() {
+            created.push(JournalClaim::file(
+                &sealed_relative,
+                Digest::of(sealed),
+                sealed.len() as u64,
+                true,
+            ));
+        }
         created.push(JournalClaim::file(
             &retained_relative,
             Digest::of(&retained),
@@ -1110,6 +1161,8 @@ impl Plan {
             files,
             inventory_relative,
             inventory,
+            sealed_relative,
+            sealed,
             retained_relative,
             retained,
             carrier_relative,
@@ -1212,6 +1265,11 @@ fn stage_payload(
         PathKind::NewFile,
     )?;
     platform.write_durable(&target, &plan.inventory)?;
+    if let Some(sealed) = plan.sealed.as_ref() {
+        let target =
+            ValidatedPath::new(paths, Path::new(&plan.sealed_relative), PathKind::NewFile)?;
+        platform.write_durable(&target, sealed)?;
+    }
     let target = ValidatedPath::new(paths, Path::new(&plan.retained_relative), PathKind::NewFile)?;
     platform.write_durable(&target, &plan.retained)?;
     // Install the signed carrier artifact at its final in-place path. The

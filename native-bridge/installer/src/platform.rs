@@ -53,8 +53,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::inventory::{
-    PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, normalize_relative_path, parse_inventory,
-    verify_inventory,
+    PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, SEALED_INVENTORY_FILE, SIGNABLE_HEAD_BYTES,
+    is_signable_image, normalize_relative_path, parse_inventory, read_entry_head,
+    verify_correspondence, verify_inventory,
 };
 use crate::model::{
     Channel, Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry,
@@ -65,7 +66,7 @@ use crate::paths::{
     InstallPaths, JOURNAL_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE, STAGING_DIR,
     STATE_DIR, VERSIONS_DIR,
 };
-use crate::policy::{CARRIER_HEADER_LEN, read_carrier};
+use crate::policy::{CarrierContents, MAX_CARRIER_DOCUMENT_BYTES, read_carrier_contents};
 
 // Shared native-file orchestration: the decisions both native adapters must make
 // identically (durable writes, atomic replacement, ordered publication, exact
@@ -2012,7 +2013,7 @@ impl TrustProof {
             || assessment.len() > MAX_PUBLISHER_BYTES
             || assessment.chars().any(char::is_control)
             || carrier.is_empty()
-            || carrier.len() > CARRIER_HEADER_LEN + MAX_DOCUMENT_BYTES
+            || carrier.len() > MAX_CARRIER_DOCUMENT_BYTES
         {
             return Err(invalid_input());
         }
@@ -2306,6 +2307,12 @@ pub struct AuthenticatedPackage {
     proof: TrustProof,
     descriptor: ReleaseDescriptor,
     payload: Vec<AuthenticatedSource>,
+    /// Exact bytes of `inventory.json`: the unsigned canonical identity, whose
+    /// digest is the descriptor's `payload_id`.
+    canonical_inventory: Vec<u8>,
+    /// Exact bytes of `sealed-inventory.json` when signing changed any file; its
+    /// digest is the one the OS-authenticated carrier asserts.
+    sealed_inventory: Option<Vec<u8>>,
 }
 
 impl AuthenticatedPackage {
@@ -2340,8 +2347,23 @@ impl AuthenticatedPackage {
     }
 
     /// The authenticated payload identity.
+    ///
+    /// This is the digest of the *unsigned canonical* inventory. It is stable
+    /// across code signing; the bytes actually installed are described by
+    /// [`AuthenticatedPackage::payload`] (and the sealed inventory, when any).
     pub fn payload_id(&self) -> Digest {
         self.descriptor.payload_id
+    }
+
+    /// The exact canonical (unsigned) inventory document bytes.
+    pub fn canonical_inventory(&self) -> &[u8] {
+        &self.canonical_inventory
+    }
+
+    /// The exact sealed signed-byte inventory document, when signing changed any
+    /// file. Its digest is asserted by the OS-authenticated carrier.
+    pub fn sealed_inventory(&self) -> Option<&[u8]> {
+        self.sealed_inventory.as_deref()
     }
 }
 
@@ -2383,31 +2405,35 @@ pub fn authenticate_package(
     }
 
     let proof = platform.verify_trust(&source, expected)?;
-    let descriptor = authenticated_descriptor(&proof, expected)?;
-    let payload = authenticated_payload(&source, &descriptor)?;
+    let contents = authenticated_descriptor(&proof, expected)?;
+    let (payload, canonical_inventory, sealed_inventory) =
+        authenticated_payload(&source, &contents.descriptor, contents.sealed_inventory)?;
 
     Ok(AuthenticatedPackage {
         source,
         proof,
-        descriptor,
+        descriptor: contents.descriptor,
         payload,
+        canonical_inventory,
+        sealed_inventory,
     })
 }
 
 fn authenticated_descriptor(
     proof: &TrustProof,
     expected: &ReleaseDescriptor,
-) -> InstallResult<ReleaseDescriptor> {
+) -> InstallResult<CarrierContents> {
     // The verdict must be one this engine accepts *for this release target*: a
     // macOS Gatekeeper proof cannot authenticate a Windows descriptor.
     if !is_accepted_assessment(proof.assessment(), expected.target) {
         return Err(trust_denied());
     }
-    let descriptor = read_carrier(proof.carrier()).map_err(|_| trust_denied())?;
-    if &descriptor != expected {
+    let contents = read_carrier_contents(proof.carrier()).map_err(|_| trust_denied())?;
+    if &contents.descriptor != expected {
         return Err(trust_denied());
     }
-    if !descriptor
+    if !contents
+        .descriptor
         .policy
         .publishers
         .iter()
@@ -2415,31 +2441,59 @@ fn authenticated_descriptor(
     {
         return Err(trust_denied());
     }
-    Ok(descriptor)
+    Ok(contents)
 }
 
+/// Read the canonical inventory (and the sealed one, when the carrier asserts it)
+/// and authenticate the payload tree against the *installed-byte* inventory.
+///
+/// Two identities are kept apart on purpose:
+///
+/// * `inventory.json` is the **unsigned canonical** inventory. Its digest must be
+///   the descriptor's `payload_id`; the descriptor is signature-covered and was
+///   fixed before signing.
+/// * `sealed-inventory.json` lists the bytes actually shipped. It exists exactly
+///   when the carrier asserts a sealed digest, and then hashes to that digest.
+///   Without a sealed digest the shipped bytes ARE the canonical inventory.
+///
+/// The payload tree is verified (and must be closed) against the shipped bytes;
+/// [`verify_correspondence`] ties the two inventories together.
 fn authenticated_payload(
     source: &PackageSource,
     descriptor: &ReleaseDescriptor,
-) -> InstallResult<Vec<AuthenticatedSource>> {
+    sealed_digest: Option<Digest>,
+) -> InstallResult<AuthenticatedPayload> {
     let payload_root = source.path().join(PACKAGE_PAYLOAD_DIR);
-    let inventory_path = source.path().join(PACKAGE_INVENTORY_FILE);
-    let bytes = match read_no_follow(&inventory_path, MAX_DOCUMENT_BYTES as u64) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(invalid_package()),
-        // Longer than the document bound: rejected from the handle's length (or
-        // from the limit-plus-one read), never buffered.
-        Err(error) if error.kind() == io::ErrorKind::InvalidData => {
-            return Err(invalid_package());
-        }
-        Err(_) => return Err(io_failure()),
-    };
+    let canonical_bytes = read_package_document(&source.path().join(PACKAGE_INVENTORY_FILE))?
+        .ok_or_else(invalid_package)?;
     // The descriptor (itself signature-covered) authenticates the exact document
     // bytes; no caller argument can substitute another inventory.
-    if Digest::of(&bytes) != descriptor.payload_id {
+    if Digest::of(&canonical_bytes) != descriptor.payload_id {
         return Err(trust_denied());
     }
-    let entries = parse_inventory(&bytes)?;
+    let canonical = parse_inventory(&canonical_bytes)?;
+
+    let sealed_path = source.path().join(SEALED_INVENTORY_FILE);
+    let sealed_bytes = read_package_document(&sealed_path)?;
+    let (entries, sealed_bytes) = match (sealed_digest, sealed_bytes) {
+        (None, None) => (canonical.clone(), None),
+        // A sealed document nothing authenticates, or an asserted digest with no
+        // document, is never interpreted.
+        (None, Some(_)) | (Some(_), None) => return Err(trust_denied()),
+        (Some(asserted), Some(bytes)) => {
+            if Digest::of(&bytes) != asserted {
+                return Err(trust_denied());
+            }
+            let sealed = parse_inventory(&bytes)?;
+            verify_correspondence(&canonical, &sealed, |relative| {
+                let head = read_entry_head(&payload_root, relative, SIGNABLE_HEAD_BYTES)?;
+                Ok(is_signable_image(&head))
+            })
+            .map_err(|_| trust_denied())?;
+            (sealed, Some(bytes))
+        }
+    };
+
     verify_inventory(&payload_root, &entries).map_err(|failure| match failure.code {
         FailureCode::InvalidPackage => trust_denied(),
         _ => failure,
@@ -2457,7 +2511,22 @@ fn authenticated_payload(
             executable: entry.executable,
         });
     }
-    Ok(payload)
+    Ok((payload, canonical_bytes, sealed_bytes))
+}
+
+/// Payload sources, canonical inventory bytes, optional sealed inventory bytes.
+type AuthenticatedPayload = (Vec<AuthenticatedSource>, Vec<u8>, Option<Vec<u8>>);
+
+/// Read one bounded package document; absent is `None`, oversize is invalid.
+fn read_package_document(path: &Path) -> InstallResult<Option<Vec<u8>>> {
+    match read_no_follow(path, MAX_DOCUMENT_BYTES as u64) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        // Longer than the document bound: rejected from the handle's length (or
+        // from the limit-plus-one read), never buffered.
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => Err(invalid_package()),
+        Err(_) => Err(io_failure()),
+    }
 }
 
 /// Reject an unreferenced, linked or special file below the package payload.

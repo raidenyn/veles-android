@@ -31,8 +31,9 @@ pub use cleanup::{
     remove_helper_after_exit, run_cleanup_helper, run_cleanup_helper_detailed,
 };
 pub use inventory::{
-    INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, normalize_relative_path,
-    parse_inventory, verify_inventory, write_inventory,
+    INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, SEALED_INVENTORY_FILE,
+    is_signable_image, normalize_relative_path, parse_inventory, verify_correspondence,
+    verify_inventory, write_inventory,
 };
 pub use journal::{
     JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, MAX_JOURNAL_MANIFEST_BYTES,
@@ -83,8 +84,10 @@ pub use platform::{
 #[cfg(windows)]
 pub use platform::{PRODUCTION_REGISTRY_PREFIX, RegistryScope, RegistryView, TEST_REGISTRY_PREFIX};
 pub use policy::{
-    CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION, authorize_package_policy, effective_policy,
-    parse_descriptor, read_carrier, write_carrier,
+    CARRIER_FLAG_SEALED_INVENTORY, CARRIER_HEADER_LEN, CARRIER_MAGIC, CARRIER_VERSION,
+    CarrierContents, MAX_CARRIER_DOCUMENT_BYTES, SEALED_INVENTORY_DIGEST_LEN,
+    authorize_package_policy, effective_policy, parse_descriptor, read_carrier,
+    read_carrier_contents, write_carrier, write_sealed_carrier,
 };
 pub use retained::{
     MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, RetainedInstall,

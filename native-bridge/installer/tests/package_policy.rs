@@ -682,8 +682,9 @@ fn carrier_bounds_and_strict_json() {
             FailureCode::InvalidPackage,
         ),
         (
+            // Bit 0 is the sealed-inventory flag (F7); every other bit is unknown.
             "unknown flags",
-            carrier_with(&magic, 1, 1, 32, offset, length, &body),
+            carrier_with(&magic, 1, 2, 32, offset, length, &body),
             FailureCode::InvalidPackage,
         ),
         (

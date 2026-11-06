@@ -10,8 +10,8 @@
 use std::collections::HashSet;
 
 use crate::model::{
-    FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor,
-    ReleasePolicy,
+    Digest, FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES, Operation,
+    ReleaseDescriptor, ReleasePolicy,
 };
 use crate::platform::AuthenticatedPackage;
 
@@ -21,7 +21,20 @@ pub const CARRIER_MAGIC: [u8; 8] = *b"VELESPC1";
 pub const CARRIER_VERSION: u16 = 1;
 /// Versioned header length in bytes.
 pub const CARRIER_HEADER_LEN: usize = 32;
-const CARRIER_FLAGS: u16 = 0;
+/// Header flag: a 32-byte sealed-inventory digest follows the descriptor section.
+///
+/// The descriptor is compiled into the carrier *before* signing and therefore
+/// can only name the unsigned canonical payload identity (`payload_id`). Signing
+/// changes the bytes of signable images, so the digest of the signed-byte
+/// inventory (the "sealed inventory") is written into the carrier by the signing
+/// step and is covered by the carrier's own OS signature. A carrier without this
+/// flag declares that no file changed when it was signed.
+pub const CARRIER_FLAG_SEALED_INVENTORY: u16 = 1;
+/// Length of the sealed-inventory digest that follows the descriptor section.
+pub const SEALED_INVENTORY_DIGEST_LEN: usize = 32;
+/// Upper bound on a complete carrier document (header, descriptor, digest).
+pub const MAX_CARRIER_DOCUMENT_BYTES: usize =
+    CARRIER_HEADER_LEN + MAX_DOCUMENT_BYTES + SEALED_INVENTORY_DIGEST_LEN;
 
 /// Parse a strict release descriptor from untrusted bytes.
 ///
@@ -38,9 +51,28 @@ pub fn parse_descriptor(bytes: &[u8]) -> InstallResult<ReleaseDescriptor> {
     Ok(descriptor)
 }
 
+/// What an authenticated carrier document asserts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarrierContents {
+    /// The strict release descriptor; its `payload_id` is the *unsigned
+    /// canonical* payload identity.
+    pub descriptor: ReleaseDescriptor,
+    /// Digest of the sealed signed-byte inventory document, when signing changed
+    /// any file's bytes. `None` declares the installed bytes equal the canonical
+    /// inventory exactly.
+    pub sealed_inventory: Option<Digest>,
+}
+
 /// Locate and parse the descriptor embedded in a bounded, versioned carrier
 /// section. Authenticity of the carrier bytes is out of scope for this function.
 pub fn read_carrier(carrier: &[u8]) -> InstallResult<ReleaseDescriptor> {
+    read_carrier_contents(carrier).map(|contents| contents.descriptor)
+}
+
+/// Locate and parse everything a carrier asserts: the descriptor and the
+/// optional sealed-inventory digest. Authenticity of the bytes is the trust
+/// layer's concern, exactly as for [`read_carrier`].
+pub fn read_carrier_contents(carrier: &[u8]) -> InstallResult<CarrierContents> {
     if carrier.len() < CARRIER_HEADER_LEN {
         return Err(invalid_package());
     }
@@ -51,7 +83,7 @@ pub fn read_carrier(carrier: &[u8]) -> InstallResult<ReleaseDescriptor> {
     let flags = read_u16(carrier, 10);
     let header_len = read_u32(carrier, 12);
     if version != CARRIER_VERSION
-        || flags != CARRIER_FLAGS
+        || (flags != 0 && flags != CARRIER_FLAG_SEALED_INVENTORY)
         || header_len as usize != CARRIER_HEADER_LEN
     {
         return Err(invalid_package());
@@ -66,25 +98,57 @@ pub fn read_carrier(carrier: &[u8]) -> InstallResult<ReleaseDescriptor> {
     let start = usize::try_from(offset).map_err(|_| invalid_package())?;
     let end = usize::try_from(end).map_err(|_| invalid_package())?;
     let section = carrier.get(start..end).ok_or_else(invalid_package)?;
-    parse_descriptor(section)
+    let descriptor = parse_descriptor(section)?;
+    let sealed_inventory = if flags == CARRIER_FLAG_SEALED_INVENTORY {
+        let digest_end = end
+            .checked_add(SEALED_INVENTORY_DIGEST_LEN)
+            .ok_or_else(invalid_package)?;
+        let raw = carrier.get(end..digest_end).ok_or_else(invalid_package)?;
+        let mut bytes = [0u8; SEALED_INVENTORY_DIGEST_LEN];
+        bytes.copy_from_slice(raw);
+        Some(Digest::from_bytes(bytes))
+    } else {
+        None
+    };
+    Ok(CarrierContents {
+        descriptor,
+        sealed_inventory,
+    })
 }
 
 /// Serialize a descriptor into a carrier section. Used by packaging and tests so
 /// the encoding has exactly one definition.
 pub fn write_carrier(descriptor: &[u8]) -> InstallResult<Vec<u8>> {
+    write_carrier_with(descriptor, None)
+}
+
+/// Serialize a descriptor plus the sealed signed-byte inventory digest.
+pub fn write_sealed_carrier(descriptor: &[u8], sealed_inventory: Digest) -> InstallResult<Vec<u8>> {
+    write_carrier_with(descriptor, Some(sealed_inventory))
+}
+
+fn write_carrier_with(descriptor: &[u8], sealed: Option<Digest>) -> InstallResult<Vec<u8>> {
     if descriptor.is_empty() || descriptor.len() > MAX_DOCUMENT_BYTES {
         return Err(InstallFailure::new(FailureCode::InvalidInput));
     }
     let length = u64::try_from(descriptor.len())
         .map_err(|_| InstallFailure::new(FailureCode::InvalidInput))?;
-    let mut carrier = Vec::with_capacity(CARRIER_HEADER_LEN + descriptor.len());
+    let flags = if sealed.is_some() {
+        CARRIER_FLAG_SEALED_INVENTORY
+    } else {
+        0
+    };
+    let mut carrier = Vec::with_capacity(CARRIER_HEADER_LEN + descriptor.len() + 32);
     carrier.extend_from_slice(&CARRIER_MAGIC);
     carrier.extend_from_slice(&CARRIER_VERSION.to_le_bytes());
-    carrier.extend_from_slice(&CARRIER_FLAGS.to_le_bytes());
+    carrier.extend_from_slice(&flags.to_le_bytes());
     carrier.extend_from_slice(&(CARRIER_HEADER_LEN as u32).to_le_bytes());
     carrier.extend_from_slice(&(CARRIER_HEADER_LEN as u64).to_le_bytes());
     carrier.extend_from_slice(&length.to_le_bytes());
     carrier.extend_from_slice(descriptor);
+    if let Some(sealed) = sealed {
+        carrier.extend_from_slice(sealed.as_bytes());
+    }
     Ok(carrier)
 }
 
