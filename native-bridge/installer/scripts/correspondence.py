@@ -1505,16 +1505,23 @@ def _fail_closed(report_path: Path | None, console: str, recorded: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    parser = _Parser(description="Verify that a signed image/tree differs from its unsigned input only by signature material.")
+    parser = _Parser(
+        description="Verify that a signed image/tree differs from its unsigned input only by signature material.",
+        allow_abbrev=False,  # an abbreviated --report would otherwise be accepted but invisible to the recovery scan above
+    )
     parser.add_argument("--unsigned", type=Path, required=True)
     parser.add_argument("--signed", type=Path, required=True)
     parser.add_argument("--kind", required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--entitlements", type=Path, help="expected entitlements plist (macho/tree); default: unchanged")
+    # Argument errors must still replace a stale report, so find --report before parsing, in both spellings
+    # argparse accepts (`--report PATH`, `--report=PATH`); the last occurrence wins, as it does in argparse.
     report_path = None
     for index, token in enumerate(argv):
         if token == "--report" and index + 1 < len(argv):
             report_path = Path(argv[index + 1])
+        elif token.startswith("--report="):
+            report_path = Path(token.partition("=")[2])
     try:
         if argv in (["-h"], ["--help"]):
             parser.print_help()

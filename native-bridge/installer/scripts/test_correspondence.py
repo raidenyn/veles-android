@@ -1804,6 +1804,21 @@ class PortableFindingTests(WorkDir):
         plain = {"notes/mz.dat": (b"MZ these are my notes", 0o644)}
         self.assertEqual(correspondence.compare(self.tree("u-plain", plain), self.tree("s-plain", plain), "tree")["verdict"], "PASS")
 
+    def test_f15_report_is_replaced_for_every_report_spelling_on_argument_errors(self):
+        unsigned = self.put("u.bin", b"x")
+        report = self.base / "report.json"
+        for spelling in (["--report", str(report)], [f"--report={report}"]):
+            with self.subTest(spelling=spelling[0]):
+                report.write_text(json.dumps({"schema": 1, "verdict": "PASS"}))
+                code = correspondence.main(["--unsigned", str(unsigned), "--signed", str(unsigned), "--kind", "pe", *spelling, "--unknown"])
+                self.assertEqual(code, 2)
+                self.assertEqual(json.loads(report.read_text())["verdict"], "ERROR")
+        # Abbreviated option names are refused rather than guessed at.
+        report.write_text(json.dumps({"schema": 1, "verdict": "PASS"}))
+        self.assertEqual(
+            correspondence.main(["--unsigned", str(unsigned), "--signed", str(unsigned), "--kind", "pe", "--rep", str(report)]), 2
+        )
+
 
 class CommandLineTests(WorkDir):
     def run_cli(self, *args):
