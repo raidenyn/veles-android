@@ -1517,6 +1517,37 @@ class MachoReviewFindingTests(WorkDir):
         self.assertEqual(report["verdict"], "PASS", report["differences"])
         return report
 
+    # ---- F1: the __LINKEDIT section table is part of the compared command ------------------
+
+    def test_f1_linkedit_section_table_is_compared_field_by_field(self):
+        unsigned, _ = build_macho(linkedit_sections=[raw_linkedit_section()])
+        same, _ = build_signed_macho(linkedit_sections=[raw_linkedit_section()])
+        self.passes(unsigned, same)
+        variants = {
+            "sectname": dict(sectname="__CHANGED"),
+            "segname": dict(segname="__OTHER"),
+            "addr+offset": dict(addr=0x100000000 + 0x4004, offset=0x4004),
+            "size": dict(size=8),
+            "align": dict(align=3),
+            "reloff": dict(reloff=0x4008),
+            "nreloc": dict(nreloc=1),
+            "flags": dict(flags=0x2),
+            "reserved1": dict(r1=1),
+            "reserved2": dict(r2=2),
+            "reserved3": dict(r3=3),
+        }
+        for name, change in variants.items():
+            with self.subTest(field=name):
+                signed, _ = build_signed_macho(linkedit_sections=[raw_linkedit_section(**change)])
+                # Audit correction: the inherited loop asserted only FAIL, which would also pass for an
+                # unrelated parse failure. Require the reason and the region the review asked to be compared.
+                report = self.expect_fail(unsigned, signed, "macho-content-changed")
+                self.assertIn("load-command:LC_SEGMENT_64:__LINKEDIT", [d.get("region") for d in report["differences"]])
+        signed, _ = build_signed_macho(linkedit_sections=[raw_linkedit_section(sectname="__CHANGED")])
+        report = self.expect_fail(unsigned, signed, "macho-content-changed")
+        self.assertIn("load-command:LC_SEGMENT_64:__LINKEDIT", [d.get("region") for d in report["differences"]])
+        # A section added on one side only is also a change.
+        self.expect_fail(build_macho()[0], build_signed_macho(linkedit_sections=[raw_linkedit_section()])[0], "macho-content-changed")
 
     # ---- F2: fat container order, CPU/subtype/alignment and packing are compared -----------
 

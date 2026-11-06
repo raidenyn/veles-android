@@ -794,6 +794,14 @@ class MachSlice:
         return self.dataoff if self.dataoff is not None else self.linkedit.fileoff + self.linkedit.filesize
 
 
+def masked_linkedit_command(segment: Segment) -> bytes:
+    """The raw ``__LINKEDIT`` command with vmsize (bytes 32-40) and filesize (bytes 48-56) zeroed."""
+    raw = bytearray(segment.command.raw)
+    raw[32:40] = b"\x00" * 8
+    raw[48:56] = b"\x00" * 8
+    return bytes(raw)
+
+
 def command_region(command: Command) -> str:
     if command.ident == LC_SEGMENT_64:
         return f"load-command:{command.name}:{command.raw[8:24].rstrip(b'\x00').decode('latin-1')}"
@@ -1050,14 +1058,14 @@ def compare_slice(u: MachSlice, s: MachSlice, expected_entitlements, entitlement
             if left.raw == right.raw:
                 continue
             if left.ident == LC_SEGMENT_64 and left.raw[8:24] == b"__LINKEDIT".ljust(16, b"\x00") == right.raw[8:24]:
-                continue  # judged separately below
+                continue  # compared below with only its two extent fields masked
             bad("macho-content-changed", f"{left.name} differs", region=command_region(left))
 
     lu, ls = u.linkedit, s.linkedit
     replaced = u.signature_command is not None
-    if (lu.vmaddr, lu.fileoff, lu.maxprot, lu.initprot, lu.flags, len(lu.sections)) != (
-        ls.vmaddr, ls.fileoff, ls.maxprot, ls.initprot, ls.flags, len(ls.sections),
-    ):
+    # The whole raw segment command (address, file offset, protections, flags, section count and every
+    # section header field) must match; only vmsize and filesize may change, judged by the extent check.
+    if masked_linkedit_command(lu) != masked_linkedit_command(ls):
         bad("macho-content-changed", "__LINKEDIT differs beyond its extent", region="load-command:LC_SEGMENT_64:__LINKEDIT")
 
     # --- the linkedit extent must be exactly "old data, zero padding, signature"
