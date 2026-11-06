@@ -669,8 +669,23 @@ class ArchiveAccountingTests(Scratch):
 
     def test_f7_stored_member_whose_compressed_size_exceeds_its_declared_size_is_refused(self):
         blob = make_codec_zip([("a", b"surplus")], zipfile.ZIP_STORED)
-        self.assert_refused("stored-surplus.zip", patch_member(blob, 0, usize=0, crc=0), "malformed-archive")
-        self.assert_refused("stored-short.zip", patch_member(blob, 0, usize=3, crc=zlib.crc32(b"sur")), "malformed-archive")
+        # Audit correction: the inherited version forged the CRC of the *declared* prefix, so the CRC over the
+        # seven stored bytes failed first and the size rule was never what refused it (mutation: deleting the
+        # csize == usize check survived). Forge the CRC of the bytes actually stored so only the size disagrees.
+        crc = zlib.crc32(b"surplus")
+        self.assert_refused("stored-surplus.zip", patch_member(blob, 0, usize=0, crc=crc), "malformed-archive")
+        self.assert_refused("stored-short.zip", patch_member(blob, 0, usize=3, crc=crc), "malformed-archive")
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_archive_inventory(self.base / "stored-surplus.zip")
+        self.assertIn("compressed size", str(caught.exception))
+
+    def test_f7_deflate_member_shorter_than_declared_is_refused_even_when_the_crc_matches(self):
+        # Declared 2 bytes, stream yields 1, CRC forged to the 1 real byte: the recorded size would be a lie.
+        blob = make_codec_zip([("a", b"x")], zipfile.ZIP_DEFLATED)
+        self.assert_refused("deflate-short.zip", patch_member(blob, 0, usize=2, crc=zlib.crc32(b"x")), "malformed-archive")
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_archive_inventory(self.base / "deflate-short.zip")
+        self.assertIn("expands to 1 bytes", str(caught.exception))
 
     def test_f7_crc_and_codec_inconsistencies_are_refused(self):
         stored = make_codec_zip([("a", b"payload")], zipfile.ZIP_STORED)
@@ -767,7 +782,38 @@ class ArchiveAccountingTests(Scratch):
         struct.pack_into("<I", fixed, eocd2 + 16, cd2 + len(extra))
         self.assert_refused("unknown-extra.zip", bytes(fixed), "malformed-archive")
 
+    def test_f8_local_record_must_repeat_the_central_record_exactly(self):
+        # Only the local CRC differs; the central record (which the CRC check uses) is intact.
+        blob = bytearray(make_zip([("a", b"payload")]))
+        struct.pack_into("<I", blob, 14, struct.unpack_from("<I", blob, 14)[0] ^ 1)
+        self.assert_refused("local-crc.zip", bytes(blob), "malformed-archive")
+        with self.assertRaises(package_inputs.InventoryError) as caught:
+            package_inputs.build_archive_inventory(self.base / "local-crc.zip")
+        self.assertIn("disagrees with the central directory", str(caught.exception))
+
+    def test_f8_end_record_comment_length_must_be_zero_even_without_comment_bytes(self):
+        blob = bytearray(make_zip([("a", b"x")]))
+        struct.pack_into("<H", blob, _eocd(bytes(blob))[0] + 20, 5)  # claims a comment that is not there
+        self.assert_refused("lying-comment.zip", bytes(blob), "unauthenticated-data")
+
     # ---- F9: metadata is bounded before any library allocates for it ---------------------
+
+    def test_f9_central_directory_larger_than_its_member_count_can_explain_is_not_read(self):
+        # One member, but the end record claims a ~200 KB central directory (junk precedes the end record).
+        blob = bytearray(make_zip([("a", b"x")]))
+        eocd, _cd_offset, cd_size = _eocd(bytes(blob))
+        junk = b"\x00" * 200_000
+        blob[eocd:eocd] = junk
+        struct.pack_into("<I", blob, eocd + len(junk) + 12, cd_size + len(junk))
+        path = self.put("padded-cd.zip", bytes(blob))
+        recorder = ReadRecorder()
+        with contextlib.ExitStack() as stack:
+            for patch in recorder.patches():
+                stack.enter_context(patch)
+            with self.assertRaises(package_inputs.InventoryError) as caught:
+                package_inputs.build_archive_inventory(path)
+        self.assertEqual(caught.exception.code, "bound-exceeded")
+        self.assertLessEqual(recorder.largest, 64, recorder.reads)
 
     def test_f9_zip_central_directory_is_not_read_when_the_member_count_is_already_refused(self):
         blob = make_zip([(f"m{index}", b"x") for index in range(10)])

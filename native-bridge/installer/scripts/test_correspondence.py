@@ -1876,11 +1876,13 @@ class PortableFindingTests(WorkDir):
                 code = correspondence.main(["--unsigned", str(unsigned), "--signed", str(unsigned), "--kind", "pe", *spelling, "--unknown"])
                 self.assertEqual(code, 2)
                 self.assertEqual(json.loads(report.read_text())["verdict"], "ERROR")
-        # Abbreviated option names are refused rather than guessed at.
+        # Abbreviated option names are refused rather than guessed at. Audit correction: the inherited
+        # version used a pair that exits 2 for an unrelated reason (not a PE), so it could not tell whether
+        # `--rep` was refused. Identical trees PASS (exit 0) if an abbreviation were accepted.
+        tree = self.tree("abbrev", {"file.txt": (b"same", 0o644)})
         report.write_text(json.dumps({"schema": 1, "verdict": "PASS"}))
-        self.assertEqual(
-            correspondence.main(["--unsigned", str(unsigned), "--signed", str(unsigned), "--kind", "pe", "--rep", str(report)]), 2
-        )
+        self.assertEqual(correspondence.main(["--unsigned", str(tree), "--signed", str(tree), "--kind", "tree", "--report", str(report)]), 0)
+        self.assertEqual(correspondence.main(["--unsigned", str(tree), "--signed", str(tree), "--kind", "tree", "--rep", str(report)]), 2)
 
 
 class CommandLineTests(WorkDir):
