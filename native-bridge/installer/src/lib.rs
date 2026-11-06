@@ -4,7 +4,9 @@
 //! never linked into it. Task 2 defines the shared strict package model
 //! (descriptor identity, payload inventory and the authenticated policy carrier)
 //! that every later installer task extends rather than redefines. Task 3 adds
-//! the fixed per-user layout and the injected OS boundary.
+//! the fixed per-user layout and the injected OS boundary. Task 7 adds the
+//! operation layer ([`operations::run_operation`]) for inspect, install, repair,
+//! rollback and uninstall over the journaled transaction.
 //!
 //! This crate currently produces portable contract evidence only. It does not
 //! perform native installation, signing or acceptance.
@@ -12,6 +14,7 @@
 pub mod inventory;
 pub mod journal;
 pub mod model;
+pub mod operations;
 pub mod paths;
 pub mod platform;
 pub mod policy;
@@ -34,6 +37,10 @@ pub use model::{
     PLACEHOLDER_EXTENSION_ID, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy,
     SCHEMA_VERSION, Target, Version, canonical_json, extension_origin, parse_version,
     validate_extension_id,
+};
+pub use operations::{
+    STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN, STATE_REPAIRED, STATE_UNINSTALLED, run_operation,
+    run_operation_within,
 };
 pub use paths::{
     InstallPaths, JOURNAL_FILE, LOCK_FILE, MACOS_CHROME_HOSTS_DIR, MAINTENANCE_DIR, MAX_ROOT_BYTES,
@@ -61,6 +68,6 @@ pub use policy::{
     parse_descriptor, read_carrier, write_carrier,
 };
 pub use transaction::{
-    STATE_CLEAN, STATE_INSTALLED, STATE_RECOVERED_ACTIVE, STATE_RECOVERED_PREVIOUS, install,
-    recover,
+    STATE_CLEAN, STATE_INSTALLED, STATE_RECOVERED_ACTIVE, STATE_RECOVERED_PREVIOUS,
+    STATE_ROLLED_BACK, install, recover,
 };

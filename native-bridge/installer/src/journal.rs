@@ -20,10 +20,16 @@
 //!   [`MAX_JOURNAL_MANIFEST_BYTES`] so the whole document stays inside
 //!   [`MAX_DOCUMENT_BYTES`]; a Native Messaging manifest is a few hundred bytes.
 //! * The created-path inventory must be a well-formed owned claim set for this
-//!   root and channel (the same rules a committed receipt is held to). Each file
-//!   claim records its exact size and, while the journal is `Prepared`, an
-//!   `incomplete` marker so rollback can remove a short prefix left by a process
-//!   that died mid-write.
+//!   root and channel (the same rules a committed receipt is held to). A file
+//!   claim that describes a staging write records its exact size and, while the
+//!   journal is `Prepared`, an `incomplete` marker so rollback can remove a short
+//!   prefix left by a process that died mid-write. A claim that only describes an
+//!   owned file being removed (an uninstall journal) records its content digest
+//!   and no size: there is no staged write to recover a prefix from.
+//! * The release policy the transaction enforces is recorded with the
+//!   authenticated carrier references that prove it, and its epoch must equal the
+//!   references' epoch. Repair and rollback compose against the persisted policy,
+//!   so a stale signature cannot erase a recorded denial.
 //! * An empty journal file means "no transaction in flight". State documents are
 //!   replaced atomically through the [`Platform`] boundary (stage, flush, rename,
 //!   flush the parent), so a reader sees the previous complete document or the
@@ -37,8 +43,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::model::{
     Channel, Digest, FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES,
-    MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PUBLISHER_BYTES, Operation, Target,
-    canonical_json, parse_version,
+    MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PUBLISHER_BYTES, Operation, ReleasePolicy,
+    Target, canonical_json, parse_version,
 };
 use crate::paths::{InstallPaths, MAX_ROOT_BYTES};
 use crate::platform::{
@@ -307,7 +313,8 @@ pub struct JournalClaim {
     pub kind: OwnedKind,
     /// Exact content digest for files; `None` for directories.
     pub sha256: Option<Digest>,
-    /// The exact byte size a complete staging write produces (files only).
+    /// The exact byte size a complete staging write produces, when this claim
+    /// describes a staging write. Absent for a file an operation only removes.
     pub size: Option<u64>,
     /// Whether a process may have died part-way through writing this file.
     pub incomplete: bool,
@@ -362,7 +369,11 @@ impl JournalClaim {
                 if self.sha256.is_none() {
                     return Err(invalid_input());
                 }
-                if self.size.is_none_or(|size| size > MAX_INVENTORY_BYTES) {
+                // A claim that describes a staging write records its exact size
+                // (so a partial prefix can be removed). A claim that describes
+                // an existing owned file being removed records only the content
+                // digest, which is what the removal verifies.
+                if self.size.is_some_and(|size| size > MAX_INVENTORY_BYTES) {
                     return Err(invalid_input());
                 }
             }
@@ -432,6 +443,13 @@ pub struct Journal {
     /// The owned registration preimage, when one was live.
     pub preimage: Option<RegistrationPreimage>,
     pub policy: PolicyCarrierRefs,
+    /// The release policy this transaction actually enforces.
+    ///
+    /// Persisted with its authenticated proof so repair and rollback can compose
+    /// against it after the fact: a later, correctly signed but stale package
+    /// can never erase a denial recorded here. `epoch` equals
+    /// `policy.epoch`.
+    pub release_policy: ReleasePolicy,
     /// Paths this transaction created, relative to the root.
     pub created: Vec<JournalClaim>,
 }
@@ -493,6 +511,10 @@ impl Journal {
             preimage.validate()?;
         }
         self.policy.validate()?;
+        self.release_policy.validate()?;
+        if self.release_policy.epoch != self.policy.epoch {
+            return Err(invalid_input());
+        }
         for claim in &self.created {
             claim.validate()?;
         }
@@ -587,6 +609,13 @@ pub struct Receipt {
     pub manifest_sha256: Digest,
     pub prior: Option<PriorInstall>,
     pub policy: PolicyCarrierRefs,
+    /// The release policy the committed installation enforces.
+    ///
+    /// This is the composed policy the transaction applied (the incoming policy
+    /// for an install, the conservative intersection/union for a repair or
+    /// rollback). Repair and rollback compose against it, so a later stale
+    /// signature cannot erase a recorded denial. `epoch` equals `policy.epoch`.
+    pub release_policy: ReleasePolicy,
     pub ownership: OwnershipRecord,
 }
 
@@ -601,6 +630,10 @@ impl Receipt {
             parse_version(&prior.version)?;
         }
         self.policy.validate()?;
+        self.release_policy.validate()?;
+        if self.release_policy.epoch != self.policy.epoch {
+            return Err(invalid_input());
+        }
         self.ownership.validate(paths)?;
         if self.ownership.manifest_sha256 != self.manifest_sha256 {
             return Err(invalid_input());

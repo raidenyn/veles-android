@@ -506,6 +506,12 @@ impl Fixture {
                 1,
             )
             .expect("bounded policy references"),
+            release_policy: ReleasePolicy {
+                publishers: vec![PUBLISHER.to_owned()],
+                denied_payloads: Vec::new(),
+                rollback_payloads: Vec::new(),
+                epoch: 1,
+            },
             created: vec![JournalClaim::file(
                 format!("versions/2.0.0-{}/host.exe", self.payload_id().to_hex()),
                 Digest::of(HOST_V2),
@@ -776,6 +782,12 @@ fn journal_rejects_unknown_phase_and_unbound_manifest() {
             1,
         )
         .expect("bounded policy references"),
+        release_policy: ReleasePolicy {
+            publishers: vec![PUBLISHER.to_owned()],
+            denied_payloads: Vec::new(),
+            rollback_payloads: Vec::new(),
+            epoch: 1,
+        },
         created: vec![
             JournalClaim::directory(version_directory.clone()),
             JournalClaim::file(

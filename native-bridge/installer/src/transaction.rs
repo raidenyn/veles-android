@@ -45,6 +45,7 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::inventory::{PACKAGE_INVENTORY_FILE, write_inventory};
 use crate::journal::{
@@ -61,8 +62,9 @@ use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, NativeManifest, OWNERSHIP_SCHEMA_VERSION,
     OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PathKind, Platform, Registration,
     StateDocument, ValidatedPath, WindowsPreimage, claim_owned_entries, claim_owned_registration,
-    parse_manifest, registration_is_owned, require_quiescent,
+    parse_manifest, registration_is_owned, require_quiescent, require_quiescent_within,
 };
+use crate::policy::authorize_package_policy;
 
 /// The report state of a completed install.
 pub const STATE_INSTALLED: &str = "installed";
@@ -72,6 +74,8 @@ pub const STATE_CLEAN: &str = "clean";
 pub const STATE_RECOVERED_ACTIVE: &str = "recovered-active";
 /// Recovery restored the last verified version.
 pub const STATE_RECOVERED_PREVIOUS: &str = "recovered-previous";
+/// The report state of a completed rollback to a retained prior release.
+pub const STATE_ROLLED_BACK: &str = "rolled-back";
 
 /// The manifest description this installer publishes.
 ///
@@ -122,16 +126,19 @@ pub fn install(
     plan.journal.write(platform, paths)?;
 
     match run(platform, paths, &plan, &package) {
-        Ok(()) => Ok(installed_report(&plan.journal)),
-        Err(failure) => settle_failed_install(platform, paths, &plan, failure),
+        Ok(()) => Ok(completed_report(&plan.journal)),
+        Err(failure) => settle_failed_install(platform, paths, &plan.journal, failure),
     }
 }
 
 /// The success report for a transaction whose receipt is committed.
-fn installed_report(journal: &Journal) -> InstallReport {
+fn completed_report(journal: &Journal) -> InstallReport {
     InstallReport {
-        operation: Operation::Install,
-        state: STATE_INSTALLED.to_owned(),
+        operation: journal.operation,
+        state: match journal.operation {
+            Operation::Rollback => STATE_ROLLED_BACK.to_owned(),
+            _ => STATE_INSTALLED.to_owned(),
+        },
         prior_usable: true,
         active_payload: Some(journal.payload_id),
         failure: None,
@@ -148,15 +155,15 @@ fn installed_report(journal: &Journal) -> InstallReport {
 fn settle_failed_install(
     platform: &impl Platform,
     paths: &InstallPaths,
-    plan: &Plan,
+    intent: &Journal,
     failure: InstallFailure,
 ) -> InstallResult<InstallReport> {
     // The durable journal is authoritative for the phase that was reached; the
-    // in-memory plan is the durable intent when the slot is unreadable or was
+    // in-memory journal is the durable intent when the slot is unreadable or was
     // already released by a state write whose parent flush failed.
     let journal = match Journal::load(platform, paths) {
         Ok(JournalState::Pending(journal)) => *journal,
-        _ => plan.journal.clone(),
+        _ => intent.clone(),
     };
     let prior_usable = previous_is_verified(platform, paths, &journal);
     let receipt = match Receipt::load(platform, paths) {
@@ -170,7 +177,7 @@ fn settle_failed_install(
             // The commit point is durable. Finish forward; if even that cannot be
             // completed, leave the journal for recover and report cleanup-pending.
             match finish_committed(platform, paths, &journal) {
-                Ok(()) => Ok(installed_report(&journal)),
+                Ok(()) => Ok(completed_report(&journal)),
                 Err(_) => {
                     // Best effort: record cleanup intent so the next recover
                     // finishes forward from a journal rather than phase guessing.
@@ -228,6 +235,290 @@ fn previous_is_verified(platform: &impl Platform, paths: &InstallPaths, journal:
     live.manifest_digest() == old.sha256() && manifest_selects_a_file(old).unwrap_or(false)
 }
 
+/// Re-activate an already retained, verified immutable version (Task 7 rollback).
+///
+/// The target version directory must already exist, verify file by file against
+/// the authenticated package, and be claimed by the committed receipt; the
+/// package must be exactly the receipt's recorded prior release. The transaction
+/// creates no payload: the only mutations are the two ordered registration
+/// publications and the committed receipt, so a failed activation restores the
+/// previous registration and never touches the retained payload.
+///
+/// Policy is composed here, under the lock, from the retained signature and the
+/// policy the committed installation enforces: denials accumulate and the
+/// publisher/rollback sets are intersected, so a stale signature cannot relax
+/// the current policy.
+pub(crate) fn activate_retained(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    package: &AuthenticatedPackage,
+    quiescence: Duration,
+) -> InstallResult<InstallReport> {
+    let _lock = platform.lock(paths)?;
+
+    match Journal::load(platform, paths)? {
+        JournalState::None => {}
+        JournalState::Pending(_) | JournalState::Unreadable => {
+            return Err(recovery_required());
+        }
+    }
+
+    let descriptor = package.descriptor();
+    descriptor.validate()?;
+    if descriptor.target != paths.target() {
+        return Err(InstallFailure::new(FailureCode::UnsupportedTarget));
+    }
+    if descriptor.channel != paths.channel() {
+        return Err(origin_rejected());
+    }
+    let version = descriptor.parsed_version()?;
+    let payload_id = descriptor.payload_id;
+
+    let current = match Receipt::load(platform, paths)? {
+        ReceiptState::None => return Err(no_rollback()),
+        ReceiptState::Committed(receipt) => *receipt,
+        ReceiptState::Unreadable => return Err(recovery_required()),
+    };
+    // Exactly one prior install is retained, so that is the only rollback target.
+    let Some(prior) = current.prior.as_ref() else {
+        return Err(no_rollback());
+    };
+    if prior.version != descriptor.version
+        || prior.payload_id != payload_id
+        || version >= parse_version(&current.version)?
+    {
+        return Err(no_rollback());
+    }
+
+    let policy = authorize_package_policy(package, &current.release_policy, Operation::Rollback)?;
+    if policy.denies(&payload_id) {
+        return Err(InstallFailure::new(FailureCode::PolicyDenied));
+    }
+    if !policy.permits_rollback(&payload_id) {
+        return Err(no_rollback());
+    }
+
+    let Some(live) = platform.read_registration(paths)? else {
+        return Err(no_rollback());
+    };
+    if !registration_is_owned(paths, &live) {
+        return Err(foreign_state());
+    }
+    if live.manifest_digest() != current.manifest_sha256 {
+        return Err(recovery_required());
+    }
+
+    let mut executables = package
+        .payload()
+        .iter()
+        .filter(|source| source.executable());
+    let executable = executables.next().ok_or_else(invalid_package)?;
+    if executables.next().is_some() {
+        return Err(invalid_package());
+    }
+
+    let version_relative = paths.version_dir_relative(&version, payload_id);
+    let created = retained_claims(paths, package, &version_relative, &current.ownership)?;
+    let manifest = manifest_for(
+        paths,
+        &paths
+            .version_dir(&version, payload_id)
+            .join(executable.relative()),
+        &descriptor.extension_id,
+    )?;
+    if prior
+        .manifest_sha256
+        .is_some_and(|digest| digest != manifest.sha256())
+    {
+        // The rebuilt manifest is not the one that was live: no honest rollback.
+        return Err(no_rollback());
+    }
+
+    let old_manifest = ManifestSnapshot::new(live.manifest().to_vec())?;
+    let preimage = registration_preimage(&live, old_manifest.sha256())?;
+    let journal = Journal {
+        schema: JOURNAL_SCHEMA_VERSION,
+        transaction_id: transaction_id(
+            Operation::Rollback,
+            paths.target(),
+            paths.channel(),
+            &descriptor.version,
+            payload_id,
+            manifest.sha256(),
+            Some(old_manifest.sha256()),
+        ),
+        operation: Operation::Rollback,
+        phase: Phase::Prepared,
+        target: paths.target(),
+        channel: paths.channel(),
+        root: root_rendering(paths)?,
+        version: descriptor.version.clone(),
+        payload_id,
+        old_version: Some(current.version.clone()),
+        old_payload_id: Some(current.payload_id),
+        manifest,
+        old_manifest: Some(old_manifest),
+        preimage: Some(preimage),
+        policy: PolicyCarrierRefs::new(
+            Digest::of(&canonical_json(descriptor)?),
+            Digest::of(package.proof().carrier()),
+            package.signer(),
+            package.assessment(),
+            policy.epoch,
+        )?,
+        release_policy: policy,
+        created,
+    };
+    journal.validate(paths)?;
+    // Durable intent before the activation mutation.
+    journal.write(platform, paths)?;
+
+    match run_retained(platform, paths, &journal, &current, quiescence) {
+        Ok(()) => Ok(completed_report(&journal)),
+        Err(failure) => settle_failed_install(platform, paths, &journal, failure),
+    }
+}
+
+/// The rollback transaction body, after the Prepared journal is durable.
+fn run_retained(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    journal: &Journal,
+    current: &Receipt,
+    quiescence: Duration,
+) -> InstallResult<()> {
+    require_quiescent_within(platform, paths, quiescence)?;
+    let registration = registration_from(&journal.manifest, journal.preimage.as_ref())?;
+    platform.publish_manifest(paths, &registration)?;
+    journal
+        .with_phase(Phase::ManifestActivated)
+        .write(platform, paths)?;
+    platform.publish_registration(paths, &registration)?;
+    journal
+        .with_phase(Phase::RegistrationPublished)
+        .write(platform, paths)?;
+
+    let live = platform.read_registration(paths)?.ok_or_else(io_failure)?;
+    if live.manifest_digest() != journal.manifest.sha256() {
+        return Err(io_failure());
+    }
+    verify_created_assets(paths, journal)?;
+
+    // The receipt is the commit point. It carries both versions' claims forward,
+    // so a later uninstall removes the retained target and the version it came
+    // from only.
+    let receipt = build_receipt(paths, journal, Some(current))?;
+    receipt.write(platform, paths)?;
+    journal
+        .with_phase(Phase::ReceiptCommitted)
+        .write(platform, paths)?;
+    journal
+        .with_phase(Phase::CleanupPending)
+        .write(platform, paths)?;
+    Journal::clear(platform, paths)
+}
+
+/// Verify a retained version directory against the authenticated package and
+/// return the claim set the transaction journals.
+///
+/// Every retained path must be claimed by the committed receipt (a receipt never
+/// authorizes an arbitrary path), must exist with the authenticated identity and
+/// must belong to this immutable version. A missing or changed retained file is
+/// `NoRollback`: the target cannot be proven and repair guidance is the answer.
+fn retained_claims(
+    paths: &InstallPaths,
+    package: &AuthenticatedPackage,
+    version_relative: &str,
+    ownership: &OwnershipRecord,
+) -> InstallResult<Vec<JournalClaim>> {
+    ownership.validate(paths)?;
+    let claimed = |relative: &str, kind: OwnedKind, sha256: Option<Digest>| {
+        ownership
+            .owned
+            .iter()
+            .any(|claim| claim.kind == kind && claim.path == relative && claim.sha256 == sha256)
+    };
+
+    let mut directories = vec![version_relative.to_owned()];
+    for source in package.payload() {
+        let parts: Vec<&str> = source.relative().split('/').collect();
+        let mut prefix = version_relative.to_owned();
+        for part in &parts[..parts.len() - 1] {
+            prefix.push('/');
+            prefix.push_str(part);
+            if !directories.contains(&prefix) {
+                directories.push(prefix.clone());
+            }
+        }
+    }
+    directories.sort_by(|left, right| {
+        path_depth(left)
+            .cmp(&path_depth(right))
+            .then_with(|| left.cmp(right))
+    });
+
+    let mut claims = Vec::with_capacity(directories.len() + package.payload().len() + 1);
+    for directory in &directories {
+        if !claimed(directory, OwnedKind::Directory, None) {
+            return Err(foreign_state());
+        }
+        match fs::symlink_metadata(paths.root().join(directory)) {
+            Ok(_) => {
+                ValidatedPath::new(paths, Path::new(directory), PathKind::Directory)?;
+            }
+            // A missing directory of the retained version means the target is
+            // no longer the verified payload: repair guidance, not a delete.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(no_rollback());
+            }
+            Err(_) => return Err(io_failure()),
+        }
+        claims.push(JournalClaim::directory(directory.clone()));
+    }
+    for source in package.payload() {
+        let relative = format!("{version_relative}/{}", source.relative());
+        if !claimed(&relative, OwnedKind::File, Some(source.sha256())) {
+            return Err(foreign_state());
+        }
+        if OwnedEntry::from_claim(paths, &OwnedClaim::file(relative.clone(), source.sha256()))?
+            .is_none()
+        {
+            return Err(no_rollback());
+        }
+        claims.push(JournalClaim::file(
+            relative,
+            source.sha256(),
+            source.size(),
+            false,
+        ));
+    }
+    // The installed inventory document is the retained payload identity; it is a
+    // file claim of the receipt, not an authenticated package member.
+    let inventory_relative = format!("{version_relative}/{PACKAGE_INVENTORY_FILE}");
+    if !claimed(
+        &inventory_relative,
+        OwnedKind::File,
+        Some(package.payload_id()),
+    ) {
+        return Err(foreign_state());
+    }
+    let inventory = OwnedEntry::from_claim(
+        paths,
+        &OwnedClaim::file(inventory_relative.clone(), package.payload_id()),
+    )?
+    .ok_or_else(no_rollback)?;
+    let size = fs::symlink_metadata(inventory.path().rendered())
+        .map_err(|_| io_failure())?
+        .len();
+    claims.push(JournalClaim::file(
+        inventory_relative,
+        package.payload_id(),
+        size,
+        false,
+    ));
+    Ok(claims)
+}
+
 /// Reconcile a pending transaction with verified live state.
 ///
 /// * A committed receipt is finished forward, whatever the journal phase says.
@@ -244,6 +535,12 @@ pub fn recover(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<
         JournalState::Unreadable => return recover_unreadable_journal(platform, paths),
         JournalState::Pending(journal) => *journal,
     };
+    if journal.operation == Operation::Uninstall {
+        // A partially removed installation is finished only by the uninstall
+        // operation, which owns removal semantics. Recovery must neither
+        // re-activate a version for it nor guess how far removal got.
+        return Err(InstallFailure::new(FailureCode::RecoveryRequired));
+    }
 
     let live = platform.read_registration(paths)?;
     if let Some(live) = live.as_ref()
@@ -425,7 +722,7 @@ impl Plan {
         });
         let inventory_relative = format!("{version_relative}/{PACKAGE_INVENTORY_FILE}");
 
-        let manifest = build_manifest(
+        let manifest = manifest_for(
             paths,
             &version_directory.join(executable.relative()),
             &descriptor.extension_id,
@@ -460,12 +757,27 @@ impl Plan {
             claim_owned_entries(paths, &prior.ownership)?;
         }
 
+        // Release ordering and policy. An installed release is never replaced by
+        // an older one here: an explicit rollback is the only downgrade path and
+        // it has its own operation. The incoming policy is then composed against
+        // the policy the committed installation actually enforces, so a
+        // correctly signed but stale package cannot relax a recorded policy.
+        let release_policy = match prior.as_ref() {
+            Some(prior) => {
+                if descriptor.parsed_version()? < parse_version(&prior.version)? {
+                    return Err(InstallFailure::new(FailureCode::PolicyDenied));
+                }
+                authorize_package_policy(package, &prior.release_policy, Operation::Install)?
+            }
+            None => descriptor.policy.clone(),
+        };
+
         let policy = PolicyCarrierRefs::new(
             Digest::of(&canonical_json(descriptor)?),
             Digest::of(package.proof().carrier()),
             package.signer(),
             package.assessment(),
-            descriptor.policy.epoch,
+            release_policy.epoch,
         )?;
 
         let mut created: Vec<JournalClaim> =
@@ -502,6 +814,7 @@ impl Plan {
             old_manifest,
             preimage,
             policy,
+            release_policy,
             created,
         };
         journal.validate(paths)?;
@@ -688,6 +1001,12 @@ fn remove_created_assets(
     paths: &InstallPaths,
     journal: &Journal,
 ) -> InstallResult<()> {
+    if journal.operation == Operation::Rollback {
+        // A rollback creates nothing. Its claim set describes the retained target
+        // version, which a failed or interrupted activation restores and never
+        // deletes: the rollback target must survive a rejected rollback.
+        return Ok(());
+    }
     require_quiescent(platform, paths)?;
     let own_prefix = format!(
         "{}/",
@@ -890,6 +1209,7 @@ fn build_receipt(
         manifest_sha256: journal.manifest.sha256(),
         prior: prior_install,
         policy: journal.policy.clone(),
+        release_policy: journal.release_policy.clone(),
         ownership: OwnershipRecord {
             schema: OWNERSHIP_SCHEMA_VERSION,
             target: journal.target,
@@ -956,7 +1276,11 @@ fn registration_preimage(
 }
 
 /// Build the exact manifest bytes this layout must publish for `executable`.
-fn build_manifest(
+///
+/// This is the single definition of the manifest the installer publishes: an
+/// install, a repair that has to restore a missing registration, and a rollback
+/// that re-activates a retained version all publish exactly these bytes.
+pub(crate) fn manifest_for(
     paths: &InstallPaths,
     executable: &Path,
     extension_id: &str,
@@ -1012,4 +1336,8 @@ fn recovery_required() -> InstallFailure {
 
 fn origin_rejected() -> InstallFailure {
     InstallFailure::new(FailureCode::OriginRejected)
+}
+
+fn no_rollback() -> InstallFailure {
+    InstallFailure::new(FailureCode::NoRollback)
 }
