@@ -1,9 +1,10 @@
 # OTP-08 aggregate acceptance record (2026-11-06)
 
-Status: **corrected after independent review.** The first version of this record
-was rejected for overstating debugger-absence evidence on macOS cold, for claiming
-per-case two-phone recovery, for an inaccurate phone-B sentence, and for
-provenance and citation errors. Those claims are narrowed here.
+Status: **accepted 2026-11-06** after independent review and owner dispositions.
+The first version of this record was rejected for overstating debugger-absence
+evidence on macOS cold, for claiming per-case two-phone recovery, for an inaccurate
+phone-B sentence, and for provenance and citation errors. Those claims are
+narrowed here and the owner then accepted the remaining qualifications.
 
 Scope: physical acceptance for OTP-08 background liveness, offscreen clipboard and
 lifecycle invalidation, per the plan's Global Constraints and the RFC's Gate B
@@ -189,19 +190,37 @@ introduced. Root cause remains unidentified; it did not recur in the
 diagnostic-host run or in the later original-host runs. It remains an open
 platform risk.
 
+## Owner dispositions (2026-11-06)
+
+The owner reviewed the qualifications above and disposed of them for OTP-08:
+
+1. **Further macOS testing: skipped.** No additional Mac runs are required for
+   OTP-08. The macOS results stand as recorded, including the macOS-cold
+   `lsof` completeness qualification and the eventual-rather-than-per-transition
+   recovery.
+2. **Provenance: accepted as documented.** Inherited worker/host/manifest/fixture
+   and APK attestations are accepted; no further provenance capture is required.
+3. **Missing phone-B record: deferred, not resolved.** Investigation is moved to
+   the OTP-15 fault-test checklist (with OTP-14 for reconnect/pull). The failed
+   `prewarm-source-a` result stays failed and its cause unresolved. This is a
+   non-blocking residual risk for OTP-08, not a reliability guarantee.
+4. **Clipboard evidence: accepted.** Existing copy, helper-teardown, interruption
+   and browser-permission-denial evidence is sufficient, including the
+   unretained-observation qualification for the restoration step.
+
 ## Verdict
 
-OTP-08's physical acceptance set is **substantially satisfied**: both platforms
-show ≥600-second backgrounded delivery from two source-bound phones, a synthetic
-copy with helper teardown, and real freeze, discard and removal transitions with
-fresh generations and later recovery. Clipboard denial is demonstrated without
-transport loss.
+OTP-08's physical acceptance set is **accepted with the qualifications and owner
+dispositions above**: both platforms show ≥600-second backgrounded delivery from
+two source-bound phones, a synthetic copy with helper teardown, and real freeze,
+discard and removal transitions with fresh generations and later recovery.
+Clipboard denial is demonstrated without transport loss.
 
-It is **not** an unqualified pass. Strict continuous debugger-absence completeness
-is unestablished on macOS cold, per-transition two-phone recovery is not
-demonstrated on macOS, Windows clipboard readback shows no transition, provenance
-is partly inherited, and the earlier phone-B loss remains unexplained. This is a
-scoped verdict for OTP-08; it does not close Gate B and does not validate
-protected transport.
+The qualifications are recorded, not erased: strict continuous debugger-absence
+completeness is unestablished on macOS cold, per-transition two-phone recovery is
+not demonstrated on macOS, Windows clipboard readback shows no transition,
+provenance is partly inherited, and the earlier phone-B loss remains unexplained
+and is deferred to the OTP-15 fault tests. This is a scoped verdict for OTP-08; it
+does not close Gate B and does not validate protected transport.
 
-Sign-off requires a reviewer other than the implementer.
+Independently reviewed and approved by a reviewer other than the implementer.

@@ -43,9 +43,11 @@ Required manifest changes: `offscreen` and `clipboardWrite` permissions in
 addition to `storage` and `nativeMessaging`; Chrome minimum 132 for the
 `frozen` transition API. CSP and host/tab permissions remain unchanged.
 
-## Verification ledger (2026-11-04; physical acceptance pending)
+## Verification ledger (2026-11-04; physical acceptance recorded 2026-11-06)
 
-This ledger does **not** close #90 or claim Gate B/C/D acceptance.
+OTP-08 acceptance is recorded in `docs/otp-08-acceptance-2026-11-06.md`, including
+the owner dispositions of 2026-11-06. This ledger does **not** claim Gate B/C/D or
+protected-transport acceptance, and it does not promote the failed runs.
 
 ### Resumed physical work, 2026-11-05
 
@@ -163,23 +165,24 @@ adjudications remain in private, git-ignored storage pending privacy-reviewed
 publication. The broader native-host verification and remaining lifecycle cases
 retain their existing gate ownership.
 
-The table below retains the original 2026-11-04 checkpoint. For current physical
-results, use the resumed-work record above.
+The table below retains the original 2026-11-04 checkpoint. Rows marked
+**BLOCKED** or **NOT RUN** were superseded by the physical work recorded above and
+in the acceptance record; they are kept as history, not current status.
 
 | Check | Result / scope |
 |---|---|
 | Baseline | 212 source tests passed before implementation |
-| Final local checks | 249 source tests / 22 files; typecheck, ESLint, Prettier, Vite build, 3 bundle tests and `git diff --check` passed |
+| Final local checks | 250 source tests / 22 files; typecheck, ESLint, Prettier, Vite build, 3 bundle tests and `git diff --check` passed |
 | Worker authority | Exact sender/document binding, revocation, restart, in-flight races and stale badge refusal covered by source tests |
 | Clipboard | Invalid input/authorization, serialized helpers, <=16 pending requests, stale queued copies, create/write/close failures and DOM erasure covered by source tests |
 | Native generation boundary | Ordered callbacks, synchronous close, obsolete authorization, outbound revocation, entry/byte overflow covered by source tests |
-| Actual Mac Chrome offscreen helper | Synthetic copy returned success; actual runtime context enumeration showed no helper left afterward. No OS clipboard readback claimed |
+| Actual Mac Chrome offscreen helper | Synthetic copy returned success; actual runtime context enumeration showed no helper left afterward. OS clipboard readback later showed the fixed value on both macOS runs |
 | Packaged browser | Real production missing-host UX and offscreen helper; native records/phones simulated. Existing routing, bounds, ownership and focus tests retained |
-| Forced freeze | **BLOCKED** in CDP-attached Chrome 156.0.8078.81: `Page.setWebLifecycleState(frozen)` returned success but `tabs.get().frozen` remained false. Explicit DOM freeze/resume injection verified local closure/reload and a changed worker token; it is not actual freeze evidence |
-| Forced discard | `tabs.discard` returned `discarded:true` and destroyed the attached target; original tab was then absent/unrestorable under this automation. Reopening obtained a fresh generation. **BLOCKED** for same-tab discard restoration acceptance; no OS/native link-cleanup claim |
-| Removal | Attached packaged-browser test covers old-tab absence/revocation and new-document ownership |
-| Windows physical acceptance | **NOT RUN**: no OTP-08 production-shaped host/fixture run prepared in this session |
-| Windows/macOS cold/prewarm >=600 s | **NOT RUN**: requires two source/signature-bound phone fixtures, registered compatible production-shaped hosts and detached idle/foreground observation. Browser tests remained CDP-attached and use simulated transport |
+| Forced freeze | **Superseded 2026-11-06**: real `frozen` transition observed on both platforms; see acceptance record |
+| Forced discard | **Superseded 2026-11-06**: real discard and replacement-tab recovery observed on both platforms |
+| Removal | Attached packaged-browser test covers old-tab absence/revocation and new-document ownership; physical removal also exercised on Windows and macOS |
+| Windows physical acceptance | **Superseded 2026-11-06**: cold, prewarm, lifecycle and clipboard-denial runs recorded |
+| Windows/macOS cold/prewarm >=600 s | **Superseded 2026-11-06**: both platforms, with the qualifications in the acceptance record |
 | Protected delivery | Excluded here; OTP-09/OTP-12 retain ownership |
 
 ### Review and remaining implementation findings
@@ -250,7 +253,10 @@ adds the simulated-port harness to `connector.html` in the ephemeral copy so
 the exact-page worker authorization remains unchanged. Explicit `BLOCKED`
 output is part of the result, not a passing physical verdict.
 
-### Physical acceptance still required
+### Physical acceptance criteria (satisfied per the acceptance record)
+
+This section states what a qualifying run must contain. Results, per-scenario
+verdicts and the owner dispositions are in `docs/otp-08-acceptance-2026-11-06.md`.
 
 For each Windows/macOS cold and prewarm run, bind exact source/build/signing
 identities, Chrome/OS/account/adapter and phone fixture identities. Keep the
