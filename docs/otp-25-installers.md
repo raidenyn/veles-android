@@ -112,12 +112,17 @@ verification output must appear in raw captures, not only as typed values.
 * **Bundle** (`evidence.py validate --run DIR --cases cases.json --anchor ANCHOR.json
   [--previous OLDDIR]`): `run.json`, hash-chained `ledger.jsonl`, `captures/`, and a separate
   `adjudication.json`. The validator refuses, among others:
-  admin or elevated accounts as standard-user proof (identity capture is inspected, the
-  declaration alone is not trusted); any binding that differs from the external anchor, an
+  admin or elevated accounts as standard-user proof (the identity capture must positively show the
+  declared `accounts[].user_name`, a complete group table and, on Windows, the Medium integrity
+  label; empty, truncated or unrelated captures prove nothing); any binding that differs from the external anchor, an
   anchor stored inside the run, or a digest/signer that no raw capture contains
   (self-attested); capture checksum mismatch, missing, unlisted or escaping captures;
   missing required actions/observations; PASS for repair/upgrade/rollback/permission-recovery
-  without distinct, ordered `grant-before`/`grant-after` observations; a broken, shortened or
+  without distinct `grant-before`/`grant-after` observations that fall strictly before and
+  strictly after the case's named maintenance action (`requires.retention_action`); an engine
+  action whose observed return or captured InstallReport contradicts the case's `dispositions`
+  (a clean maintenance result must exit 0 with no failure and no pending cleanup; an expected
+  refusal must exit 1 with one of the listed failures); a broken, shortened or
   rewritten ledger; a PASS that does not acknowledge earlier FAILs; self-adjudication or an
   adjudication not bound to the exact `run.json` and ledger head; and publication of raw
   captures without an approved privacy review by someone other than the operator.
@@ -137,7 +142,7 @@ fresh-user, and one whose profile path has a space and a non-ASCII character), t
 candidate and the external anchor from the release gate, an attended person for Bluetooth
 consent, and a second signed release for upgrade/rollback/compatibility.
 
-1. Sign in as the standard user. Capture `whoami /groups` (Windows) or `id -Gn` (macOS).
+1. Sign in as the standard user. Capture `whoami /groups` and `whoami /user` (Windows) or `id` (macOS), and declare the account name in `accounts[].user_name`.
 2. Hash and verify the candidate; capture `Get-FileHash` + `signtool verify /pa /all /v`
    (Windows) or `shasum -a 256` + `codesign -dv --verbose=4` + `spctl --assess -vv` +
    `xcrun stapler validate` (macOS).

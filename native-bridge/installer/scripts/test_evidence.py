@@ -39,14 +39,44 @@ COMMIT = "a" * 40
 H = {name: hashlib.sha256(name.encode()).hexdigest() for name in
      ("config", "descriptor", "tools", "unsigned", "package")}
 SIGNER = {"windows": "CN=Example Publisher Fixture", "macos": "Developer ID Application: Example (ABCDE12345)"}
+USER_NAME = {"windows": "FIXTURE-PC\\tester", "macos": "tester"}
+# Shapes follow the documented `whoami /groups` + `whoami /user` and `id` outputs.
+WINDOWS_GROUPS = (
+    "GROUP INFORMATION\n-----------------\n\n"
+    "Group Name                             Type             SID          Attributes\n"
+    "====================================== ================ ============ ==================================================\n"
+    "Everyone                               Well-known group S-1-1-0      Mandatory group, Enabled by default, Enabled group\n"
+    "BUILTIN\\Users                          Alias            S-1-5-32-545 Mandatory group, Enabled by default, Enabled group\n"
+    "{extra}"
+    "Mandatory Label\\{level} Mandatory Level Label            {sid}\n\n"
+)
+WINDOWS_USER = (
+    "USER INFORMATION\n----------------\n\n"
+    "User Name           SID\n=================== =============================================\n"
+    "{name} S-1-5-21-1111111111-2222222222-3333333333-1001\n"
+)
+
+
+def windows_identity(name: str = USER_NAME["windows"], level: str = "Medium", sid: str = "S-1-16-8192",
+                     extra: str = "") -> str:
+    return WINDOWS_GROUPS.format(level=level, sid=sid, extra=extra) + WINDOWS_USER.format(name=name)
+
+
 STANDARD_CAPTURE = {
-    "windows": "USER INFORMATION\nGROUP INFORMATION\nEveryone  S-1-1-0\nMandatory Label\\Medium Mandatory Level  S-1-16-8192\n",
+    "windows": windows_identity(),
     "macos": "uid=501(tester) gid=20(staff) groups=20(staff),12(everyone),61(localaccounts)\n",
 }
 ADMIN_CAPTURE = {
-    "windows": "BUILTIN\\Administrators  S-1-5-32-544  Group used for deny only\nMedium Mandatory Level S-1-16-8192\n",
+    "windows": windows_identity(extra="BUILTIN\\Administrators                resolved-deny   S-1-5-32-544 Group used for deny only\n"),
     "macos": "uid=501(tester) gid=20(staff) groups=20(staff),80(admin),12(everyone)\n",
 }
+
+
+def report(operation: str, state: str, *, failure: str | None = None, warnings: list[str] | None = None) -> str:
+    """The engine's one stdout document, in the shape cli::render_report writes."""
+    return json.dumps({"operation": operation, "state": state, "prior_usable": failure is None,
+                       "active_payload": None, "failure": failure, "warnings": warnings or []},
+                      sort_keys=True, separators=(",", ":")) + "\n"
 
 
 def sha(data: bytes) -> str:
@@ -76,7 +106,8 @@ class Bundle:
         self.ext.mkdir()
         self.captures: dict[str, bytes] = {}
         self.entries: list[dict] = []
-        self.accounts = [{"id": "std-1", "kind": "standard", "fresh": False, "identity_capture": ""}]
+        self.accounts = [{"id": "std-1", "kind": "standard", "fresh": False, "identity_capture": "",
+                          "user_name": USER_NAME[platform]}]
         self.operator = "operator-1"
         self.adjudicator = "adjudicator-1"
         self.publication = {"raw_captures": "withheld"}
@@ -125,17 +156,36 @@ class Bundle:
         attempt_id = f"att-{n}"
         started = self.stamp()
         actions, observations = [], []
+        retention = case["requires"].get("retention_action")
+        retention_obs = {"grant-before", "grant-after"}
+
+        def observe(obs: str) -> None:
+            path = self.add_capture(f"{attempt_id}-{obs}.txt", f"{obs} observed {n}\n")
+            observations.append({"id": obs, "at": self.stamp(), "capture": path})
+
         for action in case["actions"]:
             if action == drop_action:
                 continue
-            path = self.add_capture(f"{attempt_id}-{action}.txt", f"{action} output {n}\n")
+            if action == retention and "grant-before" in case["observations"] and drop_observation != "grant-before":
+                observe("grant-before")
+            disposition = case.get("dispositions", {}).get(action)
+            if disposition is None:
+                text, returns = f"{action} output {n}\n", "0"
+            elif disposition["result"] == "clean":
+                text = report(disposition["operation"], disposition["state"])
+                returns = "0"
+            else:
+                text = report(disposition["operations"][0], "failed", failure=disposition["failures"][0])
+                returns = "1"
+            path = self.add_capture(f"{attempt_id}-{action}.txt", text)
             actions.append({"id": action, "at": self.stamp(), "step": f"controlled step {action}",
-                            "capture": path, "returns": "0", "elevated": False})
+                            "capture": path, "returns": returns, "elevated": False})
+            if action == retention and "grant-after" in case["observations"] and drop_observation != "grant-after":
+                observe("grant-after")
         for obs in case["observations"]:
-            if obs == drop_observation:
+            if obs == drop_observation or (retention and obs in retention_obs):
                 continue
-            path = self.add_capture(f"{attempt_id}-{obs}.txt", f"{obs} observed {n}\n")
-            observations.append({"id": obs, "at": self.stamp(), "capture": path})
+            observe(obs)
         entry = {"seq": n, "attempt_id": attempt_id, "case": case["id"], "account": account,
                  "started": started, "ended": self.stamp(), "outcome": outcome,
                  "actions": actions, "observations": observations}
@@ -529,6 +579,235 @@ class Retention(Base):
             b.attempt("repair")
             b.write()
             self.assertEqual(b.validate(), [])
+
+
+class IdentityProof(Base):
+    """F14: a standard-user claim needs positive, complete, parsable identity evidence."""
+
+    def _validate_with(self, platform: str, name: str, text: str) -> list[str]:
+        b = Bundle(self.root / name, platform)
+        b.add_capture("whoami.txt", text)
+        b.attempt("clean-install")
+        b.write()
+        return b.validate()
+
+    def test_empty_or_unrecognised_identity_capture_proves_nothing(self) -> None:
+        for platform in PLATFORMS:
+            for label, text in (("empty", ""), ("whitespace", "\n\n"),
+                                ("unrelated", "command completed\n"),
+                                ("error-text", "'whoami' is not recognized as an internal or external command\n")):
+                with self.subTest(platform=platform, capture=label):
+                    self.assertRejected(self._validate_with(platform, f"{platform}-{label}", text), "identity")
+
+    def test_truncated_or_partial_windows_identity_is_refused(self) -> None:
+        full = STANDARD_CAPTURE["windows"]
+        cases = {
+            "groups-only": full[: full.index("USER INFORMATION")],
+            "user-only": full[full.index("USER INFORMATION"):],
+            "no-integrity-label": "\n".join(line for line in full.splitlines() if "Mandatory Label" not in line) + "\n",
+            "cut-mid-table": full[: full.index("BUILTIN")],
+        }
+        for label, text in cases.items():
+            with self.subTest(capture=label):
+                self.assertRejected(self._validate_with("windows", f"w-{label}", text), "identity")
+
+    def test_windows_integrity_level_must_be_medium(self) -> None:
+        for level, sid in (("High", "S-1-16-12288"), ("System", "S-1-16-16384"), ("Low", "S-1-16-4096")):
+            with self.subTest(level=level):
+                errors = self._validate_with("windows", f"w-{level}", windows_identity(level=level, sid=sid))
+                self.assertRejected(errors, "integrity")
+
+    def test_observed_account_must_be_the_declared_test_account(self) -> None:
+        errors = self._validate_with("windows", "w-other", windows_identity(name="FIXTURE-PC\\someone-else"))
+        self.assertRejected(errors, "declared")
+        b = Bundle(self.root / "w-undeclared")
+        del b.accounts[0]["user_name"]
+        b.attempt("clean-install")
+        b.write()
+        self.assertRejected(b.validate(), "user_name")
+        for label, text in (("uid-zero", "uid=0(root) gid=0(wheel) groups=0(wheel),1(daemon)\n"),
+                            ("other-user", "uid=502(someone) gid=20(staff) groups=20(staff)\n"),
+                            ("no-groups", "uid=501(tester) gid=20(staff)\n"),
+                            ("group-names-only", "staff everyone localaccounts\ntester\n")):
+            with self.subTest(macos=label):
+                self.assertRejected(self._validate_with("macos", f"m-{label}", text), "identity")
+
+    def test_a_complete_standard_capture_is_still_accepted(self) -> None:
+        for platform in PLATFORMS:
+            self.assertEqual(self._validate_with(platform, f"ok-{platform}", STANDARD_CAPTURE[platform]), [])
+
+
+class GrantBracket(Base):
+    """F13: grant-before AND grant-after must sit on the two sides of the maintenance action."""
+
+    def _bundle(self, name: str, family: str = "repair") -> tuple[Bundle, dict, dict, dict]:
+        b = Bundle(self.root / name)
+        entry = b.attempt(family)
+        obs = {o["id"]: o for o in entry["observations"]}
+        action = next(a for a in entry["actions"]
+                      if a["id"] == case_by_id(f"windows.{family}")["requires"]["retention_action"])
+        return b, entry, obs, action
+
+    def test_the_positive_fixture_brackets_the_maintenance_action(self) -> None:
+        b, entry, obs, action = self._bundle("order")
+        self.assertLess(obs["grant-before"]["at"], action["at"])
+        self.assertLess(action["at"], obs["grant-after"]["at"])
+        b.write()
+        self.assertEqual(b.validate(), [])
+
+    def test_every_retention_case_names_one_maintenance_action(self) -> None:
+        for case in load_cases()["cases"]:
+            if case["requires"]["retention_claim"]:
+                self.assertIn(case["requires"].get("retention_action"), case["actions"], case["id"])
+
+    def test_both_observations_after_the_maintenance_action_are_refused(self) -> None:
+        b, entry, obs, action = self._bundle("after")
+        obs["grant-before"]["at"] = "2026-12-01T12:00:00Z"
+        obs["grant-after"]["at"] = "2026-12-01T12:00:01Z"
+        entry["ended"] = "2026-12-01T12:00:02Z"
+        b.write()
+        self.assertRejected(b.validate(), "bracket")
+
+    def test_both_observations_before_the_maintenance_action_are_refused(self) -> None:
+        b, entry, obs, action = self._bundle("before")
+        obs["grant-before"]["at"] = "2026-12-01T09:30:00Z"
+        obs["grant-after"]["at"] = "2026-12-01T09:30:01Z"
+        entry["started"] = "2026-12-01T09:29:00Z"
+        b.write()
+        self.assertRejected(b.validate(), "bracket")
+
+    def test_each_one_sided_violation_is_refused_on_its_own(self) -> None:
+        for which in ("grant-before", "grant-after"):
+            with self.subTest(late=which):
+                b, entry, obs, action = self._bundle(f"one-{which}")
+                if which == "grant-before":
+                    obs["grant-before"]["at"] = "2026-12-01T12:00:00Z"   # after the action, before grant-after
+                    obs["grant-after"]["at"] = "2026-12-01T12:00:01Z"
+                else:
+                    obs["grant-after"]["at"] = "2026-12-01T09:30:00Z"    # before the action
+                    obs["grant-before"]["at"] = "2026-12-01T09:29:59Z"
+                entry["started"] = "2026-12-01T09:29:00Z"
+                entry["ended"] = "2026-12-01T12:00:02Z"
+                b.write()
+                self.assertRejected(b.validate(), "bracket")
+
+    def test_an_observation_at_the_same_instant_as_the_action_is_refused(self) -> None:
+        b, entry, obs, action = self._bundle("same")
+        obs["grant-before"]["at"] = action["at"]
+        b.write()
+        self.assertRejected(b.validate(), "bracket")
+
+    def test_unrelated_setup_actions_need_not_be_bracketed(self) -> None:
+        b, entry, obs, action = self._bundle("setup")
+        setup = next(a for a in entry["actions"] if a["id"] == "damage-managed-file")
+        setup["at"] = "2026-12-01T09:00:05Z"
+        entry["started"] = "2026-12-01T09:00:00Z"
+        b.write()
+        self.assertEqual(b.validate(), [])
+
+
+class ActionDispositions(Base):
+    """F15: engine results are decoded and held to the case's expected disposition."""
+
+    def _repair(self, name: str, text: str | None = None, returns: str | None = None) -> list[str]:
+        b = Bundle(self.root / name)
+        entry = b.attempt("repair")
+        action = next(a for a in entry["actions"] if a["id"] == "choose-repair")
+        if text is not None:
+            b.captures[action["capture"].removeprefix("captures/")] = text.encode()
+        if returns is not None:
+            action["returns"] = returns
+        b.write()
+        return b.validate()
+
+    def test_a_clean_repair_with_a_matching_report_is_accepted(self) -> None:
+        self.assertEqual(self._repair("ok"), [])
+
+    def test_a_nonzero_return_is_not_a_clean_maintenance_pass(self) -> None:
+        self.assertRejected(self._repair("rc1", returns="1"), "return")
+
+    def test_a_return_that_is_not_the_exact_exit_status_is_refused(self) -> None:
+        for bad in ("0 ", "00", "success", "-0", " 0"):
+            with self.subTest(returns=bad):
+                self.assertRejected(self._repair(f"r-{abs(hash(bad))}", returns=bad), "return")
+
+    def test_cleanup_pending_reports_are_never_a_clean_pass(self) -> None:
+        for label, text in (
+            ("failure", report("repair", "failed", failure="cleanup-pending")),
+            ("warning", report("repair", "repaired", warnings=["cleanup-pending"])),
+            ("warning-with-others", report("repair", "repaired", warnings=["leftover-files", "cleanup-pending"])),
+        ):
+            with self.subTest(report=label):
+                self.assertRejected(self._repair(f"cp-{label}", text=text), "report")
+                self.assertRejected(self._repair(f"cp0-{label}", text=text, returns="1"), "report")
+
+    def test_failure_unsettled_state_and_wrong_operation_are_refused(self) -> None:
+        for label, text in (
+            ("failure", report("repair", "failed", failure="io")),
+            ("damaged", report("repair", "damaged")),
+            ("recovery", report("repair", "recovery-required")),
+            ("wrong-op", report("install", "installed")),
+            ("wrong-state", report("repair", "installed")),
+            ("inspect", report("inspect", "installed")),
+        ):
+            with self.subTest(report=label):
+                self.assertRejected(self._repair(f"bad-{label}", text=text), "report")
+
+    def test_a_capture_that_is_not_one_strict_report_is_refused(self) -> None:
+        good = report("repair", "repaired")
+        for label, text in (
+            ("empty", ""),
+            ("prose", "repair finished\n"),
+            ("two-documents", good + good),
+            ("trailing-text", good + "Done.\n"),
+            ("unknown-field", good.replace("}\n", ',"extra":1}\n')),
+            ("duplicate-key", '{"operation":"repair","operation":"repair","state":"repaired","prior_usable":true,'
+                              '"active_payload":null,"failure":null,"warnings":[]}\n'),
+            ("bad-warning", report("repair", "repaired", warnings=["unknown-warning"])),
+            ("missing-field", '{"operation":"repair","state":"repaired"}\n'),
+        ):
+            with self.subTest(report=label):
+                self.assertRejected(self._repair(f"doc-{label}", text=text), "report")
+
+    def test_leftover_and_compatibility_warnings_do_not_make_a_clean_result_unclean(self) -> None:
+        text = report("repair", "repaired", warnings=["leftover-files", "compatibility-window"])
+        self.assertEqual(self._repair("warn", text=text), [])
+
+    def test_an_expected_refusal_must_be_a_refusal_with_an_allowed_failure(self) -> None:
+        def run(name: str, text: str | None = None, returns: str | None = None) -> list[str]:
+            b = Bundle(self.root / name)
+            entry = b.attempt("failed-upgrade")
+            action = next(a for a in entry["actions"] if a["id"] == "choose-update")
+            if text is not None:
+                b.captures[action["capture"].removeprefix("captures/")] = text.encode()
+            if returns is not None:
+                action["returns"] = returns
+            b.write()
+            return b.validate()
+        self.assertEqual(run("ok"), [])
+        with self.subTest("a successful update is not the expected refusal"):
+            self.assertRejected(run("success", text=report("install", "installed"), returns="0"), "refus")
+        with self.subTest("exit 0 contradicts a refusal report"):
+            self.assertRejected(run("rc0", returns="0"), "return")
+        with self.subTest("a failure outside the allowed set"):
+            self.assertRejected(run("wrong", text=report("install", "failed", failure="busy")), "report")
+        with self.subTest("cleanup-pending is not a refusal of a tampered package"):
+            self.assertRejected(run("pend", text=report("install", "failed", failure="cleanup-pending")), "report")
+
+    def test_negative_actions_in_other_cases_are_explicit(self) -> None:
+        by_case = {c["id"]: c.get("dispositions", {}) for c in load_cases()["cases"]}
+        for platform in PLATFORMS:
+            self.assertEqual(by_case[f"{platform}.multi-profile"]["attempt-update-with-sessions-open"]["result"], "refused")
+            for action in ("repair-with-trust-unavailable", "present-os-denied-package",
+                           "present-denied-payload", "attempt-stale-policy-rollback"):
+                self.assertEqual(by_case[f"{platform}.offline-trust"][action]["result"], "refused", action)
+            self.assertEqual(by_case[f"{platform}.offline-trust"]["repair-with-cached-trust"]["result"], "clean")
+
+    def test_every_engine_choice_has_a_declared_disposition(self) -> None:
+        for case in load_cases()["cases"]:
+            for action in case["actions"]:
+                if action.startswith("choose-") or action in ("retry-update",):
+                    self.assertIn(action, case.get("dispositions", {}), f"{case['id']}: {action}")
 
 
 class AppendOnly(Base):

@@ -44,12 +44,24 @@ DIGEST_FIELDS = ("config_sha256", "descriptor_sha256", "tools_sha256", "unsigned
 GENESIS = "0" * 64
 MAX_CLOCK_OFFSET_SECONDS = 30.0
 MAX_JSON_BYTES = 32 * 1024 * 1024
+MAX_REPORT_BYTES = 64 * 1024
+# The engine's InstallReport vocabulary (model.rs Operation / FailureCode / WarningCode).
+REPORT_FIELDS = {"operation", "state", "prior_usable", "active_payload", "failure", "warnings"}
+REPORT_OPERATIONS = ("inspect", "install", "repair", "rollback", "uninstall")
+REPORT_FAILURES = ("invalid-input", "origin-rejected", "invalid-package", "trust-denied", "trust-unavailable",
+                   "policy-denied", "unsupported-target", "busy", "host-active", "inspection-denied",
+                   "foreign-state", "unsafe-path", "io", "recovery-required", "unsupported-state",
+                   "no-rollback", "repair-package-required", "cleanup-pending")
+REPORT_WARNINGS = ("compatibility-window", "leftover-files", "cleanup-pending")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 # An account is refused as "standard" when its identity capture shows any of these.
 WINDOWS_ADMIN_MARKERS = ("S-1-5-32-544", "S-1-16-12288", "S-1-16-16384")
 MAC_ADMIN_TOKENS = {"admin", "wheel", "root", "_appserveradm", "_appserverusr"}
+WINDOWS_USER_ROW = re.compile(r"^(?P<name>\S.*?)\s+S-1-5-21(?:-\d+){4}[ \t]*$", re.MULTILINE)
+MAC_ID_ROW = re.compile(r"^uid=(?P<uid>\d+)\((?P<name>[^()\s]+)\) gid=\d+\([^()\s]+\) groups=(?P<groups>\d+\([^()\s]+\)(?:,\d+\([^()\s]+\))*)$")
+MAC_GROUP = re.compile(r"(\d+)\(([^()\s]+)\)")
 
 NOT_ACCEPTANCE = ("structurally valid; this is NOT acceptance (no physical verdict is implied, "
                   "#89 and Gates B/C/D are unaffected)")
@@ -296,6 +308,12 @@ class _Run:
         return accounts
 
     def prove_standard(self, account: dict, platform: str, label: str) -> None:
+        """Standard-user proof is POSITIVE evidence: a successful, complete, parsable
+        capture of the declared account, its groups and (Windows) integrity level.
+
+        Absence of administrator markers proves nothing - an empty, truncated or
+        unrelated capture has none - so every field below must be present and parse.
+        """
         if account.get("kind") != "standard":
             self.err(f"{label}: account {account.get('id')!r} is {account.get('kind')!r}, not a standard user")
             return
@@ -303,14 +321,59 @@ class _Run:
         if data is None:
             self.err(f"{label}: account identity capture is required to prove a standard user")
             return
+        declared = _str(account.get("user_name")).strip()
+        if not declared:
+            self.err(f"{label}: account {account.get('id')!r} needs user_name, the account name the identity capture must show")
+            return
         text = data.decode("utf-8", "replace")
         if platform == "windows":
-            if any(marker in text for marker in WINDOWS_ADMIN_MARKERS):
-                self.err(f"{label}: identity capture shows administrator membership or a High integrity token")
+            self._prove_windows_identity(text, declared, label)
         else:
-            tokens = {t.lower() for t in re.split(r"[^\w]+", text) if t}
-            if tokens & MAC_ADMIN_TOKENS:
-                self.err(f"{label}: identity capture shows administrator group membership")
+            self._prove_macos_identity(text, declared, label)
+
+    def _prove_windows_identity(self, text: str, declared: str, label: str) -> None:
+        user_at, group_at = text.find("USER INFORMATION"), text.find("GROUP INFORMATION")
+        if user_at < 0 or group_at < 0:
+            self.err(f"{label}: identity capture lacks the whoami /user and /groups sections "
+                     "(empty, truncated or unrelated output proves nothing)")
+            return
+        user_section = text[user_at:group_at] if user_at < group_at else text[user_at:]
+        group_section = text[group_at:user_at] if group_at < user_at else text[group_at:]
+        users = [m for m in WINDOWS_USER_ROW.finditer(user_section)]
+        if len(users) != 1:
+            self.err(f"{label}: identity capture shows no single account row with a user SID")
+        elif users[0].group("name").strip().lower() != declared.lower():
+            self.err(f"{label}: identity capture shows {users[0].group('name').strip()!r}, "
+                     f"not the declared account {declared!r}")
+        sids = re.findall(r"\bS-1-\d+(?:-\d+)+\b", group_section)
+        if "S-1-1-0" not in sids:
+            self.err(f"{label}: identity capture has no complete group table (the Everyone group row is missing)")
+        labels = re.findall(r"Mandatory Label\\(\S+) Mandatory Level\s+Label\s+(S-1-16-\d+)", group_section)
+        if len(labels) != 1:
+            self.err(f"{label}: identity capture shows no single mandatory integrity label")
+        elif labels[0] != ("Medium", "S-1-16-8192"):
+            self.err(f"{label}: integrity level {labels[0][0]} ({labels[0][1]}) is not the Medium level of a "
+                     "standard user's token")
+        if any(marker in text for marker in WINDOWS_ADMIN_MARKERS):
+            self.err(f"{label}: identity capture shows administrator membership or a High integrity token")
+
+    def _prove_macos_identity(self, text: str, declared: str, label: str) -> None:
+        rows = [line for line in text.splitlines() if line.strip()]
+        match = MAC_ID_ROW.match(rows[0].strip()) if len(rows) == 1 else None
+        if match is None:
+            self.err(f"{label}: identity capture is not exactly one complete `id` line "
+                     "(uid, gid and groups); empty or truncated output proves nothing")
+            return
+        if int(match.group("uid")) == 0:
+            self.err(f"{label}: identity capture shows uid 0, not a standard user")
+        if match.group("name") != declared:
+            self.err(f"{label}: identity capture shows {match.group('name')!r}, not the declared account {declared!r}")
+        groups = MAC_GROUP.findall(match.group("groups"))
+        if not groups or ",".join(f"{g}({n})" for g, n in groups) != match.group("groups"):
+            self.err(f"{label}: identity capture has no parsable group list")
+        tokens = {t.lower() for t in re.split(r"[^\w]+", text) if t}
+        if tokens & MAC_ADMIN_TOKENS:
+            self.err(f"{label}: identity capture shows administrator group membership")
 
     # ledger ------------------------------------------------------------------------
     def read_ledger(self) -> tuple[list[bytes], list[dict], str]:
@@ -428,7 +491,10 @@ class _Run:
                 self.err(f"{label}: action {aid} was or may have been elevated; elevation disqualifies a standard-user PASS")
             if not _str(action.get("step")).strip() or not _str(action.get("returns")).strip():
                 self.err(f"{label}: action {aid} needs the controlled step and its observed return")
-            self.capture(action.get("capture"), f"{label}: action {aid}")
+            captured = self.capture(action.get("capture"), f"{label}: action {aid}")
+            disposition = _obj(case.get("dispositions")).get(aid)
+            if isinstance(disposition, dict):
+                self.check_disposition(label, aid, action, captured, disposition)
             seen_actions[aid] = action
         for needed in case.get("actions", []):
             if needed not in seen_actions:
@@ -453,8 +519,79 @@ class _Run:
             tb, ta = _time(before.get("at")), _time(after.get("at"))
             if tb is None or ta is None or not tb < ta:
                 self.err(f"{label}: grant-before must be observed strictly before grant-after (retention)")
-            if tb and stamps and ta and not (tb <= min(stamps) or ta >= max(stamps)):
-                self.err(f"{label}: grant observations must bracket the controlled actions (retention)")
+            maintenance = _time(_obj(seen_actions.get(_str(requires.get("retention_action")))).get("at"))
+            if maintenance is None:
+                self.err(f"{label}: the case's maintenance action {requires.get('retention_action')!r} has no "
+                         "timestamp to bracket (retention)")
+            elif tb is None or ta is None or not (tb < maintenance < ta):
+                self.err(f"{label}: grant-before must be observed strictly before and grant-after strictly after "
+                         f"the maintenance action {requires.get('retention_action')} - a one-sided bracket does not "
+                         "show retention across it (retention)")
+
+    def check_disposition(self, label: str, aid: str, action: dict, captured: bytes | None,
+                          disposition: dict) -> None:
+        """Hold an engine-invoking action to the case's expected result.
+
+        The capture must be exactly the engine's one stdout document (strict JSON,
+        the InstallReport fields, nothing else) and the observed return the exact
+        exit status that report maps to. ``clean`` is a completed, settled operation
+        with no failure and no pending cleanup; ``refused`` is an expected-negative
+        action that must end in an allowed failure with exit status 1.
+        """
+        where = f"{label}: action {aid}"
+        clean = disposition.get("result") == "clean"
+        returns = action.get("returns")
+        want = "0" if clean else "1"
+        if returns != want:
+            self.err(f"{where}: observed return {returns!r} is not the exit status {want} a "
+                     f"{'completed' if clean else 'refused'} operation produces")
+        if captured is None:
+            return
+        doc = self.parse_report(captured, where)
+        if doc is None:
+            return
+        operations = [disposition["operation"]] if clean else list(disposition.get("operations") or [])
+        if doc["operation"] not in operations:
+            self.err(f"{where}: report operation {doc['operation']!r} is not the expected {'/'.join(operations)}")
+        pending = "cleanup-pending" in doc["warnings"] or doc["failure"] == "cleanup-pending"
+        if clean:
+            if doc["failure"] is not None or pending:
+                self.err(f"{where}: report records failure {doc['failure']!r}"
+                         f"{' and a pending cleanup' if pending else ''}; that is not a clean maintenance result")
+            if doc["state"] != disposition.get("state"):
+                self.err(f"{where}: report state {doc['state']!r} is not the settled {disposition.get('state')!r}")
+        else:
+            allowed = list(disposition.get("failures") or [])
+            if doc["failure"] not in allowed:
+                self.err(f"{where}: report failure {doc['failure']!r} is not an expected refusal "
+                         f"({', '.join(allowed)}); the action must be refused, not completed")
+
+    def parse_report(self, data: bytes, where: str) -> dict | None:
+        if len(data) > MAX_REPORT_BYTES:
+            self.err(f"{where}: report capture exceeds the {MAX_REPORT_BYTES}-byte engine bound")
+            return None
+        try:
+            doc = _parse(data[:-1]) if data.endswith(b"\n") else None
+        except (ValueError, UnicodeDecodeError):
+            doc = None
+        if doc is None and not data.endswith(b"\n"):
+            self.err(f"{where}: capture is not the engine's one newline-terminated report document")
+            return None
+        if doc is None:
+            self.err(f"{where}: capture is not one strict-JSON installer report (empty, prose or several documents)")
+            return None
+        if not isinstance(doc, dict) or set(doc) != REPORT_FIELDS:
+            self.err(f"{where}: capture is not exactly one installer report document with the engine's fields")
+            return None
+        warnings = doc.get("warnings")
+        if (doc.get("operation") not in REPORT_OPERATIONS or not isinstance(doc.get("state"), str)
+                or not doc["state"] or not isinstance(doc.get("prior_usable"), bool)
+                or not (doc.get("failure") is None or doc.get("failure") in REPORT_FAILURES)
+                or not isinstance(warnings, list) or len(warnings) > len(REPORT_WARNINGS)
+                or len(set(map(str, warnings))) != len(warnings) or any(w not in REPORT_WARNINGS for w in warnings)):
+            self.err(f"{where}: report fields are outside the engine's vocabulary")
+            return None
+        return doc
 
     # adjudication -------------------------------------------------------------------
     def check_adjudication(self, doc: dict, entries: list[dict], head: str) -> None:
