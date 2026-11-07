@@ -62,8 +62,8 @@ use crate::model::{
     MAX_PUBLISHER_BYTES, ReleaseDescriptor, Target, select_host, validate_extension_id,
 };
 use crate::paths::{
-    InstallPaths, JOURNAL_FILE, LOCK_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE,
-    STAGING_DIR, STATE_DIR, VERSIONS_DIR,
+    InstallPaths, JOURNAL_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE, STAGING_DIR,
+    STATE_DIR, VERSIONS_DIR,
 };
 use crate::policy::{CarrierContents, MAX_CARRIER_DOCUMENT_BYTES, read_carrier_contents};
 
@@ -1798,7 +1798,7 @@ impl OwnedEntry {
         kind: OwnedKind,
     ) -> InstallResult<Option<Self>> {
         let normalized = normalize_relative_path(relative).map_err(|_| unsafe_path())?;
-        if !is_private_artifact(&normalized, kind) {
+        if !is_private_artifact(paths, &normalized, kind) {
             return Err(unsafe_path());
         }
         let absolute = paths.root().join(Path::new(&normalized));
@@ -1963,14 +1963,15 @@ fn is_owned_claim_scope(normalized: &str) -> bool {
 ///
 /// These are the installer's own state slots, never receipt claims. The list is
 /// closed on purpose: cleanup must not become a general delete primitive. The
-/// lock entry is derived from the same constants as [`InstallPaths::lock_path`],
-/// so the created and removed lock cannot diverge.
-fn private_layout_files() -> [String; 4] {
+/// lock entry is [`InstallPaths::lock_relative`], the one definition the native
+/// adapters create and teardown removes, so the allowlist cannot reconstruct a
+/// second spelling of it.
+fn private_layout_files(paths: &InstallPaths) -> [String; 4] {
     [
         format!("{STATE_DIR}/{JOURNAL_FILE}"),
         format!("{STATE_DIR}/{RECEIPT_FILE}"),
         format!("{STATE_DIR}/{STAGING_DIR}/registration.json"),
-        format!("{STATE_DIR}/{LOCK_FILE}"),
+        paths.lock_relative(),
     ]
 }
 
@@ -1978,7 +1979,7 @@ fn private_layout_files() -> [String; 4] {
 const PRIVATE_LAYOUT_DIRECTORIES: [&str; 4] = ["state/staging", "state", "versions", "maintenance"];
 
 /// Whether `normalized` is one of the fixed installer-private layout paths.
-fn is_private_artifact(normalized: &str, kind: OwnedKind) -> bool {
+fn is_private_artifact(paths: &InstallPaths, normalized: &str, kind: OwnedKind) -> bool {
     let same = |candidate: &str| {
         if cfg!(windows) {
             normalized.eq_ignore_ascii_case(candidate)
@@ -1987,7 +1988,7 @@ fn is_private_artifact(normalized: &str, kind: OwnedKind) -> bool {
         }
     };
     match kind {
-        OwnedKind::File => private_layout_files()
+        OwnedKind::File => private_layout_files(paths)
             .iter()
             .any(|candidate| same(candidate)),
         OwnedKind::Directory => PRIVATE_LAYOUT_DIRECTORIES
@@ -5329,5 +5330,34 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).expect("temp dir cleanup");
+    }
+
+    /// The cleanup allowlist must consume the one relative lock definition, not
+    /// reconstruct `<state>/<lock>` independently. The assertion fails if the
+    /// allowlist's lock entry ever diverges from the file teardown removes.
+    #[test]
+    fn the_private_layout_allowlist_consumes_the_lock_relative_definition() {
+        let temp =
+            std::env::temp_dir().join(format!("veles-private-layout-lock-{}", std::process::id()));
+        let home = temp.join("home");
+        let local = temp.join("local");
+        let paths = crate::paths::InstallPaths::for_user(
+            crate::model::Target::WindowsX64,
+            crate::model::Channel::Production,
+            &home,
+            Some(&local),
+        )
+        .expect("valid Windows paths");
+        let files = super::private_layout_files(&paths);
+        assert_eq!(
+            files[3],
+            paths.lock_relative(),
+            "the allowlist names the single lock_relative() definition"
+        );
+        assert_eq!(
+            paths.root().join(&files[3]),
+            paths.lock_path(),
+            "the allowlist and teardown name the same lock file"
+        );
     }
 }
