@@ -306,7 +306,7 @@ class BuildScript(unittest.TestCase):
 
     def test_a_fixture_build_embeds_the_fixture_carrier(self):
         fixture = assemble_sample(
-            self.root, channel="fixture", tag="fixture", value=config("windows", "fixture")
+            self.root, channel="fixture", tag="fixpos", value=config("windows", "fixture")
         )
         carrier = (fixture / "embedded-carrier.bin").read_bytes()
         done, generated = self.run_build(
@@ -320,7 +320,7 @@ class BuildScript(unittest.TestCase):
         )
 
     def test_a_fixture_build_refuses_a_production_carrier(self):
-        production = assemble_sample(self.root, tag="production")
+        production = assemble_sample(self.root, tag="prodneg")
         done, generated = self.run_build(
             "fixture-mismatch", channel="fixture", carrier=production / "embedded-carrier.bin"
         )
@@ -330,7 +330,7 @@ class BuildScript(unittest.TestCase):
 
     def test_a_production_build_refuses_a_fixture_carrier(self):
         fixture = assemble_sample(
-            self.root, channel="fixture", tag="fixture", value=config("windows", "fixture")
+            self.root, channel="fixture", tag="fixneg", value=config("windows", "fixture")
         )
         done, generated = self.run_build(
             "production-mismatch", channel="production", carrier=fixture / "embedded-carrier.bin"
