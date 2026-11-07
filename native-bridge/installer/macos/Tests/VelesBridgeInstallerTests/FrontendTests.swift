@@ -25,15 +25,13 @@ final class RecordingRunner: ProcessRunning, @unchecked Sendable {
     init(result: ProcessResult) { self.result = result }
 
     var calls: [Call] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recorded
+        lock.withLock { recorded }
     }
 
     func run(executable: URL, arguments: [String]) async throws -> ProcessResult {
-        lock.lock()
-        recorded.append(Call(executable: executable, arguments: arguments))
-        lock.unlock()
+        lock.withLock {
+            recorded.append(Call(executable: executable, arguments: arguments))
+        }
         return result
     }
 }
@@ -380,11 +378,17 @@ final class OfferedOperationTests: XCTestCase {
 
     func testPackageIdentityReadsOnlyTheBoundedDigestFromTheDescriptor() throws {
         XCTAssertEqual(
-            PackageIdentity.payloadID(package: try fakeBundle(resources: installedPayload)),
+            PackageIdentity.payloadID(
+                package: try fakeBundle(resources: installedPayload)
+                    .appendingPathComponent("package")),
             Optional(installedPayload))
         for bad in [String(repeating: "A", count: 64), String(installedPayload.dropLast()),
                     String(installedPayload.dropLast()) + "g"] {
-            XCTAssertNil(PackageIdentity.payloadID(package: try fakeBundle(resources: bad)), bad)
+            XCTAssertNil(
+                PackageIdentity.payloadID(
+                    package: try fakeBundle(resources: bad)
+                        .appendingPathComponent("package")),
+                bad)
         }
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("veles-installer-tests-\(UUID().uuidString)", isDirectory: true)
@@ -395,10 +399,13 @@ final class OfferedOperationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: oversized) }
         try Data(repeating: 0x20, count: PackageIdentity.maxDescriptorBytes + 1)
             .write(to: oversized.appendingPathComponent("package/descriptor.json"))
-        XCTAssertNil(PackageIdentity.payloadID(package: oversized))
+        XCTAssertNil(
+            PackageIdentity.payloadID(
+                package: oversized.appendingPathComponent("package")))
     }
 }
 
+@MainActor
 final class InstallerViewModelTransitionTests: XCTestCase {
     /// A damaged inspect result reaches the view model with Repair offered, even though the presentation is
     /// a failure. This is the transition the old `presentation.kind == .info || .done` guard could not make.
@@ -486,6 +493,7 @@ final class EngineDeadlineTests: XCTestCase {
 }
 
 /// N1: the installer runs the engine bundled with its own release and channel.
+@MainActor
 final class BundledEngineSelectionTests: XCTestCase {
     /// A persistent engine published by a previously installed release is never substituted for this
     /// installer's own engine. Its compiled descriptor is another release's, which exact-descriptor
