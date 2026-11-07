@@ -69,6 +69,35 @@ jobs:
           else
             echo "approved=false" >> "$GITHUB_OUTPUT"
           fi
+      # The tool observation requires cl/link on PATH and VCToolsVersion,
+      # WindowsSDKVersion and UCRTVersion in the environment. Enter the selected
+      # Visual Studio developer shell and export every changed variable to the
+      # following steps, so the observation and the Cargo build see the same
+      # native toolchain context instead of relying on Rust's own MSVC discovery.
+      - name: Enter the Visual Studio developer environment
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe is missing from the windows-2025 image' }
+          $install = (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath -all | Select-Object -First 1)
+          if (-not $install) { throw 'no Visual Studio installation with the MSVC x64 tools was found' }
+          $devShell = Join-Path $install 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          if (-not (Test-Path $devShell)) { throw 'Microsoft.VisualStudio.DevShell.dll is missing from the selected installation' }
+          Import-Module $devShell
+          $before = @{}
+          Get-ChildItem Env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          Enter-VsDevShell -VsInstallPath $install -SkipAutomaticLocation -DevCmdArguments '-arch=x64' | Out-Null
+          Get-ChildItem Env: |
+            Where-Object { $before[$_.Name] -ne $_.Value } |
+            ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          foreach ($name in 'VCToolsVersion', 'WindowsSDKVersion', 'UCRTVersion') {
+            if (-not (Get-Item -Path "Env:$name" -ErrorAction SilentlyContinue)) {
+              throw "the developer environment did not export $name"
+            }
+          }
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue) -or -not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
+            throw 'the developer environment did not put cl.exe and link.exe on PATH'
+          }
       # The engine's release carrier is not supplied here: it does not exist until this job's own
       # assembler has run. The Gradle graph assembles the payload, verifies the carrier against the
       # exact descriptor and the registered channel, and only then rebuilds the engine with

@@ -305,6 +305,11 @@ def check_gradle(gradle, clean_script):
         errors.append("no task observes the native tool identities (tool_observation.py observe)")
     if not any('"check"' in call and '"--observed"' in call and '"--target"' in call for call in observe):
         errors.append("no task checks the observed tools against tools.lock.json (tool_observation.py check)")
+    # N6: the observation must run in the pinned crate context, so `rustup`/`rustc`
+    # resolve the installer's rust-toolchain.toml exactly as the Cargo build does.
+    observation_block = object_block(code, '"bridgeInstallerToolObservation"')
+    if observation_block is None or "workingDir(installerDir)" not in observation_block:
+        errors.append("the native tool observation does not run from the pinned installer crate context")
     if not re.search(r'dependsOn\(\s*if \(channel == "production"\) bridgeInstallerToolCheck else bridgeInstallerToolObservation\s*\)', code):
         errors.append("the production producer does not depend on the tool check (the fixture only on the observation)")
     finalize = [call for call in command_lines(code) if '"finalize"' in call]
@@ -412,6 +417,19 @@ def check_producer_workflow(source, platform):
             errors.append("Windows job does not provision the pinned NSIS under build/native-bridge/installer/tools/nsis")
         if "provision-nsis.ps1" in body and "bridgeInstaller" in body and body.index("provision-nsis.ps1") > body.index("bridgeInstaller"):
             errors.append("NSIS must be provisioned before the Gradle producer runs")
+        # N6: the tool observation requires cl/link and VCToolsVersion,
+        # WindowsSDKVersion and UCRTVersion. The producer must enter the selected
+        # Visual Studio developer environment and export it to the build steps,
+        # instead of relying on Rust's own MSVC discovery.
+        if "Enter-VsDevShell" not in body or "vswhere" not in body:
+            errors.append("the Windows producer never enters the Visual Studio developer environment")
+        if "$env:GITHUB_ENV" not in body:
+            errors.append("the Visual Studio developer environment is not exported to the build steps")
+        for name in ("VCToolsVersion", "WindowsSDKVersion", "UCRTVersion"):
+            if name not in body:
+                errors.append("the Windows developer environment does not export %s" % name)
+        if "Enter-VsDevShell" in body and "bridgeInstallerUnsigned" in body and body.index("Enter-VsDevShell") > body.index("bridgeInstallerUnsigned"):
+            errors.append("the Visual Studio developer environment must be entered before the Gradle producer runs")
     for directory in ("native-bridge/installer", "native-bridge/host"):
         if not re.search(r"working-directory:\s*%s\s*\n\s*run:\s*rustup show active-toolchain" % re.escape(directory), body):
             errors.append("the pinned Rust toolchain of %s is not activated" % directory)
@@ -707,6 +725,16 @@ class GradleGraph(unittest.TestCase):
         found = self.violations(self.mutate('"check", "--target"', '"noop", "--target"'))
         self.assertTrue(any("checks the observed tools" in e for e in found), found)
 
+    def test_the_tool_observation_runs_in_the_pinned_crate_context(self):
+        observation = object_block(self.gradle, '"bridgeInstallerToolObservation"')
+        self.assertIsNotNone(observation)
+        self.assertIn("workingDir(installerDir)", observation)
+        mutated = self.gradle.replace(
+            observation, observation.replace("workingDir(installerDir)\n", "", 1), 1
+        )
+        found = self.violations(mutated)
+        self.assertTrue(any("pinned installer crate context" in e for e in found), found)
+
     def test_the_sdk_and_deployment_target_are_explicit_and_from_the_lock(self):
         found = self.violations(self.mutate("MACOSX_DEPLOYMENT_TARGET", "OTHER_TARGET"))
         self.assertTrue(any("deployment target" in e for e in found), found)
@@ -844,6 +872,20 @@ class ProducerWorkflows(unittest.TestCase):
         windows = self.source("windows")
         self.assertNotEqual(check_producer_workflow(windows.replace("provision-nsis.ps1", "other.ps1"), "windows"), [])
         self.assertNotEqual(check_producer_workflow(windows.replace("build/native-bridge/installer/tools/nsis", "tools/nsis"), "windows"), [])
+
+    def test_windows_must_enter_and_export_the_visual_studio_environment(self):
+        windows = self.source("windows")
+        for label, mutated in (
+            ("no-dev-shell", windows.replace("Enter-VsDevShell", "Write-Host")),
+            ("unexported", windows.replace("$env:GITHUB_ENV", "$null")),
+            ("no-toolset", windows.replace("VCToolsVersion", "PATH")),
+            ("no-sdk", windows.replace("WindowsSDKVersion", "PATH")),
+            ("no-ucrt", windows.replace("UCRTVersion", "PATH")),
+            ("no-vswhere", windows.replace("vswhere", "other.exe")),
+        ):
+            self.assertNotEqual(
+                check_producer_workflow(mutated, "windows"), [], label
+            )
 
 
 class Callers(unittest.TestCase):

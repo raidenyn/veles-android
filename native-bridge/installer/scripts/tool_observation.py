@@ -8,7 +8,11 @@ Python 3.12+ standard library only.
 
 ``observe`` runs the real tools (``rustc``, ``rustup``, ``xcodebuild`` on macOS; ``cl``, ``link`` and the
 Visual Studio / Windows SDK environment on Windows) and writes an inventory in the shape
-``release_config.validate_tools`` consumes. ``check`` runs ``validate_tools``; there is no warning mode.
+``release_config.validate_tools`` consumes. Every tool runs from the pinned installer crate, so the Rust
+identity is the one ``rust-toolchain.toml`` selects for the build. On Windows the process must be inside the
+selected Visual Studio developer environment (the producer workflow enters it and exports it to the build
+steps): ``cl``/``link`` on ``PATH`` and ``VCToolsVersion``/``WindowsSDKVersion``/``UCRTVersion`` set.
+``check`` runs ``validate_tools``; there is no warning mode.
 A missing, mismatched or unresolved identity - in particular the Windows compiler/SDK identities the lock
 still records as ``required_unresolved`` - exits 1 and the production producer, the unsigned-input
 verification and the release gate all stop on it. Exit 2 means the environment could not be observed at
@@ -37,6 +41,12 @@ import release_config
 
 Runner = Callable[[list[str]], "tuple[int, str]"]
 
+# The pinned crate: its rust-toolchain.toml selects the exact Rust channel,
+# profile, components and targets the Cargo build uses. Every observed tool is
+# run from here so `rustup`/`rustc` cannot silently report the caller's global
+# default toolchain instead of the one the build uses (N6).
+INSTALLER_DIR = Path(__file__).resolve().parent.parent
+
 # Components rustup always installs; the lock pins only the optional ones.
 _BASE_COMPONENTS = frozenset({"cargo", "rustc", "rust-std"})
 _RUST_VERSION = re.compile(r"^rustc (\d+\.\d+\.\d+)(?: |$)")
@@ -53,7 +63,14 @@ class ObservationError(Exception):
 
 def system_runner(argv: list[str]) -> tuple[int, str]:
     try:
-        done = subprocess.run(argv, capture_output=True, text=True, timeout=120, check=False)
+        done = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            cwd=INSTALLER_DIR,
+        )
     except (OSError, subprocess.SubprocessError) as error:
         raise ObservationError(f"cannot run {argv[0]}: {error}") from error
     return done.returncode, done.stdout + done.stderr

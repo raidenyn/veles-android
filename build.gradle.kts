@@ -1394,6 +1394,9 @@ val bridgeInstallerToolObservation = tasks.register<Exec>("bridgeInstallerToolOb
         requireInstallerHost()
         delete(installerToolObservation)
     }
+    // The crate's rust-toolchain.toml must select the toolchain the build uses,
+    // not the caller's global default (N6).
+    workingDir(installerDir)
     commandLine(
         installerPython, "-I", installerToolsScript.asFile, "observe", "--target", installerToolTarget,
         "--output", installerToolObservation.get().asFile,

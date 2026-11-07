@@ -150,6 +150,45 @@ class WindowsIsAHardBlocker(unittest.TestCase):
             obs.observe("windows-x86_64", win_script(cl=(2, "no banner\n")), env=WIN_ENV)
 
 
+class ObservationContext(unittest.TestCase):
+    """The observation must run in the same crate/toolchain context as the build (N6)."""
+
+    def test_every_observed_tool_runs_in_the_pinned_installer_crate(self) -> None:
+        calls: list[tuple[list[str], dict]] = []
+
+        class Done:
+            returncode = 0
+            stderr = ""
+
+            def __init__(self, stdout: str) -> None:
+                self.stdout = stdout
+
+        table = {
+            "rustc --version": RUSTC,
+            "rustup show profile": "minimal\n",
+            "rustup component list --installed": COMPONENTS,
+            "rustup target list --installed": TARGETS,
+            "xcodebuild -version": XCODE,
+            "xcodebuild -version -sdk macosx": SDK,
+        }
+
+        def fake_run(argv: list[str], **kwargs):
+            calls.append((argv, kwargs))
+            return Done(table[" ".join(argv)])
+
+        with mock.patch.object(obs.subprocess, "run", side_effect=fake_run):
+            observed = obs.observe("macos-arm64")
+
+        self.assertEqual(obs.check(observed, "macos-arm64", LOCK), [])
+        self.assertTrue(calls)
+        for argv, kwargs in calls:
+            self.assertEqual(
+                kwargs.get("cwd"),
+                obs.INSTALLER_DIR,
+                f"{' '.join(argv)} must run inside the pinned installer crate",
+            )
+
+
 class CommandLine(unittest.TestCase):
     def run_main(self, argv: list[str]) -> tuple[int, str]:
         err = io.StringIO()
