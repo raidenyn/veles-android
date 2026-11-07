@@ -16,6 +16,12 @@ Hard limits, stated once:
   text. Parsing assumptions for ``signtool``/``codesign``/``notarytool``/``stapler``/``spctl``
   output are written from published documentation and have NOT been checked against real
   tool output on this host (no such tool exists here).
+* The Windows publisher is the leaf-certificate fingerprint ``sha256:<DER digest>`` the engine authorizes at
+  runtime (``VELES_WIN_PUBLISHER``), never a display name. The gate exports the imported leaf (``certutil
+  -store My <id> <file>``, syntax unverified) and requires both its SHA-1 to equal the configured thumbprint
+  and its SHA-256 to equal the approved fingerprint; ``signtool`` prints only SHA-1, so each signed file is
+  bound to that certificate through the SHA-1 leaf hash it reports (residual: the file-to-certificate step
+  rests on SHA-1 text and was never observed against real ``signtool`` output).
 * Executable/resource correspondence is delegated to the Task 9 CLI
   (``correspondence.py``); this module never parses PE or Mach-O content.
 * There is no unsigned fallback: a stage that cannot sign leaves no output tree, no
@@ -57,6 +63,7 @@ STAGES = ("verify-inputs", "sign-nested", "assemble", "sign-outer")
 PROTECTED_ENVIRONMENT = "native-release"
 TAG_REF = re.compile(r"^refs/tags/(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+WIN_PUBLISHER_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 THUMBPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 TEAM_ID_RE = re.compile(r"^[0-9A-Z]{10}$")
@@ -331,8 +338,12 @@ def signer_policy(platform: str, env: dict[str, str], descriptor: bytes, expecte
     except (ValueError, KeyError, TypeError):
         return {}, ["descriptor is not a release descriptor with a publisher policy"]
     if platform == "windows":
+        # The engine authorizes sha256:<leaf certificate DER digest> (platform/windows.rs); a display name
+        # can never match at runtime and so is never an authorizable identity here either.
         publisher = env.get("VELES_WIN_PUBLISHER", "")
-        if publisher not in publishers:
+        if not WIN_PUBLISHER_RE.fullmatch(publisher):
+            problems.append("the configured Windows publisher is not a sha256:<64 lowercase hex> leaf-certificate fingerprint")
+        elif publisher not in publishers:
             problems.append("the configured Windows publisher is not in the approved descriptor policy")
         policy = {"platform": platform, "publisher": publisher, "timestamp": True}
     else:
@@ -872,8 +883,13 @@ def _remove_tree(path: Path, stage_obj: Stage) -> None:
 # -- Windows ------------------------------------------------------------------
 
 
-def _windows_store(stage: Stage) -> str:
-    """Import the signing certificate into an ephemeral per-user store entry; returns its thumbprint."""
+def _windows_store(stage: Stage, policy: dict) -> str:
+    """Import the signing certificate into an ephemeral per-user store entry; returns its thumbprint.
+
+    The imported leaf certificate is exported (DER) and must (a) have the configured SHA-1 thumbprint and
+    (b) hash, by SHA-256 of the DER, to the approved publisher fingerprint - the identity the engine
+    authorizes at runtime. Nothing is signed with a certificate that fails either check.
+    """
     thumb = stage.env["VELES_WIN_CERT_SHA1"]
     keydir = stage.private_dir(stage.request.scratch / "keys")
     pfx = stage.write_secret(keydir / "release.pfx", stage.env["VELES_WIN_PFX_BASE64"])
@@ -884,6 +900,17 @@ def _windows_store(stage: Stage) -> str:
     listing = stage.run(["certutil", "-user", "-store", "My", EnvRef("VELES_WIN_CERT_SHA1")], what="credential-import-failed")
     if thumb.lower() not in re.sub(r"\s", "", listing.output).lower():
         raise StageFailure("credential-import-failed", "the imported certificate does not have the configured thumbprint")
+    leaf = keydir / "leaf.cer"
+    stage.run(["certutil", "-user", "-store", "My", EnvRef("VELES_WIN_CERT_SHA1"), leaf], what="credential-import-failed")
+    try:
+        der = leaf.read_bytes()
+    except OSError:
+        der = b""
+    leaf.unlink(missing_ok=True)
+    if not der or hashlib.sha1(der).hexdigest().lower() != thumb.lower():
+        raise StageFailure("credential-import-failed", "the exported leaf certificate is not the one with the configured thumbprint")
+    if f"sha256:{sha256_bytes(der)}" != policy["publisher"]:
+        raise StageFailure("credential-import-failed", "the signing certificate does not hash to the approved publisher fingerprint")
     return thumb
 
 
@@ -903,22 +930,29 @@ def parse_signtool_verify(output: str) -> dict:
     for stop in ("The signature is timestamped", "Timestamp Verified by", "Successfully verified"):
         chain = chain.split(stop, 1)[0]
     names = re.findall(r"Issued to:\s*(.+)", chain)
-    return {"identity": names[-1].strip() if names else None, "timestamped": "The signature is timestamped" in output}
+    leaf = re.findall(r"SHA1 hash:\s*([0-9A-Fa-f]{40})\b", chain)
+    return {
+        "identity": names[-1].strip() if names else None,
+        "leaf_sha1": leaf[-1].lower() if leaf else None,
+        "timestamped": "The signature is timestamped" in output,
+    }
 
 
 def _signtool_verify(stage: Stage, target: Path, policy: dict) -> dict:
     result = stage.run(["signtool", "verify", "/pa", "/v", target], what="signature-unverified")
     parsed = parse_signtool_verify(result.output)
-    if parsed["identity"] != policy["publisher"]:
-        raise StageFailure("signature-unverified", f"{target.name}: signer is not the approved publisher")
+    # The display name ("Issued to") is a label. Authorization is the leaf certificate: the file's leaf must be
+    # the store certificate whose DER was checked against the approved fingerprint (_windows_store).
+    if parsed["leaf_sha1"] is None or parsed["leaf_sha1"] != stage.env["VELES_WIN_CERT_SHA1"].lower():
+        raise StageFailure("signature-unverified", f"{target.name}: not signed by the approved publisher certificate")
     if not parsed["timestamped"]:
         raise StageFailure("signature-unverified", f"{target.name}: no trusted timestamp")
-    return {"verified": True, "timestamped": True, "identity": parsed["identity"]}
+    return {"verified": True, "timestamped": True, "identity": policy["publisher"]}
 
 
 def _windows_nested(stage: Stage, policy: dict) -> dict:
     request = stage.request
-    _windows_store(stage)
+    _windows_store(stage, policy)
     _copy_tree(request.inputs, request.output)
     out, pre = request.output, request.scratch / "pre"
     pre.mkdir()
@@ -965,7 +999,7 @@ def _extract_inventory(root: Path) -> dict[str, str]:
 
 def _windows_outer(stage: Stage, policy: dict) -> dict:
     request = stage.request
-    _windows_store(stage)
+    _windows_store(stage, policy)
     _copy_tree(request.inputs, request.output)
     out = request.output
     setup = out / SETUP_NAME

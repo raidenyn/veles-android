@@ -51,8 +51,12 @@ from release_gate import EnvRef, RunResult  # noqa: E402
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 OTHER_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
-THUMB = "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
-WIN_PUBLISHER = "Veles Test Publisher"
+# The Windows leaf certificate is identified exactly as the engine's trust layer identifies it:
+# sha256:<SHA-256 of the leaf certificate DER>. The display name is NOT an authorization identifier.
+FAKE_DER = b"0\x82fixture leaf certificate DER"
+THUMB = hashlib.sha1(FAKE_DER).hexdigest().upper()
+WIN_PUBLISHER = "sha256:" + hashlib.sha256(FAKE_DER).hexdigest()
+WIN_DISPLAY_NAME = "Veles Test Publisher"
 TEAM = "TEAMID1234"
 MAC_IDENTITY = f"Developer ID Application: Veles Test ({TEAM})"
 SECRET_VALUES = ("hunter2-pfx-password", "p12-secret-password", "notary-key-secret-bytes")
@@ -136,8 +140,11 @@ class FakeRunner:
     string) whose command exits 1 without side effects.
     """
 
-    def __init__(self, env, *, fail_at=None, corr=None, notary_status="Accepted", staple_ok=True, app_source=None, spctl_text=None):
+    def __init__(self, env, *, fail_at=None, corr=None, notary_status="Accepted", staple_ok=True, app_source=None, spctl_text=None,
+                 leaf_der=FAKE_DER, signed_leaf_sha1=THUMB):
         self.env = dict(env)
+        self.leaf_der = leaf_der
+        self.signed_leaf_sha1 = signed_leaf_sha1
         self.fail_at = fail_at
         self.corr = corr or {}
         self.notary_status = notary_status
@@ -197,8 +204,11 @@ class FakeRunner:
 
     # -- Windows -------------------------------------------------------------
     def tool_certutil(self, args):
+        if "-store" in args and args[-1].endswith(".cer"):
+            Path(args[-1]).write_bytes(self.leaf_der)  # certutil -store My <id> <OutputFile> exports the certificate
+            return RunResult(0, "")
         if "-store" in args:
-            return RunResult(0, f"================ Certificate 0 ================\nCert Hash(sha1): {THUMB}\n")
+            return RunResult(0, f"================ Certificate 0 ================\nCert Hash(sha1): {self.env.get('VELES_WIN_CERT_SHA1', THUMB)}\n")
         return RunResult(0, "")
 
     def tool_signtool(self, args):
@@ -209,7 +219,9 @@ class FakeRunner:
         return RunResult(
             0,
             "Signature Index: 0 (Primary Signature)\n\nSigning Certificate Chain:\n    Issued to: Fake Root\n"
-            f"        Issued to: {WIN_PUBLISHER}\n\nThe signature is timestamped: 2026-11-06\nSuccessfully verified\n",
+            "    SHA1 hash: 1111111111111111111111111111111111111111\n\n"
+            f"        Issued to: {WIN_DISPLAY_NAME}\n        SHA1 hash: {self.signed_leaf_sha1}\n\n"
+            "The signature is timestamped: 2026-11-06\nSuccessfully verified\n",
         )
 
     def tool_7z(self, args):
@@ -809,7 +821,7 @@ class OrchestrationShapeTests(unittest.TestCase):
         class WrongPublisher(FakeRunner):
             def tool_signtool(self, args):
                 result = super().tool_signtool(args)
-                return RunResult(0, result.output.replace(WIN_PUBLISHER, "Impostor Ltd")) if args[0] == "verify" else result
+                return RunResult(0, result.output.replace(THUMB, "2" * 40)) if args[0] == "verify" else result
 
         class NoTimestamp(FakeRunner):
             def tool_signtool(self, args):
@@ -863,6 +875,88 @@ class OrchestrationShapeTests(unittest.TestCase):
         _, outcome = case.run(Other(case.env))
         self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
         self.assertEqual(leftovers(case), [])
+
+
+class WindowsSignerIdentityTests(unittest.TestCase):
+    """F4: the signing gate authorizes the SAME identity the engine's trust layer does.
+
+    Runtime policy is ``sha256:<SHA-256 of the leaf certificate DER>``. A display name is a label on
+    the certificate, never an authorization identifier, so the gate must derive and check the
+    fingerprint and bind it to the certificate that actually signs.
+    """
+
+    def test_a_display_name_is_not_an_authorizable_publisher(self) -> None:
+        for label, value in (("display name", WIN_DISPLAY_NAME), ("uppercase digest", "sha256:" + "AB" * 32),
+                             ("short digest", "sha256:" + "ab" * 31), ("no scheme", "ab" * 32),
+                             ("sha1 thumbprint", "sha1:" + THUMB), ("empty", "")):
+            with self.subTest(publisher=label):
+                descriptor = descriptor_bytes("windows", publishers=[value] if value else [WIN_PUBLISHER])
+                env = {**good_env("windows", descriptor), "VELES_WIN_PUBLISHER": value}
+                _, problems = gate.signer_policy("windows", env, descriptor, COMMIT)
+                self.assertTrue(problems, f"the gate authorized {value!r}, which the runtime can never match")
+
+    def test_the_runtime_format_fingerprint_is_the_authorized_identity(self) -> None:
+        env = good_env("windows")
+        policy, problems = gate.signer_policy("windows", env, descriptor_bytes("windows"), COMMIT)
+        self.assertEqual(problems, [])
+        self.assertEqual(policy["publisher"], WIN_PUBLISHER)
+        self.assertRegex(policy["publisher"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_signed_components_record_the_fingerprint_not_a_display_name(self) -> None:
+        for stage in ("nested", "outer"):
+            with self.subTest(stage=stage):
+                case = Case(self, "windows", stage)
+                runner, outcome = case.run()
+                self.assertTrue(outcome.ok, outcome.detail)
+                records = outcome.fragment.get("components") or outcome.fragment.get("containers")
+                self.assertTrue(records)
+                for record in records:
+                    self.assertEqual(record["signature"]["identity"], WIN_PUBLISHER)
+                    self.assertNotIn(WIN_DISPLAY_NAME, json.dumps(record["signature"]))
+                exports = [c for c in runner.calls if c[0] == "certutil" and c[-1].endswith(".cer")]
+                self.assertEqual(len(exports), 1, "the leaf certificate is exported once to derive the fingerprint")
+
+    def test_the_store_certificate_must_hash_to_the_approved_fingerprint(self) -> None:
+        other = b"0\x82a different leaf certificate"
+        other_thumb = hashlib.sha1(other).hexdigest().upper()
+        # A certificate the operator imported that is NOT the approved publisher's: thumbprint and DER agree
+        # with each other, but the SHA-256 pin in the approved descriptor names another certificate.
+        case = Case(self, "windows", "nested", VELES_WIN_CERT_SHA1=other_thumb)
+        runner, outcome = case.run(FakeRunner(case.env, leaf_der=other))
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        self.assertIn("approved", outcome.detail)
+        self.assertEqual([c for c in runner.calls if c[0] == "signtool"], [], "no signature is made with the wrong certificate")
+        self.assertEqual(leftovers(case), [])
+
+    def test_the_exported_certificate_must_be_the_configured_thumbprint(self) -> None:
+        case = Case(self, "windows", "nested")
+        runner, outcome = case.run(FakeRunner(case.env, leaf_der=b"not the configured certificate"))
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        self.assertEqual([c for c in runner.calls if c[0] == "signtool"], [])
+
+    def test_a_missing_or_empty_certificate_export_blocks_before_signing(self) -> None:
+        case = Case(self, "windows", "nested")
+        runner, outcome = case.run(FakeRunner(case.env, leaf_der=b""))
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        self.assertEqual([c for c in runner.calls if c[0] == "signtool"], [])
+
+    def test_a_file_signed_by_another_leaf_is_refused(self) -> None:
+        case = Case(self, "windows", "nested")
+        _, outcome = case.run(FakeRunner(case.env, signed_leaf_sha1="2" * 40))
+        self.assertEqual((outcome.ok, outcome.code), (False, "signature-unverified"))
+        self.assertEqual(leftovers(case), [])
+
+    def test_a_signature_with_no_leaf_hash_in_the_output_is_refused(self) -> None:
+        class NoHash(FakeRunner):
+            def tool_signtool(self, args):
+                result = super().tool_signtool(args)
+                if args[0] == "sign":
+                    return result
+                return RunResult(0, "\n".join(l for l in result.output.splitlines() if "SHA1 hash" not in l) + "\n")
+
+        case = Case(self, "windows", "nested")
+        _, outcome = case.run(NoHash(case.env))
+        self.assertEqual((outcome.ok, outcome.code), (False, "signature-unverified"))
 
 
 # ---------------------------------------------------------------------------

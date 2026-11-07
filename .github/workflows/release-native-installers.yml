@@ -33,6 +33,9 @@ name: release-native-installers
 # Repository (or organization) variables the owner must set before a candidate can be signed:
 # VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS and VELES_APPROVED_DESCRIPTOR_SHA256_MACOS (the owner's
 # approval of each target's descriptor), plus the environment variables and secrets named in the
+# sign-* steps. VELES_WIN_PUBLISHER is the leaf-certificate fingerprint `sha256:<64 lowercase hex of the
+# DER digest>` the installer engine authorizes, never a display name; it must also appear in the approved
+# descriptor's policy.publishers. Remaining variables and secrets are named in the
 # sign-* steps. Not exercised by any local test: the real signtool / codesign / notarytool / stapler /
 # spctl / hdiutil / makensis behavior and the hosted-runner tool identities. See the Task 13 report.
 
