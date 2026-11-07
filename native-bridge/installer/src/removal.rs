@@ -189,16 +189,20 @@ fn staging_directory(paths: &InstallPaths, request: &RemovalRequest<'_>) -> Inst
     let directory = cleanup_staging_directory(paths, request.transaction);
     reconcile_staging(paths, &directory, request)?;
     fs::create_dir(&directory).map_err(|_| pending())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-            .map_err(|_| pending())?;
-    }
-    ensure_staging_is_safe(paths, &directory)?;
-    // The marker is written before any image: a crash after this point is
-    // identifiable as ours. A failed marker write removes the new directory.
-    if write_marker(paths, request, &directory).is_err() {
+    // From the create onward this directory is ours: any failure removes it.
+    let prepared = (|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .map_err(|_| pending())?;
+        }
+        ensure_staging_is_safe(paths, &directory)?;
+        // The marker is written before any image: a crash after this point is
+        // identifiable as ours.
+        write_marker(paths, request, &directory)
+    })();
+    if prepared.is_err() {
         let _ = remove_known_stage(&directory);
         return Err(pending());
     }
