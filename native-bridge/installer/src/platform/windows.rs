@@ -77,7 +77,7 @@ use windows::Win32::Foundation::{
     STATUS_SUCCESS, UNICODE_STRING,
 };
 use windows::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::Cryptography::CERT_CONTEXT;
 use windows::Win32::Security::WinTrust::{
@@ -1484,10 +1484,20 @@ fn is_reparse(file: &File) -> io::Result<bool> {
 const NT_FILE_OPEN: NTCREATEFILE_CREATE_DISPOSITION = NTCREATEFILE_CREATE_DISPOSITION(1);
 const NT_FILE_CREATE: NTCREATEFILE_CREATE_DISPOSITION = NTCREATEFILE_CREATE_DISPOSITION(2);
 
-/// `GENERIC_READ | GENERIC_WRITE | DELETE`: enough to read, write, rename or
-/// delete the object a handle names.
-const ACCESS_RWD: u32 = 0x8000_0000 | 0x4000_0000 | 0x0001_0000;
-const ACCESS_RD: u32 = 0x8000_0000 | 0x0001_0000;
+/// Explicit `FILE_GENERIC_READ` (`READ_CONTROL | FILE_READ_DATA |
+/// FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE`).
+///
+/// `NtCreateFile` is never handed the generic `GENERIC_READ` alias here: on a
+/// real Windows runner a relative open with `RootDirectory` fails it with
+/// `STATUS_INVALID_PARAMETER` (0xC000000D), while the explicit file rights open
+/// the same object. Wine accepts the alias, which is why this only showed up on
+/// the Windows runner.
+const ACCESS_READ: u32 = 0x0012_0089;
+/// `ACCESS_READ | DELETE`: enough to read and delete the object a handle names.
+const ACCESS_RD: u32 = ACCESS_READ | 0x0001_0000;
+/// `FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE`: enough to read, write,
+/// rename or delete the object a handle names.
+const ACCESS_RWD: u32 = 0x0013_019f;
 
 /// Open `name` relative to one already-opened directory handle.
 ///
@@ -1661,7 +1671,7 @@ fn anchored_open_below(
         let file = open_below_shared(
             HANDLE(parent.as_raw_handle()),
             OsStr::new(name),
-            GENERIC_READ.0,
+            ACCESS_READ,
             NT_FILE_OPEN,
             kind | FILE_OPEN_FOR_BACKUP_INTENT,
             ptr::null(),
@@ -1814,6 +1824,16 @@ fn delete_opened(file: &File) -> InstallResult<()> {
         }
         Err(_) => Err(io_failure()),
     }
+}
+
+/// Mark one opened object for deletion when its handle closes.
+///
+/// The lock is a byte-range-locked file on Windows; deleting it by name while the
+/// lock is held fails with `ERROR_LOCK_VIOLATION`. Marking the opened handle
+/// delete-on-close removes the entry atomically with the close, without a window
+/// in which the name is free and the exclusive lock is no longer held.
+pub(crate) fn mark_delete_on_close(file: &File) -> InstallResult<()> {
+    delete_opened(file)
 }
 
 /// Open, verify and delete one leaf relative to its validated parent handle.
@@ -2063,14 +2083,35 @@ fn token_sid(buffer: &[usize]) -> PSID {
     unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid }
 }
 
-/// A protected DACL granting full control to the object owner and nothing to
+/// A protected DACL granting full control to the creating user and nothing to
 /// everybody else.
 ///
-/// `OW` resolves to the creating user, so the owner/DACL check accepts it, and
-/// `(OI)(CI)` makes it the inherited DACL of everything created below the private
-/// root. The returned allocation is released with `LocalFree`.
+/// The owner is set **explicitly** to the current user's SID. A process running
+/// under a full administrator token creates objects owned by
+/// `BUILTIN\Administrators` by default; relying on the token's default owner would
+/// therefore make `OW` grant every administrator, and the owner check below
+/// would (correctly) reject a directory this installer just created. Naming the
+/// user keeps the layout owner-only regardless of how the process token was
+/// obtained. `(OI)(CI)` makes the DACL the inherited DACL of everything created
+/// below the private root. The returned allocation is released with `LocalFree`.
 fn owner_private_descriptor() -> InstallResult<PSECURITY_DESCRIPTOR> {
-    let sddl: Vec<u16> = "D:P(A;OICI;FA;;;OW)\0".encode_utf16().collect();
+    let token = current_user_sid()?;
+    let mut rendered = PWSTR::null();
+    // SAFETY: the SID points into the live token buffer and `rendered` is a live
+    // out-parameter; the returned string is a `LocalAlloc` allocation.
+    unsafe { ConvertSidToStringSidW(token_sid(&token), &mut rendered) }
+        .map_err(|_| io_failure())?;
+    // SAFETY: `ConvertSidToStringSidW` wrote a NUL-terminated string.
+    let sid = unsafe { rendered.to_string() };
+    // SAFETY: `rendered` is the allocation returned by `ConvertSidToStringSidW`.
+    unsafe {
+        let _ = LocalFree(Some(HLOCAL(rendered.0.cast())));
+    }
+    let sid = sid.map_err(|_| io_failure())?;
+    let sddl: Vec<u16> = format!("O:{sid}D:P(A;OICI;FA;;;OW)")
+        .encode_utf16()
+        .chain([0])
+        .collect();
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     // SAFETY: `sddl` is NUL-terminated and `descriptor` is a live out-parameter
     // whose allocation is released by the caller.

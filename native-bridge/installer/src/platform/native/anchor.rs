@@ -328,11 +328,15 @@ mod platform {
     /// `NtCreateFile`'s `FILE_OPEN` disposition.
     const FILE_OPEN: NTCREATEFILE_CREATE_DISPOSITION = NTCREATEFILE_CREATE_DISPOSITION(1);
     const FILE_DIRECTORY_FILE: NTCREATEFILE_CREATE_OPTIONS = NTCREATEFILE_CREATE_OPTIONS(0x1);
-    /// `GENERIC_READ | GENERIC_WRITE`: the directory handle is also the anchor a
-    /// directory flush is issued on, which requires write access.
-    const GENERIC_READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
-    /// `GENERIC_READ`: enough to traverse into a child with `RootDirectory`.
-    const GENERIC_READ_ONLY: u32 = 0x8000_0000;
+    /// Explicit `FILE_GENERIC_READ | FILE_GENERIC_WRITE`: the directory handle is
+    /// also the anchor a directory flush is issued on, which requires write
+    /// access. `NtCreateFile` rejects the generic `GENERIC_READ`/`GENERIC_WRITE`
+    /// aliases for these relative opens with `STATUS_INVALID_PARAMETER` on real
+    /// Windows (Wine accepts them), so the explicit rights are spelled out.
+    const GENERIC_READ_WRITE: u32 = 0x0012_019f;
+    /// Explicit `FILE_GENERIC_READ`: enough to traverse into a child with
+    /// `RootDirectory`.
+    const GENERIC_READ_ONLY: u32 = 0x0012_0089;
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
