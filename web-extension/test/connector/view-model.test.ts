@@ -284,3 +284,60 @@ describe('connector.html static contract', () => {
         expect(html).not.toMatch(/onclick=/i);
     });
 });
+
+// OTP-25 Task 12: the installer guidance keeps the two failure kinds apart, is
+// user-invoked (Retry only), and never offers or implies a trust reset or an
+// automatic replay.
+describe('installGuidancePreservesTrustAndRetry', () => {
+    function deepFreeze<T>(value: T): T {
+        if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+            Object.freeze(value);
+            for (const child of Object.values(value)) deepFreeze(child);
+        }
+        return value;
+    }
+
+    const forbidden =
+        /reset|forget|re-?pair|clear|remove (?:the )?(?:trust|pair)|replay(?:ed)? (?:the|your)|auto(?:matic(?:ally)?)? (?:install|update)/i;
+
+    it('keeps missing-host and incompatible-API guidance distinct and retry-only', () => {
+        const missing = buildViewModel(deepFreeze(snapshot()), {
+            phase: 'failed',
+            failure: localFailure('missing_host'),
+        });
+        const incompatible = buildViewModel(deepFreeze(snapshot()), {
+            phase: 'failed',
+            failure: localFailure('incompatible_api'),
+        });
+
+        expect(missing.guidance?.kind).toBe('missing_host');
+        expect(incompatible.guidance?.kind).toBe('incompatible_api');
+        expect(missing.guidance?.title).not.toBe(incompatible.guidance?.title);
+        expect(missing.guidance?.message).toContain('Install the compatible Veles Native Bridge');
+        expect(missing.guidance?.message).not.toMatch(/update/i);
+        expect(incompatible.guidance?.message).toContain('Update the Veles Native Bridge');
+        expect(incompatible.guidance?.message).not.toMatch(/install the compatible/i);
+
+        for (const view of [missing, incompatible]) {
+            const guidance = view.guidance;
+            expect(guidance).toMatchObject({
+                actionLabel: 'Retry',
+                canRetry: true,
+                bleControlsEnabled: false,
+                noAutomaticReplay: false,
+            });
+            // Trust survives installation: say so, and never offer to undo it.
+            expect(guidance?.message).toMatch(/paired phones? (?:stay|remain)s? trusted/i);
+            expect(guidance?.message).not.toMatch(forbidden);
+            // Links are user-invoked: the page never fabricates or auto-opens a URL.
+            expect(guidance?.message).not.toMatch(/https?:\/\//i);
+            // Retry is the single recovery control; BLE and search stay off.
+            expect(view.controls.reconnect).toMatchObject({ enabled: true, label: 'Retry' });
+            expect(view.controls.ble).toBe(false);
+            expect(view.controls.search.enabled).toBe(false);
+            expect(view.controls.stopScan.enabled).toBe(false);
+            expect(view.devices).toEqual([]);
+            expect(view.connections).toEqual([]);
+        }
+    });
+});

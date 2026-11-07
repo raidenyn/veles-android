@@ -145,6 +145,16 @@ verify/aggregate-checksums.sh <commit>               # build/verification/SHA256
 # `verify/verify-supply-chain.sh` asserts Node 26.8.1 / npm 11.19.0 and the
 # active Rust toolchain (generate-sboms.sh shells out to ./gradlew verifyCargoCyclonedx).
 
+# OTP-25 standalone installers (native-bridge/installer: engine crate, NSIS and SwiftPM frontends) — plain Rust,
+# NO Tauri/Node. Checks (run on Linux, Windows and macOS CI) and the UNSIGNED input producers (Windows/macOS only):
+./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
+./gradlew bridgeInstallerScriptsTest          # Python suites incl. test_build_contract.py (not on Windows)
+./gradlew bridgeInstallerUnsigned             # PRODUCTION channel; needs a tracked, approved release-<platform>.json
+./gradlew bridgeInstallerPackageFixture       # FIXTURE channel from the tracked fixture-<platform>.json
+./gradlew bridgeInstallerSupplyChain          # verify/verify-supply-chain.sh incl. native-installer.cdx.json
+# Output lands under build/native-bridge/installer/{target,slots,out,tools}. Producers never sign; signing,
+# notarization and the release gate are the protected release-native-installers.yml (Task 13).
+
 # Assert every declared generated output was removed by `./gradlew clean`.
 rust/scripts/assert-clean.sh
 ```
@@ -173,9 +183,9 @@ or requires a Docker reference build:
 | `build-android.yml` | one signed-or-unsigned release APK + mapping + `SHA256SUMS` (`android-release`); JNI allow-list runs against the APK actually built |
 | `build-web-extension.yml` | extension ZIP + sidecar + `SHA256SUMS` (`web-extension`); bundle tests |
 | `build-rust.yml` | `rust-jni-wasm` package |
-| `build-native-windows.yml` | Windows bridge executable + NSIS/MSI installers, packaged once via `bridgePackage` (`native-windows`); provisions the pinned WiX/NSIS cache and exports its absolute `NSIS_PATH` |
-| `build-native-macos.yml` | macOS bridge executable + `.app`/DMG, packaged once via `bridgePackage` (`native-macos`) |
-| `build-supply-chain.yml` | SBOM/license/audit reports (`supply-chain-reports`); report validation + policy enforcement (five SBOMs incl. `native-host.cdx.json`; vendored `bluest` patch provenance via `verify/check-vendored-patches.mjs`) |
+| `build-native-windows.yml` | OTP-25 Windows installer inputs (UNSIGNED): `bridgeInstallerUnsigned` (approved `release-windows.json`) or `bridgeInstallerPackageFixture`; each builds the tree twice (slots a/b) and publishes `tree.tar` + `provenance.json` + `report-ab.json` + `SHA256SUMS` as `native-unsigned-windows` / `native-fixture-windows`; provisions the pinned NSIS under `build/native-bridge/installer/tools/nsis`. No Tauri, no signing |
+| `build-native-macos.yml` | OTP-25 macOS installer inputs (UNSIGNED), same shape under the pinned Xcode: `native-unsigned-macos` / `native-fixture-macos`. No Tauri, no signing |
+| `build-supply-chain.yml` | SBOM/license/audit reports (`supply-chain-reports`); report validation + policy enforcement (six SBOMs incl. `native-host.cdx.json` and `native-installer.cdx.json`; vendored `bluest` patch provenance via `verify/check-vendored-patches.mjs`) |
 | `build-native-host.yml` | OTP-24 production host (called from `ci.yml`, not `release-build.yml`): Linux portable checks, `windows-2025`/`macos-26` compile + test + `bridgeHostBuild`; artifacts `native-host-windows` (exe + `SHA256SUMS`) / `native-host-macos` (mode-preserving tar of the executable + `SHA256SUMS`, plus archive sidecar; upload drops bare exec bits) (no installer, no Tauri). Not the scaffold's `native-windows`/`native-macos` archives |
 
 `release-build.yml` composes these with the neutral names, and its manual

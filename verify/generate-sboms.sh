@@ -29,3 +29,5 @@ generate_npm protocol protocol.cdx.json
 generate_cargo rust/Cargo.toml rust/veles-crypto rust.cdx.json
 generate_cargo native-bridge/src-tauri/Cargo.toml native-bridge/src-tauri native-bridge.cdx.json
 generate_cargo native-bridge/host/Cargo.toml native-bridge/host native-host.cdx.json
+# OTP-25: the standalone installer engine (native-bridge/installer, its own workspace and lockfile).
+generate_cargo native-bridge/installer/Cargo.toml native-bridge/installer native-installer.cdx.json

@@ -1,0 +1,658 @@
+name: release-native-installers
+
+# OTP-25 Task 13: protected signing, notarization and the authenticated release gate for the
+# standalone native installers.
+#
+# This workflow produces PRIVATE CANDIDATE EVIDENCE ONLY. It publishes nothing: no release, no tag,
+# no attestation, no upload outside this run's artifacts (retention-limited). Whether a candidate is
+# eligible is decided by `release_gate.py validate` in the last job; a blocked or incomplete candidate
+# fails that job.
+#
+# Trust model
+# - Manual dispatch only; there is no pull_request / pull_request_target / push / schedule trigger.
+#   The run must be dispatched on an immutable release tag (refs/tags/X.Y.Z) whose commit equals the
+#   `commit` input. release_gate.py re-checks event, ref, commit, the protected environment and the
+#   approved per-target descriptor digest inside every credentialed job, and the signing publisher /
+#   Apple team against the approved descriptor's publisher policy.
+# - Credentials exist only in the four sign-* jobs, which run in the protected environment
+#   `native-release`. They are mapped through the step-level `env:` of the single step that runs the
+#   signer and are read by NAME inside release_gate.py; no credential expression appears in a script
+#   body, and a job-level env block never carries a secret.
+# - Provenance and payload hashes are verified BEFORE any key is touched, in a job that holds no
+#   credential. That job also requires the independent unsigned builds A and B to be equal; every later
+#   job consumes the chosen A build WITHOUT rebuilding it. No job in this file compiles source.
+# - Job graph: verify-inputs -> sign-<os>-nested -> assemble-<os> -> sign-<os>-outer -> gate.
+#   The assemble jobs run pinned makensis / hdiutil over already-signed files and hold NO credential.
+#
+# Interfaces this workflow assumes from the unsigned producers (OTP-25 Task 14; not yet implemented, so
+# a real run is BLOCKED until they exist): the artifacts `native-unsigned-windows` and
+# `native-unsigned-macos` of each producer run contain `tree.tar` (a mode-preserving tar of the unsigned
+# payload tree: package/ + uninstall.exe on Windows, the installer .app on macOS) and `provenance.json`
+# ({schema, source_commit, descriptor_digest, a_inventory_sha256, b_inventory_sha256}).
+#
+# Repository (or organization) variables the owner must set before a candidate can be signed:
+# VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS and VELES_APPROVED_DESCRIPTOR_SHA256_MACOS (the owner's
+# approval of each target's descriptor), plus the environment variables and secrets named in the
+# sign-* steps. VELES_WIN_PUBLISHER is the leaf-certificate fingerprint `sha256:<64 lowercase hex of the
+# DER digest>` the installer engine authorizes, never a display name; it must also appear in the approved
+# descriptor's policy.publishers. Remaining variables and secrets are named in the
+# sign-* steps. Not exercised by any local test: the real signtool / codesign / notarytool / stapler /
+# spctl / hdiutil / makensis behavior and the hosted-runner tool identities. See the Task 13 report.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full 40-hex source commit; must equal the commit of the dispatched tag
+        required: true
+        type: string
+      descriptor_sha256_windows:
+        description: SHA-256 of the approved Windows release descriptor
+        required: true
+        type: string
+      descriptor_sha256_macos:
+        description: SHA-256 of the approved macOS release descriptor
+        required: true
+        type: string
+      unsigned_run_a:
+        description: Run id of unsigned producer build A
+        required: true
+        type: string
+      unsigned_run_b:
+        description: Run id of the independent unsigned producer build B
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-native-installers
+  cancel-in-progress: false
+
+jobs:
+  verify-inputs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      COMMIT: ${{ inputs.commit }}
+      RUN_A: ${{ inputs.unsigned_run_a }}
+      RUN_B: ${{ inputs.unsigned_run_b }}
+      DIGEST_WINDOWS: ${{ inputs.descriptor_sha256_windows }}
+      DIGEST_MACOS: ${{ inputs.descriptor_sha256_macos }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Check the dispatch inputs
+        run: |
+          set -euo pipefail
+          printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$DIGEST_WINDOWS" | grep -Eq '^[0-9a-f]{64}$'
+          printf '%s' "$DIGEST_MACOS" | grep -Eq '^[0-9a-f]{64}$'
+          printf '%s' "$RUN_A" | grep -Eq '^[0-9]+$'
+          printf '%s' "$RUN_B" | grep -Eq '^[0-9]+$'
+          test "$RUN_A" != "$RUN_B"
+      - name: Require trusted unsigned producer runs
+        run: |
+          set -euo pipefail
+          for run in "$RUN_A" "$RUN_B"; do
+            gh run view "$run" --repo "$GITHUB_REPOSITORY" --json headSha,event,conclusion,workflowName > "$RUNNER_TEMP/run-$run.json"
+            jq -e --arg sha "$COMMIT" '
+              .headSha == $sha and .conclusion == "success" and .workflowName == "release-build"
+              and (.event == "push" or .event == "workflow_dispatch")' "$RUNNER_TEMP/run-$run.json" > /dev/null
+          done
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-unsigned-windows
+          path: ${{ runner.temp }}/a/windows
+          run-id: ${{ inputs.unsigned_run_a }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-unsigned-windows
+          path: ${{ runner.temp }}/b/windows
+          run-id: ${{ inputs.unsigned_run_b }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-unsigned-macos
+          path: ${{ runner.temp }}/a/macos
+          run-id: ${{ inputs.unsigned_run_a }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-unsigned-macos
+          path: ${{ runner.temp }}/b/macos
+          run-id: ${{ inputs.unsigned_run_b }}
+          github-token: ${{ github.token }}
+      - name: Verify A/B equality, provenance and payload hashes; pin the chosen A build
+        run: |
+          set -euo pipefail
+          gate=native-bridge/installer/scripts/release_gate.py
+          for os in windows macos; do
+            if [ "$os" = windows ]; then
+              pkg="package"; digest="$DIGEST_WINDOWS"
+            else
+              pkg="Veles Bridge Installer.app/Contents/Resources/package"; digest="$DIGEST_MACOS"
+            fi
+            recipe="$(python3 -I "$gate" recipe-digest --platform "$os")"
+            mkdir -p "$RUNNER_TEMP/a/$os/tree" "$RUNNER_TEMP/b/$os/tree" "$RUNNER_TEMP/verified/$os"
+            tar -xpf "$RUNNER_TEMP/a/$os/tree.tar" -C "$RUNNER_TEMP/a/$os/tree"
+            tar -xpf "$RUNNER_TEMP/b/$os/tree.tar" -C "$RUNNER_TEMP/b/$os/tree"
+            VELES_DESCRIPTOR_SHA256="$digest" python3 -I "$gate" verify-inputs --platform "$os" \
+              --a "$RUNNER_TEMP/a/$os/tree" --b "$RUNNER_TEMP/b/$os/tree" \
+              --provenance "$RUNNER_TEMP/a/$os/provenance.json" \
+              --descriptor "$RUNNER_TEMP/a/$os/tree/$pkg/descriptor.json" \
+              --output "$RUNNER_TEMP/chosen/$os" --reports "$RUNNER_TEMP/verified/$os/reports" \
+              --commit "$COMMIT" --recipe-digest "$recipe"
+            tar -cpf "$RUNNER_TEMP/verified/$os/tree.tar" -C "$RUNNER_TEMP/chosen/$os" .
+            cp "$RUNNER_TEMP/chosen/$os/$pkg/descriptor.json" "$RUNNER_TEMP/verified/$os/descriptor.json"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: verified-inputs
+          path: ${{ runner.temp }}/verified
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-verify-inputs
+          path: |
+            ${{ runner.temp }}/verified/windows/reports
+            ${{ runner.temp }}/verified/macos/reports
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-windows-nested:
+    needs: [verify-inputs]
+    runs-on: windows-2025
+    environment: native-release
+    permissions:
+      contents: read
+    env:
+      COMMIT: ${{ inputs.commit }}
+      VELES_SIGNING_ENVIRONMENT: native-release
+      VELES_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256_windows }}
+      VELES_APPROVED_DESCRIPTOR_SHA256: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: verified-inputs
+          path: ${{ runner.temp }}/verified
+      - name: Unpack the verified inputs (no credential in this step)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tree = Join-Path $env:RUNNER_TEMP 'in'
+          New-Item -ItemType Directory -Path $tree | Out-Null
+          tar -xpf (Join-Path $env:RUNNER_TEMP 'verified/windows/tree.tar') -C $tree
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+          $recipe = python -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'recipe-digest failed' }
+          "RECIPE_DIGEST=$recipe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Sign the nested Windows components
+        env:
+          VELES_WIN_PFX_BASE64: ${{ secrets.VELES_WIN_PFX_BASE64 }}
+          VELES_WIN_PFX_PASSWORD: ${{ secrets.VELES_WIN_PFX_PASSWORD }}
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+          VELES_WIN_PUBLISHER: ${{ vars.VELES_WIN_PUBLISHER }}
+          VELES_WIN_TIMESTAMP_URL: ${{ vars.VELES_WIN_TIMESTAMP_URL }}
+        run: |
+          $in = Join-Path $env:RUNNER_TEMP 'in'
+          $s = Join-Path $env:RUNNER_TEMP 'sign-nested'
+          ./native-bridge/installer/scripts/sign-windows.ps1 -Stage nested `
+            -Inputs $in -Output (Join-Path $s 'tree') `
+            -Scratch (Join-Path $s 'scratch') -Reports (Join-Path $s 'reports') `
+            -Descriptor (Join-Path $in 'package/descriptor.json') `
+            -Boundary (Join-Path $env:RUNNER_TEMP 'verified/windows/reports/windows-verify-inputs.json') `
+            -Commit $env:COMMIT -RecipeDigest $env:RECIPE_DIGEST
+      - name: Remove key material if the job was interrupted
+        if: ${{ always() }}
+        env:
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+        run: |
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'sign-nested/scratch') -Recurse -Force -ErrorAction Ignore
+          certutil -user -delstore My $env:VELES_WIN_CERT_SHA1 2>$null | Out-Null
+          $global:LASTEXITCODE = 0
+      - name: Pack the signed tree
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $s = Join-Path $env:RUNNER_TEMP 'sign-nested'
+          tar -cpf (Join-Path $s 'tree.tar') -C (Join-Path $s 'tree') .
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-nested-windows
+          path: |
+            ${{ runner.temp }}/sign-nested/tree.tar
+            ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-windows-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ failure() }}
+        with:
+          name: blocked-sign-windows-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: ignore
+          retention-days: 7
+
+  assemble-windows:
+    needs: [sign-windows-nested]
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    env:
+      COMMIT: ${{ inputs.commit }}
+      VELES_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256_windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: signed-nested-windows
+          path: ${{ runner.temp }}/signed
+      - name: Assemble the setup executable with the pinned makensis (no credential, no rebuild)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gate = 'native-bridge/installer/scripts/release_gate.py'
+          $recipe = python -I $gate recipe-digest --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'recipe-digest failed' }
+          $in = Join-Path $env:RUNNER_TEMP 'signed-tree'
+          New-Item -ItemType Directory -Path $in | Out-Null
+          tar -xpf (Join-Path $env:RUNNER_TEMP 'signed/tree.tar') -C $in
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+          $nsis = Join-Path $PWD 'build/native-bridge/installer/tools/nsis'
+          ./native-bridge/installer/scripts/provision-nsis.ps1 -Destination $nsis
+          $env:NSIS_PATH = Join-Path $nsis 'nsis-3.08/makensis.exe'
+          $out = Join-Path $env:RUNNER_TEMP 'assemble'
+          python -I $gate assemble --platform windows --inputs $in --output (Join-Path $out 'tree') `
+            --scratch (Join-Path $out 'scratch') --reports (Join-Path $out 'reports') `
+            --descriptor (Join-Path $in 'package/descriptor.json') `
+            --boundary (Join-Path $env:RUNNER_TEMP 'signed/reports/windows-nested.json') `
+            --commit $env:COMMIT --recipe-digest $recipe
+          if ($LASTEXITCODE -ne 0) { throw 'assemble failed' }
+          tar -cpf (Join-Path $out 'tree.tar') -C (Join-Path $out 'tree') .
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: assembled-windows
+          path: |
+            ${{ runner.temp }}/assemble/tree.tar
+            ${{ runner.temp }}/assemble/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-assemble-windows
+          path: ${{ runner.temp }}/assemble/reports
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-windows-outer:
+    needs: [assemble-windows]
+    runs-on: windows-2025
+    environment: native-release
+    permissions:
+      contents: read
+    env:
+      COMMIT: ${{ inputs.commit }}
+      VELES_SIGNING_ENVIRONMENT: native-release
+      VELES_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256_windows }}
+      VELES_APPROVED_DESCRIPTOR_SHA256: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: assembled-windows
+          path: ${{ runner.temp }}/assembled
+      - name: Unpack the assembled tree (no credential in this step)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tree = Join-Path $env:RUNNER_TEMP 'in'
+          New-Item -ItemType Directory -Path $tree | Out-Null
+          tar -xpf (Join-Path $env:RUNNER_TEMP 'assembled/tree.tar') -C $tree
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+          $recipe = python -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'recipe-digest failed' }
+          "RECIPE_DIGEST=$recipe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Sign and verify the setup executable
+        env:
+          VELES_WIN_PFX_BASE64: ${{ secrets.VELES_WIN_PFX_BASE64 }}
+          VELES_WIN_PFX_PASSWORD: ${{ secrets.VELES_WIN_PFX_PASSWORD }}
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+          VELES_WIN_PUBLISHER: ${{ vars.VELES_WIN_PUBLISHER }}
+          VELES_WIN_TIMESTAMP_URL: ${{ vars.VELES_WIN_TIMESTAMP_URL }}
+        run: |
+          $in = Join-Path $env:RUNNER_TEMP 'in'
+          $s = Join-Path $env:RUNNER_TEMP 'sign-outer'
+          ./native-bridge/installer/scripts/sign-windows.ps1 -Stage outer `
+            -Inputs $in -Output (Join-Path $s 'tree') `
+            -Scratch (Join-Path $s 'scratch') -Reports (Join-Path $s 'reports') `
+            -Descriptor (Join-Path $in 'package/descriptor.json') `
+            -Boundary (Join-Path $env:RUNNER_TEMP 'assembled/reports/windows-assemble.json') `
+            -Commit $env:COMMIT -RecipeDigest $env:RECIPE_DIGEST
+      - name: Remove key material if the job was interrupted
+        if: ${{ always() }}
+        env:
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+        run: |
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'sign-outer/scratch') -Recurse -Force -ErrorAction Ignore
+          certutil -user -delstore My $env:VELES_WIN_CERT_SHA1 2>$null | Out-Null
+          $global:LASTEXITCODE = 0
+      - name: Pack the signed tree
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $s = Join-Path $env:RUNNER_TEMP 'sign-outer'
+          tar -cpf (Join-Path $s 'tree.tar') -C (Join-Path $s 'tree') .
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-outer-windows
+          path: |
+            ${{ runner.temp }}/sign-outer/tree.tar
+            ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-windows-outer
+          path: ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ failure() }}
+        with:
+          name: blocked-sign-windows-outer
+          path: ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: ignore
+          retention-days: 7
+
+  sign-macos-nested:
+    needs: [verify-inputs]
+    runs-on: macos-26
+    environment: native-release
+    permissions:
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+      COMMIT: ${{ inputs.commit }}
+      VELES_SIGNING_ENVIRONMENT: native-release
+      VELES_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256_macos }}
+      VELES_APPROVED_DESCRIPTOR_SHA256: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_MACOS }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: verified-inputs
+          path: ${{ runner.temp }}/verified
+      - name: Unpack the verified inputs (no credential in this step)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/in"
+          tar -xpf "$RUNNER_TEMP/verified/macos/tree.tar" -C "$RUNNER_TEMP/in"
+          echo "RECIPE_DIGEST=$(python3 -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform macos)" >> "$GITHUB_ENV"
+      - name: Sign the nested macOS code and seal the carrier
+        env:
+          VELES_MAC_P12_BASE64: ${{ secrets.VELES_MAC_P12_BASE64 }}
+          VELES_MAC_P12_PASSWORD: ${{ secrets.VELES_MAC_P12_PASSWORD }}
+          VELES_NOTARY_KEY_BASE64: ${{ secrets.VELES_NOTARY_KEY_BASE64 }}
+          VELES_MAC_IDENTITY: ${{ vars.VELES_MAC_IDENTITY }}
+          VELES_MAC_TEAM_ID: ${{ vars.VELES_MAC_TEAM_ID }}
+          VELES_NOTARY_KEY_ID: ${{ vars.VELES_NOTARY_KEY_ID }}
+          VELES_NOTARY_ISSUER: ${{ vars.VELES_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          s="$RUNNER_TEMP/sign-nested"
+          native-bridge/installer/scripts/sign-macos.sh --stage nested \
+            --inputs "$RUNNER_TEMP/in" --output "$s/tree" --scratch "$s/scratch" --reports "$s/reports" \
+            --descriptor "$RUNNER_TEMP/in/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/verified/macos/reports/macos-verify-inputs.json" \
+            --commit "$COMMIT" --recipe-digest "$RECIPE_DIGEST"
+      - name: Remove key material if the job was interrupted
+        if: ${{ always() }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/sign-nested/scratch/keys/veles-signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/sign-nested/scratch"
+      - name: Pack the signed tree
+        run: |
+          set -euo pipefail
+          tar -cpf "$RUNNER_TEMP/sign-nested/tree.tar" -C "$RUNNER_TEMP/sign-nested/tree" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-nested-macos
+          path: |
+            ${{ runner.temp }}/sign-nested/tree.tar
+            ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-macos-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ failure() }}
+        with:
+          name: blocked-sign-macos-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: ignore
+          retention-days: 7
+
+  assemble-macos:
+    needs: [sign-macos-nested]
+    runs-on: macos-26
+    permissions:
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+      COMMIT: ${{ inputs.commit }}
+      VELES_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256_macos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: signed-nested-macos
+          path: ${{ runner.temp }}/signed
+      - name: Assemble the disk image from the signed app (no credential, no rebuild)
+        run: |
+          set -euo pipefail
+          gate=native-bridge/installer/scripts/release_gate.py
+          recipe="$(python3 -I "$gate" recipe-digest --platform macos)"
+          mkdir -p "$RUNNER_TEMP/signed-tree"
+          tar -xpf "$RUNNER_TEMP/signed/tree.tar" -C "$RUNNER_TEMP/signed-tree"
+          out="$RUNNER_TEMP/assemble"
+          python3 -I "$gate" assemble --platform macos --inputs "$RUNNER_TEMP/signed-tree" --output "$out/tree" \
+            --scratch "$out/scratch" --reports "$out/reports" \
+            --descriptor "$RUNNER_TEMP/signed-tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/signed/reports/macos-nested.json" \
+            --commit "$COMMIT" --recipe-digest "$recipe"
+          tar -cpf "$out/tree.tar" -C "$out/tree" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: assembled-macos
+          path: |
+            ${{ runner.temp }}/assemble/tree.tar
+            ${{ runner.temp }}/assemble/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-assemble-macos
+          path: ${{ runner.temp }}/assemble/reports
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-macos-outer:
+    needs: [assemble-macos]
+    runs-on: macos-26
+    environment: native-release
+    permissions:
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+      COMMIT: ${{ inputs.commit }}
+      VELES_SIGNING_ENVIRONMENT: native-release
+      VELES_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256_macos }}
+      VELES_APPROVED_DESCRIPTOR_SHA256: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_MACOS }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: assembled-macos
+          path: ${{ runner.temp }}/assembled
+      - name: Unpack the assembled tree (no credential in this step)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/in"
+          tar -xpf "$RUNNER_TEMP/assembled/tree.tar" -C "$RUNNER_TEMP/in"
+          echo "RECIPE_DIGEST=$(python3 -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform macos)" >> "$GITHUB_ENV"
+      - name: Sign, notarize, staple and assess the disk image
+        env:
+          VELES_MAC_P12_BASE64: ${{ secrets.VELES_MAC_P12_BASE64 }}
+          VELES_MAC_P12_PASSWORD: ${{ secrets.VELES_MAC_P12_PASSWORD }}
+          VELES_NOTARY_KEY_BASE64: ${{ secrets.VELES_NOTARY_KEY_BASE64 }}
+          VELES_MAC_IDENTITY: ${{ vars.VELES_MAC_IDENTITY }}
+          VELES_MAC_TEAM_ID: ${{ vars.VELES_MAC_TEAM_ID }}
+          VELES_NOTARY_KEY_ID: ${{ vars.VELES_NOTARY_KEY_ID }}
+          VELES_NOTARY_ISSUER: ${{ vars.VELES_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          s="$RUNNER_TEMP/sign-outer"
+          native-bridge/installer/scripts/sign-macos.sh --stage outer \
+            --inputs "$RUNNER_TEMP/in" --output "$s/tree" --scratch "$s/scratch" --reports "$s/reports" \
+            --descriptor "$RUNNER_TEMP/in/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/assembled/reports/macos-assemble.json" \
+            --commit "$COMMIT" --recipe-digest "$RECIPE_DIGEST"
+      - name: Detach images and remove key material if the job was interrupted
+        if: ${{ always() }}
+        run: |
+          for mount in "$RUNNER_TEMP"/sign-outer/scratch/mnt-*; do hdiutil detach "$mount" -force 2>/dev/null || true; done
+          security delete-keychain "$RUNNER_TEMP/sign-outer/scratch/keys/veles-signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/sign-outer/scratch"
+      - name: Pack the signed tree
+        run: |
+          set -euo pipefail
+          tar -cpf "$RUNNER_TEMP/sign-outer/tree.tar" -C "$RUNNER_TEMP/sign-outer/tree" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-outer-macos
+          path: |
+            ${{ runner.temp }}/sign-outer/tree.tar
+            ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-macos-outer
+          path: ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ failure() }}
+        with:
+          name: blocked-sign-macos-outer
+          path: ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: ignore
+          retention-days: 7
+
+  gate:
+    needs: [verify-inputs, sign-windows-outer, sign-macos-outer]
+    # Run even when a job failed, so the verdict is a recorded failure of THIS job rather than a skipped one.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      COMMIT: ${{ inputs.commit }}
+      RESULT_VERIFY: ${{ needs.verify-inputs.result }}
+      RESULT_WINDOWS: ${{ needs.sign-windows-outer.result }}
+      RESULT_MACOS: ${{ needs.sign-macos-outer.result }}
+      APPROVED_WINDOWS: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS }}
+      APPROVED_MACOS: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_MACOS }}
+    steps:
+      - name: Require every producing job to have succeeded
+        run: |
+          set -euo pipefail
+          for result in "$RESULT_VERIFY" "$RESULT_WINDOWS" "$RESULT_MACOS"; do
+            if [ "$result" != success ]; then
+              echo "BLOCKED: a required job did not succeed ($RESULT_VERIFY / $RESULT_WINDOWS / $RESULT_MACOS); no candidate is eligible" >&2
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: reports-*
+          path: ${{ runner.temp }}/reports-in
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: verified-inputs
+          path: ${{ runner.temp }}/verified
+      - name: Compose the evidence bundle and apply the release gate
+        run: |
+          set -euo pipefail
+          gate=native-bridge/installer/scripts/release_gate.py
+          root="$RUNNER_TEMP/reports-root"
+          bundle="$RUNNER_TEMP/candidate-evidence"
+          mkdir -p "$root"
+          find "$RUNNER_TEMP/reports-in" -type f -name '*.json' -exec cp -n {} "$root"/ \;
+          expected="$(python3 -I "$gate" descriptor-set-digest --windows-sha256 "$APPROVED_WINDOWS" --macos-sha256 "$APPROVED_MACOS")"
+          python3 -I "$gate" bundle --reports-root "$root" --bundle "$bundle" --commit "$COMMIT" \
+            --descriptor-windows "$RUNNER_TEMP/verified/windows/descriptor.json" \
+            --descriptor-macos "$RUNNER_TEMP/verified/macos/descriptor.json"
+          python3 -I "$gate" validate --bundle "$bundle" --commit "$COMMIT" --descriptor-digest "$expected"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ always() }}
+        with:
+          name: candidate-evidence
+          path: ${{ runner.temp }}/candidate-evidence
+          if-no-files-found: ignore
+          retention-days: 14

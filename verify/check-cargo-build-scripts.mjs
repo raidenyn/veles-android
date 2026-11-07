@@ -40,7 +40,7 @@ async function main() {
   const repository = process.cwd();
   const policy = JSON.parse(await readFile(join(repository, 'verify', 'cargo-build-script-policy.json'), 'utf8'));
   const cargoHome = process.env.CARGO_HOME ?? join(process.env.HOME ?? '', '.cargo');
-  const manifests = ['rust/Cargo.toml', 'native-bridge/src-tauri/Cargo.toml', 'native-bridge/host/Cargo.toml'];
+  const manifests = ['rust/Cargo.toml', 'native-bridge/src-tauri/Cargo.toml', 'native-bridge/host/Cargo.toml', 'native-bridge/installer/Cargo.toml'];
   for (const manifest of manifests) {
     const fetched = spawnSync('cargo', ['fetch', '--locked', '--manifest-path', join(repository, manifest)], { cwd: repository, encoding: 'utf8' });
     if (fetched.status !== 0) throw new Error(`Locked Cargo fetch failed for ${manifest}: ${fetched.stderr}`);

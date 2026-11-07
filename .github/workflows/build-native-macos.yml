@@ -1,5 +1,23 @@
 name: build-native-macos
 
+# OTP-25 Task 14: the macOS producer of the standalone installer's UNSIGNED input tree.
+#
+# This is no longer the Tauri scaffold packaging: there is no Node, npm, Tauri, WiX or bridgePackage here.
+# One job builds the tree through the installer Gradle graph, which itself builds it TWICE (slots a and b,
+# separate target directories, source paths remapped, deterministic link settings) and refuses to publish
+# unless the two trees are byte-identical under Task 9's inventory comparison. The product is a
+# mode-preserving tree.tar plus provenance.json, report-ab.json and SHA256SUMS; uploads name exact files
+# because artifact upload drops bare executable bits.
+#
+# Channel selection is explicit and fail-closed:
+# - An approved, tracked native-bridge/installer/config/release-macos.json exists: the PRODUCTION
+#   channel is built by bridgeInstallerUnsigned and published under the caller-selected name
+#   (native-unsigned-macos). That is the artifact release-native-installers.yml (Task 13) downloads.
+# - Otherwise only the tracked FIXTURE config is built by bridgeInstallerPackageFixture and published as
+#   native-fixture-macos, which can never be mistaken for, or substituted as, the production input.
+# Nothing here signs, notarizes or publishes; no secret, protected environment or artifact from another
+# run is used.
+
 on:
   workflow_call:
     inputs:
@@ -9,7 +27,7 @@ on:
       artifact-name:
         required: true
         type: string
-        default: native-macos
+        default: native-unsigned-macos
 
 permissions:
   contents: read
@@ -17,37 +35,72 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
-    # Job-level environment so the pinned Xcode actually reaches the build
-    # process: every step below (xcodebuild validation and the Gradle/Tauri
-    # packaging tree) inherits DEVELOPER_DIR.
+    # Job-level environment so the pinned Xcode reaches every step: the xcodebuild validation, cargo's
+    # linker and the SwiftPM frontend build all inherit DEVELOPER_DIR.
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.commit-sha }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
-          node-version: '26.8.1'
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
       - name: Validate pinned Xcode toolchain
         run: |
           test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
           xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
-      # Normal packaging on the target runner: the executable, .app bundle,
-      # and DMG are built and packaged by one Gradle invocation with no
-      # sandbox wrapper.
-      - name: Package native bridge
-        run: ./gradlew bridgePackage
-      # Upload the packaged product directly: the outer archive, its sha256
-      # sidecar, and the component SHA256SUMS. The payload (including the
-      # symlinked .app entries) stays inside the outer archive, so
-      # artifact-upload mode changes cannot affect it.
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (host)
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Probe for the approved release config
+        id: config
+        shell: bash
+        run: |
+          if [ -f native-bridge/installer/config/release-macos.json ]; then
+            echo "approved=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "approved=false" >> "$GITHUB_OUTPUT"
+          fi
+      # The engine's release carrier is not supplied here: it does not exist until this job's own
+      # assembler has run. The Gradle graph assembles the payload, verifies the carrier against the
+      # exact descriptor and the registered channel, and only then rebuilds the engine with
+      # VELES_EMBEDDED_CARRIER (fail-closed for the production channel). Supplying the variable in
+      # this workflow would point the build at a file nobody assembled from this commit.
+      - name: Build the production-channel unsigned input tree
+        if: steps.config.outputs.approved == 'true'
+        run: ./gradlew bridgeInstallerUnsigned
+      - name: Build the fixture-channel input tree
+        if: steps.config.outputs.approved != 'true'
+        run: ./gradlew bridgeInstallerPackageFixture
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.config.outputs.approved == 'true'
         with:
           name: ${{ inputs.artifact-name }}
           path: |
-            build/native-bridge/macos/veles-native-bridge-*.tar.gz
-            build/native-bridge/macos/veles-native-bridge-*.tar.gz.sha256
-            build/native-bridge/macos/SHA256SUMS
+            build/native-bridge/installer/out/production/tree.tar
+            build/native-bridge/installer/out/production/provenance.json
+            build/native-bridge/installer/out/production/report-ab.json
+            build/native-bridge/installer/out/production/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.config.outputs.approved != 'true'
+        with:
+          name: native-fixture-macos
+          path: |
+            build/native-bridge/installer/out/fixture/tree.tar
+            build/native-bridge/installer/out/fixture/provenance.json
+            build/native-bridge/installer/out/fixture/report-ab.json
+            build/native-bridge/installer/out/fixture/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

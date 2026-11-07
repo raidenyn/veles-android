@@ -44,6 +44,10 @@ generated_paths=(
   # (asserted above); these source-tree paths must never survive.
   native-bridge/host/target
   native-bridge/host/build
+  # OTP-25 installer: cargo and SwiftPM outputs must live under build/native-bridge/installer
+  # (covered by build/native-bridge above); these source-tree paths must never survive.
+  native-bridge/installer/target
+  native-bridge/installer/macos/.build
 )
 
 for relative in "${generated_paths[@]}"; do

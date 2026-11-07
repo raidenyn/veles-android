@@ -11,6 +11,11 @@ name: build-native-host
 # The Linux job runs the portable control-plane checks (the platform adapters are cfg-gated out
 # on Linux). The Windows and macOS jobs compile and test the real WinRT / CoreBluetooth adapters
 # on their native runners. Hardware behaviour is NOT exercised by any of these jobs.
+#
+# OTP-25 Task 14 adds the standalone installer crate's format, lint and test checks to the same three
+# jobs (bridgeInstaller*), and the installer's Python script suites to the portable job. These are
+# checks only: the unsigned installer inputs are built by build-native-{windows,macos}.yml and nothing
+# here builds, signs or publishes an installer.
 
 on:
   workflow_call:
@@ -37,7 +42,11 @@ jobs:
       - name: Activate pinned Rust toolchain
         working-directory: native-bridge/host
         run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
       - run: ./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest
+      - run: ./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest bridgeInstallerScriptsTest
       - run: python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py'
 
   windows:
@@ -53,7 +62,11 @@ jobs:
       - name: Activate pinned Rust toolchain
         working-directory: native-bridge/host
         run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
       - run: .\gradlew.bat bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest
+      - run: .\gradlew.bat bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
       - run: .\gradlew.bat bridgeHostBuild
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -84,7 +97,11 @@ jobs:
       - name: Activate pinned Rust toolchain
         working-directory: native-bridge/host
         run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
       - run: ./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest
+      - run: ./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
       - run: ./gradlew bridgeHostBuild
       # actions/upload-artifact drops the executable bit of bare files, so the macOS product is a
       # mode-preserving tar holding only the executable and its SHA256SUMS (plus the archive sidecar).
