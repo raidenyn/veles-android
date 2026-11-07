@@ -87,6 +87,28 @@ fn registration(paths: &InstallPaths, executable: &str) -> Registration {
     Registration::new(serde_json::to_vec(&manifest).expect("manifest bytes")).expect("registration")
 }
 
+/// The lock is created at the state-relative path teardown removes, never at the
+/// root. NOT RUN on this Linux host.
+#[test]
+fn macos_lock_is_created_and_removed_at_the_state_relative_path() {
+    let temp = TempRoot::new("lock-path");
+    let paths = macos_paths(&temp);
+    let platform = MacosPlatform::new();
+    assert_eq!(paths.lock_path(), paths.state().join("installer.lock"));
+    {
+        let lock = platform.lock(&paths).expect("lock");
+        assert_eq!(lock.path(), paths.lock_path());
+        assert!(paths.lock_path().is_file(), "the state lock exists");
+        assert!(
+            !paths.root().join("installer.lock").exists(),
+            "no root-level lock is created"
+        );
+    }
+    fs::remove_file(paths.lock_path()).expect("the state lock is removable");
+    assert!(!paths.lock_path().exists());
+    assert!(paths.state().exists(), "only the lock file was removed");
+}
+
 #[test]
 fn macos_atomic_replace_parent_flush_and_no_symlink_follow() {
     let temp = TempRoot::new("atomic");

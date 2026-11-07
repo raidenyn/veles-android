@@ -54,7 +54,7 @@ use crate::model::{
     canonical_json, select_host,
 };
 use crate::paths::{
-    InstallPaths, JOURNAL_FILE, LOCK_FILE, MAINTENANCE_DIR, RECEIPT_FILE, STAGING_DIR, STATE_DIR,
+    InstallPaths, JOURNAL_FILE, MAINTENANCE_DIR, RECEIPT_FILE, STAGING_DIR, STATE_DIR,
     VERSIONS_DIR, maintenance_engine_file, maintenance_engine_relative,
     maintenance_relative_is_executable,
 };
@@ -1146,7 +1146,7 @@ fn remove_private_layout(
     )?;
     remove_private_file(platform, paths, &format!("{STATE_DIR}/{RECEIPT_FILE}"))?;
     remove_private_file(platform, paths, &format!("{STATE_DIR}/{JOURNAL_FILE}"))?;
-    remove_private_file(platform, paths, &format!("{STATE_DIR}/{LOCK_FILE}"))?;
+    remove_private_file(platform, paths, &paths.lock_relative())?;
     drop(lock);
 
     let mut leftover = false;

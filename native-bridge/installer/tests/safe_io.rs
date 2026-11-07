@@ -409,6 +409,12 @@ fn unicode_paths_and_busy_lock() {
         production.state().join("installer.lock")
     );
     assert_eq!(
+        production.root().join(production.lock_relative()),
+        production.lock_path(),
+        "the one relative lock definition names the created and removed file"
+    );
+    assert_eq!(production.lock_relative(), "state/installer.lock");
+    assert_eq!(
         production.journal_path(),
         production.state().join("journal.json")
     );

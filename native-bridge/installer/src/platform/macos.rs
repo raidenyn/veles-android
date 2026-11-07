@@ -1869,21 +1869,22 @@ impl Drop for CleanupRoot {
 impl NativeFs for MacosPlatform {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
         native_ensure_layout(self, paths)?;
-        // The lock file is created **relative to the anchored root**, so its
-        // ancestors are opened and verified as a chain and cannot be redirected
-        // between validation and the open.
-        let root = super::native::anchor::open_anchored(paths.root())?;
+        // The lock file is created **relative to the anchored state directory**, so
+        // its ancestors are opened and verified as a chain and cannot be redirected
+        // between validation and the open. It therefore lands at the same
+        // `state/installer.lock` path teardown removes.
+        let state = super::native::anchor::open_anchored(paths.state())?;
         let name = paths
             .lock_path()
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(unsafe_path)?;
         let c_name = c_component(OsStr::new(name))?;
-        // SAFETY: the root descriptor is live, `c_name` is NUL-terminated and the
+        // SAFETY: the state descriptor is live, `c_name` is NUL-terminated and the
         // mode is only read for the creating open.
         let fd = unsafe {
             openat(
-                root.fd(),
+                state.fd(),
                 c_name.as_ptr(),
                 T8_O_RDWR | T8_O_CREAT | T8_O_NOFOLLOW | T8_O_CLOEXEC,
                 0o600,

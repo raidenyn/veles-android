@@ -62,8 +62,8 @@ use crate::model::{
     MAX_PUBLISHER_BYTES, ReleaseDescriptor, Target, select_host, validate_extension_id,
 };
 use crate::paths::{
-    InstallPaths, JOURNAL_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE, STAGING_DIR,
-    STATE_DIR, VERSIONS_DIR,
+    InstallPaths, JOURNAL_FILE, LOCK_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE,
+    STAGING_DIR, STATE_DIR, VERSIONS_DIR,
 };
 use crate::policy::{CarrierContents, MAX_CARRIER_DOCUMENT_BYTES, read_carrier_contents};
 
@@ -1959,13 +1959,17 @@ fn is_owned_claim_scope(normalized: &str) -> bool {
 /// The fixed installer-private files cleanup may remove.
 ///
 /// These are the installer's own state slots, never receipt claims. The list is
-/// closed on purpose: cleanup must not become a general delete primitive.
-const PRIVATE_LAYOUT_FILES: [&str; 4] = [
-    "state/journal.json",
-    "state/receipt.json",
-    "state/staging/registration.json",
-    "state/installer.lock",
-];
+/// closed on purpose: cleanup must not become a general delete primitive. The
+/// lock entry is derived from the same constants as [`InstallPaths::lock_path`],
+/// so the created and removed lock cannot diverge.
+fn private_layout_files() -> [String; 4] {
+    [
+        format!("{STATE_DIR}/{JOURNAL_FILE}"),
+        format!("{STATE_DIR}/{RECEIPT_FILE}"),
+        format!("{STATE_DIR}/{STAGING_DIR}/registration.json"),
+        format!("{STATE_DIR}/{LOCK_FILE}"),
+    ]
+}
 
 /// The fixed installer-private directories cleanup may remove when empty.
 const PRIVATE_LAYOUT_DIRECTORIES: [&str; 4] = ["state/staging", "state", "versions", "maintenance"];
@@ -1980,7 +1984,9 @@ fn is_private_artifact(normalized: &str, kind: OwnedKind) -> bool {
         }
     };
     match kind {
-        OwnedKind::File => PRIVATE_LAYOUT_FILES.iter().any(|candidate| same(candidate)),
+        OwnedKind::File => private_layout_files()
+            .iter()
+            .any(|candidate| same(candidate)),
         OwnedKind::Directory => PRIVATE_LAYOUT_DIRECTORIES
             .iter()
             .any(|candidate| same(candidate)),

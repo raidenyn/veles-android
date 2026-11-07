@@ -186,6 +186,15 @@ impl InstallPaths {
         &self.lock
     }
 
+    /// The exclusive installer lock relative to the install root.
+    ///
+    /// The native adapters open this path below the anchored **state** directory
+    /// and teardown unlinks the same relative path; there is exactly one
+    /// definition, so the created and removed lock can never diverge.
+    pub fn lock_relative(&self) -> String {
+        format!("{STATE_DIR}/{LOCK_FILE}")
+    }
+
     /// Transaction journal path.
     pub fn journal_path(&self) -> &Path {
         &self.journal

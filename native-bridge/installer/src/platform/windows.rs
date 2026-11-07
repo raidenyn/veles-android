@@ -2245,11 +2245,12 @@ fn is_dynamic_owner_sid(sid: PSID) -> bool {
 impl NativeFs for WindowsPlatform {
     fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
         native_ensure_layout(self, paths)?;
-        // The lock file is opened **relative to the anchored root**: the root's
-        // whole ancestor chain is opened component by component with
-        // `FILE_OPEN_REPARSE_POINT`, so neither the root nor the lock name can be
-        // redirected between validation and the open.
-        let root = super::native::anchor::open_anchored(paths.root())?;
+        // The lock file is opened **relative to the anchored state directory**:
+        // its whole ancestor chain is opened component by component with
+        // `FILE_OPEN_REPARSE_POINT`, so neither the state directory nor the lock
+        // name can be redirected between validation and the open. This parents the
+        // lock at the same `state/installer.lock` path teardown removes.
+        let state = super::native::anchor::open_anchored(paths.state())?;
         let name = paths
             .lock_path()
             .file_name()
@@ -2258,7 +2259,7 @@ impl NativeFs for WindowsPlatform {
         // Exclusive sharing makes a second installer a `Busy`; `OPEN_ALWAYS`
         // semantics are `open`, then `create` when the fixed name is absent.
         let file = match open_below(
-            root.handle(),
+            state.handle(),
             &name,
             ACCESS_RWD,
             NT_FILE_OPEN,
@@ -2266,7 +2267,7 @@ impl NativeFs for WindowsPlatform {
         ) {
             Ok(file) => file,
             Err(failure) if failure.code == FailureCode::UnsafePath => open_below(
-                root.handle(),
+                state.handle(),
                 &name,
                 ACCESS_RWD,
                 NT_FILE_CREATE,
