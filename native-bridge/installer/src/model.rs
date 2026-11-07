@@ -213,8 +213,12 @@ impl Target {
     /// bundle alone.
     pub const fn support_executables(self) -> &'static [&'static str] {
         match self {
-            Self::WindowsX64 => &["veles-bridge-cleanup.exe", "maintenance/uninstall.exe"],
-            Self::MacosArm64 => &[],
+            Self::WindowsX64 => &[
+                "veles-bridge-cleanup.exe",
+                "maintenance/uninstall.exe",
+                "maintenance/veles-bridge-maintenance.exe",
+            ],
+            Self::MacosArm64 => &["maintenance/veles-bridge-maintenance"],
         }
     }
 }

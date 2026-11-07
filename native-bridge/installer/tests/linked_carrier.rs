@@ -110,6 +110,14 @@ fn build(temp: &Temp) -> Package {
     let app = root.join("carrier.app/Contents");
     fs::create_dir_all(app.join("Resources")).expect("resources");
     fs::write(app.join("Resources/veles-policy-carrier"), &carrier).expect("carrier resource");
+    // The carrier bundle's own engine is the persistent maintenance engine the
+    // installer publishes under `maintenance/`.
+    fs::create_dir_all(app.join("MacOS")).expect("carrier executable directory");
+    fs::write(
+        app.join("MacOS/veles-bridge-maintenance"),
+        b"mach-o maintenance engine",
+    )
+    .expect("carrier engine");
     let framework = app.join("Frameworks/Helper.framework");
     fs::create_dir_all(framework.join("Versions/A")).expect("framework");
     fs::write(framework.join("Versions/A/Helper"), b"framework binary").expect("binary");

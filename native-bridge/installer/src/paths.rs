@@ -42,6 +42,12 @@ pub const LOCK_FILE: &str = "installer.lock";
 pub const JOURNAL_FILE: &str = "journal.json";
 /// Committed receipt file name.
 pub const RECEIPT_FILE: &str = "receipt.json";
+/// Persistent maintenance engine file name on Windows.
+pub const MAINTENANCE_ENGINE_FILE: &str = "veles-bridge-maintenance.exe";
+/// Persistent maintenance engine file name on macOS.
+pub const MAINTENANCE_ENGINE_FILE_MACOS: &str = "veles-bridge-maintenance";
+/// Persistent signed uninstaller file name (Windows frontend).
+pub const MAINTENANCE_UNINSTALLER_FILE: &str = "uninstall.exe";
 /// macOS Chrome Native Messaging registration directory below Application Support.
 pub const MACOS_CHROME_HOSTS_DIR: &str = "Google/Chrome/NativeMessagingHosts";
 /// Maximum rendered absolute path accepted from an injected root.
@@ -216,6 +222,16 @@ impl InstallPaths {
         self.local_app_data.as_deref()
     }
 
+    /// The persistent maintenance engine path the frontends invoke.
+    pub fn maintenance_engine_path(&self) -> PathBuf {
+        self.root.join(maintenance_engine_relative(self.target))
+    }
+
+    /// The persistent signed uninstaller path the Windows frontend invokes.
+    pub fn maintenance_uninstaller_path(&self) -> PathBuf {
+        self.root.join(maintenance_uninstaller_relative())
+    }
+
     /// `<root>/versions/<version>-<payload-id>` for an immutable payload.
     pub fn version_dir(&self, version: &Version, payload_id: Digest) -> PathBuf {
         self.versions
@@ -247,6 +263,38 @@ impl InstallPaths {
         }
         Ok(())
     }
+}
+
+/// The persistent maintenance engine file name for a target.
+pub const fn maintenance_engine_file(target: Target) -> &'static str {
+    match target {
+        Target::WindowsX64 => MAINTENANCE_ENGINE_FILE,
+        Target::MacosArm64 => MAINTENANCE_ENGINE_FILE_MACOS,
+    }
+}
+
+/// The persistent maintenance engine path, relative to the install root.
+///
+/// This is the one definition both frontends and the engine use: NSIS names
+/// `%LOCALAPPDATA%\Veles\NativeBridge\maintenance\veles-bridge-maintenance.exe`
+/// and the Swift app resolves
+/// `~/Library/Application Support/Veles/NativeBridge/maintenance/veles-bridge-maintenance`.
+pub fn maintenance_engine_relative(target: Target) -> String {
+    format!("{MAINTENANCE_DIR}/{}", maintenance_engine_file(target))
+}
+
+/// The persistent signed uninstaller path, relative to the install root.
+pub fn maintenance_uninstaller_relative() -> String {
+    format!("{MAINTENANCE_DIR}/{MAINTENANCE_UNINSTALLER_FILE}")
+}
+
+/// Whether one persistent maintenance path is invoked as a program.
+///
+/// The engine and the signed uninstaller are executable by role; every other
+/// maintenance file keeps the bit its authenticated inventory records.
+pub fn maintenance_relative_is_executable(target: Target, relative: &str) -> bool {
+    relative == maintenance_engine_relative(target)
+        || relative == maintenance_uninstaller_relative()
 }
 
 /// The fixed root directory name for a channel.

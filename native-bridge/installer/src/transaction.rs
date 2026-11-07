@@ -61,9 +61,10 @@ use crate::inventory::{
     verify_correspondence,
 };
 use crate::journal::{
-    JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, ManifestSnapshot, Phase,
-    PolicyCarrierRefs, PriorInstall, RECEIPT_SCHEMA_VERSION, Receipt, ReceiptState,
-    RegistrationPreimage, transaction_id,
+    JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, MAX_MAINTENANCE_PUBLICATIONS,
+    MaintenancePreimage, MaintenancePublication, ManifestSnapshot, Phase, PolicyCarrierRefs,
+    PriorInstall, RECEIPT_SCHEMA_VERSION, Receipt, ReceiptState, RegistrationPreimage,
+    transaction_id,
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry,
@@ -71,7 +72,10 @@ use crate::model::{
     canonical_json, extension_origin, parse_version, select_host,
 };
 use crate::operations::STATE_DAMAGED;
-use crate::paths::{InstallPaths, MAINTENANCE_DIR, VERSIONS_DIR};
+use crate::paths::{
+    InstallPaths, MAINTENANCE_DIR, VERSIONS_DIR, maintenance_engine_file,
+    maintenance_engine_relative,
+};
 use crate::platform::{
     AuthenticatedPackage, CarrierEntry, MAX_CARRIER_BYTES, MAX_CARRIER_ENTRIES, NativeManifest,
     OWNERSHIP_SCHEMA_VERSION, OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PackageSource,
@@ -129,6 +133,20 @@ struct Plan {
     version_relative: String,
     /// The one executable the manifest selects, relative to the version directory.
     host_relative: String,
+    /// Persistent maintenance files this transaction publishes.
+    maintenance: Vec<MaintenanceWrite>,
+}
+
+/// One persistent maintenance file to publish, with the preimage it replaces.
+struct MaintenanceWrite {
+    /// Destination below the root (`maintenance/<name>`).
+    relative: String,
+    /// Installed artifact the bytes are copied from (inside `versions/`).
+    source: String,
+    sha256: Digest,
+    size: u64,
+    executable: bool,
+    preimage: Option<MaintenancePreimage>,
 }
 
 /// Install one authenticated package.
@@ -377,6 +395,16 @@ fn release_is_usable_inner(
         receipt.payload_id,
         ownership,
     )?;
+    // The persistent maintenance files both frontends invoke are part of the
+    // installation: a missing or changed one is damage, not an optional extra.
+    for claim in &ownership.owned {
+        if claim.kind == OwnedKind::File
+            && claim.path.starts_with(&format!("{MAINTENANCE_DIR}/"))
+            && OwnedEntry::from_claim(paths, claim)?.is_none()
+        {
+            return Err(no_rollback());
+        }
+    }
     let executable_relative = format!("{version_relative}/{}", executable.path);
     let handle = ValidatedPath::new(paths, Path::new(&executable_relative), PathKind::File)?;
     platform.check_launch_permissions(&handle, true)?;
@@ -581,6 +609,10 @@ pub(crate) fn activate_retained(
         )?,
         release_policy: policy,
         created,
+        // A rollback re-activates a retained release; the persistent maintenance
+        // assets are never downgraded (the newer engine stays published and
+        // claimed), so this journal publishes nothing.
+        maintenance: Vec::new(),
     };
     journal.validate(paths)?;
     // Durable intent before the activation mutation.
@@ -1832,6 +1864,19 @@ impl Plan {
             claim_owned_entries(paths, &prior.ownership)?;
         }
 
+        // Persistent maintenance publication: both frontends invoke the engine
+        // and the signed uninstaller at fixed `maintenance/` paths, so those
+        // files are published (verified and owned) beside the immutable version
+        // copies that retain them for recovery.
+        let maintenance = maintenance_plan(
+            paths,
+            &version_relative,
+            prior.as_ref(),
+            &carrier_relative,
+            &carrier_entries,
+            package,
+        )?;
+
         // Release ordering and policy. An installed release is never replaced by
         // an older one here: an explicit rollback is the only downgrade path and
         // it has its own operation. The incoming policy is then composed against
@@ -1885,6 +1930,14 @@ impl Plan {
             true,
         ));
         created.extend(carrier_claims);
+        // A persistent file created by this transaction is removable on failure;
+        // a replacement is restored from its journaled preimage instead.
+        created.extend(
+            maintenance
+                .iter()
+                .filter(|write| write.preimage.is_none())
+                .map(MaintenanceWrite::claim),
+        );
 
         let journal = Journal {
             schema: JOURNAL_SCHEMA_VERSION,
@@ -1913,6 +1966,10 @@ impl Plan {
             policy,
             release_policy,
             created,
+            maintenance: maintenance
+                .iter()
+                .map(MaintenanceWrite::publication)
+                .collect(),
         };
         journal.validate(paths)?;
 
@@ -1930,8 +1987,191 @@ impl Plan {
             carrier_relative,
             version_relative,
             host_relative: executable.relative().to_owned(),
+            maintenance,
         })
     }
+}
+
+impl MaintenanceWrite {
+    /// The created claim of a persistent file that did not exist before.
+    fn claim(&self) -> JournalClaim {
+        JournalClaim::file(&self.relative, self.sha256, self.size, true)
+    }
+
+    /// The journaled publication record.
+    fn publication(&self) -> MaintenancePublication {
+        MaintenancePublication {
+            path: self.relative.clone(),
+            source: self.source.clone(),
+            sha256: self.sha256,
+            size: self.size,
+            executable: self.executable,
+            preimage: self.preimage.clone(),
+        }
+    }
+}
+
+/// The installed artifact that holds one release's maintenance engine.
+///
+/// On Windows the carrier *is* the engine image (`carrier.exe`); on macOS the
+/// engine is the carrier bundle's own executable. Every other payload file below
+/// `maintenance/` is published from its own immutable version copy.
+fn maintenance_engine_source(
+    paths: &InstallPaths,
+    carrier_relative: &str,
+    entries: &[CarrierEntry],
+) -> InstallResult<(String, Digest, u64)> {
+    match paths.target() {
+        crate::model::Target::WindowsX64 => {
+            let root = entries
+                .iter()
+                .find(|entry| entry.relative().is_empty() && entry.kind() == OwnedKind::File)
+                .ok_or_else(invalid_package)?;
+            Ok((
+                carrier_relative.to_owned(),
+                root.sha256().ok_or_else(invalid_package)?,
+                root.size(),
+            ))
+        }
+        crate::model::Target::MacosArm64 => {
+            let relative = format!("Contents/MacOS/{}", maintenance_engine_file(paths.target()));
+            let entry = entries
+                .iter()
+                .find(|entry| entry.relative() == relative && entry.kind() == OwnedKind::File)
+                .ok_or_else(invalid_package)?;
+            Ok((
+                format!("{carrier_relative}/{relative}"),
+                entry.sha256().ok_or_else(invalid_package)?,
+                entry.size(),
+            ))
+        }
+    }
+}
+
+/// The path tail that identifies one persistent file's retained copy.
+///
+/// The engine is retained inside its release's carrier artifact; every other
+/// maintenance file keeps its own relative path inside the version directory.
+pub(crate) fn maintenance_retained_tail(paths: &InstallPaths, relative: &str) -> String {
+    if relative == maintenance_engine_relative(paths.target()) {
+        match paths.target() {
+            crate::model::Target::WindowsX64 => package_carrier_name(paths.target()).to_owned(),
+            crate::model::Target::MacosArm64 => format!(
+                "{}/Contents/MacOS/{}",
+                package_carrier_name(paths.target()),
+                maintenance_engine_file(paths.target())
+            ),
+        }
+    } else {
+        relative.to_owned()
+    }
+}
+
+/// Compute the persistent maintenance set and the owned preimage each replaced
+/// file is restored from.
+///
+/// A present destination is only ever replaced when the prior committed receipt
+/// claims that exact path and its own retained copy still holds the claimed
+/// bytes; anything else is `foreign-state`, exactly like the registration
+/// preimage. A destination that is not owned yet and is absent is created.
+fn maintenance_plan(
+    paths: &InstallPaths,
+    version_relative: &str,
+    prior: Option<&Receipt>,
+    carrier_relative: &str,
+    carrier_entries: &[CarrierEntry],
+    package: &AuthenticatedPackage,
+) -> InstallResult<Vec<MaintenanceWrite>> {
+    let (engine_source, engine_sha256, engine_size) =
+        maintenance_engine_source(paths, carrier_relative, carrier_entries)?;
+    let mut candidates = vec![(
+        maintenance_engine_relative(paths.target()),
+        engine_source,
+        engine_sha256,
+        engine_size,
+        true,
+    )];
+    let prefix = format!("{MAINTENANCE_DIR}/");
+    for source in package.payload() {
+        if source.relative().starts_with(&prefix) {
+            candidates.push((
+                source.relative().to_owned(),
+                format!("{version_relative}/{}", source.relative()),
+                source.sha256(),
+                source.size(),
+                source.executable(),
+            ));
+        }
+    }
+    if candidates.len() > MAX_MAINTENANCE_PUBLICATIONS {
+        return Err(invalid_package());
+    }
+
+    let mut writes = Vec::with_capacity(candidates.len());
+    for (relative, source, sha256, size, executable) in candidates {
+        let destination = paths.root().join(&relative);
+        let preimage = match fs::symlink_metadata(&destination) {
+            Ok(metadata) => {
+                if !metadata.is_file() {
+                    return Err(unsafe_path());
+                }
+                let prior = prior.ok_or_else(foreign_state)?;
+                let claim = prior
+                    .ownership
+                    .owned
+                    .iter()
+                    .find(|claim| claim.kind == OwnedKind::File && claim.path == relative)
+                    .ok_or_else(foreign_state)?;
+                let claimed = claim.sha256.ok_or_else(foreign_state)?;
+                // The preimage is the retained copy of the release that published
+                // these bytes. It is selected by the exact claimed identity, never
+                // assumed to be the receipt's active version (a rollback keeps the
+                // newer maintenance assets while the older release is active).
+                let suffix = format!("/{}", maintenance_retained_tail(paths, &relative));
+                let mut preimage = None;
+                for candidate in &prior.ownership.owned {
+                    if candidate.kind != OwnedKind::File
+                        || candidate.sha256 != Some(claimed)
+                        || !candidate.path.starts_with(&format!("{VERSIONS_DIR}/"))
+                        || !candidate.path.ends_with(&suffix)
+                    {
+                        continue;
+                    }
+                    let absolute = paths.root().join(&candidate.path);
+                    let Ok(retained) = fs::symlink_metadata(&absolute) else {
+                        continue;
+                    };
+                    if !retained.is_file() {
+                        continue;
+                    }
+                    let Ok(bytes) = read_no_follow(&absolute, retained.len()) else {
+                        continue;
+                    };
+                    if bytes.len() as u64 == retained.len() && Digest::of(&bytes) == claimed {
+                        preimage = Some(MaintenancePreimage {
+                            source: candidate.path.clone(),
+                            sha256: claimed,
+                            size: retained.len(),
+                            executable,
+                        });
+                        break;
+                    }
+                }
+                Some(preimage.ok_or_else(recovery_required)?)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(_) => return Err(io_failure()),
+        };
+        writes.push(MaintenanceWrite {
+            relative,
+            source,
+            sha256,
+            size,
+            executable,
+            preimage,
+        });
+    }
+    Ok(writes)
 }
 
 /// The transaction body, after the Prepared journal is durable.
@@ -1942,6 +2182,10 @@ fn run(
     package: &AuthenticatedPackage,
 ) -> InstallResult<()> {
     stage_payload(platform, paths, plan, package)?;
+    // The persistent maintenance engine and uninstaller are published from the
+    // staged (authenticated) artifacts. They are written while the journal is
+    // still `Prepared`, so a crash leaves claims that are removable or restorable.
+    publish_maintenance(platform, paths, plan)?;
     // Every staging write completed and read back: no file may have been left as
     // a short prefix any more.
     let journal = plan
@@ -2104,6 +2348,94 @@ fn stage_payload(
     Ok(())
 }
 
+/// Publish the persistent maintenance files the frontends invoke.
+///
+/// The bytes are copied from the just-staged immutable artifacts (never from the
+/// download), verified against the identity the journal recorded, written
+/// durably, given their launch permission and read back exactly. A created file is
+/// removed on failure; a replaced one is restored from its journaled preimage.
+fn publish_maintenance(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    plan: &Plan,
+) -> InstallResult<()> {
+    for write in &plan.maintenance {
+        let bytes = read_no_follow(&paths.root().join(&write.source), write.size)
+            .map_err(|_| io_failure())?;
+        if bytes.len() as u64 != write.size || Digest::of(&bytes) != write.sha256 {
+            return Err(io_failure());
+        }
+        let handle = match write.preimage {
+            None => {
+                let handle =
+                    ValidatedPath::new(paths, Path::new(&write.relative), PathKind::NewFile)?;
+                platform.write_durable(&handle, &bytes)?;
+                handle
+            }
+            Some(_) => {
+                // Never write through an existing inode: stage a sibling and
+                // rename it over the owned preimage.
+                let handle = ValidatedPath::new(paths, Path::new(&write.relative), PathKind::File)?;
+                platform.replace_durable(&handle, &bytes)?;
+                handle
+            }
+        };
+        let written = handle.adopt(PathKind::File)?;
+        platform.apply_launch_permissions(&written, write.executable)?;
+        let published = read_no_follow(&paths.root().join(&write.relative), write.size)
+            .map_err(|_| io_failure())?;
+        if published.len() as u64 != write.size || Digest::of(&published) != write.sha256 {
+            return Err(io_failure());
+        }
+    }
+    Ok(())
+}
+
+/// Restore every replaced persistent maintenance file from its retained preimage.
+///
+/// Called on the failure/rollback path before this transaction's created assets
+/// are removed. The preimage bytes are read from the retained version directory,
+/// verified against the journaled identity, written durably through the same
+/// owned-preimage rules as a first publication, and read back.
+fn restore_maintenance_preimages(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    journal: &Journal,
+) -> InstallResult<()> {
+    for publication in &journal.maintenance {
+        let Some(preimage) = &publication.preimage else {
+            continue;
+        };
+        let bytes = read_no_follow(&paths.root().join(&preimage.source), preimage.size)
+            .map_err(|_| recovery_required())?;
+        if bytes.len() as u64 != preimage.size || Digest::of(&bytes) != preimage.sha256 {
+            return Err(recovery_required());
+        }
+        let destination = paths.root().join(&publication.path);
+        let handle = match fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.is_file() => {
+                ValidatedPath::new(paths, Path::new(&publication.path), PathKind::File)?
+            }
+            Ok(_) => return Err(foreign_state()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                ValidatedPath::new(paths, Path::new(&publication.path), PathKind::NewFile)?
+            }
+            Err(_) => return Err(io_failure()),
+        };
+        match handle.kind() {
+            PathKind::NewFile => platform.write_durable(&handle, &bytes)?,
+            _ => platform.replace_durable(&handle, &bytes)?,
+        }
+        let written = handle.adopt(PathKind::File)?;
+        platform.apply_launch_permissions(&written, preimage.executable)?;
+        let restored = read_no_follow(&destination, preimage.size).map_err(|_| io_failure())?;
+        if restored.len() as u64 != preimage.size || Digest::of(&restored) != preimage.sha256 {
+            return Err(io_failure());
+        }
+    }
+    Ok(())
+}
+
 /// Validate the platform-reported entries of one signed carrier artifact.
 ///
 /// The root entry must be the artifact itself, the set must be bounded, and the
@@ -2160,6 +2492,10 @@ fn restore_previous(
     paths: &InstallPaths,
     journal: &Journal,
 ) -> InstallResult<()> {
+    // The persistent maintenance files are restored first: the previous release
+    // cannot verify as whole while one of its claimed files still holds this
+    // transaction's newer bytes.
+    restore_maintenance_preimages(platform, paths, journal)?;
     let live = platform.read_registration(paths)?;
     let live_digest = live.as_ref().map(Registration::manifest_digest);
 
@@ -2332,9 +2668,13 @@ fn remove_created_assets(
     let mut entries = Vec::with_capacity(journal.created.len());
     for claim in &journal.created {
         let entry = if claim.incomplete {
-            if claim.kind != OwnedKind::File || !claim.path.starts_with(&own_prefix) {
+            let own_persistent = claim.path.starts_with(&format!("{MAINTENANCE_DIR}/"));
+            if claim.kind != OwnedKind::File
+                || !(claim.path.starts_with(&own_prefix) || own_persistent)
+            {
                 // Only this transaction's own files may be removed without a
-                // digest match.
+                // digest match: a staged version file or a persistent maintenance
+                // file it was writing when it died.
                 return Err(foreign_state());
             }
             let size = claim.size.ok_or_else(foreign_state)?;
@@ -2517,6 +2857,12 @@ fn build_receipt(
     journal: &Journal,
     prior: Option<&Receipt>,
 ) -> InstallResult<Receipt> {
+    let replaced: BTreeSet<&str> = journal
+        .maintenance
+        .iter()
+        .filter(|publication| publication.preimage.is_some())
+        .map(|publication| publication.path.as_str())
+        .collect();
     let mut owned: Vec<OwnedClaim> = Vec::new();
     if let Some(prior) = prior
         && prior.transaction_id != journal.transaction_id
@@ -2538,7 +2884,24 @@ fn build_receipt(
         keep.push(
             paths.version_dir_relative(&parse_version(&journal.version)?, journal.payload_id),
         );
-        for entry in claim_owned_entries(paths, &prior.ownership)? {
+        // A persistent file this transaction replaced already holds the new
+        // bytes: it is not carried forward from the prior receipt, and its old
+        // claim must not be re-verified (the final claim comes from the journal).
+        let carried = OwnershipRecord {
+            schema: OWNERSHIP_SCHEMA_VERSION,
+            target: prior.ownership.target,
+            channel: prior.ownership.channel,
+            root: prior.ownership.root.clone(),
+            manifest_sha256: prior.ownership.manifest_sha256,
+            owned: prior
+                .ownership
+                .owned
+                .iter()
+                .filter(|claim| !replaced.contains(claim.path.as_str()))
+                .cloned()
+                .collect(),
+        };
+        for entry in claim_owned_entries(paths, &carried)? {
             let claim = entry.claim();
             let in_versions = claim.path.starts_with(&format!("{VERSIONS_DIR}/"));
             let retained_version = keep.iter().any(|retained| {
@@ -2550,6 +2913,17 @@ fn build_receipt(
         }
     }
     owned.extend(journal.created.iter().map(JournalClaim::as_owned));
+    owned.extend(
+        journal
+            .maintenance
+            .iter()
+            .filter(|publication| publication.preimage.is_some())
+            .map(|publication| OwnedClaim {
+                path: publication.path.clone(),
+                kind: OwnedKind::File,
+                sha256: Some(publication.sha256),
+            }),
+    );
     owned.sort_by(|left, right| left.path.cmp(&right.path));
     owned.dedup_by(|left, right| left.path == right.path);
 
@@ -2597,6 +2971,20 @@ fn verify_created_assets(
     let entries = claim_owned_entries(paths, &journal.ownership_record())?;
     if entries.len() != journal.created.len() {
         return Err(io_failure());
+    }
+    // A replaced persistent file is not in the created set, but the activation may
+    // not be completed unless it holds exactly the journaled identity.
+    for publication in &journal.maintenance {
+        let claim = OwnedClaim {
+            path: publication.path.clone(),
+            kind: OwnedKind::File,
+            sha256: Some(publication.sha256),
+        };
+        let entry = OwnedEntry::from_claim(paths, &claim)?.ok_or_else(io_failure)?;
+        let metadata = fs::symlink_metadata(entry.path().rendered()).map_err(|_| io_failure())?;
+        if metadata.len() != publication.size {
+            return Err(io_failure());
+        }
     }
     let manifest = parse_manifest(journal.manifest.bytes())?;
     let executable = fs::canonicalize(manifest.executable()?).map_err(|_| unsafe_path())?;

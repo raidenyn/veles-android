@@ -53,11 +53,16 @@ use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, Operation, WarningCode,
     canonical_json, select_host,
 };
-use crate::paths::{InstallPaths, JOURNAL_FILE, LOCK_FILE, RECEIPT_FILE, STAGING_DIR, STATE_DIR};
+use crate::paths::{
+    InstallPaths, JOURNAL_FILE, LOCK_FILE, MAINTENANCE_DIR, RECEIPT_FILE, STAGING_DIR, STATE_DIR,
+    VERSIONS_DIR, maintenance_engine_file, maintenance_engine_relative,
+    maintenance_relative_is_executable,
+};
 use crate::platform::{
     AuthenticatedPackage, AuthenticatedSource, OWNERSHIP_SCHEMA_VERSION, OwnedEntry, OwnedKind,
     OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration, StateDocument,
-    ValidatedPath, read_no_follow, registration_is_owned, require_quiescent_within,
+    ValidatedPath, package_carrier_name, read_no_follow, registration_is_owned,
+    require_quiescent_within,
 };
 use crate::policy::{authorize_package_policy, is_no_broader_than};
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
@@ -404,7 +409,7 @@ fn repair(
 
     // A repair mutates the installed tree, so it requires quiescence first.
     require_quiescent_within(platform, paths, quiescence)?;
-    plan.restore(platform, paths)?;
+    plan.restore(platform, paths, package.package().path())?;
 
     // The restored host is what Chrome will launch. Package-form approval was an
     // assessment of the *package* copy; the installed form is assessed here, under
@@ -475,10 +480,25 @@ fn repair(
     ))
 }
 
-/// The validated set of authenticated files a repair may restore.
+/// Where a repair takes the exact bytes of one managed file.
+enum RepairSource<'a> {
+    /// The same-version authenticated package itself.
+    Package(&'a AuthenticatedSource),
+    /// A retained copy inside an immutable version directory (an older or newer
+    /// release the receipt still owns, used when the persistent maintenance asset
+    /// belongs to a release other than the one being repaired).
+    Retained { relative: String },
+    /// The package's own signed carrier image, for the persistent engine.
+    PackageImage { relative: String },
+}
+
+/// One managed file a repair may restore, bound to its exact identity.
 struct RepairedFile<'a> {
     relative: String,
-    source: &'a AuthenticatedSource,
+    sha256: Digest,
+    size: u64,
+    executable: bool,
+    source: RepairSource<'a>,
 }
 
 /// The exact paths and bytes a repair may write, validated before any mutation.
@@ -581,7 +601,34 @@ impl<'a> RepairPlan<'a> {
             if !claimed(&relative, OwnedKind::File, Some(source.sha256())) {
                 return Err(foreign_state());
             }
-            files.push(RepairedFile { relative, source });
+            files.push(RepairedFile {
+                relative,
+                sha256: source.sha256(),
+                size: source.size(),
+                executable: source.executable(),
+                source: RepairSource::Package(source),
+            });
+        }
+        // The persistent maintenance files both frontends invoke are owned claims
+        // of the receipt too. They are restored from the same-version package when
+        // it carries the claimed bytes, otherwise from the retained copy of the
+        // release that published them (a rollback never downgrades them).
+        for claim in &receipt.ownership.owned {
+            if claim.kind != OwnedKind::File
+                || !claim.path.starts_with(&format!("{MAINTENANCE_DIR}/"))
+            {
+                continue;
+            }
+            let sha256 = claim.sha256.ok_or_else(foreign_state)?;
+            let (source, size, executable) =
+                maintenance_repair_source(paths, package, receipt, &claim.path, sha256)?;
+            files.push(RepairedFile {
+                relative: claim.path.clone(),
+                sha256,
+                size,
+                executable,
+                source,
+            });
         }
 
         Ok(Self {
@@ -598,7 +645,12 @@ impl<'a> RepairPlan<'a> {
 
     /// Create a missing claimed directory, verify an existing one, then restore
     /// only the files whose exact bytes are missing or damaged.
-    fn restore(&self, platform: &impl Platform, paths: &InstallPaths) -> InstallResult<()> {
+    fn restore(
+        &self,
+        platform: &impl Platform,
+        paths: &InstallPaths,
+        package_root: &Path,
+    ) -> InstallResult<()> {
         for directory in &self.directories {
             match fs::symlink_metadata(paths.root().join(directory)) {
                 Ok(_) => {
@@ -613,13 +665,14 @@ impl<'a> RepairPlan<'a> {
             }
         }
         for file in &self.files {
-            let bytes = read_source(file.source)?;
+            let bytes =
+                repair_source_bytes(paths, package_root, &file.source, file.size, file.sha256)?;
             restore_bytes(
                 platform,
                 paths,
                 &file.relative,
-                file.source.size(),
-                file.source.sha256(),
+                file.size,
+                file.sha256,
                 &bytes,
             )?;
             // Intact bytes with a lost launch permission are damage too: the
@@ -627,10 +680,10 @@ impl<'a> RepairPlan<'a> {
             // the file's own handle.
             let handle = ValidatedPath::new(paths, Path::new(&file.relative), PathKind::File)?;
             if platform
-                .check_launch_permissions(&handle, file.source.executable())
+                .check_launch_permissions(&handle, file.executable)
                 .is_err()
             {
-                platform.apply_launch_permissions(&handle, file.source.executable())?;
+                platform.apply_launch_permissions(&handle, file.executable)?;
             }
         }
         restore_bytes(
@@ -698,6 +751,119 @@ fn restore_bytes(
     // must not rewrite the linked data. `replace_durable` stages new bytes into a
     // fresh sibling and renames it over the target.
     platform.replace_durable(&handle, bytes)
+}
+
+/// The bytes one managed file is restored from, re-read immediately before the write.
+fn repair_source_bytes(
+    paths: &InstallPaths,
+    package_root: &Path,
+    source: &RepairSource<'_>,
+    size: u64,
+    sha256: Digest,
+) -> InstallResult<Vec<u8>> {
+    let needed = || InstallFailure::new(FailureCode::RepairPackageRequired);
+    let bytes = match source {
+        RepairSource::Package(source) => return read_source(source),
+        RepairSource::Retained { relative } => {
+            read_no_follow(&paths.root().join(relative), size).map_err(|_| needed())?
+        }
+        RepairSource::PackageImage { relative } => {
+            read_no_follow(&package_root.join(relative), size).map_err(|_| needed())?
+        }
+    };
+    if bytes.len() as u64 != size || Digest::of(&bytes) != sha256 {
+        return Err(needed());
+    }
+    Ok(bytes)
+}
+
+/// Where the exact claimed bytes of one persistent maintenance file live.
+///
+/// Preference: the same-version package's authenticated payload, then a retained
+/// copy of any release the receipt still owns (a rollback keeps the newer engine),
+/// then the package's own signed carrier image (the persistent engine on a fresh
+/// installation). No source means a fresh signed download is required.
+fn maintenance_repair_source<'a>(
+    paths: &InstallPaths,
+    package: &'a AuthenticatedPackage,
+    receipt: &Receipt,
+    relative: &str,
+    sha256: Digest,
+) -> InstallResult<(RepairSource<'a>, u64, bool)> {
+    if let Some(source) = package
+        .payload()
+        .iter()
+        .find(|source| source.relative() == relative && source.sha256() == sha256)
+    {
+        return Ok((
+            RepairSource::Package(source),
+            source.size(),
+            source.executable(),
+        ));
+    }
+    let engine = relative == maintenance_engine_relative(paths.target());
+    let tail = if engine {
+        match paths.target() {
+            crate::model::Target::WindowsX64 => package_carrier_name(paths.target()).to_owned(),
+            crate::model::Target::MacosArm64 => format!(
+                "{}/Contents/MacOS/{}",
+                package_carrier_name(paths.target()),
+                maintenance_engine_file(paths.target())
+            ),
+        }
+    } else {
+        relative.to_owned()
+    };
+    let suffix = format!("/{tail}");
+    for claim in &receipt.ownership.owned {
+        if claim.kind != OwnedKind::File
+            || claim.sha256 != Some(sha256)
+            || !claim.path.starts_with(&format!("{VERSIONS_DIR}/"))
+            || !claim.path.ends_with(&suffix)
+        {
+            continue;
+        }
+        match read_no_follow(
+            &paths.root().join(&claim.path),
+            crate::model::MAX_INVENTORY_BYTES,
+        ) {
+            Ok(bytes) if Digest::of(&bytes) == sha256 => {
+                let size = bytes.len() as u64;
+                let executable = maintenance_relative_is_executable(paths.target(), relative);
+                return Ok((
+                    RepairSource::Retained {
+                        relative: claim.path.clone(),
+                    },
+                    size,
+                    executable,
+                ));
+            }
+            // A retained copy that no longer verifies is not a repair source; a
+            // later copy, the package image or the signed download may still be.
+            _ => continue,
+        }
+    }
+    if engine {
+        let package_relative = match paths.target() {
+            crate::model::Target::WindowsX64 => package_carrier_name(paths.target()).to_owned(),
+            crate::model::Target::MacosArm64 => tail.clone(),
+        };
+        if let Ok(bytes) = read_no_follow(
+            &package.package().path().join(&package_relative),
+            crate::model::MAX_INVENTORY_BYTES,
+        ) && Digest::of(&bytes) == sha256
+        {
+            let size = bytes.len() as u64;
+            return Ok((
+                RepairSource::PackageImage {
+                    relative: package_relative,
+                },
+                size,
+                true,
+            ));
+        }
+    }
+    Err(InstallFailure::new(FailureCode::RepairPackageRequired))
 }
 
 /// Re-read an authenticated package source immediately before restoring it.
@@ -1067,6 +1233,8 @@ fn uninstall_journal(
         policy: receipt.policy.clone(),
         release_policy: receipt.release_policy.clone(),
         created: receipt.ownership.owned.iter().map(removal_claim).collect(),
+        // An uninstall only removes; it publishes no maintenance file.
+        maintenance: Vec::new(),
     })
 }
 

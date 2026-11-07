@@ -41,6 +41,7 @@
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::inventory::normalize_relative_path;
 use crate::model::{
     Channel, Digest, FailureCode, InstallFailure, InstallResult, MAX_DOCUMENT_BYTES,
     MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PUBLISHER_BYTES, Operation, ReleasePolicy,
@@ -413,6 +414,52 @@ impl JournalClaim {
     }
 }
 
+/// One persistent maintenance file a transaction publishes (OTP-25 F6).
+///
+/// The engine and the signed uninstaller live *inside* the immutable version
+/// directory as retained recovery assets, and are also published to the stable
+/// `maintenance/` paths both frontends invoke. The publication is journaled with
+/// the exact identity it must produce and, when it replaces an owned file, the
+/// exact retained preimage a failed activation restores.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaintenancePublication {
+    /// Persistent path below the root (`maintenance/<name>`).
+    pub path: String,
+    /// The installed artifact the bytes are copied from (inside `versions/`).
+    pub source: String,
+    /// Exact SHA-256 the published file holds.
+    pub sha256: Digest,
+    /// Exact size the published file holds.
+    pub size: u64,
+    /// Whether the published file keeps its launch permission.
+    pub executable: bool,
+    /// The owned file this publication replaces, or `None` when the
+    /// destination was absent (the file is then one of the created claims).
+    pub preimage: Option<MaintenancePreimage>,
+}
+
+/// The exact bytes a replaced persistent file held before this transaction.
+///
+/// The bytes are not copied into the journal: they stay in the retained version
+/// directory, and the journal records the identity and location that recovery
+/// must verify and restore from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaintenancePreimage {
+    /// Retained copy below the root (`versions/<version>-<payload-id>/...`).
+    pub source: String,
+    /// Exact SHA-256 of the preimage bytes.
+    pub sha256: Digest,
+    /// Exact size of the preimage bytes.
+    pub size: u64,
+    /// Whether the preimage kept its launch permission.
+    pub executable: bool,
+}
+
+/// Bound on the persistent maintenance files one transaction may publish.
+pub const MAX_MAINTENANCE_PUBLICATIONS: usize = 16;
+
 /// The durable journal slot, as found by [`Journal::load`].
 #[derive(Debug, Clone)]
 pub enum JournalState {
@@ -494,6 +541,10 @@ pub struct Journal {
     pub release_policy: ReleasePolicy,
     /// Paths this transaction created, relative to the root.
     pub created: Vec<JournalClaim>,
+    /// Persistent maintenance files this transaction published. Older journals
+    /// (before F6) carry none and still parse.
+    #[serde(default)]
+    pub maintenance: Vec<MaintenancePublication>,
 }
 
 impl Journal {
@@ -567,10 +618,80 @@ impl Journal {
         // in-root, in-scope (`versions/`/`maintenance/`), bounded, duplicate-free
         // and kind/digest consistent.
         self.ownership_record().validate(paths)?;
+        self.validate_maintenance(paths)?;
         // The claim set contributes to the document bound: a journal whose
         // inventory would not fit is invalid, not merely unwritable.
         if self.to_bytes()?.len() > MAX_DOCUMENT_BYTES {
             return Err(invalid_input());
+        }
+        Ok(())
+    }
+
+    /// Validate the persistent maintenance publications against the created set.
+    ///
+    /// A created publication is also a created claim (removal on failure); a
+    /// replacement is not created by this transaction and must carry its exact
+    /// retained preimage instead. Both paths stay in scope and duplicate-free.
+    fn validate_maintenance(&self, paths: &InstallPaths) -> InstallResult<()> {
+        if self.maintenance.len() > MAX_MAINTENANCE_PUBLICATIONS {
+            return Err(invalid_input());
+        }
+        let mut seen = std::collections::HashSet::with_capacity(self.maintenance.len());
+        for publication in &self.maintenance {
+            let path = normalize_relative_path(&publication.path).map_err(|_| invalid_input())?;
+            let source =
+                normalize_relative_path(&publication.source).map_err(|_| invalid_input())?;
+            if !path.starts_with(&format!("{}/", crate::paths::MAINTENANCE_DIR))
+                || !source.starts_with(&format!("{}/", crate::paths::VERSIONS_DIR))
+                || path == source
+                || publication.size > MAX_INVENTORY_BYTES
+                || !seen.insert(path.to_lowercase())
+            {
+                return Err(invalid_input());
+            }
+            let created = self
+                .created
+                .iter()
+                .filter(|claim| claim.path == publication.path)
+                .collect::<Vec<_>>();
+            match &publication.preimage {
+                None => {
+                    let claim = created.first().ok_or_else(invalid_input)?;
+                    if claim.kind != OwnedKind::File
+                        || claim.sha256 != Some(publication.sha256)
+                        || claim.size != Some(publication.size)
+                        || created.len() != 1
+                    {
+                        return Err(invalid_input());
+                    }
+                }
+                Some(preimage) => {
+                    let source =
+                        normalize_relative_path(&preimage.source).map_err(|_| invalid_input())?;
+                    if !created.is_empty()
+                        || !source.starts_with(&format!("{}/", crate::paths::VERSIONS_DIR))
+                        || preimage.size > MAX_INVENTORY_BYTES
+                    {
+                        return Err(invalid_input());
+                    }
+                    // The preimage names a retained path this layout validates.
+                    OwnershipRecord {
+                        schema: OWNERSHIP_SCHEMA_VERSION,
+                        target: self.target,
+                        channel: self.channel,
+                        root: self.root.clone(),
+                        manifest_sha256: self.manifest.sha256(),
+                        owned: vec![OwnedClaim {
+                            path: source,
+                            kind: OwnedKind::File,
+                            sha256: Some(preimage.sha256),
+                        }],
+                    }
+                    .validate(paths)?;
+                }
+            }
+            // The destination is a fixed maintenance path; the scope check above
+            // only admits `maintenance/`.
         }
         Ok(())
     }

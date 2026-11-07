@@ -530,6 +530,7 @@ impl Fixture {
                 HOST_V2.len() as u64,
                 false,
             )],
+            maintenance: Vec::new(),
         }
     }
 }
@@ -692,6 +693,15 @@ const REPLACE_FILE_POINTS: [&str; 2] = [
     "replace_file: revalidated, live entry untouched",
     "replace_file: renamed, parent not flushed",
 ];
+/// The crash points of a staged replacement of an owned file (`replace_durable`):
+/// the persistent maintenance assets an upgrade replaces. Recorded under
+/// `WriteDurable`, because it is the same durable-write boundary to the caller.
+const REPLACE_DURABLE_POINTS: [&str; 4] = [
+    "replace_durable: staging sibling created, empty",
+    "replace_durable: staging bytes written, not flushed",
+    "replace_durable: staged and verified, live entry untouched",
+    "replace_durable: renamed, parent not flushed",
+];
 
 /// The named crash points each mutation of a clean **install** crosses on the
 /// portable adapter, written out by hand. This is the inventory the crash test is
@@ -745,10 +755,20 @@ fn assert_boundary_inventory(platform: &FakePlatform, label: &str) {
                 format!("{}: {}", crossing.primitive, crossing.point)
             })
             .collect();
-        assert_eq!(
-            observed,
-            expected_boundaries(*call),
-            "{label}: mutation {} ({call:?}) crossed an unexpected set of crash points",
+        // `WriteDurable` is recorded for both a fresh durable write and a staged
+        // replacement of an owned file (the persistent maintenance assets on an
+        // upgrade), so it crosses exactly one of the two hand-written sets.
+        let accepted = if *call == PlatformCall::WriteDurable {
+            vec![
+                WRITE_DURABLE_POINTS.to_vec(),
+                REPLACE_DURABLE_POINTS.to_vec(),
+            ]
+        } else {
+            vec![expected_boundaries(*call)]
+        };
+        assert!(
+            accepted.iter().any(|expected| observed == *expected),
+            "{label}: mutation {} ({call:?}) crossed an unexpected set of crash points: {observed:?}",
             index + 1
         );
     }
@@ -968,6 +988,7 @@ fn journal_rejects_unknown_phase_and_unbound_manifest() {
                 true,
             ),
         ],
+        maintenance: Vec::new(),
     };
 
     let bytes = journal.to_bytes().expect("bounded journal document");

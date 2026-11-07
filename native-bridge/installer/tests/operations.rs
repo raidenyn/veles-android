@@ -255,6 +255,15 @@ fn build_package_from(
             let resources = root.join("carrier.app/Contents/Resources");
             fs::create_dir_all(&resources).expect("carrier bundle");
             fs::write(resources.join("veles-policy-carrier"), &carrier).expect("carrier resource");
+            // The carrier bundle's own engine: the persistent maintenance engine is
+            // published from this authenticated artifact.
+            let macos = root.join("carrier.app/Contents/MacOS");
+            fs::create_dir_all(&macos).expect("carrier executable directory");
+            fs::write(
+                macos.join("veles-bridge-maintenance"),
+                b"macOS maintenance engine",
+            )
+            .expect("carrier engine");
         }
     }
     let proof = TrustProof::new(signer, assessment, carrier).expect("fixture trust proof");
@@ -448,6 +457,36 @@ impl Fixture {
         );
         self.proofs.borrow_mut().push(package.proof.clone());
         package
+    }
+
+    /// A package built from an explicit payload list, for maintenance-path fixtures.
+    fn package_from(
+        &self,
+        name: &str,
+        version: &str,
+        files: &[(&str, &[u8], bool)],
+        policy: ReleasePolicy,
+    ) -> Package {
+        let package = build_package_from(
+            &self.temp,
+            self.target,
+            name,
+            version,
+            files,
+            policy,
+            PUBLISHER,
+            (1, 2),
+        );
+        self.proofs.borrow_mut().push(package.proof.clone());
+        package
+    }
+
+    /// A platform with extra faults but the same vouched-for releases.
+    fn platform_with(&self, faults: Faults) -> FakePlatform {
+        FakePlatform::with_faults(Faults {
+            trust_by_carrier: self.proofs.borrow().clone(),
+            ..faults
+        })
     }
 
     fn platform(&self) -> FakePlatform {
@@ -5762,4 +5801,314 @@ fn an_interrupted_removal_is_finished_only_by_uninstall_never_by_the_recovery_pr
     let report = run_operation(&platform, &fixture.paths, Operation::Uninstall, None)
         .expect("uninstall resumes");
     assert_eq!(report.state, STATE_UNINSTALLED);
+}
+
+// ---------------------------------------------------------------------------
+// Persistent maintenance publication (OTP-25 F6)
+// ---------------------------------------------------------------------------
+
+/// The uninstaller fixture the Windows package ships below `maintenance/`.
+const UNINSTALLER_V1: &[u8] = b"the signed uninstaller of release one";
+const UNINSTALLER_V2: &[u8] = b"the signed uninstaller of release two";
+
+fn maintenance_files(uninstaller: &'static [u8]) -> Vec<(&'static str, &'static [u8], bool)> {
+    vec![
+        ("host.exe", HOST_V1, true),
+        ("licenses/NOTICE", NOTICE_V1, false),
+        ("maintenance/uninstall.exe", uninstaller, true),
+    ]
+}
+
+fn claimed(receipt: &Receipt, relative: &str) -> Option<Digest> {
+    receipt
+        .ownership
+        .owned
+        .iter()
+        .find(|claim| {
+            claim.kind == veles_bridge_installer::OwnedKind::File && claim.path == relative
+        })
+        .and_then(|claim| claim.sha256)
+}
+
+/// The installed tree advertises the persistent maintenance paths the frontends
+/// invoke: the engine itself and the signed uninstaller. They are published (not
+/// only buried inside `versions/`), verified and owned by the receipt.
+#[test]
+fn install_publishes_the_maintenance_engine_and_uninstaller_to_the_advertised_paths() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let payload = package.descriptor.payload_id;
+    fixture.install(&package);
+
+    let engine_relative = "maintenance/veles-bridge-maintenance.exe";
+    let uninstaller_relative = "maintenance/uninstall.exe";
+    let engine =
+        fs::read(paths.root().join(engine_relative)).expect("the persistent engine exists");
+    assert_eq!(
+        engine,
+        package.proof.carrier(),
+        "the engine is the authenticated carrier image, byte for byte"
+    );
+    assert_eq!(
+        fs::read(paths.root().join(uninstaller_relative)).expect("the persistent uninstaller"),
+        UNINSTALLER_V1
+    );
+    let committed = receipt(paths).expect("the receipt is committed");
+    for (relative, bytes) in [
+        (engine_relative, package.proof.carrier()),
+        (uninstaller_relative, UNINSTALLER_V1),
+    ] {
+        assert_eq!(
+            claimed(&committed, relative),
+            Some(Digest::of(bytes)),
+            "{relative} is a verified owned claim"
+        );
+    }
+    // The retained recovery asset is still inside the immutable version too.
+    let installed = version_dir(paths, "1.0.0", payload);
+    assert_eq!(
+        fs::read(installed.join(uninstaller_relative)).expect("the version copy"),
+        UNINSTALLER_V1
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for relative in [engine_relative, uninstaller_relative] {
+            assert_eq!(
+                fs::metadata(paths.root().join(relative))
+                    .expect("published file")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700,
+                "{relative} keeps its owner-only launch permission"
+            );
+        }
+    }
+}
+
+/// macOS publishes the engine from its authenticated carrier bundle at the one
+/// path the Swift frontend resolves.
+#[test]
+fn macos_publishes_the_maintenance_engine_from_the_carrier_bundle() {
+    let fixture = Fixture::macos();
+    let paths = &fixture.paths;
+    let package = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    assert_eq!(
+        fs::read(paths.root().join("maintenance/veles-bridge-maintenance"))
+            .expect("the persistent engine exists"),
+        b"macOS maintenance engine"
+    );
+    let committed = receipt(paths).expect("the receipt is committed");
+    assert_eq!(
+        claimed(&committed, "maintenance/veles-bridge-maintenance"),
+        Some(Digest::of(b"macOS maintenance engine"))
+    );
+}
+
+/// A file this installer does not own at a persistent path is never replaced:
+/// the owned-preimage rule applies to maintenance publication exactly as it does
+/// to the registration.
+#[test]
+fn a_foreign_file_at_a_persistent_maintenance_path_blocks_the_install() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    fs::create_dir_all(paths.maintenance()).expect("private maintenance directory");
+    let foreign_path = paths.root().join("maintenance/uninstall.exe");
+    fs::write(&foreign_path, b"another product's file").expect("foreign file");
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let payload = package.descriptor.payload_id;
+    let before = snapshot(fixture.temp.path());
+    let platform = fixture.platform();
+    let failure = run_operation(
+        &platform,
+        paths,
+        Operation::Install,
+        Some(authenticate(&package)),
+    )
+    .expect_err("a foreign persistent path is not replaced");
+    assert_eq!(failure.code, FailureCode::ForeignState);
+    assert_eq!(
+        fs::read(&foreign_path).expect("the foreign file is preserved"),
+        b"another product's file"
+    );
+    assert!(
+        !version_dir(paths, "1.0.0", payload).exists(),
+        "nothing is staged when the owned preimage is not established"
+    );
+    assert!(
+        receipt(paths).is_none(),
+        "no receipt is committed for a refused install"
+    );
+    assert!(!paths.registration_path().exists());
+    let _ = before;
+}
+
+/// An upgrade replaces the persistent assets; a failed activation afterwards
+/// restores the previous release's exact bytes, never leaving the newer engine
+/// advertised next to an older installation.
+#[test]
+fn an_upgrade_replaces_the_persistent_assets_and_a_failed_activation_restores_them() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let v2 = fixture.package_from(
+        "v2",
+        "2.0.0",
+        &maintenance_files(UNINSTALLER_V2),
+        policy(1, Vec::new(), Vec::new()),
+    );
+
+    // The OS denies the installed host after publication and before activation.
+    let platform = fixture.platform_with(Faults {
+        host_state: HostState::Quiescent,
+        host: Some(veles_bridge_installer::HostFault::Denied),
+        ..Faults::default()
+    });
+    let failure = run_operation(
+        &platform,
+        paths,
+        Operation::Install,
+        Some(authenticate(&v2)),
+    )
+    .expect_err("a denied host assessment fails the activation");
+    assert_eq!(failure.code, FailureCode::TrustDenied);
+    assert_eq!(
+        fs::read(paths.root().join("maintenance/uninstall.exe")).expect("restored uninstaller"),
+        UNINSTALLER_V1,
+        "the failed upgrade restored the previous persistent uninstaller"
+    );
+    assert_eq!(
+        receipt(paths)
+            .expect("the previous receipt survives")
+            .version,
+        "1.0.0"
+    );
+
+    // The honest upgrade publishes the newer assets and claims them.
+    fixture.install(&v2);
+    assert_eq!(
+        fs::read(paths.root().join("maintenance/uninstall.exe")).expect("upgraded uninstaller"),
+        UNINSTALLER_V2
+    );
+    let committed = receipt(paths).expect("the receipt is committed");
+    assert_eq!(committed.version, "2.0.0");
+    assert_eq!(
+        claimed(&committed, "maintenance/uninstall.exe"),
+        Some(Digest::of(UNINSTALLER_V2))
+    );
+}
+
+/// Repair restores a damaged persistent maintenance file from the same-version
+/// authenticated package, and inspect tells the truth in between.
+#[test]
+fn repair_restores_a_damaged_persistent_uninstaller() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    let persistent = paths.root().join("maintenance/uninstall.exe");
+    fs::write(&persistent, b"damaged by a partial overwrite").expect("damaged persistent file");
+    let inspected = run_operation(&fixture.platform(), paths, Operation::Inspect, None)
+        .expect("inspect reports the damage");
+    assert_eq!(inspected.state, STATE_DAMAGED);
+
+    let repaired = run_operation(
+        &fixture.platform(),
+        paths,
+        Operation::Repair,
+        Some(authenticate(&package)),
+    )
+    .expect("the same-version package repairs the persistent asset");
+    assert_eq!(repaired.state, STATE_REPAIRED);
+    assert_eq!(
+        fs::read(&persistent).expect("restored bytes"),
+        UNINSTALLER_V1
+    );
+}
+
+/// After a rollback the persistent engine is the newer release's (it is never
+/// downgraded); a later repair still restores that claimed identity from the
+/// retained copy rather than refusing the whole installation.
+#[test]
+fn repair_restores_a_damaged_persistent_asset_of_a_retained_newer_release() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    // The payload identity is fixed by the bytes, so the provisional build names
+    // the rollback-eligible identity the real release's policy must carry.
+    let provisional = fixture.package_from(
+        "v1-provisional",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let p1 = provisional.descriptor.payload_id;
+    let v1 = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), vec![p1]),
+    );
+    assert_eq!(v1.descriptor.payload_id, p1);
+    fixture.install(&v1);
+    let v2 = fixture.package_from(
+        "v2",
+        "2.0.0",
+        &maintenance_files(UNINSTALLER_V2),
+        policy(1, Vec::new(), vec![p1]),
+    );
+    fixture.install(&v2);
+    let rolled = run_operation(&fixture.platform(), paths, Operation::Rollback, None)
+        .expect("the retained release rolls back");
+    assert_eq!(rolled.state, STATE_ROLLED_BACK);
+    assert_eq!(
+        fs::read(paths.root().join("maintenance/uninstall.exe")).expect("the newer uninstaller"),
+        UNINSTALLER_V2,
+        "rollback does not downgrade the persistent maintenance assets"
+    );
+
+    let persistent = paths.root().join("maintenance/uninstall.exe");
+    fs::write(&persistent, b"damaged after the rollback").expect("damaged persistent file");
+    let repaired = run_operation(
+        &fixture.platform(),
+        paths,
+        Operation::Repair,
+        Some(authenticate(&v1)),
+    )
+    .expect("the installed release's package repairs its persistent asset");
+    assert_eq!(repaired.state, STATE_REPAIRED);
+    assert_eq!(
+        fs::read(&persistent).expect("restored bytes"),
+        UNINSTALLER_V2,
+        "the retained newer copy supplies the claimed identity"
+    );
 }

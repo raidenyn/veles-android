@@ -78,9 +78,11 @@ pub use operations::{
     run_operation_within,
 };
 pub use paths::{
-    InstallPaths, JOURNAL_FILE, LOCK_FILE, MACOS_CHROME_HOSTS_DIR, MAINTENANCE_DIR, MAX_ROOT_BYTES,
-    RECEIPT_FILE, ROOT_DIR_DEVELOPMENT, ROOT_DIR_FIXTURE, ROOT_DIR_PRODUCTION, STAGING_DIR,
-    STATE_DIR, VERSIONS_DIR, root_dir_name,
+    InstallPaths, JOURNAL_FILE, LOCK_FILE, MACOS_CHROME_HOSTS_DIR, MAINTENANCE_DIR,
+    MAINTENANCE_ENGINE_FILE, MAINTENANCE_ENGINE_FILE_MACOS, MAINTENANCE_UNINSTALLER_FILE,
+    MAX_ROOT_BYTES, RECEIPT_FILE, ROOT_DIR_DEVELOPMENT, ROOT_DIR_FIXTURE, ROOT_DIR_PRODUCTION,
+    STAGING_DIR, STATE_DIR, VERSIONS_DIR, maintenance_engine_file, maintenance_engine_relative,
+    maintenance_relative_is_executable, maintenance_uninstaller_relative, root_dir_name,
 };
 #[cfg(target_os = "macos")]
 #[doc(hidden)]
