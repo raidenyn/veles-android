@@ -1,5 +1,25 @@
 name: build-native-windows
 
+# OTP-25 Task 14: the Windows producer of the standalone installer's UNSIGNED input tree.
+#
+# This is no longer the Tauri scaffold packaging: there is no Node, npm, Tauri, WiX or bridgePackage here.
+# One job builds the tree through the installer Gradle graph, which itself builds it TWICE (slots a and b,
+# separate target directories, source paths remapped, deterministic link settings) and refuses to publish
+# unless the two trees are byte-identical under Task 9's inventory comparison. The product is a
+# mode-preserving tree.tar plus provenance.json, report-ab.json and SHA256SUMS; uploads name exact files
+# because artifact upload drops bare executable bits.
+#
+# Channel selection is explicit and fail-closed:
+# - An approved, tracked native-bridge/installer/config/release-windows.json exists: the PRODUCTION
+#   channel is built by bridgeInstallerUnsigned and published under the caller-selected name
+#   (native-unsigned-windows). That is the artifact release-native-installers.yml (Task 13) downloads.
+# - Otherwise only the tracked FIXTURE config is built by bridgeInstallerPackageFixture and published as
+#   native-fixture-windows, which can never be mistaken for, or substituted as, the production input.
+# Nothing here signs, notarizes or publishes; no secret, protected environment or artifact from another
+# run is used.
+# The Windows engine's policy carrier is embedded and the NSIS uninstaller generated on this runner;
+# neither step has run anywhere yet (see the Task 14 report).
+
 on:
   workflow_call:
     inputs:
@@ -9,7 +29,7 @@ on:
       artifact-name:
         required: true
         type: string
-        default: native-windows
+        default: native-unsigned-windows
 
 permissions:
   contents: read
@@ -21,37 +41,59 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.commit-sha }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
-          node-version: '26.8.1'
-      # Provision the pinned, hash-verified WiX/NSIS toolset into the isolated
-      # Tauri local-tools cache (bundle.useLocalToolsDir), then export the
-      # absolute NSIS_PATH the packaging build reads. The cache path must be
-      # canonicalized before use: Gradle launches Tauri from native-bridge/, so
-      # NSIS_PATH must point at the resolved cache rather than the relative
-      # workflow argument, and Tauri's NSIS bundler reads NSIS_PATH (not
-      # TAURI_NSIS_PATH). GITHUB_ENV carries it into the packaging step below.
-      - name: Provision pinned Windows installer tools
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Provision the pinned NSIS (hash-verified)
         run: |
-          $cache = [IO.Path]::GetFullPath('native-bridge/src-tauri/target/.tauri')
-          pwsh -NoProfile -File verify/native/provision-windows-tools.ps1 -TauriCachePath $cache
+          pwsh -NoProfile -File native-bridge/installer/scripts/provision-nsis.ps1 -Destination ([IO.Path]::GetFullPath('build/native-bridge/installer/tools/nsis'))
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "NSIS_PATH=$(Join-Path $cache 'NSIS')" >> $env:GITHUB_ENV
-      # Normal packaging on the target runner: the executable, NSIS, and MSI
-      # installers are built and packaged by one Gradle invocation with no
-      # offline/firewall wrapper.
-      - name: Package native bridge
-        run: .\gradlew.bat bridgePackage
-      # Upload the packaged product directly: the outer archive, its sha256
-      # sidecar, and the component SHA256SUMS. The installer payload stays
-      # inside the outer archive, so artifact-upload mode changes cannot
-      # affect it.
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (host)
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Probe for the approved release config
+        id: config
+        shell: bash
+        run: |
+          if [ -f native-bridge/installer/config/release-windows.json ]; then
+            echo "approved=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "approved=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the production-channel unsigned input tree
+        if: steps.config.outputs.approved == 'true'
+        run: .\gradlew.bat bridgeInstallerUnsigned
+      - name: Build the fixture-channel input tree
+        if: steps.config.outputs.approved != 'true'
+        run: .\gradlew.bat bridgeInstallerPackageFixture
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.config.outputs.approved == 'true'
         with:
           name: ${{ inputs.artifact-name }}
           path: |
-            build/native-bridge/windows/veles-native-bridge-*.zip
-            build/native-bridge/windows/veles-native-bridge-*.zip.sha256
-            build/native-bridge/windows/SHA256SUMS
+            build/native-bridge/installer/out/production/tree.tar
+            build/native-bridge/installer/out/production/provenance.json
+            build/native-bridge/installer/out/production/report-ab.json
+            build/native-bridge/installer/out/production/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.config.outputs.approved != 'true'
+        with:
+          name: native-fixture-windows
+          path: |
+            build/native-bridge/installer/out/fixture/tree.tar
+            build/native-bridge/installer/out/fixture/provenance.json
+            build/native-bridge/installer/out/fixture/report-ab.json
+            build/native-bridge/installer/out/fixture/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

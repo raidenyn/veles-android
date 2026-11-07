@@ -1191,6 +1191,374 @@ val bridgeHostBuild = tasks.register<Exec>("bridgeHostBuild") {
 }
 // ---- OTP-24 production host (end) ----
 
+// ---- OTP-25 installer producers (begin) ----
+// OTP-25 standalone per-user installers (`native-bridge/installer`, crate veles-bridge-installer, the
+// NSIS frontend in windows/ and the SwiftPM frontend in macos/).
+//
+// This graph builds the UNSIGNED installer input trees that Task 13's protected release workflow signs
+// and gates. It is deliberately disjoint from the Tauri scaffold (bridgeInstall/bridgeBuild/bridgeBundle/
+// bridgePackage) and from the OTP-24 host graph above, uses no Node, and never signs, notarizes or
+// publishes anything. Every product lands under build/native-bridge/installer/:
+//   target/<channel>-<slot>/{installer,host,frontend}   cargo/swift outputs, one tree per channel and slot
+//   slots/<channel>/<slot>/                              staged binaries and the assembled input tree
+//   out/<channel>/                                       tree.tar, provenance.json, report-ab.json, SHA256SUMS
+//   tools/nsis/                                          the pinned NSIS (provision-nsis.ps1)
+//
+// Public tasks:
+//   bridgeInstallerFormat / bridgeInstallerLint / bridgeInstallerTest   cargo fmt/clippy/test (locked)
+//   bridgeInstallerScriptsTest                                          the Python script suites (not on Windows)
+//   bridgeInstallerUnsigned          PRODUCTION channel input tree; requires a tracked approved release config
+//   bridgeInstallerPackageFixture    FIXTURE channel input tree from the tracked fixture config
+//   bridgeInstallerSupplyChain       the full supply-chain policy run (SBOMs, licences, build scripts, remote code)
+// The channel is fixed by the registration below, never by the config or a property: a config of the
+// other channel is refused, so a fixture config cannot produce a production artifact.
+//
+// Independent A/B: each producer builds the tree twice, as slot a and slot b, with SEPARATE explicit
+// target directories that are deleted first (a warm cache is never reused) and with the checkout and
+// cargo-registry paths remapped to fixed prefixes plus deterministic link settings. Two slots built on
+// one runner show that the build is reproducible there; they are not a cross-machine claim, which the
+// release workflow makes by comparing two separate producer runs.
+val installerDir = layout.projectDirectory.dir("native-bridge/installer")
+val installerBuildRoot = layout.buildDirectory.dir("native-bridge/installer")
+val installerAssembler = installerDir.file("scripts/assemble_unsigned.py")
+val installerOsName = System.getProperty("os.name")
+val installerPlatform = when {
+    installerOsName.startsWith("Windows") -> "windows"
+    installerOsName.startsWith("Mac") -> "macos"
+    else -> "unsupported"
+}
+val installerRustTriple = if (installerPlatform == "windows") "x86_64-pc-windows-msvc" else "aarch64-apple-darwin"
+val installerPython = if (installerPlatform == "windows") "python" else "python3"
+val installerExecutableSuffix = if (installerPlatform == "windows") ".exe" else ""
+val installerSources = fileTree(installerDir) {
+    include("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/**", "tests/**", "config/**", "macos/**", "windows/**", "scripts/**")
+    exclude("target/**", "macos/.build/**", "scripts/__pycache__/**")
+}
+// Tracked build inputs. The approved production config has no default content in this repository: until
+// the owner approves one (and the production extension ID), bridgeInstallerUnsigned fails closed.
+val installerReleaseConfig = providers.gradleProperty("installerReleaseConfig")
+    .map { layout.projectDirectory.file(it) }
+    .orElse(layout.projectDirectory.file("native-bridge/installer/config/release-$installerPlatform.json"))
+val installerFixtureConfig = providers.provider { layout.projectDirectory.file("native-bridge/installer/config/fixture-$installerPlatform.json") }
+val installerMakensis = providers.gradleProperty("installerMakensis")
+    .orElse(installerBuildRoot.map { it.file("tools/nsis/nsis-3.08/makensis.exe").asFile.absolutePath })
+
+fun requireInstallerHost() {
+    check(installerPlatform != "unsupported") {
+        "OTP-25 installer inputs are built on a Windows or macOS runner; Linux is not a producer target."
+    }
+}
+
+fun installerRustFlags(): String {
+    val checkout = layout.projectDirectory.asFile.absolutePath
+    check(checkout.none { it.isWhitespace() }) { "RUSTFLAGS cannot carry a checkout path containing whitespace: $checkout" }
+    val cargoHome = System.getenv("CARGO_HOME")?.takeIf { it.isNotBlank() } ?: "${System.getProperty("user.home")}/.cargo"
+    val flags = mutableListOf(
+        "--remap-path-prefix=$checkout=/veles-src",
+        cargoRegistryRemapRustFlags(),
+        "--remap-path-prefix=$cargoHome/git/checkouts=/cargo-git",
+    )
+    if (installerPlatform == "windows") {
+        flags += listOf("-C", "link-arg=/Brepro", "-C", "link-arg=/PDBALTPATH:veles.pdb")
+    }
+    return flags.joinToString(" ")
+}
+
+fun installerSourceCommit(): String {
+    val head = providers.exec {
+        workingDir(layout.projectDirectory)
+        commandLine("git", "rev-parse", "HEAD")
+    }.standardOutput.asText.get().trim()
+    val dirty = providers.exec {
+        workingDir(layout.projectDirectory)
+        commandLine("git", "status", "--porcelain", "--untracked-files=no")
+    }.standardOutput.asText.get().trim()
+    check(dirty.isEmpty()) { "Installer inputs are built from a clean commit; tracked changes exist:\n$dirty" }
+    check(Regex("[0-9a-f]{40}").matches(head)) { "unexpected git HEAD '$head'" }
+    return head
+}
+
+fun Exec.installerCargoEnvironment() {
+    environment("RUSTFLAGS", installerRustFlags())
+    environment("SOURCE_DATE_EPOCH", "946684800")
+    environment("ZERO_AR_DATE", "1")
+}
+
+val bridgeInstallerToolchainCheck = tasks.register("bridgeInstallerToolchainCheck") {
+    group = "native-bridge"
+    description = "Asserts the native-bridge/installer crate resolves to its pinned Rust 1.98.0 toolchain."
+    inputs.file(installerDir.file("rust-toolchain.toml"))
+    doLast {
+        val hint = "Install rustup and run `rustup show active-toolchain` in native-bridge/installer/ to install the pinned toolchain"
+        requireOnPath("rustup", "Rust 1.98.0", hint)
+        requireOnPath("cargo", "Rust 1.98.0", hint)
+        val rustc = providers.exec {
+            workingDir(installerDir)
+            commandLine("rustc", "--version")
+        }.standardOutput.asText.get().trim()
+        check(rustc.startsWith("rustc 1.98.0 ")) {
+            "native-bridge/installer/rust-toolchain.toml requires Rust 1.98.0; active toolchain is '$rustc'"
+        }
+    }
+}
+
+val installerCheckTargetDir = installerBuildRoot.map { it.dir("target/check") }
+
+val bridgeInstallerFormat = tasks.register<Exec>("bridgeInstallerFormat") {
+    group = "native-bridge"
+    description = "Checks cargo fmt formatting for the installer crate."
+    dependsOn(bridgeInstallerToolchainCheck)
+    inputs.files(installerSources)
+    workingDir(installerDir)
+    environment("CARGO_TARGET_DIR", installerCheckTargetDir.get().asFile)
+    commandLine("cargo", "fmt", "--all", "--", "--check")
+}
+
+val bridgeInstallerLint = tasks.register<Exec>("bridgeInstallerLint") {
+    group = "native-bridge"
+    description = "Runs locked cargo clippy with -D warnings for the installer crate."
+    dependsOn(bridgeInstallerToolchainCheck)
+    inputs.files(installerSources)
+    workingDir(installerDir)
+    environment("CARGO_TARGET_DIR", installerCheckTargetDir.get().asFile)
+    commandLine("cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings")
+}
+
+val bridgeInstallerTest = tasks.register<Exec>("bridgeInstallerTest") {
+    group = "native-bridge"
+    description = "Runs locked cargo test for the installer crate (portable plus current-OS adapter tests)."
+    dependsOn(bridgeInstallerToolchainCheck)
+    inputs.files(installerSources)
+    workingDir(installerDir)
+    environment("CARGO_TARGET_DIR", installerCheckTargetDir.get().asFile)
+    commandLine("cargo", "test", "--locked")
+}
+
+val bridgeInstallerScriptsTest = tasks.register<Exec>("bridgeInstallerScriptsTest") {
+    group = "native-bridge"
+    description = "Runs the installer Python script suites (contracts, gate, correspondence, assembler); not run on Windows."
+    enabled = installerPlatform != "windows"
+    inputs.files(installerSources)
+    workingDir(layout.projectDirectory)
+    environment("PYTHONDONTWRITEBYTECODE", "1")
+    commandLine(installerPython, "-I", "-m", "unittest", "discover", "-s", "native-bridge/installer/scripts", "-p", "test_*.py")
+}
+
+// Registers the three-stage producer for one channel: config check, then per slot (engine, host, optional
+// Swift frontend, optional NSIS uninstaller, staging, assembly, optional carrier embedding), then the A/B
+// finalization that publishes tree.tar, provenance.json, report-ab.json and SHA256SUMS.
+fun registerInstallerProducer(taskName: String, channel: String, config: Provider<RegularFile>, summary: String): TaskProvider<Exec> {
+    val configCheck = tasks.register<Exec>("${taskName}Config") {
+        group = "native-bridge"
+        description = "Refuses a release config that is not tracked, unmodified and of the $channel channel."
+        inputs.files(config)
+        doFirst { requireInstallerHost() }
+        commandLine(
+            installerPython, "-I", installerAssembler.asFile, "check-config", "--config", config.get().asFile,
+            "--channel", channel, "--platform", installerPlatform, "--require-tracked",
+        )
+    }
+    // The single literal origin of the config's extension ID: compiled into the host, so a changed ID
+    // must rebuild it. Evaluated lazily, only for a graph that actually builds the host.
+    val allowedOrigin = providers.exec {
+        commandLine(installerPython, "-I", installerAssembler.asFile, "origin", "--config", config.get().asFile)
+    }.standardOutput.asText.map { it.trim() }
+    val releaseVersion = providers.provider {
+        @Suppress("UNCHECKED_CAST")
+        (groovy.json.JsonSlurper().parse(config.get().asFile) as Map<String, Any?>)["version"] as String
+    }
+    val slotFinishers = mutableListOf<TaskProvider<*>>()
+    val slotOutputs = mutableMapOf<String, Provider<Directory>>()
+    var previousFinisher: TaskProvider<*>? = null
+    listOf("a", "b").forEach { slot ->
+        val suffix = slot.uppercase()
+        val installerTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/installer") }
+        val hostTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/host") }
+        val frontendScratchDir = installerBuildRoot.map { it.dir("target/$channel-$slot/frontend") }
+        val slotRoot = installerBuildRoot.map { it.dir("slots/$channel/$slot") }
+        val binDir = slotRoot.map { it.dir("bin") }
+        val assembledDir = slotRoot.map { it.dir("assembled") }
+        val uninstallerDir = slotRoot.map { it.dir("uninstall") }
+        slotOutputs[slot] = assembledDir
+
+        val engine = tasks.register<Exec>("${taskName}Engine$suffix") {
+            group = "native-bridge"
+            description = "Builds the installer engine and cleanup helper (slot $slot, $channel) into its own target directory."
+            dependsOn(configCheck, bridgeInstallerToolchainCheck)
+            inputs.files(installerSources)
+            inputs.files(config)
+            outputs.dir(installerTargetDir)
+            workingDir(installerDir)
+            doFirst {
+                requireInstallerHost()
+                delete(installerTargetDir)
+                environment("CARGO_TARGET_DIR", installerTargetDir.get().asFile)
+                installerCargoEnvironment()
+            }
+            commandLine(
+                "cargo", "build", "--locked", "--release", "--target", installerRustTriple,
+                "--bin", "veles-bridge-maintenance", "--bin", "veles-bridge-cleanup",
+            )
+        }
+        val host = tasks.register<Exec>("${taskName}Host$suffix") {
+            group = "native-bridge"
+            description = "Builds the production Native Messaging host (slot $slot, $channel) with the config's exact origin."
+            dependsOn(configCheck, bridgeHostToolchainCheck)
+            inputs.files(bridgeHostSources)
+            inputs.files(config)
+            // The allowlist is compiled in through option_env!, so the exact origin is a tracked build input.
+            inputs.property("VELES_ALLOWED_ORIGINS", allowedOrigin)
+            outputs.dir(hostTargetDir)
+            workingDir(productionHostDir)
+            doFirst {
+                requireInstallerHost()
+                delete(hostTargetDir)
+                environment("CARGO_TARGET_DIR", hostTargetDir.get().asFile)
+                environment("VELES_ALLOWED_ORIGINS", allowedOrigin.get())
+                installerCargoEnvironment()
+            }
+            commandLine("cargo", "build", "--locked", "--release", "--target", installerRustTriple, "--bin", "veles-native-host")
+        }
+        val frontend = tasks.register<Exec>("${taskName}Frontend$suffix") {
+            group = "native-bridge"
+            description = "Builds the SwiftUI installer frontend (macOS only, slot $slot, $channel) with a private scratch path."
+            enabled = installerPlatform == "macos"
+            dependsOn(configCheck)
+            inputs.files(installerSources)
+            outputs.dir(frontendScratchDir)
+            workingDir(installerDir.dir("macos"))
+            doFirst {
+                delete(frontendScratchDir)
+            }
+            commandLine(
+                "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
+                "--scratch-path", frontendScratchDir.get().asFile,
+                "-Xswiftc", "-file-prefix-map", "-Xswiftc", "${layout.projectDirectory.asFile.absolutePath}=/veles-src",
+            )
+        }
+        val uninstaller = tasks.register<Exec>("${taskName}Uninstaller$suffix") {
+            group = "native-bridge"
+            description = "Generates the unsigned NSIS uninstaller (Windows only, slot $slot, $channel)."
+            enabled = installerPlatform == "windows"
+            dependsOn(configCheck)
+            inputs.files(installerSources)
+            outputs.dir(uninstallerDir)
+            doFirst {
+                delete(uninstallerDir)
+                uninstallerDir.get().asFile.mkdirs()
+                commandLine(
+                    "pwsh", "-NoProfile", "-File", installerDir.file("scripts/generate-uninstaller.ps1").asFile,
+                    "-Makensis", installerMakensis.get(), "-Version", releaseVersion.get(),
+                    "-Output", uninstallerDir.get().file("uninstall.exe").asFile,
+                )
+            }
+        }
+        val stage = tasks.register<Sync>("${taskName}Stage$suffix") {
+            group = "native-bridge"
+            description = "Stages exactly the built executables the assembler accepts (slot $slot, $channel)."
+            dependsOn(engine, host, uninstaller)
+            into(binDir)
+            from(installerTargetDir.map { it.dir("$installerRustTriple/release") }) {
+                include("veles-bridge-maintenance$installerExecutableSuffix")
+                if (installerPlatform == "windows") include("veles-bridge-cleanup$installerExecutableSuffix")
+            }
+            from(hostTargetDir.map { it.dir("$installerRustTriple/release") }) {
+                include("veles-native-host$installerExecutableSuffix")
+            }
+            from(uninstallerDir) { include("uninstall.exe") }
+        }
+        val assemble = tasks.register<Exec>("${taskName}Assemble$suffix") {
+            group = "native-bridge"
+            description = "Assembles the unsigned input tree (slot $slot, $channel) from the staged executables."
+            dependsOn(stage, frontend)
+            inputs.files(config)
+            inputs.files(installerSources)
+            outputs.dir(assembledDir)
+            doFirst {
+                delete(assembledDir)
+                val arguments = mutableListOf(
+                    installerPython, "-I", installerAssembler.asFile.absolutePath, "assemble",
+                    "--platform", installerPlatform, "--channel", channel, "--config", config.get().asFile.absolutePath,
+                    "--commit", installerSourceCommit(), "--binaries", binDir.get().asFile.absolutePath,
+                    "--output", assembledDir.get().asFile.absolutePath,
+                )
+                if (installerPlatform == "macos") {
+                    val binPath = providers.exec {
+                        workingDir(installerDir.dir("macos"))
+                        commandLine(
+                            "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
+                            "--scratch-path", frontendScratchDir.get().asFile, "--show-bin-path",
+                        )
+                    }.standardOutput.asText.get().trim()
+                    arguments += listOf(
+                        "--frontend", "$binPath/VelesBridgeInstaller",
+                        "--packager", installerDir.file("scripts/package-macos.sh").asFile.absolutePath,
+                    )
+                }
+                commandLine(arguments)
+            }
+        }
+        val embed = tasks.register<Exec>("${taskName}Carrier$suffix") {
+            group = "native-bridge"
+            description = "Embeds the policy carrier into the unsigned engine image (Windows only, slot $slot, $channel)."
+            enabled = installerPlatform == "windows"
+            dependsOn(assemble)
+            doFirst {
+                commandLine(
+                    "pwsh", "-NoProfile", "-File", installerDir.file("scripts/embed-carrier.ps1").asFile,
+                    "-Image", assembledDir.get().file("tree/package/carrier.exe").asFile,
+                    "-Carrier", assembledDir.get().file("carrier.bin").asFile,
+                )
+            }
+        }
+        previousFinisher?.let { earlier ->
+            engine.configure { mustRunAfter(earlier) }
+            host.configure { mustRunAfter(earlier) }
+        }
+        previousFinisher = embed
+        slotFinishers += embed
+    }
+    return tasks.register<Exec>(taskName) {
+        group = "native-bridge"
+        description = summary
+        dependsOn(slotFinishers)
+        inputs.files(config)
+        val outDir = installerBuildRoot.map { it.dir("out/$channel") }
+        outputs.dir(outDir)
+        doFirst {
+            requireInstallerHost()
+            delete(outDir)
+            outDir.get().asFile.parentFile.mkdirs()
+            commandLine(
+                installerPython, "-I", installerAssembler.asFile.absolutePath, "finalize",
+                "--platform", installerPlatform,
+                "--slot-a", slotOutputs.getValue("a").get().asFile.absolutePath,
+                "--slot-b", slotOutputs.getValue("b").get().asFile.absolutePath,
+                "--output", outDir.get().asFile.absolutePath, "--commit", installerSourceCommit(),
+            )
+        }
+    }
+}
+
+val bridgeInstallerUnsigned = registerInstallerProducer(
+    "bridgeInstallerUnsigned", "production", installerReleaseConfig,
+    "Builds the UNSIGNED production-channel installer input tree twice and publishes tree.tar, provenance and the A/B report; requires a tracked approved release config.",
+)
+
+val bridgeInstallerPackageFixture = registerInstallerProducer(
+    "bridgeInstallerPackageFixture", "fixture", installerFixtureConfig,
+    "Builds the FIXTURE-channel installer input tree twice from the tracked fixture config; never a release candidate.",
+)
+
+val bridgeInstallerSupplyChain = tasks.register<Exec>("bridgeInstallerSupplyChain") {
+    group = "verification"
+    description = "Runs the whole supply-chain policy (SBOMs incl. native-installer, licences, build scripts, remote code); exit 0 or fail."
+    // Prerequisites (CI provisions them): npm ci --ignore-scripts --prefix verify; ./gradlew installCargoDeny.
+    workingDir(layout.projectDirectory)
+    commandLine("bash", "verify/verify-supply-chain.sh")
+}
+// ---- OTP-25 installer producers (end) ----
+
 tasks.named("check") {
     dependsOn(
         rustFormat,
@@ -1203,6 +1571,10 @@ tasks.named("check") {
         bridgeHostFormat,
         bridgeHostLint,
         bridgeHostTest,
+        bridgeInstallerFormat,
+        bridgeInstallerLint,
+        bridgeInstallerTest,
+        bridgeInstallerScriptsTest,
         "protocolCheck",
     )
 }
@@ -1229,6 +1601,10 @@ tasks.named<Delete>("clean") {
         // source-tree paths are removed defensively in case a cargo run ignored CARGO_TARGET_DIR.
         layout.projectDirectory.dir("native-bridge/host/target"),
         layout.projectDirectory.dir("native-bridge/host/build"),
+        // OTP-25 installer: cargo/swift targets live under build/native-bridge/installer; these source-tree
+        // paths are removed defensively in case a developer build ignored the redirect.
+        layout.projectDirectory.dir("native-bridge/installer/target"),
+        layout.projectDirectory.dir("native-bridge/installer/macos/.build"),
         layout.buildDirectory.dir("native-bridge"),
         // Rust JNI/WASM staged package (rustPackage producer).
         rustPackageDir,

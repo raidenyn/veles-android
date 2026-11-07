@@ -384,7 +384,7 @@ test('Rust workflow packages rust-jni-wasm without a reference rebuild', async (
   assert.doesNotMatch(source, /secrets:/, 'Rust workflow must not accept signing secrets');
 });
 
-test('supply-chain workflow enforces reports before uploading exactly five SBOMs', async () => {
+test('supply-chain workflow enforces reports before uploading exactly six SBOMs', async () => {
   const source = await workflow('build-supply-chain.yml');
   assertReusableWorkflow(source, 'build-supply-chain.yml');
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
@@ -399,6 +399,7 @@ test('supply-chain workflow enforces reports before uploading exactly five SBOMs
     'build/sbom/rust.cdx.json',
     'build/sbom/native-bridge.cdx.json',
     'build/sbom/native-host.cdx.json',
+    'build/sbom/native-installer.cdx.json',
     'build/verification/supply-chain/npm-licenses.txt',
     'build/verification/supply-chain/cargo-licenses.txt',
     'build/verification/supply-chain/npm-install-scripts.txt',
@@ -409,90 +410,242 @@ test('supply-chain workflow enforces reports before uploading exactly five SBOMs
   assert.doesNotMatch(source, /secrets:/, 'Supply-chain workflow must not accept signing secrets');
 });
 
-function assertSingleBuildNativeWorkflow(source, name, platform, packageCommand, artifactDefault, uploadPaths_) {
+// OTP-25 Task 14: the native producers build the standalone installers' UNSIGNED input trees with the
+// installer Gradle graph. There is no Tauri scaffold path, no secret, no protected environment and no
+// artifact taken from another run. The approved-config probe selects the channel: an approved
+// release-<platform>.json builds the production input tree (`native-unsigned-<platform>`), otherwise the
+// tracked fixture config builds a clearly named fixture tree (`native-fixture-<platform>`).
+const NATIVE_PRODUCERS = {
+  windows: {
+    file: 'build-native-windows.yml',
+    runner: 'windows-2025',
+    artifact: 'native-unsigned-windows',
+    fixture: 'native-fixture-windows',
+    gradle: String.raw`.\gradlew.bat`,
+  },
+  macos: {
+    file: 'build-native-macos.yml',
+    runner: 'macos-26',
+    artifact: 'native-unsigned-macos',
+    fixture: 'native-fixture-macos',
+    gradle: './gradlew',
+  },
+};
+const PRODUCER_OUTPUT = (channel) => ['tree.tar', 'provenance.json', 'report-ab.json', 'SHA256SUMS'].map((name) => `build/native-bridge/installer/out/${channel}/${name}`);
+
+function assertInstallerProducer(source, platform) {
+  const spec = NATIVE_PRODUCERS[platform];
+  const name = spec.file;
   assert.match(source, /workflow_call:/, `${name} must be reusable`);
   assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
-  assert.match(source, /artifact-name:[\s\S]*?required:\s*true/, `${name} must require an artifact name`);
-  assert.match(source, new RegExp(`artifact-name:[\\s\\S]*?default:\\s*${artifactDefault}`), `${name} must default to the neutral ${artifactDefault} artifact name`);
+  assert.match(source, new RegExp(`artifact-name:\\s*\\n\\s*required:\\s*true\\s*\\n\\s*type:\\s*string\\s*\\n\\s*default:\\s*${spec.artifact}\\b`), `${name} must default to the neutral ${spec.artifact} artifact name`);
   assert.doesNotMatch(source, /-latest/, `${name} must use pinned target runner labels`);
-  assert.match(source, new RegExp(`runs-on:\\s*${platform.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${name} must target ${platform}`);
+  assert.match(source, new RegExp(`runs-on:\\s*${spec.runner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${name} must target ${spec.runner}`);
   assert.equal((source.match(/runs-on:/g) ?? []).length, 1, `${name} must build and package in exactly one job`);
   assert.deepEqual(Object.keys(callerJobKeys(source)), ['build'], `${name} must define exactly one native job`);
   assert.doesNotMatch(source, /secrets:/, `${name} must not accept signing secrets`);
+  assert.doesNotMatch(source, /^\s*environment:/m, `${name} must not enter a protected environment`);
   assertNoSecretRunInterpolation(source, name);
-  assert.equal((source.match(/actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/g) ?? []).length, 1, `${name} must pin Node 26.8.1 in its single job`);
   assert.match(source, /ref:\s*\$\{\{ inputs\.commit-sha \}\}/, `${name} must build the requested commit`);
-  // Normal packaging only: no offline/firewall/sandbox wrapper, no extracted
-  // verification view, no A/B run transports, no cross-run byte comparison,
-  // and no metadata-preserving re-staging of the product tree.
+  // No Tauri scaffold production path, no Node, no A/B transports, no offline wrapper, no other run's artifacts.
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
   for (const forbidden of [
-    /network-deny-windows\.ps1/, /network-deny-macos\.sh/, /sandbox-exec/, /NetFirewallRule/, /pfctl/,
+    /tauri/i, /\bnpm\b/, /setup-node/, /bridgePackage/, /bridgeBundle/, /bridgeBuild\b/, /bridgeManifests/, /provision-windows-tools/, /NSIS_PATH/,
+    /veles-native-bridge/, /network-deny-windows\.ps1/, /network-deny-macos\.sh/, /sandbox-exec/, /NetFirewallRule/, /pfctl/,
     /extract-view\.mjs/, /prepare-run\.(?:sh|ps1)/, /verify\/verify-native\.sh/, /verified-artifact\.mjs/,
-    /native-runs/, /unverified-/, /needs:/, /actions\/download-artifact@/,
+    /native-runs/, /unverified-/, /needs:/, /actions\/download-artifact@/, /--offline/, /\bgh run\b/, /run-id/,
   ]) {
-    assert.doesNotMatch(source, forbidden, `${name} must not reproduce the A/B verification machinery`);
+    assert.doesNotMatch(executable, forbidden, `${name} must not use ${forbidden}`);
   }
-  assert.equal(
-    (source.match(new RegExp(packageCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length,
-    1,
-    `${name} must invoke the normal packaging command exactly once`,
-  );
-  assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must publish the caller-selected artifact`);
-  assertExactUploadPaths(source, name, uploadPaths_);
+  // Each channel's producer task is invoked exactly once, only for its selected input tree.
+  for (const task of ['bridgeInstallerUnsigned', 'bridgeInstallerPackageFixture']) {
+    assert.equal(executable.split(task).length - 1, 1, `${name} must invoke ${task} exactly once`);
+  }
+  assert.match(executable, /if: steps\.config\.outputs\.approved == 'true'\n\s*run: .*bridgeInstallerUnsigned/, `${name} must build production inputs only with an approved release config`);
+  assert.match(executable, /if: steps\.config\.outputs\.approved != 'true'\n\s*run: .*bridgeInstallerPackageFixture/, `${name} must build fixture inputs only without an approved release config`);
+  assert.ok(executable.includes(`release-${platform}.json`), `${name} must probe for the approved release-${platform}.json`);
+  assert.ok(executable.includes(`${spec.gradle} bridgeInstallerUnsigned`) && executable.includes(`${spec.gradle} bridgeInstallerPackageFixture`), `${name} must invoke Gradle directly with the platform wrapper`);
+  for (const [task, tool] of [['bridgeInstallerUnsigned', 'installer'], ['bridgeInstallerPackageFixture', 'installer']]) assert.ok(executable.includes(task), `${name} must run ${task} for the ${tool} graph`);
+  for (const directory of ['native-bridge/installer', 'native-bridge/host']) {
+    assert.match(executable, new RegExp(`working-directory:\\s*${directory.replace(/\//g, '\\/')}\\s*\\n\\s*run:\\s*rustup show active-toolchain`), `${name} must activate the pinned Rust toolchain of ${directory}`);
+  }
+  assert.match(executable, /actions\/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1[\s\S]*?python-version:\s*['"]3\.12['"]/, `${name} must pin Python 3.12 for the assembler`);
+  // Hashes and modes travel inside a mode-preserving tar plus checksums; uploads are exact files, two channels, bounded.
+  const uploads = uploadPaths(source, name);
+  assert.deepEqual(uploads, [PRODUCER_OUTPUT('production'), PRODUCER_OUTPUT('fixture')], `${name} must upload exactly the production and fixture output files`);
+  const uploadSteps = steps(source).filter((step) => step.some((line) => isUploadArtifact(mappingEntry(line)?.value ?? '')));
+  assert.equal(uploadSteps.length, 2, `${name} must have exactly two uploads`);
+  const [production, fixture] = uploadSteps.map((step) => step.join('\n'));
+  assert.match(production, /if: steps\.config\.outputs\.approved == 'true'/, `${name} production upload must be conditional on the approved config`);
+  assert.match(production, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must publish the caller-selected artifact`);
+  assert.match(fixture, /if: steps\.config\.outputs\.approved != 'true'/, `${name} fixture upload must be conditional on the missing approved config`);
+  assert.match(fixture, new RegExp(`name:\\s*${spec.fixture}\\b`), `${name} fixture upload must be named ${spec.fixture}`);
+  assert.notEqual(spec.fixture, spec.artifact);
+  for (const step of [production, fixture]) {
+    assert.match(step, /if-no-files-found:\s*error/, `${name} uploads must fail on missing files`);
+    assert.match(step, /retention-days:\s*\d+/, `${name} uploads must be retention-bounded`);
+    assert.doesNotMatch(step, /path:[^\n]*\*|^\s+build\/[^\n]*veles-native-host(?:\.exe)?\s*$/m, `${name} uploads must name exact files, never globs or bare executables whose exec bit upload drops`);
+  }
 }
 
-test('Windows native workflow packages its installer in one job with provisioned tools', async () => {
+test('Windows native workflow builds unsigned installer inputs in one job with the pinned NSIS', async () => {
   const source = await workflow('build-native-windows.yml');
-  assertSingleBuildNativeWorkflow(
-    source,
-    'build-native-windows.yml',
-    'windows-2025',
-    String.raw`.\gradlew.bat bridgePackage`,
-    'native-windows',
-    [
-      'build/native-bridge/windows/veles-native-bridge-*.zip',
-      'build/native-bridge/windows/veles-native-bridge-*.zip.sha256',
-      'build/native-bridge/windows/SHA256SUMS',
-    ],
-  );
-  const provisionIndex = source.indexOf('- name: Provision pinned Windows installer tools');
-  const packageIndex = source.indexOf('- name: Package native bridge');
-  assert.ok(provisionIndex !== -1, 'Windows workflow must provision installer tools');
-  assert.ok(packageIndex !== -1 && provisionIndex < packageIndex, 'Windows workflow must provision installer tools before packaging');
-  const provisionStep = source.slice(provisionIndex, packageIndex);
-  assert.match(provisionStep, /\$cache = \[IO\.Path\]::GetFullPath\('native-bridge\/src-tauri\/target\/\.tauri'\)/, 'Windows provisioning must resolve the isolated Tauri cache path');
-  assert.match(provisionStep, /pwsh -NoProfile -File verify\/native\/provision-windows-tools\.ps1 -TauriCachePath \$cache/, 'Windows workflow must provision the pinned WiX/NSIS toolset');
-  assert.match(provisionStep, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/, 'provisioning failure must propagate explicitly');
-  assert.match(provisionStep, /"NSIS_PATH=\$\(Join-Path \$cache 'NSIS'\)" >> \$env:GITHUB_ENV/, 'Windows workflow must export the absolute NSIS_PATH the packaging build reads');
-  const provisionInvoke = provisionStep.indexOf('pwsh -NoProfile -File');
-  const exitCheck = provisionStep.indexOf('if ($LASTEXITCODE -ne 0)');
-  const nsisPersist = provisionStep.indexOf('"NSIS_PATH=');
-  assert.ok(provisionInvoke !== -1 && provisionInvoke < exitCheck && exitCheck < nsisPersist, 'the exit-code check must sit between provisioning and persisting NSIS_PATH');
-  const packageStep = source.slice(packageIndex);
-  assert.match(packageStep, /run: \.\\gradlew\.bat bridgePackage/, 'Windows packaging must invoke Gradle directly');
+  assertInstallerProducer(source, 'windows');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  const provision = executable.indexOf('provision-nsis.ps1');
+  const firstBuild = executable.search(/bridgeInstaller(?:Unsigned|PackageFixture)/);
+  assert.ok(provision !== -1 && provision < firstBuild, 'Windows workflow must provision the pinned NSIS before building');
+  assert.match(executable, /build\/native-bridge\/installer\/tools\/nsis/, 'NSIS must be provisioned under the mandated build root');
+  assert.match(executable, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/, 'provisioning failure must propagate explicitly');
 });
 
-test('macOS native workflow packages its installer in one job under the pinned Xcode', async () => {
+test('macOS native workflow builds unsigned installer inputs in one job under the pinned Xcode', async () => {
   const source = await workflow('build-native-macos.yml');
-  assertSingleBuildNativeWorkflow(
-    source,
-    'build-native-macos.yml',
-    'macos-26',
-    String.raw`./gradlew bridgePackage`,
-    'native-macos',
-    [
-      'build/native-bridge/macos/veles-native-bridge-*.tar.gz',
-      'build/native-bridge/macos/veles-native-bridge-*.tar.gz.sha256',
-      'build/native-bridge/macos/SHA256SUMS',
-    ],
-  );
+  assertInstallerProducer(source, 'macos');
   const jobBlock = source.slice(source.indexOf('  build:'));
   assert.match(jobBlock, /^    env:\n      DEVELOPER_DIR: \/Applications\/Xcode_26\.6\.app$/m, 'macOS workflow must set the pinned Xcode in job environment so it reaches every build step');
   for (const contract of ['17F113', 'macosx26.5']) {
     assert.match(jobBlock, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `macOS workflow must enforce the pinned ${contract}`);
   }
-  assert.match(jobBlock, /run: \.\/gradlew bridgePackage/, 'macOS packaging must invoke Gradle directly');
   assert.doesNotMatch(jobBlock, /export DEVELOPER_DIR/, 'macOS Xcode selection must not depend on a per-step shell export');
+});
+
+function mutateProducer(source, label, platform) {
+  const spec = NATIVE_PRODUCERS[platform];
+  const mutations = {
+    'scaffold packaging': (text) => `${text}\n      - run: ${spec.gradle} bridgePackage\n`,
+    'node tooling': (text) => `${text}\n      - run: npm ci --prefix native-bridge\n`,
+    'duplicate unsigned build': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerUnsigned\n`,
+    'duplicate fixture build': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerPackageFixture\n`,
+    'unconditional production build': (text) => text.replace("if: steps.config.outputs.approved == 'true'\n        run:", 'run:'),
+    'secret input': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: read\n# secrets:\n    secrets:\n      X:\n        required: true'),
+    'protected environment': (text) => text.replace('    steps:', '    environment: native-release\n    steps:'),
+    'artifact from another run': (text) => text.replace('    steps:', '    steps:\n      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n        with:\n          name: x\n          run-id: 1\n'),
+    'floating action': (text) => text.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v4'),
+    'glob upload': (text) => text.replace('build/native-bridge/installer/out/production/tree.tar', 'build/native-bridge/installer/out/production/*'),
+    'dropped provenance': (text) => text.replace('            build/native-bridge/installer/out/production/provenance.json\n', ''),
+    'dropped checksums': (text) => text.replace('            build/native-bridge/installer/out/fixture/SHA256SUMS\n', ''),
+    'scaffold artifact default': (text) => text.replace(`default: ${spec.artifact}`, `default: native-${platform}`),
+    'fixture mislabeled production': (text) => text.replace(`name: ${spec.fixture}`, `name: ${spec.artifact}`),
+    'unactivated installer toolchain': (text) => text.replace('working-directory: native-bridge/installer\n        run: rustup show active-toolchain', 'run: true'),
+    'silent upload': (text) => text.replaceAll('if-no-files-found: error', 'if-no-files-found: ignore'),
+    'offline wrapper': (text) => text.replace(`${spec.gradle} bridgeInstallerPackageFixture`, `${spec.gradle} --offline bridgeInstallerPackageFixture`),
+    'write permission': (text) => text.replace('contents: read', 'contents: write'),
+  };
+  return mutations[label](source);
+}
+
+test('native producer contract names every invariant it enforces (negative mutations)', async () => {
+  const labels = [
+    'scaffold packaging', 'node tooling', 'duplicate unsigned build', 'duplicate fixture build', 'unconditional production build',
+    'secret input', 'protected environment', 'artifact from another run', 'floating action', 'glob upload', 'dropped provenance',
+    'dropped checksums', 'scaffold artifact default', 'fixture mislabeled production', 'unactivated installer toolchain',
+    'silent upload', 'offline wrapper', 'write permission',
+  ];
+  for (const platform of Object.keys(NATIVE_PRODUCERS)) {
+    const source = await workflow(NATIVE_PRODUCERS[platform].file);
+    for (const label of labels) {
+      const mutated = mutateProducer(source, label, platform);
+      assert.notEqual(mutated, source, `${platform}: mutation "${label}" must change the workflow`);
+      let rejected = false;
+      try {
+        assertInstallerProducer(mutated, platform);
+        assertActionsPinned(mutated, NATIVE_PRODUCERS[platform].file);
+        assert.match(mutated, /permissions:\n  contents: read\n/);
+      } catch {
+        rejected = true;
+      }
+      assert.ok(rejected, `${platform}: the contract must reject "${label}"`);
+    }
+  }
+});
+
+test('host check workflow runs the installer format, lint and tests on all three platforms', async () => {
+  const source = await workflow('build-native-host.yml');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  for (const task of ['bridgeInstallerFormat', 'bridgeInstallerLint', 'bridgeInstallerTest']) {
+    assert.ok(executable.split(task).length - 1 >= 3, `${task} must run on the portable, Windows and macOS jobs`);
+  }
+  assert.equal(executable.split('bridgeInstallerScriptsTest').length - 1, 1, 'the Python script suites run once, in the portable job');
+  assert.ok(executable.slice(0, executable.indexOf('  windows:')).includes('bridgeInstallerScriptsTest'), 'the Python script suites belong to the portable job');
+  for (const task of ['bridgeInstallerUnsigned', 'bridgeInstallerPackageFixture']) {
+    assert.ok(!executable.includes(task), `the check workflow must not build installer inputs (${task})`);
+  }
+  assert.match(executable, /working-directory:\s*native-bridge\/installer\s*\n\s*run:\s*rustup show active-toolchain/, 'the installer toolchain must be activated');
+});
+
+test('only the protected release workflow may reference signing credentials or sign anything', async () => {
+  for (const name of await workflowFiles()) {
+    if (name === 'release-native-installers.yml') continue;
+    const executable = (await workflow(name)).split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+    assert.doesNotMatch(executable, /VELES_WIN_|VELES_MAC_|VELES_NOTARY_|VELES_APPROVED_|native-release|signtool|notarytool|codesign/, `${name} must not reference signing credentials or tools`);
+  }
+});
+
+test('the release gate keeps accepting only trusted producer runs, never pull-request artifacts', async () => {
+  const gate = await workflow('release-native-installers.yml');
+  assert.match(gate, /\.workflowName == "release-build"/);
+  assert.match(gate, /\(\.event == "push" or \.event == "workflow_dispatch"\)/, 'a pull_request producer run must not qualify as a signed-candidate source');
+  assert.match(gate, /\.headSha == \$sha/);
+  assert.match(gate, /\.conclusion == "success"/);
+  assert.doesNotMatch(gate.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n').replace('.event == "push" or .event == "workflow_dispatch"', ''), /pull_request/, 'the gate must not be triggered by or accept pull_request context');
+  assert.match(gate, /name: native-unsigned-windows/);
+  assert.match(gate, /name: native-unsigned-macos/);
+  // The producers publish exactly the names the gate downloads.
+  for (const spec of Object.values(NATIVE_PRODUCERS)) {
+    assert.match(await workflow(spec.file), new RegExp(`default: ${spec.artifact}`));
+  }
+});
+
+test('supply-chain consumers cover the installer crate, Swift frontend and NSIS toolchain', async () => {
+  const generate = await readFile(new URL('verify/generate-sboms.sh', root), 'utf8');
+  assert.match(generate, /generate_cargo native-bridge\/installer\/Cargo\.toml native-bridge\/installer native-installer\.cdx\.json/);
+  const sboms = await import(new URL('verify/verify-sboms.mjs', root));
+  assert.equal(sboms.PRODUCTION_SBOM_ROOTS['native-installer'], 'veles-bridge-installer@0.1.0');
+  assert.deepEqual(sboms.PRODUCTION_LOCKFILES['native-installer'], { path: ['native-bridge', 'installer', 'Cargo.lock'], ecosystem: 'cargo' });
+  assert.equal(typeof sboms.verifyInstallerToolchainCoverage, 'function');
+  assert.deepEqual(await sboms.verifyInstallerToolchainCoverage(repository), [], 'the repository installer toolchain must be fully covered');
+  const scan = await readFile(new URL('verify/check-remote-code.mjs', root), 'utf8');
+  for (const scope of ['native-bridge/installer/src', 'native-bridge/installer/scripts', 'native-bridge/installer/windows', 'native-bridge/installer/macos/Package.swift', 'native-bridge/installer/macos/Sources']) {
+    assert.ok(scan.includes(`'${scope}'`), `the remote-code scan must cover ${scope}`);
+  }
+  assert.match(await readFile(new URL('verify/check-cargo-build-scripts.mjs', root), 'utf8'), /native-bridge\/installer\/Cargo\.toml/);
+  assert.match(await readFile(new URL('verify/check-npm-licenses.mjs', root), 'utf8'), /native-bridge\/installer\/Cargo\.toml/);
+  assert.match(await workflow('build-supply-chain.yml'), /build\/sbom\/native-installer\.cdx\.json/);
+});
+
+test('installer toolchain coverage fails closed on an uncovered Swift package or an unpinned NSIS archive', async () => {
+  const { verifyInstallerToolchainCoverage } = await import(new URL('verify/verify-sboms.mjs', root));
+  const { mkdtemp, mkdir, writeFile, cp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const copy = async (mutate) => {
+    const directory = await mkdtemp(join(tmpdir(), 'installer-coverage-'));
+    await mkdir(join(directory, 'native-bridge/installer/macos'), { recursive: true });
+    await mkdir(join(directory, 'native-bridge/installer/config'), { recursive: true });
+    await cp(new URL('native-bridge/installer/macos/Package.swift', root), join(directory, 'native-bridge/installer/macos/Package.swift'));
+    await cp(new URL('native-bridge/installer/config/tools.lock.json', root), join(directory, 'native-bridge/installer/config/tools.lock.json'));
+    await cp(new URL('native-bridge/installer/Cargo.lock', root), join(directory, 'native-bridge/installer/Cargo.lock'));
+    await mutate(directory);
+    return directory;
+  };
+  assert.deepEqual(await verifyInstallerToolchainCoverage(await copy(async () => {})), []);
+  const external = await copy(async (directory) => {
+    const path = join(directory, 'native-bridge/installer/macos/Package.swift');
+    await writeFile(path, (await readFile(path, 'utf8')).replace('targets: [', 'dependencies: [.package(url: "https://example.invalid/x.git", from: "1.0.0")],\n    targets: ['));
+  });
+  assert.match((await verifyInstallerToolchainCoverage(external)).join('\n'), /Swift package declares an external dependency/);
+  const resolved = await copy(async (directory) => { await writeFile(join(directory, 'native-bridge/installer/macos/Package.resolved'), '{}'); });
+  assert.match((await verifyInstallerToolchainCoverage(resolved)).join('\n'), /Package\.resolved/);
+  const unpinned = await copy(async (directory) => {
+    const path = join(directory, 'native-bridge/installer/config/tools.lock.json');
+    const lock = JSON.parse(await readFile(path, 'utf8'));
+    lock.archives.nsis.sha256 = 'latest';
+    await writeFile(path, JSON.stringify(lock));
+  });
+  assert.match((await verifyInstallerToolchainCoverage(unpinned)).join('\n'), /NSIS archive is not pinned/);
+  const lockless = await copy(async (directory) => { await writeFile(join(directory, 'native-bridge/installer/Cargo.lock'), ''); });
+  assert.match((await verifyInstallerToolchainCoverage(lockless)).join('\n'), /Cargo\.lock/);
 });
 
 // OTP-25 Task 1: the standalone installer toolchain is pinned independently of
@@ -829,8 +982,8 @@ test('release-build caller graph composes single-build workflows with default-re
     'web-extension': 'web-extension',
     rust: 'rust-jni-wasm',
     'supply-chain': 'supply-chain-reports',
-    'native-windows': 'native-windows',
-    'native-macos': 'native-macos',
+    'native-windows': 'native-unsigned-windows',
+    'native-macos': 'native-unsigned-macos',
   };
   for (const [job, artifact] of Object.entries(neutralNames)) {
     const start = source.indexOf(`  ${job}:`);

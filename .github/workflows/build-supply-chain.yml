@@ -41,6 +41,7 @@ jobs:
             build/sbom/rust.cdx.json
             build/sbom/native-bridge.cdx.json
             build/sbom/native-host.cdx.json
+            build/sbom/native-installer.cdx.json
             build/verification/supply-chain/npm-licenses.txt
             build/verification/supply-chain/cargo-licenses.txt
             build/verification/supply-chain/npm-install-scripts.txt

@@ -166,8 +166,8 @@ with component checksums) and one optional local verifier:
 | Android APK | `./gradlew assembleRelease` in `build-android.yml`; artifact `android-release` = actual APK + `mapping.txt` + `SHA256SUMS` | `verify/verify.sh <apk> <ref>` (Docker rebuild + signature-stripped compare) | `build/verification/android/app-release-unsigned.apk` |
 | Web-extension | `npm run package` in `build-web-extension.yml`; artifact `web-extension` = ZIP + sidecar + `SHA256SUMS` | `verify/verify-web.sh` (candidate/reference byte compare) | `build/web-extension/{veles-extension-<version>.zip,.zip.sha256,SHA256SUMS}` |
 | Rust JNI/WASM | `./gradlew rustPackage` in `build-rust.yml`; artifact `rust-jni-wasm` | `verify/verify-rust.sh` (candidate/reference byte compare) | `build/rust-package/{jni,wasm,SHA256SUMS}` |
-| Native Windows | `./gradlew bridgePackage` **once** on `windows-2025` in `build-native-windows.yml`; artifact `native-windows` = archive + sidecar + `SHA256SUMS` | `verify/verify-native.sh` with two locally produced run dirs | `build/native-bridge/windows/`, `build/verification/native-bridge/windows/` |
-| Native macOS | `./gradlew bridgePackage` **once** on `macos-26` in `build-native-macos.yml`; artifact `native-macos` = archive + sidecar + `SHA256SUMS` | `verify/verify-native.sh` with two locally produced run dirs | `build/native-bridge/macos/`, `build/verification/native-bridge/macos/` |
+| Native Windows | OTP-25: `bridgeInstallerUnsigned` (or `bridgeInstallerPackageFixture`) **once** on `windows-2025` in `build-native-windows.yml`; it builds slots a and b in separate target directories; artifact `native-unsigned-windows` = `tree.tar` + `provenance.json` + `report-ab.json` + `SHA256SUMS` | the protected `release-native-installers.yml` compares two producer RUNS (not this job's two slots) | `build/native-bridge/installer/{target,slots,out}/` |
+| Native macOS | OTP-25: same shape on `macos-26` under the pinned Xcode in `build-native-macos.yml`; artifact `native-unsigned-macos` | the protected `release-native-installers.yml` compares two producer RUNS | `build/native-bridge/installer/{target,slots,out}/` |
 | Supply chain | `verify/verify-supply-chain.sh` in `build-supply-chain.yml` (policy enforcement runs in CI); artifact `supply-chain-reports` | same script locally | `build/sbom/*.cdx.json`, `build/verification/supply-chain/*.txt` |
 
 #### What the native comparison actually proves
@@ -605,3 +605,29 @@ selecting a default.
 - Publication makes **no reproducibility claim**: releases are attested and
   checksummed, but a passing build is not evidence that a second build would
   be byte-identical. Only the optional local verifiers provide that evidence.
+
+## OTP-25 standalone installer inputs (Task 14)
+
+The Tauri scaffold packaging (`bridgePackage`, `native-windows` / `native-macos`) is no longer what
+`build-native-windows.yml` / `build-native-macos.yml` build. They build the standalone installers' UNSIGNED
+input trees with `bridgeInstallerUnsigned` (production channel, requires a tracked approved
+`native-bridge/installer/config/release-<platform>.json`) or `bridgeInstallerPackageFixture` (fixture channel,
+tracked `fixture-<platform>.json`). The channel is fixed by the Gradle registration; a config of the other
+channel is refused by `assemble_unsigned.py check-config`, so a fixture config cannot yield a production
+artifact.
+
+*Independent builds.* Each producer builds twice, as slot `a` and slot `b`, into separate explicit target
+directories under `build/native-bridge/installer/target/<channel>-<slot>/`, each deleted first (no warm cache is
+reused), with the checkout and cargo-registry paths remapped (`--remap-path-prefix`) and, on Windows, `/Brepro`
+and `/PDBALTPATH`. The slots are compared with Task 9's inventory comparison and the producer publishes nothing
+but a FAIL report if they differ. Two slots on one runner show same-runner reproducibility only; the protected
+release workflow compares two separate producer runs (`unsigned_run_a`, `unsigned_run_b`).
+
+*Evidence status.* None of the Windows or macOS producer steps has executed (see the Task 14 report); the
+link-determinism flags are best effort until a native A/B comparison has run.
+
+*Supply chain.* `native-installer.cdx.json` joins the SBOM set (six SBOMs), the installer manifest is covered by
+the licence and cargo build-script checks, and the installer sources, scripts, NSIS and Swift frontends and the
+producer/release workflows are in the remote-code scope. The Swift package must declare no external dependency and
+NSIS is the only build-tool archive (hash-pinned in `tools.lock.json`); both are enforced by
+`verifyInstallerToolchainCoverage` in `verify/verify-sboms.mjs`.

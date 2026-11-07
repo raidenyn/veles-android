@@ -30,7 +30,7 @@
       "enum": ["production", "development", "fixture"]
     },
     "version": {
-      "description": "Three unsigned numeric components compared numerically, never lexicographically.",
+      "description": "Three unsigned numeric components compared numerically, never lexicographically. The Rust validator (model.rs parse_version) is authoritative at runtime: it additionally requires every component to fit an unsigned 64-bit integer, which a regular expression cannot state.",
       "type": "string",
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
     },
@@ -129,11 +129,9 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "publisher": {
-      "description": "A trusted publisher/signer identity with no surrounding whitespace and no control characters.",
+      "description": "A trusted publisher/signer identity. The Rust validator (model.rs is_valid_publisher) is authoritative: 1 to 512 UTF-8 BYTES, no leading or trailing Unicode white space, and no control character (C0, DEL or C1). The schema deliberately states no pattern or character-length limit, because ECMA-262 \\S and JSON Schema's character-counted maxLength disagree with those rules in both directions and a divergent second rule would become a second authority.",
       "type": "string",
-      "minLength": 1,
-      "maxLength": 512,
-      "pattern": "^\\S(?:[^\\u0000-\\u001f\\u007f]*\\S)?$"
+      "minLength": 1
     },
     "policy": {
       "type": "object",

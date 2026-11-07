@@ -99,13 +99,18 @@ async function main() {
     'native-bridge/src-tauri', 'native-bridge/scripts', 'native-bridge/package.json',
     'native-bridge/host/src', 'native-bridge/host/scripts', 'native-bridge/host/Cargo.toml',
     '.github/workflows/build-native-host.yml',
+    // OTP-25 standalone installers: engine, scripts, NSIS and Swift frontends, producer and release workflows.
+    'native-bridge/installer/src', 'native-bridge/installer/scripts', 'native-bridge/installer/windows',
+    'native-bridge/installer/macos/Package.swift', 'native-bridge/installer/macos/Sources', 'native-bridge/installer/Cargo.toml',
+    '.github/workflows/build-native-windows.yml', '.github/workflows/build-native-macos.yml',
+    '.github/workflows/release-native-installers.yml',
     'build.gradle.kts', 'verify',
   ];
   const paths = [];
   for (const scope of scopes) {
     try {
       const entries = await filesUnder(repository, scope);
-      paths.push(...entries.filter((path) => !path.includes('node_modules/') && !path.includes('verify/test/') && !path.endsWith('package-lock.json') && !['verify/check-cargo-build-scripts.mjs', 'verify/check-remote-code.mjs'].includes(path)));
+      paths.push(...entries.filter((path) => !path.includes('node_modules/') && !path.includes('verify/test/') && !path.includes('installer/scripts/fixtures/') && !path.includes('__pycache__/') && !/installer\/scripts\/test_[^/]*\.py$/.test(path) && !path.endsWith('package-lock.json') && !['verify/check-cargo-build-scripts.mjs', 'verify/check-remote-code.mjs'].includes(path)));
     } catch {
       try { await readFile(join(repository, scope)); paths.push(scope); } catch { /* absent optional scope */ }
     }
