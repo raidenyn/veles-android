@@ -1093,8 +1093,10 @@ const S_IFLNK: u32 = 0o120000;
 
 const T8_O_RDONLY: c_int = 0;
 const T8_O_RDWR: c_int = 2;
-const T8_O_CREAT: c_int = 0o200;
-const T8_O_EXCL: c_int = 0o2000;
+/// Darwin `O_CREAT` is `0x0200` (octal `0o1000`), not the Linux `0o200`.
+const T8_O_CREAT: c_int = 0x0200;
+/// Darwin `O_EXCL` is `0x0800` (octal `0o4000`); `0o2000` is `O_TRUNC` there.
+const T8_O_EXCL: c_int = 0x0800;
 const T8_O_DIRECTORY: c_int = 0x10_0000;
 const T8_O_NOFOLLOW: c_int = 0x0100;
 const T8_O_CLOEXEC: c_int = 0x100_0000;
