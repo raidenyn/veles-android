@@ -121,7 +121,8 @@ pub use policy::{
     read_carrier_contents, write_carrier, write_sealed_carrier,
 };
 pub use removal::{
-    RemovalCoordinator, RemovalRequest, cleanup_helper_source, cleanup_staging_directory,
+    RemovalCoordinator, RemovalRequest, cleanup_helper_digest, cleanup_helper_source,
+    cleanup_staging_directory,
 };
 pub use retained::{
     MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, RetainedInstall,

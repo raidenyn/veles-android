@@ -65,7 +65,10 @@ use crate::platform::{
     require_quiescent_within,
 };
 use crate::policy::{authorize_package_policy, is_no_broader_than};
-use crate::removal::{RemovalCoordinator, RemovalRequest, cleanup_helper_source};
+use crate::removal::{
+    RemovalCoordinator, RemovalRequest, cleanup_helper_digest, cleanup_helper_source,
+    discard_staging_residue,
+};
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
 use crate::transaction::{
     STATE_INSTALLED, activate_retained, bound_by_replaced_release, install, manifest_for, recover,
@@ -1013,6 +1016,7 @@ fn uninstall(
     // image) can still be removed, and its removal observed. A release without a
     // cleanup helper, or a host that cannot stage one, leaves this `None`; a
     // removal that then fails is reported as pending, never as clean.
+    let helper_sha256 = cleanup_helper_digest(paths, &record.owned);
     let coordinator = match cleanup_helper_source(paths, &record.owned)? {
         Some((source, sha256)) => RemovalCoordinator::stage(
             paths,
@@ -1025,6 +1029,16 @@ fn uninstall(
         )?,
         None => None,
     };
+    // A retry may find the installed helper already removed by the interrupted
+    // in-process pass while the outside-root stage from that run survives. The
+    // stage identity is durable (the transaction and the claimed helper digest),
+    // so reconcile and observe it before any success can be reported: a surviving
+    // stage is not clean. A stage that cannot be identified is preserved.
+    if coordinator.is_none()
+        && let Some(helper_sha256) = helper_sha256
+    {
+        discard_staging_residue(paths, &transaction, helper_sha256).map_err(deferred_removal)?;
+    }
 
     // Remove the registration first, only after ownership and quiescence were
     // validated.

@@ -174,6 +174,25 @@ pub fn cleanup_helper_source(
     Ok(None)
 }
 
+/// The claimed digest of this release's cleanup helper, whether or not the file
+/// is still present.
+///
+/// The outside-root stage marker binds this digest, so a retry can recognise its
+/// own residue after the in-process pass has already removed the helper image.
+pub fn cleanup_helper_digest(
+    paths: &InstallPaths,
+    claims: &[crate::platform::OwnedClaim],
+) -> Option<Digest> {
+    let name = cleanup_helper_file(paths.target());
+    claims
+        .iter()
+        .find(|claim| {
+            claim.kind == OwnedKind::File
+                && (claim.path == name || claim.path.ends_with(&format!("/{name}")))
+        })
+        .and_then(|claim| claim.sha256)
+}
+
 /// The fixed staging path for one installation and transaction. Deterministic so
 /// a retry can recognise the residue of a crash, and distinct per install root so
 /// independent installations never collide in the shared temporary directory.
@@ -187,8 +206,13 @@ pub fn cleanup_staging_directory(paths: &InstallPaths, transaction: &str) -> Pat
 /// Create the staging directory, reconciling only our own crash residue.
 fn staging_directory(paths: &InstallPaths, request: &RemovalRequest<'_>) -> InstallResult<PathBuf> {
     let directory = cleanup_staging_directory(paths, request.transaction);
-    reconcile_staging(paths, &directory, request)?;
-    fs::create_dir(&directory).map_err(|_| pending())?;
+    reconcile_staging(
+        paths,
+        &directory,
+        request.transaction,
+        request.helper_sha256,
+    )?;
+    create_staging_directory(&directory)?;
     // From the create onward this directory is ours: any failure removes it.
     let prepared = (|| {
         #[cfg(unix)]
@@ -209,12 +233,27 @@ fn staging_directory(paths: &InstallPaths, request: &RemovalRequest<'_>) -> Inst
     Ok(directory)
 }
 
+/// Create the outside-root stage. On Windows the protected owner-only DACL is
+/// applied by the creation call itself, so the directory is never briefly
+/// inherited from the shared temporary directory.
+fn create_staging_directory(directory: &Path) -> InstallResult<()> {
+    #[cfg(windows)]
+    {
+        crate::platform::create_private_staging_directory(directory).map_err(|_| pending())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::create_dir(directory).map_err(|_| pending())
+    }
+}
+
 /// Remove a staging directory left by this same transaction, or refuse to touch
 /// anything else.
 fn reconcile_staging(
     paths: &InstallPaths,
     directory: &Path,
-    request: &RemovalRequest<'_>,
+    transaction: &str,
+    helper_sha256: Digest,
 ) -> InstallResult<()> {
     match fs::symlink_metadata(directory) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -225,8 +264,10 @@ fn reconcile_staging(
     ensure_staging_is_safe(paths, directory)?;
     match fs::symlink_metadata(directory.join(STAGING_MARKER)) {
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-            let expected = marker_bytes(paths, request)?;
-            let actual = fs::read(directory.join(STAGING_MARKER)).map_err(|_| pending())?;
+            let expected = marker_bytes(paths, transaction, helper_sha256)?;
+            // The marker is untrusted recovery input: read at most one byte past
+            // the small value it must equal, never its self-reported length.
+            let actual = read_marker_bounded(&directory.join(STAGING_MARKER), expected.len())?;
             if actual != expected {
                 // Another installation or transaction, or a forged marker: keep
                 // the directory and fail closed.
@@ -249,14 +290,50 @@ fn reconcile_staging(
     remove_known_stage(directory)
 }
 
+/// Read at most `limit` bytes, plus one to detect excess, from a marker file.
+fn read_marker_bounded(path: &Path, limit: usize) -> InstallResult<Vec<u8>> {
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(|_| pending())?;
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| pending())?;
+    Ok(bytes)
+}
+
+/// Reconcile and observe the outside-root stage of one transaction without
+/// requiring the installed helper image to still exist.
+///
+/// The stage name is deterministic from the install root and the transaction; its
+/// marker also binds the helper digest and root. Both come from durable state, so a
+/// retry after the in-process pass removed the helper can still recognise and
+/// dispose of the crash residue. Anything that does not match is preserved and
+/// reported.
+pub(crate) fn discard_staging_residue(
+    paths: &InstallPaths,
+    transaction: &str,
+    helper_sha256: Digest,
+) -> InstallResult<()> {
+    let directory = cleanup_staging_directory(paths, transaction);
+    reconcile_staging(paths, &directory, transaction, helper_sha256)?;
+    match fs::symlink_metadata(&directory) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        _ => Err(pending()),
+    }
+}
+
 /// The bounded identity of one staging directory. The temporary path is fixed,
 /// so its contents must prove whose they are before a retry may remove them.
-fn marker_bytes(paths: &InstallPaths, request: &RemovalRequest<'_>) -> InstallResult<Vec<u8>> {
+fn marker_bytes(
+    paths: &InstallPaths,
+    transaction: &str,
+    helper_sha256: Digest,
+) -> InstallResult<Vec<u8>> {
     let root = paths.root().to_str().ok_or_else(pending)?;
     Ok(format!(
         "{STAGING_MARKER_SCHEMA}\n{}\n{}\n{}\n",
-        request.transaction,
-        request.helper_sha256.to_hex(),
+        transaction,
+        helper_sha256.to_hex(),
         root
     )
     .into_bytes())
@@ -267,7 +344,7 @@ fn write_marker(
     request: &RemovalRequest<'_>,
     directory: &Path,
 ) -> InstallResult<()> {
-    let bytes = marker_bytes(paths, request)?;
+    let bytes = marker_bytes(paths, request.transaction, request.helper_sha256)?;
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -296,6 +373,8 @@ fn ensure_staging_is_safe(paths: &InstallPaths, directory: &Path) -> InstallResu
             return Err(pending());
         }
     }
+    #[cfg(windows)]
+    crate::platform::validate_private_staging_directory(directory)?;
     let root = fs::canonicalize(paths.root()).unwrap_or_else(|_| paths.root().to_path_buf());
     let staged = fs::canonicalize(directory).map_err(|_| pending())?;
     if staged.starts_with(&root) || root.starts_with(&staged) {

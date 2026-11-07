@@ -35,12 +35,12 @@ use veles_bridge_installer::journal::{MaintenancePreimage, MaintenancePublicatio
 use veles_bridge_installer::{
     AuthenticatedPackage, Channel, Digest, FailureCode, FakePlatform, Faults, HostState,
     InstallFailure, InstallLock, InstallPaths, InstallResult, InventoryEntry,
-    JOURNAL_SCHEMA_VERSION, Journal, JournalState, MAX_INVENTORY_BYTES, ManifestSnapshot,
-    NativeManifest, Operation, PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall,
-    PortablePlatform, RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, Receipt, ReceiptState,
-    Registration, ReleaseDescriptor, ReleasePolicy, RemovalCoordinator, RemovalRequest,
-    RetainedInstall, STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN, STATE_REPAIRED, STATE_ROLLED_BACK,
-    STATE_UNINSTALLED, StateDocument, TRUST_ASSESSMENT_MACOS_GATEKEEPER,
+    JOURNAL_SCHEMA_VERSION, Journal, JournalClaim, JournalState, MAX_INVENTORY_BYTES,
+    ManifestSnapshot, NativeManifest, Operation, PRODUCTION_HOST_NAME, Phase, Platform,
+    PlatformCall, PortablePlatform, RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, Receipt,
+    ReceiptState, Registration, ReleaseDescriptor, ReleasePolicy, RemovalCoordinator,
+    RemovalRequest, RetainedInstall, STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN, STATE_REPAIRED,
+    STATE_ROLLED_BACK, STATE_UNINSTALLED, StateDocument, TRUST_ASSESSMENT_MACOS_GATEKEEPER,
     TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof, ValidatedPath, Version, WarningCode,
     authenticate_package, canonical_json, cleanup_staging_directory, extension_origin,
     parse_manifest, path_is_within, recover, run_operation, run_operation_within, write_carrier,
@@ -6737,6 +6737,178 @@ fn staging_reconciles_its_own_crash_residue() {
         !directory.exists(),
         "the disposable staging artifact is gone"
     );
+}
+
+/// Build the durable boundary an interrupted uninstall leaves after the in-process
+/// file pass: the registration and every owned leaf are gone (including the
+/// installed cleanup helper), the receipt and a `CleanupPending` journal survive,
+/// and the real coordinator's outside-root stage was abandoned with no destructor.
+fn crash_uninstall_after_owned_file_pass(
+    fixture: &Fixture,
+    package: &Package,
+) -> (String, PathBuf) {
+    let paths = &fixture.paths;
+    fixture.install(package);
+    let committed = receipt(paths).expect("committed receipt");
+    let transaction = committed.transaction_id.clone();
+    let helper = committed
+        .ownership
+        .owned
+        .iter()
+        .find(|claim| {
+            claim.kind == veles_bridge_installer::OwnedKind::File
+                && claim.path.ends_with("/veles-bridge-cleanup.exe")
+        })
+        .expect("the release carries a cleanup helper claim");
+    let helper_sha256 = helper.sha256.expect("helper digest");
+    let helper_path = paths.root().join(&helper.path);
+    let request = RemovalRequest {
+        helper_source: &helper_path,
+        helper_sha256,
+        publisher: PUBLISHER,
+        transaction: &transaction,
+    };
+    let staged = RemovalCoordinator::stage(paths, &request)
+        .expect("the coordinator stages the helper pair")
+        .expect("the helper image is present");
+    std::mem::forget(staged); // the process died: no destructor ran
+
+    let live = fs::read(paths.registration_path()).expect("the live registration");
+    fs::remove_file(paths.registration_path()).expect("the pass removed the registration");
+    for claim in &committed.ownership.owned {
+        if claim.kind == veles_bridge_installer::OwnedKind::Directory {
+            continue;
+        }
+        match fs::remove_file(paths.root().join(&claim.path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("remove {}: {error}", claim.path),
+        }
+    }
+
+    let journal = Journal {
+        schema: JOURNAL_SCHEMA_VERSION,
+        transaction_id: transaction.clone(),
+        operation: Operation::Uninstall,
+        phase: Phase::CleanupPending,
+        target: paths.target(),
+        channel: paths.channel(),
+        root: committed.root.clone(),
+        version: committed.version.clone(),
+        payload_id: committed.payload_id,
+        old_version: None,
+        old_payload_id: None,
+        old_carrier_sha256: None,
+        manifest: ManifestSnapshot::new(live).expect("bounded live manifest"),
+        old_manifest: None,
+        preimage: None,
+        policy: committed.policy.clone(),
+        release_policy: committed.release_policy.clone(),
+        created: committed
+            .ownership
+            .owned
+            .iter()
+            .map(|claim| JournalClaim {
+                path: claim.path.clone(),
+                kind: claim.kind,
+                sha256: claim.sha256,
+                size: None,
+                incomplete: false,
+            })
+            .collect(),
+        maintenance: Vec::new(),
+    };
+    journal
+        .write(&PortablePlatform::new(), paths)
+        .expect("the pending uninstall journal is durable");
+    (
+        transaction.clone(),
+        cleanup_staging_directory(paths, &transaction),
+    )
+}
+
+/// Shipping retry after the installed helper has already been removed: the stage
+/// identity is durable (transaction plus the claimed helper digest), so a retry
+/// reconciles and observes the outside-root stage even though no helper file is
+/// left to stage again. A surviving stage is never clean (N4).
+#[test]
+fn a_retry_after_the_installed_helper_is_gone_still_disposes_the_stage() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.assembled(
+        "uninstall-retry",
+        "1.0.0",
+        HOST_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let (_transaction, directory) = crash_uninstall_after_owned_file_pass(&fixture, &package);
+    assert!(directory.exists(), "the crashed stage is on disk");
+    let helper = receipt(paths)
+        .expect("receipt")
+        .ownership
+        .owned
+        .iter()
+        .find(|claim| claim.path.ends_with("/veles-bridge-cleanup.exe"))
+        .expect("helper claim")
+        .path
+        .clone();
+    assert!(
+        !paths.root().join(&helper).exists(),
+        "the installed helper file is gone before the retry"
+    );
+
+    let report = run_operation(&fixture.platform(), paths, Operation::Uninstall, None)
+        .expect("the retry completes the removal");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(
+        report.warnings.is_empty(),
+        "nothing of ours survives, so the retry is clean: {:?}",
+        report.warnings
+    );
+    assert!(
+        !directory.exists(),
+        "the outside-root stage is reconciled and observed gone without a helper file"
+    );
+    assert!(!paths.root().exists(), "the installation root is removed");
+}
+
+/// A stage that still holds a foreign entry after the helper is gone is preserved
+/// and reported: a retry may only delete its own marked artifact.
+#[test]
+fn a_retry_without_the_helper_preserves_a_foreign_entry_in_its_stage() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.assembled(
+        "uninstall-retry-foreign",
+        "1.0.0",
+        HOST_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let (_transaction, directory) = crash_uninstall_after_owned_file_pass(&fixture, &package);
+    let foreign = directory.join("foreign.txt");
+    fs::write(&foreign, b"not ours").expect("foreign staging content");
+
+    let failure = failure_code(run_operation(
+        &fixture.platform(),
+        paths,
+        Operation::Uninstall,
+        None,
+    ));
+    assert_eq!(
+        failure,
+        FailureCode::CleanupPending,
+        "an outside-root stage that still exists is not a clean uninstall"
+    );
+    assert_eq!(
+        fs::read(&foreign).expect("foreign entry survives"),
+        b"not ours"
+    );
+    assert!(
+        directory.exists(),
+        "the unidentifiable contents are preserved"
+    );
+    assert!(receipt(paths).is_some(), "the durable intent is retained");
+    let _ = fs::remove_dir_all(&directory);
 }
 
 /// Observed disposal is not best effort: a directory that still holds foreign

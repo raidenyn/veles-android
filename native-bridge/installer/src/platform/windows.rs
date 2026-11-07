@@ -89,17 +89,17 @@ use windows::Win32::Security::WinTrust::{
 };
 use windows::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, EqualSid, GetTokenInformation, IsValidSid, PSID,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
+    SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN,
-    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_BASIC_INFO, FILE_BEGIN,
-    FILE_DISPOSITION_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_MODE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FileBasicInfo, FileDispositionInfo, FlushFileBuffers,
-    GETFINALPATHNAMEBYHANDLE_FLAGS, GetFileInformationByHandleEx, GetFileSizeEx, OPEN_EXISTING,
-    ReadFile, SetFileInformationByHandle, SetFilePointerEx, WriteFile,
+    CreateDirectoryW, CreateFileW, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_ARCHIVE,
+    FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TEMPORARY, FILE_BASIC_INFO,
+    FILE_BEGIN, FILE_DISPOSITION_INFO, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+    FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileBasicInfo, FileDispositionInfo,
+    FlushFileBuffers, GETFINALPATHNAMEBYHANDLE_FLAGS, GetFileInformationByHandleEx, GetFileSizeEx,
+    OPEN_EXISTING, ReadFile, SetFileInformationByHandle, SetFilePointerEx, WriteFile,
 };
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
 use windows::Win32::System::Registry::{
@@ -2214,6 +2214,62 @@ fn validate_private_directory_handle(directory: &File) -> InstallResult<()> {
         let _ = LocalFree(Some(HLOCAL(descriptor.0)));
     }
     result
+}
+
+/// Create an outside-root staging directory with the installer's protected
+/// owner-only DACL applied by the creation call itself.
+///
+/// The stage lives in the shared temporary directory, outside the install root, so
+/// it cannot inherit the private layout's descriptor. `CreateDirectoryW` takes the
+/// owner-only descriptor atomically; [`validate_private_staging_directory`] then
+/// proves the owner and DACL from an opened, no-follow handle before any image is
+/// copied. NOT RUN on this Linux host: it compiles for `x86_64-pc-windows-msvc`.
+pub(crate) fn create_private_staging_directory(path: &Path) -> InstallResult<()> {
+    let descriptor = owner_private_descriptor()?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.0,
+        bInheritHandle: windows::core::BOOL(0),
+    };
+    let wide = wide_path(path)?;
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `attributes` holds a
+    // live descriptor for the duration of the call.
+    let created = unsafe { CreateDirectoryW(PCWSTR(wide.as_ptr()), Some(&attributes)) };
+    // SAFETY: `descriptor` is the allocation returned by the conversion.
+    unsafe {
+        let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+    }
+    created.map_err(|_| io_failure())?;
+    if let Err(failure) = validate_private_staging_directory(path) {
+        // We just created this directory, so removing the (still empty) name is
+        // our own cleanup, never a foreign delete.
+        let _ = fs::remove_dir(path);
+        return Err(failure);
+    }
+    Ok(())
+}
+
+/// Prove an outside-root staging directory is this user's and nobody else's.
+///
+/// The descriptor is read from the opened directory handle, never from the path,
+/// so a name swapped after resolution cannot lend another object's security
+/// descriptor. NOT RUN on this Linux host.
+pub(crate) fn validate_private_staging_directory(path: &Path) -> InstallResult<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let directory = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(path)
+        .map_err(|_| io_failure())?;
+    if is_reparse(&directory).map_err(|_| io_failure())?
+        || !directory.metadata().map_err(|_| io_failure())?.is_dir()
+    {
+        return Err(unsafe_path());
+    }
+    validate_private_directory_handle(&directory)
 }
 
 /// The raw bytes of `S-1-3-4` (`OWNER RIGHTS`) and `S-1-3-0` (`CREATOR OWNER`).

@@ -77,7 +77,10 @@ mod native;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub(crate) use windows::{anchored_open_assessment_below, anchored_open_regular_below};
+pub(crate) use windows::{
+    anchored_open_assessment_below, anchored_open_regular_below, create_private_staging_directory,
+    validate_private_staging_directory,
+};
 // The PE carrier-resource parser is Windows-only in production but portable in
 // tests, so its coverage checks are exercised on every host.
 #[cfg(any(windows, test))]
