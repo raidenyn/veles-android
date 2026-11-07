@@ -1545,6 +1545,18 @@ fn authenticate_for_completion(
         evidence.contents.sealed_inventory,
     )
     .map_err(unprovable_as_recovery)?;
+    // The published persistent files are bound to the authenticated carrier and
+    // inventory, never to the journal's own fields. A journal that names another
+    // identity or source (or omits a publication the payload requires) cannot
+    // complete.
+    verify_authenticated_maintenance(
+        platform,
+        paths,
+        journal,
+        &evidence,
+        &entries,
+        &version_relative,
+    )?;
     retained_claims(
         paths,
         &entries,
@@ -1576,6 +1588,78 @@ fn authenticate_for_completion(
         descriptor,
         &journal.release_policy,
     )
+}
+
+/// Bind the persistent maintenance publications a completion would accept to the
+/// authenticated carrier and payload inventory.
+///
+/// The journal is installer state: its `source`, `sha256` and `size` fields agree
+/// with each other by construction and prove nothing. The engine's identity is
+/// the authenticated carrier artifact; every other `maintenance/` file is an entry
+/// of the authenticated inventory. An install must publish exactly that set. A
+/// rollback publishes nothing (it never downgrades the persistent assets).
+fn verify_authenticated_maintenance(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    journal: &Journal,
+    evidence: &ReleaseEvidence,
+    entries: &[InventoryEntry],
+    version_relative: &str,
+) -> InstallResult<()> {
+    if journal.operation == Operation::Rollback {
+        if journal.maintenance.is_empty() {
+            return Ok(());
+        }
+        return Err(recovery_required());
+    }
+    let carrier_relative = evidence
+        .retained
+        .carrier_relative(paths)
+        .map_err(|_| recovery_required())?;
+    let carrier_source = PackageSource::open(&paths.root().join(&carrier_relative))
+        .map_err(|_| recovery_required())?;
+    let carrier_entries = carrier_entries_for(platform, &carrier_source, paths.target())
+        .map_err(|_| recovery_required())?;
+    let (engine_source, engine_sha256, engine_size) =
+        maintenance_engine_source(paths, &carrier_relative, &carrier_entries)
+            .map_err(|_| recovery_required())?;
+
+    let mut expected: std::collections::BTreeMap<String, (String, Digest, u64, bool)> =
+        std::collections::BTreeMap::new();
+    expected.insert(
+        maintenance_engine_relative(paths.target()),
+        (engine_source, engine_sha256, engine_size, true),
+    );
+    let prefix = format!("{MAINTENANCE_DIR}/");
+    for entry in entries {
+        if entry.path.starts_with(&prefix) {
+            expected.insert(
+                entry.path.clone(),
+                (
+                    format!("{version_relative}/{}", entry.path),
+                    entry.sha256,
+                    entry.size,
+                    entry.executable,
+                ),
+            );
+        }
+    }
+    if journal.maintenance.len() != expected.len() {
+        return Err(recovery_required());
+    }
+    for publication in &journal.maintenance {
+        let Some((source, sha256, size, executable)) = expected.get(&publication.path) else {
+            return Err(recovery_required());
+        };
+        if publication.source != *source
+            || publication.sha256 != *sha256
+            || publication.size != *size
+            || publication.executable != *executable
+        {
+            return Err(recovery_required());
+        }
+    }
+    Ok(())
 }
 
 /// Whether the registration manifest a rollback journalled as the one it replaced
@@ -2394,46 +2478,135 @@ fn publish_maintenance(
 /// Restore every replaced persistent maintenance file from its retained preimage.
 ///
 /// Called on the failure/rollback path before this transaction's created assets
-/// are removed. The preimage bytes are read from the retained version directory,
-/// verified against the journaled identity, written durably through the same
-/// owned-preimage rules as a first publication, and read back.
+/// are removed. The preimage is not authorized by the journal: it is re-derived
+/// from the committed previous receipt and its retained copy inside the immutable
+/// version, and the journal must agree with that derivation. Every destination is
+/// validated before the first write, and a regular file that holds neither this
+/// transaction's published identity nor the previous identity is foreign state
+/// that is preserved untouched (N2).
 fn restore_maintenance_preimages(
     platform: &impl Platform,
     paths: &InstallPaths,
     journal: &Journal,
+    prior: Option<&Receipt>,
 ) -> InstallResult<()> {
+    let mut restores: Vec<(String, Vec<u8>, bool)> = Vec::new();
     for publication in &journal.maintenance {
-        let Some(preimage) = &publication.preimage else {
+        let Some(recorded) = &publication.preimage else {
             continue;
         };
-        let bytes = read_no_follow(&paths.root().join(&preimage.source), preimage.size)
-            .map_err(|_| recovery_required())?;
-        if bytes.len() as u64 != preimage.size || Digest::of(&bytes) != preimage.sha256 {
+        // A replacement can only be restored on top of a committed previous
+        // receipt, and the preimage must be the retained copy of the identity
+        // that receipt claims at this exact destination.
+        let prior = prior.ok_or_else(recovery_required)?;
+        let derived = authenticated_maintenance_preimage(paths, prior, &publication.path)?;
+        if derived.source != recorded.source
+            || derived.sha256 != recorded.sha256
+            || derived.size != recorded.size
+        {
             return Err(recovery_required());
         }
+        let bytes = read_no_follow(&paths.root().join(&derived.source), derived.size)
+            .map_err(|_| recovery_required())?;
+        if bytes.len() as u64 != derived.size || Digest::of(&bytes) != derived.sha256 {
+            return Err(recovery_required());
+        }
+
+        // A replace never unlinks the destination, so it must still exist and be
+        // a regular file. Only the new published identity or the already-restored
+        // previous identity is ours to see here.
         let destination = paths.root().join(&publication.path);
-        let handle = match fs::symlink_metadata(&destination) {
-            Ok(metadata) if metadata.is_file() => {
-                ValidatedPath::new(paths, Path::new(&publication.path), PathKind::File)?
-            }
+        let metadata = match fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.is_file() => metadata,
             Ok(_) => return Err(foreign_state()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                ValidatedPath::new(paths, Path::new(&publication.path), PathKind::NewFile)?
+                return Err(foreign_state());
             }
             Err(_) => return Err(io_failure()),
         };
-        match handle.kind() {
-            PathKind::NewFile => platform.write_durable(&handle, &bytes)?,
-            _ => platform.replace_durable(&handle, &bytes)?,
+        let matches = |expected_size: u64, expected: Digest| -> bool {
+            metadata.len() == expected_size
+                && read_no_follow(&destination, expected_size)
+                    .map(|current| Digest::of(&current) == expected)
+                    .unwrap_or(false)
+        };
+        if matches(publication.size, publication.sha256) {
+            // The crash happened after publication: restore the preimage.
+        } else if matches(derived.size, derived.sha256) {
+            // Already holds the previous identity (a crash before the atomic
+            // replace renamed the staged sibling): nothing to write.
+            continue;
+        } else {
+            // A different regular file was put here while the installer was
+            // stopped. It is not ours to overwrite.
+            return Err(foreign_state());
         }
+        restores.push((publication.path.clone(), bytes, publication.executable));
+    }
+
+    // Nothing above wrote: only now are the verified preimages restored.
+    for (relative, bytes, executable) in restores {
+        let handle = ValidatedPath::new(paths, Path::new(&relative), PathKind::File)?;
+        platform.replace_durable(&handle, &bytes)?;
         let written = handle.adopt(PathKind::File)?;
-        platform.apply_launch_permissions(&written, preimage.executable)?;
-        let restored = read_no_follow(&destination, preimage.size).map_err(|_| io_failure())?;
-        if restored.len() as u64 != preimage.size || Digest::of(&restored) != preimage.sha256 {
+        platform.apply_launch_permissions(&written, executable)?;
+        let restored = read_no_follow(&paths.root().join(&relative), bytes.len() as u64)
+            .map_err(|_| io_failure())?;
+        if restored != bytes {
             return Err(io_failure());
         }
     }
     Ok(())
+}
+
+/// The exact preimage identity a committed previous receipt claims for one
+/// persistent maintenance destination, read from its retained copy.
+///
+/// This mirrors the selection `maintenance_plan` used when the transaction was
+/// prepared, but derives it from committed evidence instead of the editable
+/// journal. A destination the prior receipt does not claim, or a retained copy
+/// that no longer verifies, cannot be restored.
+fn authenticated_maintenance_preimage(
+    paths: &InstallPaths,
+    prior: &Receipt,
+    relative: &str,
+) -> InstallResult<MaintenancePreimage> {
+    let claim = prior
+        .ownership
+        .owned
+        .iter()
+        .find(|claim| claim.kind == OwnedKind::File && claim.path == relative)
+        .ok_or_else(recovery_required)?;
+    let claimed = claim.sha256.ok_or_else(recovery_required)?;
+    let suffix = format!("/{}", maintenance_retained_tail(paths, relative));
+    for candidate in &prior.ownership.owned {
+        if candidate.kind != OwnedKind::File
+            || candidate.sha256 != Some(claimed)
+            || !candidate.path.starts_with(&format!("{VERSIONS_DIR}/"))
+            || !candidate.path.ends_with(&suffix)
+        {
+            continue;
+        }
+        let absolute = paths.root().join(&candidate.path);
+        let Ok(retained) = fs::symlink_metadata(&absolute) else {
+            continue;
+        };
+        if !retained.is_file() {
+            continue;
+        }
+        let Ok(bytes) = read_no_follow(&absolute, retained.len()) else {
+            continue;
+        };
+        if bytes.len() as u64 == retained.len() && Digest::of(&bytes) == claimed {
+            return Ok(MaintenancePreimage {
+                source: candidate.path.clone(),
+                sha256: claimed,
+                size: retained.len(),
+                executable: false,
+            });
+        }
+    }
+    Err(recovery_required())
 }
 
 /// Validate the platform-reported entries of one signed carrier artifact.
@@ -2492,21 +2665,27 @@ fn restore_previous(
     paths: &InstallPaths,
     journal: &Journal,
 ) -> InstallResult<()> {
+    // The previous release must be provable *before* the first restore write: the
+    // preimages are derived from its committed receipt, not from the journal.
+    let prior = if journal.old_manifest.is_some() {
+        Some(previous_release(platform, paths, journal)?)
+    } else {
+        None
+    };
     // The persistent maintenance files are restored first: the previous release
     // cannot verify as whole while one of its claimed files still holds this
     // transaction's newer bytes.
-    restore_maintenance_preimages(platform, paths, journal)?;
+    restore_maintenance_preimages(platform, paths, journal, prior.as_ref())?;
     let live = platform.read_registration(paths)?;
     let live_digest = live.as_ref().map(Registration::manifest_digest);
 
     // Never claim a restoration, republish a registration or clear recovery
     // intent for a previous release that cannot be shown to be whole: a live old
     // manifest is no proof that its executable, resources or inventory survive.
-    if journal.old_manifest.is_some() {
-        let prior = previous_release(platform, paths, journal)?;
-        if !release_is_usable(platform, paths, &prior, None) {
-            return Err(recovery_required());
-        }
+    if let Some(prior) = prior.as_ref()
+        && !release_is_usable(platform, paths, prior, None)
+    {
+        return Err(recovery_required());
     }
 
     match (journal.old_manifest.as_ref(), live_digest) {

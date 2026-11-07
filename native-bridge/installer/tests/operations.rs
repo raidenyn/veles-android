@@ -31,17 +31,18 @@ use std::process;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use veles_bridge_installer::journal::{MaintenancePreimage, MaintenancePublication};
 use veles_bridge_installer::{
     AuthenticatedPackage, Channel, Digest, FailureCode, FakePlatform, Faults, HostState,
-    InstallFailure, InstallLock, InstallPaths, InstallResult, InventoryEntry, JournalState,
-    NativeManifest, Operation, PRODUCTION_HOST_NAME, Platform, PlatformCall, PortablePlatform,
-    RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, Receipt, ReceiptState, Registration,
-    ReleaseDescriptor, ReleasePolicy, RetainedInstall, STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN,
-    STATE_REPAIRED, STATE_ROLLED_BACK, STATE_UNINSTALLED, StateDocument,
-    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof,
-    ValidatedPath, Version, WarningCode, authenticate_package, canonical_json, extension_origin,
-    parse_manifest, path_is_within, recover, run_operation, run_operation_within, write_carrier,
-    write_inventory,
+    InstallFailure, InstallLock, InstallPaths, InstallResult, InventoryEntry,
+    JOURNAL_SCHEMA_VERSION, Journal, JournalState, ManifestSnapshot, NativeManifest, Operation,
+    PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall, PortablePlatform, RETAINED_FILE_NAME,
+    RETAINED_SCHEMA_VERSION, Receipt, ReceiptState, Registration, ReleaseDescriptor, ReleasePolicy,
+    RetainedInstall, STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN, STATE_REPAIRED, STATE_ROLLED_BACK,
+    STATE_UNINSTALLED, StateDocument, TRUST_ASSESSMENT_MACOS_GATEKEEPER,
+    TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof, ValidatedPath, Version, WarningCode,
+    authenticate_package, canonical_json, extension_origin, parse_manifest, path_is_within,
+    recover, run_operation, run_operation_within, write_carrier, write_inventory,
 };
 
 const EXTENSION_ID: &str = "mnopabcdefghijklmnopabcdefghijkl";
@@ -6149,8 +6150,383 @@ fn repair_restores_a_damaged_persistent_asset_of_a_retained_newer_release() {
 }
 
 // ---------------------------------------------------------------------------
-// Uninstall removal coordinator (OTP-25 F7)
+// Maintenance recovery ownership/authentication (N2)
 // ---------------------------------------------------------------------------
+
+/// A pending upgrade journal as a crash after maintenance publication but before
+/// activation would leave it: the committed receipt still names the previous
+/// release, the journal names the new one, and the persistent files hold the new
+/// publication until recovery restores their verified preimages.
+fn maintenance_crash_journal(
+    paths: &InstallPaths,
+    prior: &Receipt,
+    v2_payload: Digest,
+    maintenance: Vec<MaintenancePublication>,
+) -> Journal {
+    let version_relative = paths.version_dir_relative(
+        &Version::parse("2.0.0").expect("fixture version"),
+        v2_payload,
+    );
+    let new_manifest = ManifestSnapshot::new(manifest_selecting(
+        paths,
+        &paths.root().join(&version_relative).join("host.exe"),
+    ))
+    .expect("bounded new manifest");
+    let live = fs::read(paths.registration_path()).expect("the previous registration is live");
+    Journal {
+        schema: JOURNAL_SCHEMA_VERSION,
+        transaction_id: "fedcba9876543210fedcba9876543210".to_owned(),
+        operation: Operation::Install,
+        phase: Phase::Staged,
+        target: paths.target(),
+        channel: paths.channel(),
+        root: paths
+            .root()
+            .to_str()
+            .expect("UTF-8 install root")
+            .to_owned(),
+        version: "2.0.0".to_owned(),
+        payload_id: v2_payload,
+        old_version: Some(prior.version.clone()),
+        old_payload_id: Some(prior.payload_id),
+        old_carrier_sha256: Some(prior.policy.carrier_sha256),
+        manifest: new_manifest,
+        old_manifest: Some(ManifestSnapshot::new(live.clone()).expect("bounded previous manifest")),
+        preimage: Some(veles_bridge_installer::RegistrationPreimage::new(
+            Digest::of(&live),
+        )),
+        policy: prior.policy.clone(),
+        release_policy: prior.release_policy.clone(),
+        created: Vec::new(),
+        maintenance,
+    }
+}
+
+/// A crash-time recovery must not overwrite a regular maintenance destination that
+/// holds neither this transaction's published bytes nor the verified preimage: a
+/// different file put there while the installer was stopped is foreign state. It
+/// must also validate every destination before the first write, so an earlier
+/// valid one is not restored either.
+#[test]
+fn recovery_preserves_a_replaced_maintenance_destination_unchanged() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let prior = receipt(paths).expect("the previous receipt is committed");
+    let v2 = fixture.package_from(
+        "v2",
+        "2.0.0",
+        &maintenance_files(UNINSTALLER_V2),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let p1 = v1.descriptor.payload_id;
+    let p2 = v2.descriptor.payload_id;
+    let engine_relative = "maintenance/veles-bridge-maintenance.exe";
+    let uninstaller_relative = "maintenance/uninstall.exe";
+    let v1_dir = format!("versions/1.0.0-{}", p1.to_hex());
+    let v2_dir = format!("versions/2.0.0-{}", p2.to_hex());
+
+    let journal = maintenance_crash_journal(
+        paths,
+        &prior,
+        p2,
+        vec![
+            MaintenancePublication {
+                path: engine_relative.to_owned(),
+                source: format!("{v2_dir}/carrier.exe"),
+                sha256: Digest::of(v2.proof.carrier()),
+                size: v2.proof.carrier().len() as u64,
+                executable: true,
+                preimage: Some(MaintenancePreimage {
+                    source: format!("{v1_dir}/carrier.exe"),
+                    sha256: Digest::of(v1.proof.carrier()),
+                    size: v1.proof.carrier().len() as u64,
+                    executable: true,
+                }),
+            },
+            MaintenancePublication {
+                path: uninstaller_relative.to_owned(),
+                source: format!("{v2_dir}/{uninstaller_relative}"),
+                sha256: Digest::of(UNINSTALLER_V2),
+                size: UNINSTALLER_V2.len() as u64,
+                executable: true,
+                preimage: Some(MaintenancePreimage {
+                    source: format!("{v1_dir}/{uninstaller_relative}"),
+                    sha256: Digest::of(UNINSTALLER_V1),
+                    size: UNINSTALLER_V1.len() as u64,
+                    executable: true,
+                }),
+            },
+        ],
+    );
+
+    // The crash happened after publication: the persistent files hold the new
+    // identity. Then a different regular file was put at the uninstaller path.
+    fs::write(paths.root().join(engine_relative), v2.proof.carrier()).expect("published engine");
+    let foreign = b"not this installer's uninstaller";
+    fs::write(paths.root().join(uninstaller_relative), foreign).expect("foreign replacement");
+    journal
+        .write(&PortablePlatform::new(), paths)
+        .expect("the crash journal is durable");
+
+    let before = snapshot(fixture.temp.path());
+    let failure = failure_code(recover(&fixture.platform(), paths));
+    assert_eq!(
+        failure,
+        FailureCode::ForeignState,
+        "a regular file that is neither the new nor the old identity is foreign state"
+    );
+    assert_eq!(
+        fs::read(paths.root().join(uninstaller_relative)).expect("the foreign file remains"),
+        foreign,
+        "the foreign replacement is preserved byte for byte"
+    );
+    assert_eq!(
+        fs::read(paths.root().join(engine_relative)).expect("the valid destination remains"),
+        v2.proof.carrier(),
+        "no destination is written before every destination has been validated"
+    );
+    assert_eq!(
+        snapshot(fixture.temp.path()),
+        before,
+        "refusing a foreign destination mutates nothing"
+    );
+    assert_eq!(
+        receipt(paths)
+            .expect("the previous receipt survives")
+            .version,
+        "1.0.0"
+    );
+    assert!(
+        matches!(journal_state(paths), JournalState::Pending(_)),
+        "the durable intent is retained for an explicit resolution"
+    );
+}
+
+/// The preimage a recovery restores is never authorized by editable journal data
+/// alone: it must be the retained copy of the identity the committed previous
+/// receipt claims. A forged preimage/source is refused before any write.
+#[test]
+fn recovery_refuses_a_forged_maintenance_preimage_without_writing() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let prior = receipt(paths).expect("the previous receipt is committed");
+    let v2 = fixture.package_from(
+        "v2",
+        "2.0.0",
+        &maintenance_files(UNINSTALLER_V2),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let p1 = v1.descriptor.payload_id;
+    let p2 = v2.descriptor.payload_id;
+    let uninstaller_relative = "maintenance/uninstall.exe";
+    let v1_dir = format!("versions/1.0.0-{}", p1.to_hex());
+    let v2_dir = format!("versions/2.0.0-{}", p2.to_hex());
+
+    // A regular file inside the retained version that the journal names as the
+    // preimage, with a matching digest. Nothing binds it to the prior receipt.
+    let forged = b"attacker-supplied preimage";
+    fs::write(paths.root().join(&v1_dir).join("evil.bin"), forged).expect("forged preimage source");
+
+    let journal = maintenance_crash_journal(
+        paths,
+        &prior,
+        p2,
+        vec![MaintenancePublication {
+            path: uninstaller_relative.to_owned(),
+            source: format!("{v2_dir}/{uninstaller_relative}"),
+            sha256: Digest::of(UNINSTALLER_V2),
+            size: UNINSTALLER_V2.len() as u64,
+            executable: true,
+            preimage: Some(MaintenancePreimage {
+                source: format!("{v1_dir}/evil.bin"),
+                sha256: Digest::of(forged),
+                size: forged.len() as u64,
+                executable: true,
+            }),
+        }],
+    );
+    fs::write(paths.root().join(uninstaller_relative), UNINSTALLER_V2)
+        .expect("published uninstaller");
+    journal
+        .write(&PortablePlatform::new(), paths)
+        .expect("the crash journal is durable");
+
+    let failure = failure_code(recover(&fixture.platform(), paths));
+    assert_eq!(
+        failure,
+        FailureCode::RecoveryRequired,
+        "a preimage the previous receipt does not claim is not recovery authority"
+    );
+    assert_eq!(
+        fs::read(paths.root().join(uninstaller_relative)).expect("the published file remains"),
+        UNINSTALLER_V2,
+        "a forged preimage causes no write"
+    );
+}
+
+/// Forward completion accepts maintenance publications only when they are the
+/// authenticated carrier/inventory identities. A journal whose published bytes
+/// and journal fields agree with each other is not evidence: once the live
+/// registration is the new one, a forged persistent file must stop completion.
+#[test]
+fn completion_refuses_a_forged_maintenance_publication() {
+    let probe = Fixture::windows();
+    let probe_v1 = probe.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let probe_v2 = probe.package_from(
+        "v2",
+        "2.0.0",
+        &maintenance_files(UNINSTALLER_V2),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    probe.install(&probe_v1);
+    let clean = probe.platform();
+    run_operation(
+        &clean,
+        &probe.paths,
+        Operation::Install,
+        Some(authenticate(&probe_v2)),
+    )
+    .expect("the probe upgrade completes");
+    let total = clean.mutations().len();
+
+    // Find the crash window after the new registration is live but before the
+    // receipt commits: that is the state recovery finishes forward.
+    let mut chosen = None;
+    for attempt in 1..=total {
+        let fixture = Fixture::windows();
+        let paths = &fixture.paths;
+        let v1 = fixture.package_from(
+            "v1",
+            "1.0.0",
+            &maintenance_files(UNINSTALLER_V1),
+            policy(1, Vec::new(), Vec::new()),
+        );
+        let v2 = fixture.package_from(
+            "v2",
+            "2.0.0",
+            &maintenance_files(UNINSTALLER_V2),
+            policy(1, Vec::new(), Vec::new()),
+        );
+        fixture.install(&v1);
+        let crashing = FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            panic_at_mutation: Some(attempt),
+            trust_by_carrier: fixture.proofs.borrow().clone(),
+            ..Faults::default()
+        });
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            run_operation(
+                &crashing,
+                paths,
+                Operation::Install,
+                Some(authenticate(&v2)),
+            )
+        }));
+        assert!(outcome.is_err(), "attempt {attempt} did not die");
+        let pending = match journal_state(paths) {
+            JournalState::Pending(journal) => *journal,
+            _ => continue,
+        };
+        let receipt_is_previous = receipt(paths)
+            .map(|receipt| receipt.version == "1.0.0")
+            .unwrap_or(true);
+        let live_is_new = fs::read(paths.registration_path())
+            .map(|bytes| Digest::of(&bytes) == pending.manifest.sha256())
+            .unwrap_or(false);
+        if receipt_is_previous && live_is_new {
+            chosen = Some(attempt);
+            break;
+        }
+    }
+    let attempt = chosen.expect("a crash window before the receipt commit exists");
+
+    // Rebuild that exact window and forge the persistent uninstaller plus the
+    // journal fields that describe it.
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let v1 = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let v2 = fixture.package_from(
+        "v2",
+        "2.0.0",
+        &maintenance_files(UNINSTALLER_V2),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    let crashing = FakePlatform::with_faults(Faults {
+        host_state: HostState::Quiescent,
+        panic_at_mutation: Some(attempt),
+        trust_by_carrier: fixture.proofs.borrow().clone(),
+        ..Faults::default()
+    });
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        run_operation(
+            &crashing,
+            paths,
+            Operation::Install,
+            Some(authenticate(&v2)),
+        )
+    }));
+    assert!(outcome.is_err());
+
+    let mut journal = match journal_state(paths) {
+        JournalState::Pending(journal) => *journal,
+        other => panic!("expected a pending journal: {other:?}"),
+    };
+    let forged = b"forged persistent engine";
+    let uninstaller_relative = "maintenance/uninstall.exe";
+    fs::write(paths.root().join(uninstaller_relative), forged).expect("forged publication");
+    for publication in &mut journal.maintenance {
+        if publication.path == uninstaller_relative {
+            publication.sha256 = Digest::of(forged);
+            publication.size = forged.len() as u64;
+        }
+    }
+    journal
+        .write(&PortablePlatform::new(), paths)
+        .expect("the forged journal is durable");
+
+    let failure = failure_code(recover(&fixture.platform(), paths));
+    assert_eq!(
+        failure,
+        FailureCode::RecoveryRequired,
+        "a publication that is not the authenticated carrier/inventory identity cannot complete"
+    );
+    assert_eq!(
+        fs::read(paths.root().join(uninstaller_relative)).expect("the forged file remains"),
+        forged,
+        "refusing completion writes nothing"
+    );
+    assert_eq!(
+        receipt(paths)
+            .expect("the previous receipt survives")
+            .version,
+        "1.0.0"
+    );
+}
 
 /// A clean uninstall leaves no owned artifact behind: not the payload, not the
 /// maintenance assets, not the lock, state, receipts or the private layout.
