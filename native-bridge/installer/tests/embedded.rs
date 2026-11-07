@@ -149,7 +149,61 @@ fn build_named_binary(target_dir: &Path, binary: &str, carrier: Option<&Path>) -
         "cargo build failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    target_dir.join("debug").join(binary)
+    build_binary_path(target_dir, binary)
+}
+
+/// The nested Cargo output name of one binary: the platform's executable suffix
+/// belongs to the file name (`veles-bridge-maintenance.exe` on Windows), and a
+/// read-back that omits it fails with NotFound even though it compiled (N5).
+fn executable_name(binary: &str, suffix: &str) -> String {
+    format!("{binary}{suffix}")
+}
+
+/// The exact nested Cargo output path for the host platform.
+fn build_binary_path(target_dir: &Path, binary: &str) -> PathBuf {
+    target_dir
+        .join("debug")
+        .join(executable_name(binary, std::env::consts::EXE_SUFFIX))
+}
+
+/// The read-back path must carry the platform executable suffix. The Windows
+/// branch is exercised here by constructing the name with `.exe`, which is what
+/// the nested Cargo build produces on that host; omitting it makes both read-back
+/// tests fail with NotFound despite compiling. The real Windows run is NOT RUN on
+/// this Linux host.
+#[test]
+fn the_nested_build_read_back_uses_the_platform_executable_suffix() {
+    assert_eq!(
+        executable_name("veles-bridge-maintenance", ".exe"),
+        "veles-bridge-maintenance.exe"
+    );
+    assert_eq!(
+        executable_name("veles-bridge-cleanup", ".exe"),
+        "veles-bridge-cleanup.exe"
+    );
+    assert_eq!(
+        executable_name("veles-bridge-maintenance", ""),
+        "veles-bridge-maintenance"
+    );
+    // The shipping helper appends the compile-time suffix, so Windows resolves
+    // `debug/<binary>.exe` exactly as the nested build wrote it.
+    assert_eq!(
+        build_binary_path(Path::new("probe-target"), "veles-bridge-cleanup"),
+        Path::new("probe-target")
+            .join("debug")
+            .join(executable_name(
+                "veles-bridge-cleanup",
+                std::env::consts::EXE_SUFFIX
+            ))
+    );
+    for suffix in [".exe", ""] {
+        let name = executable_name("veles-bridge-cleanup", suffix);
+        assert_eq!(
+            name.strip_prefix("veles-bridge-cleanup"),
+            Some(suffix),
+            "the suffix is appended verbatim for {suffix:?}"
+        );
+    }
 }
 
 /// The cleanup helper is part of the inventoried payload, and the carrier is only
