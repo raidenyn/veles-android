@@ -1160,8 +1160,7 @@ fn remove_private_layout(
     )?;
     remove_private_file(platform, paths, &format!("{STATE_DIR}/{RECEIPT_FILE}"))?;
     remove_private_file(platform, paths, &format!("{STATE_DIR}/{JOURNAL_FILE}"))?;
-    remove_private_file(platform, paths, &paths.lock_relative())?;
-    drop(lock);
+    lock.remove()?;
 
     let mut leftover = false;
     for relative in [

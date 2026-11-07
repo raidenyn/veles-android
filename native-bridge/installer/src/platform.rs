@@ -1344,6 +1344,33 @@ impl InstallLock {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Remove the lock's directory entry while the exclusive lock is still held.
+    ///
+    /// Unix unlinks the held inode. Windows cannot unlink a byte-range-locked file
+    /// by name (`ERROR_LOCK_VIOLATION`), so the verified handle is marked
+    /// delete-on-close: the entry disappears atomically when this guard is
+    /// dropped, with no window in which the name is free and the lock is not
+    /// held.
+    pub fn remove(self) -> InstallResult<()> {
+        #[cfg(windows)]
+        {
+            crate::platform::windows::mark_delete_on_close(&self.file)
+        }
+        #[cfg(unix)]
+        {
+            fs::remove_file(&self.path).map_err(|_| io_failure())?;
+            if let Some(parent) = self.path.parent() {
+                flush_directory(parent)?;
+            }
+            Ok(())
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = self;
+            Ok(())
+        }
+    }
 }
 
 impl Drop for InstallLock {
@@ -1369,6 +1396,15 @@ fn acquire_lock(paths: &InstallPaths) -> InstallResult<InstallLock> {
         use std::os::unix::fs::OpenOptionsExt;
 
         options.mode(0o600).custom_flags(NO_FOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // DELETE access is what lets teardown mark the still-locked handle
+        // delete-on-close instead of unlinking the name (which Windows refuses
+        // while the byte-range lock is held).
+        options.access_mode(0xC001_0000); // GENERIC_READ | GENERIC_WRITE | DELETE
     }
     let file = options.open(paths.lock_path()).map_err(|error| {
         if error.kind() == io::ErrorKind::AlreadyExists {
@@ -4521,21 +4557,20 @@ fn replace_file_checked(staged: &ValidatedPath, live: &ValidatedPath) -> Install
     staged.revalidate()?;
     live.revalidate()?;
 
-    #[cfg(unix)]
-    {
-        crash_point("replace_file", "revalidated, live entry untouched");
-        fs::rename(staged.rendered(), live.rendered()).map_err(|_| io_failure())?;
-        crash_point("replace_file", "renamed, parent not flushed");
-        if let Some(parent) = live.rendered().parent() {
-            flush_directory(parent)?;
-        }
-        Ok(())
+    crash_point("replace_file", "revalidated, live entry untouched");
+    // `fs::rename` replaces the destination directory entry on every target this
+    // crate builds for, including Windows (`MoveFileExW` with
+    // `MOVEFILE_REPLACE_EXISTING`), and never writes through the destination
+    // inode. This is the portable reference primitive used by the tests and by
+    // [`PortablePlatform`]; the production Windows and macOS adapters override
+    // `Platform::replace_file` with a handle-bound `renameat`/`NtSetInformationFile`
+    // so the name is not re-resolved there.
+    fs::rename(staged.rendered(), live.rendered()).map_err(|_| io_failure())?;
+    crash_point("replace_file", "renamed, parent not flushed");
+    if let Some(parent) = live.rendered().parent() {
+        flush_directory(parent)?;
     }
-    #[cfg(not(unix))]
-    {
-        // ReplaceFileW with the exact destination handle is Task 8's native adapter.
-        Err(InstallFailure::new(FailureCode::UnsupportedTarget))
-    }
+    Ok(())
 }
 
 fn read_registration_from(path: &Path) -> InstallResult<Option<Registration>> {
