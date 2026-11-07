@@ -53,7 +53,9 @@ pub use cleanup::{
     remove_helper_after_exit, run_cleanup_helper, run_cleanup_helper_detailed,
     run_cleanup_helper_via_launcher, run_cleanup_launcher,
 };
-pub use embedded::{EMBEDDED_CARRIER_ENV, decode_embedded_carrier};
+pub use embedded::{
+    EMBEDDED_CARRIER_ENV, decode_embedded_carrier, decode_embedded_carrier_for_channel,
+};
 pub use host::{HostOs, HostPlatform, PlatformKind, host_platform, platform_kind_for};
 pub use inventory::{
     INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, SEALED_INVENTORY_FILE,

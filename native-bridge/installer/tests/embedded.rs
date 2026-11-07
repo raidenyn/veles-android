@@ -14,8 +14,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use veles_bridge_installer::{
-    Channel, Digest, FailureCode, InstallPaths, PRODUCTION_HOST_NAME, ReleaseDescriptor,
-    ReleasePolicy, Target, canonical_json, write_carrier,
+    Channel, Digest, FailureCode, InstallPaths, ReleaseDescriptor, ReleasePolicy, Target,
+    canonical_json, write_carrier,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -51,17 +51,22 @@ impl Drop for Temp {
 const EXTENSION_ID: &str = "mnopabcdefghijklmnopabcdefghijkl";
 
 fn descriptor() -> ReleaseDescriptor {
+    descriptor_for(Channel::Production)
+}
+
+fn descriptor_for(channel: Channel) -> ReleaseDescriptor {
     let payload_id = Digest::of(b"the fixture payload inventory");
+    let identity = channel.identity();
     let descriptor = ReleaseDescriptor {
         schema: 1,
-        channel: Channel::Production,
+        channel,
         version: "1.0.0".to_owned(),
         source_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         target: Target::WindowsX64,
         minimum_os: "11".to_owned(),
         extension_id: EXTENSION_ID.to_owned(),
-        host_name: PRODUCTION_HOST_NAME.to_owned(),
-        bundle_id: PRODUCTION_HOST_NAME.to_owned(),
+        host_name: identity.host_name.to_owned(),
+        bundle_id: identity.bundle_id.to_owned(),
         api_min: 1,
         api_max: 1,
         payload_id,
@@ -78,6 +83,11 @@ fn descriptor() -> ReleaseDescriptor {
 
 fn carrier() -> Vec<u8> {
     write_carrier(&canonical_json(&descriptor()).expect("descriptor JSON")).expect("carrier")
+}
+
+fn carrier_for(channel: Channel) -> Vec<u8> {
+    write_carrier(&canonical_json(&descriptor_for(channel)).expect("descriptor JSON"))
+        .expect("carrier")
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -118,19 +128,18 @@ fn the_build_time_channel_embeds_the_carrier_in_the_executable() {
 }
 
 fn build_binary(target_dir: &Path, carrier: Option<&Path>) -> PathBuf {
+    build_named_binary(target_dir, "veles-bridge-maintenance", carrier)
+}
+
+fn build_named_binary(target_dir: &Path, binary: &str, carrier: Option<&Path>) -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut command = Command::new(env!("CARGO"));
     command
         .current_dir(manifest)
-        .args([
-            "build",
-            "--locked",
-            "--bin",
-            "veles-bridge-maintenance",
-            "--target-dir",
-        ])
+        .args(["build", "--locked", "--bin", binary, "--target-dir"])
         .arg(target_dir)
-        .env_remove("VELES_EMBEDDED_CARRIER");
+        .env_remove("VELES_EMBEDDED_CARRIER")
+        .env_remove("VELES_BUILD_CHANNEL");
     if let Some(carrier) = carrier {
         command.env("VELES_EMBEDDED_CARRIER", carrier);
     }
@@ -140,7 +149,30 @@ fn build_binary(target_dir: &Path, carrier: Option<&Path>) -> PathBuf {
         "cargo build failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    target_dir.join("debug").join("veles-bridge-maintenance")
+    target_dir.join("debug").join(binary)
+}
+
+/// The cleanup helper is part of the inventoried payload, and the carrier is only
+/// compiled into the maintenance engine. Rebuilding the engine with the carrier must
+/// therefore leave the payload identity (and thus the carrier's descriptor) unchanged,
+/// which is what makes the assemble -> rebuild -> re-assemble order sound.
+#[test]
+fn the_carrier_is_not_embedded_in_the_payload_cleanup_helper() {
+    let temp = Temp::new("cleanup-payload");
+    let carrier_path = temp.path().join("carrier.bin");
+    let carrier_bytes = carrier();
+    fs::write(&carrier_path, &carrier_bytes).expect("carrier document");
+
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let target_dir = manifest
+        .join("target")
+        .join("embedded-carrier-cleanup-probe");
+    let built = build_named_binary(&target_dir, "veles-bridge-cleanup", Some(&carrier_path));
+    let helper = fs::read(&built).expect("built cleanup helper");
+    assert!(
+        !contains(&helper, &carrier_bytes),
+        "the cleanup helper is payload, not the release identity carrier"
+    );
 }
 
 /// The library seam: a carrier supplied through the channel is parsed into the
@@ -328,4 +360,117 @@ fn the_build_channel_transports_exact_bytes_and_refuses_a_wrong_input() {
             "a wrong channel input fails the build: {wrong:?}"
         );
     }
+}
+
+/// A production-channel build must embed the authenticated carrier: leaving it out is a
+/// build error, not an engine that later answers `policy-denied`. A fixture build without
+/// one is the honest fixture state; the development channel never ships a release carrier.
+#[test]
+fn the_build_channel_rule_fails_closed_for_a_production_build() {
+    use channel::{BuildChannel, build_channel, resolve};
+
+    assert_eq!(
+        build_channel(None).expect("unset"),
+        BuildChannel::Unspecified
+    );
+    assert_eq!(
+        build_channel(Some("")).expect("empty"),
+        BuildChannel::Unspecified
+    );
+    assert_eq!(
+        build_channel(Some("production")).expect("production"),
+        BuildChannel::Production
+    );
+    assert_eq!(
+        build_channel(Some("fixture")).expect("fixture"),
+        BuildChannel::Fixture
+    );
+    assert_eq!(
+        build_channel(Some("development")).expect("development"),
+        BuildChannel::Development
+    );
+    assert!(build_channel(Some("release")).is_err());
+
+    assert_eq!(resolve(None, None).expect("unreleased"), None);
+    assert_eq!(
+        resolve(None, Some("fixture")).expect("fixture without a carrier"),
+        None
+    );
+    assert!(
+        resolve(None, Some("production"))
+            .expect_err("production without a carrier")
+            .contains("production")
+    );
+    assert!(
+        resolve(None, Some("production"))
+            .expect_err("production without a carrier")
+            .contains(channel::ENV)
+    );
+
+    let temp = Temp::new("channel-rule");
+    let carrier_path = temp.path().join("embedded-carrier.bin");
+    let carrier_bytes = carrier();
+    fs::write(&carrier_path, &carrier_bytes).expect("carrier");
+    let path = carrier_path.to_str().expect("UTF-8");
+    assert_eq!(
+        resolve(Some(path), Some("production")).expect("production with a carrier"),
+        Some(carrier_bytes.clone())
+    );
+    assert!(
+        resolve(Some(path), Some("fixture"))
+            .expect_err("a production carrier in a fixture build")
+            .contains("fixture")
+    );
+    assert!(
+        resolve(Some(path), Some("development"))
+            .expect_err("development must not embed a release carrier")
+            .contains("development")
+    );
+
+    // A fixture build must not embed a production carrier, and a production build must not embed
+    // a fixture one: the declared channel and the carrier's channel must agree.
+    let fixture_path = temp.path().join("fixture-carrier.bin");
+    let fixture_bytes = carrier_for(Channel::Fixture);
+    fs::write(&fixture_path, &fixture_bytes).expect("fixture carrier");
+    let fixture = fixture_path.to_str().expect("UTF-8");
+    assert_eq!(
+        resolve(Some(fixture), Some("fixture")).expect("fixture carrier in a fixture build"),
+        Some(fixture_bytes)
+    );
+    assert!(
+        resolve(Some(fixture), Some("production"))
+            .expect_err("a fixture carrier in a production build")
+            .contains("production")
+    );
+}
+
+/// A compiled-in carrier is only usable by the channel it belongs to. A fixture engine that
+/// somehow embeds a production carrier refuses at run time, rather than installing production
+/// identity under the fixture root.
+#[test]
+fn an_embedded_carrier_is_bound_to_its_build_channel() {
+    use veles_bridge_installer::embedded::decode_embedded_carrier_for_channel;
+
+    assert_eq!(
+        decode_embedded_carrier_for_channel(None, Channel::Fixture).expect("absent"),
+        None
+    );
+    assert_eq!(
+        decode_embedded_carrier_for_channel(Some(&carrier()), Channel::Production)
+            .expect("production carrier in a production build")
+            .expect("present"),
+        descriptor()
+    );
+    assert_eq!(
+        decode_embedded_carrier_for_channel(Some(&carrier()), Channel::Fixture)
+            .expect_err("a production carrier in a fixture build is refused")
+            .code,
+        FailureCode::PolicyDenied
+    );
+    assert_eq!(
+        decode_embedded_carrier_for_channel(Some(&carrier()), Channel::Development)
+            .expect_err("a production carrier in a development build is refused")
+            .code,
+        FailureCode::PolicyDenied
+    );
 }

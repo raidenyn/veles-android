@@ -11,9 +11,11 @@
 //! * [`EMBEDDED_CARRIER`]: the authenticated release carrier release packaging
 //!   supplies through the build-time channel (`VELES_EMBEDDED_CARRIER`, see
 //!   `build.rs`). The engine parses the release descriptor out of those exact
-//!   bytes and authenticates every package against it. This unreleased build
-//!   embeds nothing, so install and repair answer `policy-denied` rather than
-//!   trusting a package-supplied descriptor.
+//!   bytes and authenticates every package against it. A production producer sets
+//!   `VELES_BUILD_CHANNEL=production` after carrier assembly, so a production build
+//!   without one fails closed; an unreleased build embeds nothing, and install and
+//!   repair answer `policy-denied` rather than trusting a package-supplied
+//!   descriptor. A carrier that belongs to another channel is refused at run time.
 //! * [`BUILD_CHANNEL`]: the channel compiled into this binary
 //!   (`veles_bridge_installer::COMPILED_CHANNEL`): production unless the producer
 //!   built a fixture or development engine with its own `veles_channel` cfg. A
@@ -23,7 +25,7 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 
 use veles_bridge_installer::cli::{self, Context, ParsedCommand};
-use veles_bridge_installer::embedded::decode_embedded_carrier;
+use veles_bridge_installer::embedded::decode_embedded_carrier_for_channel;
 use veles_bridge_installer::host::host_platform;
 use veles_bridge_installer::{COMPILED_CHANNEL, Channel};
 
@@ -56,9 +58,9 @@ fn run(invocation: &cli::Invocation, stdout: &mut dyn Write, stderr: &mut dyn Wr
             return cli::emit(&report, stdout, stderr);
         }
     };
-    // A carrier was compiled in but does not parse: that is a refusal of the
-    // build's own release identity, never a silent "no identity".
-    let expected = match decode_embedded_carrier(EMBEDDED_CARRIER) {
+    // A carrier was compiled in but does not parse, or belongs to another build channel:
+    // that is a refusal of the build's own release identity, never a silent "no identity".
+    let expected = match decode_embedded_carrier_for_channel(EMBEDDED_CARRIER, BUILD_CHANNEL) {
         Ok(expected) => expected,
         Err(failure) => {
             let report = cli::failure_report(invocation.operation, &failure);
