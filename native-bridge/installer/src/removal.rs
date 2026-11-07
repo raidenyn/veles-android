@@ -292,7 +292,11 @@ fn new_capability() -> InstallResult<[u8; 32]> {
                 windows::Win32::Security::Cryptography::BCRYPT_USE_SYSTEM_PREFERRED_RNG,
             )
         };
-        if status.is_ok() { Ok(key) } else { Err(pending()) }
+        if status.is_ok() {
+            Ok(key)
+        } else {
+            Err(pending())
+        }
     }
     #[cfg(not(any(unix, windows)))]
     {
