@@ -291,9 +291,29 @@ fn reconcile_staging(
 }
 
 /// Read at most `limit` bytes, plus one to detect excess, from a marker file.
+///
+/// The marker is opened without following a final symbolic link on the Unix
+/// targets, so a swapped name cannot redirect the bounded read.
 fn read_marker_bounded(path: &Path, limit: usize) -> InstallResult<Vec<u8>> {
     use std::io::Read;
-    let file = fs::File::open(path).map_err(|_| pending())?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x20000); // O_NOFOLLOW
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x100); // O_NOFOLLOW
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let file = options.open(path).map_err(|_| pending())?;
     let mut bytes = Vec::new();
     file.take(limit as u64 + 1)
         .read_to_end(&mut bytes)
