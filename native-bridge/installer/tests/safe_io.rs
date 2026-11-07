@@ -330,22 +330,24 @@ fn ancestor_swap_and_symlink_block() {
     }
 }
 
-/// Windows reparse points are the platform analogue of Unix symlinks. The
-/// portable suite runs on the Linux host, so this named assertion is visible
-/// but unexecuted until Task 8 records native Windows evidence.
+/// Windows reparse points are the platform analogue of Unix symlinks. This
+/// assertion only compiles on a non-Unix target, and now runs on the Windows
+/// runner instead of staying visibly skipped.
 #[cfg(not(unix))]
 #[test]
-#[ignore = "requires Windows runner; Task 8 native evidence"]
 fn windows_reparse_point_ancestor_is_rejected() {
     let temp = TempRoot::new();
     let paths = windows_paths(&temp, Channel::Production);
     let platform = FakePlatform::new();
-    let _lock = platform
+    let lock = platform
         .lock(&paths)
         .expect("lock creates the private layout");
     let staged = ValidatedPath::new_file(&paths, Path::new("state/staging/manifest.json"))
         .expect("validated staged path");
 
+    // The lock file lives inside `state`; Windows cannot rename a directory that
+    // still contains an open handle, so release the lock before moving it aside.
+    drop(lock);
     let state = paths.state().to_path_buf();
     let moved_state = paths.root().join("state-real");
     fs::rename(&state, &moved_state).expect("move the real state directory aside");
