@@ -495,8 +495,28 @@ def _tar_tree(tree: Path) -> bytes:
     return buffer.getvalue()
 
 
-def finalize(*, platform: str, slot_a: Path, slot_b: Path, output: Path, commit: str) -> None:
+def _check_tool_observation(platform: str, observation: Any) -> dict:
+    """The observed build-tool inventory that is bound into the provenance (shape only here).
+
+    The producer records what it observed; whether it matches ``config/tools.lock.json`` is decided by
+    ``tool_observation.py check`` before a production build and again by the release gate, which never
+    trusts the producer's own verdict.
+    """
+    if (
+        not isinstance(observation, dict)
+        or set(observation) != {"target", "tools"}
+        or observation["target"] != PLATFORM_TARGET[platform]
+        or not isinstance(observation["tools"], dict)
+        or not observation["tools"]
+        or not all(isinstance(entry, dict) for entry in observation["tools"].values())
+    ):
+        raise AssemblyError(f"tool observation must be {{target: {PLATFORM_TARGET[platform]}, tools: {{...}}}}")
+    return observation
+
+
+def finalize(*, platform: str, slot_a: Path, slot_b: Path, output: Path, commit: str, tool_observation: Any) -> None:
     """Compare two independent slots; publish ``tree.tar`` (from A), provenance and reports."""
+    observation = _check_tool_observation(platform, tool_observation)
     output = Path(output)
     if output.exists() or output.is_symlink():
         raise AssemblyError(f"output must not exist: {output}")
@@ -536,6 +556,7 @@ def finalize(*, platform: str, slot_a: Path, slot_b: Path, output: Path, commit:
             "descriptor_digest": sha256_bytes(descriptor),
             "a_inventory_sha256": inventory_a["inventory_sha256"],
             "b_inventory_sha256": inventory_b["inventory_sha256"],
+            "tool_observation": observation,
         }
         (scratch / "tree.tar").write_bytes(_tar_tree(tree_a))
         (scratch / "provenance.json").write_bytes(canonical_json(provenance))
@@ -583,6 +604,8 @@ def _parser() -> argparse.ArgumentParser:
     final.add_argument("--slot-b", type=Path, required=True)
     final.add_argument("--output", type=Path, required=True)
     final.add_argument("--commit", required=True)
+    final.add_argument("--tool-observation", type=Path, required=True,
+                       help="observed build-tool inventory (tool_observation.py observe) bound into provenance.json")
     return parser
 
 
@@ -611,7 +634,8 @@ def main(argv: list[str] | None = None) -> int:
                 binaries=args.binaries, output=args.output, frontend=args.frontend, packager=args.packager,
             )  # fmt: skip
             return 0
-        finalize(platform=args.platform, slot_a=args.slot_a, slot_b=args.slot_b, output=args.output, commit=args.commit)
+        finalize(platform=args.platform, slot_a=args.slot_a, slot_b=args.slot_b, output=args.output, commit=args.commit,
+                 tool_observation=load_config(args.tool_observation))
         return 0
     except AssemblyError as error:
         print(f"assemble_unsigned: refused: {error}", file=sys.stderr)

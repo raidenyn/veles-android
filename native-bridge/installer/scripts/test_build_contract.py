@@ -238,6 +238,23 @@ def check_gradle(gradle, clean_script):
     if not supply or "verify-supply-chain.sh" not in supply.group(1):
         errors.append("bridgeInstallerSupplyChain does not run verify/verify-supply-chain.sh")
 
+    # 7b. Build-tool identity (F8): observed, checked against the lock before a production build, bound into
+    # provenance, and the macOS SDK / deployment target selected explicitly from the lock.
+    observe = [call for call in command_lines(code) if "tool_observation" in call or "installerToolsScript" in call]
+    if not any('"observe"' in call and '"--target"' in call and '"--output"' in call for call in observe):
+        errors.append("no task observes the native tool identities (tool_observation.py observe)")
+    if not any('"check"' in call and '"--observed"' in call and '"--target"' in call for call in observe):
+        errors.append("no task checks the observed tools against tools.lock.json (tool_observation.py check)")
+    if not re.search(r'dependsOn\(\s*if \(channel == "production"\) bridgeInstallerToolCheck else bridgeInstallerToolObservation\s*\)', code):
+        errors.append("the production producer does not depend on the tool check (the fixture only on the observation)")
+    finalize = [call for call in command_lines(code) if '"finalize"' in call]
+    if not finalize or any('"--tool-observation"' not in call for call in finalize):
+        errors.append("finalize does not bind the tool observation into provenance")
+    if "MACOSX_DEPLOYMENT_TARGET" not in code or "SDKROOT" not in code or '"--sdk"' not in code:
+        errors.append("the macOS SDK and deployment target are not selected explicitly")
+    if re.search(r'MACOSX_DEPLOYMENT_TARGET",\s*"', code):
+        errors.append("the macOS deployment target is hard-coded instead of read from tools.lock.json")
+
     # 8. Clean contract.
     clean = gradle.split('tasks.named<Delete>("clean")', 1)
     for path in ("native-bridge/installer/target", "native-bridge/installer/macos/.build"):
@@ -522,7 +539,7 @@ class GradleGraph(unittest.TestCase):
 
     def test_a_missing_target_triple_is_rejected(self):
         block = producer_block(self.gradle)
-        mutated = self.gradle.replace(block, re.sub(r'"--target",\s*[^,\n]+,\s*', "", block, count=1))
+        mutated = self.gradle.replace(block, re.sub(r'("--release",\s*)"--target",\s*[^,\n]+,\s*', r"\1", block, count=1))
         self.assertTrue(any("--target" in e for e in self.violations(mutated)))
 
     def test_output_outside_build_is_rejected(self):
@@ -578,6 +595,26 @@ class GradleGraph(unittest.TestCase):
     def test_the_production_config_must_be_tracked_and_checked_for_its_channel(self):
         found = self.violations(self.mutate("--require-tracked", "--noop"))
         self.assertTrue(any("require-tracked" in e for e in found), found)
+
+    def test_the_production_graph_cannot_skip_the_tool_check(self):
+        found = self.violations(self.mutate("if (channel == \"production\") bridgeInstallerToolCheck else bridgeInstallerToolObservation", "bridgeInstallerToolObservation"))
+        self.assertTrue(any("depend on the tool check" in e for e in found), found)
+
+    def test_provenance_must_carry_the_tool_observation(self):
+        found = self.violations(self.mutate('"--tool-observation", installerToolObservation.get().asFile.absolutePath,', ""))
+        self.assertTrue(any("bind the tool observation" in e for e in found), found)
+
+    def test_the_tool_tasks_must_exist(self):
+        found = self.violations(self.mutate('"observe", "--target"', '"noop", "--target"'))
+        self.assertTrue(any("observes the native tool identities" in e for e in found), found)
+        found = self.violations(self.mutate('"check", "--target"', '"noop", "--target"'))
+        self.assertTrue(any("checks the observed tools" in e for e in found), found)
+
+    def test_the_sdk_and_deployment_target_are_explicit_and_from_the_lock(self):
+        found = self.violations(self.mutate("MACOSX_DEPLOYMENT_TARGET", "OTHER_TARGET"))
+        self.assertTrue(any("deployment target" in e for e in found), found)
+        found = self.violations(self.mutate('environment("MACOSX_DEPLOYMENT_TARGET", installerMinimumOs.get())', 'environment("MACOSX_DEPLOYMENT_TARGET", "26.0")'))
+        self.assertTrue(any("hard-coded" in e for e in found), found)
 
     def test_a_linux_host_must_be_refused(self):
         found = self.violations(self.mutate("Windows or macOS runner", "any runner"))

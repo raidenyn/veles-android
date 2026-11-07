@@ -1242,6 +1242,21 @@ val installerReleaseConfig = providers.gradleProperty("installerReleaseConfig")
 val installerFixtureConfig = providers.provider { layout.projectDirectory.file("native-bridge/installer/config/fixture-$installerPlatform.json") }
 val installerMakensis = providers.gradleProperty("installerMakensis")
     .orElse(installerBuildRoot.map { it.file("tools/nsis/nsis-3.08/makensis.exe").asFile.absolutePath })
+// Build-tool identity: observed on this machine, held to config/tools.lock.json, bound into provenance.
+val installerToolTarget = if (installerPlatform == "windows") "windows-x86_64" else "macos-arm64"
+val installerToolsScript = installerDir.file("scripts/tool_observation.py")
+val installerToolObservation = installerBuildRoot.map { it.file("tools/observed-$installerToolTarget.json") }
+// The macOS deployment target comes from the reviewed lock, never from a literal here.
+val installerMinimumOs = providers.provider {
+    @Suppress("UNCHECKED_CAST")
+    val lock = groovy.json.JsonSlurper().parse(installerDir.file("config/tools.lock.json").asFile) as Map<String, Any?>
+    @Suppress("UNCHECKED_CAST")
+    (lock["targets"] as Map<String, Map<String, Any?>>).getValue("macos-arm64")["minimum_os"] as String
+}
+// The SDK is selected explicitly (the one the pinned Xcode reports), not whatever a tool defaults to.
+val installerMacosSdkPath = providers.exec {
+    commandLine("xcrun", "--sdk", "macosx", "--show-sdk-path")
+}.standardOutput.asText.map { it.trim() }
 
 fun requireInstallerHost() {
     check(installerPlatform != "unsupported") {
@@ -1279,6 +1294,10 @@ fun installerSourceCommit(): String {
 }
 
 fun Exec.installerCargoEnvironment() {
+    if (installerPlatform == "macos") {
+        environment("MACOSX_DEPLOYMENT_TARGET", installerMinimumOs.get())
+        environment("SDKROOT", installerMacosSdkPath.get())
+    }
     environment("RUSTFLAGS", installerRustFlags())
     environment("SOURCE_DATE_EPOCH", "946684800")
     environment("ZERO_AR_DATE", "1")
@@ -1344,6 +1363,33 @@ val bridgeInstallerScriptsTest = tasks.register<Exec>("bridgeInstallerScriptsTes
     commandLine(installerPython, "-I", "-m", "unittest", "discover", "-s", "native-bridge/installer/scripts", "-p", "test_*.py")
 }
 
+val bridgeInstallerToolObservation = tasks.register<Exec>("bridgeInstallerToolObservation") {
+    group = "native-bridge"
+    description = "Observes the native compiler/SDK identities of THIS machine into build/ (records only; does not judge)."
+    inputs.files(installerSources)
+    outputs.file(installerToolObservation)
+    outputs.upToDateWhen { false }
+    doFirst {
+        requireInstallerHost()
+        delete(installerToolObservation)
+    }
+    commandLine(
+        installerPython, "-I", installerToolsScript.asFile, "observe", "--target", installerToolTarget,
+        "--output", installerToolObservation.get().asFile,
+    )
+}
+
+val bridgeInstallerToolCheck = tasks.register<Exec>("bridgeInstallerToolCheck") {
+    group = "native-bridge"
+    description = "Fails unless the observed tools equal config/tools.lock.json; unresolved Windows identities always fail."
+    dependsOn(bridgeInstallerToolObservation)
+    inputs.files(installerSources)
+    commandLine(
+        installerPython, "-I", installerToolsScript.asFile, "check", "--target", installerToolTarget,
+        "--observed", installerToolObservation.get().asFile,
+    )
+}
+
 // Registers the three-stage producer for one channel: config check, then per slot (engine, host, optional
 // Swift frontend, optional NSIS uninstaller, staging, assembly, optional carrier embedding), then the A/B
 // finalization that publishes tree.tar, provenance.json, report-ab.json and SHA256SUMS.
@@ -1351,6 +1397,8 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
     val configCheck = tasks.register<Exec>("${taskName}Config") {
         group = "native-bridge"
         description = "Refuses a release config that is not tracked, unmodified and of the $channel channel."
+        // A production build starts only on the locked toolchain; the fixture records what it was built with.
+        dependsOn(if (channel == "production") bridgeInstallerToolCheck else bridgeInstallerToolObservation)
         inputs.files(config)
         doFirst { requireInstallerHost() }
         commandLine(
@@ -1429,12 +1477,13 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
             workingDir(installerDir.dir("macos"))
             doFirst {
                 delete(frontendScratchDir)
+                // Resolved at execution: the SDK path exists only on a macOS runner.
+                commandLine(
+                    "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
+                    "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile,
+                    "-Xswiftc", "-file-prefix-map", "-Xswiftc", "${layout.projectDirectory.asFile.absolutePath}=/veles-src",
+                )
             }
-            commandLine(
-                "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
-                "--scratch-path", frontendScratchDir.get().asFile,
-                "-Xswiftc", "-file-prefix-map", "-Xswiftc", "${layout.projectDirectory.asFile.absolutePath}=/veles-src",
-            )
         }
         val uninstaller = tasks.register<Exec>("${taskName}Uninstaller$suffix") {
             group = "native-bridge"
@@ -1487,7 +1536,7 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                         workingDir(installerDir.dir("macos"))
                         commandLine(
                             "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
-                            "--scratch-path", frontendScratchDir.get().asFile, "--show-bin-path",
+                            "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile, "--show-bin-path",
                         )
                     }.standardOutput.asText.get().trim()
                     arguments += listOf(
@@ -1535,6 +1584,7 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 "--slot-a", slotOutputs.getValue("a").get().asFile.absolutePath,
                 "--slot-b", slotOutputs.getValue("b").get().asFile.absolutePath,
                 "--output", outDir.get().asFile.absolutePath, "--commit", installerSourceCommit(),
+                "--tool-observation", installerToolObservation.get().asFile.absolutePath,
             )
         }
     }

@@ -55,6 +55,7 @@ INSTALLER_DIR = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import package_inputs  # noqa: E402  (Task 9 inventory library; sibling module)
+import release_config  # noqa: E402  (tool-identity lock; sibling module)
 
 SCHEMA = 1
 TARGETS = ("windows-x86_64", "macos-arm64")
@@ -1263,6 +1264,28 @@ def _json_object(text: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def tools_lock() -> dict:
+    """The reviewed tool-identity lock of the commit being released (tests substitute a synthetic one)."""
+    return release_config.load_lock()
+
+
+def tool_observation_problems(target: str, observation: Any) -> list[str]:
+    """Why this observed build-tool inventory may not stand behind a ``target`` release (empty: it matches).
+
+    There is no warning mode: a missing, mismatched or unresolved compiler/SDK identity (the Windows MSVC and SDK
+    identities are recorded as ``required_unresolved`` until the owner supplies them) blocks.
+    """
+    if not isinstance(observation, dict):
+        return ["tool observation is not an object"]
+    try:
+        problems = release_config.validate_tools(tools_lock(), observation)
+    except (OSError, ValueError) as error:
+        return [f"tool lock is unreadable: {error}"]
+    if observation.get("target") != target:
+        problems.append(f"tool observation is for {observation.get('target')!r}, not {target!r}")
+    return problems
+
+
 def verify_unsigned_inputs(
     *, platform: str, a: Path, b: Path, provenance: Path, descriptor_path: Path, env: dict[str, str],
     expected_commit: str, recipe: str, output: Path, reports: Path,
@@ -1294,7 +1317,7 @@ def verify_unsigned_inputs(
     try:
         record = load_json(provenance)
         if (
-            set(record) != {"schema", "source_commit", "descriptor_digest", "a_inventory_sha256", "b_inventory_sha256"}
+            set(record) != {"schema", "source_commit", "descriptor_digest", "a_inventory_sha256", "b_inventory_sha256", "tool_observation"}
             or record["schema"] != SCHEMA
         ):
             raise ValueError("provenance shape")
@@ -1309,6 +1332,11 @@ def verify_unsigned_inputs(
     wrong = sorted(k for k, v in claims.items() if record.get(k) != v)
     if wrong:
         return _fail("provenance-invalid", "provenance disagrees with the inputs on: " + ", ".join(wrong))
+    # Before any signing job can start: the tools that built these bytes must be the locked ones.
+    tool_problems = tool_observation_problems(target, record["tool_observation"])
+    if tool_problems:
+        return _fail("tools-unverified", "; ".join(tool_problems[:6]))
+    (reports / f"tools-{target}.json").write_bytes(canonical_json(record["tool_observation"]))
     request = SignRequest(platform, "nested", a, output, Path("."), reports, expected_commit, descriptor_path, {}, recipe)
     request.boundary = {
         "stage": "verify-inputs",
@@ -1329,6 +1357,7 @@ def verify_unsigned_inputs(
         "stage": "verify-inputs",
         "boundary": boundary,
         "ab_report": f"ab-{target}.json",
+        "tool_observation": f"tools-{target}.json",
         "a_inventory_sha256": first["inventory_sha256"],
         "b_inventory_sha256": second["inventory_sha256"],
     }
@@ -1463,6 +1492,7 @@ def compose_target_report(*, target: str, commit: str, descriptor: str, recipe: 
             "a_inventory_sha256": verify["a_inventory_sha256"],
             "b_inventory_sha256": verify["b_inventory_sha256"],
             "ab_report": prefix(verify["ab_report"]),
+            "tool_observation": prefix(verify["tool_observation"]),
             "chosen": "A",
         },
         "boundaries": [fragments[stage]["boundary"] for stage in STAGES],
@@ -1638,6 +1668,11 @@ def _validate_unsigned_and_boundaries(bundle: Path, evidence: dict, report: dict
         errors.append(f"A/B {problem}")
     elif not (isinstance(ab, dict) and ab.get("verdict") == "PASS" and not ab.get("differences") and ab.get("input_hashes") == {"first": a, "second": b}):
         errors.append("A/B equality report is not a PASS over the claimed inventories")
+    observation, problem = _read_indexed(bundle, evidence, str(unsigned.get("tool_observation")))
+    if problem:
+        errors.append(f"tool observation: {problem}")
+    else:
+        errors += [f"tool observation: {e}" for e in tool_observation_problems(str(report.get("target")), observation)]
     boundaries = report["boundaries"]
     if not isinstance(boundaries, list) or [x.get("stage") if isinstance(x, dict) else None for x in boundaries] != list(STAGES):
         return errors + ["boundary stages are not verify-inputs, sign-nested, assemble, sign-outer in order"]

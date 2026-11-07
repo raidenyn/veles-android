@@ -46,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 
+import release_config  # noqa: E402
 import release_gate as gate  # noqa: E402
 from release_gate import EnvRef, RunResult  # noqa: E402
 
@@ -70,6 +71,39 @@ CARRIER_APP = gate.CARRIER_APP
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# -- build-tool identity (F8) ----------------------------------------------------------------------
+# The repository lock keeps the Windows MSVC/SDK identities `required_unresolved` on purpose, so a Windows
+# candidate can never be eligible from it. The orchestration tests below need a Windows pipeline that GETS
+# to the signing stages, so they run against a synthetic lock that resolves those two tools. The tests in
+# ToolIdentityBindingTests run against the REAL lock and prove the hard blocker.
+REAL_LOCK = release_config.load_lock()
+RESOLVED_LOCK = json.loads(json.dumps(REAL_LOCK))
+RESOLVED_LOCK["tools"]["msvc"] = {
+    "targets": ["windows-x86_64"],
+    "identity": {"cl_version": "19.44.35211", "linker_version": "14.44.35211.0", "msvc_toolset_version": "14.44.35207",
+                 "msvc_toolset_sha256": "a" * 64},
+}
+RESOLVED_LOCK["tools"]["windows_sdk"] = {
+    "targets": ["windows-x86_64"],
+    "identity": {"windows_sdk_version": "10.0.26100.0", "ucrt_version": "10.0.26100.0", "windows_sdk_sha256": "b" * 64},
+}
+assert release_config.validate_lock(RESOLVED_LOCK) == [], release_config.validate_lock(RESOLVED_LOCK)
+
+
+def tool_observation(platform: str, lock: dict | None = None) -> dict:
+    """An inventory that matches ``lock`` exactly (the synthetic one by default)."""
+    lock = lock or RESOLVED_LOCK
+    target = "windows-x86_64" if platform == "windows" else "macos-arm64"
+    return {"target": target, "tools": {name: dict(entry["identity"]) for name, entry in lock["tools"].items()
+                                         if target in entry["targets"] and "identity" in entry}}
+
+
+def setUpModule() -> None:
+    patcher = mock.patch.object(gate, "tools_lock", lambda: RESOLVED_LOCK, create=True)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 def descriptor_bytes(platform: str, *, commit: str = COMMIT, target: str | None = None, publishers=None) -> bytes:
@@ -1272,7 +1306,7 @@ class VerifyInputsTests(unittest.TestCase):
         for side in (pipeline.a, pipeline.b):
             (side / "package/payload/veles-native-host.exe").write_bytes(b"MZ-drifted")
         first = gate.package_inputs.build_inventory(pipeline.a)["inventory_sha256"]
-        pipeline.provenance.write_bytes(gate.canonical_json({"schema": 1, "source_commit": COMMIT, "descriptor_digest": sha(pipeline.descriptor.read_bytes()), "a_inventory_sha256": first, "b_inventory_sha256": first}))
+        pipeline.provenance.write_bytes(gate.canonical_json({"schema": 1, "source_commit": COMMIT, "descriptor_digest": sha(pipeline.descriptor.read_bytes()), "a_inventory_sha256": first, "b_inventory_sha256": first, "tool_observation": tool_observation(pipeline.platform)}))
         done = self.verify(root, pipeline)
         self.assertEqual((done.ok, done.code), (False, "input-mismatch"))
         self.assertFalse((root / "verified").exists())
@@ -1392,7 +1426,8 @@ class Pipeline:
         first = gate.package_inputs.build_inventory(self.a)["inventory_sha256"]
         self.provenance = root / platform / "provenance.json"
         self.provenance.write_bytes(
-            gate.canonical_json({"schema": 1, "source_commit": COMMIT, "descriptor_digest": sha(self.descriptor.read_bytes()), "a_inventory_sha256": first, "b_inventory_sha256": first})
+            gate.canonical_json({"schema": 1, "source_commit": COMMIT, "descriptor_digest": sha(self.descriptor.read_bytes()), "a_inventory_sha256": first, "b_inventory_sha256": first,
+                                 "tool_observation": tool_observation(platform)})
         )
         self.recipe = gate.recipe_digest(gate.INSTALLER_DIR, platform)
         self.reports_root = root / platform / "reports"
@@ -1479,6 +1514,100 @@ def component(report: dict, role: str) -> dict:
     return next(c for c in report["components"] if c["role"] == role)
 
 
+class ToolIdentityBindingTests(unittest.TestCase):
+    """F8: the locked compiler/SDK identities are enforced where production eligibility is decided.
+
+    ``release_config.validate_tools`` used to be called only by its own tests. These tests drive the gate with
+    provenance carrying real observations and prove that an unresolved, missing, mismatched or foreign
+    inventory blocks before any key is used, and that the bundle validator re-checks what was recorded.
+    """
+
+    def setUp(self) -> None:
+        self.helper = VerifyInputsTests()
+        self.helper.addCleanup = self.addCleanup
+
+    def verify(self, platform: str, mutate=None, *, lock=None):
+        root, pipeline = self.helper.setup(platform)
+        record = json.loads(pipeline.provenance.read_text())
+        if mutate:
+            mutate(record)
+        pipeline.provenance.write_bytes(gate.canonical_json(record))
+        with mock.patch.object(gate, "tools_lock", lambda: lock or RESOLVED_LOCK, create=True):
+            return self.helper.verify(root, pipeline), root
+
+    def test_matching_observations_pass_and_are_published_with_the_inputs(self) -> None:
+        for platform in ("windows", "macos"):
+            with self.subTest(platform=platform):
+                done, root = self.verify(platform)
+                self.assertTrue(done.ok, done.detail)
+                name = done.fragment["tool_observation"]
+                self.assertEqual(name, f"tools-{TARGET[platform]}.json")
+                self.assertEqual(json.loads((root / "rep" / name).read_text()), tool_observation(platform))
+
+    def test_a_provenance_without_an_observation_is_refused(self) -> None:
+        done, _ = self.verify("macos", lambda r: r.pop("tool_observation"))
+        self.assertEqual((done.ok, done.code), (False, "provenance-invalid"))
+
+    def test_the_real_windows_lock_blocks_every_candidate_because_its_identities_are_unresolved(self) -> None:
+        done, root = self.verify("windows", lambda r: r.update(tool_observation=tool_observation("windows", RESOLVED_LOCK)), lock=REAL_LOCK)
+        self.assertEqual((done.ok, done.code), (False, "tools-unverified"))
+        self.assertIn("unresolved", done.detail)
+        self.assertFalse((root / "verified").exists(), "no build-A copy is released for a blocked candidate")
+
+    def test_the_real_macos_lock_accepts_exactly_its_pinned_identities(self) -> None:
+        done, _ = self.verify("macos", lambda r: r.update(tool_observation=tool_observation("macos", REAL_LOCK)), lock=REAL_LOCK)
+        self.assertTrue(done.ok, done.detail)
+
+    def test_mismatched_missing_and_foreign_observations_are_refused(self) -> None:
+        def edit(change):
+            return lambda r: change(r["tool_observation"])
+
+        for label, platform, change in (
+            ("rust channel", "macos", edit(lambda o: o["tools"]["rust"].update(channel="1.99.0"))),
+            ("xcode build", "macos", edit(lambda o: o["tools"]["xcode"].update(build="17F000"))),
+            ("sdk version", "macos", edit(lambda o: o["tools"]["macos_sdk"].update(version="macosx26.4"))),
+            ("tool missing", "macos", edit(lambda o: o["tools"].pop("xcode"))),
+            ("field missing", "macos", edit(lambda o: o["tools"]["rust"].pop("profile"))),
+            ("cl version", "windows", edit(lambda o: o["tools"]["msvc"].update(cl_version="19.00.00000"))),
+            ("sdk digest", "windows", edit(lambda o: o["tools"]["windows_sdk"].update(windows_sdk_sha256="c" * 64))),
+            ("other target", "macos", edit(lambda o: o.update(target="windows-x86_64"))),
+            ("not an object", "macos", lambda r: r.update(tool_observation=[])),
+        ):
+            with self.subTest(label):
+                done, _ = self.verify(platform, change)
+                self.assertEqual((done.ok, done.code), (False, "tools-unverified"), done.detail)
+
+    def test_the_bundle_validator_rechecks_the_recorded_observation(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="gate-tools-bundle-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        golden, expected = build_pipeline_bundle(root)
+
+        def fresh():
+            work = Path(tempfile.mkdtemp(prefix="gate-tools-copy-"))
+            self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+            bundle = work / "bundle"
+            shutil.copytree(golden, bundle)
+            return bundle
+
+        bundle = fresh()
+        self.assertEqual(gate.validate(bundle, COMMIT, expected), [])
+        rel = json.loads((bundle / "reports/macos-arm64.json").read_text())["unsigned"]["tool_observation"]
+        self.assertEqual(rel, "reports/tools-macos-arm64.json")
+        with self.subTest("tampered recorded observation"):
+            bundle = fresh()
+            edit_report(bundle, rel, lambda o: o["tools"]["xcode"].update(build="17F000"))
+            self.assertTrue(any("tool" in e and "xcode.build" in e for e in gate.validate(bundle, COMMIT, expected)))
+        with self.subTest("the pointer is removed"):
+            bundle = fresh()
+            edit_report(bundle, "reports/macos-arm64.json", lambda r: r["unsigned"].pop("tool_observation"))
+            self.assertTrue(any("tool observation" in e for e in gate.validate(bundle, COMMIT, expected)))
+        with self.subTest("the repository lock cannot make a Windows bundle eligible"):
+            bundle = fresh()
+            with mock.patch.object(gate, "tools_lock", lambda: REAL_LOCK, create=True):
+                errors = gate.validate(bundle, COMMIT, expected)
+            self.assertTrue(any("windows-x86_64" in e and "unresolved" in e for e in errors), errors)
+
+
 class ValidateBundleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1518,8 +1647,13 @@ class ValidateBundleTests(unittest.TestCase):
         windows, macos = (sha(descriptor_bytes(p)) for p in ("windows", "macos"))
         printed = subprocess.run([sys.executable, "-I", str(HERE / "release_gate.py"), "descriptor-set-digest", "--windows-sha256", windows, "--macos-sha256", macos], capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(printed, self.expected)
+        # The shipped CLI reads the REAL lock, whose Windows MSVC/SDK identities are unresolved: even a complete,
+        # internally consistent bundle is not ELIGIBLE until the owner records those identities (F8).
         done = subprocess.run([sys.executable, "-I", str(HERE / "release_gate.py"), "validate", "--bundle", str(self.bundle), "--commit", COMMIT, "--descriptor-digest", self.expected], capture_output=True, text=True)
-        self.assertEqual((done.returncode, done.stdout.strip()), (0, "ELIGIBLE"))
+        self.assertEqual(done.returncode, 1, done.stdout)
+        self.assertNotIn("ELIGIBLE\n", done.stdout.replace("BLOCKED", ""))
+        self.assertTrue(all("windows-x86_64" in line and "tool observation" in line for line in done.stdout.splitlines() if line.startswith("BLOCKED")), done.stdout)
+        self.assertIn("unresolved", done.stdout)
 
     def test_mismatched_commit_target_policy_or_payload_fails(self) -> None:
         # -- commit

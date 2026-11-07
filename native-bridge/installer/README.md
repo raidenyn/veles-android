@@ -73,3 +73,16 @@ Never record a digest or fingerprint that was not read from real output.
 
 Unit tests (`scripts/test_evidence.py`) use synthetic bundles in temp directories only; none is
 physical evidence.
+
+## Build-tool identity (F8)
+
+`scripts/tool_observation.py observe` reads the real `rustc`/`rustup`/`xcodebuild` (macOS) or `cl`/`link`/the
+Visual Studio environment (Windows) on the build machine; `check` holds that inventory to `config/tools.lock.json`.
+`bridgeInstallerUnsigned` depends on the check, so a production build cannot start on an unlocked toolchain;
+`bridgeInstallerPackageFixture` only records the observation. `finalize` binds the observation into
+`provenance.json`, and `release_gate.py` re-validates it in `verify-inputs` (before any key is used) and again in
+`validate` (eligibility). The Windows MSVC and SDK identities are still `required_unresolved` in the lock, so a
+Windows candidate is blocked until the owner records them from the approved runner; the observation collects
+versions only and never invents the toolset/SDK digests. macOS builds select the SDK (`SDKROOT`, `swift build
+--sdk`) and the deployment target (`MACOSX_DEPLOYMENT_TARGET`, read from the lock) explicitly. None of this has
+run on a native runner: the parsers follow documented tool output and are unverified against real output.

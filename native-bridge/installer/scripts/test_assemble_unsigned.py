@@ -23,12 +23,14 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import assemble_unsigned as au  # noqa: E402
 import package_inputs  # noqa: E402
+import release_config  # noqa: E402
 import release_gate  # noqa: E402
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -58,6 +60,15 @@ def config(platform="windows", channel="production", **overrides):
     }
     value.update(overrides)
     return value
+
+
+RESOLVED_LOCK = json.loads(json.dumps(release_config.load_lock()))
+RESOLVED_LOCK["tools"]["msvc"] = {"targets": ["windows-x86_64"], "identity": {
+    "cl_version": "19.44.35211", "linker_version": "14.44.35211.0", "msvc_toolset_version": "14.44.35207", "msvc_toolset_sha256": "a" * 64}}
+RESOLVED_LOCK["tools"]["windows_sdk"] = {"targets": ["windows-x86_64"], "identity": {
+    "windows_sdk_version": "10.0.26100.0", "ucrt_version": "10.0.26100.0", "windows_sdk_sha256": "b" * 64}}
+OBSERVED = {"target": "windows-x86_64", "tools": {name: dict(entry["identity"]) for name, entry in RESOLVED_LOCK["tools"].items()
+                                                  if "windows-x86_64" in entry["targets"]}}
 
 
 class Workspace(unittest.TestCase):
@@ -372,10 +383,11 @@ class Finalize(Workspace):
     def test_equal_independent_slots_produce_the_gate_artifacts(self):
         a, b = self.trees()
         out = self.root / "published"
-        au.finalize(platform="windows", slot_a=a, slot_b=b, output=out, commit=COMMIT)
+        au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=out, commit=COMMIT)
         self.assertEqual(["SHA256SUMS", "provenance.json", "report-ab.json", "tree.tar"], sorted(p.name for p in out.iterdir()))
         provenance = json.loads((out / "provenance.json").read_bytes())
-        self.assertEqual({"schema", "source_commit", "descriptor_digest", "a_inventory_sha256", "b_inventory_sha256"}, set(provenance))
+        self.assertEqual({"schema", "source_commit", "descriptor_digest", "a_inventory_sha256", "b_inventory_sha256", "tool_observation"}, set(provenance))
+        self.assertEqual(OBSERVED, provenance["tool_observation"])
         self.assertEqual(COMMIT, provenance["source_commit"])
         extracted = self.root / "extracted"
         extracted.mkdir()
@@ -390,14 +402,31 @@ class Finalize(Workspace):
             self.assertIn(f"{hashlib.sha256((out / name).read_bytes()).hexdigest()}  {name}", sums)
         self.assertEqual("PASS", json.loads((out / "report-ab.json").read_bytes())["verdict"])
 
+    def test_the_observed_tool_inventory_is_bound_into_the_provenance(self):
+        a, b = self.trees()
+        out = self.root / "published"
+        au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=out, commit=COMMIT)
+        provenance = json.loads((out / "provenance.json").read_bytes())
+        self.assertEqual(OBSERVED, provenance["tool_observation"])
+
+    def test_a_missing_or_foreign_tool_observation_publishes_nothing(self):
+        a, b = self.trees()
+        for label, observation in (("none", None), ("list", []), ("empty", {}), ("other target", {**OBSERVED, "target": "macos-arm64"}),
+                                   ("no tools", {"target": "windows-x86_64"}), ("tools not an object", {"target": "windows-x86_64", "tools": []})):
+            with self.subTest(label):
+                out = self.root / f"published-{abs(hash(label))}"
+                with self.assertRaises(au.AssemblyError):
+                    au.finalize(platform="windows", tool_observation=observation, slot_a=a, slot_b=b, output=out, commit=COMMIT)
+                self.assertFalse(out.exists())
+
     def test_the_tar_is_deterministic_and_keeps_modes(self):
         a, b = self.trees()
         (a / "tree" / "package" / "payload" / "veles-native-host.exe").chmod(0o755)
         (b / "tree" / "package" / "payload" / "veles-native-host.exe").chmod(0o755)
         out1, out2 = self.root / "p1", self.root / "p2"
-        au.finalize(platform="windows", slot_a=a, slot_b=b, output=out1, commit=COMMIT)
+        au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=out1, commit=COMMIT)
         os.utime(a / "tree" / "uninstall.exe", (12345, 12345))
-        au.finalize(platform="windows", slot_a=a, slot_b=b, output=out2, commit=COMMIT)
+        au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=out2, commit=COMMIT)
         self.assertEqual((out1 / "tree.tar").read_bytes(), (out2 / "tree.tar").read_bytes())
         with tarfile.open(out1 / "tree.tar") as archive:
             members = {m.name.lstrip("./"): m for m in archive.getmembers()}
@@ -409,7 +438,7 @@ class Finalize(Workspace):
         a, b = self.trees(differ=True)
         out = self.root / "published"
         with self.assertRaises(au.AssemblyError) as caught:
-            au.finalize(platform="windows", slot_a=a, slot_b=b, output=out, commit=COMMIT)
+            au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=out, commit=COMMIT)
         self.assertIn("differ", str(caught.exception))
         self.assertFalse((out / "tree.tar").exists())
         self.assertFalse((out / "provenance.json").exists())
@@ -419,41 +448,41 @@ class Finalize(Workspace):
     def test_the_same_directory_is_not_two_builds(self):
         a, _ = self.trees()
         with self.assertRaises(au.AssemblyError):
-            au.finalize(platform="windows", slot_a=a, slot_b=a, output=self.root / "published", commit=COMMIT)
+            au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=a, output=self.root / "published", commit=COMMIT)
         link = self.root / "alias"
         link.symlink_to(a)
         with self.assertRaises(au.AssemblyError):
-            au.finalize(platform="windows", slot_a=a, slot_b=link, output=self.root / "published2", commit=COMMIT)
+            au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=link, output=self.root / "published2", commit=COMMIT)
 
     def test_slots_built_for_different_commits_are_refused(self):
         a, b = self.trees()
         shutil.rmtree(b)
         au.assemble(platform="windows", channel="production", config=self.write_config(config(), "c2.json"), commit=OTHER_COMMIT, binaries=self.binaries("zz"), output=b, frontend=None, packager=None)
         with self.assertRaises(au.AssemblyError):
-            au.finalize(platform="windows", slot_a=a, slot_b=b, output=self.root / "published", commit=COMMIT)
+            au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=self.root / "published", commit=COMMIT)
 
     def test_slots_that_agree_with_each_other_but_not_with_the_requested_commit_are_refused(self):
         a, b = self.trees()
         with self.assertRaises(au.AssemblyError) as caught:
-            au.finalize(platform="windows", slot_a=a, slot_b=b, output=self.root / "published", commit=OTHER_COMMIT)
+            au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=self.root / "published", commit=OTHER_COMMIT)
         self.assertIn("was built for commit", str(caught.exception))
 
     def test_the_windows_uninstaller_is_required(self):
         a, b = self.trees(uninstaller=False)
         with self.assertRaises(au.AssemblyError):
-            au.finalize(platform="windows", slot_a=a, slot_b=b, output=self.root / "published", commit=COMMIT)
+            au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=self.root / "published", commit=COMMIT)
 
     def test_existing_output_is_refused(self):
         a, b = self.trees()
         existing = self.root / "published"
         existing.mkdir()
         with self.assertRaises(au.AssemblyError):
-            au.finalize(platform="windows", slot_a=a, slot_b=b, output=existing, commit=COMMIT)
+            au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=existing, commit=COMMIT)
 
     def test_the_gate_accepts_what_finalize_publishes(self):
         a, b = self.trees()
         out = self.root / "published"
-        au.finalize(platform="windows", slot_a=a, slot_b=b, output=out, commit=COMMIT)
+        au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=out, commit=COMMIT)
         trees = {}
         for tag in ("a", "b"):
             trees[tag] = self.root / f"gate-{tag}"
@@ -466,10 +495,11 @@ class Finalize(Workspace):
             "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/tags/1.2.3", "GITHUB_SHA": COMMIT,
             "VELES_DESCRIPTOR_SHA256": digest,
         }
-        outcome = release_gate.verify_unsigned_inputs(
-            platform="windows", a=trees["a"], b=trees["b"], provenance=out / "provenance.json", descriptor_path=descriptor,
-            env=env, expected_commit=COMMIT, recipe="r" * 64, output=self.root / "chosen", reports=self.root / "reports",
-        )
+        with mock.patch.object(release_gate, "tools_lock", lambda: RESOLVED_LOCK):
+            outcome = release_gate.verify_unsigned_inputs(
+                platform="windows", a=trees["a"], b=trees["b"], provenance=out / "provenance.json", descriptor_path=descriptor,
+                env=env, expected_commit=COMMIT, recipe="r" * 64, output=self.root / "chosen", reports=self.root / "reports",
+            )
         # Task 13's first job accepts exactly what the producer publishes: A/B equality, provenance,
         # descriptor binding and the structural stage check (payload view == inventory.json).
         self.assertTrue(outcome.ok, f"{outcome.code}: {outcome.detail}")
@@ -505,6 +535,23 @@ class CommandLine(Workspace):
         result = self.run_cli(*arguments)
         self.assertEqual(1, result.returncode)
         self.assertIn("differs from HEAD", result.stderr)
+
+    def test_finalize_requires_the_tool_observation_file_and_binds_it(self):
+        a, b = Finalize.trees(self)
+        out = self.root / "published-cli"
+        base = ["finalize", "--platform", "windows", "--slot-a", str(a), "--slot-b", str(b), "--output", str(out), "--commit", COMMIT]
+        missing = self.run_cli(*base)
+        self.assertEqual(missing.returncode, 2, missing.stderr)
+        self.assertFalse(out.exists())
+        observed = self.root / "observed.json"
+        observed.write_text(json.dumps(OBSERVED))
+        done = self.run_cli(*base, "--tool-observation", str(observed))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(OBSERVED, json.loads((out / "provenance.json").read_bytes())["tool_observation"])
+        junk = self.root / "junk.json"
+        junk.write_text("{")
+        again = self.run_cli(*(base[:-1] + [str(self.root / "published-junk")]), "--tool-observation", str(junk))
+        self.assertEqual(again.returncode, 2, again.stderr)
 
     def test_origin_command_prints_exactly_the_one_allowed_origin(self):
         production = self.write_config(config(), "p.json")
