@@ -50,11 +50,14 @@ or Gate B/C/D claim.
 ```json
 {"schema": 1, "platforms": {"windows": {"source_commit": "<40 hex>", "config_sha256": "…",
   "descriptor_sha256": "…", "tools_sha256": "…", "unsigned_sha256": "…",
-  "package_sha256": "…", "signer": "<publisher or Developer ID identity>"}, "macos": {"…": "…"}}}
+  "package_sha256": "…", "signer": "sha256:<leaf DER digest> or Developer ID identity"}, "macos": {"…": "…"}}}
 ```
 
 Fill it from the release gate's authenticated output, not from the test operator's notes.
-Never record a digest or fingerprint that was not read from real output.
+Never record a digest or fingerprint that was not read from real output. The Windows `signer`
+is the leaf-certificate fingerprint `sha256:<64 lowercase hex of the DER>`, the same identity
+`src/platform/windows.rs` authorizes at runtime; a certificate display name is never an
+authorization identifier.
 
 ### Run bundle
 

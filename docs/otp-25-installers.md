@@ -45,19 +45,29 @@ Installation is per user, needs no administrator password and never runs a servi
    installs no service, launch agent, scheduled task or autostart entry. Bluetooth permission
    is still yours to grant; installing does not prove it.
 
-**Maintenance app (repair, update, roll back, uninstall).** The installed maintenance tool
-is under the install root's `maintenance/` folder:
+**Maintenance app (repair, update, roll back, uninstall).** Open the signed installer for
+maintenance; its UI runs the same engine the package carries. The persistent maintenance
+location the product is designed to publish is `maintenance/` under the install root:
 
-| OS | Install root | Maintenance location | Also reachable from |
+| OS | Install root | Intended maintenance location | Also reachable from |
 |---|---|---|---|
 | Windows | `%LOCALAPPDATA%\Veles\NativeBridge` | `…\NativeBridge\maintenance\` | Settings > Apps > Installed apps > *Veles Native Bridge* |
 | macOS | `~/Library/Application Support/Veles/NativeBridge` | `…/NativeBridge/maintenance/` | re-running the signed installer |
 
-* **Repair** restores damaged managed files from the signed same-version installer. If the
-  local recovery content is damaged the product asks for a **fresh signed download**; it does
-  not fetch anything itself and there is no automatic updater.
+Journaled publication of that persistent copy is not implemented yet (OTP-25 follow-up), so
+the Installed Apps entry is not written and the signed uninstaller cannot find a retained
+engine; until it lands, maintenance runs from the installer bundle.
+
+* **Repair** restores damaged managed files from the signed installer **of the installed
+  version**; with a newer installer the UI offers **Update** instead. If the local recovery
+  content is damaged the product asks for a **fresh signed download** for that exact version;
+  it does not fetch anything itself and there is no automatic updater.
 * **Update** is a newer signed installer. **Roll back** returns to the retained verified
   version when one exists. An older installer never silently downgrades.
+* **Interrupted change.** Install, Repair and Roll back first settle a pending activation from
+  the authenticated journal, so choosing the action again (Retry) finishes or restores the
+  previous state. Inspect stays read-only, and an interrupted removal is finished only by
+  Uninstall. State that is foreign, unsupported or contradictory is refused, not reinterpreted.
 * **Uninstall** removes only this product's registration, manifest, versions, receipts and
   maintenance assets. Unrelated files are left and reported.
 * **No trust reset.** None of these operations touches extension trust, Chrome profile data
@@ -89,7 +99,9 @@ is under the install root's `maintenance/` folder:
 
 Each physical verdict must bind, from outside the run (the *anchor*): source commit,
 release-descriptor digest, release-config digest, tool-lock digest, unsigned input digest,
-signed package digest and signer identity. These come from the producers' `provenance.json`
+signed package digest and signer identity (on Windows the signer is the leaf-certificate
+fingerprint `sha256:<64 lowercase hex of the certificate DER>` that the engine's trust layer
+authorizes, never a certificate display name; on macOS it is the Developer ID identity). These come from the producers' `provenance.json`
 and `SHA256SUMS` and the release gate's bundle, never from the test operator. The run adds
 OS, architecture and Chrome version, the account (standard / fresh), the controlled actions
 with UTC timestamps and observed returns, raw capture checksums, and the clock source with the
@@ -142,7 +154,7 @@ fresh-user, and one whose profile path has a space and a non-ASCII character), t
 candidate and the external anchor from the release gate, an attended person for Bluetooth
 consent, and a second signed release for upgrade/rollback/compatibility.
 
-1. Sign in as the standard user. Capture `whoami /groups` and `whoami /user` (Windows) or `id` (macOS), and declare the account name in `accounts[].user_name`.
+1. Sign in as the standard user. Capture `whoami /groups` and `whoami /user` (Windows) or `id` (macOS), and declare the account name in `accounts[].user_name`. The validator reads the documented English section headers and labels, so record the Windows run with an English-language UI; a localized capture is refused (fail closed) rather than guessed.
 2. Hash and verify the candidate; capture `Get-FileHash` + `signtool verify /pa /all /v`
    (Windows) or `shasum -a 256` + `codesign -dv --verbose=4` + `spctl --assess -vv` +
    `xcrun stapler validate` (macOS).
