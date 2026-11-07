@@ -1960,14 +1960,15 @@ fn is_owned_claim_scope(normalized: &str) -> bool {
 ///
 /// These are the installer's own state slots, never receipt claims. The list is
 /// closed on purpose: cleanup must not become a general delete primitive.
-const PRIVATE_LAYOUT_FILES: [&str; 3] = [
+const PRIVATE_LAYOUT_FILES: [&str; 4] = [
     "state/journal.json",
     "state/receipt.json",
     "state/staging/registration.json",
+    "state/installer.lock",
 ];
 
 /// The fixed installer-private directories cleanup may remove when empty.
-const PRIVATE_LAYOUT_DIRECTORIES: [&str; 3] = ["state/staging", "versions", "maintenance"];
+const PRIVATE_LAYOUT_DIRECTORIES: [&str; 4] = ["state/staging", "state", "versions", "maintenance"];
 
 /// Whether `normalized` is one of the fixed installer-private layout paths.
 fn is_private_artifact(normalized: &str, kind: OwnedKind) -> bool {
@@ -3004,6 +3005,22 @@ pub trait Platform {
         let _ = (source, destination);
         Err(InstallFailure::new(FailureCode::UnsupportedTarget))
     }
+    /// Run the outside-root cleanup helper for one uninstall.
+    ///
+    /// The helper deletes the exact owned entries a running engine cannot (the
+    /// maintenance image it is executing from, or a file the OS still holds), so
+    /// the uninstall can only complete on an authenticated completion, the helper
+    /// image's observed absence and the entries' observed absence. The default
+    /// uses the launcher protocol from Task 10; a platform without a native
+    /// launcher answers `CleanupPending`, the fail-closed verdict.
+    fn run_cleanup(
+        &self,
+        run: &crate::cleanup::HelperRun<'_>,
+        launcher: &Path,
+    ) -> InstallResult<()> {
+        let (_completion, verdict) = crate::cleanup::run_cleanup_helper_via_launcher(run, launcher);
+        verdict
+    }
     /// Remove one validated owned entry.
     fn remove_owned(&self, entry: &OwnedEntry) -> InstallResult<()>;
     /// Flush the parent directory of a validated path.
@@ -3302,6 +3319,10 @@ pub struct Faults {
     /// Host assessment returned by `verify_host`. `None` derives it from the
     /// injected `trust` proof (the host is signed like the carrier).
     pub host: Option<HostFault>,
+    /// Refuse removal of this exact owned path, as a mapped image would.
+    pub fail_remove_of: Option<String>,
+    /// What the scripted outside-root cleanup helper reports.
+    pub cleanup: Option<CleanupBehavior>,
 }
 
 /// What an injected `verify_host` reports.
@@ -3313,6 +3334,17 @@ pub enum HostFault {
     Unavailable,
     /// The OS assesses the host with this signer and verdict.
     Assessed { signer: String, assessment: String },
+}
+
+/// What a scripted cleanup helper reports (the native protocol is NOT RUN here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupBehavior {
+    /// The helper removed the exact entries it was given.
+    Complete,
+    /// No authenticated completion could be produced.
+    Pending,
+    /// The helper claimed completion but left the entries in place.
+    ClaimedButLeft,
 }
 
 impl Default for Faults {
@@ -3334,6 +3366,8 @@ impl Default for Faults {
             inspect_owned_tree: false,
             panic_at_boundary: None,
             host: None,
+            fail_remove_of: None,
+            cleanup: None,
         }
     }
 }
@@ -3361,6 +3395,7 @@ pub enum PlatformCall {
     SetLaunchPermissions,
     CheckLaunchPermissions,
     RemoveOwned,
+    RunCleanup,
     FlushParent,
 }
 
@@ -3381,6 +3416,7 @@ impl PlatformCall {
                 | Self::SetLaunchPermissions
                 | Self::ReplaceManifest
                 | Self::PublishManifest
+                | Self::RunCleanup
                 | Self::PublishRegistration
                 | Self::RemoveRegistration
                 | Self::RemoveOwned
@@ -3398,6 +3434,7 @@ struct FakeState {
     published_preimages: Vec<Option<WindowsPreimage>>,
     retained_verifications: Vec<PathBuf>,
     host_verifications: Vec<(PathBuf, String)>,
+    cleanup_runs: Vec<Vec<String>>,
 }
 
 /// A fault-injectable [`Platform`] over the portable primitives.
@@ -3491,6 +3528,11 @@ impl FakePlatform {
     /// The version directories handed to `verify_retained`, in order.
     pub fn retained_verifications(&self) -> Vec<PathBuf> {
         self.fake_state().retained_verifications.clone()
+    }
+
+    /// The exact entries each cleanup-helper run was given, in order.
+    pub fn cleanup_runs(&self) -> Vec<Vec<String>> {
+        self.fake_state().cleanup_runs.clone()
     }
 
     fn fake_state(&self) -> MutexGuard<'_, FakeState> {
@@ -3803,8 +3845,38 @@ impl Platform for FakePlatform {
     }
 
     fn remove_owned(&self, entry: &OwnedEntry) -> InstallResult<()> {
-        self.begin_mutation(PlatformCall::RemoveOwned)?;
+        let mutation = self.begin_mutation(PlatformCall::RemoveOwned)?;
+        if self.faults.fail_remove_of.as_deref() == Some(entry.claim().path.as_str()) {
+            // A mapped image: the OS refuses the in-process unlink.
+            self.fake_state().mutations = mutation;
+            return Err(io_failure());
+        }
         self.probed(|| remove_owned_entry(entry))
+    }
+
+    fn run_cleanup(
+        &self,
+        run: &crate::cleanup::HelperRun<'_>,
+        _launcher: &Path,
+    ) -> InstallResult<()> {
+        self.begin_mutation(PlatformCall::RunCleanup)?;
+        self.fake_state()
+            .cleanup_runs
+            .push(run.entries.iter().map(|entry| entry.path.clone()).collect());
+        match self.faults.cleanup.unwrap_or(CleanupBehavior::Pending) {
+            CleanupBehavior::Pending => Err(InstallFailure::new(FailureCode::CleanupPending)),
+            CleanupBehavior::Complete => {
+                for entry in &run.entries {
+                    let absolute = run.root.join(&entry.path);
+                    let _ = match entry.kind {
+                        OwnedKind::Directory => fs::remove_dir(&absolute),
+                        _ => fs::remove_file(&absolute),
+                    };
+                }
+                Ok(())
+            }
+            CleanupBehavior::ClaimedButLeft => Ok(()),
+        }
     }
 
     fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {

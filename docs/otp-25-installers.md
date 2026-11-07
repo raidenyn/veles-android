@@ -46,17 +46,21 @@ Installation is per user, needs no administrator password and never runs a servi
    is still yours to grant; installing does not prove it.
 
 **Maintenance app (repair, update, roll back, uninstall).** Open the signed installer for
-maintenance; its UI runs the same engine the package carries. The persistent maintenance
-location the product is designed to publish is `maintenance/` under the install root:
+maintenance; its UI runs the engine the package carries. Install publishes a verified,
+journaled copy of the maintenance engine and the signed uninstaller at one persistent path
+set below the install root, and both frontends and the engine use exactly those paths:
 
-| OS | Install root | Intended maintenance location | Also reachable from |
+| OS | Install root | Persistent maintenance paths | Also reachable from |
 |---|---|---|---|
-| Windows | `%LOCALAPPDATA%\Veles\NativeBridge` | `…\NativeBridge\maintenance\` | Settings > Apps > Installed apps > *Veles Native Bridge* |
-| macOS | `~/Library/Application Support/Veles/NativeBridge` | `…/NativeBridge/maintenance/` | re-running the signed installer |
+| Windows | `%LOCALAPPDATA%\Veles\NativeBridge` | `…\maintenance\veles-bridge-maintenance.exe`, `…\maintenance\uninstall.exe` | Settings > Apps > Installed apps > *Veles Native Bridge* |
+| macOS | `~/Library/Application Support/Veles/NativeBridge` | `…/maintenance/veles-bridge-maintenance` | re-running the signed installer |
 
-Journaled publication of that persistent copy is not implemented yet (OTP-25 follow-up), so
-the Installed Apps entry is not written and the signed uninstaller cannot find a retained
-engine; until it lands, maintenance runs from the installer bundle.
+The copies are taken from the authenticated installed carrier/package, are read back and
+verified against the journaled identity, and are owned by the receipt: a foreign file at one
+of those paths blocks the install instead of being overwritten, an upgrade replaces them and
+restores the previous bytes if activation fails, repair restores a damaged copy, and uninstall
+removes them. The immutable copies inside `versions/<version>-<id>/` stay as the retained
+recovery assets.
 
 * **Repair** restores damaged managed files from the signed installer **of the installed
   version**; with a newer installer the UI offers **Update** instead. If the local recovery
@@ -69,7 +73,14 @@ engine; until it lands, maintenance runs from the installer bundle.
   previous state. Inspect stays read-only, and an interrupted removal is finished only by
   Uninstall. State that is foreign, unsupported or contradictory is refused, not reinterpreted.
 * **Uninstall** removes only this product's registration, manifest, versions, receipts and
-  maintenance assets. Unrelated files are left and reported.
+  maintenance assets, then tears down the private layout (receipt, journal, lock, `state/`,
+  `versions/`, `maintenance/` and the empty install root). A run that cannot observe an owned
+  removal reports **cleanup-pending** and keeps its durable intent, never a claim of success;
+  unrelated files are left and reported. When the engine is executing the installed
+  maintenance image itself, Windows cannot delete that mapped image while it runs: the cleanup
+  helper is run from outside the removable root and the run ends **cleanup-pending**, and
+  running Uninstall again from the signed installer (whose engine is outside the root)
+  finishes it.
 * **No trust reset.** None of these operations touches extension trust, Chrome profile data
   or the Bluetooth grant, and none should be worked around by resetting them. If macOS asks
   for Bluetooth consent again, answer the prompt; do not clear permissions to hide it.

@@ -25,6 +25,7 @@ pub mod operations;
 pub mod paths;
 pub mod platform;
 pub mod policy;
+pub mod removal;
 pub mod retained;
 pub mod transaction;
 
@@ -78,10 +79,11 @@ pub use operations::{
     run_operation_within,
 };
 pub use paths::{
-    InstallPaths, JOURNAL_FILE, LOCK_FILE, MACOS_CHROME_HOSTS_DIR, MAINTENANCE_DIR,
-    MAINTENANCE_ENGINE_FILE, MAINTENANCE_ENGINE_FILE_MACOS, MAINTENANCE_UNINSTALLER_FILE,
-    MAX_ROOT_BYTES, RECEIPT_FILE, ROOT_DIR_DEVELOPMENT, ROOT_DIR_FIXTURE, ROOT_DIR_PRODUCTION,
-    STAGING_DIR, STATE_DIR, VERSIONS_DIR, maintenance_engine_file, maintenance_engine_relative,
+    CLEANUP_HELPER_FILE, CLEANUP_HELPER_FILE_MACOS, InstallPaths, JOURNAL_FILE, LOCK_FILE,
+    MACOS_CHROME_HOSTS_DIR, MAINTENANCE_DIR, MAINTENANCE_ENGINE_FILE,
+    MAINTENANCE_ENGINE_FILE_MACOS, MAINTENANCE_UNINSTALLER_FILE, MAX_ROOT_BYTES, RECEIPT_FILE,
+    ROOT_DIR_DEVELOPMENT, ROOT_DIR_FIXTURE, ROOT_DIR_PRODUCTION, STAGING_DIR, STATE_DIR,
+    VERSIONS_DIR, cleanup_helper_file, maintenance_engine_file, maintenance_engine_relative,
     maintenance_relative_is_executable, maintenance_uninstaller_relative, root_dir_name,
 };
 #[cfg(target_os = "macos")]
@@ -95,8 +97,8 @@ pub use platform::WindowsCleanupRoot;
 #[cfg(windows)]
 pub use platform::WindowsPlatform;
 pub use platform::{
-    AuthenticatedPackage, AuthenticatedSource, BoundaryCrossing, CarrierEntry, FakePlatform,
-    Faults, HostAssessment, HostFault, HostState, InstallLock, MAX_CARRIER_BYTES,
+    AuthenticatedPackage, AuthenticatedSource, BoundaryCrossing, CarrierEntry, CleanupBehavior,
+    FakePlatform, Faults, HostAssessment, HostFault, HostState, InstallLock, MAX_CARRIER_BYTES,
     MAX_CARRIER_ENTRIES, MAX_MANIFEST_PATH_BYTES, NativeManifest, OWNERSHIP_SCHEMA_VERSION,
     OwnedClaim, OwnedEntry, OwnedKind, OwnershipRecord, PACKAGE_MACOS_CARRIER,
     PACKAGE_WINDOWS_CARRIER, PackageKind, PackageSource, PathKind, Platform, PlatformCall,
@@ -116,6 +118,7 @@ pub use policy::{
     authorize_package_policy, effective_policy, parse_descriptor, read_carrier,
     read_carrier_contents, write_carrier, write_sealed_carrier,
 };
+pub use removal::{RemovalCoordinator, RemovalRequest, cleanup_helper_source};
 pub use retained::{
     MAX_RETAINED_BYTES, RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, RetainedInstall,
 };

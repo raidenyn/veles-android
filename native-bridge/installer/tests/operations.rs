@@ -1807,21 +1807,40 @@ fn uninstall_twice_preserves_foreign_files_and_registration() {
     let after = snapshot(fixture.temp.path());
     assert_changes_confined(&fixture.temp, paths, &before, &after, "uninstall");
 
-    // Uninstalling twice is idempotent and changes nothing at all. The preserved
-    // foreign files are reported again because they still block private-layout
-    // removal.
+    // Uninstalling twice is idempotent for everything this product owns. The
+    // preserved foreign files are reported again because they still block
+    // private-layout removal; the second run only removes the lock file it had to
+    // create, and the third changes nothing at all.
     let platform = fixture.platform();
     let again = run_operation(&platform, paths, Operation::Uninstall, None)
         .expect("a second uninstall is idempotent");
     assert_eq!(again.state, STATE_UNINSTALLED);
     assert_eq!(again.warnings, vec![WarningCode::LeftoverFiles]);
     assert!(
-        platform.mutations().is_empty(),
-        "nothing is left to remove: {:?}",
+        platform
+            .mutations()
+            .iter()
+            .all(|call| *call == PlatformCall::RemoveOwned),
+        "only the installer's own fixed layout is removed: {:?}",
         platform.mutations()
     );
-    assert_eq!(snapshot(fixture.temp.path()), after);
     fixture.assert_unowned_assets(&unowned, "after the second uninstall");
+    let settled = snapshot(fixture.temp.path());
+    let platform = fixture.platform();
+    let third = run_operation(&platform, paths, Operation::Uninstall, None)
+        .expect("the third uninstall is idempotent");
+    assert_eq!(third.state, STATE_UNINSTALLED);
+    assert!(
+        platform
+            .mutations()
+            .iter()
+            .all(|call| *call == PlatformCall::RemoveOwned),
+        "{:?}",
+        platform.mutations()
+    );
+    assert_eq!(snapshot(fixture.temp.path()), settled);
+    fixture.assert_unowned_assets(&unowned, "after the third uninstall");
+    let _ = after;
 
     // A damaged install whose registration was removed by hand still uninstalls
     // its owned payload: the receipt, kept until the end, is the removal intent.
@@ -2027,7 +2046,14 @@ fn chrome_relaunch_during_remove_reports_cleanup_pending() {
     let again = run_operation(&platform, paths, Operation::Uninstall, None)
         .expect("the third uninstall is idempotent");
     assert_eq!(again.state, STATE_UNINSTALLED);
-    assert!(platform.mutations().is_empty());
+    assert!(
+        platform
+            .mutations()
+            .iter()
+            .all(|call| *call == PlatformCall::RemoveOwned),
+        "only the installer's own fixed layout is removed: {:?}",
+        platform.mutations()
+    );
 }
 
 #[test]
@@ -2169,11 +2195,9 @@ fn rollback_activates_the_retained_verified_payload() {
         "{:?}",
         report.warnings
     );
-    assert_eq!(
-        fs::read_dir(paths.versions())
-            .expect("versions dir")
-            .count(),
-        0
+    assert!(
+        !paths.versions().exists(),
+        "the owned versions directory is removed, not left empty"
     );
 }
 
@@ -3749,7 +3773,15 @@ fn late_host_launch_after_removal_reports_cleanup_pending() {
         platform.calls().contains(&PlatformCall::InspectHosts),
         "the empty uninstall still establishes quiescence"
     );
-    assert!(platform.mutations().is_empty());
+    assert!(
+        platform
+            .mutations()
+            .iter()
+            .all(|call| *call == PlatformCall::RemoveOwned),
+        "the empty uninstall only removes the fixed layout it created: {:?}",
+        platform.mutations()
+    );
+    assert!(!empty.paths.root().exists());
 
     // An owned host that is still running defers even the empty uninstall.
     let active = FakePlatform::with_faults(Faults {
@@ -4272,8 +4304,11 @@ fn uninstall_preserves_foreign_content_inside_a_claimed_version_directory() {
         b"not ours"
     );
     assert!(
-        platform.mutations().is_empty(),
-        "nothing is left to remove: {:?}",
+        platform
+            .mutations()
+            .iter()
+            .all(|call| *call == PlatformCall::RemoveOwned),
+        "only the installer's own fixed layout is removed: {:?}",
         platform.mutations()
     );
 }
@@ -6110,5 +6145,129 @@ fn repair_restores_a_damaged_persistent_asset_of_a_retained_newer_release() {
         fs::read(&persistent).expect("restored bytes"),
         UNINSTALLER_V2,
         "the retained newer copy supplies the claimed identity"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Uninstall removal coordinator (OTP-25 F7)
+// ---------------------------------------------------------------------------
+
+/// A clean uninstall leaves no owned artifact behind: not the payload, not the
+/// maintenance assets, not the lock, state, receipts or the private layout.
+#[test]
+fn a_clean_uninstall_removes_every_owned_layout_artifact() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &maintenance_files(UNINSTALLER_V1),
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    let report = run_operation(&fixture.platform(), paths, Operation::Uninstall, None)
+        .expect("the owned installation uninstalls");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(
+        report.warnings.is_empty(),
+        "nothing of ours is left, so nothing is a leftover: {:?}",
+        report.warnings
+    );
+    assert!(!paths.lock_path().exists(), "the lock file is removed");
+    assert!(!paths.receipt_path().exists(), "the receipt is removed");
+    assert!(!paths.journal_path().exists(), "the journal is removed");
+    assert!(!paths.state().exists(), "the state directory is removed");
+    assert!(
+        !paths.versions().exists(),
+        "the versions directory is removed"
+    );
+    assert!(
+        !paths.maintenance().exists(),
+        "the maintenance directory is removed"
+    );
+    assert!(
+        !paths.root().exists(),
+        "the private install root is removed: {:?}",
+        snapshot(fixture.temp.path())
+    );
+}
+
+/// An owned file the running engine cannot remove is handed to the outside-root
+/// cleanup helper; only its authenticated completion and the observed absence of
+/// the file make the uninstall clean.
+#[test]
+fn the_cleanup_helper_completes_an_owned_removal_the_engine_could_not() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &[
+            ("host.exe", HOST_V1, true),
+            ("maintenance/uninstall.exe", UNINSTALLER_V1, true),
+            (
+                "veles-bridge-cleanup.exe",
+                b"the signed cleanup helper",
+                true,
+            ),
+        ],
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    let platform = fixture.platform_with(Faults {
+        host_state: HostState::Quiescent,
+        fail_remove_of: Some("maintenance/uninstall.exe".to_owned()),
+        cleanup: Some(veles_bridge_installer::CleanupBehavior::Complete),
+        ..Faults::default()
+    });
+    let report = run_operation(&platform, paths, Operation::Uninstall, None)
+        .expect("the helper removes what the engine could not");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert_eq!(
+        platform.cleanup_runs(),
+        vec![vec!["maintenance/uninstall.exe".to_owned()]],
+        "the coordinator hands the exact remaining owned entry to the helper"
+    );
+    assert!(!paths.root().exists(), "the observed removal is clean");
+}
+
+/// A helper that reports an authenticated completion without removing the entry
+/// is not evidence of removal: the uninstall stays pending and the durable
+/// intent is retained for a retry.
+#[test]
+fn a_cleanup_helper_that_claims_completion_without_removal_is_not_clean() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &[
+            ("host.exe", HOST_V1, true),
+            ("maintenance/uninstall.exe", UNINSTALLER_V1, true),
+            (
+                "veles-bridge-cleanup.exe",
+                b"the signed cleanup helper",
+                true,
+            ),
+        ],
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    let platform = fixture.platform_with(Faults {
+        host_state: HostState::Quiescent,
+        fail_remove_of: Some("maintenance/uninstall.exe".to_owned()),
+        cleanup: Some(veles_bridge_installer::CleanupBehavior::ClaimedButLeft),
+        ..Faults::default()
+    });
+    let failure = run_operation(&platform, paths, Operation::Uninstall, None)
+        .expect_err("a claimed completion without removal is not a clean uninstall");
+    assert_eq!(failure.code, FailureCode::CleanupPending);
+    assert!(
+        receipt(paths).is_some(),
+        "the durable intent is retained for a retry"
+    );
+    assert!(
+        matches!(journal_state(paths), JournalState::Pending(_)),
+        "the interrupted removal is resumable"
     );
 }

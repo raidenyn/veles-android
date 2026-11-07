@@ -48,6 +48,10 @@ pub const MAINTENANCE_ENGINE_FILE: &str = "veles-bridge-maintenance.exe";
 pub const MAINTENANCE_ENGINE_FILE_MACOS: &str = "veles-bridge-maintenance";
 /// Persistent signed uninstaller file name (Windows frontend).
 pub const MAINTENANCE_UNINSTALLER_FILE: &str = "uninstall.exe";
+/// The bounded cleanup helper's file name on Windows.
+pub const CLEANUP_HELPER_FILE: &str = "veles-bridge-cleanup.exe";
+/// The bounded cleanup helper's file name on macOS.
+pub const CLEANUP_HELPER_FILE_MACOS: &str = "veles-bridge-cleanup";
 /// macOS Chrome Native Messaging registration directory below Application Support.
 pub const MACOS_CHROME_HOSTS_DIR: &str = "Google/Chrome/NativeMessagingHosts";
 /// Maximum rendered absolute path accepted from an injected root.
@@ -286,6 +290,14 @@ pub fn maintenance_engine_relative(target: Target) -> String {
 /// The persistent signed uninstaller path, relative to the install root.
 pub fn maintenance_uninstaller_relative() -> String {
     format!("{MAINTENANCE_DIR}/{MAINTENANCE_UNINSTALLER_FILE}")
+}
+
+/// The cleanup helper's file name for a target.
+pub const fn cleanup_helper_file(target: Target) -> &'static str {
+    match target {
+        Target::WindowsX64 => CLEANUP_HELPER_FILE,
+        Target::MacosArm64 => CLEANUP_HELPER_FILE_MACOS,
+    }
 }
 
 /// Whether one persistent maintenance path is invoked as a program.

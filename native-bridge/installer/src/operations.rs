@@ -59,12 +59,13 @@ use crate::paths::{
     maintenance_relative_is_executable,
 };
 use crate::platform::{
-    AuthenticatedPackage, AuthenticatedSource, OWNERSHIP_SCHEMA_VERSION, OwnedEntry, OwnedKind,
-    OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration, StateDocument,
+    AuthenticatedPackage, AuthenticatedSource, InstallLock, OWNERSHIP_SCHEMA_VERSION, OwnedEntry,
+    OwnedKind, OwnershipRecord, PathKind, Platform, QUIESCENCE_TIMEOUT, Registration,
     ValidatedPath, package_carrier_name, read_no_follow, registration_is_owned,
     require_quiescent_within,
 };
 use crate::policy::{authorize_package_policy, is_no_broader_than};
+use crate::removal::{RemovalCoordinator, RemovalRequest, cleanup_helper_source};
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
 use crate::transaction::{
     STATE_INSTALLED, activate_retained, bound_by_replaced_release, install, manifest_for, recover,
@@ -885,7 +886,7 @@ fn uninstall(
     paths: &InstallPaths,
     quiescence: Duration,
 ) -> InstallResult<InstallReport> {
-    let _lock = platform.lock(paths)?;
+    let lock = platform.lock(paths)?;
 
     // A partial uninstall is resumable; every other pending transaction must be
     // reconciled first.
@@ -912,16 +913,20 @@ fn uninstall(
     {
         return Err(recovery_required());
     }
-    let (manifest_sha256, root, claims) = match (&pending, &receipt) {
+    let (manifest_sha256, root, claims, signer, transaction) = match (&pending, &receipt) {
         (Some(journal), _) => (
             journal.manifest.sha256(),
             journal.root.clone(),
             journal.created.iter().map(JournalClaim::as_owned).collect(),
+            journal.policy.signer.clone(),
+            journal.transaction_id.clone(),
         ),
         (None, Some(receipt)) => (
             receipt.manifest_sha256,
             receipt.root.clone(),
             receipt.ownership.owned.clone(),
+            receipt.policy.signer.clone(),
+            receipt.transaction_id.clone(),
         ),
         (None, None) => {
             return match platform.read_registration(paths)? {
@@ -936,7 +941,7 @@ fn uninstall(
                     // after the terminal inspection: an owned host may still be
                     // executing a payload that no receipt can claim.
                     require_quiescent_within(platform, paths, quiescence).map_err(deferred)?;
-                    let leftover = final_layout_cleanup(platform, paths)?;
+                    let leftover = remove_private_layout(platform, paths, lock)?;
                     Ok(report_with_warnings(
                         Operation::Uninstall,
                         STATE_UNINSTALLED,
@@ -1002,6 +1007,29 @@ fn uninstall(
         (None, None) => None,
     };
 
+    // The outside-root coordinator is staged before the first removal: it copies
+    // the signed cleanup helper and a launcher image outside the removable root,
+    // so an owned file the running engine cannot delete (a mapped maintenance
+    // image) can still be removed, and its removal observed. A release without a
+    // cleanup helper, or a host that cannot stage one, leaves this `None`; a
+    // removal that then fails is reported as pending, never as clean.
+    let coordinator = cleanup_helper_source(paths, &record.owned)
+        .ok()
+        .flatten()
+        .and_then(|(source, sha256)| {
+            RemovalCoordinator::stage(
+                paths,
+                &RemovalRequest {
+                    helper_source: &source,
+                    helper_sha256: sha256,
+                    publisher: &signer,
+                    transaction: &transaction,
+                },
+            )
+            .ok()
+            .flatten()
+        });
+
     // Remove the registration first, only after ownership and quiescence were
     // validated.
     if let Some(live) = live.as_ref() {
@@ -1017,7 +1045,17 @@ fn uninstall(
     if let Err(failure) = require_quiescent_within(platform, paths, quiescence) {
         return Err(deferred(failure));
     }
-    let mut leftover = remove_owned_entries(platform, &entries)?;
+    let (mut leftover, failed) = remove_owned_entries(platform, &entries)?;
+    if !failed.is_empty() {
+        // An owned file the in-process removal could not delete: only the
+        // outside-root helper may finish it, and only its authenticated
+        // completion plus the observed absence of every entry is a clean result.
+        let coordinator =
+            coordinator.ok_or_else(|| InstallFailure::new(FailureCode::CleanupPending))?;
+        coordinator
+            .complete(platform, paths, &failed)
+            .map_err(deferred_removal)?;
+    }
 
     // Every owned *file* claim must be gone. A claimed directory that still
     // exists can only retain foreign content at this point (every owned child
@@ -1051,21 +1089,12 @@ fn uninstall(
         return Err(deferred(failure));
     }
 
-    // Final private-layout cleanup happens *before* the durable intent is
-    // released, so an owned artifact that cannot be removed still reports
-    // `CleanupPending` with the receipt/journal intact (never a false success).
-    // Every deletion goes through a validated handle that revalidates its full
-    // ancestry immediately before the unlink; a swapped ancestor fails closed and
-    // its content is preserved as foreign leftovers.
-    leftover |= final_layout_cleanup(platform, paths)?;
-
-    // Release the durable intent only after removal is proven. The receipt is
-    // released before the journal: a crash in between leaves a journal whose
-    // claims are all absent, so the retry finishes idempotently.
-    platform.write_state(paths, StateDocument::Receipt, &[])?;
-    if journal.is_some() {
-        Journal::clear(platform, paths)?;
-    }
+    // The private layout is torn down only after every owned claim is observed
+    // gone: the staging artifact, the intent documents, the lock, the fixed
+    // directories and the root itself. An owned artifact that cannot be removed is
+    // `CleanupPending` (the durable intent is then still intact); foreign content
+    // is preserved and reported.
+    leftover |= remove_private_layout(platform, paths, lock)?;
 
     Ok(report_with_warnings(
         Operation::Uninstall,
@@ -1081,31 +1110,106 @@ fn uninstall(
     ))
 }
 
-/// Remove the installer's own staging artifact and emptied private directories.
+/// Tear down the installer's private layout after every owned claim is gone.
 ///
-/// Every removal uses a validated handle ([`OwnedEntry::private_layout`]) that
-/// captures the ancestry and content identity and revalidates them immediately
-/// before the unlink: a `state/staging` directory swapped for a symlink during a
-/// quiescence inspection can therefore never turn cleanup into a delete outside
-/// the install root. Foreign content is preserved and reported; an owned artifact
-/// that cannot be removed is `CleanupPending` (the caller keeps its receipt and
-/// journal until removal is established).
+/// Order matters. The staging artifact and the intent documents go first (the
+/// receipt before the journal, so a crash in between leaves a journal whose claims
+/// are all absent and the retry finishes idempotently). The lock file is unlinked
+/// while this process still holds its handle, then the guard is released and only
+/// empty-directory removal remains. Every deletion goes through a validated handle
+/// ([`OwnedEntry::private_layout`]) that revalidates its full ancestry immediately
+/// before the unlink; a swapped ancestor fails closed and its content is preserved
+/// as foreign leftovers. A non-empty fixed directory holds foreign content and is
+/// reported, never recursed into.
 ///
-/// The held lock file, the `state/` directory and the fixed root cannot be
-/// removed while this process still holds the lock; they are the fixed layout,
-/// not leftovers. The released (empty) journal/receipt slots are fixed state
-/// slots too and are not reported as leftovers.
-fn final_layout_cleanup(platform: &impl Platform, paths: &InstallPaths) -> InstallResult<bool> {
+/// Residual: the lock file is unlinked while the lock is held, so a concurrent
+/// installer that creates a new lock file in that window is not serialized against
+/// the final empty-directory removal (no payload or registration mutation happens
+/// after this point).
+fn remove_private_layout(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    lock: InstallLock,
+) -> InstallResult<bool> {
     remove_private_file(
         platform,
         paths,
         &format!("{STATE_DIR}/{STAGING_DIR}/registration.json"),
     )?;
-    // `versions/`, `maintenance/` and `state/staging/` are part of the fixed
-    // private layout the lock recreates on every run: an empty one is not a
-    // leftover and removing it would mutate on an idempotent retry. Non-empty
-    // ones hold foreign content and are reported below.
-    Ok(layout_has_leftovers(paths))
+    remove_private_file(platform, paths, &format!("{STATE_DIR}/{RECEIPT_FILE}"))?;
+    remove_private_file(platform, paths, &format!("{STATE_DIR}/{JOURNAL_FILE}"))?;
+    remove_private_file(platform, paths, &format!("{STATE_DIR}/{LOCK_FILE}"))?;
+    drop(lock);
+
+    let mut leftover = false;
+    for relative in [
+        format!("{STATE_DIR}/{STAGING_DIR}"),
+        STATE_DIR.to_owned(),
+        VERSIONS_DIR.to_owned(),
+        MAINTENANCE_DIR.to_owned(),
+    ] {
+        leftover |= remove_empty_private_directory(platform, paths, &relative)?;
+    }
+    leftover |= remove_empty_root(paths)?;
+    Ok(leftover)
+}
+
+/// Remove one fixed private directory when it is provably empty.
+fn remove_empty_private_directory(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    relative: &str,
+) -> InstallResult<bool> {
+    if private_path_has_entries(&paths.root().join(relative)) {
+        return Ok(true);
+    }
+    match OwnedEntry::private_layout(paths, relative, OwnedKind::Directory) {
+        Ok(None) => Ok(false),
+        Ok(Some(entry)) => match platform.remove_owned(&entry) {
+            Ok(()) => Ok(false),
+            // An entry that appeared between the check and the removal is foreign
+            // content: preserved and reported.
+            Err(failure) if private_path_has_entries(&paths.root().join(relative)) => {
+                let _ = failure;
+                Ok(true)
+            }
+            Err(failure) => Err(deferred_removal(failure)),
+        },
+        Err(failure) if failure.code == FailureCode::UnsafePath => Ok(true),
+        Err(failure) => Err(deferred_removal(failure)),
+    }
+}
+
+/// Remove the private install root itself when nothing remains inside it.
+fn remove_empty_root(paths: &InstallPaths) -> InstallResult<bool> {
+    let root = paths.root();
+    match fs::symlink_metadata(root) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(InstallFailure::new(FailureCode::CleanupPending)),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => Ok(true),
+        Ok(_) => {
+            let empty = fs::read_dir(root)
+                .map(|mut entries| entries.next().is_none())
+                .map_err(|_| InstallFailure::new(FailureCode::CleanupPending))?;
+            if !empty {
+                return Ok(true);
+            }
+            match fs::remove_dir(root) {
+                Ok(()) => Ok(false),
+                // A foreign entry appeared while removing: preserved and reported.
+                Err(_) => match fs::read_dir(root) {
+                    Ok(entries) => {
+                        if entries.into_iter().next().is_some() {
+                            Ok(true)
+                        } else {
+                            Err(InstallFailure::new(FailureCode::CleanupPending))
+                        }
+                    }
+                    Err(_) => Err(InstallFailure::new(FailureCode::CleanupPending)),
+                },
+            }
+        }
+    }
 }
 
 /// Remove one fixed installer-private file, if it is still ours.
@@ -1137,36 +1241,6 @@ fn remove_private_file(
             }
         }
     }
-}
-
-/// Whether anything this product does not own remains inside its private layout.
-fn layout_has_leftovers(paths: &InstallPaths) -> bool {
-    for directory in [paths.versions(), paths.maintenance(), paths.staging()] {
-        if private_path_has_entries(directory) {
-            return true;
-        }
-    }
-    let entries = match fs::read_dir(paths.state()) {
-        Ok(entries) => entries,
-        // A state directory that cannot be read is not provably clean: report a
-        // leftover rather than claim a completed removal.
-        Err(_) => return true,
-    };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => return true,
-        };
-        let name = entry.file_name();
-        // The lock and the released (empty) journal/receipt slots are the fixed
-        // state layout, not leftovers. A quarantined or any other document is
-        // foreign and is reported.
-        if name != LOCK_FILE && name != JOURNAL_FILE && name != RECEIPT_FILE && name != STAGING_DIR
-        {
-            return true;
-        }
-    }
-    false
 }
 
 /// Whether `path` is absent-or-an-empty directory, and provably so.
@@ -1250,17 +1324,35 @@ fn removal_claim(claim: &crate::platform::OwnedClaim) -> JournalClaim {
 }
 
 /// Remove owned files first and directories deepest-first.
-fn remove_owned_entries(platform: &impl Platform, entries: &[OwnedEntry]) -> InstallResult<bool> {
+///
+/// A leaf that cannot be removed is returned to the caller instead of aborting:
+/// the outside-root cleanup helper may still remove it, and only an observed
+/// removal (or an explicit pending verdict) may end the uninstall. An unsafe path
+/// or an uninterpretable claim fails closed at once.
+fn remove_owned_entries(
+    platform: &impl Platform,
+    entries: &[OwnedEntry],
+) -> InstallResult<(bool, Vec<OwnedEntry>)> {
     let mut leftover = false;
+    let mut failed: Vec<OwnedEntry> = Vec::new();
     let mut files: Vec<&OwnedEntry> = entries
         .iter()
         .filter(|entry| !entry.claim().kind.is_directory())
         .collect();
     files.sort_by(|left, right| left.claim().path.cmp(&right.claim().path));
     for entry in files {
-        // Any error removing an owned file is a deletion that has not been
-        // established: never report a completed uninstall.
-        platform.remove_owned(entry).map_err(deferred_removal)?;
+        match platform.remove_owned(entry) {
+            Ok(()) => {}
+            Err(failure)
+                if matches!(
+                    failure.code,
+                    FailureCode::UnsafePath | FailureCode::RecoveryRequired
+                ) =>
+            {
+                return Err(failure);
+            }
+            Err(_) => failed.push(entry.clone()),
+        }
     }
 
     let mut directories: Vec<&OwnedEntry> = entries
@@ -1282,7 +1374,7 @@ fn remove_owned_entries(platform: &impl Platform, entries: &[OwnedEntry]) -> Ins
             Err(failure) => return Err(deferred_removal(failure)),
         }
     }
-    Ok(leftover)
+    Ok((leftover, failed))
 }
 
 /// Classify a failed removal of an owned path.
