@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import os
+import plistlib
 import shutil
 import stat
 import subprocess
@@ -344,6 +345,20 @@ class MacosAssembly(Workspace):
         self.assertIn(descriptor, carrier)
         self.assertEqual(0, int.from_bytes(carrier[10:12], "little"))
         self.assertFalse((out / "tree" / "Applications").exists())
+
+
+    def test_the_host_bundle_identity_follows_the_channel(self):
+        # F2: the fixture tree must not carry the production host bundle ID.
+        for channel, expected in (("production", "me.nagaev.veles.bridge"), ("fixture", "me.nagaev.veles.bridge.fixture")):
+            with self.subTest(channel=channel):
+                cfg = self.write_config(config("macos", channel=channel))
+                frontend = self.root / f"VelesBridgeInstaller-{channel}"
+                frontend.write_bytes(b"frontend\n" * 8)
+                out = self.root / f"out-mac-{channel}"
+                au.assemble(platform="macos", channel=channel, config=cfg, commit=COMMIT, binaries=self.binaries(f"m-{channel}", "macos"),
+                            output=out, frontend=frontend, packager=HERE / "package-macos.sh")
+                host_plist = out / "tree" / "Veles Bridge Installer.app" / "Contents" / "Resources" / "package" / "payload" / "Veles Native Bridge.app" / "Contents" / "Info.plist"
+                self.assertEqual(plistlib.loads(host_plist.read_bytes())["CFBundleIdentifier"], expected)
 
 
 class PackagerDrift(Workspace):

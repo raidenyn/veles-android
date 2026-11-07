@@ -1442,6 +1442,11 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 delete(installerTargetDir)
                 environment("CARGO_TARGET_DIR", installerTargetDir.get().asFile)
                 installerCargoEnvironment()
+                if (channel != "production") {
+                    // The channel is compiled into the engine: a fixture engine resolves only the fixture root,
+                    // registration and identity, so its package-less commands cannot address production state.
+                    environment("RUSTFLAGS", installerRustFlags() + " --cfg veles_channel=\"$channel\"")
+                }
             }
             commandLine(
                 "cargo", "build", "--locked", "--release", "--target", installerRustTriple,

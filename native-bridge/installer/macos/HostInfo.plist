@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>veles-native-host</string>
 	<key>CFBundleIdentifier</key>
-	<string>me.nagaev.veles.bridge</string>
+	<string>@BUNDLE_ID@</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

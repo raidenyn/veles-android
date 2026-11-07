@@ -12,6 +12,8 @@
 #
 # <input-dir> must hold EXACTLY these regular files (no symlinks, no sub-directories, nothing else):
 #   VERSION                    one line `MAJOR.MINOR.PATCH` + newline
+#   BUNDLE_ID                  one line: the channel's host bundle identity (`me.nagaev.veles.bridge` for
+#                              production, `me.nagaev.veles.bridge.fixture` for the fixture channel)
 #   VelesBridgeInstaller       the arm64 SwiftUI frontend executable
 #   veles-bridge-maintenance   the engine executable (becomes carrier.app's executable)
 #   veles-native-host          the production Bluetooth host executable
@@ -101,7 +103,7 @@ for plist in Info.plist CarrierInfo.plist HostInfo.plist; do
   [ -f "$macos_dir/$plist" ] && [ ! -L "$macos_dir/$plist" ] || fail "missing bundle input $plist"
 done
 
-required="VERSION VelesBridgeInstaller veles-bridge-maintenance veles-native-host veles-policy-carrier descriptor.json inventory.json"
+required="VERSION BUNDLE_ID VelesBridgeInstaller veles-bridge-maintenance veles-native-host veles-policy-carrier descriptor.json inventory.json"
 allowed="$required sealed-inventory.json"
 
 while IFS= read -r -d '' entry; do
@@ -126,6 +128,19 @@ version_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 [ "$(size_of "$inputs/VERSION")" -eq "$((${#version_line} + 1))" ] \
   || fail "VERSION must be exactly one line"
 version="$version_line"
+
+# The host bundle identity is the CHANNEL's, supplied by the assembler from the checked release config. Only the
+# two packageable host identities are accepted: a fixture tree must never carry the production host identity
+# (it would address the production Bluetooth/TCC subject), and no other value is a product identity.
+bundle_line=""
+IFS= read -r bundle_line <"$inputs/BUNDLE_ID" || true
+case "$bundle_line" in
+  me.nagaev.veles.bridge | me.nagaev.veles.bridge.fixture) ;;
+  *) fail "BUNDLE_ID is not a packageable host identity" ;;
+esac
+[ "$(size_of "$inputs/BUNDLE_ID")" -eq "$((${#bundle_line} + 1))" ] \
+  || fail "BUNDLE_ID must be exactly one line"
+bundle_id="$bundle_line"
 
 # ---- build --------------------------------------------------------------------------------------
 
@@ -155,7 +170,7 @@ put() {
 }
 
 put_plist() {
-  sed "s/@VERSION@/$version/g" "$1" >"$2"
+  sed -e "s/@VERSION@/$version/g" -e "s/@BUNDLE_ID@/$bundle_id/g" "$1" >"$2"
 }
 
 put_plist "$macos_dir/Info.plist" "$app/Contents/Info.plist"

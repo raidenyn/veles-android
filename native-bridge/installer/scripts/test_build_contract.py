@@ -187,7 +187,7 @@ def check_gradle(gradle, clean_script):
         errors.append("the checkout path is not remapped to a fixed prefix")
     if "/Brepro" not in code:
         errors.append("the Windows link does not request deterministic output (/Brepro)")
-    if 'environment("RUSTFLAGS"' not in code:
+    if not re.search(r'fun Exec\.installerCargoEnvironment\(\) \{(?:(?!\n\}).)*environment\("RUSTFLAGS"', code, re.S):
         errors.append("RUSTFLAGS is not set explicitly (an ambient value could drop the remap)")
 
     # 5. The exact origin is a tracked build input of the host build.
@@ -254,6 +254,15 @@ def check_gradle(gradle, clean_script):
         errors.append("the macOS SDK and deployment target are not selected explicitly")
     if re.search(r'MACOSX_DEPLOYMENT_TARGET",\s*"', code):
         errors.append("the macOS deployment target is hard-coded instead of read from tools.lock.json")
+
+    # 7c. Channel identity (F2): a non-production engine is COMPILED for its channel; production never is.
+    channel_block = re.search(r'if \(channel != "production"\) \{(.*?)\n\s*\}', code, re.S)
+    if not channel_block or 'veles_channel=' not in channel_block.group(1) or 'environment("RUSTFLAGS"' not in channel_block.group(1):
+        errors.append("a non-production engine is not built with --cfg veles_channel=<channel> in RUSTFLAGS")
+    if code.count("veles_channel") != 1:
+        errors.append("veles_channel must be set exactly once, for the non-production engine build only")
+    if re.search(r'(?i)veles_channel=\\"production|veles_channel.*production', code.replace('if (channel != "production")', "")):
+        errors.append("production must never carry a veles_channel cfg")
 
     # 8. Clean contract.
     clean = gradle.split('tasks.named<Delete>("clean")', 1)
@@ -616,6 +625,14 @@ class GradleGraph(unittest.TestCase):
         found = self.violations(self.mutate('environment("MACOSX_DEPLOYMENT_TARGET", installerMinimumOs.get())', 'environment("MACOSX_DEPLOYMENT_TARGET", "26.0")'))
         self.assertTrue(any("hard-coded" in e for e in found), found)
 
+    def test_a_fixture_engine_must_be_compiled_for_its_channel(self):
+        found = self.violations(self.mutate(' --cfg veles_channel=\\"$channel\\"', ""))
+        self.assertTrue(any("veles_channel" in e for e in found), found)
+        found = self.violations(self.mutate('if (channel != "production") {', 'if (true) {'))
+        self.assertTrue(any("veles_channel" in e or "production" in e for e in found), found)
+        found = self.violations(self.mutate('if (channel != "production") {', 'if (channel == "production") {'))
+        self.assertTrue(any("production" in e for e in found), found)
+
     def test_a_linux_host_must_be_refused(self):
         found = self.violations(self.mutate("Windows or macOS runner", "any runner"))
         self.assertTrue(any("Linux" in e for e in found), found)
@@ -637,6 +654,55 @@ class GradleGraph(unittest.TestCase):
             clean_tail = self.gradle.split('tasks.named<Delete>("clean")', 1)
             mutated = clean_tail[0] + 'tasks.named<Delete>("clean")' + clean_tail[1].replace(path, "")
             self.assertTrue(any(path in e for e in self.violations(mutated)), path)
+
+
+class CompiledChannel(unittest.TestCase):
+    """F2, executed: the engine is really built per channel, with the exact RUSTFLAGS the producer passes."""
+
+    def run_channel_tests(self, label, rustflags):
+        import os
+        import shutil
+        import subprocess
+
+        if shutil.which("cargo") is None:
+            self.skipTest("cargo is not on PATH; the compiled-channel build cannot run here")
+        target = ROOT / "build" / "native-bridge" / "installer" / "channel-test" / label
+        target.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ, CARGO_TARGET_DIR=str(target))
+        env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+        env.pop("RUSTFLAGS", None)
+        if rustflags:
+            env["RUSTFLAGS"] = rustflags
+        done = subprocess.run(["cargo", "test", "--locked", "--test", "channel"], cwd=INSTALLER, env=env,
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stdout[-1500:] + done.stderr[-1500:])
+        return done.stdout
+
+    def test_the_default_build_is_the_production_channel(self):
+        out = self.run_channel_tests("production", None)
+        self.assertIn("compiled_channel_is_production_by_default ... ok", out)
+        self.assertNotIn("compiled_channel_is_fixture", out)
+
+    def test_the_fixture_producer_flags_build_the_fixture_channel(self):
+        out = self.run_channel_tests("fixture", '--cfg veles_channel="fixture"')
+        self.assertIn("compiled_channel_is_fixture_when_built_for_it ... ok", out)
+        self.assertNotIn("compiled_channel_is_production", out)
+        self.assertIn("a_fixture_channel_engine_cannot_address_a_production_installation ... ok", out)
+
+    def test_two_channels_in_one_build_do_not_compile(self):
+        import os
+        import shutil
+        import subprocess
+
+        if shutil.which("cargo") is None:
+            self.skipTest("cargo is not on PATH")
+        target = ROOT / "build" / "native-bridge" / "installer" / "channel-test" / "both"
+        target.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ, CARGO_TARGET_DIR=str(target), RUSTFLAGS='--cfg veles_channel="fixture" --cfg veles_channel="development"')
+        env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+        done = subprocess.run(["cargo", "build", "--locked", "--lib"], cwd=INSTALLER, env=env, capture_output=True, text=True, check=False)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("at most one veles_channel", done.stderr)
 
 
 class ProducerWorkflows(unittest.TestCase):

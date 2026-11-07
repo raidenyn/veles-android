@@ -11,18 +11,19 @@
 //!   package against. Release packaging (Task 13) compiles the approved
 //!   descriptor in; until then it is absent and install/repair answer
 //!   `policy-denied` rather than trusting a package-supplied descriptor.
-//! * [`BUILD_CHANNEL`]: production. The development workflow (Task 12) builds a
-//!   separate binary with its own channel compiled in; a production binary
-//!   cannot select another channel at runtime.
+//! * [`BUILD_CHANNEL`]: the channel compiled into this binary
+//!   (`veles_bridge_installer::COMPILED_CHANNEL`): production unless the producer
+//!   built a fixture or development engine with its own `veles_channel` cfg. A
+//!   binary cannot select another channel at runtime.
 
 use std::ffi::OsString;
 use std::io::{self, Write};
 
 use veles_bridge_installer::cli::{self, Context, ParsedCommand};
-use veles_bridge_installer::{Channel, ReleaseDescriptor, parse_descriptor};
+use veles_bridge_installer::{COMPILED_CHANNEL, Channel, ReleaseDescriptor, parse_descriptor};
 
 /// The channel this binary installs. Compiled in; never a runtime choice.
-const BUILD_CHANNEL: Channel = Channel::Production;
+const BUILD_CHANNEL: Channel = COMPILED_CHANNEL;
 
 /// Raw bytes of the approved release descriptor, compiled in by release
 /// packaging (Task 13). `None` in this unreleased build.

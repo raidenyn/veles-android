@@ -26,6 +26,21 @@ pub mod policy;
 pub mod retained;
 pub mod transaction;
 
+/// The channel this build installs - compiled in, never a runtime choice.
+///
+/// The producers build one engine per channel: production by default, and the fixture or development
+/// engine with `--cfg veles_channel="fixture"` / `"development"` in RUSTFLAGS. A fixture or development
+/// engine therefore resolves only its own root, registration name and identity (`InstallPaths`), and a
+/// production engine can never be steered to either by an argument, a package or the environment.
+#[cfg(all(veles_channel = "fixture", veles_channel = "development"))]
+compile_error!("at most one veles_channel may be selected");
+#[cfg(not(any(veles_channel = "fixture", veles_channel = "development")))]
+pub const COMPILED_CHANNEL: Channel = Channel::Production;
+#[cfg(veles_channel = "fixture")]
+pub const COMPILED_CHANNEL: Channel = Channel::Fixture;
+#[cfg(veles_channel = "development")]
+pub const COMPILED_CHANNEL: Channel = Channel::Development;
+
 pub use cleanup::{
     CLEANUP_LAUNCHER_ARG, CLEANUP_MAGIC, CLEANUP_SCHEMA_VERSION, CleanupChannel, CleanupCompletion,
     CleanupEntry, CleanupFailure, CleanupFileSystem, CleanupReason, CleanupRequest, CleanupStatus,

@@ -175,8 +175,9 @@ class BundleInputContract(unittest.TestCase):
 
     # -- identity ---------------------------------------------------------------
 
-    def test_host_bundle_id_is_the_exact_production_id(self) -> None:
-        self.assertEqual(self.host_plist["CFBundleIdentifier"], HOST_BUNDLE_ID)
+    def test_host_bundle_id_is_a_channel_placeholder_filled_from_the_config(self) -> None:
+        # The identity is the channel's, never a literal that a fixture build would inherit (F2).
+        self.assertEqual(self.host_plist["CFBundleIdentifier"], "@BUNDLE_ID@")
         self.assertEqual(self.host_plist["CFBundleExecutable"], HOST_EXECUTABLE)
         self.assertEqual(self.host_plist["CFBundlePackageType"], "APPL")
         self.assertIs(self.host_plist["LSUIElement"], True, "the host is a background app")
@@ -394,6 +395,7 @@ class BundleInputContract(unittest.TestCase):
 
 INPUT_FILES = {
     "VERSION": b"1.2.3\n",
+    "BUNDLE_ID": b"me.nagaev.veles.bridge\n",
     INSTALLER_EXECUTABLE: b"\xcf\xfa\xed\xfe fake installer frontend\n",
     ENGINE_EXECUTABLE: b"\xcf\xfa\xed\xfe fake engine\n",
     HOST_EXECUTABLE: b"\xcf\xfa\xed\xfe fake host\n",
@@ -568,7 +570,7 @@ class PackageScriptContract(unittest.TestCase):
             ("HostInfo.plist", app / f"Contents/Resources/package/payload/{HOST_APP_NAME}/Contents/Info.plist"),
             ("CarrierInfo.plist", app / "Contents/Resources/package/carrier.app/Contents/Info.plist"),
         ):
-            expected = (MACOS / source).read_bytes().replace(b"@VERSION@", b"1.2.3")
+            expected = (MACOS / source).read_bytes().replace(b"@VERSION@", b"1.2.3").replace(b"@BUNDLE_ID@", HOST_BUNDLE_ID.encode())
             self.assertEqual(produced.read_bytes(), expected)
 
     def test_inputs_are_copied_byte_for_byte(self) -> None:
@@ -691,6 +693,31 @@ class PackageScriptContract(unittest.TestCase):
             completed = run_package(inputs, output)
             self.assertEqual(completed.returncode, 1, missing)
             self.assertFalse(output.exists(), f"no partial output when {missing} is missing")
+
+    def test_a_fixture_build_carries_the_fixture_host_bundle_id_and_only_there(self) -> None:
+        inputs = make_inputs(self.tmp / "in-fixture", extra={"BUNDLE_ID": b"me.nagaev.veles.bridge.fixture\n"})
+        output = self.tmp / "out-fixture"
+        completed = run_package(inputs, output)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        app = self.app(output)
+        host = load_plist(app / f"Contents/Resources/package/payload/{HOST_APP_NAME}/Contents/Info.plist")
+        self.assertEqual(host["CFBundleIdentifier"], "me.nagaev.veles.bridge.fixture")
+        self.assertNotEqual(host["CFBundleIdentifier"], HOST_BUNDLE_ID)
+        self.assertEqual(load_plist(app / "Contents/Info.plist")["CFBundleIdentifier"], INSTALLER_BUNDLE_ID)
+        # No production host identity survives anywhere in the fixture host bundle.
+        for path in (app / f"Contents/Resources/package/payload/{HOST_APP_NAME}").rglob("Info.plist"):
+            self.assertNotIn(b"<string>" + HOST_BUNDLE_ID.encode() + b"</string>", path.read_bytes())
+
+    def test_only_the_two_packageable_host_identities_are_accepted(self) -> None:
+        for bad in (b"me.nagaev.veles.bridge.dev\n", b"com.example.host\n", b"me.nagaev.veles.bridge.installer\n",
+                    b"me.nagaev.veles.bridge.fixture\nme.nagaev.veles.bridge\n", b"\n", b"me.nagaev.veles.bridge\n\n",
+                    b"me.nagaev.veles.bridge ", b"me.nagaev.veles.bridge.FIXTURE\n", b"@BUNDLE_ID@\n"):
+            inputs = make_inputs(self.tmp / "in-id", extra={"BUNDLE_ID": bad})
+            output = self.tmp / "out-id"
+            completed = run_package(inputs, output)
+            self.assertEqual(completed.returncode, 1, bad)
+            self.assertFalse(output.exists(), bad)
+            shutil.rmtree(inputs)
 
     def test_invalid_version_is_refused(self) -> None:
         for bad in (b"1.2\n", b"v1.2.3\n", b"1.2.3-rc1\n", b"1.2.3\n4\n", b"1.2.3 \n", b"01.2.3\n", b"\n", b"1.2.3;rm\n"):

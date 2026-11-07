@@ -15,6 +15,10 @@ description = "OTP-25 standalone per-user installer engine: strict package ident
 name = "veles_bridge_installer"
 path = "src/lib.rs"
 
+# The channel an engine installs is a compile-time cfg set by the producer's RUSTFLAGS, not a Cargo feature.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(veles_channel, values("fixture", "development"))'] }
+
 [dependencies]
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.140"

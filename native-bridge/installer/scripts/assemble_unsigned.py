@@ -405,6 +405,7 @@ def _assemble_macos(
         inputs = scratch / f"inputs-{tag}"
         inputs.mkdir()
         _write(inputs / "VERSION", f"{config['version']}\n".encode(), 0o644)
+        _write(inputs / "BUNDLE_ID", f"{config['bundle_id']}\n".encode(), 0o644)
         _copy_file(frontend, inputs / "VelesBridgeInstaller", 0o755)
         _copy_file(files["veles-bridge-maintenance"], inputs / "veles-bridge-maintenance", 0o755)
         _copy_file(files["veles-native-host"], inputs / "veles-native-host", 0o755)
