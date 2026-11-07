@@ -477,7 +477,6 @@ class _Run:
             if requires.get("fresh_account"):
                 if account.get("fresh") is not True or self.capture(account.get("fresh_evidence"), f"{label}: fresh account evidence") is None:
                     self.err(f"{label}: this case needs a fresh account with captured freshness evidence")
-        stamps: list[datetime] = []
         seen_actions: dict[str, dict] = {}
         for action in entry.get("actions") if isinstance(entry.get("actions"), list) else []:
             action = _obj(action)
@@ -485,16 +484,20 @@ class _Run:
             when = _time(action.get("at"))
             if when is None or not (started <= when <= ended):
                 self.err(f"{label}: action {aid} has a timestamp outside the attempt (clock)")
-            else:
-                stamps.append(when)
             if action.get("elevated") is not False:
                 self.err(f"{label}: action {aid} was or may have been elevated; elevation disqualifies a standard-user PASS")
             if not _str(action.get("step")).strip() or not _str(action.get("returns")).strip():
                 self.err(f"{label}: action {aid} needs the controlled step and its observed return")
             captured = self.capture(action.get("capture"), f"{label}: action {aid}")
-            disposition = _obj(case.get("dispositions")).get(aid)
-            if isinstance(disposition, dict):
-                self.check_disposition(label, aid, action, captured, disposition)
+            declared = case.get("dispositions", {})
+            if not isinstance(declared, dict):
+                self.err(f"{label}: case {case.get('id')!r} dispositions must be an object")
+            elif aid in declared:
+                # A declared expectation that is malformed is a broken contract, never a check to skip.
+                if not isinstance(declared[aid], dict):
+                    self.err(f"{label}: action {aid} has a malformed disposition (must be an object)")
+                else:
+                    self.check_disposition(label, aid, action, captured, declared[aid])
             seen_actions[aid] = action
         for needed in case.get("actions", []):
             if needed not in seen_actions:
@@ -539,7 +542,26 @@ class _Run:
         action that must end in an allowed failure with exit status 1.
         """
         where = f"{label}: action {aid}"
-        clean = disposition.get("result") == "clean"
+        result = disposition.get("result")
+        if result not in ("clean", "refused"):
+            self.err(f"{where}: disposition result {result!r} is not 'clean' or 'refused'")
+            return
+        clean = result == "clean"
+        if clean:
+            operations = [disposition.get("operation")]
+            if operations[0] not in REPORT_OPERATIONS or not _str(disposition.get("state")).strip():
+                self.err(f"{where}: a clean disposition needs an engine operation and its settled state")
+                return
+        else:
+            operations = disposition.get("operations")
+            failures = disposition.get("failures")
+            if (not isinstance(operations, list) or not operations
+                    or any(operation not in REPORT_OPERATIONS for operation in operations)
+                    or not isinstance(failures, list) or not failures
+                    or any(failure not in REPORT_FAILURES for failure in failures)):
+                self.err(f"{where}: a refused disposition needs a non-empty operations and failures list "
+                         "from the engine's own vocabulary")
+                return
         returns = action.get("returns")
         want = "0" if clean else "1"
         if returns != want:
@@ -550,7 +572,6 @@ class _Run:
         doc = self.parse_report(captured, where)
         if doc is None:
             return
-        operations = [disposition["operation"]] if clean else list(disposition.get("operations") or [])
         if doc["operation"] not in operations:
             self.err(f"{where}: report operation {doc['operation']!r} is not the expected {'/'.join(operations)}")
         pending = "cleanup-pending" in doc["warnings"] or doc["failure"] == "cleanup-pending"
@@ -560,11 +581,9 @@ class _Run:
                          f"{' and a pending cleanup' if pending else ''}; that is not a clean maintenance result")
             if doc["state"] != disposition.get("state"):
                 self.err(f"{where}: report state {doc['state']!r} is not the settled {disposition.get('state')!r}")
-        else:
-            allowed = list(disposition.get("failures") or [])
-            if doc["failure"] not in allowed:
-                self.err(f"{where}: report failure {doc['failure']!r} is not an expected refusal "
-                         f"({', '.join(allowed)}); the action must be refused, not completed")
+        elif doc["failure"] not in failures:
+            self.err(f"{where}: report failure {doc['failure']!r} is not an expected refusal "
+                     f"({', '.join(failures)}); the action must be refused, not completed")
 
     def parse_report(self, data: bytes, where: str) -> dict | None:
         if len(data) > MAX_REPORT_BYTES:

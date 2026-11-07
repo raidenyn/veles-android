@@ -809,6 +809,45 @@ class ActionDispositions(Base):
                 if action.startswith("choose-") or action in ("retry-update",):
                     self.assertIn(action, case.get("dispositions", {}), f"{case['id']}: {action}")
 
+    def test_a_malformed_disposition_is_refused_never_silently_skipped(self) -> None:
+        """A declared expectation with the wrong shape is a broken contract; it must not disable the check."""
+        def mutate(case: dict, action: str, value: object) -> None:
+            if case["id"] == "windows.repair":
+                case["dispositions"][action] = value
+
+        def mutate_container(case: dict) -> None:
+            if case["id"] == "windows.repair":
+                case["dispositions"] = ["choose-repair"]
+
+        def mutate_failed(case: dict) -> None:
+            if case["id"] == "windows.failed-upgrade":
+                case["dispositions"]["choose-update"] = {
+                    "result": "refused", "operations": ["install"], "failures": []}
+
+        mutations = {
+            "dispositions-not-an-object": (mutate_container, None),
+            "disposition-not-an-object": (mutate, ("choose-repair", "clean")),
+            "unknown-result": (mutate, ("choose-repair", {"result": "maybe", "operation": "repair",
+                                                           "state": "repaired"})),
+            "clean-without-state": (mutate, ("choose-repair", {"result": "clean", "operation": "repair"})),
+            "clean-with-unknown-operation": (mutate, ("choose-repair", {"result": "clean", "operation": "launch",
+                                                                        "state": "repaired"})),
+            "refused-without-failures": (mutate_failed, None),
+        }
+        for label, (change, argument) in mutations.items():
+            with self.subTest(disposition=label):
+                doc = load_cases()
+                for case in doc["cases"]:
+                    change(case) if argument is None else change(case, *argument)
+                path = self.root / f"cases-{label}.json"
+                path.write_text(json.dumps(doc))
+                b = Bundle(self.root / f"malformed-{label}")
+                b.attempt("repair" if label != "refused-without-failures" else "failed-upgrade")
+                b.write()
+                errors = evidence.validate(b.run, path, b.anchor_path)
+                self.assertTrue(errors, "a malformed disposition is silently ignored")
+                self.assertTrue(any("disposition" in e for e in errors), errors)
+
 
 class AppendOnly(Base):
     def test_prior_failures_are_append_only(self) -> None:
