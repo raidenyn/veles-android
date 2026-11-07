@@ -304,6 +304,21 @@ class BuildScript(unittest.TestCase):
         self.assertIn("EMBEDDED_CARRIER: Option<&[u8]> = None", source)
         self.assertFalse((generated / "embedded_carrier.bin").exists())
 
+    def test_a_fixture_build_embeds_the_fixture_carrier(self):
+        fixture = assemble_sample(
+            self.root, channel="fixture", tag="fixture", value=config("windows", "fixture")
+        )
+        carrier = (fixture / "embedded-carrier.bin").read_bytes()
+        done, generated = self.run_build(
+            "fixture-present", channel="fixture", carrier=fixture / "embedded-carrier.bin"
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(carrier, (generated / "embedded_carrier.bin").read_bytes())
+        self.assertIn(
+            "Some(include_bytes!",
+            (generated / "embedded_carrier.rs").read_text(encoding="utf-8"),
+        )
+
     def test_a_fixture_build_refuses_a_production_carrier(self):
         production = assemble_sample(self.root, tag="production")
         done, generated = self.run_build(
