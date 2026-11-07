@@ -98,6 +98,25 @@ def literals(call):
     return re.findall(r'"([^"]*)"', call)
 
 
+def object_block(code, marker):
+    """The balanced ``{...}`` body of the first registration whose text contains ``marker``."""
+    index = code.find(marker)
+    if index < 0:
+        return None
+    start = code.find("{", index + len(marker))
+    if start < 0:
+        return None
+    depth = 0
+    for position in range(start, len(code)):
+        if code[position] == "{":
+            depth += 1
+        elif code[position] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[start : position + 1]
+    return None
+
+
 # --------------------------------------------------------------------------- Gradle
 
 
@@ -198,10 +217,46 @@ def check_gradle(gradle, clean_script):
     if not re.search(r"inputs\.files?\(config\)", code):
         errors.append("the release config is not declared as a task input")
 
-    # 5b. The authenticated release carrier is a build-time input of the engine build.
-    if (not re.search(r'gradleProperty\("installerEmbeddedCarrier"\)', code)
-            or not re.search(r'environment\("VELES_EMBEDDED_CARRIER", carrier\.asFile\.absolutePath\)', code)):
-        errors.append("the engine does not compile in the authenticated carrier from installerEmbeddedCarrier")
+    # 5b. The authenticated carrier is assembled FIRST, verified against the exact descriptor and
+    # channel, and only then compiled into the engine that is published. A production build cannot
+    # build without it; a fixture build consumes its own channel's assembly; no property may point
+    # the engine at an unverified file.
+    if 'gradleProperty("installerEmbeddedCarrier")' in code:
+        errors.append("the embedded carrier must come from the assembler, never from a gradle property")
+    embedded = object_block(code, '"${taskName}EngineEmbedded$suffix"')
+    if embedded is None:
+        errors.append("no engine build compiles the assembled carrier in")
+    else:
+        if 'environment("VELES_BUILD_CHANNEL", channel)' not in embedded:
+            errors.append("the carrier-bearing engine build does not declare its channel")
+        if 'environment("VELES_EMBEDDED_CARRIER"' not in embedded:
+            errors.append("the carrier-bearing engine build does not pass VELES_EMBEDDED_CARRIER")
+        if "embedded-carrier.bin" not in embedded:
+            errors.append("the embedded carrier is not the assembler's embedded-carrier.bin")
+        if "carrierCheck" not in embedded:
+            errors.append("the carrier-bearing engine build does not consume a verified carrier")
+    if code.count('environment("VELES_EMBEDDED_CARRIER"') != 1:
+        errors.append("exactly one engine build may compile a carrier in")
+    if 'it.dir("slots/$channel/$slot")' not in code:
+        errors.append("the assembled carrier is not scoped to the registered channel")
+    bootstrap = object_block(code, '"${taskName}Engine$suffix"')
+    if bootstrap is not None and 'environment("VELES_EMBEDDED_CARRIER"' in bootstrap:
+        errors.append("the bootstrap engine build must embed no carrier")
+    elif bootstrap is None or 'environment.remove("VELES_EMBEDDED_CARRIER")' not in bootstrap:
+        errors.append("the bootstrap engine build does not clear an ambient carrier")
+    assembled_final = object_block(code, '"${taskName}AssembleFinal$suffix"')
+    if assembled_final is None:
+        errors.append("the published tree is not re-assembled from the carrier-bearing engine")
+    if "slotOutputs[slot] = assembledFinalDir" not in code:
+        errors.append("finalize does not publish the carrier-bearing assembly")
+    check = object_block(code, '"${taskName}CarrierCheck$suffix"')
+    if check is None or '"verify-carrier"' not in check:
+        errors.append("the assembled carrier is not verified against the descriptor and channel before the build")
+    elif '"--channel", channel' not in check or '"--descriptor"' not in check:
+        errors.append("the carrier check does not bind the exact descriptor and channel")
+    verify = object_block(code, '"${taskName}VerifyCarrier$suffix"')
+    if verify is None or '"--image"' not in verify or '"verify-carrier"' not in verify:
+        errors.append("the built engine image is not checked to contain the assembler's carrier bytes")
 
     # 6. Channel is hard-selected by the registration, never by the config or a property override.
     unsigned = re.search(r'registerInstallerProducer\(\s*"bridgeInstallerUnsigned"([^)]*)\)', code)
@@ -365,6 +420,10 @@ def check_producer_workflow(source, platform):
         errors.append("a producer must not accept secrets or enter a protected environment")
     if "actions/download-artifact" in body or re.search(r"\bgh run\b|run-id", body):
         errors.append("a producer must not source any artifact from another run (no PR artifact substitution)")
+    # The carrier exists only after the producer's own assembler has run, so the Gradle graph is the
+    # only coherent supply point. The workflow must not point the engine at a file it did not assemble.
+    if "VELES_EMBEDDED_CARRIER" in body or "VELES_BUILD_CHANNEL" in body:
+        errors.append("the producer workflow must not set the carrier channel itself; the Gradle producer supplies the assembled carrier")
     if not re.search(r"permissions:\n  contents: read\n", body) or body.count("permissions:") != 1:
         errors.append("permissions must be a single workflow-level contents: read")
     # Uploads: mode- and hash-preserving, explicit, named, bounded.
@@ -590,15 +649,29 @@ class GradleGraph(unittest.TestCase):
         found = self.violations(self.mutate('environment("VELES_ALLOWED_ORIGINS"', 'environment("OTHER"'))
         self.assertTrue(any("VELES_ALLOWED_ORIGINS" in e for e in found), found)
 
-    def test_the_engine_must_compile_in_the_supplied_carrier(self):
+    def test_the_engine_must_compile_in_the_assembled_and_verified_carrier(self):
         for old, new in (
-            ('environment("VELES_EMBEDDED_CARRIER", carrier.asFile.absolutePath)',
-             'environment("VELES_CARRIER_IGNORED", carrier.asFile.absolutePath)'),
-            ('val installerEmbeddedCarrier = providers.gradleProperty("installerEmbeddedCarrier")',
-             'val installerEmbeddedCarrier = providers.provider { null }'),
+            ('environment("VELES_EMBEDDED_CARRIER"', 'environment("VELES_CARRIER_IGNORED"'),
+            ('environment("VELES_BUILD_CHANNEL", channel)', 'environment("VELES_CHANNEL_IGNORED", channel)'),
+            ('val carrierDocument = assembledDir.map { it.file("embedded-carrier.bin") }',
+             'val carrierDocument = providers.provider { null }'),
+            ('"${taskName}EngineEmbedded$suffix"', '"${taskName}Engine$suffix"'),
+            ('slotOutputs[slot] = assembledFinalDir', 'slotOutputs[slot] = assembledDir'),
         ):
             found = self.violations(self.mutate(old, new, 1))
-            self.assertTrue(any("carrier" in e for e in found), found)
+            self.assertTrue(any("carrier" in e or "assembly" in e for e in found), (old, found))
+
+    def test_the_carrier_check_must_bind_the_channel_and_the_image(self):
+        anchor = ('                    "--descriptor", descriptor.asFile.absolutePath,\n'
+                  '                    "--channel", channel,')
+        found = self.violations(self.mutate(anchor, anchor.replace('"--channel", channel', '"--channel", "production"'), 1))
+        self.assertTrue(any("carrier" in e for e in found), found)
+        found = self.violations(self.mutate('"--image", image.absolutePath', '"--no-image", image.absolutePath', 1))
+        self.assertTrue(any("carrier" in e for e in found), found)
+
+    def test_the_carrier_must_be_scoped_to_the_registered_channel(self):
+        found = self.violations(self.mutate('it.dir("slots/$channel/$slot")', 'it.dir("slots/production/$slot")', 1))
+        self.assertTrue(any("carrier" in e for e in found), found)
 
     def test_a_fixture_config_cannot_feed_the_production_task(self):
         found = self.violations(self.mutate('"bridgeInstallerUnsigned", "production", installerReleaseConfig', '"bridgeInstallerUnsigned", "production", installerFixtureConfig'))
@@ -748,6 +821,11 @@ class ProducerWorkflows(unittest.TestCase):
             "wrong-artifact-default": source.replace("default: %s" % spec["artifact"], "default: native-%s" % platform, 1),
             "fixture-as-production": source.replace("name: %s" % spec["fixture"], "name: %s" % spec["artifact"], 1),
             "unactivated-toolchain": source.replace("working-directory: native-bridge/installer\n        run: rustup show active-toolchain", "run: true", 1),
+            "carrier-env": source.replace(
+                "      - name: Build the production-channel unsigned input tree",
+                "      - name: Build the production-channel unsigned input tree\n        env:\n          VELES_EMBEDDED_CARRIER: unverified.bin",
+                1,
+            ),
             "silent-upload": source.replace("if-no-files-found: error", "if-no-files-found: ignore"),
             "write-permission": source.replace("contents: read", "contents: write", 1),
         }

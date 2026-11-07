@@ -1199,10 +1199,18 @@ val bridgeHostBuild = tasks.register<Exec>("bridgeHostBuild") {
 // and gates. It is deliberately disjoint from the Tauri scaffold (bridgeInstall/bridgeBuild/bridgeBundle/
 // bridgePackage) and from the OTP-24 host graph above, uses no Node, and never signs, notarizes or
 // publishes anything. Every product lands under build/native-bridge/installer/:
-//   target/<channel>-<slot>/{installer,host,frontend}   cargo/swift outputs, one tree per channel and slot
-//   slots/<channel>/<slot>/                              staged binaries and the assembled input tree
+//   target/<channel>-<slot>/{installer,installer-embedded,host,frontend}   cargo/swift outputs, one tree per channel and slot
+//   slots/<channel>/<slot>/                              staged binaries and the assembled input trees
 //   out/<channel>/                                       tree.tar, provenance.json, report-ab.json, SHA256SUMS
 //   tools/nsis/                                          the pinned NSIS (provision-nsis.ps1)
+//
+// Carrier ordering: the assembler is the only producer of the policy carrier, and it needs the
+// payload (host, cleanup helper, uninstaller) but not the engine, so each slot builds a bootstrap
+// engine first, assembles, verifies the carrier against the exact descriptor and channel, and only
+// then rebuilds the engine with `VELES_EMBEDDED_CARRIER` pointing at the assembler's verified
+// `embedded-carrier.bin`. The published tree is re-assembled from that engine (`assembled-final`).
+// A production build declares `VELES_BUILD_CHANNEL=production`, so `build.rs` fails closed if the
+// carrier is ever absent; a fixture build embeds its own channel's carrier or none.
 //
 // Public tasks:
 //   bridgeInstallerFormat / bridgeInstallerLint / bridgeInstallerTest   cargo fmt/clippy/test (locked)
@@ -1240,11 +1248,9 @@ val installerReleaseConfig = providers.gradleProperty("installerReleaseConfig")
     .map { layout.projectDirectory.file(it) }
     .orElse(layout.projectDirectory.file("native-bridge/installer/config/release-$installerPlatform.json"))
 val installerFixtureConfig = providers.provider { layout.projectDirectory.file("native-bridge/installer/config/fixture-$installerPlatform.json") }
-// The authenticated carrier document the engine compiles in (`VELES_EMBEDDED_CARRIER`). Release
-// packaging supplies it on the engine build that follows carrier assembly; without it the engine is
-// an unreleased build and refuses install/repair with policy-denied instead of trusting a package.
-val installerEmbeddedCarrier = providers.gradleProperty("installerEmbeddedCarrier")
-    .map { layout.projectDirectory.file(it) }
+// No carrier path is an operator input: the authenticated carrier is produced by the assembler in
+// the same producer graph and compiled in only after `verify-carrier` accepts it, so a build can
+// never embed a file that was not assembled from this commit's payload.
 val installerMakensis = providers.gradleProperty("installerMakensis")
     .orElse(installerBuildRoot.map { it.file("tools/nsis/nsis-3.08/makensis.exe").asFile.absolutePath })
 // Build-tool identity: observed on this machine, held to config/tools.lock.json, bound into provenance.
@@ -1306,6 +1312,16 @@ fun Exec.installerCargoEnvironment() {
     environment("RUSTFLAGS", installerRustFlags())
     environment("SOURCE_DATE_EPOCH", "946684800")
     environment("ZERO_AR_DATE", "1")
+}
+
+// The channel is compiled into the engine. Production is the default and never carries a cfg; a
+// fixture or development engine resolves only its own root, registration and identity, so its
+// package-less commands cannot address production state. Called after `installerCargoEnvironment`
+// because it replaces RUSTFLAGS with the remapped flags plus the channel.
+fun Exec.installerChannelEnvironment(channel: String) {
+    if (channel != "production") {
+        environment("RUSTFLAGS", installerRustFlags() + " --cfg veles_channel=\"$channel\"")
+    }
 }
 
 val bridgeInstallerToolchainCheck = tasks.register("bridgeInstallerToolchainCheck") {
@@ -1395,9 +1411,11 @@ val bridgeInstallerToolCheck = tasks.register<Exec>("bridgeInstallerToolCheck") 
     )
 }
 
-// Registers the three-stage producer for one channel: config check, then per slot (engine, host, optional
-// Swift frontend, optional NSIS uninstaller, staging, assembly, optional carrier embedding), then the A/B
-// finalization that publishes tree.tar, provenance.json, report-ab.json and SHA256SUMS.
+// Registers the two-pass producer for one channel: config check, then per slot (bootstrap engine,
+// host, optional Swift frontend, optional NSIS uninstaller, staging, assembly and carrier
+// verification, carrier-bearing engine, staging, final assembly, optional Windows resource embedding,
+// carrier-bytes verification), then the A/B finalization that publishes tree.tar, provenance.json,
+// report-ab.json and SHA256SUMS.
 fun registerInstallerProducer(taskName: String, channel: String, config: Provider<RegularFile>, summary: String): TaskProvider<Exec> {
     val configCheck = tasks.register<Exec>("${taskName}Config") {
         group = "native-bridge"
@@ -1426,37 +1444,65 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
     listOf("a", "b").forEach { slot ->
         val suffix = slot.uppercase()
         val installerTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/installer") }
+        val embeddedTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/installer-embedded") }
         val hostTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/host") }
         val frontendScratchDir = installerBuildRoot.map { it.dir("target/$channel-$slot/frontend") }
         val slotRoot = installerBuildRoot.map { it.dir("slots/$channel/$slot") }
         val binDir = slotRoot.map { it.dir("bin") }
+        val embeddedBinDir = slotRoot.map { it.dir("bin-embedded") }
         val assembledDir = slotRoot.map { it.dir("assembled") }
+        val assembledFinalDir = slotRoot.map { it.dir("assembled-final") }
         val uninstallerDir = slotRoot.map { it.dir("uninstall") }
-        slotOutputs[slot] = assembledDir
+        // The published tree is the one re-assembled from the carrier-bearing engine; the bootstrap
+        // tree only exists to let the assembler compute the carrier it then hands to that build.
+        slotOutputs[slot] = assembledFinalDir
 
+        // The assembler arguments are identical for both passes; only the staged binaries and the
+        // output directory differ.
+        fun assemblerArguments(binaries: Directory, output: Directory): MutableList<String> {
+            val arguments = mutableListOf(
+                installerPython, "-I", installerAssembler.asFile.absolutePath, "assemble",
+                "--platform", installerPlatform, "--channel", channel, "--config", config.get().asFile.absolutePath,
+                "--commit", installerSourceCommit(), "--binaries", binaries.asFile.absolutePath,
+                "--output", output.asFile.absolutePath,
+            )
+            if (installerPlatform == "macos") {
+                val binPath = providers.exec {
+                    workingDir(installerDir.dir("macos"))
+                    commandLine(
+                        "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
+                        "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile, "--show-bin-path",
+                    )
+                }.standardOutput.asText.get().trim()
+                arguments += listOf(
+                    "--frontend", "$binPath/VelesBridgeInstaller",
+                    "--packager", installerDir.file("scripts/package-macos.sh").asFile.absolutePath,
+                )
+            }
+            return arguments
+        }
+
+        // Pass 1: a bootstrap engine with no release identity. It is only a member of the assembler's
+        // closed binary set (the engine is not part of the payload inventory), never published.
         val engine = tasks.register<Exec>("${taskName}Engine$suffix") {
             group = "native-bridge"
-            description = "Builds the installer engine and cleanup helper (slot $slot, $channel) into its own target directory."
+            description = "Builds the bootstrap installer engine and cleanup helper (slot $slot, $channel) the assembler consumes."
             dependsOn(configCheck, bridgeInstallerToolchainCheck)
             inputs.files(installerSources)
             inputs.files(config)
-            installerEmbeddedCarrier.orNull?.let { carrier -> inputs.file(carrier) }
             outputs.dir(installerTargetDir)
             workingDir(installerDir)
             doFirst {
                 requireInstallerHost()
                 delete(installerTargetDir)
+                // The bootstrap pass must never inherit an ambient carrier: it exists only to
+                // satisfy the assembler's closed binary set; the published tree is rebuilt from
+                // the embedded pass below.
+                environment.remove("VELES_EMBEDDED_CARRIER")
+                environment.remove("VELES_BUILD_CHANNEL")
                 environment("CARGO_TARGET_DIR", installerTargetDir.get().asFile)
                 installerCargoEnvironment()
-                installerEmbeddedCarrier.orNull?.let { carrier ->
-                    // Compiled in by `build.rs`: the exact authenticated bytes, never read at run time.
-                    environment("VELES_EMBEDDED_CARRIER", carrier.asFile.absolutePath)
-                }
-                if (channel != "production") {
-                    // The channel is compiled into the engine: a fixture engine resolves only the fixture root,
-                    // registration and identity, so its package-less commands cannot address production state.
-                    environment("RUSTFLAGS", installerRustFlags() + " --cfg veles_channel=\"$channel\"")
-                }
+                installerChannelEnvironment(channel)
             }
             commandLine(
                 "cargo", "build", "--locked", "--release", "--target", installerRustTriple,
@@ -1519,7 +1565,7 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
         }
         val stage = tasks.register<Sync>("${taskName}Stage$suffix") {
             group = "native-bridge"
-            description = "Stages exactly the built executables the assembler accepts (slot $slot, $channel)."
+            description = "Stages exactly the bootstrap executables the assembler accepts (slot $slot, $channel)."
             dependsOn(engine, host, uninstaller)
             into(binDir)
             from(installerTargetDir.map { it.dir("$installerRustTriple/release") }) {
@@ -1533,54 +1579,138 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
         }
         val assemble = tasks.register<Exec>("${taskName}Assemble$suffix") {
             group = "native-bridge"
-            description = "Assembles the unsigned input tree (slot $slot, $channel) from the staged executables."
+            description = "Assembles the bootstrap unsigned input tree and publishes the carrier (slot $slot, $channel)."
             dependsOn(stage, frontend)
             inputs.files(config)
             inputs.files(installerSources)
             outputs.dir(assembledDir)
             doFirst {
                 delete(assembledDir)
-                val arguments = mutableListOf(
-                    installerPython, "-I", installerAssembler.asFile.absolutePath, "assemble",
-                    "--platform", installerPlatform, "--channel", channel, "--config", config.get().asFile.absolutePath,
-                    "--commit", installerSourceCommit(), "--binaries", binDir.get().asFile.absolutePath,
-                    "--output", assembledDir.get().asFile.absolutePath,
-                )
-                if (installerPlatform == "macos") {
-                    val binPath = providers.exec {
-                        workingDir(installerDir.dir("macos"))
-                        commandLine(
-                            "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
-                            "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile, "--show-bin-path",
-                        )
-                    }.standardOutput.asText.get().trim()
-                    arguments += listOf(
-                        "--frontend", "$binPath/VelesBridgeInstaller",
-                        "--packager", installerDir.file("scripts/package-macos.sh").asFile.absolutePath,
-                    )
-                }
-                commandLine(arguments)
+                commandLine(assemblerArguments(binDir.get(), assembledDir.get()))
             }
         }
-        val embed = tasks.register<Exec>("${taskName}Carrier$suffix") {
+        // The engine build consumes an already-verified artifact: the carrier the assembler just wrote
+        // is checked against this tree's exact descriptor and the registered channel before compiling.
+        val carrierCheck = tasks.register<Exec>("${taskName}CarrierCheck$suffix") {
             group = "native-bridge"
-            description = "Embeds the policy carrier into the unsigned engine image (Windows only, slot $slot, $channel)."
-            enabled = installerPlatform == "windows"
+            description = "Verifies the assembled carrier against the exact descriptor and channel (slot $slot, $channel)."
             dependsOn(assemble)
+            inputs.files(assembledDir)
+            outputs.upToDateWhen { false }
+            doFirst {
+                val descriptor = if (installerPlatform == "windows") {
+                    assembledDir.get().file("tree/package/descriptor.json")
+                } else {
+                    assembledDir.get().file("tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json")
+                }
+                commandLine(
+                    installerPython, "-I", installerAssembler.asFile.absolutePath, "verify-carrier",
+                    "--carrier", assembledDir.get().file("embedded-carrier.bin").asFile.absolutePath,
+                    "--descriptor", descriptor.asFile.absolutePath,
+                    "--channel", channel,
+                )
+            }
+        }
+        // Pass 2: the engine that is published. It compiles the exact verified carrier bytes in;
+        // `build.rs` refuses a production build that reaches this point without one.
+        val engineEmbedded = tasks.register<Exec>("${taskName}EngineEmbedded$suffix") {
+            group = "native-bridge"
+            description = "Rebuilds the engine with the verified carrier compiled in (slot $slot, $channel)."
+            dependsOn(carrierCheck, bridgeInstallerToolchainCheck)
+            inputs.files(installerSources)
+            inputs.files(config)
+            val carrierDocument = assembledDir.map { it.file("embedded-carrier.bin") }
+            inputs.file(carrierDocument)
+            outputs.dir(embeddedTargetDir)
+            workingDir(installerDir)
+            doFirst {
+                requireInstallerHost()
+                delete(embeddedTargetDir)
+                environment("CARGO_TARGET_DIR", embeddedTargetDir.get().asFile)
+                installerCargoEnvironment()
+                installerChannelEnvironment(channel)
+                // The channel is declared so `build.rs` fails closed when a production build has no
+                // carrier; the document is the assembler's verified artifact, never read at run time.
+                environment("VELES_BUILD_CHANNEL", channel)
+                environment("VELES_EMBEDDED_CARRIER", carrierDocument.get().asFile.absolutePath)
+            }
+            commandLine(
+                "cargo", "build", "--locked", "--release", "--target", installerRustTriple,
+                "--bin", "veles-bridge-maintenance", "--bin", "veles-bridge-cleanup",
+            )
+        }
+        val stageEmbedded = tasks.register<Sync>("${taskName}StageEmbedded$suffix") {
+            group = "native-bridge"
+            description = "Stages the carrier-bearing executables for the published tree (slot $slot, $channel)."
+            dependsOn(engineEmbedded, host, uninstaller)
+            into(embeddedBinDir)
+            from(embeddedTargetDir.map { it.dir("$installerRustTriple/release") }) {
+                include("veles-bridge-maintenance$installerExecutableSuffix")
+                if (installerPlatform == "windows") include("veles-bridge-cleanup$installerExecutableSuffix")
+            }
+            from(hostTargetDir.map { it.dir("$installerRustTriple/release") }) {
+                include("veles-native-host$installerExecutableSuffix")
+            }
+            from(uninstallerDir) { include("uninstall.exe") }
+        }
+        val assembleFinal = tasks.register<Exec>("${taskName}AssembleFinal$suffix") {
+            group = "native-bridge"
+            description = "Assembles the published unsigned input tree from the carrier-bearing engine (slot $slot, $channel)."
+            dependsOn(stageEmbedded, frontend)
+            inputs.files(config)
+            inputs.files(installerSources)
+            outputs.dir(assembledFinalDir)
+            doFirst {
+                delete(assembledFinalDir)
+                commandLine(assemblerArguments(embeddedBinDir.get(), assembledFinalDir.get()))
+            }
+        }
+        val embedCarrier = tasks.register<Exec>("${taskName}EmbedCarrier$suffix") {
+            group = "native-bridge"
+            description = "Embeds the policy carrier resource into the published engine image (Windows only, slot $slot, $channel)."
+            enabled = installerPlatform == "windows"
+            dependsOn(assembleFinal)
             doFirst {
                 commandLine(
                     "pwsh", "-NoProfile", "-File", installerDir.file("scripts/embed-carrier.ps1").asFile,
-                    "-Image", assembledDir.get().file("tree/package/carrier.exe").asFile,
-                    "-Carrier", assembledDir.get().file("carrier.bin").asFile,
+                    "-Image", assembledFinalDir.get().file("tree/package/carrier.exe").asFile,
+                    "-Carrier", assembledFinalDir.get().file("carrier.bin").asFile,
+                )
+            }
+        }
+        val verifyCarrier = tasks.register<Exec>("${taskName}VerifyCarrier$suffix") {
+            group = "native-bridge"
+            description = "Requires the built engine image to contain exactly the assembler's carrier bytes (slot $slot, $channel)."
+            dependsOn(if (installerPlatform == "windows") embedCarrier else assembleFinal)
+            inputs.files(assembledFinalDir)
+            outputs.upToDateWhen { false }
+            doFirst {
+                val descriptor: File
+                val image: File
+                if (installerPlatform == "windows") {
+                    descriptor = assembledFinalDir.get().file("tree/package/descriptor.json").asFile
+                    image = assembledFinalDir.get().file("tree/package/carrier.exe").asFile
+                } else {
+                    val packageDir = assembledFinalDir.get().dir("tree/Veles Bridge Installer.app/Contents/Resources/package")
+                    descriptor = packageDir.file("descriptor.json").asFile
+                    image = packageDir.file("carrier.app/Contents/MacOS/veles-bridge-maintenance").asFile
+                }
+                commandLine(
+                    installerPython, "-I", installerAssembler.asFile.absolutePath, "verify-carrier",
+                    "--carrier", assembledFinalDir.get().file("embedded-carrier.bin").asFile.absolutePath,
+                    "--descriptor", descriptor.absolutePath,
+                    "--channel", channel,
+                    "--image", image.absolutePath,
                 )
             }
         }
         previousFinisher?.let { earlier ->
             engine.configure { mustRunAfter(earlier) }
+            engineEmbedded.configure { mustRunAfter(earlier) }
             host.configure { mustRunAfter(earlier) }
         }
-        previousFinisher = embed
-        slotFinishers += embed
+        previousFinisher = verifyCarrier
+        slotFinishers += verifyCarrier
     }
     return tasks.register<Exec>(taskName) {
         group = "native-bridge"

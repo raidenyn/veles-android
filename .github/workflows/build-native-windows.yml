@@ -69,6 +69,11 @@ jobs:
           else
             echo "approved=false" >> "$GITHUB_OUTPUT"
           fi
+      # The engine's release carrier is not supplied here: it does not exist until this job's own
+      # assembler has run. The Gradle graph assembles the payload, verifies the carrier against the
+      # exact descriptor and the registered channel, and only then rebuilds the engine with
+      # VELES_EMBEDDED_CARRIER (fail-closed for the production channel). Supplying the variable in
+      # this workflow would point the build at a file nobody assembled from this commit.
       - name: Build the production-channel unsigned input tree
         if: steps.config.outputs.approved == 'true'
         run: .\gradlew.bat bridgeInstallerUnsigned
