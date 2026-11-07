@@ -1624,7 +1624,28 @@ fn verify_authenticated_maintenance(
         maintenance_engine_source(paths, &carrier_relative, &carrier_entries)
             .map_err(|_| recovery_required())?;
 
-    let mut expected: std::collections::BTreeMap<String, (String, Digest, u64, bool)> =
+    let expected = authenticated_maintenance_set(
+        paths,
+        entries,
+        version_relative,
+        (engine_source, engine_sha256, engine_size),
+    );
+    verify_maintenance_publications(journal, &expected)
+}
+
+/// One authenticated persistent publication: source, digest, size, executable.
+type MaintenanceIdentity = (String, Digest, u64, bool);
+
+/// The exact persistent files an install must publish, derived only from the
+/// authenticated carrier and payload inventory (never from journal fields).
+fn authenticated_maintenance_set(
+    paths: &InstallPaths,
+    entries: &[InventoryEntry],
+    version_relative: &str,
+    engine: (String, Digest, u64),
+) -> std::collections::BTreeMap<String, MaintenanceIdentity> {
+    let (engine_source, engine_sha256, engine_size) = engine;
+    let mut expected: std::collections::BTreeMap<String, MaintenanceIdentity> =
         std::collections::BTreeMap::new();
     expected.insert(
         maintenance_engine_relative(paths.target()),
@@ -1644,6 +1665,14 @@ fn verify_authenticated_maintenance(
             );
         }
     }
+    expected
+}
+
+/// Require the journal's publication records to be exactly the authenticated set.
+fn verify_maintenance_publications(
+    journal: &Journal,
+    expected: &std::collections::BTreeMap<String, MaintenanceIdentity>,
+) -> InstallResult<()> {
     if journal.maintenance.len() != expected.len() {
         return Err(recovery_required());
     }
@@ -2491,6 +2520,11 @@ fn restore_maintenance_preimages(
     prior: Option<&Receipt>,
 ) -> InstallResult<()> {
     let mut restores: Vec<(String, Vec<u8>, bool)> = Vec::new();
+    // The authenticated publications of the release this transaction staged. It is
+    // computed only if a destination is not already the previous identity: a crash
+    // before publication left every destination old, and a partially staged release
+    // cannot authenticate, but then no destination needs its new identity either.
+    let mut authenticated: Option<std::collections::BTreeMap<String, MaintenanceIdentity>> = None;
     for publication in &journal.maintenance {
         let Some(recorded) = &publication.preimage else {
             continue;
@@ -2530,13 +2564,26 @@ fn restore_maintenance_preimages(
                     .map(|current| Digest::of(&current) == expected)
                     .unwrap_or(false)
         };
-        if matches(publication.size, publication.sha256) {
-            // The crash happened after publication: restore the preimage.
-        } else if matches(derived.size, derived.sha256) {
+        if matches(derived.size, derived.sha256) {
             // Already holds the previous identity (a crash before the atomic
             // replace renamed the staged sibling): nothing to write.
             continue;
-        } else {
+        }
+        // Not the preimage. The only other identity this transaction may write
+        // over is the publication derived from the authenticated carrier and
+        // inventory, never the journal's own sha/size fields.
+        if authenticated.is_none() {
+            let set = authenticated_restoration_publications(platform, paths, journal)?;
+            verify_maintenance_publications(journal, &set)?;
+            authenticated = Some(set);
+        }
+        let Some((_source, sha256, size, _executable)) = authenticated
+            .as_ref()
+            .and_then(|publications| publications.get(&publication.path))
+        else {
+            return Err(foreign_state());
+        };
+        if !matches(*size, *sha256) {
             // A different regular file was put here while the installer was
             // stopped. It is not ours to overwrite.
             return Err(foreign_state());
@@ -2544,9 +2591,16 @@ fn restore_maintenance_preimages(
         restores.push((publication.path.clone(), bytes, publication.executable));
     }
 
-    // Nothing above wrote: only now are the verified preimages restored.
+    // Validate every destination through an anchored handle before the first
+    // write: a later unsafe ancestry cannot be discovered after an earlier
+    // destination was already restored.
+    let mut prepared = Vec::with_capacity(restores.len());
     for (relative, bytes, executable) in restores {
         let handle = ValidatedPath::new(paths, Path::new(&relative), PathKind::File)?;
+        prepared.push((handle, relative, bytes, executable));
+    }
+    // Nothing above wrote: only now are the verified preimages restored.
+    for (handle, relative, bytes, executable) in prepared {
         platform.replace_durable(&handle, &bytes)?;
         let written = handle.adopt(PathKind::File)?;
         platform.apply_launch_permissions(&written, executable)?;
@@ -2557,6 +2611,60 @@ fn restore_maintenance_preimages(
         }
     }
     Ok(())
+}
+
+/// The authenticated persistent-publication identities of the release this
+/// transaction was installing.
+///
+/// The restoration path must classify a destination that is not the previous
+/// identity. The journal's `sha256`/`size` for that publication are editable
+/// fields and prove nothing; the accepted identity is re-derived here from the
+/// OS-verified carrier installed in the immutable version and the authenticated
+/// payload inventory, exactly as forward completion derives it.
+fn authenticated_restoration_publications(
+    platform: &impl Platform,
+    paths: &InstallPaths,
+    journal: &Journal,
+) -> InstallResult<std::collections::BTreeMap<String, MaintenanceIdentity>> {
+    let ownership = journal.ownership_record();
+    let evidence = authenticate_release_in_place(
+        platform,
+        paths,
+        &ownership,
+        &journal.version,
+        journal.payload_id,
+        Some(journal.policy.carrier_sha256),
+        Some(&journal.release_policy),
+        None,
+        FailureCode::RecoveryRequired,
+    )?;
+    let version = parse_version(&journal.version)?;
+    let version_relative = paths.version_dir_relative(&version, journal.payload_id);
+    let entries = retained_inventory(
+        paths,
+        &ownership,
+        &version_relative,
+        journal.payload_id,
+        evidence.contents.sealed_inventory,
+    )
+    .map_err(unprovable_as_recovery)?;
+    let carrier_relative = evidence
+        .retained
+        .carrier_relative(paths)
+        .map_err(|_| recovery_required())?;
+    let carrier_source = PackageSource::open(&paths.root().join(&carrier_relative))
+        .map_err(|_| recovery_required())?;
+    let carrier_entries = carrier_entries_for(platform, &carrier_source, paths.target())
+        .map_err(|_| recovery_required())?;
+    let (engine_source, engine_sha256, engine_size) =
+        maintenance_engine_source(paths, &carrier_relative, &carrier_entries)
+            .map_err(|_| recovery_required())?;
+    Ok(authenticated_maintenance_set(
+        paths,
+        &entries,
+        &version_relative,
+        (engine_source, engine_sha256, engine_size),
+    ))
 }
 
 /// The exact preimage identity a committed previous receipt claims for one
