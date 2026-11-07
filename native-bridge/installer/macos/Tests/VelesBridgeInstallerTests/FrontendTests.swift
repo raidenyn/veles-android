@@ -484,3 +484,45 @@ final class EngineDeadlineTests: XCTestCase {
                 .answers(requested: .repair))
     }
 }
+
+/// F6: the frontend resolves the persistent maintenance engine the Rust engine publishes.
+final class PersistentMaintenanceEngineTests: XCTestCase {
+    func testThePersistentEnginePathMatchesTheEnginesPublishedLayout() {
+        let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)
+        let persistent = EngineLocation.persistentEngine(homeDirectory: home)
+        XCTAssertEqual(
+            persistent.path,
+            "/Users/example/Library/Application Support/Veles/NativeBridge/maintenance/veles-bridge-maintenance"
+        )
+    }
+
+    func testThePersistentEngineIsPreferredOnlyWhenItIsExecutable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("veles-f6-\(UUID().uuidString)", isDirectory: true)
+        let resources = root.appendingPathComponent("Resources", isDirectory: true)
+        let package = resources.appendingPathComponent("package", isDirectory: true)
+        let bundled = package.appendingPathComponent(EngineLocation.engineRelativePath)
+        try FileManager.default.createDirectory(
+            at: bundled.deletingLastPathComponent(), withIntermediateDirectories: true)
+        XCTAssertTrue(FileManager.default.createFile(atPath: bundled.path, contents: Data()))
+
+        // Without a published persistent engine, the bundled engine is the only one present.
+        XCTAssertEqual(
+            EngineLocation.resolve(resourceURL: resources, homeDirectory: root).engine.path,
+            bundled.standardizedFileURL.path
+        )
+
+        // Once the engine publishes itself there, maintenance runs the persistent copy.
+        let persistent = EngineLocation.persistentEngine(homeDirectory: root)
+        try FileManager.default.createDirectory(
+            at: persistent.deletingLastPathComponent(), withIntermediateDirectories: true)
+        XCTAssertTrue(FileManager.default.createFile(atPath: persistent.path, contents: Data()))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: persistent.path)
+        XCTAssertEqual(
+            EngineLocation.resolve(resourceURL: resources, homeDirectory: root).engine.path,
+            persistent.path
+        )
+        try? FileManager.default.removeItem(at: root)
+    }
+}

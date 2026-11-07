@@ -220,6 +220,29 @@ class WindowsInstallerContract(unittest.TestCase):
             r'(?m)^\s*!define\s+MAINTENANCE_ENGINE_EXE\s+'
             r'"\$LOCALAPPDATA\\Veles\\NativeBridge\\maintenance\\veles-bridge-maintenance\.exe"\s*$',
         )
+        # F6: the frontend and the engine agree on one path set. The NSIS defines
+        # are the Rust engine's `maintenance_engine_relative` /
+        # `maintenance_uninstaller_relative` for the Windows target, and the
+        # Installed Apps entry points at the same uninstaller.
+        paths = (HERE.parent / "src" / "paths.rs").read_text(encoding="utf-8")
+        engine_file = re.search(r'pub const MAINTENANCE_ENGINE_FILE: &str = "([^"]+)"', paths)
+        uninstaller_file = re.search(
+            r'pub const MAINTENANCE_UNINSTALLER_FILE: &str = "([^"]+)"', paths
+        )
+        maintenance_dir = re.search(r'pub const MAINTENANCE_DIR: &str = "([^"]+)"', paths)
+        self.assertIsNotNone(engine_file)
+        self.assertIsNotNone(uninstaller_file)
+        self.assertIsNotNone(maintenance_dir)
+        engine = maintenance_dir.group(1) + "\\" + engine_file.group(1)
+        uninstaller = maintenance_dir.group(1) + "\\" + uninstaller_file.group(1)
+        self.assertIn(engine, self.code, "NSIS names the engine path the engine publishes")
+        self.assertRegex(
+            self.code,
+            r'(?m)^\s*!define\s+UNINSTALL_EXE\s+"\$LOCALAPPDATA\\Veles\\NativeBridge\\'
+            + re.escape(uninstaller)
+            + r'"\s*$',
+        )
+        self.assertIn("\"UninstallString\" '\"${UNINSTALL_EXE}\"'", self.code)
 
     def test_engine_arguments_are_not_built_from_user_input(self) -> None:
         # The operation is chosen from a closed list; no command line is

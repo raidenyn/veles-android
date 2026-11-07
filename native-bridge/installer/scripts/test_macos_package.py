@@ -41,6 +41,7 @@ INSTALLER = HERE.parent
 MACOS = INSTALLER / "macos"
 SCRIPT = HERE / "package-macos.sh"
 MODEL_RS = INSTALLER / "src" / "model.rs"
+PATHS_RS = INSTALLER / "src" / "paths.rs"
 PACKAGE_SWIFT = MACOS / "Package.swift"
 APP_SWIFT = MACOS / "Sources" / "VelesBridgeInstaller" / "App.swift"
 TESTS_SWIFT = MACOS / "Tests" / "VelesBridgeInstallerTests" / "FrontendTests.swift"
@@ -357,6 +358,9 @@ class BundleInputContract(unittest.TestCase):
             "testDamagedStateStillOffersRepairForTheSameVersionPackage",
             "testADamagedInspectOffersRepairWithoutAnyPresentationGuard",
             "testAWedgedEngineIsReportedAfterTheDeadline",
+            # F6: the persistent maintenance engine the Rust engine publishes.
+            "testThePersistentEnginePathMatchesTheEnginesPublishedLayout",
+            "testThePersistentEngineIsPreferredOnlyWhenItIsExecutable",
         ):
             self.assertIn(required, names)
 
@@ -379,6 +383,23 @@ class BundleInputContract(unittest.TestCase):
         # The old guard that hid Repair behind an informational/done presentation must not come back.
         for pattern in (r"presentation\.kind\s*==\s*\.info", r"installed:\s*Bool", r"damaged:\s*Bool"):
             self.assertIsNone(re.search(pattern, self.app_source), f"App.swift must not contain {pattern!r}")
+
+    def test_the_frontend_resolves_the_persistent_maintenance_engine(self) -> None:
+        """F6: the Swift frontend and the Rust engine agree on one maintenance path set."""
+        self.assertRegex(
+            self.app_source,
+            r'static let maintenanceEngineRelativePath =\s*\n\s*"Library/Application Support/'
+            r'Veles/NativeBridge/maintenance/veles-bridge-maintenance"')
+        self.assertRegex(self.app_source, r"static func persistentEngine\(homeDirectory: URL\) -> URL")
+        self.assertRegex(
+            self.app_source,
+            r"isExecutableFile\(atPath: persistent\.path\) \? persistent : bundled")
+        # The persistent path is exactly the Rust engine's `maintenance_engine_relative`
+        # for macOS: `<root>/maintenance/veles-bridge-maintenance`.
+        paths = PATHS_RS.read_text(encoding="utf-8")
+        self.assertRegex(paths, r'pub const MAINTENANCE_DIR: &str = "maintenance"')
+        self.assertRegex(paths, r'pub const MAINTENANCE_ENGINE_FILE_MACOS: &str = "veles-bridge-maintenance"')
+        self.assertIn('root.join(steps)'.replace("steps", "maintenance_engine_relative(self.target)"), paths)
 
     def test_the_child_wait_is_bounded_and_never_signals_the_engine(self) -> None:
         """The Swift frontend must not wait for the engine without a deadline, and must not kill it."""
