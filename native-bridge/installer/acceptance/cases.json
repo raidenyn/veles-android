@@ -1,0 +1,1918 @@
+{
+  "schema": 1,
+  "outcomes": [
+    "PASS",
+    "FAIL",
+    "BLOCKED",
+    "NOT_RUN"
+  ],
+  "blockers": {
+    "B-HOST": "No Windows or macOS host with Chrome is available: the executor is Linux x86_64 with no devices.",
+    "B-ACCOUNT": "No standard non-admin test account (and no freshly created one) is available on a Windows/macOS host.",
+    "B-CANDIDATE": "No approved production release descriptor (config/release-<platform>.json is untracked because the Web Store extension ID is not approved) and therefore no signed, notarized candidate or release anchor exists; signing credentials and the protected release job have not been supplied.",
+    "B-SECOND-RELEASE": "A second signed release (older and newer, with controllable host API ranges) does not exist; upgrade, failed-upgrade, rollback and compatibility need both.",
+    "B-ATTENDED": "An attended person must grant or deny Bluetooth consent and observe the OS/Chrome grant state; none is available.",
+    "B-DEV-BUILD": "A separately compiled development host and an unpacked development extension ID are required and have not been built on a native runner.",
+    "B-TRUST-FIXTURES": "Offline trust cases need a controllable network, an OS-level denial and a descriptor that denies a known payload digest; no owner-authorised trust fixtures exist."
+  },
+  "cases": [
+    {
+      "id": "windows.clean-install",
+      "platform": "windows",
+      "family": "clean-install",
+      "title": "Clean install as a standard user",
+      "why": "The only path a new user takes; proves install needs no elevation, writes only per-user locations and registers exactly one manifest.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-signed-installer",
+        "close-connector-tabs",
+        "choose-install"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "package-signature-in-place"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.launch",
+      "platform": "windows",
+      "family": "launch",
+      "title": "Chrome launches the installed host for the exact origin",
+      "why": "Installation proves nothing about launch; the exact-origin Native Messaging launch and the hello/ready API 1<->1 negotiation are shown separately.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-connector-in-chrome"
+      ],
+      "observations": [
+        "state-before",
+        "chrome-launch-result",
+        "host-process",
+        "endpoint-state",
+        "api-negotiation"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89",
+        "#125",
+        "#127"
+      ],
+      "scope_note": "Installer-owned facts only (registration, exact-origin launch, API 1<->1). BLE behaviour and protected delivery are owned by #125/#127 and Gates B/C/D; this case claims nothing about them.",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.repair",
+      "platform": "windows",
+      "family": "repair",
+      "title": "Repair a damaged install",
+      "why": "Repair must restore managed files and exact registration from the signed package without resetting trust or consent.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "damage-managed-file",
+        "open-signed-installer",
+        "close-connector-tabs",
+        "choose-repair"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "grant-before",
+        "grant-after"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Attended: record the grant state before and after (Settings > Privacy & security > Bluetooth and Chrome's site Bluetooth permission for the connector page). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.upgrade",
+      "platform": "windows",
+      "family": "upgrade",
+      "title": "Upgrade over an installed older release",
+      "why": "Staged upgrade must keep the prior verified payload, change one manifest atomically and retain the user's grant under the final signing identity.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "install-older-release",
+        "open-newer-signed-installer",
+        "close-connector-tabs",
+        "choose-update"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "retained-prior-version",
+        "grant-before",
+        "grant-after"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Attended: record the grant state before and after (Settings > Privacy & security > Bluetooth and Chrome's site Bluetooth permission for the connector page). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.failed-upgrade",
+      "platform": "windows",
+      "family": "failed-upgrade",
+      "title": "Failed upgrade leaves the prior install usable",
+      "why": "A bad or interrupted upgrade must restore the last verified version and registration, and must not delete the working payload.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "install-older-release",
+        "present-tampered-newer-package",
+        "choose-update"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "failure-guidance-text",
+        "prior-install-still-launches"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.rollback",
+      "platform": "windows",
+      "family": "rollback",
+      "title": "Explicit rollback to the retained version",
+      "why": "Rollback is a user operation to a retained signature-verified payload; it must keep consent and honour current revocation policy.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "open-maintenance-app",
+        "close-connector-tabs",
+        "choose-rollback"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "rolled-back-version",
+        "grant-before",
+        "grant-after"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Attended: record the grant state before and after (Settings > Privacy & security > Bluetooth and Chrome's site Bluetooth permission for the connector page). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.uninstall",
+      "platform": "windows",
+      "family": "uninstall",
+      "title": "Complete uninstall",
+      "why": "Uninstall must remove only owned registration and files, wait for host and cleanup-helper exit and leave unrelated files.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-maintenance-app",
+        "close-connector-tabs",
+        "choose-uninstall"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "host-exit",
+        "cleanup-helper-exit",
+        "post-uninstall-residue",
+        "foreign-registration-untouched"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.fresh-user",
+      "platform": "windows",
+      "family": "fresh-user",
+      "title": "Fresh standard user on a clean profile",
+      "why": "Shows the product works for an account with no prior state, so nothing depends on the developer's profile, caches or earlier installs.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": true,
+        "retention_claim": false
+      },
+      "actions": [
+        "sign-in-fresh-account",
+        "open-signed-installer",
+        "choose-install",
+        "open-connector-in-chrome"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "chrome-launch-result",
+        "registration-readback"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Create a brand-new standard account for this case and record its creation and first sign-in as the freshness evidence.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.origin-negative",
+      "platform": "windows",
+      "family": "origin-negative",
+      "title": "Unlisted origin is rejected",
+      "why": "The manifest allows exactly one literal origin; any other extension, including the development one, must be refused by Chrome before a host starts.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-connector-from-unlisted-origin"
+      ],
+      "observations": [
+        "state-before",
+        "chrome-rejection",
+        "no-host-process",
+        "registered-origin-readback"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "# open chrome-extension://<ANY-OTHER-ID>/connector.html from a second unpacked extension and record Chrome's native-messaging rejection from chrome://extensions > service worker console",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.dev-coexistence",
+      "platform": "windows",
+      "family": "dev-coexistence",
+      "title": "Development registration coexists without touching production",
+      "why": "Developers register a separate .dev host; it must not alter, shadow or accept the production registration, and removal must leave production intact.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "install-production",
+        "register-dev-host",
+        "open-production-connector",
+        "open-dev-connector",
+        "remove-dev-host"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "production-registration-unchanged",
+        "dev-registration-separate",
+        "dev-removal-residue"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-DEV-BUILD"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "native-bridge/installer/scripts/register-dev.ps1 --extension-id <32 a-p dev ID> --host-binary <dev build>/veles-native-host.exe",
+          "native-bridge/installer/scripts/remove-dev.ps1 --extension-id <32 a-p dev ID> --host-binary <dev build>/veles-native-host.exe",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.multi-profile",
+      "platform": "windows",
+      "family": "multi-profile",
+      "title": "Several Chrome profiles",
+      "why": "A host in any profile blocks quiescence; the installer must ask for every owning session to close and must not kill Chrome or guess processes.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-connector-profile-a",
+        "open-connector-profile-b",
+        "attempt-update-with-sessions-open",
+        "close-all-connector-tabs",
+        "retry-update"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "blocked-by-active-host-text",
+        "no-chrome-process-terminated",
+        "retry-succeeds"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Keep the connector open in two different Chrome profiles; expect the installer to ask you to close both and then succeed on Retry. Do not close Chrome for it.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.compatibility",
+      "platform": "windows",
+      "family": "compatibility",
+      "title": "Independent extension and host updates",
+      "why": "Extension-only and host-only updates must keep API overlap (1<->1) and no-overlap must fail closed with visible update/install guidance.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "update-extension-only",
+        "update-host-only",
+        "install-no-overlap-pair"
+      ],
+      "observations": [
+        "state-before",
+        "overlap-ready",
+        "no-overlap-failure-guidance",
+        "connector-retry-guidance"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE"
+      ],
+      "obligations": [
+        "#89",
+        "#125",
+        "#127"
+      ],
+      "scope_note": "Proves only installer/compat-manifest behaviour. Connector retry logic and host API negotiation tests remain owned by #125/#127.",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Use releases whose host API ranges overlap (extension-only and host-only updates) and a pair with no overlap; the connector must show update/install guidance for the latter.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.permission-recovery",
+      "platform": "windows",
+      "family": "permission-recovery",
+      "title": "Permission denial recovery without a reset",
+      "why": "A denied or missing Bluetooth grant must be recoverable with the product's guidance; installer operations must never reset TCC or trust.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "provoke-missing-or-denied-grant",
+        "follow-product-guidance"
+      ],
+      "observations": [
+        "grant-before",
+        "grant-after",
+        "guidance-text",
+        "no-trust-reset"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89",
+        "#125",
+        "#127"
+      ],
+      "scope_note": "Proves only that installer operations do not reset or hide consent. Connector permission-denial recovery is owned by #127 and shared native-host cases by #125; not duplicated here.",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Attended: record the grant state before and after (Settings > Privacy & security > Bluetooth and Chrome's site Bluetooth permission for the connector page). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.unicode-path",
+      "platform": "windows",
+      "family": "unicode-path",
+      "title": "Spaces and non-ASCII user path",
+      "why": "Per-user roots live under the account's profile; a profile path with spaces and non-ASCII characters must install, launch and uninstall.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "sign-in-account-with-unicode-profile",
+        "open-signed-installer",
+        "choose-install",
+        "open-connector-in-chrome",
+        "choose-uninstall"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "profile-path",
+        "chrome-launch-result",
+        "post-uninstall-residue"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Use an account whose profile path ($env:USERPROFILE) contains a space and a non-ASCII character, and record the resolved path.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.hygiene",
+      "platform": "windows",
+      "family": "hygiene",
+      "title": "No elevation, system files, autostart or extra endpoints",
+      "why": "The installer promises a per-user, non-elevated, non-resident footprint; only before/after system inspection can show it.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-signed-installer",
+        "choose-install",
+        "open-connector-in-chrome",
+        "close-connector-tabs",
+        "choose-uninstall"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "no-elevation-prompt",
+        "no-system-files",
+        "no-autostart",
+        "no-extra-endpoints",
+        "host-exit"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "reg query HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+          "schtasks /query /fo LIST /v",
+          "Get-Service | Where-Object { $_.Name -like '*veles*' }",
+          "Get-ChildItem -Recurse C:\\Windows,\"C:\\Program Files\",\"C:\\Program Files (x86)\" -Filter '*veles*' -ErrorAction SilentlyContinue",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "windows.offline-trust",
+      "platform": "windows",
+      "family": "offline-trust",
+      "title": "Offline trust and revocation limits",
+      "why": "Self-contained installers still depend on OS trust services; the cached, unavailable, denied and stale-policy outcomes must be observed, not assumed.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "disconnect-network",
+        "repair-with-cached-trust",
+        "repair-with-trust-unavailable",
+        "present-os-denied-package",
+        "present-denied-payload",
+        "attempt-stale-policy-rollback"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "cached-trust-success",
+        "trust-unavailable-blocks",
+        "os-denial-blocks",
+        "denied-payload-blocks",
+        "stale-policy-rollback-refused",
+        "offline-limitation-text"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE",
+        "B-TRUST-FIXTURES"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "whoami /groups > captures\\whoami.txt",
+          "whoami /user >> captures\\whoami.txt",
+          "Get-FileHash -Algorithm SHA256 .\\<signed-installer>.exe | Out-File captures\\package-digest.txt",
+          "signtool verify /pa /all /v .\\<signed-installer>.exe > captures\\signature.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "reg query \"HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\me.nagaev.veles.bridge\" /s",
+          "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge\" /s",
+          "Get-ChildItem -Recurse -Force \"$env:LOCALAPPDATA\\Veles\" | Get-FileHash -Algorithm SHA256",
+          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'veles*' } | Format-List ProcessId,Name,ExecutablePath",
+          "Get-NetTCPConnection -State Listen,Established | Format-Table -AutoSize",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) Windows account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed setup.exe, run by double-click as the standard user (UAC must not appear).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from Settings > Apps > Installed apps > Veles Native Bridge (maintenance assets live under Settings > Apps > Installed apps > Veles Native Bridge > Uninstall, or %LOCALAPPDATA%\\Veles\\NativeBridge\\maintenance\\).",
+          "Disconnect the network at the OS level for the cached-trust and unavailable-trust steps; do not disable revocation or Gatekeeper. State the offline-freshness limitation as shown in the product text.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.clean-install",
+      "platform": "macos",
+      "family": "clean-install",
+      "title": "Clean install as a standard user",
+      "why": "The only path a new user takes; proves install needs no elevation, writes only per-user locations and registers exactly one manifest.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-signed-installer",
+        "close-connector-tabs",
+        "choose-install"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "package-signature-in-place"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.launch",
+      "platform": "macos",
+      "family": "launch",
+      "title": "Chrome launches the installed host for the exact origin",
+      "why": "Installation proves nothing about launch; the exact-origin Native Messaging launch and the hello/ready API 1<->1 negotiation are shown separately.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-connector-in-chrome"
+      ],
+      "observations": [
+        "state-before",
+        "chrome-launch-result",
+        "host-process",
+        "endpoint-state",
+        "api-negotiation"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89",
+        "#125",
+        "#127"
+      ],
+      "scope_note": "Installer-owned facts only (registration, exact-origin launch, API 1<->1). BLE behaviour and protected delivery are owned by #125/#127 and Gates B/C/D; this case claims nothing about them.",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.repair",
+      "platform": "macos",
+      "family": "repair",
+      "title": "Repair a damaged install",
+      "why": "Repair must restore managed files and exact registration from the signed package without resetting trust or consent.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "damage-managed-file",
+        "open-signed-installer",
+        "close-connector-tabs",
+        "choose-repair"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "grant-before",
+        "grant-after"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Attended: record the grant state before and after (System Settings > Privacy & Security > Bluetooth (entry for the final host identity) and the prompt-or-no-prompt on the next connector scan). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.upgrade",
+      "platform": "macos",
+      "family": "upgrade",
+      "title": "Upgrade over an installed older release",
+      "why": "Staged upgrade must keep the prior verified payload, change one manifest atomically and retain the user's grant under the final signing identity.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "install-older-release",
+        "open-newer-signed-installer",
+        "close-connector-tabs",
+        "choose-update"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "retained-prior-version",
+        "grant-before",
+        "grant-after"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Attended: record the grant state before and after (System Settings > Privacy & Security > Bluetooth (entry for the final host identity) and the prompt-or-no-prompt on the next connector scan). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.failed-upgrade",
+      "platform": "macos",
+      "family": "failed-upgrade",
+      "title": "Failed upgrade leaves the prior install usable",
+      "why": "A bad or interrupted upgrade must restore the last verified version and registration, and must not delete the working payload.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "install-older-release",
+        "present-tampered-newer-package",
+        "choose-update"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "failure-guidance-text",
+        "prior-install-still-launches"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.rollback",
+      "platform": "macos",
+      "family": "rollback",
+      "title": "Explicit rollback to the retained version",
+      "why": "Rollback is a user operation to a retained signature-verified payload; it must keep consent and honour current revocation policy.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "open-maintenance-app",
+        "close-connector-tabs",
+        "choose-rollback"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "registration-readback",
+        "rolled-back-version",
+        "grant-before",
+        "grant-after"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Attended: record the grant state before and after (System Settings > Privacy & Security > Bluetooth (entry for the final host identity) and the prompt-or-no-prompt on the next connector scan). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.uninstall",
+      "platform": "macos",
+      "family": "uninstall",
+      "title": "Complete uninstall",
+      "why": "Uninstall must remove only owned registration and files, wait for host and cleanup-helper exit and leave unrelated files.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-maintenance-app",
+        "close-connector-tabs",
+        "choose-uninstall"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "host-exit",
+        "cleanup-helper-exit",
+        "post-uninstall-residue",
+        "foreign-registration-untouched"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.fresh-user",
+      "platform": "macos",
+      "family": "fresh-user",
+      "title": "Fresh standard user on a clean profile",
+      "why": "Shows the product works for an account with no prior state, so nothing depends on the developer's profile, caches or earlier installs.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": true,
+        "retention_claim": false
+      },
+      "actions": [
+        "sign-in-fresh-account",
+        "open-signed-installer",
+        "choose-install",
+        "open-connector-in-chrome"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "chrome-launch-result",
+        "registration-readback"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Create a brand-new standard account for this case and record its creation and first sign-in as the freshness evidence.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.origin-negative",
+      "platform": "macos",
+      "family": "origin-negative",
+      "title": "Unlisted origin is rejected",
+      "why": "The manifest allows exactly one literal origin; any other extension, including the development one, must be refused by Chrome before a host starts.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-connector-from-unlisted-origin"
+      ],
+      "observations": [
+        "state-before",
+        "chrome-rejection",
+        "no-host-process",
+        "registered-origin-readback"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "# open chrome-extension://<ANY-OTHER-ID>/connector.html from a second unpacked extension and record Chrome's native-messaging rejection from chrome://extensions > service worker console",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.dev-coexistence",
+      "platform": "macos",
+      "family": "dev-coexistence",
+      "title": "Development registration coexists without touching production",
+      "why": "Developers register a separate .dev host; it must not alter, shadow or accept the production registration, and removal must leave production intact.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "install-production",
+        "register-dev-host",
+        "open-production-connector",
+        "open-dev-connector",
+        "remove-dev-host"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "production-registration-unchanged",
+        "dev-registration-separate",
+        "dev-removal-residue"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-DEV-BUILD"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "native-bridge/installer/scripts/register-dev.sh --extension-id <32 a-p dev ID> --host-binary <dev build>/veles-native-host",
+          "native-bridge/installer/scripts/remove-dev.sh --extension-id <32 a-p dev ID> --host-binary <dev build>/veles-native-host",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.multi-profile",
+      "platform": "macos",
+      "family": "multi-profile",
+      "title": "Several Chrome profiles",
+      "why": "A host in any profile blocks quiescence; the installer must ask for every owning session to close and must not kill Chrome or guess processes.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-connector-profile-a",
+        "open-connector-profile-b",
+        "attempt-update-with-sessions-open",
+        "close-all-connector-tabs",
+        "retry-update"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "blocked-by-active-host-text",
+        "no-chrome-process-terminated",
+        "retry-succeeds"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Keep the connector open in two different Chrome profiles; expect the installer to ask you to close both and then succeed on Retry. Do not close Chrome for it.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.compatibility",
+      "platform": "macos",
+      "family": "compatibility",
+      "title": "Independent extension and host updates",
+      "why": "Extension-only and host-only updates must keep API overlap (1<->1) and no-overlap must fail closed with visible update/install guidance.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "update-extension-only",
+        "update-host-only",
+        "install-no-overlap-pair"
+      ],
+      "observations": [
+        "state-before",
+        "overlap-ready",
+        "no-overlap-failure-guidance",
+        "connector-retry-guidance"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE"
+      ],
+      "obligations": [
+        "#89",
+        "#125",
+        "#127"
+      ],
+      "scope_note": "Proves only installer/compat-manifest behaviour. Connector retry logic and host API negotiation tests remain owned by #125/#127.",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Use releases whose host API ranges overlap (extension-only and host-only updates) and a pair with no overlap; the connector must show update/install guidance for the latter.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.permission-recovery",
+      "platform": "macos",
+      "family": "permission-recovery",
+      "title": "Permission denial recovery without a reset",
+      "why": "A denied or missing Bluetooth grant must be recoverable with the product's guidance; installer operations must never reset TCC or trust.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": true
+      },
+      "actions": [
+        "provoke-missing-or-denied-grant",
+        "follow-product-guidance"
+      ],
+      "observations": [
+        "grant-before",
+        "grant-after",
+        "guidance-text",
+        "no-trust-reset"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-ATTENDED"
+      ],
+      "obligations": [
+        "#89",
+        "#125",
+        "#127"
+      ],
+      "scope_note": "Proves only that installer operations do not reset or hide consent. Connector permission-denial recovery is owned by #127 and shared native-host cases by #125; not duplicated here.",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Attended: record the grant state before and after (System Settings > Privacy & Security > Bluetooth (entry for the final host identity) and the prompt-or-no-prompt on the next connector scan). A missing observation is BLOCKED, not PASS; never reset consent to make a case pass.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.unicode-path",
+      "platform": "macos",
+      "family": "unicode-path",
+      "title": "Spaces and non-ASCII user path",
+      "why": "Per-user roots live under the account's profile; a profile path with spaces and non-ASCII characters must install, launch and uninstall.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "sign-in-account-with-unicode-profile",
+        "open-signed-installer",
+        "choose-install",
+        "open-connector-in-chrome",
+        "choose-uninstall"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "profile-path",
+        "chrome-launch-result",
+        "post-uninstall-residue"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Use an account whose profile path ($HOME) contains a space and a non-ASCII character, and record the resolved path.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.hygiene",
+      "platform": "macos",
+      "family": "hygiene",
+      "title": "No elevation, system files, autostart or extra endpoints",
+      "why": "The installer promises a per-user, non-elevated, non-resident footprint; only before/after system inspection can show it.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "open-signed-installer",
+        "choose-install",
+        "open-connector-in-chrome",
+        "close-connector-tabs",
+        "choose-uninstall"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "no-elevation-prompt",
+        "no-system-files",
+        "no-autostart",
+        "no-extra-endpoints",
+        "host-exit"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "ls -la ~/Library/LaunchAgents /Library/LaunchAgents /Library/LaunchDaemons",
+          "launchctl list | grep -i veles",
+          "sudo -n true  # must fail: the user must not be an administrator",
+          "find /Applications /Library /usr/local -iname '*veles*' -newer captures/state-before.txt 2>/dev/null",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    },
+    {
+      "id": "macos.offline-trust",
+      "platform": "macos",
+      "family": "offline-trust",
+      "title": "Offline trust and revocation limits",
+      "why": "Self-contained installers still depend on OS trust services; the cached, unavailable, denied and stale-policy outcomes must be observed, not assumed.",
+      "requires": {
+        "standard_account": true,
+        "fresh_account": false,
+        "retention_claim": false
+      },
+      "actions": [
+        "disconnect-network",
+        "repair-with-cached-trust",
+        "repair-with-trust-unavailable",
+        "present-os-denied-package",
+        "present-denied-payload",
+        "attempt-stale-policy-rollback"
+      ],
+      "observations": [
+        "state-before",
+        "state-after",
+        "cached-trust-success",
+        "trust-unavailable-blocks",
+        "os-denial-blocks",
+        "denied-payload-blocks",
+        "stale-policy-rollback-refused",
+        "offline-limitation-text"
+      ],
+      "blockers": [
+        "B-HOST",
+        "B-ACCOUNT",
+        "B-CANDIDATE",
+        "B-SECOND-RELEASE",
+        "B-TRUST-FIXTURES"
+      ],
+      "obligations": [
+        "#89"
+      ],
+      "scope_note": "",
+      "settle": {
+        "commands": [
+          "# environment bind: prove the account is NOT an administrator, then hash and verify the candidate",
+          "id -Gn > captures/whoami.txt",
+          "id -un >> captures/whoami.txt",
+          "shasum -a 256 <signed-installer>.dmg > captures/package-digest.txt",
+          "codesign -dv --verbose=4 \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/signature.txt",
+          "spctl --assess --type execute -vv \"<mounted-dmg>/Veles Bridge Installer.app\" 2> captures/gatekeeper.txt",
+          "xcrun stapler validate <signed-installer>.dmg >> captures/gatekeeper.txt",
+          "# before/after state snapshot (run once before and once after the operation; redirect to captures/state-before.txt / state-after.txt)",
+          "cat \"$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/me.nagaev.veles.bridge.json\"",
+          "find \"$HOME/Library/Application Support/Veles\" -type f -exec shasum -a 256 {} +",
+          "ps -axo pid,user,command | grep -i '[v]eles'",
+          "lsof -nP -iTCP -sTCP:LISTEN; lsof -nP -iUDP",
+          "python3 -I native-bridge/installer/scripts/evidence.py validate --run <run dir> --cases native-bridge/installer/acceptance/cases.json --anchor <external anchor.json>"
+        ],
+        "manual": [
+          "Sign in to a STANDARD (non-administrator) macOS account created for this run; record who and when in run.json accounts[] with the identity capture above.",
+          "Use the signed Veles Bridge Installer.app opened from the mounted DMG as the standard user (no administrator password prompt).",
+          "Perform exactly the controlled actions listed for this case, in order, capturing each output and the clock; never answer an elevation prompt (an elevation prompt is a FAIL).",
+          "Maintenance operations are reached from the installed maintenance app under ~/Library/Application Support/Veles/NativeBridge/maintenance/ (maintenance assets live under ~/Library/Application Support/Veles/NativeBridge/maintenance/).",
+          "Disconnect the network at the OS level for the cached-trust and unavailable-trust steps; do not disable revocation or Gatekeeper. State the offline-freshness limitation as shown in the product text.",
+          "Hand the whole run directory to an independent adjudicator who writes adjudication.json; the operator never adjudicates their own run. Raw captures stay private until a privacy review approves publication."
+        ]
+      }
+    }
+  ]
+}
