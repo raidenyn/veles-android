@@ -1411,7 +1411,7 @@ def assemble(request: SignRequest, env: dict[str, str], runner: Callable[..., Ru
             package = request.output / WIN_PACKAGE
             number = _descriptor_version(package / "descriptor.json")
             stage.run(
-                [tool, f"/DVERSION={number}", f"/DINPUT_DIR={package}", f"/DOUTFILE={request.output / SETUP_NAME}",
+                [tool, "/NOCD", f"/DVERSION={number}", f"/DINPUT_DIR={package}", f"/DOUTFILE={request.output / SETUP_NAME}",
                  f"/DUNINSTALLER_SIGNED={request.output / UNINSTALLER}", NSIS_RECIPE],
                 what="assemble-failed",
             )  # fmt: skip

@@ -40,7 +40,7 @@
 
 Unicode true
 RequestExecutionLevel user
-SetCompressor /SOLID lzma
+SetCompressor zlib
 CRCCheck on
 
 !ifndef VERSION
@@ -100,6 +100,17 @@ Var /GLOBAL ExitCode
 Var /GLOBAL EngineReport
 Var /GLOBAL Guidance
 Var /GLOBAL Succeeded
+Var /GLOBAL Field
+Var /GLOBAL FieldKey
+Var /GLOBAL FieldEnd
+Var /GLOBAL ReportOperation
+Var /GLOBAL ReportState
+Var /GLOBAL ReportFailure
+Var /GLOBAL ReportWarnings
+Var /GLOBAL ExpectOperation
+Var /GLOBAL ExpectOperationAlt
+Var /GLOBAL ExpectState
+Var /GLOBAL ExpectStateAlt
 
 ; A substring test without a plugin: $Found is "1" when $Needle occurs in $Haystack.
 !macro DefineContains PREFIX
@@ -124,72 +135,284 @@ Var /GLOBAL Succeeded
 !insertmacro DefineContains ""
 !insertmacro DefineContains "un."
 
-; The report's failure code selects the guidance. The engine's stable vocabulary
-; is closed; an unknown code gets the generic text. $EngineReport is bounded by
-; the NSIS string size and only ever searched, never executed or displayed.
-!macro DefineGuidance PREFIX
-  Function ${PREFIX}SelectGuidance
-    StrCpy $Guidance "The operation did not complete. Your previous Veles connector installation was not changed by this attempt where it could be kept. Try again; if it persists, download a fresh installer."
+; Read one value out of $EngineReport, the engine's canonical one-line JSON (sorted keys, no spaces).
+; In: $FieldKey = the text that precedes the value (for example "state":"), $FieldEnd = the character
+; that ends it. Out: $Field = the value, or "" when the key is absent, null or unterminated. The report
+; is only ever read, never executed or displayed.
+!macro DefineReadField PREFIX
+  Function ${PREFIX}ReadField
+    StrCpy $Field ""
     StrCpy $Haystack $EngineReport
+    StrCpy $Needle $FieldKey
+    Call ${PREFIX}Contains
+    ${If} $Found != "1"
+      Return
+    ${EndIf}
+    IntOp $Cursor $Cursor + $NeedleLength
+    ReadLoop:
+      StrCpy $Window $EngineReport 1 $Cursor
+      StrCmp $Window "" ReadUnterminated
+      StrCmpS $Window $FieldEnd ReadDone
+      StrCpy $Field "$Field$Window"
+      IntOp $Cursor $Cursor + 1
+      Goto ReadLoop
+    ReadUnterminated:
+      StrCpy $Field ""
+    ReadDone:
+  FunctionEnd
+!macroend
+!insertmacro DefineReadField ""
+!insertmacro DefineReadField "un."
 
+; The structured meaning of the report: operation, state, failure code and warning list.
+; An unreadable report leaves operation and state empty, which is never a success.
+!macro DefineParseReport PREFIX
+  Function ${PREFIX}ParseReport
+    StrCpy $FieldEnd '"'
+    StrCpy $FieldKey '"operation":"'
+    Call ${PREFIX}ReadField
+    StrCpy $ReportOperation $Field
+    StrCpy $FieldKey '"state":"'
+    Call ${PREFIX}ReadField
+    StrCpy $ReportState $Field
+    StrCpy $FieldKey '"failure":"'
+    Call ${PREFIX}ReadField
+    StrCpy $ReportFailure $Field
+    StrCpy $FieldEnd ']'
+    StrCpy $FieldKey '"warnings":['
+    Call ${PREFIX}ReadField
+    StrCpy $ReportWarnings $Field
+    ; A pending cleanup is a failure whether the engine reported it as the failure or as a warning.
+    StrCpy $Haystack $ReportWarnings
     StrCpy $Needle "cleanup-pending"
     Call ${PREFIX}Contains
     ${If} $Found == "1"
+      StrCpy $ReportFailure "cleanup-pending"
+    ${EndIf}
+  FunctionEnd
+!macroend
+!insertmacro DefineParseReport ""
+!insertmacro DefineParseReport "un."
+
+; The failure code (a closed vocabulary) selects the guidance; an unknown code gets the generic text.
+!macro DefineGuidance PREFIX
+  Function ${PREFIX}SelectGuidance
+    StrCpy $Guidance "The operation did not complete. Your previous Veles connector installation was not changed by this attempt where it could be kept. Try again; if it persists, download a fresh installer."
+    StrCmpS $ReportFailure "cleanup-pending" GuidancePending
+    StrCmpS $ReportFailure "host-active" GuidanceHostActive
+    StrCmpS $ReportFailure "unsupported-state" GuidanceUnsupported
+    StrCmpS $ReportFailure "trust-unavailable" GuidanceTrustUnavailable
+    StrCmpS $ReportFailure "trust-denied" GuidanceTrustDenied
+    StrCmpS $ReportFailure "recovery-required" GuidanceRecovery
+    StrCmpS $ReportFailure "foreign-state" GuidanceForeign
+    StrCmpS $ReportFailure "no-rollback" GuidanceNoRollback
+    StrCmpS $ReportFailure "repair-package-required" GuidanceRepairPackage
+    Return
+    GuidancePending:
       StrCpy $Guidance "Some files could not be removed yet. Close Chrome and the Veles connector, then run this again. The product is not reported as removed."
       Return
-    ${EndIf}
-    StrCpy $Needle "host-active"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceHostActive:
       StrCpy $Guidance "Veles is in use. Close all Veles connector tabs in Chrome, then retry."
       Return
-    ${EndIf}
-    StrCpy $Needle "unsupported-state"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceUnsupported:
       StrCpy $Guidance "This installation was written by a newer Veles installer and was left untouched. Use the newer installer."
       Return
-    ${EndIf}
-    StrCpy $Needle "trust-unavailable"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceTrustUnavailable:
       StrCpy $Guidance "Windows could not check the installer's signature right now. Connect to the network if needed, then retry."
       Return
-    ${EndIf}
-    StrCpy $Needle "trust-denied"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceTrustDenied:
       StrCpy $Guidance "Windows did not accept the signature of this installer. It was not installed. Download a fresh copy."
       Return
-    ${EndIf}
-    StrCpy $Needle "recovery-required"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceRecovery:
       StrCpy $Guidance "A previous change was interrupted. Run this installer again to finish or restore it."
       Return
-    ${EndIf}
-    StrCpy $Needle "foreign-state"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceForeign:
       StrCpy $Guidance "Another program owns the Veles connector registration. It was not changed."
       Return
-    ${EndIf}
-    StrCpy $Needle "no-rollback"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceNoRollback:
       StrCpy $Guidance "There is no earlier verified version to go back to. Use Repair or install again."
       Return
-    ${EndIf}
-    StrCpy $Needle "repair-package-required"
-    Call ${PREFIX}Contains
-    ${If} $Found == "1"
+    GuidanceRepairPackage:
       StrCpy $Guidance "Repair needs this exact version. Run the installer you downloaded for the installed version."
-      Return
-    ${EndIf}
   FunctionEnd
 !macroend
 !insertmacro DefineGuidance ""
 !insertmacro DefineGuidance "un."
+
+; Warnings of a COMPLETE operation are appended to its message, never dropped: preserved files the product
+; does not own, and a host/extension API window that does not overlap.
+!macro DefineNotes PREFIX
+  Function ${PREFIX}AppendNotes
+    StrCpy $Haystack $ReportWarnings
+    StrCpy $Needle "compatibility-window"
+    Call ${PREFIX}Contains
+    ${If} $Found == "1"
+      StrCpy $Guidance "$Guidance This version may not be compatible with your installed Veles extension; update the extension, then retry the connector."
+    ${EndIf}
+    StrCpy $Needle "leftover-files"
+    Call ${PREFIX}Contains
+    ${If} $Found == "1"
+      StrCpy $Guidance "$Guidance Some files that Veles does not own were left in its folder and were not deleted."
+    ${EndIf}
+  FunctionEnd
+!macroend
+!insertmacro DefineNotes ""
+!insertmacro DefineNotes "un."
+
+; What an inspection found. Inspect exits 0 for every report it produces - the state IS the answer - so none
+; of these messages is a completed installation and none says "Done".
+!macro DefineInspectGuidance PREFIX
+  Function ${PREFIX}InspectGuidance
+    StrCpy $Succeeded ""
+    StrCmpS $ReportState "absent" InspectAbsent
+    StrCmpS $ReportState "installed" InspectInstalled
+    StrCmpS $ReportState "damaged" InspectDamaged
+    StrCmpS $ReportState "foreign" InspectForeign
+    StrCmpS $ReportState "recovery-required" InspectRecovery
+    ; An unknown state is not understood, so it is not reported as anything.
+    StrCpy $Guidance "The installation state could not be understood. Download a fresh installer."
+    Push "1"
+    Return
+    InspectAbsent:
+      StrCpy $Guidance "Veles Native Bridge is not installed for this Windows user."
+      Push "0"
+      Return
+    InspectInstalled:
+      StrCpy $Guidance "Veles Native Bridge is installed and complete."
+      Push "0"
+      Return
+    InspectDamaged:
+      StrCpy $Guidance "Veles Native Bridge was found but is damaged. Run this installer and choose Repair."
+      Push "0"
+      Return
+    InspectForeign:
+      StrCpy $Guidance "Another program owns the Veles connector registration. It was not changed."
+      Push "0"
+      Return
+    InspectRecovery:
+      StrCpy $Guidance "A previous change was interrupted. Run this installer again to finish or restore it."
+      Push "0"
+  FunctionEnd
+!macroend
+!insertmacro DefineInspectGuidance ""
+!insertmacro DefineInspectGuidance "un."
+
+; The operation and settled state a COMPLETE mutation must report. Install and update may report the repair
+; that a same-version rerun performs.
+!macro DefineExpectations PREFIX
+  Function ${PREFIX}SetExpectations
+    StrCpy $ExpectOperation ""
+    StrCpy $ExpectOperationAlt ""
+    StrCpy $ExpectState ""
+    StrCpy $ExpectStateAlt ""
+    StrCmpS $Operation "install" ExpectInstall
+    StrCmpS $Operation "update" ExpectInstall
+    StrCmpS $Operation "repair" ExpectRepair
+    StrCmpS $Operation "rollback" ExpectRollback
+    StrCmpS $Operation "uninstall" ExpectUninstall
+    Return
+    ExpectInstall:
+      StrCpy $ExpectOperation "install"
+      StrCpy $ExpectOperationAlt "repair"
+      StrCpy $ExpectState "installed"
+      StrCpy $ExpectStateAlt "repaired"
+      Return
+    ExpectRepair:
+      StrCpy $ExpectOperation "repair"
+      StrCpy $ExpectOperationAlt "repair"
+      StrCpy $ExpectState "repaired"
+      StrCpy $ExpectStateAlt "repaired"
+      Return
+    ExpectRollback:
+      StrCpy $ExpectOperation "rollback"
+      StrCpy $ExpectOperationAlt "rollback"
+      StrCpy $ExpectState "rolled-back"
+      StrCpy $ExpectStateAlt "rolled-back"
+      Return
+    ExpectUninstall:
+      StrCpy $ExpectOperation "uninstall"
+      StrCpy $ExpectOperationAlt "uninstall"
+      StrCpy $ExpectState "uninstalled"
+      StrCpy $ExpectStateAlt "uninstalled"
+  FunctionEnd
+!macroend
+!insertmacro DefineExpectations ""
+!insertmacro DefineExpectations "un."
+
+; Surface the engine's result by its STRUCTURED meaning, not by the exit code alone. Exit 0 is a complete
+; operation and exit 1 an operation failure (cleanup-pending and unsupported-state included); inspect exits 0
+; for any report because the state is the answer. A report that is unreadable, names another operation, an
+; unsettled state, a failure or a pending cleanup is never shown as done.
+!macro DefineHandleResult PREFIX ENGINE_DOWN ENGINE_INVALID
+  Function ${PREFIX}HandleEngineResult
+    Pop $ExitCode
+    Pop $EngineReport
+    StrCpy $Succeeded ""
+    StrCmp $ExitCode "0" Completed
+    StrCmp $ExitCode "1" Failed
+    StrCmp $ExitCode "2" Invalid
+    StrCpy $Guidance "${ENGINE_DOWN}"
+    SetErrorLevel 3
+    Goto ReportOutcome
+    Invalid:
+      StrCpy $Guidance "${ENGINE_INVALID}"
+      SetErrorLevel 2
+      Goto ReportOutcome
+    Failed:
+      Call ${PREFIX}ParseReport
+      Call ${PREFIX}SelectGuidance
+      SetErrorLevel 1
+      Goto ReportOutcome
+    Unreadable:
+      StrCpy $Guidance "The installer engine returned a result that could not be understood, so nothing is reported as done. Download a fresh installer."
+      SetErrorLevel 1
+      Goto ReportOutcome
+    Completed:
+      Call ${PREFIX}ParseReport
+      StrCmpS $ReportOperation "" Unreadable
+      StrCmpS $ReportState "" Unreadable
+      ; A pending cleanup is a failure whatever the exit code says.
+      StrCmpS $ReportFailure "cleanup-pending" Failed
+      StrCmpS $Operation "inspect" Inspected
+      ; Any other failure with exit 0 contradicts the exit status; it is never a success.
+      StrCmpS $ReportFailure "" 0 Failed
+      Call ${PREFIX}SetExpectations
+      StrCmpS $ExpectOperation "" Unreadable
+      StrCmpS $ReportOperation $ExpectOperation OperationMatches
+      StrCmpS $ReportOperation $ExpectOperationAlt OperationMatches
+      Goto Unreadable
+      OperationMatches:
+        StrCmpS $ReportState $ExpectState Settled
+        StrCmpS $ReportState $ExpectStateAlt Settled
+        Goto Unreadable
+      Settled:
+        StrCpy $Succeeded "1"
+        SetErrorLevel 0
+        StrCpy $Guidance "Done. Open the Veles connector in Chrome and retry; Bluetooth permission is still yours to grant."
+        StrCmpS $Operation "uninstall" Removed
+        Goto AddNotes
+      Removed:
+        StrCpy $Guidance "Veles Native Bridge was removed for this Windows user."
+      AddNotes:
+        Call ${PREFIX}AppendNotes
+        Goto ReportOutcome
+      Inspected:
+        StrCmpS $ReportOperation "inspect" InspectReadable
+        Goto Unreadable
+      InspectReadable:
+        Call ${PREFIX}InspectGuidance
+        Pop $ExitCode
+        StrCmp $ExitCode "0" InspectKnown
+        SetErrorLevel 1
+        Goto ReportOutcome
+      InspectKnown:
+        SetErrorLevel 0
+        Call ${PREFIX}AppendNotes
+    ReportOutcome:
+      DetailPrint "$Guidance"
+      MessageBox MB_OK|MB_ICONINFORMATION "$Guidance" /SD IDOK
+  FunctionEnd
+!macroend
 
 ; Remove the one HKCU entry. Defined once and expanded for installer and uninstaller.
 !macro DefineRemoveEntry PREFIX
@@ -288,44 +511,7 @@ Function OperationPageLeave
   ${EndIf}
 FunctionEnd
 
-; Surface the engine's result. Exit 0 is a complete operation, 1 an operation
-; failure (cleanup-pending and unsupported-state included), 2 an invalid
-; invocation of the engine. Anything else means the engine did not run. A
-; cleanup-pending report is never shown as done, whatever the exit code says.
-Function HandleEngineResult
-  Pop $ExitCode
-  Pop $EngineReport
-  StrCpy $Succeeded ""
-  StrCmp $ExitCode "0" EngineCompleted
-  StrCmp $ExitCode "1" EngineFailed
-  StrCmp $ExitCode "2" EngineInvalid
-  StrCpy $Guidance "The installer engine could not be started. Download a fresh installer."
-  SetErrorLevel 3
-  Goto ReportOutcome
-  EngineInvalid:
-    StrCpy $Guidance "The installer engine refused an internal request. Download a fresh installer."
-    SetErrorLevel 2
-    Goto ReportOutcome
-  EngineFailed:
-    Call SelectGuidance
-    SetErrorLevel 1
-    Goto ReportOutcome
-  EngineCompleted:
-    StrCpy $Haystack $EngineReport
-    StrCpy $Needle "cleanup-pending"
-    Call Contains
-    ${If} $Found == "1"
-      Call SelectGuidance
-      SetErrorLevel 1
-      Goto ReportOutcome
-    ${EndIf}
-    StrCpy $Succeeded "1"
-    SetErrorLevel 0
-    StrCpy $Guidance "Done. Open the Veles connector in Chrome and retry; Bluetooth permission is still yours to grant."
-  ReportOutcome:
-    DetailPrint "$Guidance"
-    MessageBox MB_OK|MB_ICONINFORMATION "$Guidance" /SD IDOK
-FunctionEnd
+!insertmacro DefineHandleResult "" "The installer engine could not be started. Download a fresh installer." "The installer engine refused an internal request. Download a fresh installer."
 
 ; Publish the Installed Apps entry only after a COMPLETE engine result, and only
 ; when the signed maintenance entry really exists under the fixed root.
@@ -399,42 +585,10 @@ Function un.onInit
   InitPluginsDir
 FunctionEnd
 
-Function un.HandleEngineResult
-  Pop $ExitCode
-  Pop $EngineReport
-  StrCpy $Succeeded ""
-  StrCmp $ExitCode "0" UnEngineCompleted
-  StrCmp $ExitCode "1" UnEngineFailed
-  StrCmp $ExitCode "2" UnEngineInvalid
-  StrCpy $Guidance "The maintenance engine could not be started. Run the installer again and choose Uninstall."
-  SetErrorLevel 3
-  Goto UnReportOutcome
-  UnEngineInvalid:
-    StrCpy $Guidance "The maintenance engine refused an internal request. Run the installer again and choose Uninstall."
-    SetErrorLevel 2
-    Goto UnReportOutcome
-  UnEngineFailed:
-    Call un.SelectGuidance
-    SetErrorLevel 1
-    Goto UnReportOutcome
-  UnEngineCompleted:
-    StrCpy $Haystack $EngineReport
-    StrCpy $Needle "cleanup-pending"
-    Call un.Contains
-    ${If} $Found == "1"
-      Call un.SelectGuidance
-      SetErrorLevel 1
-      Goto UnReportOutcome
-    ${EndIf}
-    StrCpy $Succeeded "1"
-    SetErrorLevel 0
-    StrCpy $Guidance "Veles Native Bridge was removed for this Windows user."
-  UnReportOutcome:
-    DetailPrint "$Guidance"
-    MessageBox MB_OK|MB_ICONINFORMATION "$Guidance" /SD IDOK
-FunctionEnd
+!insertmacro DefineHandleResult "un." "The maintenance engine could not be started. Run the installer again and choose Uninstall." "The maintenance engine refused an internal request. Run the installer again and choose Uninstall."
 
 Section "Uninstall"
+  StrCpy $Operation "uninstall"
   IfFileExists "${MAINTENANCE_ENGINE_EXE}" 0 EngineMissing
   nsExec::ExecToStack '"${MAINTENANCE_ENGINE_EXE}" uninstall'
   Call un.HandleEngineResult

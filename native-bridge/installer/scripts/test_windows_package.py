@@ -92,6 +92,20 @@ class WindowsInstallerContract(unittest.TestCase):
 
     # -- privilege and scope ------------------------------------------------
 
+    def test_compression_is_the_planned_zlib_not_solid_lzma(self) -> None:
+        # Plan: "Unicode MUI2 and zlib". A solid LZMA stream was an unledgered departure; zlib is restored.
+        code = strip_comments(NSI.read_text(encoding="utf-8"))
+        self.assertRegex(code, r"(?m)^SetCompressor\s+zlib\s*$")
+        self.assertNotRegex(code, r"(?i)lzma|/SOLID|bzip2")
+        self.assertRegex(code, r"(?m)^Unicode true\s*$")
+
+    def test_the_uninstaller_generator_uses_nocd_and_an_absolute_script(self) -> None:
+        text = (HERE / "generate-uninstaller.ps1").read_text(encoding="utf-8")
+        call = next(line for line in text.splitlines() if line.lstrip().startswith("& $Makensis") and "DGENERATE_UNINSTALLER" in line)
+        self.assertIn('"/NOCD"', call)
+        self.assertLess(call.index('"/NOCD"'), call.index("$script"), "options precede the script path")
+        self.assertRegex(text, r"\$script\s*=\s*\(Resolve-Path .*installer\.nsi.*\)\.ProviderPath")
+
     def test_request_execution_level_user_only(self) -> None:
         levels = re.findall(r"(?im)^\s*RequestExecutionLevel\s+(\S+)", self.code)
         self.assertEqual(levels, ["user"], "exactly one RequestExecutionLevel, and it is user")

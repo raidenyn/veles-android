@@ -43,14 +43,14 @@ if (-not ([IO.Path]::GetFullPath($Makensis)).StartsWith($tools + [IO.Path]::Dire
 if (-not (Test-Path -LiteralPath $Makensis -PathType Leaf)) { throw "makensis is missing: $Makensis" }
 if (Test-Path -LiteralPath $Output) { throw "output must not exist: $Output" }
 
-$script = Join-Path $PSScriptRoot '..\windows\installer.nsi'
+$script = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\windows\installer.nsi')).ProviderPath
 $work = Join-Path ([IO.Path]::GetTempPath()) ("veles-uninstaller-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
     $generator = Join-Path $work 'generator.exe'
     $inputs = Join-Path $work 'inputs'
     New-Item -ItemType Directory -Path $inputs | Out-Null
-    & $Makensis /V2 "/DGENERATE_UNINSTALLER" "/DVERSION=$Version" "/DINPUT_DIR=$inputs" "/DOUTFILE=$generator" $script
+    & $Makensis /V2 "/NOCD" "/DGENERATE_UNINSTALLER" "/DVERSION=$Version" "/DINPUT_DIR=$inputs" "/DOUTFILE=$generator" $script
     if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
     & $generator
     if ($LASTEXITCODE -ne 0) { throw "the uninstaller generator failed with exit code $LASTEXITCODE" }

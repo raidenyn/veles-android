@@ -1086,6 +1086,20 @@ class AssemblyTests(unittest.TestCase):
             self.assertEqual((done.ok, done.code), (False, "assemble-failed"))
             self.assertFalse((tmp / "assembled").exists())
 
+    def test_makensis_runs_with_the_planned_nocd_and_an_absolute_recipe(self) -> None:
+        # Plan: "Unicode MUI2 and zlib, /NOCD, an absolute script path and fixed input/output roots".
+        case, outcome = self.nested_output("windows")
+        env = ci_env("windows") | {"NSIS_PATH": "/fake/makensis.exe"}
+        runner = FakeRunner(env)
+        tmp = Path(tempfile.mkdtemp(prefix="gate-asm-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        self.assertTrue(gate.assemble(self.request(case, outcome, tmp), env, runner).ok)
+        compile_call = next(c for c in runner.calls if any(a.startswith("/DOUTFILE=") for a in c))
+        self.assertIn("/NOCD", compile_call)
+        self.assertEqual(compile_call[-1], str(gate.NSIS_RECIPE))
+        self.assertTrue(Path(compile_call[-1]).is_absolute())
+        self.assertLess(compile_call.index("/NOCD"), len(compile_call) - 1, "options come before the script")
+
     def test_cleanup_runs_on_each_assembly_failure(self) -> None:
         for platform in ("windows", "macos"):
             case, outcome = self.nested_output(platform)
