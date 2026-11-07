@@ -62,7 +62,7 @@ use crate::platform::{
 use crate::policy::{authorize_package_policy, is_no_broader_than};
 use crate::retained::{RETAINED_FILE_NAME, RetainedInstall};
 use crate::transaction::{
-    STATE_INSTALLED, activate_retained, bound_by_replaced_release, install, manifest_for,
+    STATE_INSTALLED, activate_retained, bound_by_replaced_release, install, manifest_for, recover,
     release_is_usable, verify_installed_host,
 };
 
@@ -126,6 +126,21 @@ fn dispatch(
     package: Option<AuthenticatedPackage>,
     quiescence: Duration,
 ) -> InstallResult<InstallReport> {
+    // A transaction an earlier process left pending is settled before the requested
+    // operation runs, from the same authenticated evidence recovery always uses. This
+    // is what makes "Retry" true: without it install, repair and rollback refuse the
+    // pending journal and nothing else in the product would ever settle it.
+    // Inspection stays read-only, and an interrupted removal is finished only by
+    // uninstall itself, whose resumable semantics recovery deliberately does not own.
+    if matches!(
+        operation,
+        Operation::Install | Operation::Repair | Operation::Rollback
+    ) && !matches!(Journal::load(platform, paths)?, JournalState::None)
+    {
+        // Foreign, unsupported and ambiguous states are refused exactly as recovery
+        // reports them; the requested operation does not run over them.
+        recover(platform, paths)?;
+    }
     match operation {
         Operation::Inspect => inspect(platform, paths),
         Operation::Install => {

@@ -5501,3 +5501,265 @@ fn recovery_of_an_interrupted_rollback_of_the_producers_payload_selects_the_host
         );
     }
 }
+
+// -- F5: an ordinary interrupted activation is settled by the next maintenance command ---------------
+//
+// `recover()` existed only as a library/test API; install, repair and rollback refused a pending journal, so
+// "Retry to recover" was false guidance. These tests drive the SHIPPING dispatch - `cli::run`, the entry point
+// of every frontend - through a process death and a restart.
+
+fn cli_install(
+    platform: &FakePlatform,
+    fixture: &Fixture,
+    package: &Package,
+) -> (i32, InstallReport) {
+    use veles_bridge_installer::cli::{self, Context};
+    let context = Context {
+        platform,
+        paths: &fixture.paths,
+        expected: Some(&package.descriptor),
+        quiescence: Some(SHORT_WAIT),
+    };
+    let arguments = vec![
+        std::ffi::OsString::from("install"),
+        std::ffi::OsString::from("--package"),
+        package.root.clone().into_os_string(),
+    ];
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let exit = cli::run(&arguments, &context, &mut stdout, &mut stderr);
+    let report: InstallReport = serde_json::from_slice(&stdout).expect("one strict report");
+    (exit, report)
+}
+
+type InstallReport = veles_bridge_installer::InstallReport;
+
+#[test]
+fn a_cli_restart_after_an_interrupted_upgrade_settles_it_and_completes_the_retry() {
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let build = |fixture: &Fixture| {
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), vec![p1]),
+        );
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V2,
+            NOTICE_V2,
+            policy(2, Vec::new(), vec![p1]),
+        );
+        fixture.install(&v1);
+        (v1, v2)
+    };
+    let probe = Fixture::windows();
+    let (_, probe_v2) = build(&probe);
+    let platform = probe.platform_trusting(&probe_v2.proof);
+    let (exit, report) = cli_install(&platform, &probe, &probe_v2);
+    assert_eq!(
+        (exit, report.state.as_str()),
+        (0, veles_bridge_installer::STATE_INSTALLED),
+        "{report:?}"
+    );
+    let total = platform.mutations().len();
+    assert!(
+        total >= 4,
+        "an upgrade crosses several durable boundaries: {total}"
+    );
+
+    let p2 = payload_id(HOST_V2, NOTICE_V2);
+    let mut interrupted_states = std::collections::BTreeSet::new();
+    for attempt in 1..=total {
+        let fixture = Fixture::windows();
+        let (_v1, v2) = build(&fixture);
+        let context = format!("upgrade interrupted at durable attempt {attempt}/{total}");
+        let crashing = FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            panic_at_mutation: Some(attempt),
+            trust: Some(v2.proof.clone()),
+            trust_by_carrier: fixture.proofs.borrow().clone(),
+            ..Faults::default()
+        });
+        let outcome =
+            panic::catch_unwind(AssertUnwindSafe(|| cli_install(&crashing, &fixture, &v2)));
+        assert!(
+            outcome.is_err(),
+            "{context}: the injected death interrupts the CLI"
+        );
+
+        // A fresh process, the very same command: the user's "Retry".
+        let restarted = fixture.platform_trusting(&v2.proof);
+        let (exit, report) = cli_install(&restarted, &fixture, &v2);
+        assert_eq!(
+            exit, 0,
+            "{context}: the retry must complete, not stay blocked: {report:?}"
+        );
+        assert!(report.failure.is_none(), "{context}: {report:?}");
+        assert_eq!(
+            report.active_payload,
+            Some(p2),
+            "{context}: the requested release is active"
+        );
+        interrupted_states.insert(report.state.clone());
+        assert!(
+            matches!(journal_state(&fixture.paths), JournalState::None),
+            "{context}: the retry leaves no pending journal"
+        );
+        let manifest =
+            parse_manifest(&fs::read(fixture.paths.registration_path()).expect("registration"))
+                .expect("complete registration");
+        assert_eq!(
+            fs::read(manifest.executable().expect("executable")).expect("host"),
+            HOST_V2,
+            "{context}: the live host is the requested release"
+        );
+        assert_eq!(
+            receipt(&fixture.paths).expect("receipt").payload_id,
+            p2,
+            "{context}"
+        );
+    }
+    assert!(!interrupted_states.is_empty());
+}
+
+#[test]
+fn recovery_preflight_never_hides_a_foreign_registration() {
+    // Recovery refuses a registration another product owns, and the maintenance command stays refused with
+    // nothing touched - the preflight settles only what is provably this installer's own.
+    let p1 = payload_id(HOST_V1, NOTICE_V1);
+    let build = |fixture: &Fixture| {
+        let v1 = fixture.package(
+            "v1",
+            "1.0.0",
+            HOST_V1,
+            NOTICE_V1,
+            policy(1, Vec::new(), vec![p1]),
+        );
+        let v2 = fixture.package(
+            "v2",
+            "2.0.0",
+            HOST_V2,
+            NOTICE_V2,
+            policy(2, Vec::new(), vec![p1]),
+        );
+        fixture.install(&v1);
+        (v1, v2)
+    };
+    let probe = Fixture::windows();
+    let (_, probe_v2) = build(&probe);
+    let platform = probe.platform_trusting(&probe_v2.proof);
+    cli_install(&platform, &probe, &probe_v2);
+    let total = platform.mutations().len();
+
+    let fixture = Fixture::windows();
+    let (_v1, v2) = build(&fixture);
+    let crashing = FakePlatform::with_faults(Faults {
+        host_state: HostState::Quiescent,
+        panic_at_mutation: Some(total.min(3)),
+        trust: Some(v2.proof.clone()),
+        trust_by_carrier: fixture.proofs.borrow().clone(),
+        ..Faults::default()
+    });
+    assert!(
+        panic::catch_unwind(AssertUnwindSafe(|| cli_install(&crashing, &fixture, &v2))).is_err()
+    );
+    assert!(matches!(
+        journal_state(&fixture.paths),
+        JournalState::Pending(_)
+    ));
+    fs::write(
+        fixture.paths.registration_path(),
+        b"{\"name\":\"someone else's manifest\"}\n",
+    )
+    .expect("a foreign product takes the registration path");
+    let before = snapshot(fixture.temp.path());
+    let restarted = fixture.platform_trusting(&v2.proof);
+    let (exit, report) = cli_install(&restarted, &fixture, &v2);
+    assert_eq!(exit, 1, "{report:?}");
+    assert_eq!(
+        report.failure,
+        Some(FailureCode::ForeignState),
+        "{report:?}"
+    );
+    assert_eq!(
+        snapshot(fixture.temp.path()),
+        before,
+        "the refusal touches nothing"
+    );
+}
+
+#[test]
+fn an_interrupted_removal_is_finished_only_by_uninstall_never_by_the_recovery_preflight() {
+    let fixture = Fixture::windows();
+    let v1 = fixture.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    let v2 = fixture.package(
+        "v2",
+        "2.0.0",
+        HOST_V2,
+        NOTICE_V2,
+        policy(2, Vec::new(), Vec::new()),
+    );
+    fixture.install(&v1);
+    // Die in the middle of an uninstall, after it journalled its removal.
+    let probe = Fixture::windows();
+    let probe_v1 = probe.package(
+        "v1",
+        "1.0.0",
+        HOST_V1,
+        NOTICE_V1,
+        policy(1, Vec::new(), Vec::new()),
+    );
+    probe.install(&probe_v1);
+    let counting = probe.platform();
+    run_operation(&counting, &probe.paths, Operation::Uninstall, None).expect("probe uninstall");
+    let total = counting.mutations().len();
+    assert!(total >= 3, "{total}");
+    let crashing = FakePlatform::with_faults(Faults {
+        host_state: HostState::Quiescent,
+        panic_at_mutation: Some(2),
+        trust_by_carrier: fixture.proofs.borrow().clone(),
+        ..Faults::default()
+    });
+    assert!(
+        panic::catch_unwind(AssertUnwindSafe(|| run_operation(
+            &crashing,
+            &fixture.paths,
+            Operation::Uninstall,
+            None
+        )))
+        .is_err()
+    );
+    assert!(matches!(
+        journal_state(&fixture.paths),
+        JournalState::Pending(_)
+    ));
+
+    let before = snapshot(fixture.temp.path());
+    let platform = fixture.platform_trusting(&v2.proof);
+    let (exit, report) = cli_install(&platform, &fixture, &v2);
+    assert_eq!(exit, 1, "{report:?}");
+    assert_eq!(
+        report.failure,
+        Some(FailureCode::RecoveryRequired),
+        "{report:?}"
+    );
+    assert_eq!(
+        snapshot(fixture.temp.path()),
+        before,
+        "an install never resumes a removal"
+    );
+
+    // The user's way forward is uninstall itself, which owns resumable removal.
+    let platform = fixture.platform();
+    let report = run_operation(&platform, &fixture.paths, Operation::Uninstall, None)
+        .expect("uninstall resumes");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+}
