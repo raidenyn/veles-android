@@ -3,14 +3,17 @@
 //! A thin shell over [`veles_bridge_installer::cli`]: it parses the closed
 //! argument grammar, resolves the fixed per-user layout from OS APIs, builds the
 //! platform adapter for the build target and prints one report. It reads no
-//! environment variable, accepts no root/origin/command/URL and starts no shell.
+//! environment variable at run time, accepts no root/origin/command/URL and
+//! starts no shell.
 //!
-//! Two inputs belong to later tasks and are deliberately seams here:
+//! Two inputs are compiled in, never chosen at run time:
 //!
-//! * [`EMBEDDED_DESCRIPTOR`]: the release descriptor the engine authenticates a
-//!   package against. Release packaging (Task 13) compiles the approved
-//!   descriptor in; until then it is absent and install/repair answer
-//!   `policy-denied` rather than trusting a package-supplied descriptor.
+//! * [`EMBEDDED_CARRIER`]: the authenticated release carrier release packaging
+//!   supplies through the build-time channel (`VELES_EMBEDDED_CARRIER`, see
+//!   `build.rs`). The engine parses the release descriptor out of those exact
+//!   bytes and authenticates every package against it. This unreleased build
+//!   embeds nothing, so install and repair answer `policy-denied` rather than
+//!   trusting a package-supplied descriptor.
 //! * [`BUILD_CHANNEL`]: the channel compiled into this binary
 //!   (`veles_bridge_installer::COMPILED_CHANNEL`): production unless the producer
 //!   built a fixture or development engine with its own `veles_channel` cfg. A
@@ -20,14 +23,16 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 
 use veles_bridge_installer::cli::{self, Context, ParsedCommand};
-use veles_bridge_installer::{COMPILED_CHANNEL, Channel, ReleaseDescriptor, parse_descriptor};
+use veles_bridge_installer::embedded::decode_embedded_carrier;
+use veles_bridge_installer::host::host_platform;
+use veles_bridge_installer::{COMPILED_CHANNEL, Channel};
 
 /// The channel this binary installs. Compiled in; never a runtime choice.
 const BUILD_CHANNEL: Channel = COMPILED_CHANNEL;
 
-/// Raw bytes of the approved release descriptor, compiled in by release
-/// packaging (Task 13). `None` in this unreleased build.
-const EMBEDDED_DESCRIPTOR: Option<&[u8]> = None;
+// Written by `build.rs`: `Some(exact carrier bytes)` when release packaging
+// supplied the authenticated carrier, `None` in an unreleased build.
+include!(concat!(env!("OUT_DIR"), "/embedded_carrier.rs"));
 
 fn main() {
     let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -51,17 +56,18 @@ fn run(invocation: &cli::Invocation, stdout: &mut dyn Write, stderr: &mut dyn Wr
             return cli::emit(&report, stdout, stderr);
         }
     };
-    let expected: Option<ReleaseDescriptor> =
-        EMBEDDED_DESCRIPTOR.and_then(|bytes| parse_descriptor(bytes).ok());
-    #[cfg(windows)]
-    let platform = veles_bridge_installer::WindowsPlatform::new();
-    #[cfg(not(windows))]
-    let platform = {
-        // Unreachable in practice: `resolve_user_paths` already refused a host
-        // without a product target. The portable adapter keeps this a total
-        // function and is never the one that runs a product operation.
-        veles_bridge_installer::PortablePlatform::new()
+    // A carrier was compiled in but does not parse: that is a refusal of the
+    // build's own release identity, never a silent "no identity".
+    let expected = match decode_embedded_carrier(EMBEDDED_CARRIER) {
+        Ok(expected) => expected,
+        Err(failure) => {
+            let report = cli::failure_report(invocation.operation, &failure);
+            return cli::emit(&report, stdout, stderr);
+        }
     };
+    // The adapter is the one this build target needs (Windows, macOS or the
+    // portable reference host); never a fallback chosen at run time.
+    let platform = host_platform();
     let context = Context {
         platform: &platform,
         paths: &paths,

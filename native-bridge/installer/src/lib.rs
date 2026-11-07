@@ -16,6 +16,8 @@
 
 pub mod cleanup;
 pub mod cli;
+pub mod embedded;
+pub mod host;
 pub mod inventory;
 pub mod journal;
 pub mod model;
@@ -50,6 +52,8 @@ pub use cleanup::{
     remove_helper_after_exit, run_cleanup_helper, run_cleanup_helper_detailed,
     run_cleanup_helper_via_launcher, run_cleanup_launcher,
 };
+pub use embedded::{EMBEDDED_CARRIER_ENV, decode_embedded_carrier};
+pub use host::{HostOs, HostPlatform, PlatformKind, host_platform, platform_kind_for};
 pub use inventory::{
     INVENTORY_SCHEMA_VERSION, PACKAGE_INVENTORY_FILE, PACKAGE_PAYLOAD_DIR, SEALED_INVENTORY_FILE,
     is_signable_image, normalize_relative_path, parse_inventory, verify_correspondence,

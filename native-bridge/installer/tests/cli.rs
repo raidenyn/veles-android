@@ -346,11 +346,12 @@ fn report_no_payload_or_environment_leak() {
     assert_eq!(output.status.code(), Some(EXIT_FAILURE));
     let report = parse_report(&output.stdout);
     assert_eq!(report.operation, Operation::Install);
-    // A non-product host refuses every operation by name; a Windows host
-    // resolves its layout and then finds no embedded release descriptor yet.
+    // A non-product host refuses every operation by name; a Windows or macOS
+    // host resolves its layout and then finds no embedded release descriptor in
+    // this unreleased build. (The macOS arm is cfg-gated and NOT RUN here.)
     assert_eq!(
         report.failure,
-        Some(if cfg!(windows) {
+        Some(if cfg!(windows) || cfg!(target_os = "macos") {
             FailureCode::PolicyDenied
         } else {
             FailureCode::UnsupportedTarget

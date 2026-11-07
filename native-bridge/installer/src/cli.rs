@@ -356,9 +356,9 @@ pub fn unsupported_target_report(operation: Operation) -> InstallReport {
 ///
 /// There is no override: on Windows the user profile and `%LOCALAPPDATA%` come
 /// from the Known Folders API (`SHGetKnownFolderPath`), never from environment
-/// variables or arguments. A host without a product target (and macOS, whose
-/// known-folder resolution belongs to the Task 11 frontend) is
-/// `UnsupportedTarget`.
+/// variables or arguments. On macOS the home directory comes from the account
+/// database (`getpwuid_r` for the effective user), never from `HOME`. A host
+/// with no product backend (this development host) is `UnsupportedTarget`.
 pub fn resolve_user_paths(channel: Channel) -> InstallResult<InstallPaths> {
     #[cfg(windows)]
     {
@@ -366,11 +366,87 @@ pub fn resolve_user_paths(channel: Channel) -> InstallResult<InstallPaths> {
         let local = windows_known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)?;
         InstallPaths::for_user(Target::WindowsX64, channel, &profile, Some(&local))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = (channel, Target::WindowsX64);
+        let home = macos_home_directory()?;
+        InstallPaths::for_user(Target::MacosArm64, channel, &home, None)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (channel, Target::WindowsX64, Target::MacosArm64);
         Err(InstallFailure::new(FailureCode::UnsupportedTarget))
     }
+}
+
+/// The effective user's home directory, from the OS account database.
+///
+/// `getpwuid_r` is the documented account lookup; it takes no environment value,
+/// so a poisoned `HOME` cannot redirect the fixed install root. The record buffer
+/// is bounded and the result is used only after a successful lookup.
+#[cfg(target_os = "macos")]
+fn macos_home_directory() -> InstallResult<PathBuf> {
+    use std::ffi::{CStr, OsStr, c_char, c_int};
+    use std::os::unix::ffi::OsStrExt;
+
+    // `struct passwd` as declared by macOS <pwd.h> for 64-bit targets. The field
+    // order and types are the ABI; Rust never reads any field except `pw_dir`,
+    // and the names exist only to document the layout. NATIVE-BLOCKED: no macOS
+    // host is available here, so this ABI is documented, not executed.
+    #[repr(C)]
+    struct Passwd {
+        _name: *mut c_char,
+        _passwd: *mut c_char,
+        _uid: u32,
+        _gid: u32,
+        _change: i64,
+        _class: *mut c_char,
+        _gecos: *mut c_char,
+        dir: *mut c_char,
+        _shell: *mut c_char,
+        _expire: i64,
+    }
+
+    unsafe extern "C" {
+        fn geteuid() -> u32;
+        fn getpwuid_r(
+            uid: u32,
+            passwd: *mut Passwd,
+            buffer: *mut c_char,
+            length: usize,
+            result: *mut *mut Passwd,
+        ) -> c_int;
+    }
+
+    let mut passwd = std::mem::MaybeUninit::<Passwd>::zeroed();
+    let mut buffer = vec![0u8; 16 * 1024];
+    let mut result: *mut Passwd = std::ptr::null_mut();
+    // SAFETY: `passwd` and `buffer` are live and distinct for the duration of the
+    // call; `result` receives a pointer into `passwd` on success only.
+    let status = unsafe {
+        getpwuid_r(
+            geteuid(),
+            passwd.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if status != 0 || result.is_null() {
+        return Err(InstallFailure::new(FailureCode::Io));
+    }
+    // SAFETY: the successful lookup initialized the record, and `pw_dir` points
+    // into `buffer`, which outlives this borrow.
+    let passwd = unsafe { passwd.assume_init() };
+    if passwd.dir.is_null() {
+        return Err(InstallFailure::new(FailureCode::Io));
+    }
+    // SAFETY: `pw_dir` is a NUL-terminated string owned by the account record.
+    let bytes = unsafe { CStr::from_ptr(passwd.dir) }.to_bytes();
+    let home = PathBuf::from(OsStr::from_bytes(bytes));
+    if !home.is_absolute() {
+        return Err(InstallFailure::new(FailureCode::UnsupportedTarget));
+    }
+    Ok(home)
 }
 
 #[cfg(windows)]

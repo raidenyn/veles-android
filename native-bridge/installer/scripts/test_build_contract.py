@@ -198,6 +198,11 @@ def check_gradle(gradle, clean_script):
     if not re.search(r"inputs\.files?\(config\)", code):
         errors.append("the release config is not declared as a task input")
 
+    # 5b. The authenticated release carrier is a build-time input of the engine build.
+    if (not re.search(r'gradleProperty\("installerEmbeddedCarrier"\)', code)
+            or not re.search(r'environment\("VELES_EMBEDDED_CARRIER", carrier\.asFile\.absolutePath\)', code)):
+        errors.append("the engine does not compile in the authenticated carrier from installerEmbeddedCarrier")
+
     # 6. Channel is hard-selected by the registration, never by the config or a property override.
     unsigned = re.search(r'registerInstallerProducer\(\s*"bridgeInstallerUnsigned"([^)]*)\)', code)
     fixture = re.search(r'registerInstallerProducer\(\s*"bridgeInstallerPackageFixture"([^)]*)\)', code)
@@ -584,6 +589,16 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("VELES_ALLOWED_ORIGINS" in e for e in found), found)
         found = self.violations(self.mutate('environment("VELES_ALLOWED_ORIGINS"', 'environment("OTHER"'))
         self.assertTrue(any("VELES_ALLOWED_ORIGINS" in e for e in found), found)
+
+    def test_the_engine_must_compile_in_the_supplied_carrier(self):
+        for old, new in (
+            ('environment("VELES_EMBEDDED_CARRIER", carrier.asFile.absolutePath)',
+             'environment("VELES_CARRIER_IGNORED", carrier.asFile.absolutePath)'),
+            ('val installerEmbeddedCarrier = providers.gradleProperty("installerEmbeddedCarrier")',
+             'val installerEmbeddedCarrier = providers.provider { null }'),
+        ):
+            found = self.violations(self.mutate(old, new, 1))
+            self.assertTrue(any("carrier" in e for e in found), found)
 
     def test_a_fixture_config_cannot_feed_the_production_task(self):
         found = self.violations(self.mutate('"bridgeInstallerUnsigned", "production", installerReleaseConfig', '"bridgeInstallerUnsigned", "production", installerFixtureConfig'))

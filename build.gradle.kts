@@ -1240,6 +1240,11 @@ val installerReleaseConfig = providers.gradleProperty("installerReleaseConfig")
     .map { layout.projectDirectory.file(it) }
     .orElse(layout.projectDirectory.file("native-bridge/installer/config/release-$installerPlatform.json"))
 val installerFixtureConfig = providers.provider { layout.projectDirectory.file("native-bridge/installer/config/fixture-$installerPlatform.json") }
+// The authenticated carrier document the engine compiles in (`VELES_EMBEDDED_CARRIER`). Release
+// packaging supplies it on the engine build that follows carrier assembly; without it the engine is
+// an unreleased build and refuses install/repair with policy-denied instead of trusting a package.
+val installerEmbeddedCarrier = providers.gradleProperty("installerEmbeddedCarrier")
+    .map { layout.projectDirectory.file(it) }
 val installerMakensis = providers.gradleProperty("installerMakensis")
     .orElse(installerBuildRoot.map { it.file("tools/nsis/nsis-3.08/makensis.exe").asFile.absolutePath })
 // Build-tool identity: observed on this machine, held to config/tools.lock.json, bound into provenance.
@@ -1435,6 +1440,7 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
             dependsOn(configCheck, bridgeInstallerToolchainCheck)
             inputs.files(installerSources)
             inputs.files(config)
+            installerEmbeddedCarrier.orNull?.let { carrier -> inputs.file(carrier) }
             outputs.dir(installerTargetDir)
             workingDir(installerDir)
             doFirst {
@@ -1442,6 +1448,10 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 delete(installerTargetDir)
                 environment("CARGO_TARGET_DIR", installerTargetDir.get().asFile)
                 installerCargoEnvironment()
+                installerEmbeddedCarrier.orNull?.let { carrier ->
+                    // Compiled in by `build.rs`: the exact authenticated bytes, never read at run time.
+                    environment("VELES_EMBEDDED_CARRIER", carrier.asFile.absolutePath)
+                }
                 if (channel != "production") {
                     // The channel is compiled into the engine: a fixture engine resolves only the fixture root,
                     // registration and identity, so its package-less commands cannot address production state.
