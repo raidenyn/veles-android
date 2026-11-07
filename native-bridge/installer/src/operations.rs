@@ -1045,7 +1045,7 @@ fn uninstall(
     if let Err(failure) = require_quiescent_within(platform, paths, quiescence) {
         return Err(deferred(failure));
     }
-    let (mut leftover, failed) = remove_owned_entries(platform, &entries)?;
+    let failed = remove_owned_files(platform, &entries)?;
     if !failed.is_empty() {
         // An owned file the in-process removal could not delete: only the
         // outside-root helper may finish it, and only its authenticated
@@ -1057,10 +1057,8 @@ fn uninstall(
             .map_err(deferred_removal)?;
     }
 
-    // Every owned *file* claim must be gone. A claimed directory that still
-    // exists can only retain foreign content at this point (every owned child
-    // was removed above): that is preserved and reported, not treated as a
-    // pending deletion.
+    // Every owned *file* claim must be gone before any directory that contains
+    // it may be removed.
     for claim in &record.owned {
         match claim.kind {
             // An owned leaf (file or link) that is still there was not removed:
@@ -1071,14 +1069,21 @@ fn uninstall(
                 }
                 Ok(None) => {}
             },
-            // A claimed directory that still exists (or was replaced by a link
-            // or another kind) keeps only foreign content now: preserve and
-            // report it rather than claiming a pending owned deletion.
-            OwnedKind::Directory => {
-                if !matches!(OwnedEntry::from_claim(paths, claim), Ok(None)) {
-                    leftover = true;
-                }
-            }
+            OwnedKind::Directory => {}
+        }
+    }
+
+    // Only now are the validated owned directories retried, deepest-first. The
+    // first pass ran before the helper for leaves that were still present; a
+    // directory it could not empty then may be empty now. A directory that still
+    // exists here can only retain foreign content, which is preserved and
+    // reported rather than treated as a pending owned deletion (N3).
+    let mut leftover = remove_owned_directories(platform, &entries)?;
+    for claim in &record.owned {
+        if claim.kind == OwnedKind::Directory
+            && !matches!(OwnedEntry::from_claim(paths, claim), Ok(None))
+        {
+            leftover = true;
         }
     }
 
@@ -1323,17 +1328,17 @@ fn removal_claim(claim: &crate::platform::OwnedClaim) -> JournalClaim {
     }
 }
 
-/// Remove owned files first and directories deepest-first.
+/// Remove owned files and links. A leaf that cannot be removed is returned to the
+/// caller instead of aborting: the outside-root cleanup helper may still remove
+/// it, and only an observed removal (or an explicit pending verdict) may end the
+/// uninstall. An unsafe path or an uninterpretable claim fails closed at once.
 ///
-/// A leaf that cannot be removed is returned to the caller instead of aborting:
-/// the outside-root cleanup helper may still remove it, and only an observed
-/// removal (or an explicit pending verdict) may end the uninstall. An unsafe path
-/// or an uninterpretable claim fails closed at once.
-fn remove_owned_entries(
+/// Directories are deliberately not touched here: they are removed only after
+/// every owned leaf has been observed gone, including by the helper.
+fn remove_owned_files(
     platform: &impl Platform,
     entries: &[OwnedEntry],
-) -> InstallResult<(bool, Vec<OwnedEntry>)> {
-    let mut leftover = false;
+) -> InstallResult<Vec<OwnedEntry>> {
     let mut failed: Vec<OwnedEntry> = Vec::new();
     let mut files: Vec<&OwnedEntry> = entries
         .iter()
@@ -1354,7 +1359,20 @@ fn remove_owned_entries(
             Err(_) => failed.push(entry.clone()),
         }
     }
+    Ok(failed)
+}
 
+/// Remove validated owned directories deepest-first, after every owned leaf is
+/// gone.
+///
+/// A directory that cannot be removed because it still has content keeps foreign
+/// content and is reported as a leftover. A path replaced by a link or another
+/// kind is no longer ours to delete and is preserved the same way.
+fn remove_owned_directories(
+    platform: &impl Platform,
+    entries: &[OwnedEntry],
+) -> InstallResult<bool> {
+    let mut leftover = false;
     let mut directories: Vec<&OwnedEntry> = entries
         .iter()
         .filter(|entry| entry.claim().kind.is_directory())
@@ -1374,7 +1392,7 @@ fn remove_owned_entries(
             Err(failure) => return Err(deferred_removal(failure)),
         }
     }
-    Ok((leftover, failed))
+    Ok(leftover)
 }
 
 /// Classify a failed removal of an owned path.

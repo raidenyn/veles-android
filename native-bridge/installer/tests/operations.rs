@@ -6607,6 +6607,62 @@ fn the_cleanup_helper_completes_an_owned_removal_the_engine_could_not() {
     assert!(!paths.root().exists(), "the observed removal is clean");
 }
 
+/// If the helper removes the last owned file of an immutable version, the
+/// directories that could not be removed before the helper must be retried
+/// deepest-first. Otherwise uninstall reports success and erases its intent while
+/// leaving owned empty version directories (and the root) behind (N3).
+#[test]
+fn the_cleanup_helper_finishes_owned_version_directories_before_teardown() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &[
+            ("host.exe", HOST_V1, true),
+            ("licenses/NOTICE", NOTICE_V1, false),
+            ("maintenance/uninstall.exe", UNINSTALLER_V1, true),
+            (
+                "veles-bridge-cleanup.exe",
+                b"the signed cleanup helper",
+                true,
+            ),
+        ],
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    let p1 = package.descriptor.payload_id;
+    let version_leaf = format!("versions/1.0.0-{}/host.exe", p1.to_hex());
+    let platform = fixture.platform_with(Faults {
+        host_state: HostState::Quiescent,
+        fail_remove_of: Some(version_leaf.clone()),
+        cleanup: Some(veles_bridge_installer::CleanupBehavior::Complete),
+        ..Faults::default()
+    });
+    let report = run_operation(&platform, paths, Operation::Uninstall, None)
+        .expect("the helper removes the last owned leaf and the directories are finished");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(
+        report.warnings.is_empty(),
+        "no owned directory or root survives, so nothing is a leftover: {:?}",
+        report.warnings
+    );
+    assert_eq!(
+        platform.cleanup_runs(),
+        vec![vec![version_leaf]],
+        "the helper was asked to remove only the leaf the engine could not"
+    );
+    assert!(
+        !version_dir(paths, "1.0.0", p1).exists(),
+        "the owned empty version directory is removed after the helper"
+    );
+    assert!(
+        !paths.versions().exists(),
+        "the versions container is removed"
+    );
+    assert!(!paths.root().exists(), "the private root is removed");
+}
+
 /// A helper that reports an authenticated completion without removing the entry
 /// is not evidence of removal: the uninstall stays pending and the durable
 /// intent is retained for a retry.
