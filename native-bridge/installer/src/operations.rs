@@ -1013,22 +1013,18 @@ fn uninstall(
     // image) can still be removed, and its removal observed. A release without a
     // cleanup helper, or a host that cannot stage one, leaves this `None`; a
     // removal that then fails is reported as pending, never as clean.
-    let coordinator = cleanup_helper_source(paths, &record.owned)
-        .ok()
-        .flatten()
-        .and_then(|(source, sha256)| {
-            RemovalCoordinator::stage(
-                paths,
-                &RemovalRequest {
-                    helper_source: &source,
-                    helper_sha256: sha256,
-                    publisher: &signer,
-                    transaction: &transaction,
-                },
-            )
-            .ok()
-            .flatten()
-        });
+    let coordinator = match cleanup_helper_source(paths, &record.owned)? {
+        Some((source, sha256)) => RemovalCoordinator::stage(
+            paths,
+            &RemovalRequest {
+                helper_source: &source,
+                helper_sha256: sha256,
+                publisher: &signer,
+                transaction: &transaction,
+            },
+        )?,
+        None => None,
+    };
 
     // Remove the registration first, only after ownership and quiescence were
     // validated.
@@ -1046,7 +1042,14 @@ fn uninstall(
         return Err(deferred(failure));
     }
     let failed = remove_owned_files(platform, &entries)?;
-    if !failed.is_empty() {
+    if failed.is_empty() {
+        // Every in-process removal succeeded. If a coordinator was staged, its
+        // outside-root residue is still ours: dispose of it through the observed
+        // path, never the best-effort destructor.
+        if let Some(coordinator) = coordinator.as_ref() {
+            coordinator.discard_observed().map_err(deferred_removal)?;
+        }
+    } else {
         // An owned file the in-process removal could not delete: only the
         // outside-root helper may finish it, and only its authenticated
         // completion plus the observed absence of every entry is a clean result.

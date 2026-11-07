@@ -30,6 +30,13 @@ use crate::model::{Digest, FailureCode, InstallFailure, InstallResult};
 use crate::paths::{InstallPaths, cleanup_helper_file};
 use crate::platform::{OwnedEntry, OwnedKind, Platform};
 
+/// Prefix of the private outside-root staging directory.
+const STAGING_PREFIX: &str = "veles-bridge-cleanup-";
+/// The bounded identity of one staging directory, so a retry can recognise its
+/// own crash residue instead of reusing or deleting foreign content.
+const STAGING_MARKER: &str = ".veles-cleanup-stage";
+const STAGING_MARKER_SCHEMA: &str = "veles-cleanup-stage-v1";
+
 /// Everything the coordinator needs to name one helper run.
 pub struct RemovalRequest<'a> {
     /// The installed, authenticated cleanup helper image.
@@ -68,10 +75,13 @@ impl RemovalCoordinator {
         if !request.helper_source.is_file() {
             return Ok(None);
         }
-        let directory = staging_directory(request.transaction)?;
         let launcher_source = launcher_source(paths)?;
-        let (launcher, helper) = copy_images(&directory, &launcher_source, request)?;
-        Ok(Some(Self {
+        let directory = staging_directory(paths, request)?;
+        // Ownership is acquired before the first byte is copied: from here on, an
+        // error or a drop removes this directory, its marker and the two named
+        // images. Foreign content is never recursed into.
+        let (launcher, helper) = image_paths(&directory);
+        let coordinator = Self {
             directory,
             launcher,
             helper,
@@ -79,7 +89,14 @@ impl RemovalCoordinator {
             publisher: request.publisher.to_owned(),
             transaction: request.transaction.to_owned(),
             timeout: MAX_CLEANUP_TIMEOUT,
-        }))
+        };
+        copy_verified(&launcher_source, &coordinator.launcher, None)?;
+        copy_verified(
+            request.helper_source,
+            &coordinator.helper,
+            Some(request.helper_sha256),
+        )?;
+        Ok(Some(coordinator))
     }
 
     /// Run the helper for the owned entries still present and require observed
@@ -107,7 +124,7 @@ impl RemovalCoordinator {
             .map_err(deferred_removal)?;
         // The staged images and directory are the installer's own residue outside
         // the root: their absence must be observed too.
-        self.discard()?;
+        self.discard_observed()?;
         for entry in remaining {
             if OwnedEntry::from_claim(paths, entry.claim())?.is_some() {
                 return Err(pending());
@@ -116,25 +133,19 @@ impl RemovalCoordinator {
         Ok(())
     }
 
-    /// Remove the staging directory and verify it is gone.
-    fn discard(&self) -> InstallResult<()> {
-        let _ = fs::remove_file(&self.helper);
-        let _ = fs::remove_file(&self.launcher);
-        let _ = fs::remove_dir(&self.directory);
-        match fs::symlink_metadata(&self.directory) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            _ => Err(pending()),
-        }
+    /// Remove this coordinator's staging artifact and require the observed
+    /// absence of the directory. Used on every success path, including one that
+    /// never needed the helper: a best-effort `Drop` is not evidence of cleanup.
+    pub fn discard_observed(&self) -> InstallResult<()> {
+        remove_known_stage(&self.directory)
     }
 }
 
 impl Drop for RemovalCoordinator {
     fn drop(&mut self) {
-        // Best effort on every path that never reached `discard`; the explicit
-        // path above is the one whose absence is observed.
-        let _ = fs::remove_file(&self.helper);
-        let _ = fs::remove_file(&self.launcher);
-        let _ = fs::remove_dir(&self.directory);
+        // Best effort on every path that never reached `discard_observed`; that
+        // explicit path is the one whose absence is observed and required.
+        let _ = remove_known_stage(&self.directory);
     }
 }
 
@@ -163,9 +174,20 @@ pub fn cleanup_helper_source(
     Ok(None)
 }
 
-fn staging_directory(transaction: &str) -> InstallResult<PathBuf> {
+/// The fixed staging path for one installation and transaction. Deterministic so
+/// a retry can recognise the residue of a crash, and distinct per install root so
+/// independent installations never collide in the shared temporary directory.
+pub fn cleanup_staging_directory(paths: &InstallPaths, transaction: &str) -> PathBuf {
+    let root = paths.root().to_string_lossy();
+    let root_prefix = Digest::of(root.as_bytes()).to_hex();
     let suffix: String = transaction.chars().take(16).collect();
-    let directory = std::env::temp_dir().join(format!("veles-bridge-cleanup-{suffix}"));
+    std::env::temp_dir().join(format!("{STAGING_PREFIX}{}-{suffix}", &root_prefix[..8]))
+}
+
+/// Create the staging directory, reconciling only our own crash residue.
+fn staging_directory(paths: &InstallPaths, request: &RemovalRequest<'_>) -> InstallResult<PathBuf> {
+    let directory = cleanup_staging_directory(paths, request.transaction);
+    reconcile_staging(paths, &directory, request)?;
     fs::create_dir(&directory).map_err(|_| pending())?;
     #[cfg(unix)]
     {
@@ -173,7 +195,142 @@ fn staging_directory(transaction: &str) -> InstallResult<PathBuf> {
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
             .map_err(|_| pending())?;
     }
+    ensure_staging_is_safe(paths, &directory)?;
+    // The marker is written before any image: a crash after this point is
+    // identifiable as ours. A failed marker write removes the new directory.
+    if write_marker(paths, request, &directory).is_err() {
+        let _ = remove_known_stage(&directory);
+        return Err(pending());
+    }
     Ok(directory)
+}
+
+/// Remove a staging directory left by this same transaction, or refuse to touch
+/// anything else.
+fn reconcile_staging(
+    paths: &InstallPaths,
+    directory: &Path,
+    request: &RemovalRequest<'_>,
+) -> InstallResult<()> {
+    match fs::symlink_metadata(directory) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(pending()),
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => return Err(pending()),
+    }
+    ensure_staging_is_safe(paths, directory)?;
+    match fs::symlink_metadata(directory.join(STAGING_MARKER)) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            let expected = marker_bytes(paths, request)?;
+            let actual = fs::read(directory.join(STAGING_MARKER)).map_err(|_| pending())?;
+            if actual != expected {
+                // Another installation or transaction, or a forged marker: keep
+                // the directory and fail closed.
+                return Err(pending());
+            }
+        }
+        Ok(_) => return Err(pending()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // A crash between `create_dir` and the marker leaves an empty
+            // directory; anything else is not ours.
+            let empty = fs::read_dir(directory)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if !empty {
+                return Err(pending());
+            }
+        }
+        Err(_) => return Err(pending()),
+    }
+    remove_known_stage(directory)
+}
+
+/// The bounded identity of one staging directory. The temporary path is fixed,
+/// so its contents must prove whose they are before a retry may remove them.
+fn marker_bytes(paths: &InstallPaths, request: &RemovalRequest<'_>) -> InstallResult<Vec<u8>> {
+    let root = paths.root().to_str().ok_or_else(pending)?;
+    Ok(format!(
+        "{STAGING_MARKER_SCHEMA}\n{}\n{}\n{}\n",
+        request.transaction,
+        request.helper_sha256.to_hex(),
+        root
+    )
+    .into_bytes())
+}
+
+fn write_marker(
+    paths: &InstallPaths,
+    request: &RemovalRequest<'_>,
+    directory: &Path,
+) -> InstallResult<()> {
+    let bytes = marker_bytes(paths, request)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(directory.join(STAGING_MARKER))
+        .map_err(|_| pending())?;
+    use std::io::Write;
+    file.write_all(&bytes).map_err(|_| pending())?;
+    file.sync_all().map_err(|_| pending())
+}
+
+/// Require the staging directory to be outside the removable root and private.
+fn ensure_staging_is_safe(paths: &InstallPaths, directory: &Path) -> InstallResult<()> {
+    let metadata = fs::symlink_metadata(directory).map_err(|_| pending())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(pending());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(pending());
+        }
+    }
+    let root = fs::canonicalize(paths.root()).unwrap_or_else(|_| paths.root().to_path_buf());
+    let staged = fs::canonicalize(directory).map_err(|_| pending())?;
+    if staged.starts_with(&root) || root.starts_with(&staged) {
+        // A temporary directory inside (or containing) the removable root is not
+        // outside-root staging: the helper would be removing itself.
+        return Err(pending());
+    }
+    Ok(())
+}
+
+/// Remove only the two named images, the marker and the now-empty directory.
+/// Foreign entries are preserved: `remove_dir` then fails and the call reports
+/// pending rather than recursing.
+fn remove_known_stage(directory: &Path) -> InstallResult<()> {
+    let (launcher, helper) = image_paths(directory);
+    for path in [launcher, helper, directory.join(STAGING_MARKER)] {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(pending());
+            }
+            Ok(_) => fs::remove_file(&path).map_err(|_| pending())?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(pending()),
+        }
+    }
+    match fs::remove_dir(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(pending()),
+    }
+}
+
+/// The two staged image names (the platform executable suffix applies).
+fn image_paths(directory: &Path) -> (PathBuf, PathBuf) {
+    let extension = if cfg!(windows) { ".exe" } else { "" };
+    (
+        directory.join(format!("launcher{extension}")),
+        directory.join(format!("helper{extension}")),
+    )
 }
 
 /// The image that understands the launcher mode: the published maintenance engine
@@ -184,19 +341,6 @@ fn launcher_source(paths: &InstallPaths) -> InstallResult<PathBuf> {
         return Ok(published);
     }
     std::env::current_exe().map_err(|_| pending())
-}
-
-fn copy_images(
-    directory: &Path,
-    launcher_source: &Path,
-    request: &RemovalRequest<'_>,
-) -> InstallResult<(PathBuf, PathBuf)> {
-    let extension = if cfg!(windows) { ".exe" } else { "" };
-    let launcher = directory.join(format!("launcher{extension}"));
-    let helper = directory.join(format!("helper{extension}"));
-    copy_verified(launcher_source, &launcher, None)?;
-    copy_verified(request.helper_source, &helper, Some(request.helper_sha256))?;
-    Ok((launcher, helper))
 }
 
 fn copy_verified(source: &Path, destination: &Path, expected: Option<Digest>) -> InstallResult<()> {

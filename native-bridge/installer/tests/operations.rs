@@ -35,14 +35,16 @@ use veles_bridge_installer::journal::{MaintenancePreimage, MaintenancePublicatio
 use veles_bridge_installer::{
     AuthenticatedPackage, Channel, Digest, FailureCode, FakePlatform, Faults, HostState,
     InstallFailure, InstallLock, InstallPaths, InstallResult, InventoryEntry,
-    JOURNAL_SCHEMA_VERSION, Journal, JournalState, ManifestSnapshot, NativeManifest, Operation,
-    PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall, PortablePlatform, RETAINED_FILE_NAME,
-    RETAINED_SCHEMA_VERSION, Receipt, ReceiptState, Registration, ReleaseDescriptor, ReleasePolicy,
+    JOURNAL_SCHEMA_VERSION, Journal, JournalState, MAX_INVENTORY_BYTES, ManifestSnapshot,
+    NativeManifest, Operation, PRODUCTION_HOST_NAME, Phase, Platform, PlatformCall,
+    PortablePlatform, RETAINED_FILE_NAME, RETAINED_SCHEMA_VERSION, Receipt, ReceiptState,
+    Registration, ReleaseDescriptor, ReleasePolicy, RemovalCoordinator, RemovalRequest,
     RetainedInstall, STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN, STATE_REPAIRED, STATE_ROLLED_BACK,
     STATE_UNINSTALLED, StateDocument, TRUST_ASSESSMENT_MACOS_GATEKEEPER,
     TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof, ValidatedPath, Version, WarningCode,
-    authenticate_package, canonical_json, extension_origin, parse_manifest, path_is_within,
-    recover, run_operation, run_operation_within, write_carrier, write_inventory,
+    authenticate_package, canonical_json, cleanup_staging_directory, extension_origin,
+    parse_manifest, path_is_within, recover, run_operation, run_operation_within, write_carrier,
+    write_inventory,
 };
 
 const EXTENSION_ID: &str = "mnopabcdefghijklmnopabcdefghijkl";
@@ -6525,6 +6527,189 @@ fn completion_refuses_a_forged_maintenance_publication() {
             .expect("the previous receipt survives")
             .version,
         "1.0.0"
+    );
+}
+
+/// Outside-root staging acquires cleanup ownership before the first copy: a
+/// failed copy (here an oversized helper image refused by the size bound) leaves
+/// no directory or partial launcher behind (N4).
+#[test]
+fn a_failed_outside_root_stage_leaves_nothing_behind() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let oversized = fixture.temp.path().join("oversized-helper");
+    let file = fs::File::create(&oversized).expect("oversized helper");
+    file.set_len(MAX_INVENTORY_BYTES + 1)
+        .expect("sparse helper");
+    let request = RemovalRequest {
+        helper_source: &oversized,
+        helper_sha256: Digest::of(b""),
+        publisher: PUBLISHER,
+        transaction: "0123456789abcdef0123456789abcdef",
+    };
+    let failure = RemovalCoordinator::stage(paths, &request)
+        .expect_err("an oversized helper image is refused");
+    assert_eq!(failure.code, FailureCode::CleanupPending);
+    assert!(
+        !cleanup_staging_directory(paths, request.transaction).exists(),
+        "the launcher copied before the failure is removed with its directory"
+    );
+}
+
+/// A crash after staging leaves a directory with this transaction's marker; a
+/// retry reconciles that residue and stages afresh. It never reuses it as-is and
+/// never deletes a directory it cannot identify.
+#[test]
+fn staging_reconciles_its_own_crash_residue() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let helper = fixture.temp.path().join("helper-image");
+    let helper_bytes = b"the signed cleanup helper";
+    fs::write(&helper, helper_bytes).expect("helper image");
+    let request = RemovalRequest {
+        helper_source: &helper,
+        helper_sha256: Digest::of(helper_bytes),
+        publisher: PUBLISHER,
+        transaction: "0123456789abcdef0123456789abcdef",
+    };
+    let directory = cleanup_staging_directory(paths, request.transaction);
+    let _ = fs::remove_dir_all(&directory);
+
+    let staged = RemovalCoordinator::stage(paths, &request)
+        .expect("the first stage succeeds")
+        .expect("the helper image is present");
+    std::mem::forget(staged); // the process died: no destructor ran
+    assert!(directory.exists(), "the crash residue is on disk");
+
+    let restaged = RemovalCoordinator::stage(paths, &request)
+        .expect("a retry reconciles its own residue and stages afresh")
+        .expect("the helper image is present");
+    assert!(directory.exists(), "a fresh staging directory exists");
+    restaged.discard_observed().expect("observed disposal");
+    assert!(
+        !directory.exists(),
+        "the disposable staging artifact is gone"
+    );
+}
+
+/// Observed disposal is not best effort: a directory that still holds foreign
+/// content is preserved and reported, so it can never count as clean.
+#[test]
+fn observed_disposal_refuses_foreign_residue() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let helper = fixture.temp.path().join("helper-image");
+    let helper_bytes = b"the signed cleanup helper";
+    fs::write(&helper, helper_bytes).expect("helper image");
+    let request = RemovalRequest {
+        helper_source: &helper,
+        helper_sha256: Digest::of(helper_bytes),
+        publisher: PUBLISHER,
+        transaction: "0123456789abcdef0123456789abcdef",
+    };
+    let directory = cleanup_staging_directory(paths, request.transaction);
+    let _ = fs::remove_dir_all(&directory);
+    let staged = RemovalCoordinator::stage(paths, &request)
+        .expect("stage")
+        .expect("helper present");
+    let foreign = directory.join("not-ours.txt");
+    fs::write(&foreign, b"foreign").expect("foreign residue");
+    let failure = staged
+        .discard_observed()
+        .expect_err("residue is not a completed disposal");
+    assert_eq!(failure.code, FailureCode::CleanupPending);
+    assert_eq!(
+        fs::read(&foreign).expect("foreign file survives"),
+        b"foreign"
+    );
+    assert!(directory.exists(), "the unobserved directory is preserved");
+    let _ = fs::remove_dir_all(&directory);
+}
+
+/// A staging failure must never be discarded and then reported as a clean
+/// uninstall: the outside-root artifact is unaccounted for.
+#[test]
+fn uninstall_does_not_report_clean_when_outside_root_staging_fails() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &[
+            ("host.exe", HOST_V1, true),
+            ("licenses/NOTICE", NOTICE_V1, false),
+            ("maintenance/uninstall.exe", UNINSTALLER_V1, true),
+            (
+                "veles-bridge-cleanup.exe",
+                b"the signed cleanup helper",
+                true,
+            ),
+        ],
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    let transaction = receipt(paths).expect("committed receipt").transaction_id;
+    let directory = cleanup_staging_directory(paths, &transaction);
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("unrecognisable residue");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+            .expect("private residue");
+    }
+    fs::write(directory.join("foreign.txt"), b"not ours").expect("foreign content");
+
+    let failure = failure_code(run_operation(
+        &fixture.platform(),
+        paths,
+        Operation::Uninstall,
+        None,
+    ));
+    assert_eq!(
+        failure,
+        FailureCode::CleanupPending,
+        "an unaccounted outside-root stage is not clean"
+    );
+    assert!(receipt(paths).is_some(), "the durable intent is retained");
+    assert!(paths.root().exists(), "nothing was removed");
+    assert!(
+        directory.join("foreign.txt").exists(),
+        "foreign staging content is preserved"
+    );
+    let _ = fs::remove_dir_all(&directory);
+}
+
+/// A clean uninstall that never needed the helper still disposes of the staged
+/// pair through the observed path.
+#[test]
+fn a_clean_uninstall_disposes_the_outside_root_stage() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let package = fixture.package_from(
+        "v1",
+        "1.0.0",
+        &[
+            ("host.exe", HOST_V1, true),
+            ("licenses/NOTICE", NOTICE_V1, false),
+            ("maintenance/uninstall.exe", UNINSTALLER_V1, true),
+            (
+                "veles-bridge-cleanup.exe",
+                b"the signed cleanup helper",
+                true,
+            ),
+        ],
+        policy(1, Vec::new(), Vec::new()),
+    );
+    fixture.install(&package);
+    let transaction = receipt(paths).expect("committed receipt").transaction_id;
+    let report = run_operation(&fixture.platform(), paths, Operation::Uninstall, None)
+        .expect("the owned installation uninstalls");
+    assert_eq!(report.state, STATE_UNINSTALLED);
+    assert!(report.warnings.is_empty());
+    assert!(
+        !cleanup_staging_directory(paths, &transaction).exists(),
+        "the staged launcher/helper pair and directory are observed gone"
     );
 }
 
