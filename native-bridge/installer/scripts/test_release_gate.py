@@ -1350,6 +1350,20 @@ class SealedCarrierTests(unittest.TestCase):
         self.assertTrue(sealed.endswith(b"tail-of-image"))
         self.assertEqual(sealed[:102], image[:102])
 
+    def test_an_engine_image_that_compiles_the_carrier_in_still_has_one_sealable_placeholder(self) -> None:
+        # Round 3: the engine also contains the *unsealed* document it compiled in. The sealed
+        # placeholder is the only document the embedded locator may find, and only it is rewritten.
+        compiled_in = carrier(self.DESC, sealed=False)
+        resource = carrier(self.DESC, sealed=True)
+        image = b"MZ" + bytes(64) + compiled_in + bytes(64) + resource + b"tail-of-image"
+        sealed = gate.seal_carrier(image, self.INVENTORY, self.DESC, embedded=True)
+        self.assertEqual(len(sealed), len(image))
+        self.assertEqual(gate.read_carrier_seal(sealed, embedded=True), sha(self.INVENTORY))
+        start = 66 + len(compiled_in) + 64
+        self.assertEqual(sealed[start : start + len(resource) - 32], resource[:-32])
+        self.assertEqual(sealed[66 : 66 + len(compiled_in)], compiled_in)
+        self.assertTrue(sealed.endswith(b"tail-of-image"))
+
     def test_refusals(self) -> None:
         def refused(data, descriptor=None, embedded=False, inventory=None):
             with self.assertRaises(gate.StageFailure) as caught:

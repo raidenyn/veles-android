@@ -11,6 +11,7 @@ Commands (exit 0 success, 1 a refusal the build must treat as a blocker, 2 inval
     origin       --config F
     assemble     --platform P --channel C --config F --commit SHA --binaries DIR --output NEW
                  [--frontend EXE --packager package-macos.sh]
+    verify-carrier --carrier F --descriptor F --channel C [--image F]
     finalize     --platform P --slot-a DIR --slot-b DIR --output NEW --commit SHA
 
 Fail-closed rules this module owns:
@@ -31,9 +32,19 @@ tree), ``provenance.json`` (the exact shape ``release_gate.verify_inputs`` reads
 and ``SHA256SUMS``.
 
 The Windows engine's policy carrier is a resource that must be embedded into ``carrier.exe`` on a
-Windows runner (``finish-windows-tree.ps1``); this module only writes the carrier document
-(``carrier.bin``, with the zeroed 32-byte sealed-digest placeholder Task 13 needs). That embedding
-is NOT RUN on this host.
+Windows runner (``embed-carrier.ps1``). Two documents are published for the engine build, never
+built on the fly by it:
+
+* ``carrier.bin`` carries the zeroed 32-byte sealed-digest placeholder Task 13 fills in place;
+* ``embedded-carrier.bin`` is the same descriptor in an unsealed document, which is the exact
+  document ``VELES_EMBEDDED_CARRIER`` compiles into the engine. It deliberately is not the
+  placeholder, so a resource locator that matches the placeholder cannot confuse the compiled-in
+  copy with the resource Task 13 seals.
+
+The macOS tree packages the unsealed document as ``carrier.app/Contents/Resources/veles-policy-carrier``;
+``embedded-carrier.bin`` at the output root is byte-identical to it. ``verify-carrier`` checks either
+document against the exact descriptor, the channel and, when given, a built image. The resource
+embedding itself is NOT RUN on this host.
 """
 
 from __future__ import annotations
@@ -391,6 +402,10 @@ def _assemble_windows(config: dict, commit: str, files: dict[str, Path], scratch
     _copy_file(files["veles-bridge-maintenance.exe"], package / "carrier.exe", 0o755)
     # The document a Windows runner embeds as the VELES_POLICY_CARRIER resource of carrier.exe.
     _write(scratch / "carrier.bin", carrier_document(descriptor, sealed_placeholder=True), 0o644)
+    # The exact document the engine compiles in (`VELES_EMBEDDED_CARRIER`). Unsealed on purpose:
+    # Task 13's embedded carrier locator requires the sealed-placeholder header, so the compiled-in
+    # copy can never be mistaken for (or sealed instead of) the resource.
+    _write(scratch / "embedded-carrier.bin", carrier_document(descriptor, sealed_placeholder=False), 0o644)
 
 
 def _assemble_macos(
@@ -435,6 +450,59 @@ def _assemble_macos(
     for leftover in scratch.iterdir():
         if leftover.name != "tree":
             shutil.rmtree(leftover)
+    # Byte-identical to the document the tree packages in carrier.app; the engine build embeds this.
+    _write(scratch / "embedded-carrier.bin", carrier_document(descriptor, sealed_placeholder=False), 0o644)
+
+
+# ---------------------------------------------------------------------------
+# Carrier verification
+# ---------------------------------------------------------------------------
+
+
+def verify_carrier(
+    *, carrier: Path, descriptor: Path, channel: str, image: Path | None = None
+) -> None:  # fmt: skip
+    """Refuse unless ``carrier`` is the exact document for this descriptor and channel.
+
+    The engine build consumes an *already verified* artifact: this is the check that runs between
+    assembly and the build. ``image`` additionally requires the exact carrier bytes to occur exactly
+    once in a built engine image, so the bytes the build embedded are provably the assembled ones.
+    Nothing here trusts a length field before bounding it.
+    """
+    if channel not in PACKAGEABLE_CHANNELS:
+        raise AssemblyError(f"channel {channel!r} is not packageable")
+    data = _regular_file(Path(carrier), "carrier document").read_bytes()
+    expected = _regular_file(Path(descriptor), "descriptor.json").read_bytes()
+    if len(data) < CARRIER_HEADER_LEN or data[:8] != CARRIER_MAGIC:
+        raise AssemblyError("the carrier document does not start with the carrier magic")
+    version = int.from_bytes(data[8:10], "little")
+    flags = int.from_bytes(data[10:12], "little")
+    header_len = int.from_bytes(data[12:16], "little")
+    offset = int.from_bytes(data[16:24], "little")
+    length = int.from_bytes(data[24:32], "little")
+    if version != CARRIER_VERSION or flags not in (0, CARRIER_FLAG_SEALED) or header_len != CARRIER_HEADER_LEN:
+        raise AssemblyError("unsupported carrier header")
+    end = offset + length
+    if offset < CARRIER_HEADER_LEN or length == 0 or end > len(data):
+        raise AssemblyError("the carrier descriptor section is out of bounds")
+    if data[offset:end] != expected:
+        raise AssemblyError("the carrier's descriptor is not the package descriptor")
+    try:
+        value = json.loads(expected)
+    except ValueError as error:
+        raise AssemblyError(f"descriptor.json is not valid JSON: {error}") from error
+    if not isinstance(value, dict) or value.get("channel") != channel:
+        raise AssemblyError(f"the carrier belongs to another channel, not {channel}")
+    wanted = end + (SEALED_DIGEST_LEN if flags == CARRIER_FLAG_SEALED else 0)
+    if len(data) != wanted:
+        raise AssemblyError("unexpected bytes around the carrier document")
+    if image is not None:
+        built = _regular_file(Path(image), "engine image").read_bytes()
+        found = built.count(data)
+        if found != 1:
+            raise AssemblyError(
+                f"the engine image must contain exactly one copy of the assembled carrier (found {found})"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +667,11 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--output", type=Path, required=True)
     build.add_argument("--frontend", type=Path)
     build.add_argument("--packager", type=Path)
+    verify = sub.add_parser("verify-carrier")
+    verify.add_argument("--carrier", type=Path, required=True)
+    verify.add_argument("--descriptor", type=Path, required=True)
+    verify.add_argument("--channel", required=True, choices=PACKAGEABLE_CHANNELS)
+    verify.add_argument("--image", type=Path)
     final = sub.add_parser("finalize")
     final.add_argument("--platform", required=True, choices=sorted(PLATFORM_TARGET))
     final.add_argument("--slot-a", type=Path, required=True)
@@ -634,6 +707,9 @@ def main(argv: list[str] | None = None) -> int:
                 platform=args.platform, channel=args.channel, config=args.config, commit=args.commit,
                 binaries=args.binaries, output=args.output, frontend=args.frontend, packager=args.packager,
             )  # fmt: skip
+            return 0
+        if args.command == "verify-carrier":
+            verify_carrier(carrier=args.carrier, descriptor=args.descriptor, channel=args.channel, image=args.image)
             return 0
         finalize(platform=args.platform, slot_a=args.slot_a, slot_b=args.slot_b, output=args.output, commit=args.commit,
                  tool_observation=load_config(args.tool_observation))

@@ -69,6 +69,7 @@ COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 THUMBPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 TEAM_ID_RE = re.compile(r"^[0-9A-Z]{10}$")
 CARRIER_MAGIC = b"VELESPC1"
+CARRIER_VERSION = 1
 CARRIER_HEADER_LEN = 32
 SEALED_DIGEST_LEN = 32
 CARRIER_FLAG_SEALED = 1
@@ -549,9 +550,23 @@ def _locate_carrier(data: bytes, *, embedded: bool) -> int:
         if data[:8] != CARRIER_MAGIC:
             raise StageFailure("seal-failed", "the carrier document does not start with the carrier magic")
         return 0
-    positions = [m.start() for m in re.finditer(re.escape(CARRIER_MAGIC), data)]
+    # An embedded carrier is the sealed-placeholder document the producer wrote as the engine's
+    # RT_RCDATA resource. Match its full fixed header, not just the magic: the engine also compiles
+    # the *unsealed* release document in (`VELES_EMBEDDED_CARRIER`), and the compiled-in copy must
+    # never be mistaken for, or sealed instead of, the resource. This is stricter than a magic scan.
+    prefix = (
+        CARRIER_MAGIC
+        + CARRIER_VERSION.to_bytes(2, "little")
+        + CARRIER_FLAG_SEALED.to_bytes(2, "little")
+        + CARRIER_HEADER_LEN.to_bytes(4, "little")
+        + CARRIER_HEADER_LEN.to_bytes(8, "little")
+    )
+    positions = [m.start() for m in re.finditer(re.escape(prefix), data)]
     if len(positions) != 1:
-        raise StageFailure("seal-failed", f"expected exactly one carrier document in the image, found {len(positions)}")
+        raise StageFailure(
+            "seal-failed",
+            f"expected exactly one embedded carrier document in the image, found {len(positions)}",
+        )
     return positions[0]
 
 
