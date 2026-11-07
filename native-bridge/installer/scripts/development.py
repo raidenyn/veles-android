@@ -93,9 +93,11 @@ _DESCRIPTOR_FIELDS = frozenset(
     }
 )
 _COMMANDS = frozenset({"register", "remove"})
-# The approved production release config (if present) names the production extension ID; the
-# dev commands refuse it. It is read from the same place the host packaging reads it.
-_APPROVED_RELEASE_CONFIG = Path(__file__).resolve().parents[1] / "config" / "release.json"
+# The approved production identity source is the SAME file the producers read: build.gradle.kts defaults
+# installerReleaseConfig to config/release-<platform>.json for each producer platform. Every such file
+# that exists contributes its production extension ID, which the dev commands refuse.
+_CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+PRODUCTION_CONFIG_NAMES = ("release-windows.json", "release-macos.json")
 
 
 class Refusal(Exception):
@@ -121,26 +123,32 @@ def validate_extension_id(value: object, *, production_ids: frozenset[str] | set
     return value
 
 
-def production_extension_ids(config_path: Path = _APPROVED_RELEASE_CONFIG) -> frozenset[str]:
-    """Extension IDs the approved production release config names (empty when absent)."""
-    try:
-        with config_path.open("rb") as handle:
-            raw = handle.read(MAX_DESCRIPTOR_BYTES + 1)
-    except FileNotFoundError:
-        return frozenset()
-    except OSError as error:
-        raise Refusal("approved release config is unreadable") from error
-    if len(raw) > MAX_DESCRIPTOR_BYTES:
-        raise Refusal("approved release config is oversized")
-    try:
-        config = json.loads(raw)
-    except ValueError as error:
-        raise Refusal("approved release config is not valid JSON") from error
-    if not isinstance(config, dict):
-        raise Refusal("approved release config must be an object")
-    if config.get("channel") == "production" and isinstance(config.get("extension_id"), str):
-        return frozenset({config["extension_id"]})
-    return frozenset()
+def production_extension_ids(config_dir: Path = _CONFIG_DIR) -> frozenset[str]:
+    """Extension IDs every approved producer release config names (empty when none exists).
+
+    A config that exists but cannot be read or parsed is a refusal, never an empty set: an
+    unreadable approval must not turn the production ID into an acceptable dev ID.
+    """
+    found: set[str] = set()
+    for name in PRODUCTION_CONFIG_NAMES:
+        try:
+            with (config_dir / name).open("rb") as handle:
+                raw = handle.read(MAX_DESCRIPTOR_BYTES + 1)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise Refusal(f"approved release config {name} is unreadable") from error
+        if len(raw) > MAX_DESCRIPTOR_BYTES:
+            raise Refusal(f"approved release config {name} is oversized")
+        try:
+            config = json.loads(raw)
+        except ValueError as error:
+            raise Refusal(f"approved release config {name} is not valid JSON") from error
+        if not isinstance(config, dict):
+            raise Refusal(f"approved release config {name} must be an object")
+        if config.get("channel") == "production" and isinstance(config.get("extension_id"), str):
+            found.add(config["extension_id"])
+    return frozenset(found)
 
 
 def parse_args(argv: list[str]) -> tuple[str, str, str]:

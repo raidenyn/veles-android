@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -31,6 +32,8 @@ PLACEHOLDER_ID = "abcdefghijklmnopabcdefghijklmnop"
 DEV_ID = "hgfedcbahgfedcbahgfedcbahgfedcba"
 OTHER_ID = "ponmlkjihgfedcbaponmlkjihgfedcba"
 PRODUCTION_ID = "bbbbbbbbbbbbbbbbcccccccccccccccc"
+# The approved identity source: the file names build.gradle.kts hands the producers.
+PRODUCER_CONFIG_NAMES = ("release-windows.json", "release-macos.json")
 DEV_HOST_NAME = "me.nagaev.veles.bridge.dev"
 PRODUCTION_HOST_NAME = "me.nagaev.veles.bridge"
 HOST_FILE = "veles-native-host"
@@ -227,31 +230,36 @@ class ProductionIsolation(Fixture):
                 self.assertEqual(result.returncode, 1, (label, result.stderr))
         self.assertEqual(build.engine_calls(), [])
 
-        # -- The approved production ID is rejected when the approved config is present.
-        scripts = self.tmp / "scripts-copy"
-        shutil.copytree(SCRIPTS, scripts, ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
-        config = self.tmp / "config"
-        config.mkdir()
-        (config / "release.json").write_text(
-            json.dumps({"channel": "production", "extension_id": PRODUCTION_ID})
-        )
-        prod_build = self.build_in(self.tmp / "prodbuild", PRODUCTION_ID)
-        result = subprocess.run(
-            [
-                "sh",
-                str(scripts / "register-dev.sh"),
-                "--extension-id",
-                PRODUCTION_ID,
-                "--host-binary",
-                str(prod_build.host_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertEqual(prod_build.engine_calls(), [])
+        # -- The approved production ID is rejected when an approved producer config is present,
+        # under every file name the producers actually read (release-<platform>.json).
+        for config_name in PRODUCER_CONFIG_NAMES:
+            with self.subTest(production_config=config_name):
+                root = self.tmp / f"installer-copy-{config_name}"
+                scripts = root / "scripts"
+                shutil.copytree(SCRIPTS, scripts, ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
+                config = root / "config"
+                config.mkdir()
+                (config / config_name).write_text(
+                    json.dumps({"channel": "production", "extension_id": PRODUCTION_ID})
+                )
+                prod_build = self.build_in(self.tmp / f"prodbuild-{config_name}", PRODUCTION_ID)
+                result = subprocess.run(
+                    [
+                        "sh",
+                        str(scripts / "register-dev.sh"),
+                        "--extension-id",
+                        PRODUCTION_ID,
+                        "--host-binary",
+                        str(prod_build.host_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("production extension id", result.stderr)
+                self.assertEqual(prod_build.engine_calls(), [])
 
         # -- Production names / channels / extra origins in the build descriptor.
         for label, change in (
@@ -439,6 +447,48 @@ class HostAllowlistBinding(Fixture):
         build.host_path.symlink_to(real)
         self.assertEqual(self.register(build).returncode, 1)
         self.assertEqual(build.engine_calls(), [])
+
+
+class ProductionIdentitySource(unittest.TestCase):
+    """F16: the dev guard reads the same approved config the producers read."""
+
+    def test_the_guard_names_exactly_the_files_gradle_hands_the_producers(self) -> None:
+        gradle = (SCRIPTS.parents[2] / "build.gradle.kts").read_text(encoding="utf-8")
+        match = re.search(r'native-bridge/installer/config/release-\$installerPlatform\.json', gradle)
+        self.assertIsNotNone(match, "build.gradle.kts no longer defaults installerReleaseConfig to release-<platform>.json")
+        platforms = re.findall(r'startsWith\("\w+"\) -> "(windows|macos)"', gradle)
+        self.assertEqual(sorted(platforms), ["macos", "windows"])
+        self.assertEqual(sorted(development.PRODUCTION_CONFIG_NAMES),
+                         sorted(f"release-{platform}.json" for platform in platforms))
+        self.assertEqual(development._CONFIG_DIR, SCRIPTS.parent / "config")
+
+    def test_default_discovery_finds_every_producer_config(self) -> None:
+        for name in PRODUCER_CONFIG_NAMES:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                (Path(raw) / name).write_text(json.dumps({"channel": "production", "extension_id": PRODUCTION_ID}))
+                ids = development.production_extension_ids(Path(raw))
+                self.assertEqual(ids, frozenset({PRODUCTION_ID}))
+                with self.assertRaises(development.Refusal):
+                    development.validate_extension_id(PRODUCTION_ID, production_ids=ids)
+
+    def test_both_platform_configs_contribute_and_fixture_ids_do_not(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "release-windows.json").write_text(json.dumps({"channel": "production", "extension_id": PRODUCTION_ID}))
+            (root / "release-macos.json").write_text(json.dumps({"channel": "production", "extension_id": OTHER_ID}))
+            (root / "fixture-windows.json").write_text(json.dumps({"channel": "fixture", "extension_id": DEV_ID}))
+            self.assertEqual(development.production_extension_ids(root), frozenset({PRODUCTION_ID, OTHER_ID}))
+
+    def test_an_unreadable_or_malformed_producer_config_fails_closed(self) -> None:
+        for body in ("{", "[]", "x" * (development.MAX_DESCRIPTOR_BYTES + 1)):
+            with self.subTest(body=body[:8]), tempfile.TemporaryDirectory() as raw:
+                (Path(raw) / "release-macos.json").write_text(body)
+                with self.assertRaises(development.Refusal):
+                    development.production_extension_ids(Path(raw))
+
+    def test_the_repository_default_directory_is_the_tracked_config_directory(self) -> None:
+        self.assertEqual(development.production_extension_ids(),
+                         development.production_extension_ids(SCRIPTS.parent / "config"))
 
 
 class ModuleSurface(unittest.TestCase):
