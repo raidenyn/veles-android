@@ -352,8 +352,42 @@ class BundleInputContract(unittest.TestCase):
             "testActiveHostShowsCloseTabsAndRetry",
             "testTrustUnavailableNeverShowsDone",
             "testMaintenanceDoesNotLaunchHost",
+            # F11: Update and damaged-install Repair transitions, and the bounded child wait.
+            "testAnInstalledReleaseOffersRepairOnlyForItsOwnPackageAndUpdateForAnother",
+            "testDamagedStateStillOffersRepairForTheSameVersionPackage",
+            "testADamagedInspectOffersRepairWithoutAnyPresentationGuard",
+            "testAWedgedEngineIsReportedAfterTheDeadline",
         ):
             self.assertIn(required, names)
+
+    def test_operation_availability_is_derived_from_installation_and_package_state(self) -> None:
+        """F11: Update exists, Repair survives a damaged result, and neither depends on the presentation kind."""
+        self.assertRegex(self.app_source, r"enum OperationPlanner")
+        self.assertRegex(
+            self.app_source,
+            r"static func offered\(for report: MaintenanceReport, packagePayload: String\?\)"
+            r" -> \[OfferedOperation\]")
+        self.assertRegex(self.app_source, r"case update")
+        self.assertRegex(self.app_source, r"case \.install, \.update: return \.install")
+        # The package this installer carries is read from its own descriptor, bounded, and used to tell
+        # "the installed release" (Repair) from "another release" (Update).
+        self.assertRegex(self.app_source, r"enum PackageIdentity")
+        self.assertRegex(self.app_source, r"descriptor\.json")
+        # ... and read under a bound, never loaded whole.
+        self.assertRegex(self.app_source, r"read\(upToCount: maxDescriptorBytes \+ 1\)")
+        self.assertIsNone(re.search(r"Data\(contentsOf:", self.app_source))
+        # The old guard that hid Repair behind an informational/done presentation must not come back.
+        for pattern in (r"presentation\.kind\s*==\s*\.info", r"installed:\s*Bool", r"damaged:\s*Bool"):
+            self.assertIsNone(re.search(pattern, self.app_source), f"App.swift must not contain {pattern!r}")
+
+    def test_the_child_wait_is_bounded_and_never_signals_the_engine(self) -> None:
+        """The Swift frontend must not wait for the engine without a deadline, and must not kill it."""
+        self.assertRegex(self.app_source, r"static let defaultDeadline: TimeInterval = (\d+)")
+        self.assertRegex(self.app_source, r"terminationHandler")
+        self.assertRegex(self.app_source, r"finished\.wait\(timeout: \.now\(\) \+ deadline\)")
+        self.assertRegex(self.app_source, r"case timedOut")
+        self.assertRegex(self.app_source, r"case \.timedOut:")
+        self.assertIsNone(re.search(r"\bprocess\.(terminate|kill)\s*\(", self.app_source))
 
     # -- cross-language vocabulary ----------------------------------------------------------
 

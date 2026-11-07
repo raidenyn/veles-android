@@ -175,6 +175,12 @@ struct MaintenanceReport: Equatable, Decodable, Sendable {
         }
     }
 
+    /// A same-version `install` is the repair of that release (`Operation::Install` reruns repair), so the engine
+    /// answers it with a `repair` report. Every other requested word must be answered by itself.
+    func answers(requested: MaintenanceOperation) -> Bool {
+        requested == .install && operation == .repair
+    }
+
     /// Whether the operation reached a settled outcome the engine would exit 0 for. This mirrors
     /// `exit_code` in `src/cli.rs`; the client treats any disagreement as a failed run.
     var expectedExitStatus: Int32 {
@@ -210,6 +216,8 @@ enum ClientError: Error, Equatable, Sendable {
     case malformedReport
     case operationMismatch
     case exitStatusDisagrees
+    /// The engine did not finish within the deadline. The app stops waiting; it never signals the engine.
+    case timedOut
 }
 
 /// Where the signed engine and the authenticated package live inside this app bundle.
@@ -265,7 +273,9 @@ struct MaintenanceClient: Sendable {
             throw ClientError.outputTooLarge
         }
         let report = try MaintenanceReport.decode(result.standardOutput)
-        guard report.operation == operation else { throw ClientError.operationMismatch }
+        guard report.operation == operation || report.answers(requested: operation) else {
+            throw ClientError.operationMismatch
+        }
         guard result.status == report.expectedExitStatus else { throw ClientError.exitStatusDisagrees }
         return report
     }
@@ -281,13 +291,20 @@ private final class Drained: @unchecked Sendable {
 struct FoundationProcessRunner: ProcessRunning {
     static let childEnvironment: [String: String] = ["LC_ALL": "C"]
     static let standardErrorLimit = 4096
+    /// How long the app waits for the engine. The engine bounds its own waits (quiescence, cleanup); this
+    /// is the backstop that keeps a wedged child from freezing the window for ever.
+    static let defaultDeadline: TimeInterval = 300
+
+    var deadline: TimeInterval = FoundationProcessRunner.defaultDeadline
 
     func run(executable: URL, arguments: [String]) async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
+        let deadline = self.deadline
+        return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     continuation.resume(
-                        returning: try Self.runBlocking(executable: executable, arguments: arguments))
+                        returning: try Self.runBlocking(
+                            executable: executable, arguments: arguments, deadline: deadline))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -295,7 +312,9 @@ struct FoundationProcessRunner: ProcessRunning {
         }
     }
 
-    private static func runBlocking(executable: URL, arguments: [String]) throws -> ProcessResult {
+    private static func runBlocking(
+        executable: URL, arguments: [String], deadline: TimeInterval
+    ) throws -> ProcessResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -305,6 +324,8 @@ struct FoundationProcessRunner: ProcessRunning {
         let errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
         do {
             try process.run()
         } catch {
@@ -313,7 +334,9 @@ struct FoundationProcessRunner: ProcessRunning {
         let group = DispatchGroup()
         let outputBytes = drain(output.fileHandleForReading, limit: MaintenanceReport.maxBytes + 1, group: group)
         let errorBytes = drain(errors.fileHandleForReading, limit: standardErrorLimit, group: group)
-        process.waitUntilExit()
+        // A bounded wait. On the deadline the app stops waiting and reports it; it does not signal the engine,
+        // which owns a crash-safe transaction that a kill could interrupt. A later Inspect shows the truth.
+        guard finished.wait(timeout: .now() + deadline) == .success else { throw ClientError.timedOut }
         group.wait()
         guard process.terminationReason == .exit else { throw ClientError.terminatedBySignal }
         return ProcessResult(
@@ -337,6 +360,100 @@ struct FoundationProcessRunner: ProcessRunning {
             group.leave()
         }
         return drained
+    }
+}
+
+// MARK: - Which operations are offered (pure, testable)
+
+/// What the user may ask for. `update` is `install --package` of a release other than the installed one.
+enum OfferedOperation: String, CaseIterable, Equatable, Sendable {
+    case install
+    case update
+    case repair
+    case rollback
+    case uninstall
+
+    /// The engine word that performs it.
+    var engineOperation: MaintenanceOperation {
+        switch self {
+        case .install, .update: return .install
+        case .repair: return .repair
+        case .rollback: return .rollback
+        case .uninstall: return .uninstall
+        }
+    }
+}
+
+/// The installation as a report describes it, reduced to what decides the offered operations.
+enum InstalledState: Equatable, Sendable {
+    case absent
+    case installed
+    case damaged
+    case foreign
+    case recoveryRequired
+    case unknown
+
+    init(reportState state: String) {
+        switch state {
+        case "absent", "uninstalled": self = .absent
+        case "installed", "clean", "repaired", "rolled-back", "recovered-active", "recovered-previous":
+            self = .installed
+        case "damaged": self = .damaged
+        case "foreign": self = .foreign
+        case "recovery-required": self = .recoveryRequired
+        default: self = .unknown
+        }
+    }
+}
+
+/// Derives the offered operations from the OWNED installation state and the package this installer carries -
+/// never from how a presentation happened to be classified.
+///
+/// `report.activePayload` is the payload id of the installed release and `packagePayload` the one this
+/// installer carries. They are equal exactly when this installer IS the installed release, the only package
+/// the engine accepts for Repair; a different package can only Update.
+enum OperationPlanner {
+    static func offered(for report: MaintenanceReport, packagePayload: String?) -> [OfferedOperation] {
+        // A result that failed, or left a cleanup pending, offers only Retry and Quit (the presentation's
+        // actions); the next Inspect shows the truth.
+        if report.warnings.contains(.cleanupPending) { return [] }
+        if report.operation != .inspect && report.failure != nil { return [] }
+        if report.failure == .unsupportedState || report.failure == .cleanupPending { return [] }
+        let sameRelease = report.activePayload != nil && report.activePayload == packagePayload
+        switch InstalledState(reportState: report.state) {
+        case .absent:
+            return [.install]
+        case .installed:
+            return sameRelease ? [.repair, .rollback, .uninstall] : [.update, .rollback, .uninstall]
+        case .damaged:
+            return sameRelease ? [.repair, .uninstall] : [.uninstall]
+        case .recoveryRequired:
+            return [.install]
+        case .foreign, .unknown:
+            return []
+        }
+    }
+}
+
+/// The payload id of the release this installer carries, read from its own `descriptor.json`.
+enum PackageIdentity {
+    static let maxDescriptorBytes = 64 * 1024
+
+    /// Read at most one byte past the bound, so an oversized or hostile descriptor can never be
+    /// loaded whole. This identity only decides which buttons are offered; the engine still
+    /// authenticates the package, its inventory and its signature before acting on it.
+    static func payloadID(package: URL) -> String? {
+        let file = package.appendingPathComponent("descriptor.json", isDirectory: false)
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maxDescriptorBytes + 1),
+            data.count <= maxDescriptorBytes,
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let id = object["payload_id"] as? String,
+            id.utf8.count == 64,
+            id.unicodeScalars.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) })
+        else { return nil }
+        return id
     }
 }
 
@@ -417,6 +534,11 @@ enum Presenter {
             return (
                 "The installer package is missing",
                 "Open this installer from the original disk image so it can find its package."
+            )
+        case .timedOut:
+            return (
+                "The installer engine is taking too long",
+                "It may still be finishing. Wait a minute, then choose Retry; nothing is reported as done until it says so."
             )
         case .launchFailed:
             return (
@@ -555,9 +677,9 @@ enum Presenter {
         switch state {
         case "absent": return "Choose Install to set it up for this user account."
         case "installed", "clean": return "You can repair, roll back or uninstall it."
-        case "damaged": return "Choose Repair to restore it from this installer."
+        case "damaged": return "Repair restores it from the installer of the same version; otherwise remove it and install again."
         case "foreign": return "The installer did not create these files and left them untouched."
-        case "recovery-required": return "Choose Retry to finish recovering it."
+        case "recovery-required": return "Choose Install: the installer settles the interrupted change first."
         case "failed": return "Nothing was reported as done."
         default: return "No change was made."
         }
@@ -593,43 +715,46 @@ final class InstallerViewModel: ObservableObject {
     enum Screen: Equatable {
         case inspecting
         case running(MaintenanceOperation)
-        case result(Presentation, installed: Bool, damaged: Bool)
+        case result(Presentation, offered: [OfferedOperation])
     }
 
     @Published private(set) var screen: Screen = .inspecting
     @Published private(set) var translocated = false
     private var lastOperation: MaintenanceOperation = .inspect
     private let client: MaintenanceClient?
+    private let packagePayload: String?
 
     init(resourceURL: URL? = Bundle.main.resourceURL, runner: ProcessRunning = FoundationProcessRunner()) {
         if let resourceURL {
             let location = EngineLocation.resolve(resourceURL: resourceURL)
             translocated = EngineLocation.isTranslocated(location.engine)
             client = MaintenanceClient(engine: location.engine, package: location.package, runner: runner)
+            packagePayload = PackageIdentity.payloadID(package: location.package)
         } else {
             client = nil
+            packagePayload = nil
         }
     }
 
     func start() { Task { await perform(.inspect) } }
     func retry() { Task { await perform(lastOperation) } }
 
+    func performOffered(_ offered: OfferedOperation) async { await perform(offered.engineOperation) }
+
     func perform(_ operation: MaintenanceOperation) async {
         lastOperation = operation
         screen = operation == .inspect ? .inspecting : .running(operation)
         guard let client else {
-            screen = .result(Presenter.present(ClientError.engineUnavailable), installed: false, damaged: false)
+            screen = .result(Presenter.present(ClientError.engineUnavailable), offered: [])
             return
         }
         do {
             let report = try await client.run(operation.rawValue)
             screen = .result(
                 Presenter.present(report),
-                installed: ["installed", "clean", "repaired", "rolled-back"].contains(report.state)
-                    && report.failure == nil,
-                damaged: report.state == "damaged")
+                offered: OperationPlanner.offered(for: report, packagePayload: packagePayload))
         } catch {
-            screen = .result(Presenter.present(error), installed: false, damaged: false)
+            screen = .result(Presenter.present(error), offered: [])
         }
     }
 }
@@ -646,8 +771,8 @@ struct InstallerView: View {
                 ProgressView("Checking this account…")
             case .running(let operation):
                 ProgressView("Working: \(operation.rawValue)…")
-            case .result(let presentation, let installed, let damaged):
-                resultView(presentation, installed: installed, damaged: damaged)
+            case .result(let presentation, let offered):
+                resultView(presentation, offered: offered)
             }
             if model.translocated {
                 Text("This app is running from a temporary read-only location. That is fine: Veles is never installed there.")
@@ -663,19 +788,27 @@ struct InstallerView: View {
     }
 
     @ViewBuilder
-    private func resultView(_ presentation: Presentation, installed: Bool, damaged: Bool) -> some View {
+    private func resultView(_ presentation: Presentation, offered: [OfferedOperation]) -> some View {
         Text(presentation.title).font(.headline)
         Text(presentation.detail).fixedSize(horizontal: false, vertical: true)
         ForEach(presentation.warnings, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
         HStack {
-            if presentation.kind == .info || presentation.kind == .done {
-                if installed || damaged {
-                    Button("Repair") { Task { await model.perform(.repair) } }
-                    Button("Roll back") { Task { await model.perform(.rollback) } }
-                    Button("Uninstall…", role: .destructive) { confirmUninstall = true }
-                } else {
-                    Button("Install") { Task { await model.perform(.install) } }
+            // The buttons come from the owned installation state and this installer's package, not from how the
+            // result happened to be classified: a damaged installation still offers Repair.
+            ForEach(offered, id: \.self) { operation in
+                switch operation {
+                case .install:
+                    Button("Install") { Task { await model.performOffered(operation) } }
                         .keyboardShortcut(.defaultAction)
+                case .update:
+                    Button("Update") { Task { await model.performOffered(operation) } }
+                        .keyboardShortcut(.defaultAction)
+                case .repair:
+                    Button("Repair") { Task { await model.performOffered(operation) } }
+                case .rollback:
+                    Button("Roll back") { Task { await model.performOffered(operation) } }
+                case .uninstall:
+                    Button("Uninstall…", role: .destructive) { confirmUninstall = true }
                 }
             }
             if presentation.actions.contains(.retry) {

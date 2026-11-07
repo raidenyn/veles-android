@@ -43,14 +43,16 @@ func reportData(
     operation: String,
     state: String,
     priorUsable: Bool = true,
+    activePayload: String? = nil,
     failure: String? = nil,
     warnings: [String] = []
 ) -> Data {
     let failureJSON = failure.map { "\"\($0)\"" } ?? "null"
+    let payloadJSON = activePayload.map { "\"\($0)\"" } ?? "null"
     let warningsJSON = "[" + warnings.map { "\"\($0)\"" }.joined(separator: ",") + "]"
     let text =
         "{\"operation\":\"\(operation)\",\"state\":\"\(state)\",\"prior_usable\":\(priorUsable),"
-        + "\"active_payload\":null,\"failure\":\(failureJSON),\"warnings\":\(warningsJSON)}\n"
+        + "\"active_payload\":\(payloadJSON),\"failure\":\(failureJSON),\"warnings\":\(warningsJSON)}\n"
     return Data(text.utf8)
 }
 
@@ -271,5 +273,214 @@ final class FrontendTests: XCTestCase {
         // copies from; it is never an argument of any other operation.
         let package = EngineLocation.resolve(resourceURL: translocated).package
         XCTAssertTrue(package.path.hasSuffix("/package"))
+    }
+}
+
+// MARK: - F11: the offered operations come from installation and package state
+
+/// The installed payload this fake installer would report, and another release's payload.
+private let installedPayload = String(repeating: "a", count: 64)
+private let otherPayload = String(repeating: "b", count: 64)
+
+private func stateReport(
+    _ operation: MaintenanceOperation,
+    _ state: String,
+    activePayload: String? = nil,
+    failure: FailureCode? = nil,
+    warnings: [WarningCode] = []
+) -> MaintenanceReport {
+    MaintenanceReport(
+        operation: operation, state: state, priorUsable: false,
+        activePayload: activePayload, failure: failure, warnings: warnings)
+}
+
+/// A writable fake app bundle whose `Resources/package/descriptor.json` names this installer's payload.
+private func fakeBundle(resources: String) throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("veles-installer-tests-\(UUID().uuidString)", isDirectory: true)
+    let package = root.appendingPathComponent("package", isDirectory: true)
+    try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+    let descriptor = "{\"payload_id\":\"\(resources)\"}\n"
+    try Data(descriptor.utf8).write(to: package.appendingPathComponent("descriptor.json"))
+    return root
+}
+
+final class OfferedOperationTests: XCTestCase {
+    /// A newer installer over an existing installation offers Update - the engine's `install`.
+    func testAnInstalledReleaseOffersRepairOnlyForItsOwnPackageAndUpdateForAnother() {
+        let installed = stateReport(.inspect, "installed", activePayload: installedPayload)
+        XCTAssertEqual(
+            OperationPlanner.offered(for: installed, packagePayload: installedPayload),
+            [.repair, .rollback, .uninstall])
+        XCTAssertEqual(
+            OperationPlanner.offered(for: installed, packagePayload: otherPayload),
+            [.update, .rollback, .uninstall])
+        // Without a readable package identity there is no same-version package to repair with.
+        XCTAssertEqual(
+            OperationPlanner.offered(for: installed, packagePayload: nil),
+            [.update, .rollback, .uninstall])
+        XCTAssertEqual(OfferedOperation.update.engineOperation, .install)
+        XCTAssertEqual(OfferedOperation.repair.engineOperation, .repair)
+    }
+
+    func testAnAbsentOrRecoverableInstallationOffersInstall() {
+        XCTAssertEqual(
+            OperationPlanner.offered(for: stateReport(.inspect, "absent"), packagePayload: otherPayload),
+            [.install])
+        XCTAssertEqual(
+            OperationPlanner.offered(
+                for: stateReport(.inspect, "recovery-required", failure: .recoveryRequired),
+                packagePayload: otherPayload),
+            [.install])
+    }
+
+    /// F11's second defect: a damaged inspection carries a failure, so the old presentation-kind guard hid
+    /// Repair even though the damage is safely ours. The planner must not look at the presentation.
+    func testDamagedStateStillOffersRepairForTheSameVersionPackage() {
+        for failure in [nil, .recoveryRequired] as [FailureCode?] {
+            let damaged = stateReport(
+                .inspect, "damaged", activePayload: installedPayload, failure: failure)
+            let presented = Presenter.present(damaged).kind
+            XCTAssertNotEqual(presented, .info, "a damaged result is not informational")
+            XCTAssertNotEqual(presented, .done, "a damaged result is never done")
+            XCTAssertEqual(
+                OperationPlanner.offered(for: damaged, packagePayload: installedPayload),
+                [.repair, .uninstall],
+                "repair is still the safe same-version operation for owned damage")
+            XCTAssertEqual(
+                OperationPlanner.offered(for: damaged, packagePayload: otherPayload),
+                [.uninstall],
+                "another release of the product cannot repair this one")
+        }
+    }
+
+    func testForeignUnknownAndUnreadableStatesOfferNothing() {
+        for state in ["foreign", "some-future-state"] {
+            XCTAssertEqual(
+                OperationPlanner.offered(for: stateReport(.inspect, state), packagePayload: installedPayload),
+                [])
+        }
+        XCTAssertEqual(
+            OperationPlanner.offered(
+                for: stateReport(.inspect, "installed", failure: .unsupportedState),
+                packagePayload: installedPayload),
+            [])
+    }
+
+    /// A mutating result that failed, or left cleanup pending, offers only the presentation's Retry.
+    func testAFailedOrPendingMutationOffersOnlyRetry() {
+        for report in [
+            stateReport(.install, "failed", failure: .io),
+            stateReport(.uninstall, "uninstalled", warnings: [.cleanupPending]),
+            stateReport(.repair, "failed", failure: .cleanupPending),
+        ] {
+            XCTAssertEqual(OperationPlanner.offered(for: report, packagePayload: installedPayload), [])
+        }
+    }
+
+    func testPackageIdentityReadsOnlyTheBoundedDigestFromTheDescriptor() throws {
+        XCTAssertEqual(
+            PackageIdentity.payloadID(package: try fakeBundle(resources: installedPayload)),
+            Optional(installedPayload))
+        for bad in [String(repeating: "A", count: 64), String(installedPayload.dropLast()),
+                    String(installedPayload.dropLast()) + "g"] {
+            XCTAssertNil(PackageIdentity.payloadID(package: try fakeBundle(resources: bad)), bad)
+        }
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("veles-installer-tests-\(UUID().uuidString)", isDirectory: true)
+        XCTAssertNil(PackageIdentity.payloadID(package: missing))
+
+        // An oversized descriptor is never loaded whole: the read itself is bounded.
+        let oversized = try fakeBundle(resources: installedPayload)
+        defer { try? FileManager.default.removeItem(at: oversized) }
+        try Data(repeating: 0x20, count: PackageIdentity.maxDescriptorBytes + 1)
+            .write(to: oversized.appendingPathComponent("package/descriptor.json"))
+        XCTAssertNil(PackageIdentity.payloadID(package: oversized))
+    }
+}
+
+final class InstallerViewModelTransitionTests: XCTestCase {
+    /// A damaged inspect result reaches the view model with Repair offered, even though the presentation is
+    /// a failure. This is the transition the old `presentation.kind == .info || .done` guard could not make.
+    func testADamagedInspectOffersRepairWithoutAnyPresentationGuard() async throws {
+        let bundle = try fakeBundle(resources: installedPayload)
+        defer { try? FileManager.default.removeItem(at: bundle) }
+        let report = reportData(
+            operation: "inspect", state: "damaged", priorUsable: false,
+            activePayload: installedPayload, failure: "recovery-required")
+        let runner = RecordingRunner(result: result(0, report))
+        let model = InstallerViewModel(resourceURL: bundle, runner: runner)
+        await model.perform(.inspect)
+        guard case .result(let presentation, let offered) = model.screen else {
+            return XCTFail("the inspection must settle into a result: \(model.screen)")
+        }
+        XCTAssertNotEqual(presentation.kind, .info, "the old guard would have hidden Repair here")
+        XCTAssertNotEqual(presentation.kind, .done)
+        XCTAssertEqual(offered, [.repair, .uninstall])
+        XCTAssertEqual(runner.calls.map(\.arguments.first), ["inspect"] as [String?])
+    }
+
+    /// Choosing Update starts the engine's `install`; choosing Repair starts `repair`.
+    func testUpdateAndRepairStartTheEngineWordTheyMean() async throws {
+        let newer = try fakeBundle(resources: otherPayload)
+        defer { try? FileManager.default.removeItem(at: newer) }
+        let runner = RecordingRunner(
+            result: result(0, reportData(operation: "install", state: "installed")))
+        let model = InstallerViewModel(resourceURL: newer, runner: runner)
+        await model.performOffered(.update)
+        XCTAssertEqual(runner.calls.last?.arguments.first, "install")
+        let installed = try fakeBundle(resources: installedPayload)
+        defer { try? FileManager.default.removeItem(at: installed) }
+        let repairRunner = RecordingRunner(
+            result: result(0, reportData(operation: "repair", state: "repaired")))
+        let repairing = InstallerViewModel(resourceURL: installed, runner: repairRunner)
+        await repairing.performOffered(.repair)
+        XCTAssertEqual(repairRunner.calls.last?.arguments.first, "repair")
+    }
+
+    func testAnAbsentInstallationDoesNotPretendToOfferMaintenance() async throws {
+        let bundle = try fakeBundle(resources: installedPayload)
+        defer { try? FileManager.default.removeItem(at: bundle) }
+        let runner = RecordingRunner(
+            result: result(0, reportData(operation: "inspect", state: "absent", priorUsable: false)))
+        let model = InstallerViewModel(resourceURL: bundle, runner: runner)
+        await model.perform(.inspect)
+        guard case .result(_, let offered) = model.screen else {
+            return XCTFail("the inspection must settle into a result: \(model.screen)")
+        }
+        XCTAssertEqual(offered, [.install])
+    }
+}
+
+final class EngineDeadlineTests: XCTestCase {
+    /// The Swift child wait is bounded: a wedged engine is reported, never waited on for ever, and it is
+    /// never signalled (a kill could interrupt the engine's crash-safe transaction).
+    func testAWedgedEngineIsReportedAfterTheDeadline() async {
+        var runner = FoundationProcessRunner()
+        runner.deadline = 0.2
+        do {
+            _ = try await runner.run(
+                executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["2"])
+            XCTFail("a child that does not exit must not be waited on without a deadline")
+        } catch {
+            XCTAssertEqual(error as? ClientError, .timedOut)
+        }
+    }
+
+    func testTheDefaultDeadlineIsFiniteAndGenerous() {
+        XCTAssertEqual(FoundationProcessRunner.defaultDeadline, 300)
+        XCTAssertGreaterThan(FoundationProcessRunner().deadline, 0)
+    }
+
+    /// `install` is answered with `repair` only when this installer IS the installed release; that is the
+    /// same-version rerun. Nothing else may be answered by another operation word.
+    func testASameVersionInstallIsAnsweredByTheRepairItPerformed() throws {
+        let repaired = MaintenanceReport(
+            operation: .repair, state: "repaired", priorUsable: true, activePayload: installedPayload)
+        XCTAssertTrue(repaired.answers(requested: .install))
+        XCTAssertFalse(repaired.answers(requested: .rollback))
+        XCTAssertFalse(
+            MaintenanceReport(operation: .install, state: "installed", priorUsable: true)
+                .answers(requested: .repair))
     }
 }
