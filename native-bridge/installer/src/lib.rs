@@ -52,7 +52,7 @@ pub use model::{
     MAX_POLICY_DIGESTS, MAX_PUBLISHER_BYTES, MAX_PUBLISHERS, MAX_REPORT_WARNINGS, MIN_API_VERSION,
     Operation, PLACEHOLDER_EXTENSION_ID, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy,
     SCHEMA_VERSION, Target, Version, WarningCode, canonical_json, extension_origin, parse_version,
-    validate_extension_id,
+    select_host, validate_extension_id,
 };
 pub use operations::{
     STATE_ABSENT, STATE_DAMAGED, STATE_FOREIGN, STATE_REPAIRED, STATE_UNINSTALLED, run_operation,

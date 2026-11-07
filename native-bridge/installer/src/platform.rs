@@ -59,7 +59,7 @@ use crate::inventory::{
 use crate::model::{
     Channel, Digest, FailureCode, InstallFailure, InstallResult, InventoryEntry,
     MAX_DOCUMENT_BYTES, MAX_INVENTORY_BYTES, MAX_INVENTORY_ENTRIES, MAX_PATH_BYTES,
-    MAX_PUBLISHER_BYTES, ReleaseDescriptor, Target, validate_extension_id,
+    MAX_PUBLISHER_BYTES, ReleaseDescriptor, Target, select_host, validate_extension_id,
 };
 use crate::paths::{
     InstallPaths, JOURNAL_FILE, MAINTENANCE_DIR, MAX_ROOT_BYTES, RECEIPT_FILE, STAGING_DIR,
@@ -2576,16 +2576,19 @@ pub fn authenticate_package(
     // The carrier's signature authenticates the policy, not the code that will
     // run. The one executable the manifest will select is assessed by the OS in
     // its package form and by a publisher the authenticated policy lists.
-    let mut executables = payload.iter().filter(|source| source.executable());
-    if let (Some(host), None) = (executables.next(), executables.next()) {
-        assess_host(
-            platform,
-            &source.path().join(PACKAGE_PAYLOAD_DIR),
-            host.relative(),
-            &contents.descriptor,
-            &contents.descriptor.policy.publishers,
-        )?;
-    }
+    let host = select_host(
+        contents.descriptor.target,
+        payload.iter(),
+        |source| source.relative(),
+        |source| source.executable(),
+    )?;
+    assess_host(
+        platform,
+        &source.path().join(PACKAGE_PAYLOAD_DIR),
+        host.relative(),
+        &contents.descriptor,
+        &contents.descriptor.policy.publishers,
+    )?;
 
     Ok(AuthenticatedPackage {
         source,

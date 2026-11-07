@@ -205,6 +205,43 @@ pub enum Target {
     MacosArm64,
 }
 
+impl Target {
+    /// Payload files this target's layout contract names as SUPPORT executables:
+    /// they carry launch permission like the host but are never the Native
+    /// Messaging host. The Windows producer ships the cleanup helper and the
+    /// uninstaller as executables beside the host; the macOS payload is the host
+    /// bundle alone.
+    pub const fn support_executables(self) -> &'static [&'static str] {
+        match self {
+            Self::WindowsX64 => &["veles-bridge-cleanup.exe", "maintenance/uninstall.exe"],
+            Self::MacosArm64 => &[],
+        }
+    }
+}
+
+/// Select the one Native Messaging host from an authenticated payload listing.
+///
+/// Executable PERMISSION and host ROLE are different facts. Every executable
+/// file keeps its launch permission; the host is the single executable that is
+/// not a named support role of the target. Anything else is an ambiguous
+/// payload, never a guess: no executable, only support executables, or an
+/// unlisted second executable all fail `invalid-package`.
+pub fn select_host<T>(
+    target: Target,
+    items: impl IntoIterator<Item = T>,
+    path: impl Fn(&T) -> &str,
+    executable: impl Fn(&T) -> bool,
+) -> InstallResult<T> {
+    let support = target.support_executables();
+    let mut hosts = items
+        .into_iter()
+        .filter(|item| executable(item) && !support.contains(&path(item)));
+    match (hosts.next(), hosts.next()) {
+        (Some(host), None) => Ok(host),
+        _ => Err(invalid_package()),
+    }
+}
+
 /// User-visible installer operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

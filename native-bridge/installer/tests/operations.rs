@@ -178,27 +178,46 @@ fn build_package_with(
     signer: &str,
     api: (u32, u32),
 ) -> Package {
+    build_package_from(
+        temp,
+        target,
+        name,
+        version,
+        &[("host.exe", host, true), ("licenses/NOTICE", notice, false)],
+        policy,
+        signer,
+        api,
+    )
+}
+
+/// One authenticated release package built from an explicit payload file list
+/// of `(relative path, bytes, executable)`.
+#[allow(clippy::too_many_arguments)]
+fn build_package_from(
+    temp: &TempRoot,
+    target: Target,
+    name: &str,
+    version: &str,
+    files: &[(&str, &[u8], bool)],
+    policy: ReleasePolicy,
+    signer: &str,
+    api: (u32, u32),
+) -> Package {
     let root = temp.path().join("packages").join(name);
     let payload = root.join("payload");
-    fs::create_dir_all(payload.join("licenses")).expect("payload tree");
-    fs::write(payload.join("host.exe"), host).expect("host payload");
-    fs::write(payload.join("licenses/NOTICE"), notice).expect("notice payload");
-
-    let inventory = write_inventory(&[
-        InventoryEntry {
-            path: "host.exe".to_owned(),
-            size: host.len() as u64,
-            sha256: Digest::of(host),
-            executable: true,
-        },
-        InventoryEntry {
-            path: "licenses/NOTICE".to_owned(),
-            size: notice.len() as u64,
-            sha256: Digest::of(notice),
-            executable: false,
-        },
-    ])
-    .expect("canonical inventory document");
+    let mut entries = Vec::new();
+    for (relative, bytes, executable) in files {
+        let path = payload.join(relative);
+        fs::create_dir_all(path.parent().expect("payload parent")).expect("payload tree");
+        fs::write(&path, bytes).expect("payload file");
+        entries.push(InventoryEntry {
+            path: (*relative).to_owned(),
+            size: bytes.len() as u64,
+            sha256: Digest::of(bytes),
+            executable: *executable,
+        });
+    }
+    let inventory = write_inventory(&entries).expect("canonical inventory document");
     fs::write(root.join("inventory.json"), &inventory).expect("inventory document");
 
     let (minimum_os, assessment) = match target {
@@ -5213,4 +5232,272 @@ fn a_receipt_edited_to_hide_the_downgrade_cannot_make_recovery_install_the_older
         exercised.iter().all(|count| *count >= 1),
         "the post-receipt window was exercised for every edit: {exercised:?}"
     );
+}
+
+// -- F3: host selection is separate from executable permission --------------------------------
+//
+// The Windows producer ships THREE executable files (the Native Messaging host, the cleanup helper and the
+// uninstaller). The engine used to equate "executable" with "the one host" and refused that legitimate
+// payload with `invalid-package`. These tests feed the producer's real payload shape through the whole
+// engine: install, inspect, repair, upgrade and rollback.
+
+const HELPER: &[u8] = b"cleanup helper image";
+const UNINSTALLER: &[u8] = b"signed uninstaller image";
+const WINDOWS_HOST: &str = "veles-native-host.exe";
+
+fn assembled_files<'a>(host: &'a [u8], notice: &'a [u8]) -> Vec<(&'static str, &'a [u8], bool)> {
+    // The exact entries `assemble_unsigned.py` writes for Windows - three executables and a notice - in the
+    // producer's sorted-by-path order, so the host is the LAST executable listed, not the first.
+    vec![
+        ("licenses/NOTICE", notice, false),
+        ("maintenance/uninstall.exe", UNINSTALLER, true),
+        ("veles-bridge-cleanup.exe", HELPER, true),
+        (WINDOWS_HOST, host, true),
+    ]
+}
+
+impl Fixture {
+    fn assembled(&self, name: &str, version: &str, host: &[u8], policy: ReleasePolicy) -> Package {
+        self.assembled_from(name, version, &assembled_files(host, NOTICE_V1), policy)
+    }
+
+    fn assembled_from(
+        &self,
+        name: &str,
+        version: &str,
+        files: &[(&str, &[u8], bool)],
+        policy: ReleasePolicy,
+    ) -> Package {
+        let package = build_package_from(
+            &self.temp,
+            self.target,
+            name,
+            version,
+            files,
+            policy,
+            PUBLISHER,
+            (1, 2),
+        );
+        self.proofs.borrow_mut().push(package.proof.clone());
+        package
+    }
+}
+
+fn assembled_payload_id(host: &[u8]) -> Digest {
+    let entries: Vec<InventoryEntry> = assembled_files(host, NOTICE_V1)
+        .into_iter()
+        .map(|(path, bytes, executable)| InventoryEntry {
+            path: path.to_owned(),
+            size: bytes.len() as u64,
+            sha256: Digest::of(bytes),
+            executable,
+        })
+        .collect();
+    Digest::of(&write_inventory(&entries).expect("canonical fixture inventory"))
+}
+
+#[test]
+fn the_producers_three_executable_windows_payload_installs_repairs_upgrades_and_rolls_back() {
+    let fixture = Fixture::windows();
+    let paths = &fixture.paths;
+    let p1 = assembled_payload_id(HOST_V1);
+    let v1 = fixture.assembled("asm-v1", "1.0.0", HOST_V1, policy(1, Vec::new(), vec![p1]));
+    let v2 = fixture.assembled("asm-v2", "2.0.0", HOST_V2, policy(2, Vec::new(), vec![p1]));
+
+    // Install: the host - not a helper or the uninstaller - is what the registration selects.
+    let installed = fixture.install(&v1);
+    assert_eq!(installed.state, veles_bridge_installer::STATE_INSTALLED);
+    let manifest = parse_manifest(&fixture.registration()).expect("complete registration");
+    let selected = manifest.executable().expect("absolute executable");
+    let v1_dir = version_dir(paths, "1.0.0", p1);
+    assert_eq!(selected, v1_dir.join(WINDOWS_HOST));
+    for support in ["veles-bridge-cleanup.exe", "maintenance/uninstall.exe"] {
+        assert!(
+            v1_dir.join(support).is_file(),
+            "support executable {support} is installed"
+        );
+    }
+
+    // Inspect: the installation is complete and usable.
+    let platform = fixture.platform();
+    let inspected = run_operation(&platform, paths, Operation::Inspect, None).expect("inspect");
+    assert_eq!(inspected.state, veles_bridge_installer::STATE_INSTALLED);
+    assert!(inspected.prior_usable, "{inspected:?}");
+
+    // Repair: a damaged managed file (the cleanup helper) is restored from the same-version package.
+    fs::remove_file(v1_dir.join("veles-bridge-cleanup.exe")).expect("damage a support file");
+    let platform = fixture.platform();
+    let repaired = run_operation(&platform, paths, Operation::Repair, Some(authenticate(&v1)))
+        .expect("repair of the producer's payload");
+    assert_eq!(repaired.state, STATE_REPAIRED);
+    assert_eq!(
+        fs::read(v1_dir.join("veles-bridge-cleanup.exe")).expect("restored helper"),
+        HELPER
+    );
+
+    // Upgrade, then rollback to the retained release.
+    fixture.install(&v2);
+    let platform = fixture.platform_trusting(&v1.proof);
+    let rolled = run_operation(
+        &platform,
+        paths,
+        Operation::Rollback,
+        Some(authenticate(&v1)),
+    )
+    .expect("rollback of the producer's payload");
+    assert_eq!(rolled.state, STATE_ROLLED_BACK);
+    let manifest = parse_manifest(&fixture.registration()).expect("complete registration");
+    assert_eq!(
+        manifest.executable().expect("absolute executable"),
+        v1_dir.join(WINDOWS_HOST)
+    );
+    let platform = fixture.platform();
+    assert!(
+        run_operation(&platform, paths, Operation::Inspect, None)
+            .expect("inspect")
+            .prior_usable
+    );
+}
+
+#[test]
+fn an_executable_that_is_neither_the_host_nor_a_named_support_role_is_an_ambiguous_payload() {
+    let fixture = Fixture::windows();
+    let mut files = assembled_files(HOST_V1, NOTICE_V1);
+    files.push(("extra-tool.exe", b"unlisted executable", true));
+    let package =
+        fixture.assembled_from("extra", "1.0.0", &files, policy(1, Vec::new(), Vec::new()));
+    let platform = FakePlatform::with_faults(Faults {
+        trust: Some(package.proof.clone()),
+        host_state: HostState::Quiescent,
+        ..Faults::default()
+    });
+    let outcome = authenticate_package(&platform, &package.root, &package.descriptor).and_then(
+        |authenticated| {
+            run_operation(
+                &platform,
+                &fixture.paths,
+                Operation::Install,
+                Some(authenticated),
+            )
+        },
+    );
+    assert_eq!(failure_code(outcome), FailureCode::InvalidPackage);
+    assert!(
+        !fixture.paths.versions().exists()
+            || fs::read_dir(fixture.paths.versions()).unwrap().count() == 0,
+        "nothing is installed for an ambiguous payload"
+    );
+}
+
+#[test]
+fn support_executables_never_stand_in_for_a_missing_or_unlaunchable_host() {
+    let fixture = Fixture::windows();
+    type Files<'a> = Vec<(&'a str, &'a [u8], bool)>;
+    let cases: Vec<(&str, Files)> = vec![
+        (
+            "host without launch permission",
+            vec![
+                (WINDOWS_HOST, HOST_V1, false),
+                ("veles-bridge-cleanup.exe", HELPER, true),
+                ("licenses/NOTICE", NOTICE_V1, false),
+            ],
+        ),
+        (
+            "only support executables",
+            vec![
+                ("veles-bridge-cleanup.exe", HELPER, true),
+                ("maintenance/uninstall.exe", UNINSTALLER, true),
+                ("licenses/NOTICE", NOTICE_V1, false),
+            ],
+        ),
+    ];
+    for (index, (label, files)) in cases.iter().enumerate() {
+        let package = fixture.assembled_from(
+            &format!("bad-{index}"),
+            "1.0.0",
+            files,
+            policy(1, Vec::new(), Vec::new()),
+        );
+        let platform = FakePlatform::with_faults(Faults {
+            trust: Some(package.proof.clone()),
+            host_state: HostState::Quiescent,
+            ..Faults::default()
+        });
+        let outcome = authenticate_package(&platform, &package.root, &package.descriptor).and_then(
+            |authenticated| {
+                run_operation(
+                    &platform,
+                    &fixture.paths,
+                    Operation::Install,
+                    Some(authenticated),
+                )
+            },
+        );
+        assert_eq!(
+            failure_code(outcome),
+            FailureCode::InvalidPackage,
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn recovery_of_an_interrupted_rollback_of_the_producers_payload_selects_the_host_not_a_helper() {
+    // The sorted inventory lists the uninstaller and the cleanup helper BEFORE the host, so a recovery that
+    // took "the first executable" would rebuild the wrong manifest and report recovery-required.
+    let p1 = assembled_payload_id(HOST_V1);
+    let build = |fixture: &Fixture| {
+        let v1 = fixture.assembled("asm-v1", "1.0.0", HOST_V1, policy(1, Vec::new(), vec![p1]));
+        let v2 = fixture.assembled("asm-v2", "2.0.0", HOST_V2, policy(2, Vec::new(), vec![p1]));
+        fixture.install(&v1);
+        fixture.install(&v2);
+        (v1, v2)
+    };
+    let probe = Fixture::windows();
+    let (probe_v1, _) = build(&probe);
+    let platform = probe.platform_trusting(&probe_v1.proof);
+    run_operation(
+        &platform,
+        &probe.paths,
+        Operation::Rollback,
+        Some(authenticate(&probe_v1)),
+    )
+    .expect("the probe rollback completes");
+    let total = platform.mutations().len();
+
+    for attempt in 1..=total {
+        let fixture = Fixture::windows();
+        let (v1, _v2) = build(&fixture);
+        let context = format!("producer-payload rollback interrupted at {attempt}/{total}");
+        let crashing = FakePlatform::with_faults(Faults {
+            host_state: HostState::Quiescent,
+            panic_at_mutation: Some(attempt),
+            trust: Some(v1.proof.clone()),
+            trust_by_carrier: fixture.proofs.borrow().clone(),
+            ..Faults::default()
+        });
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            run_operation(
+                &crashing,
+                &fixture.paths,
+                Operation::Rollback,
+                Some(authenticate(&v1)),
+            )
+        }));
+        assert!(outcome.is_err(), "{context}: the injected death interrupts");
+        let recovering = fixture.platform_trusting(&v1.proof);
+        let report = recover(&recovering, &fixture.paths)
+            .unwrap_or_else(|failure| panic!("{context}: recovery failed: {failure:?}"));
+        assert!(report.failure.is_none(), "{context}: {report:?}");
+        let manifest = parse_manifest(
+            &fs::read(fixture.paths.registration_path()).expect("live registration"),
+        )
+        .expect("complete registration");
+        let selected = manifest.executable().expect("absolute executable");
+        assert_eq!(
+            selected.file_name().and_then(|name| name.to_str()),
+            Some(WINDOWS_HOST),
+            "{context}: the host, never a support executable, is what Chrome would launch"
+        );
+    }
 }

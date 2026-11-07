@@ -51,7 +51,7 @@ use crate::journal::{
 };
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, Operation, WarningCode,
-    canonical_json,
+    canonical_json, select_host,
 };
 use crate::paths::{InstallPaths, JOURNAL_FILE, LOCK_FILE, RECEIPT_FILE, STAGING_DIR, STATE_DIR};
 use crate::platform::{
@@ -353,14 +353,12 @@ fn repair(
         return Err(InstallFailure::new(FailureCode::PolicyDenied));
     }
 
-    let mut executables = package
-        .payload()
-        .iter()
-        .filter(|source| source.executable());
-    let executable = executables.next().ok_or_else(invalid_package)?;
-    if executables.next().is_some() {
-        return Err(invalid_package());
-    }
+    let executable = select_host(
+        descriptor.target,
+        package.payload().iter(),
+        |source| source.relative(),
+        |source| source.executable(),
+    )?;
 
     // A live registration that is foreign, or ours but not the committed one, is
     // a conflict: report it and touch nothing. The damaged managed tree is
@@ -1178,10 +1176,6 @@ fn report_with_warnings(
 
 fn path_depth(path: &str) -> usize {
     path.matches('/').count()
-}
-
-fn invalid_package() -> InstallFailure {
-    InstallFailure::new(FailureCode::InvalidPackage)
 }
 
 fn unsafe_path() -> InstallFailure {

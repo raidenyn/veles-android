@@ -68,7 +68,7 @@ use crate::journal::{
 use crate::model::{
     Digest, FailureCode, InstallFailure, InstallReport, InstallResult, InventoryEntry,
     MAX_DOCUMENT_BYTES, Operation, ReleaseDescriptor, ReleasePolicy, Version, WarningCode,
-    canonical_json, extension_origin, parse_version,
+    canonical_json, extension_origin, parse_version, select_host,
 };
 use crate::operations::STATE_DAMAGED;
 use crate::paths::{InstallPaths, MAINTENANCE_DIR, VERSIONS_DIR};
@@ -362,10 +362,13 @@ fn release_is_usable_inner(
             )?)?
         }
     };
-    let mut executables = entries.iter().filter(|entry| entry.executable);
-    let (Some(executable), None) = (executables.next(), executables.next()) else {
-        return Err(no_rollback());
-    };
+    let executable = select_host(
+        paths.target(),
+        entries.iter(),
+        |entry| entry.path.as_str(),
+        |entry| entry.executable,
+    )
+    .map_err(|_| no_rollback())?;
     // Every claim of the version, re-verified by content through validated handles.
     retained_claims(
         paths,
@@ -513,11 +516,12 @@ pub(crate) fn activate_retained(
         prior.payload_id,
         os_contents.sealed_inventory,
     )?;
-    let mut executables = entries.iter().filter(|entry| entry.executable);
-    let executable = executables.next().ok_or_else(invalid_package)?;
-    if executables.next().is_some() {
-        return Err(invalid_package());
-    }
+    let executable = select_host(
+        paths.target(),
+        entries.iter(),
+        |entry| entry.path.as_str(),
+        |entry| entry.executable,
+    )?;
 
     let created = retained_claims(
         paths,
@@ -930,9 +934,13 @@ fn retained_inventory(
             sealed
         }
     };
-    if entries.iter().filter(|entry| entry.executable).count() != 1 {
-        return Err(no_rollback());
-    }
+    select_host(
+        paths.target(),
+        entries.iter(),
+        |entry| entry.path.as_str(),
+        |entry| entry.executable,
+    )
+    .map_err(|_| no_rollback())?;
     Ok(entries)
 }
 
@@ -1513,10 +1521,13 @@ fn authenticate_for_completion(
         &ownership,
     )
     .map_err(unprovable_as_recovery)?;
-    let executable = entries
-        .iter()
-        .find(|entry| entry.executable)
-        .ok_or_else(recovery_required)?;
+    let executable = select_host(
+        paths.target(),
+        entries.iter(),
+        |entry| entry.path.as_str(),
+        |entry| entry.executable,
+    )
+    .map_err(|_| recovery_required())?;
     let manifest = manifest_for(
         paths,
         &paths.root().join(&version_relative).join(&executable.path),
@@ -1690,16 +1701,15 @@ impl Plan {
         let version = descriptor.parsed_version()?;
         let payload_id = descriptor.payload_id;
 
-        // The manifest selects exactly one authenticated executable. A payload
-        // that marks none or several is ambiguous, never a guess.
-        let mut executables = package
-            .payload()
-            .iter()
-            .filter(|source| source.executable());
-        let executable = executables.next().ok_or_else(invalid_package)?;
-        if executables.next().is_some() {
-            return Err(invalid_package());
-        }
+        // The manifest selects exactly one authenticated host. Support executables
+        // (cleanup helper, uninstaller) keep their launch permission but are never
+        // the host; a payload without exactly one host is ambiguous, not a guess.
+        let executable = select_host(
+            descriptor.target,
+            package.payload().iter(),
+            |source| source.relative(),
+            |source| source.executable(),
+        )?;
 
         // The installed `inventory.json` is the unsigned canonical identity the
         // descriptor authenticates; the files are the shipped (possibly signed)
