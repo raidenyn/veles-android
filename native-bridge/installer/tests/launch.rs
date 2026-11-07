@@ -12,7 +12,6 @@
 //! but cannot run on this host.
 
 use std::fs;
-#[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
@@ -147,6 +146,18 @@ fn version_dir(paths: &InstallPaths, package: &Package) -> PathBuf {
         &Version::parse(&package.descriptor.version).expect("version"),
         package.descriptor.payload_id,
     )
+}
+
+/// The path a validated native handle renders for an existing directory.
+///
+/// Validation canonicalises the trusted anchor (`/var` -> `/private/var` on
+/// macOS, the `\\?\` form on Windows) and then pushes the normalized
+/// components, so the directory the OS is asked to assess is this form rather
+/// than the raw `for_user` join.
+#[track_caller]
+fn canonical(path: &Path) -> PathBuf {
+    fs::canonicalize(path)
+        .unwrap_or_else(|error| panic!("canonicalize {}: {error}", path.display()))
 }
 
 #[cfg(unix)]
@@ -319,8 +330,11 @@ fn installed_host_is_assessed_before_the_manifest_selects_it() {
     assert_eq!(
         verifications,
         vec![
-            (package.root.join("payload"), "host.exe".to_owned()),
-            (version, "host.exe".to_owned()),
+            (
+                canonical(&package.root).join("payload"),
+                "host.exe".to_owned()
+            ),
+            (canonical(&version), "host.exe".to_owned()),
         ],
         "the package form and the installed form are both assessed"
     );
@@ -396,7 +410,10 @@ fn rollback_reassesses_the_retained_host() {
     assert!(
         good.host_verifications()
             .iter()
-            .any(|(root, executable)| root == &version_dir(&paths, &v1) && executable == "host.exe")
+            .any(
+                |(root, executable)| root == &canonical(&version_dir(&paths, &v1))
+                    && executable == "host.exe"
+            )
     );
 }
 
@@ -472,7 +489,7 @@ fn repair_refuses_an_installed_host_the_os_would_refuse() {
         );
         assert_eq!(
             refusing.host_verifications(),
-            vec![(version.clone(), "host.exe".to_owned())],
+            vec![(canonical(&version), "host.exe".to_owned())],
             "{name}: exactly the installed form (version directory), not the package form"
         );
         fs::remove_dir_all(paths.root()).expect("reset the layout");
@@ -494,7 +511,7 @@ fn repair_assesses_the_installed_host_before_it_publishes_and_before_it_reports(
     assert_eq!(report.state, STATE_REPAIRED);
     assert_eq!(
         good.host_verifications(),
-        vec![(version, "host.exe".to_owned())]
+        vec![(canonical(&version), "host.exe".to_owned())]
     );
     let calls = good.calls();
     let assessed = calls

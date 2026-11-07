@@ -295,6 +295,13 @@ fn version_dir(paths: &InstallPaths, version: &str, payload_id: Digest) -> PathB
     )
 }
 
+/// The form a validated native handle renders for an existing path.
+#[track_caller]
+fn canonical_dir(path: &Path) -> PathBuf {
+    fs::canonicalize(path)
+        .unwrap_or_else(|error| panic!("canonicalize {}: {error}", path.display()))
+}
+
 fn receipt(paths: &InstallPaths) -> Option<Receipt> {
     match Receipt::load(&PortablePlatform::new(), paths).expect("the receipt is readable") {
         ReceiptState::None => None,
@@ -368,12 +375,40 @@ fn assert_changes_confined(
     };
     let root = render(paths.root());
     let registration = render(paths.registration_path());
+    let separator = std::path::MAIN_SEPARATOR;
     for changed in changed_paths(before, after) {
         assert!(
-            changed == root || changed.starts_with(&format!("{root}/")) || changed == registration,
+            changed == root
+                || changed.starts_with(&format!("{root}{separator}"))
+                || changed == registration,
             "{context}: {changed} is not inside the install root or the fixed registration"
         );
     }
+}
+
+/// Give a fixture staging directory the same owner-only protection the installer
+/// applies when it creates one. A directory made with `create_dir_all` inherits
+/// the temporary directory's DACL (and, under a full administrator token, its
+/// `BUILTIN\Administrators` owner), which the staging check must refuse; the
+/// fixture wants to exercise the *contents* refusal, not the DACL refusal.
+#[cfg(windows)]
+fn protect_staging_fixture(directory: &Path) {
+    let user = std::env::var("USERNAME").expect("USERNAME is set on Windows");
+    let owner = process::Command::new("icacls")
+        .arg(directory)
+        .args(["/setowner", &user])
+        .status()
+        .expect("icacls is a standard Windows tool");
+    assert!(owner.success(), "could not set the staging fixture owner");
+    let dacl = process::Command::new("icacls")
+        .arg(directory)
+        .args(["/inheritance:r", "/grant:r", &format!("{user}:(OI)(CI)F")])
+        .status()
+        .expect("icacls is a standard Windows tool");
+    assert!(
+        dacl.success(),
+        "could not give the staging fixture the installer's private DACL"
+    );
 }
 
 /// A fixture: one injected per-user layout plus a quiescent, trusted installer.
@@ -4061,8 +4096,8 @@ fn rollback_verifies_the_installed_carrier_in_place() {
     assert_eq!(
         platform.retained_verifications(),
         vec![
-            version_dir(paths, "2.0.0", payload_id(HOST_V2, NOTICE_V2)),
-            version_dir(paths, "1.0.0", p1)
+            canonical_dir(&version_dir(paths, "2.0.0", payload_id(HOST_V2, NOTICE_V2))),
+            canonical_dir(&version_dir(paths, "1.0.0", p1))
         ],
         "the OS path receives the version directory holding each in-place carrier: \
          the installed release whose signed policy bounds the receipt, then the target"
@@ -6977,6 +7012,8 @@ fn uninstall_does_not_report_clean_when_outside_root_staging_fails() {
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
             .expect("private residue");
     }
+    #[cfg(windows)]
+    protect_staging_fixture(&directory);
     fs::write(directory.join("foreign.txt"), b"not ours").expect("foreign content");
 
     let failure = failure_code(run_operation(

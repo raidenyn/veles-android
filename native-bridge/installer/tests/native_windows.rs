@@ -521,7 +521,7 @@ fn cleanup_helper_image_disappears_after_exit() {
 #[test]
 fn cleanup_root_does_not_follow_a_planted_reparse_point() {
     let temp = TempRoot::new("anchored");
-    let root = temp.path().join("Veles/NativeBridge");
+    let root = temp.path().join("Veles").join("NativeBridge");
     fs::create_dir_all(root.join("versions/1.0.0-aaaa")).expect("version dir");
     let outside = temp.path().join("outside");
     fs::create_dir_all(&outside).expect("outside");

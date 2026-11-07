@@ -99,6 +99,13 @@ fn snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
             if metadata.is_dir() {
                 out.insert(relative, Vec::new());
                 walk(base, &path, out);
+            } else if relative.ends_with("installer.lock") {
+                // The test holds this file with an exclusive byte-range lock. On
+                // Windows a locked range cannot be read even by the owning
+                // process, so record the (empty) lock entry without reading it;
+                // it is not state a refused publication can change.
+                assert_eq!(metadata.len(), 0, "the installer lock stays empty");
+                out.insert(relative, Vec::new());
             } else {
                 out.insert(relative, fs::read(&path).expect("snapshot bytes"));
             }
