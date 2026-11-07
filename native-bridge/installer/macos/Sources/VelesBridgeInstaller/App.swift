@@ -223,36 +223,25 @@ enum ClientError: Error, Equatable, Sendable {
 /// Where the signed engine and the authenticated package live.
 ///
 /// The installer bundle carries the engine inside the sealed policy carrier
-/// (`carrier.app`), and the installed engine publishes itself at the persistent
-/// location both frontends and the Rust engine agree on (OTP-25 F6):
-/// `~/Library/Application Support/Veles/NativeBridge/maintenance/veles-bridge-maintenance`.
-/// Maintenance prefers the persistent copy; a machine that has never completed an
-/// install falls back to the bundled engine, which is the only one present.
+/// (`carrier.app`). That engine is compiled for this installer's channel and
+/// release, and its compiled descriptor is exactly the package's descriptor, so
+/// it is the only engine this downloaded installer may run (N1). A persistent
+/// engine from a previously installed release has a different compiled
+/// descriptor: exact-descriptor authentication rejects a newer package through
+/// it, and a production persistent engine would address production state from a
+/// fixture build. The installer therefore never discovers or prefers one.
 enum EngineLocation {
     static let engineName = "veles-bridge-maintenance"
     /// The engine is the executable of the sealed policy-carrier bundle shipped in the package.
     static let engineRelativePath = "carrier.app/Contents/MacOS/veles-bridge-maintenance"
     static let packageDirectoryName = "package"
-    /// The persistent maintenance location, relative to the user's home directory.
-    static let maintenanceEngineRelativePath =
-        "Library/Application Support/Veles/NativeBridge/maintenance/veles-bridge-maintenance"
 
-    /// The persistent maintenance engine for one home directory.
-    static func persistentEngine(homeDirectory: URL) -> URL {
-        homeDirectory.appendingPathComponent(maintenanceEngineRelativePath, isDirectory: false)
-            .standardizedFileURL
-    }
-
-    static func resolve(
-        resourceURL: URL,
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> (engine: URL, package: URL) {
+    static func resolve(resourceURL: URL) -> (engine: URL, package: URL) {
         let package = resourceURL.appendingPathComponent(packageDirectoryName, isDirectory: true)
             .standardizedFileURL
         let bundled = package.appendingPathComponent(engineRelativePath, isDirectory: false)
             .standardizedFileURL
-        let persistent = persistentEngine(homeDirectory: homeDirectory)
-        let engine = FileManager.default.isExecutableFile(atPath: persistent.path) ? persistent : bundled
+        let engine = bundled
         return (engine, package)
     }
 

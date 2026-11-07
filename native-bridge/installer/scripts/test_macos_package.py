@@ -358,9 +358,9 @@ class BundleInputContract(unittest.TestCase):
             "testDamagedStateStillOffersRepairForTheSameVersionPackage",
             "testADamagedInspectOffersRepairWithoutAnyPresentationGuard",
             "testAWedgedEngineIsReportedAfterTheDeadline",
-            # F6: the persistent maintenance engine the Rust engine publishes.
-            "testThePersistentEnginePathMatchesTheEnginesPublishedLayout",
-            "testThePersistentEngineIsPreferredOnlyWhenItIsExecutable",
+            # N1: the installer runs the engine bundled with its own release/channel.
+            "testTheBundledEngineIsAlwaysUsedEvenWhenAnotherPersistentEngineExists",
+            "testANewerInstallerRunsItsOwnEngineNotAnOlderPersistentOne",
         ):
             self.assertIn(required, names)
 
@@ -384,22 +384,25 @@ class BundleInputContract(unittest.TestCase):
         for pattern in (r"presentation\.kind\s*==\s*\.info", r"installed:\s*Bool", r"damaged:\s*Bool"):
             self.assertIsNone(re.search(pattern, self.app_source), f"App.swift must not contain {pattern!r}")
 
-    def test_the_frontend_resolves_the_persistent_maintenance_engine(self) -> None:
-        """F6: the Swift frontend and the Rust engine agree on one maintenance path set."""
+    def test_the_frontend_always_runs_the_engine_bundled_with_its_release(self) -> None:
+        """N1: never an older persistent engine, and never a production path from a fixture build."""
+        # The release/channel identity is compiled into the engine that ships inside this
+        # installer bundle, so that is the only executable the frontend may resolve. A
+        # persistent engine from a previously installed release has a different compiled
+        # descriptor and exact-descriptor authentication rejects its use with a newer package.
+        self.assertNotRegex(self.app_source, r"persistentEngine")
+        self.assertNotRegex(self.app_source, r"Application Support")
+        self.assertNotRegex(self.app_source, r"isExecutableFile\(atPath:")
         self.assertRegex(
             self.app_source,
-            r'static let maintenanceEngineRelativePath =\s*\n\s*"Library/Application Support/'
-            r'Veles/NativeBridge/maintenance/veles-bridge-maintenance"')
-        self.assertRegex(self.app_source, r"static func persistentEngine\(homeDirectory: URL\) -> URL")
+            r"let engine = bundled\b",
+        )
+        # The resolution is exactly: package = <resources>/package, engine = package/carrier.app/...
         self.assertRegex(
             self.app_source,
-            r"isExecutableFile\(atPath: persistent\.path\) \? persistent : bundled")
-        # The persistent path is exactly the Rust engine's `maintenance_engine_relative`
-        # for macOS: `<root>/maintenance/veles-bridge-maintenance`.
-        paths = PATHS_RS.read_text(encoding="utf-8")
-        self.assertRegex(paths, r'pub const MAINTENANCE_DIR: &str = "maintenance"')
-        self.assertRegex(paths, r'pub const MAINTENANCE_ENGINE_FILE_MACOS: &str = "veles-bridge-maintenance"')
-        self.assertIn('root.join(steps)'.replace("steps", "maintenance_engine_relative(self.target)"), paths)
+            r'static func resolve\(resourceURL: URL\) -> \(engine: URL, package: URL\)',
+        )
+        self.assertRegex(self.app_source, r'engineRelativePath = "carrier\.app/Contents/MacOS/veles-bridge-maintenance"')
 
     def test_the_child_wait_is_bounded_and_never_signals_the_engine(self) -> None:
         """The Swift frontend must not wait for the engine without a deadline, and must not kill it."""
