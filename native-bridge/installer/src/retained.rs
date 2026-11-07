@@ -66,9 +66,13 @@ impl RetainedInstall {
         version_relative: &str,
         package: &AuthenticatedPackage,
     ) -> InstallResult<Self> {
+        let version = parse_version(&package.descriptor().version)?;
+        if version_relative != paths.version_dir_relative(&version, package.descriptor().payload_id)
+        {
+            return Err(invalid_package());
+        }
         let absolute = paths
-            .root()
-            .join(version_relative)
+            .version_dir(&version, package.descriptor().payload_id)
             .join(package_carrier_name(paths.target()));
         let carrier_path = absolute.to_str().ok_or_else(invalid_package)?.to_owned();
         let value = Self {
@@ -93,7 +97,11 @@ impl RetainedInstall {
             paths.version_dir_relative(&version, self.descriptor.payload_id),
             package_carrier_name(paths.target())
         );
-        if Path::new(&self.carrier_path) != paths.root().join(&relative) {
+        if Path::new(&self.carrier_path)
+            != paths
+                .version_dir(&version, self.descriptor.payload_id)
+                .join(package_carrier_name(paths.target()))
+        {
             return Err(invalid_package());
         }
         Ok(relative)

@@ -1574,7 +1574,9 @@ fn authenticate_for_completion(
     .map_err(|_| recovery_required())?;
     let manifest = manifest_for(
         paths,
-        &paths.root().join(&version_relative).join(&executable.path),
+        &paths
+            .version_dir(&version, journal.payload_id)
+            .join(&executable.path),
         &descriptor.extension_id,
     )?;
     if manifest.sha256() != journal.manifest.sha256() {
@@ -1869,7 +1871,7 @@ impl Plan {
         // An immutable version directory is created once and never reused; a
         // same-identity directory is Task 7's repair decision, not an overwrite.
         let version_relative = paths.version_dir_relative(&version, payload_id);
-        let version_directory = paths.root().join(&version_relative);
+        let version_directory = paths.version_dir(&version, payload_id);
         match fs::symlink_metadata(&version_directory) {
             Ok(_) => return Err(foreign_state()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -2391,9 +2393,15 @@ pub(crate) fn verify_installed_host(
         policy: policy.clone(),
         ..descriptor.clone()
     };
+    // Hand the OS the same canonical, component-built directory handle rendering
+    // the rest of the installer uses. Joining the `/`-separated relative string
+    // directly produces a path that names the same directory but is not the
+    // `Path` a canonical anchor renders (macOS `/var` -> `/private/var`, Windows
+    // `/` vs `\`), and a native assessment must see the location validation proved.
+    let installed_root = ValidatedPath::existing_directory(paths, Path::new(version_relative))?;
     assess_host(
         platform,
-        &paths.root().join(version_relative),
+        installed_root.rendered(),
         executable_relative,
         &anchor,
         &policy.publishers,

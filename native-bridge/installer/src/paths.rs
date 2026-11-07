@@ -128,10 +128,12 @@ impl InstallPaths {
         let registration_name = channel.identity().host_name;
         let registration = match target {
             Target::WindowsX64 => root.join(format!("{registration_name}.json")),
-            Target::MacosArm64 => user_home
-                .join("Library")
-                .join("Application Support")
-                .join(MACOS_CHROME_HOSTS_DIR)
+            Target::MacosArm64 => MACOS_CHROME_HOSTS_DIR
+                .split('/')
+                .fold(
+                    user_home.join("Library").join("Application Support"),
+                    |path, component| path.join(component),
+                )
                 .join(format!("{registration_name}.json")),
         };
 
