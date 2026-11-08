@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use veles_bridge_installer::cleanup::{
-    CleanupReason, CleanupStatus, HelperRun, run_cleanup_helper_detailed,
+    CleanupEntry, CleanupReason, CleanupStatus, HelperRun, run_cleanup_helper_detailed,
     run_cleanup_helper_via_launcher,
 };
 use veles_bridge_installer::{
-    Channel, Digest, FailureCode, InstallPaths, NativeManifest, PRODUCTION_HOST_NAME,
+    Channel, Digest, FailureCode, InstallPaths, NativeManifest, OwnedKind, PRODUCTION_HOST_NAME,
     PackageSource, PathKind, Platform, Registration, RegistryView, ReleaseDescriptor,
     ReleasePolicy, RemoveOutcome, StateDocument, Target, ValidatedPath, WindowsCleanupRoot,
     WindowsPlatform, extension_origin,
@@ -745,12 +745,20 @@ fn an_unsigned_well_formed_executable_is_denied_as_carrier_and_as_host() {
 /// The launcher is the helper's recorded parent and exits at once, so the helper
 /// observes a real parent exit while this process stays alive. With a **signed**
 /// helper (`VELES_TEST_HELPER_PUBLISHER`) the run therefore reaches `complete`,
-/// the installer deletes the staged image and observes it gone. With the
-/// unsigned fixture the helper refuses to vouch for itself (`SelfMismatch`) - and
-/// the point of this test is that the reason is never `ParentAlive` any more.
+/// deletes the one owned payload entry named in the request, and the installer
+/// deletes the staged image and observes both gone. With the unsigned fixture the
+/// helper refuses to vouch for itself (`SelfMismatch`) and preserves everything -
+/// and the point of this test is that the reason is never `ParentAlive` any more.
+///
+/// A signed run additionally sets `VELES_TEST_HELPER_REQUIRE_COMPLETE`, which
+/// turns a `SelfMismatch` into a failure: without it a mis-signed helper would
+/// satisfy the unsigned branch and the deletion half would silently not run.
+/// The lab certificate procedure (self-signed root + signing leaf, trusted only
+/// on that machine) is in
+/// `.superpowers/sdd/2026-11-06-otp25-installers/windows-signing-dry-run/`.
 ///
 /// NOT RUN on the Linux development host: it needs a Windows runner (and, for the
-/// `complete` half, the Task 13 signing credentials).
+/// `complete` half, a signing identity).
 #[test]
 fn launcher_lets_the_helper_observe_its_parents_exit_while_the_installer_stays_alive() {
     let temp = TempRoot::new("launcher-handoff");
@@ -760,7 +768,16 @@ fn launcher_lets_the_helper_observe_its_parents_exit_while_the_installer_stays_a
     let launcher = Path::new(env!("CARGO_BIN_EXE_veles-bridge-maintenance"));
 
     let root = temp.path().join("Veles").join("NativeBridge");
-    fs::create_dir_all(&root).expect("cleanup root");
+    let owned = root.join("versions").join("1.0.0-aaaa").join("host.exe");
+    fs::create_dir_all(owned.parent().expect("owned parent")).expect("owned dir");
+    let owned_bytes = b"owned payload the installer cannot delete in-process";
+    fs::write(&owned, owned_bytes).expect("owned file");
+    let entries = vec![CleanupEntry {
+        path: "versions/1.0.0-aaaa/host.exe".to_owned(),
+        kind: OwnedKind::File,
+        size: owned_bytes.len() as u64,
+        sha256: Some(Digest::of(owned_bytes)),
+    }];
 
     let transaction = "33".repeat(32);
     let capability = [0x44u8; 32];
@@ -773,7 +790,7 @@ fn launcher_lets_the_helper_observe_its_parents_exit_while_the_installer_stays_a
         transaction: &transaction,
         capability: &capability,
         root: &root,
-        entries: Vec::new(),
+        entries,
         timeout: Duration::from_secs(8),
     };
     let started = Instant::now();
@@ -785,12 +802,24 @@ fn launcher_lets_the_helper_observe_its_parents_exit_while_the_installer_stays_a
     let completion = completion.expect("the real helper writes an authenticated completion");
     assert!(completion.verify(&capability));
     assert_eq!(completion.transaction, transaction);
+    // A runner that stages a **signed** helper sets this to require the deletion
+    // half, so a silent `SelfMismatch` can never be mistaken for the signed path.
+    let require_complete = std::env::var_os("VELES_TEST_HELPER_REQUIRE_COMPLETE").is_some();
     match completion.status {
         CleanupStatus::Complete => {
             verdict.expect("complete is only reported once the image is gone");
             assert!(!staged.exists(), "the installer removed the staged image");
+            assert!(
+                !owned.exists(),
+                "the helper removed the owned payload after the parent exited"
+            );
         }
         CleanupStatus::CleanupPending => {
+            assert!(
+                !require_complete,
+                "a signed helper was declared, but the cleanup did not complete: {:?}",
+                completion.reason
+            );
             assert_ne!(
                 completion.reason,
                 Some(CleanupReason::ParentAlive),
@@ -801,6 +830,10 @@ fn launcher_lets_the_helper_observe_its_parents_exit_while_the_installer_stays_a
                 FailureCode::CleanupPending
             );
             assert!(staged.exists(), "a pending cleanup never removes the image");
+            assert!(
+                owned.exists(),
+                "a pending cleanup never removes an owned payload"
+            );
         }
     }
 }
