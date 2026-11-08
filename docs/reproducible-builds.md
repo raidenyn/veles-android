@@ -618,8 +618,10 @@ artifact.
 
 *Independent builds.* Each producer builds twice, as slot `a` and slot `b`, into separate explicit target
 directories under `build/native-bridge/installer/target/<channel>-<slot>/`, each deleted first (no warm cache is
-reused), with the checkout and cargo-registry paths remapped (`--remap-path-prefix`) and, on Windows, `/Brepro`
-and `/PDBALTPATH`. The slots are compared with Task 9's inventory comparison and the producer publishes nothing
+reused), with the checkout and cargo-registry paths remapped (`--remap-path-prefix`) and, on Windows, `/Brepro`,
+`/PDBALTPATH` and `-C target-feature=+crt-static`. The static CRT makes the shipped binaries self-contained: a
+clean Windows has no `vcruntime140.dll`, and the outside-root cleanup helper is staged into a temp directory by
+itself, so an adjacent DLL copy would not follow it. The slots are compared with Task 9's inventory comparison and the producer publishes nothing
 but a FAIL report if they differ. Two slots on one runner show same-runner reproducibility only; the protected
 release workflow compares two separate producer runs (`unsigned_run_a`, `unsigned_run_b`).
 

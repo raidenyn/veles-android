@@ -206,6 +206,8 @@ def check_gradle(gradle, clean_script):
         errors.append("the checkout path is not remapped to a fixed prefix")
     if "/Brepro" not in code:
         errors.append("the Windows link does not request deterministic output (/Brepro)")
+    if "target-feature=+crt-static" not in code:
+        errors.append("the Windows build does not link the static CRT (+crt-static)")
     if not re.search(r'fun Exec\.installerCargoEnvironment\(\) \{(?:(?!\n\}).)*environment\("RUSTFLAGS"', code, re.S):
         errors.append("RUSTFLAGS is not set explicitly (an ambient value could drop the remap)")
 
@@ -658,6 +660,8 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("remap" in e for e in found), found)
         found = self.violations(self.mutate("/Brepro", "/noop"))
         self.assertTrue(any("deterministic" in e for e in found), found)
+        found = self.violations(self.mutate("+crt-static", "+noop"))
+        self.assertTrue(any("static CRT" in e for e in found), found)
         found = self.violations(self.mutate('environment("RUSTFLAGS"', 'environment("RUSTFLAGZ"'))
         self.assertTrue(any("RUSTFLAGS" in e for e in found), found)
 

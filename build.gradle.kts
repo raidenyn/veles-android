@@ -1107,6 +1107,11 @@ val productionHostExecutable = "veles-native-host$windowsExecutableSuffix"
 fun Exec.productionHostEnvironment() {
     workingDir(productionHostDir)
     environment("CARGO_TARGET_DIR", productionHostTargetDir.get().asFile)
+    // The shipped host is self-contained for the same reason as the installer binaries:
+    // a clean Windows has no vcruntime140.dll.
+    if (System.getProperty("os.name").startsWith("Windows")) {
+        environment("RUSTFLAGS", "-C target-feature=+crt-static")
+    }
     // The origin allowlist is compiled in through option_env!("VELES_ALLOWED_ORIGINS"), so the variable is a
     // real build input: changing only it must re-run cargo instead of leaving a stale staged binary.
     inputs.property("VELES_ALLOWED_ORIGINS", providers.environmentVariable("VELES_ALLOWED_ORIGINS").orElse(""))
@@ -1285,7 +1290,14 @@ fun installerRustFlags(): String {
         "--remap-path-prefix=$cargoHome/git/checkouts=/cargo-git",
     )
     if (installerPlatform == "windows") {
-        flags += listOf("-C", "link-arg=/Brepro", "-C", "link-arg=/PDBALTPATH:veles.pdb")
+        // Self-contained binaries. A clean Windows has no vcruntime140.dll, and the
+        // outside-root cleanup helper is staged into a temp directory by itself, so an
+        // adjacent DLL copy would not follow it. The static CRT needs no redistributable.
+        flags += listOf(
+            "-C", "target-feature=+crt-static",
+            "-C", "link-arg=/Brepro",
+            "-C", "link-arg=/PDBALTPATH:veles.pdb",
+        )
     }
     return flags.joinToString(" ")
 }

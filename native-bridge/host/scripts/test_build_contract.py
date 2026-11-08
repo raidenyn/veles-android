@@ -532,6 +532,7 @@ class GradleIncremental(unittest.TestCase):
         code = strip_kotlin_comments(host_block(read("build.gradle.kts")))
         helper = code.split("fun Exec.productionHostEnvironment()", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('inputs.property("VELES_ALLOWED_ORIGINS", providers.environmentVariable("VELES_ALLOWED_ORIGINS").orElse(""))', helper)
+        self.assertIn("target-feature=+crt-static", helper)
         for task in ("bridgeHostLint", "bridgeHostTest", "bridgeHostBuild"):
             self.assertIn("productionHostEnvironment()", task_body(code, task), task)
 
