@@ -2186,6 +2186,7 @@ def _validate_target(bundle: Path, evidence: dict, target: str, rel: str, descri
         errors.append("report policy digest is not the digest of its signing policy")
     errors += _validate_unsigned_and_boundaries(bundle, evidence, report, descriptor)
     platform = "windows" if target.startswith("windows") else "macos"
+    errors += _validate_signing_fragments(bundle, evidence, platform)
     errors += _validate_components(bundle, evidence, report, platform, policy)
     errors += _validate_containers(bundle, evidence, report, platform, policy)
     seal = report["seal"]
@@ -2197,6 +2198,37 @@ def _validate_target(bundle: Path, evidence: dict, target: str, rel: str, descri
         if not (isinstance(identity, dict) and SHA256_RE.match(str(identity.get("sha256"))) and identity.get("path")):
             errors.append(f"tool identity for {name} is missing or has no recorded sha256")
     return errors, policy
+
+
+def _validate_signing_fragments(bundle: Path, evidence: dict, platform: str) -> list[str]:
+    """Each credentialed signing fragment's own context must be the evidence run's context.
+
+    Composition compares the fragments with the run that composed the bundle; validation re-reads the
+    indexed files so a substituted fragment or an edited evidence context is refused independently.
+    ``CONTEXT_FIELDS`` are the fields a fragment records; the evidence context adds ``platforms``.
+    """
+    context = evidence["context"] if isinstance(evidence["context"], dict) else {}
+    expected = {field: context.get(field) for field in CONTEXT_FIELDS}
+    errors = []
+    for name, stage in (("nested", "sign-nested"), ("outer", "sign-outer")):
+        rel = f"reports/{platform}-{name}.json"
+        fragment, problem = _read_indexed(bundle, evidence, rel)
+        if problem:
+            errors.append(f"signing fragment: {problem}")
+            continue
+        if not isinstance(fragment, dict):
+            errors.append(f"signing fragment {rel} is not an object")
+            continue
+        if (fragment.get("platform"), fragment.get("stage")) != (platform, stage):
+            errors.append(f"signing fragment {rel} is not the {platform} {stage} fragment")
+        recorded = fragment.get("context")
+        if not isinstance(recorded, dict) or set(recorded) != set(CONTEXT_FIELDS):
+            errors.append(f"signing fragment {rel} does not record a complete signing context")
+            continue
+        wrong = sorted(field for field, value in expected.items() if recorded.get(field) != value)
+        if wrong:
+            errors.append(f"signing fragment {rel} records another run's context: {', '.join(wrong)}")
+    return errors
 
 
 def _validate_unsigned_and_boundaries(bundle: Path, evidence: dict, report: dict, descriptor: str | None) -> list[str]:

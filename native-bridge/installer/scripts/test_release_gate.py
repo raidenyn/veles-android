@@ -2000,6 +2000,49 @@ class ValidateBundleTests(unittest.TestCase):
         edit_evidence(self.bundle, lambda e: e.pop("context"))
         self.assertBlocked("missing")
 
+    def test_evidence_context_must_equal_the_signing_fragments(self) -> None:
+        # Composition compares the fragments with the run that composed the bundle; independent
+        # validation must re-read the indexed fragments instead of trusting the evidence's copy of
+        # the context. A syntactically valid run id for another run changes nothing else.
+        self.assertEqual(self.validate(), [])
+        edit_evidence(self.bundle, lambda e: e["context"].update(run_id="9999999999"))
+        errors = self.assertBlocked("context")
+        for platform in ("windows", "macos"):
+            self.assertTrue(any(f"{platform}-nested.json" in e for e in errors), errors)
+            self.assertTrue(any(f"{platform}-outer.json" in e for e in errors), errors)
+
+    def test_a_signing_fragment_from_another_run_is_refused(self) -> None:
+        # A fragment swapped for another run's and re-indexed leaves the evidence file index
+        # self-consistent; only its recorded context (and the platform/stage it names) disagree.
+        for field, value in (("run_id", "9999999999"), ("actor", "someone-else"), ("sha", OTHER_COMMIT)):
+            with self.subTest(field=field):
+                self.setUp()
+                rel = "reports/windows-nested.json"
+                record = json.loads((self.bundle / rel).read_text())
+                record["context"][field] = value
+                data = json.dumps(record, sort_keys=True).encode()
+                (self.bundle / rel).write_bytes(data)
+                edit_evidence(self.bundle, lambda e, data=data, rel=rel: e["files"].__setitem__(rel, sha(data)))
+                errors = self.assertBlocked("windows-nested.json")
+                self.assertTrue(any("context" in e for e in errors), errors)
+                self.assertFalse([e for e in errors if e.startswith("macos")], "only the replaced fragment is blocked")
+        for label, update in (
+            ("another platform", {"platform": "macos"}),
+            ("another stage", {"stage": "sign-outer"}),
+        ):
+            with self.subTest(label):
+                self.setUp()
+                edit_report(self.bundle, "reports/windows-nested.json", lambda r, update=update: r.update(update))
+                self.assertBlocked("windows-nested.json", "is not the windows sign-nested fragment")
+
+    def test_a_windows_only_fixture_still_validates(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="gate-windows-context-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        bundle, _ = build_pipeline_bundle(root, platforms=("windows",))
+        self.assertEqual(gate.validate(bundle, COMMIT, "windows"), [])
+        edit_evidence(bundle, lambda e: e["context"].update(run_id="9999999999"))
+        self.assertTrue(gate.validate(bundle, COMMIT, "windows"))
+
     def test_one_selected_target_is_a_complete_bundle(self) -> None:
         for platforms in (("windows",), ("macos",)):
             with self.subTest(platforms=platforms):
