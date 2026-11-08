@@ -1,20 +1,18 @@
 {
-  "schema": 1,
-  "channel": "fixture",
-  "version": "0.1.0",
-  "target": "windows-x86_64",
-  "minimum_os": "10",
-  "extension_id": "fixture",
-  "host_name": "me.nagaev.veles.bridge.fixture",
-  "bundle_id": "me.nagaev.veles.bridge.fixture",
-  "api_min": 1,
-  "api_max": 1,
-  "policy": {
-    "publishers": [
-      "Veles Fixture (not a release signer)"
-    ],
-    "denied_payloads": [],
-    "rollback_payloads": [],
-    "epoch": 1
-  }
+    "schema": 1,
+    "channel": "fixture",
+    "version": "0.1.0",
+    "target": "windows-x86_64",
+    "minimum_os": "10",
+    "extension_id": "fixture",
+    "host_name": "me.nagaev.veles.bridge.fixture",
+    "bundle_id": "me.nagaev.veles.bridge.fixture",
+    "api_min": 1,
+    "api_max": 1,
+    "policy": {
+        "publishers": ["Veles Fixture (not a release signer)"],
+        "denied_payloads": [],
+        "rollback_payloads": [],
+        "epoch": 1
+    }
 }

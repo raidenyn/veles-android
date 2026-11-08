@@ -1,20 +1,20 @@
 {
-  "schema": 1,
-  "channel": "development",
-  "version": "0.1.0",
-  "source_commit": "0123456789abcdef0123456789abcdef01234567",
-  "target": "macos-arm64",
-  "minimum_os": "26.0",
-  "extension_id": "abcdefghijklmnopabcdefghijklmnop",
-  "host_name": "me.nagaev.veles.bridge.dev",
-  "bundle_id": "me.nagaev.veles.bridge.dev",
-  "api_min": 1,
-  "api_max": 1,
-  "payload_id": "1111111111111111111111111111111111111111111111111111111111111111",
-  "policy": {
-    "publishers": ["Veles Development Example Publisher (not a release signer)"],
-    "denied_payloads": [],
-    "rollback_payloads": [],
-    "epoch": 1
-  }
+    "schema": 1,
+    "channel": "development",
+    "version": "0.1.0",
+    "source_commit": "0123456789abcdef0123456789abcdef01234567",
+    "target": "macos-arm64",
+    "minimum_os": "26.0",
+    "extension_id": "abcdefghijklmnopabcdefghijklmnop",
+    "host_name": "me.nagaev.veles.bridge.dev",
+    "bundle_id": "me.nagaev.veles.bridge.dev",
+    "api_min": 1,
+    "api_max": 1,
+    "payload_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "policy": {
+        "publishers": ["Veles Development Example Publisher (not a release signer)"],
+        "denied_payloads": [],
+        "rollback_payloads": [],
+        "epoch": 1
+    }
 }

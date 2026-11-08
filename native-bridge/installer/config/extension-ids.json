@@ -1,9 +1,9 @@
 {
-  "schema": 1,
-  "ids": {
-    "production": "abcdefghijklmnopabcdefghijklmnop",
-    "development": "abcdefghijklmnopabcdefghijklmnop",
-    "fixture": "ffffffffffffffffffffffffffffffff"
-  },
-  "note": "Single source of truth for installer extension IDs. A release config names an alias from here; the descriptor carries the resolved id. Replace the production value with the real Chrome Web Store item ID before public release (plan Task 16)."
+    "schema": 1,
+    "ids": {
+        "production": "abcdefghijklmnopabcdefghijklmnop",
+        "development": "abcdefghijklmnopabcdefghijklmnop",
+        "fixture": "ffffffffffffffffffffffffffffffff"
+    },
+    "note": "Single source of truth for installer extension IDs. A release config names an alias from here; the descriptor carries the resolved id. Replace the production value with the real Chrome Web Store item ID before public release (plan Task 16)."
 }
