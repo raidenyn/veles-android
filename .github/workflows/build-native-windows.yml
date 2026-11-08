@@ -1,24 +1,17 @@
 name: build-native-windows
 
-# OTP-25 Task 14: the Windows producer of the standalone installer's UNSIGNED input tree.
+# OTP-25 Task 14/15: the Windows producer of the standalone installer.
 #
-# This is no longer the Tauri scaffold packaging: there is no Node, npm, Tauri, WiX or bridgePackage here.
-# One job builds the tree through the installer Gradle graph, which itself builds it TWICE (slots a and b,
-# separate target directories, source paths remapped, deterministic link settings) and refuses to publish
-# unless the two trees are byte-identical under Task 9's inventory comparison. The product is a
-# mode-preserving tree.tar plus provenance.json, report-ab.json and SHA256SUMS; uploads name exact files
-# because artifact upload drops bare executable bits.
+# The caller states the build kind explicitly: `build-kind: release` builds the UNSIGNED
+# production-channel input tree through bridgeInstallerUnsigned (the two-slot A/B build Task 13
+# signs), while `build-kind: debug` builds the finished FIXTURE-channel DEBUG installer through
+# bridgeInstallerDebug (one slot, debug Rust/Swift, setup.exe + metadata + symbols). There is no
+# config-file probe and no silent fixture fallback: an omitted or invalid build kind fails before
+# anything is built.
 #
-# Channel selection is explicit and fail-closed:
-# - An approved, tracked native-bridge/installer/config/release-windows.json exists: the PRODUCTION
-#   channel is built by bridgeInstallerUnsigned and published under the caller-selected name
-#   (native-unsigned-windows). That is the artifact release-native-installers.yml (Task 13) downloads.
-# - Otherwise only the tracked FIXTURE config is built by bridgeInstallerPackageFixture and published as
-#   native-fixture-windows, which can never be mistaken for, or substituted as, the production input.
-# Nothing here signs, notarizes or publishes; no secret, protected environment or artifact from another
-# run is used.
-# The Windows engine's policy carrier is embedded and the NSIS uninstaller generated on this runner;
-# neither step has run anywhere yet (see the Task 14 report).
+# Nothing here signs, notarizes or publishes; no secret, protected environment or artifact from
+# another run is used. The Windows engine's policy carrier is embedded and the NSIS uninstaller
+# generated on this runner; neither step has run anywhere yet (see the Task 14 report).
 
 on:
   workflow_call:
@@ -30,6 +23,9 @@ on:
         required: true
         type: string
         default: native-unsigned-windows
+      build-kind:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -60,15 +56,18 @@ jobs:
       - name: Activate pinned Rust toolchain (host)
         working-directory: native-bridge/host
         run: rustup show active-toolchain
-      - name: Probe for the approved release config
-        id: config
+      - name: Validate the build kind
         shell: bash
+        env:
+          BUILD_KIND: ${{ inputs.build-kind }}
         run: |
-          if [ -f native-bridge/installer/config/release-windows.json ]; then
-            echo "approved=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "approved=false" >> "$GITHUB_OUTPUT"
-          fi
+          case "$BUILD_KIND" in
+            release|debug) ;;
+            *)
+              echo "build-kind must be release or debug (got '$BUILD_KIND')" >&2
+              exit 1
+              ;;
+          esac
       # The tool observation requires cl/link on PATH and VCToolsVersion,
       # WindowsSDKVersion and UCRTVersion in the environment. Enter the selected
       # Visual Studio developer shell and export every changed variable to the
@@ -104,13 +103,18 @@ jobs:
       # VELES_EMBEDDED_CARRIER (fail-closed for the production channel). Supplying the variable in
       # this workflow would point the build at a file nobody assembled from this commit.
       - name: Build the production-channel unsigned input tree
-        if: steps.config.outputs.approved == 'true'
+        if: inputs.build-kind == 'release'
         run: .\gradlew.bat bridgeInstallerUnsigned
-      - name: Build the fixture-channel input tree
-        if: steps.config.outputs.approved != 'true'
-        run: .\gradlew.bat bridgeInstallerPackageFixture
+      # The debug build compiles Rust without --release and Swift in debug, enables the
+      # compile-time fixture trust adapter (build.rs refuses it for release/production) and packages
+      # the finished setup.exe with metadata and symbols.
+      - name: Build the debug fixture-channel installer
+        if: inputs.build-kind == 'debug'
+        env:
+          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: .\gradlew.bat bridgeInstallerDebug
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: steps.config.outputs.approved == 'true'
+        if: inputs.build-kind == 'release'
         with:
           name: ${{ inputs.artifact-name }}
           path: |
@@ -121,13 +125,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: steps.config.outputs.approved != 'true'
+        if: inputs.build-kind == 'debug'
         with:
-          name: native-fixture-windows
+          name: ${{ inputs.artifact-name }}
           path: |
-            build/native-bridge/installer/out/fixture/tree.tar
-            build/native-bridge/installer/out/fixture/provenance.json
-            build/native-bridge/installer/out/fixture/report-ab.json
-            build/native-bridge/installer/out/fixture/SHA256SUMS
+            build/native-bridge/installer/out/debug/setup.exe
+            build/native-bridge/installer/out/debug/metadata.json
+            build/native-bridge/installer/out/debug/SHA256SUMS
+            build/native-bridge/installer/out/debug/symbols
           if-no-files-found: error
           retention-days: 14

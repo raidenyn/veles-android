@@ -557,6 +557,42 @@ impl Platform for WindowsPlatform {
 }
 
 fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> InstallResult<TrustProof> {
+    #[cfg(feature = "debug-fixture-trust")]
+    {
+        debug_fixture_trust(source, expected)
+    }
+    #[cfg(not(feature = "debug-fixture-trust"))]
+    {
+        verify_trust_os(source, expected)
+    }
+}
+
+/// The debug build's fixture-only carrier path.
+///
+/// The package is not signed with a release identity, so there is nothing for WinVerifyTrust to
+/// assess: the exact carrier bytes are read from the package image and the compile-time fixture
+/// adapter turns them into evidence. It never runs in a release build (the module is not compiled).
+#[cfg(feature = "debug-fixture-trust")]
+fn debug_fixture_trust(
+    source: &PackageSource,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<TrustProof> {
+    if source.kind() != PackageKind::Directory {
+        return Err(invalid_package());
+    }
+    let carrier = open_carrier(source.path())?;
+    let handle = ReadOnlyFile::open(carrier.path())?;
+    let image = handle.read_all()?;
+    let carrier_bytes = pe::extract_carrier(&image, CARRIER_RESOURCE_NAME, MAX_CARRIER_BYTES)
+        .map_err(|_| trust_denied())?;
+    super::debug_trust::trust_proof(Target::WindowsX64, expected, carrier_bytes.to_vec())
+}
+
+#[cfg_attr(feature = "debug-fixture-trust", allow(dead_code))]
+fn verify_trust_os(
+    source: &PackageSource,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<TrustProof> {
     if expected.target != Target::WindowsX64 {
         return Err(unsupported());
     }
@@ -588,6 +624,26 @@ fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> Install
 /// is opened (a linked ancestor or leaf is `UnsafePath`), the verification runs
 /// over the handle that was opened, and revocation checking is never disabled.
 fn verify_host(
+    root: &Path,
+    executable: &str,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<HostAssessment> {
+    #[cfg(feature = "debug-fixture-trust")]
+    {
+        // Containment is still enforced (a linked or escaping path is `UnsafePath`); only the
+        // OS signature assessment is replaced by the compile-time fixture identity.
+        let relative = crate::inventory::normalize_relative_path(executable)?;
+        drop(crate::inventory::open_entry(root, &relative)?);
+        super::debug_trust::host_assessment(Target::WindowsX64, expected)
+    }
+    #[cfg(not(feature = "debug-fixture-trust"))]
+    {
+        verify_host_os(root, executable, expected)
+    }
+}
+
+#[cfg_attr(feature = "debug-fixture-trust", allow(dead_code))]
+fn verify_host_os(
     root: &Path,
     executable: &str,
     expected: &ReleaseDescriptor,

@@ -1234,6 +1234,7 @@ val bridgeHostBuild = tasks.register<Exec>("bridgeHostBuild") {
 val installerDir = layout.projectDirectory.dir("native-bridge/installer")
 val installerBuildRoot = layout.buildDirectory.dir("native-bridge/installer")
 val installerAssembler = installerDir.file("scripts/assemble_unsigned.py")
+val installerReleaseGate = installerDir.file("scripts/release_gate.py")
 val installerOsName = System.getProperty("os.name")
 val installerPlatform = when {
     installerOsName.startsWith("Windows") -> "windows"
@@ -1279,6 +1280,42 @@ fun requireInstallerHost() {
         "OTP-25 installer inputs are built on a Windows or macOS runner; Linux is not a producer target."
     }
 }
+
+// One installer build kind. The release kind is the two-slot A/B unsigned input tree Task 13 signs.
+// The debug kind is the PR path: one slot, no --release, the compile-time fixture trust adapter, a
+// debug Swift frontend, and a finished installer (setup.exe / DMG) packaged by release_gate.py.
+// Nothing selects a kind at run time: the registration names it.
+class InstallerBuildKind(
+    val name: String,
+    val slots: List<String>,
+    val outputDirectory: String,
+    val cargoProfileArguments: List<String>,
+    val cargoBinaryDirectory: String,
+    val cargoFeatures: List<String>,
+    val swiftConfiguration: String,
+)
+
+val installerReleaseKind = InstallerBuildKind(
+    name = "release",
+    slots = listOf("a", "b"),
+    outputDirectory = "",
+    cargoProfileArguments = listOf("--release"),
+    cargoBinaryDirectory = "release",
+    cargoFeatures = emptyList(),
+    swiftConfiguration = "release",
+)
+
+// The feature is compiled in only here; build.rs refuses it outside a debug profile or for the
+// production channel.
+val installerDebugKind = InstallerBuildKind(
+    name = "debug",
+    slots = listOf("a"),
+    outputDirectory = "debug",
+    cargoProfileArguments = emptyList(),
+    cargoBinaryDirectory = "debug",
+    cargoFeatures = listOf("--features", "debug-fixture-trust"),
+    swiftConfiguration = "debug",
+)
 
 fun installerRustFlags(): String {
     val checkout = layout.projectDirectory.asFile.absolutePath
@@ -1426,12 +1463,20 @@ val bridgeInstallerToolCheck = tasks.register<Exec>("bridgeInstallerToolCheck") 
     )
 }
 
-// Registers the two-pass producer for one channel: config check, then per slot (bootstrap engine,
-// host, optional Swift frontend, optional NSIS uninstaller, staging, assembly and carrier
-// verification, carrier-bearing engine, staging, final assembly, optional Windows resource embedding,
-// carrier-bytes verification), then the A/B finalization that publishes tree.tar, provenance.json,
-// report-ab.json and SHA256SUMS.
-fun registerInstallerProducer(taskName: String, channel: String, config: Provider<RegularFile>, summary: String): TaskProvider<Exec> {
+// Registers the two-pass producer for one channel and one build kind: config check, then per slot
+// (bootstrap engine, host, optional Swift frontend, optional NSIS uninstaller, staging, assembly and
+// carrier verification, carrier-bearing engine, staging, final assembly, optional Windows resource
+// embedding, carrier-bytes verification). The release kind then runs the A/B finalization that
+// publishes tree.tar, provenance.json, report-ab.json and SHA256SUMS; the debug kind packages the
+// finished installer (setup.exe / DMG) with metadata and symbols.
+fun registerInstallerProducer(
+    taskName: String,
+    channel: String,
+    config: Provider<RegularFile>,
+    summary: String,
+    kind: InstallerBuildKind,
+): TaskProvider<Exec> {
+    val buildName = kind.name
     val configCheck = tasks.register<Exec>("${taskName}Config") {
         group = "native-bridge"
         description = "Refuses a release config that is not tracked, unmodified and of the $channel channel."
@@ -1456,18 +1501,27 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
     val slotFinishers = mutableListOf<TaskProvider<*>>()
     val slotOutputs = mutableMapOf<String, Provider<Directory>>()
     var previousFinisher: TaskProvider<*>? = null
-    listOf("a", "b").forEach { slot ->
+    var lastEmbeddedTargetDir: Provider<Directory>? = null
+    var lastHostTargetDir: Provider<Directory>? = null
+    var lastFrontendScratchDir: Provider<Directory>? = null
+    var lastSymbolsDir: Provider<Directory>? = null
+    kind.slots.forEach { slot ->
         val suffix = slot.uppercase()
-        val installerTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/installer") }
-        val embeddedTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/installer-embedded") }
-        val hostTargetDir = installerBuildRoot.map { it.dir("target/$channel-$slot/host") }
-        val frontendScratchDir = installerBuildRoot.map { it.dir("target/$channel-$slot/frontend") }
-        val slotRoot = installerBuildRoot.map { it.dir("slots/$channel/$slot") }
+        val installerTargetDir = installerBuildRoot.map { it.dir("target/$buildName-$channel-$slot/installer") }
+        val embeddedTargetDir = installerBuildRoot.map { it.dir("target/$buildName-$channel-$slot/installer-embedded") }
+        val hostTargetDir = installerBuildRoot.map { it.dir("target/$buildName-$channel-$slot/host") }
+        val frontendScratchDir = installerBuildRoot.map { it.dir("target/$buildName-$channel-$slot/frontend") }
+        val slotRoot = installerBuildRoot.map { it.dir("slots/$buildName/$channel/$slot") }
         val binDir = slotRoot.map { it.dir("bin") }
         val embeddedBinDir = slotRoot.map { it.dir("bin-embedded") }
         val assembledDir = slotRoot.map { it.dir("assembled") }
         val assembledFinalDir = slotRoot.map { it.dir("assembled-final") }
         val uninstallerDir = slotRoot.map { it.dir("uninstall") }
+        val symbolsDir = installerBuildRoot.map { it.dir("target/$buildName-$channel-$slot/symbols") }
+        lastEmbeddedTargetDir = embeddedTargetDir
+        lastHostTargetDir = hostTargetDir
+        lastFrontendScratchDir = frontendScratchDir
+        lastSymbolsDir = symbolsDir
         // The published tree is the one re-assembled from the carrier-bearing engine; the bootstrap
         // tree only exists to let the assembler compute the carrier it then hands to that build.
         slotOutputs[slot] = assembledFinalDir
@@ -1485,7 +1539,7 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 val binPath = providers.exec {
                     workingDir(installerDir.dir("macos"))
                     commandLine(
-                        "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
+                        "xcrun", "swift", "build", "--configuration", kind.swiftConfiguration, "--arch", "arm64",
                         "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile, "--show-bin-path",
                     )
                 }.standardOutput.asText.get().trim()
@@ -1519,10 +1573,11 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 installerCargoEnvironment()
                 installerChannelEnvironment(channel)
             }
-            commandLine(
-                "cargo", "build", "--locked", "--release", "--target", installerRustTriple,
-                "--bin", "veles-bridge-maintenance", "--bin", "veles-bridge-cleanup",
-            )
+            val cargoArguments = mutableListOf("cargo", "build", "--locked")
+            cargoArguments.addAll(kind.cargoProfileArguments)
+            if (kind.cargoFeatures.isNotEmpty()) cargoArguments.addAll(kind.cargoFeatures)
+            cargoArguments.addAll(listOf("--target", installerRustTriple, "--bin", "veles-bridge-maintenance", "--bin", "veles-bridge-cleanup"))
+            commandLine(cargoArguments)
         }
         val host = tasks.register<Exec>("${taskName}Host$suffix") {
             group = "native-bridge"
@@ -1541,7 +1596,10 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 environment("VELES_ALLOWED_ORIGINS", allowedOrigin.get())
                 installerCargoEnvironment()
             }
-            commandLine("cargo", "build", "--locked", "--release", "--target", installerRustTriple, "--bin", "veles-native-host")
+            commandLine(
+                listOf("cargo", "build", "--locked") + kind.cargoProfileArguments +
+                    listOf("--target", installerRustTriple, "--bin", "veles-native-host"),
+            )
         }
         val frontend = tasks.register<Exec>("${taskName}Frontend$suffix") {
             group = "native-bridge"
@@ -1555,7 +1613,7 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 delete(frontendScratchDir)
                 // Resolved at execution: the SDK path exists only on a macOS runner.
                 commandLine(
-                    "xcrun", "swift", "build", "--configuration", "release", "--arch", "arm64",
+                    "xcrun", "swift", "build", "--configuration", kind.swiftConfiguration, "--arch", "arm64",
                     "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile,
                     "-Xswiftc", "-file-prefix-map", "-Xswiftc", "${layout.projectDirectory.asFile.absolutePath}=/veles-src",
                 )
@@ -1583,11 +1641,11 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
             description = "Stages exactly the bootstrap executables the assembler accepts (slot $slot, $channel)."
             dependsOn(engine, host, uninstaller)
             into(binDir)
-            from(installerTargetDir.map { it.dir("$installerRustTriple/release") }) {
+            from(installerTargetDir.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) {
                 include("veles-bridge-maintenance$installerExecutableSuffix")
                 if (installerPlatform == "windows") include("veles-bridge-cleanup$installerExecutableSuffix")
             }
-            from(hostTargetDir.map { it.dir("$installerRustTriple/release") }) {
+            from(hostTargetDir.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) {
                 include("veles-native-host$installerExecutableSuffix")
             }
             from(uninstallerDir) { include("uninstall.exe") }
@@ -1649,21 +1707,22 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
                 environment("VELES_BUILD_CHANNEL", channel)
                 environment("VELES_EMBEDDED_CARRIER", carrierDocument.get().asFile.absolutePath)
             }
-            commandLine(
-                "cargo", "build", "--locked", "--release", "--target", installerRustTriple,
-                "--bin", "veles-bridge-maintenance", "--bin", "veles-bridge-cleanup",
-            )
+            val cargoArguments = mutableListOf("cargo", "build", "--locked")
+            cargoArguments.addAll(kind.cargoProfileArguments)
+            if (kind.cargoFeatures.isNotEmpty()) cargoArguments.addAll(kind.cargoFeatures)
+            cargoArguments.addAll(listOf("--target", installerRustTriple, "--bin", "veles-bridge-maintenance", "--bin", "veles-bridge-cleanup"))
+            commandLine(cargoArguments)
         }
         val stageEmbedded = tasks.register<Sync>("${taskName}StageEmbedded$suffix") {
             group = "native-bridge"
             description = "Stages the carrier-bearing executables for the published tree (slot $slot, $channel)."
             dependsOn(engineEmbedded, host, uninstaller)
             into(embeddedBinDir)
-            from(embeddedTargetDir.map { it.dir("$installerRustTriple/release") }) {
+            from(embeddedTargetDir.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) {
                 include("veles-bridge-maintenance$installerExecutableSuffix")
                 if (installerPlatform == "windows") include("veles-bridge-cleanup$installerExecutableSuffix")
             }
-            from(hostTargetDir.map { it.dir("$installerRustTriple/release") }) {
+            from(hostTargetDir.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) {
                 include("veles-native-host$installerExecutableSuffix")
             }
             from(uninstallerDir) { include("uninstall.exe") }
@@ -1727,12 +1786,73 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
         previousFinisher = verifyCarrier
         slotFinishers += verifyCarrier
     }
+    val outDir = installerBuildRoot.map {
+        it.dir(if (kind.outputDirectory.isEmpty()) "out/$channel" else "out/${kind.outputDirectory}")
+    }
+    if (kind.name == "debug") {
+        // Symbols travel beside the finished installer; both are uploaded, never mixed into a tree.
+        val symbols = tasks.register<Sync>("${taskName}Symbols") {
+            group = "native-bridge"
+            description = "Stages the available debug symbols (PDBs on Windows, dSYMs on macOS)."
+            dependsOn(slotFinishers)
+            into(lastSymbolsDir!!)
+            from(lastEmbeddedTargetDir!!.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) { include("*.pdb") }
+            from(lastHostTargetDir!!.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) { include("*.pdb") }
+            doFirst { lastSymbolsDir!!.get().asFile.mkdirs() }
+            doLast {
+                if (installerPlatform != "macos") return@doLast
+                val destination = lastSymbolsDir!!.get().asFile
+                destination.mkdirs()
+                val binaries = listOf(
+                    lastEmbeddedTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-bridge-maintenance$installerExecutableSuffix"),
+                    lastEmbeddedTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-bridge-cleanup$installerExecutableSuffix"),
+                    lastHostTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-native-host$installerExecutableSuffix"),
+                )
+                for (binary in binaries) {
+                    if (!binary.isFile) continue
+                    val dSYM = destination.resolve("${binary.name}.dSYM")
+                    providers.exec {
+                        commandLine("xcrun", "dsymutil", binary.absolutePath, "-o", dSYM.absolutePath)
+                        isIgnoreExitValue = true
+                    }.result.get()
+                }
+            }
+        }
+        return tasks.register<Exec>(taskName) {
+            group = "native-bridge"
+            description = summary
+            dependsOn(slotFinishers)
+            dependsOn(symbols)
+            inputs.files(config)
+            inputs.files(slotOutputs.getValue("a"))
+            outputs.dir(outDir)
+            val runId = providers.environmentVariable("VELES_WORKFLOW_RUN_ID").orElse("local")
+            doFirst {
+                requireInstallerHost()
+                delete(outDir)
+                outDir.get().asFile.parentFile.mkdirs()
+                environment("VELES_WORKFLOW_RUN_ID", runId.get())
+                val arguments = mutableListOf(
+                    installerPython, "-I", installerReleaseGate.asFile.absolutePath, "package-debug",
+                    "--platform", installerPlatform,
+                    "--tree", slotOutputs.getValue("a").get().file("tree").asFile.absolutePath,
+                    "--config", config.get().asFile.absolutePath,
+                    "--output", outDir.get().asFile.absolutePath,
+                    "--commit", installerSourceCommit(),
+                    "--symbols", lastSymbolsDir!!.get().asFile.absolutePath,
+                )
+                if (installerPlatform == "windows") {
+                    arguments += listOf("--nsis-path", installerMakensis.get())
+                }
+                commandLine(arguments)
+            }
+        }
+    }
     return tasks.register<Exec>(taskName) {
         group = "native-bridge"
         description = summary
         dependsOn(slotFinishers)
         inputs.files(config)
-        val outDir = installerBuildRoot.map { it.dir("out/$channel") }
         outputs.dir(outDir)
         doFirst {
             requireInstallerHost()
@@ -1753,11 +1873,19 @@ fun registerInstallerProducer(taskName: String, channel: String, config: Provide
 val bridgeInstallerUnsigned = registerInstallerProducer(
     "bridgeInstallerUnsigned", "production", installerReleaseConfig,
     "Builds the UNSIGNED production-channel installer input tree twice and publishes tree.tar, provenance and the A/B report; requires a tracked approved release config.",
+    installerReleaseKind,
 )
 
 val bridgeInstallerPackageFixture = registerInstallerProducer(
     "bridgeInstallerPackageFixture", "fixture", installerFixtureConfig,
     "Builds the FIXTURE-channel installer input tree twice from the tracked fixture config; never a release candidate.",
+    installerReleaseKind,
+)
+
+val bridgeInstallerDebug = registerInstallerProducer(
+    "bridgeInstallerDebug", "fixture", installerFixtureConfig,
+    "Builds the finished FIXTURE-channel DEBUG installer once (setup.exe or ad-hoc-signed DMG) with metadata and symbols; never a release candidate.",
+    installerDebugKind,
 )
 
 val bridgeInstallerSupplyChain = tasks.register<Exec>("bridgeInstallerSupplyChain") {

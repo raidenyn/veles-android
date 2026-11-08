@@ -15,6 +15,12 @@ description = "OTP-25 standalone per-user installer engine: strict package ident
 name = "veles_bridge_installer"
 path = "src/lib.rs"
 
+# The debug fixture trust adapter exists only in a build that explicitly enables this feature.
+# `build.rs` refuses it outside a debug profile or for the production channel; nothing at run
+# time (argument, environment, descriptor field) can enable it.
+[features]
+debug-fixture-trust = []
+
 # The channel an engine installs is a compile-time cfg set by the producer's RUSTFLAGS, not a Cargo feature.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(veles_channel, values("fixture", "development"))'] }

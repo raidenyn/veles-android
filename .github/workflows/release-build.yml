@@ -12,10 +12,12 @@ name: release-build
 #   Android artifact, preserving the existing prerelease collision/replacement
 #   behavior.
 # - The native jobs build the standalone installers' UNSIGNED input trees (OTP-25 Task 14) and upload
-#   them as native-unsigned-windows / native-unsigned-macos (or, while no approved release config is
-#   tracked, clearly named fixture trees). They sign nothing and do not feed the Android publication
-#   beyond their existing success requirement; release-native-installers.yml consumes them only from a
-#   push or workflow_dispatch run of this workflow, never from a pull_request run.
+#   them as native-unsigned-windows / native-unsigned-macos. They sign nothing and do not feed the
+#   Android publication beyond their existing success requirement; release-native-installers.yml
+#   consumes them only from a push or workflow_dispatch run of this workflow, never from a
+#   pull_request run. `build-kind: release` is always stated explicitly: the producers no longer
+#   infer a channel from a config file, and the PR debug path calls the same workflows with
+#   `build-kind: debug`.
 
 on:
   push:
@@ -136,6 +138,7 @@ jobs:
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       artifact-name: native-unsigned-windows
+      build-kind: release
 
   native-macos:
     if: |
@@ -153,6 +156,7 @@ jobs:
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       artifact-name: native-unsigned-macos
+      build-kind: release
 
   publish:
     name: publish prerelease

@@ -465,6 +465,40 @@ impl Platform for MacosPlatform {
 }
 
 fn verify_trust(source: &PackageSource, expected: &ReleaseDescriptor) -> InstallResult<TrustProof> {
+    #[cfg(feature = "debug-fixture-trust")]
+    {
+        debug_fixture_trust(source, expected)
+    }
+    #[cfg(not(feature = "debug-fixture-trust"))]
+    {
+        verify_trust_os(source, expected)
+    }
+}
+
+/// The debug build's fixture-only carrier path.
+///
+/// `carrier.app` is ad-hoc signed for the debug DMG, so there is no Gatekeeper identity to
+/// assess. The exact carrier resource bytes are read from the package and the compile-time fixture
+/// adapter turns them into evidence; the resource file is never trusted on its own, because the
+/// decision layer still requires it to equal the compiled-in expected descriptor.
+#[cfg(feature = "debug-fixture-trust")]
+fn debug_fixture_trust(
+    source: &PackageSource,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<TrustProof> {
+    if source.kind() != PackageKind::Directory {
+        return Err(invalid_package());
+    }
+    let carrier = open_carrier(source.path())?;
+    let carrier_bytes = read_carrier_resource(&carrier)?;
+    super::debug_trust::trust_proof(Target::MacosArm64, expected, carrier_bytes)
+}
+
+#[cfg_attr(feature = "debug-fixture-trust", allow(dead_code))]
+fn verify_trust_os(
+    source: &PackageSource,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<TrustProof> {
     if expected.target != Target::MacosArm64 {
         return Err(unsupported());
     }
@@ -543,6 +577,26 @@ fn host_subject(root: &Path, relative: &str) -> std::path::PathBuf {
 /// (nested code and the resource seal included, revocation never bypassed) and
 /// the Gatekeeper execution assessment must accept the same subject.
 fn verify_host(
+    root: &Path,
+    executable: &str,
+    expected: &ReleaseDescriptor,
+) -> InstallResult<HostAssessment> {
+    #[cfg(feature = "debug-fixture-trust")]
+    {
+        // Containment is still enforced (a linked or escaping path is `UnsafePath`); only the
+        // Gatekeeper/Team-ID assessment is replaced by the compile-time fixture identity.
+        let relative = crate::inventory::normalize_relative_path(executable)?;
+        drop(crate::inventory::open_entry(root, &relative)?);
+        super::debug_trust::host_assessment(Target::MacosArm64, expected)
+    }
+    #[cfg(not(feature = "debug-fixture-trust"))]
+    {
+        verify_host_os(root, executable, expected)
+    }
+}
+
+#[cfg_attr(feature = "debug-fixture-trust", allow(dead_code))]
+fn verify_host_os(
     root: &Path,
     executable: &str,
     expected: &ReleaseDescriptor,

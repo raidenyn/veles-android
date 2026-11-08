@@ -85,6 +85,10 @@ pub(crate) use windows::{
 // tests, so its coverage checks are exercised on every host.
 #[cfg(any(windows, test))]
 mod pe;
+// The debug fixture trust adapter exists only in a build that explicitly enables the feature;
+// `build.rs` refuses the feature outside a debug profile or for the production channel.
+#[cfg(feature = "debug-fixture-trust")]
+pub mod debug_trust;
 // The pure publisher/status logic of both native adapters is compiled for its
 // own target *and* for `cargo test`, so every security-relevant mapping is
 // asserted on any host instead of being trusted on a native runner.

@@ -33,7 +33,7 @@ FORBIDDEN_CARGO_FLAGS = (
 )
 ONE_PUBLIC_TASKS = (
     "bridgeInstallerFormat", "bridgeInstallerLint", "bridgeInstallerTest", "bridgeInstallerScriptsTest",
-    "bridgeInstallerUnsigned", "bridgeInstallerPackageFixture", "bridgeInstallerSupplyChain",
+    "bridgeInstallerUnsigned", "bridgeInstallerPackageFixture", "bridgeInstallerDebug", "bridgeInstallerSupplyChain",
 )
 SHA_PINNED_USE = re.compile(r"uses:\s*(?:\./|[\w.-]+/[\w./-]+@[0-9a-f]{40}\b)")
 
@@ -117,6 +117,12 @@ def object_block(code, marker):
     return None
 
 
+def kind_declaration(code, name):
+    """The argument text of ``name = InstallerBuildKind(...)``, whitespace-normalised."""
+    match = re.search(r"val %s\s*=\s*InstallerBuildKind\((.*?)\n\s*\)" % re.escape(name), code, re.S)
+    return re.sub(r"\s+", " ", match.group(1)) if match else None
+
+
 # --------------------------------------------------------------------------- Gradle
 
 
@@ -137,32 +143,62 @@ def check_gradle(gradle, clean_script):
         if re.search(r"(?i)(?<![\w])%s(?![\w])" % re.escape(forbidden), code):
             errors.append("installer producer section references the scaffold/Node/Tauri path %r" % forbidden)
 
-    # 2. Locked cargo, release, explicit production binaries only, no all-features/simulator/test driver.
-    builds = [call for call in command_lines(code) if '"cargo"' in call and '"build"' in call]
-    if len(builds) < 2:
-        errors.append("expected an installer-engine and a host cargo build, found %d" % len(builds))
-    seen = set()
-    for call in builds:
-        words = literals(call)
-        if "--locked" not in words:
-            errors.append("a cargo build does not pass --locked")
-        if "--release" not in words:
-            errors.append("a cargo build is not --release")
-        bins = [words[i + 1] for i, word in enumerate(words) if word == "--bin" and i + 1 < len(words)]
-        if not bins:
-            errors.append("a cargo build does not name its binaries with --bin")
-        for name in bins:
-            seen.add(name)
-            if name not in ALLOWED_BINS:
-                errors.append("a cargo build names a binary outside the production set: %s" % name)
-        for flag in FORBIDDEN_CARGO_FLAGS:
-            if flag in words or any(flag in word for word in words if word.startswith("-") or "driver" in word):
-                errors.append("a cargo build must not use %s" % flag)
-        if "--target" not in words:
-            errors.append("a cargo build does not pin its --target triple")
-    for need in ALLOWED_BINS[:1] + ALLOWED_BINS[2:]:
-        if need not in seen:
+    # 2. Locked cargo, an explicit build kind for every producer (release has --release and the
+    #    static CRT; debug is a plain debug profile with the one reviewed fixture-trust feature),
+    #    explicit production binaries only, no simulator/test driver.
+    release_kind = kind_declaration(code, "installerReleaseKind")
+    debug_kind = kind_declaration(code, "installerDebugKind")
+    if release_kind is None or "cargoProfileArguments = listOf(\"--release\")" not in release_kind:
+        errors.append("the release build kind does not pass cargo --release")
+    elif "cargoBinaryDirectory = \"release\"" not in release_kind:
+        errors.append("the release build kind does not read the release binary directory")
+    if release_kind is not None and "slots = listOf(\"a\", \"b\")" not in release_kind:
+        errors.append("the release build kind does not define the two explicit A/B slots")
+    if debug_kind is None:
+        errors.append("no debug build kind is declared")
+    else:
+        if "cargoProfileArguments = emptyList()" not in debug_kind:
+            errors.append("the debug build kind must not pass cargo --release")
+        if "cargoBinaryDirectory = \"debug\"" not in debug_kind:
+            errors.append("the debug build kind does not read the debug binary directory")
+        if "cargoFeatures = listOf(\"--features\", \"debug-fixture-trust\")" not in debug_kind:
+            errors.append("the debug build kind does not enable debug-fixture-trust")
+        if "slots = listOf(\"a\")" not in debug_kind:
+            errors.append("the debug build kind must build exactly one slot")
+        if "swiftConfiguration = \"debug\"" not in debug_kind:
+            errors.append("the debug build kind does not select the Swift debug configuration")
+    if release_kind is not None and "cargoFeatures = emptyList()" not in release_kind:
+        errors.append("the release build kind must not enable the debug feature")
+    if release_kind is not None and "swiftConfiguration = \"release\"" not in release_kind:
+        errors.append("the release build kind does not select the Swift release configuration")
+    if 'mutableListOf("cargo", "build", "--locked")' not in code:
+        errors.append("a cargo build does not pass --locked")
+    if 'listOf("cargo", "build", "--locked")' not in code:
+        errors.append("the host cargo build does not pass --locked")
+    if code.count("kind.cargoProfileArguments") < 2:
+        errors.append("a cargo build does not use the build kind's profile arguments")
+    if "kind.cargoFeatures" not in code:
+        errors.append("a cargo build does not use the build kind's feature arguments")
+    for need in ('"--bin", "veles-bridge-maintenance"', '"--bin", "veles-bridge-cleanup"', '"--bin", "veles-native-host"'):
+        if need not in code:
             errors.append("no cargo build produces %s" % need)
+    named = set(re.findall(r'"--bin",\s*"([^"]+)"', code))
+    if named - set(ALLOWED_BINS):
+        errors.append("a cargo build names a binary outside the production set: %s" % sorted(named - set(ALLOWED_BINS)))
+    producer_section = code[code.find("fun registerInstallerProducer"):]
+    if producer_section.count('"--target", installerRustTriple') != 3:
+        errors.append("a cargo build does not pin its --target triple")
+    for flag in FORBIDDEN_CARGO_FLAGS:
+        if flag == "--features":
+            if code.count('"--features"') != 1:
+                errors.append("--features may only carry the one reviewed debug feature")
+            elif debug_kind is None or 'listOf("--features", "debug-fixture-trust")' not in debug_kind:
+                errors.append("a cargo build must not use --features")
+        elif flag == "test-driver":
+            if "test-driver" in producer_section:
+                errors.append("a cargo build must not use test-driver")
+        elif flag in producer_section:
+            errors.append("a cargo build must not use %s" % flag)
     if re.search(r'"cargo",\s*"install"', code):
         errors.append("the producer graph must not cargo install anything")
     lint = [call for call in command_lines(code) if '"clippy"' in call]
@@ -188,12 +224,15 @@ def check_gradle(gradle, clean_script):
     if "--scratch-path" not in code and "swift" in code:
         errors.append("the Swift build does not redirect its scratch path under build/")
 
-    # 4. Independent A/B: two explicit slots, each with its own target directories, wiped first.
+    # 4. Independent A/B for release, one slot for debug: explicit slots, each with its own target
+    #    directories (scoped by build kind, channel and slot), wiped first.
     if not re.search(r'listOf\("a",\s*"b"\)', code):
-        errors.append("the producer does not define the two explicit A/B slots")
-    slot_dirs = [d for d in re.findall(r'dir\("target/([^"]*)"\)', code) if d != "check"]
-    if len(slot_dirs) < 3 or any("$channel" not in d or "$slot" not in d for d in slot_dirs):
-        errors.append("cargo target directories are not distinct per channel and slot")
+        errors.append("the release build kind does not define the two explicit A/B slots")
+    if not re.search(r'slots = listOf\("a"\)', code):
+        errors.append("the debug build kind does not build exactly one slot")
+    slot_dirs = [d for d in re.findall(r'it\.dir\("target/([^"]*)"\)', code) if d != "check"]
+    if len(slot_dirs) < 3 or any("$channel" not in d or "$slot" not in d or "$buildName" not in d for d in slot_dirs):
+        errors.append("cargo target directories are not distinct per build kind, channel and slot")
     for task in re.split(r"(?=tasks\.register)", code):
         if not task.startswith("tasks.register"):
             continue
@@ -239,7 +278,7 @@ def check_gradle(gradle, clean_script):
             errors.append("the carrier-bearing engine build does not consume a verified carrier")
     if code.count('environment("VELES_EMBEDDED_CARRIER"') != 1:
         errors.append("exactly one engine build may compile a carrier in")
-    if 'it.dir("slots/$channel/$slot")' not in code:
+    if 'it.dir("slots/$buildName/$channel/$slot")' not in code:
         errors.append("the assembled carrier is not scoped to the registered channel")
     bootstrap = object_block(code, '"${taskName}Engine$suffix"')
     if bootstrap is not None and 'environment("VELES_EMBEDDED_CARRIER"' in bootstrap:
@@ -271,8 +310,15 @@ def check_gradle(gradle, clean_script):
         errors.append("bridgeInstallerPackageFixture is not registered as the fixture channel with the tracked fixture config")
     elif "installerReleaseConfig" in fixture.group(1) or '"production"' in fixture.group(1):
         errors.append("bridgeInstallerPackageFixture references a production input")
-    if code.count("registerInstallerProducer(") != 3:  # the definition and the two registrations
-        errors.append("registerInstallerProducer must be defined once and called exactly twice")
+    debug = re.search(r'registerInstallerProducer\(\s*"bridgeInstallerDebug"(.*?)\n\)', code, re.S)
+    if not debug or '"fixture"' not in debug.group(1) or "installerFixtureConfig" not in debug.group(1):
+        errors.append("bridgeInstallerDebug is not registered as the fixture channel with the tracked fixture config")
+    elif "installerReleaseConfig" in debug.group(1) or '"production"' in debug.group(1):
+        errors.append("bridgeInstallerDebug references a production input")
+    elif "installerDebugKind" not in debug.group(1):
+        errors.append("bridgeInstallerDebug does not use the debug build kind")
+    if code.count("registerInstallerProducer(") != 4:  # the definition and the three registrations
+        errors.append("registerInstallerProducer must be defined once and called exactly three times")
     fixture_config = re.search(r"val installerFixtureConfig\s*=\s*([^\n]+)", code)
     release_config = re.search(r"val installerReleaseConfig\s*=\s*([^\n]*(?:\n\s+\.[^\n]+)*)", code)
     if not fixture_config or "gradleProperty" in fixture_config.group(1) or "fixture-" not in fixture_config.group(1):
@@ -331,6 +377,32 @@ def check_gradle(gradle, clean_script):
     if re.search(r'(?i)veles_channel=\\"production|veles_channel.*production', code.replace('if (channel != "production")', "")):
         errors.append("production must never carry a veles_channel cfg")
 
+    # 9. Debug packaging: a debug build produces the FINISHED installer through release_gate.py
+    #    package-debug (never the A/B finalize step) and stages symbols for upload.
+    debug_branch = object_block(code, 'if (kind.name == "debug")')
+    if debug_branch is None:
+        errors.append("the registration does not branch on the debug build kind")
+    elif '"package-debug"' not in debug_branch:
+        errors.append("the debug producer does not package a finished installer (package-debug)")
+    elif '"finalize"' in debug_branch:
+        errors.append("the debug producer must not run the release A/B finalize step")
+    if '"package-debug"' not in code:
+        errors.append("bridgeInstallerDebug does not package a finished installer (package-debug)")
+    if "release_gate.py" not in code:
+        errors.append("the debug packager is not release_gate.py")
+    if 'environmentVariable("VELES_WORKFLOW_RUN_ID")' not in code or 'orElse("local")' not in code:
+        errors.append("the debug producer does not bind the workflow run id with a local default")
+    if 'environment("VELES_WORKFLOW_RUN_ID"' not in code:
+        errors.append("the debug packager does not receive the workflow run id")
+    if debug_kind is None or "outputDirectory = \"debug\"" not in debug_kind:
+        errors.append("the debug build kind does not publish to out/debug")
+    if '"*.pdb"' not in code or "dSYM" not in code:
+        errors.append("the debug producer does not collect the available PDB/dSYM symbols")
+    if '"--symbols"' not in code:
+        errors.append("the debug packager is not given the staged symbols")
+    if code.count('"finalize"') != 1:
+        errors.append("exactly the release finalizer may call assemble_unsigned finalize")
+
     # 8. Clean contract.
     clean = gradle.split('tasks.named<Delete>("clean")', 1)
     for path in ("native-bridge/installer/target", "native-bridge/installer/macos/.build"):
@@ -350,15 +422,15 @@ PRODUCERS = {
         "file": ".github/workflows/build-native-windows.yml",
         "runner": "windows-2025",
         "artifact": "native-unsigned-windows",
-        "fixture": "native-fixture-windows",
         "gradle": r".\gradlew.bat",
+        "installer": "setup.exe",
     },
     "macos": {
         "file": ".github/workflows/build-native-macos.yml",
         "runner": "macos-26",
         "artifact": "native-unsigned-macos",
-        "fixture": "native-fixture-macos",
         "gradle": "./gradlew",
+        "installer": "Veles Bridge Installer.dmg",
     },
 }
 
@@ -380,29 +452,53 @@ def check_producer_workflow(source, platform):
         errors.append("commit-sha input is not required")
     if not re.search(r"artifact-name:\s*\n\s*required:\s*true\s*\n\s*type:\s*string\s*\n\s*default:\s*%s\b" % spec["artifact"], body):
         errors.append("artifact-name must default to the neutral %s" % spec["artifact"])
+    if not re.search(r"build-kind:\s*\n\s*required:\s*true\s*\n\s*type:\s*string\b", body):
+        errors.append("build-kind is not a required string input")
+    if re.search(r"build-kind:\s*\n\s*required:\s*true\s*\n\s*type:\s*string\s*\n\s*default:", body):
+        errors.append("build-kind must not have a default (the caller states release or debug)")
     if "-latest" in body or not re.search(r"runs-on:\s*%s\b" % re.escape(spec["runner"]), body) or body.count("runs-on:") != 1:
         errors.append("exactly one job on %s is required" % spec["runner"])
     # No Tauri scaffold production path.
     if re.search(r"(?i)tauri|\bnpm\b|setup-node|node-version|bridgePackage|bridgeBundle|bridgeBuild\b|bridgeManifests|"
                  r"provision-windows-tools|NSIS_PATH|veles-native-bridge|verify/native/", body):
         errors.append("the producer still uses the Tauri scaffold packaging path")
-    # Channel-specific Gradle tasks, each called once for its selected input tree.
-    for task in ("bridgeInstallerUnsigned", "bridgeInstallerPackageFixture"):
-        if body.count(task) != 1:
-            errors.append("%s must be invoked exactly once (found %d)" % (task, body.count(task)))
+    # The build kind is explicit and validated before anything is built: no config-file probe.
+    if "build-kind must be release or debug" not in body:
+        errors.append("the workflow does not validate build-kind as release or debug")
+    else:
+        build_positions = [body.index(task) for task in ("bridgeInstallerUnsigned", "bridgeInstallerDebug") if task in body]
+        if build_positions and body.index("build-kind must be release or debug") > min(build_positions):
+            errors.append("build-kind must be validated before any build runs")
+    if re.search(r"release-%s\.json" % platform, body):
+        errors.append("the producer must never select its channel from config-file existence")
+    # Exactly one release build and one debug build, each for its own build kind.
+    if body.count("bridgeInstallerUnsigned") != 1:
+        errors.append("bridgeInstallerUnsigned must be invoked exactly once (found %d)" % body.count("bridgeInstallerUnsigned"))
+    if body.count("bridgeInstallerDebug") != 1:
+        errors.append("bridgeInstallerDebug must be invoked exactly once (found %d)" % body.count("bridgeInstallerDebug"))
+    if "bridgeInstallerPackageFixture" in body:
+        errors.append("the producer workflows must not fall back to a fixture input tree")
     for scaffold in ("bridgePackage", "bridgeHostBuild"):
         if scaffold in body:
             errors.append("the producer invokes %s" % scaffold)
     if "--offline" in body:
         errors.append("the producer must not run offline (no wrapper)")
-    unsigned_if = re.search(r"if:[^\n]*\n[^\n]*bridgeInstallerUnsigned", body)
-    fixture_if = re.search(r"if:[^\n]*\n[^\n]*bridgeInstallerPackageFixture", body)
-    if not unsigned_if or "== 'true'" not in unsigned_if.group(0) or "!=" in unsigned_if.group(0):
-        errors.append("bridgeInstallerUnsigned must run only when an approved release config exists")
-    if not fixture_if or "!= 'true'" not in fixture_if.group(0):
-        errors.append("bridgeInstallerPackageFixture must run only when no approved release config exists")
-    if not re.search(r"release-%s\.json" % platform, body):
-        errors.append("the approved-config probe does not name release-%s.json" % platform)
+    def selected_for(kind_value):
+        index = body.find("bridgeInstallerDebug" if kind_value == "debug" else "bridgeInstallerUnsigned")
+        if index < 0:
+            return False
+        condition = body.rfind("inputs.build-kind == '%s'" % kind_value, 0, index)
+        return condition >= 0 and index - condition < 400
+
+    if not selected_for("release"):
+        errors.append("bridgeInstallerUnsigned must run only for build-kind release")
+    if not selected_for("debug"):
+        errors.append("bridgeInstallerDebug must run only for build-kind debug")
+    if "VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}" not in body:
+        errors.append("the debug build must receive the workflow run id")
+    for task in ("bridgeInstallerUnsigned", "bridgeInstallerDebug"):
+        if ("%s %s" % (spec["gradle"], task)) not in body:
+            errors.append("%s must invoke %s with the platform wrapper" % (spec["file"], task))
     # Pinned toolchains and runtimes.
     for line in body.splitlines():
         stripped = line.strip().lstrip("- ")
@@ -446,34 +542,37 @@ def check_producer_workflow(source, platform):
         errors.append("the producer workflow must not set the carrier channel itself; the Gradle producer supplies the assembled carrier")
     if not re.search(r"permissions:\n  contents: read\n", body) or body.count("permissions:") != 1:
         errors.append("permissions must be a single workflow-level contents: read")
-    # Uploads: mode- and hash-preserving, explicit, named, bounded.
+    # Uploads: exactly the release input tree or the finished debug installer, exact files,
+    # caller-selected names, bounded.
     uploads = upload_blocks(source)
     if len(uploads) != 2:
-        errors.append("expected exactly two uploads (approved production tree, fixture tree), found %d" % len(uploads))
+        errors.append("expected exactly two uploads (release input tree, debug installer), found %d" % len(uploads))
     else:
-        production = next((b for b in uploads if "build/native-bridge/installer/out/production/" in b), None)
-        fixture = next((b for b in uploads if "build/native-bridge/installer/out/fixture/" in b), None)
-        if production is None or fixture is None:
-            errors.append("uploads must be the production and the fixture output directories")
+        release = next((b for b in uploads if "build/native-bridge/installer/out/production/" in b), None)
+        debug = next((b for b in uploads if "build/native-bridge/installer/out/debug/" in b), None)
+        if release is None or debug is None:
+            errors.append("uploads must be the production input tree and the finished debug installer")
         else:
-            if "name: ${{ inputs.artifact-name }}" not in production:
-                errors.append("the production upload must use the caller-selected artifact name")
-            if "name: %s" % spec["fixture"] not in fixture:
-                errors.append("the fixture upload must be named %s" % spec["fixture"])
-            for block, channel in ((production, "production"), (fixture, "fixture")):
-                for name in ("tree.tar", "provenance.json", "report-ab.json", "SHA256SUMS"):
-                    if "build/native-bridge/installer/out/%s/%s" % (channel, name) not in block:
-                        errors.append("the %s upload omits %s (hashes and modes travel inside tree.tar)" % (channel, name))
+            for block, label in ((release, "release"), (debug, "debug")):
+                if "name: ${{ inputs.artifact-name }}" not in block:
+                    errors.append("the %s upload must use the caller-selected artifact name" % label)
+            for name in ("tree.tar", "provenance.json", "report-ab.json", "SHA256SUMS"):
+                if "build/native-bridge/installer/out/production/%s" % name not in release:
+                    errors.append("the release upload omits %s" % name)
+            for name in (spec["installer"], "metadata.json", "SHA256SUMS", "symbols"):
+                if "build/native-bridge/installer/out/debug/%s" % name not in debug:
+                    errors.append("the debug upload omits %s (the artifact must be a finished installer with metadata and symbols)" % name)
+            if "if: inputs.build-kind == 'release'" not in release.split("with:")[0]:
+                errors.append("the release upload must be conditional on build-kind release")
+            if "if: inputs.build-kind == 'debug'" not in debug.split("with:")[0]:
+                errors.append("the debug upload must be conditional on build-kind debug")
+            if "out/debug/" in release or "out/production/" in debug:
+                errors.append("a debug upload must never carry the production input tree")
+            for block in (release, debug):
                 if "if-no-files-found: error" not in block or not re.search(r"retention-days:\s*\d+", block):
                     errors.append("every upload must fail on missing files and be retention-bounded")
                 if re.search(r"path:[^\n]*\*|veles-native-host(?:\.exe)?\s*$", block, re.M):
                     errors.append("uploads must name exact files, not globs or bare executables (exec bits are dropped)")
-            if "if:" not in production or "== 'true'" not in production.split("with:")[0]:
-                errors.append("the production upload must be conditional on the approved config")
-            if "!= 'true'" not in fixture.split("with:")[0]:
-                errors.append("the fixture upload must be conditional on the absence of an approved config")
-            if spec["fixture"] == spec["artifact"] or "native-unsigned" in fixture:
-                errors.append("a fixture artifact must never carry the production artifact name")
     return errors
 
 
@@ -491,6 +590,10 @@ def check_release_build(source):
         block = job_block(source, job)
         if "artifact-name: %s\n" % artifact not in block + "\n":
             errors.append("release-build %s must pass artifact-name %s" % (job, artifact))
+        if "build-kind: release\n" not in block + "\n":
+            errors.append("release-build %s must pass build-kind release" % job)
+        if "build-kind: debug" in block:
+            errors.append("release-build %s must not build the debug installer" % job)
         if "uses: ./.github/workflows/build-%s.yml" % job not in block:
             errors.append("release-build %s must reuse its producer workflow" % job)
     # The Android-only publication conditions are untouched.
@@ -538,7 +641,7 @@ def check_host_workflow_installer(source):
     portable = body.split("  windows:", 1)[0]
     if "bridgeInstallerScriptsTest" not in portable:
         errors.append("bridgeInstallerScriptsTest must run in the portable job")
-    for task in ("bridgeInstallerUnsigned", "bridgeInstallerPackageFixture"):
+    for task in ("bridgeInstallerUnsigned", "bridgeInstallerPackageFixture", "bridgeInstallerDebug"):
         if task in body:
             errors.append("the host check workflow must not build installer inputs (%s)" % task)
     if len(re.findall(r"working-directory:\s*native-bridge/installer\s*\n\s*run:\s*rustup show active-toolchain", body)) < 3:
@@ -618,21 +721,29 @@ class GradleGraph(unittest.TestCase):
             self.assertNotEqual(self.violations(mutated), [], injected)
 
     def test_an_unlocked_cargo_build_is_rejected(self):
-        found = self.violations(self.mutate('"cargo", "build", "--locked", ', '"cargo", "build", ', 1))
+        block = producer_block(self.gradle)
+        mutated = self.gradle.replace(block, block.replace('mutableListOf("cargo", "build", "--locked")', 'mutableListOf("cargo", "build")'))
+        found = self.violations(mutated)
         self.assertTrue(any("--locked" in e for e in found), found)
 
     def test_a_non_production_binary_is_rejected(self):
-        found = self.violations(self.mutate('"veles-native-host"', '"veles-host-test-driver"', 1))
+        found = self.violations(self.mutate('"--bin", "veles-native-host"', '"--bin", "veles-host-test-driver"', 1))
         self.assertTrue(any("outside the production set" in e or "test-driver" in e for e in found), found)
 
     def test_all_features_and_simulator_flags_are_rejected(self):
-        for flag in ('"--all-features"', '"--features", "test-driver"', '"--workspace"', '"--bins"'):
-            found = self.violations(self.mutate('"--release", ', '"--release", %s, ' % flag, 1))
-            self.assertTrue(any("must not use" in e or "test-driver" in e for e in found), (flag, found))
+        anchor = 'mutableListOf("cargo", "build", "--locked")'
+        for flag in ('"--all-features"', '"--workspace"', '"--bins"'):
+            found = self.violations(self.mutate(anchor, '%s, %s' % (anchor, flag), 1))
+            self.assertTrue(any("must not use" in e for e in found), (flag, found))
+        # The one reviewed feature may belong to the debug kind only.
+        found = self.violations(self.mutate("cargoFeatures = emptyList()", 'cargoFeatures = listOf("--features", "test-driver")', 1))
+        self.assertTrue(any("debug feature" in e or "must not use" in e or "test-driver" in e for e in found), found)
+        found = self.violations(self.mutate('listOf("--features", "debug-fixture-trust")', 'listOf("--features", "debug-fixture-trust", "--all-features")', 1))
+        self.assertTrue(any("--features" in e or "must not use" in e or "debug" in e for e in found), found)
 
     def test_a_missing_target_triple_is_rejected(self):
         block = producer_block(self.gradle)
-        mutated = self.gradle.replace(block, re.sub(r'("--release",\s*)"--target",\s*[^,\n]+,\s*', r"\1", block, count=1))
+        mutated = self.gradle.replace(block, block.replace('listOf("--target", installerRustTriple, ', 'listOf(', 2))
         self.assertTrue(any("--target" in e for e in self.violations(mutated)))
 
     def test_output_outside_build_is_rejected(self):
@@ -647,8 +758,8 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("A/B slots" in e for e in found), found)
 
     def test_shared_target_directories_are_rejected(self):
-        found = self.violations(self.mutate("target/$channel-$slot/installer", "target/$channel/installer", 1))
-        self.assertTrue(any("distinct per channel and slot" in e for e in found), found)
+        found = self.violations(self.mutate("target/$buildName-$channel-$slot/installer", "target/$channel/installer", 1))
+        self.assertTrue(any("distinct per build kind, channel and slot" in e for e in found), found)
 
     def test_a_build_that_keeps_a_stale_target_is_rejected(self):
         block = producer_block(self.gradle)
@@ -692,7 +803,7 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("carrier" in e for e in found), found)
 
     def test_the_carrier_must_be_scoped_to_the_registered_channel(self):
-        found = self.violations(self.mutate('it.dir("slots/$channel/$slot")', 'it.dir("slots/production/$slot")', 1))
+        found = self.violations(self.mutate('it.dir("slots/$buildName/$channel/$slot")', 'it.dir("slots/$buildName/production/$slot")', 1))
         self.assertTrue(any("carrier" in e for e in found), found)
 
     def test_a_fixture_config_cannot_feed_the_production_task(self):
@@ -705,7 +816,31 @@ class GradleGraph(unittest.TestCase):
         found = self.violations(self.mutate("installerFixtureConfig,", "installerReleaseConfig,", 1) if "installerFixtureConfig," in producer_block(self.gradle) else self.mutate("installerFixtureConfig", "installerReleaseConfig"))
         self.assertTrue(any("fixture" in e.lower() for e in found), found)
 
-    def test_a_property_override_of_the_fixture_config_is_rejected(self):
+    def test_the_debug_task_is_fixture_only_and_uses_the_debug_kind(self):
+        found = self.violations(self.mutate('"bridgeInstallerDebug", "fixture"', '"bridgeInstallerDebug", "production"'))
+        self.assertTrue(any("bridgeInstallerDebug" in e for e in found), found)
+        found = self.violations(self.mutate('"bridgeInstallerDebug", "fixture", installerFixtureConfig,', '"bridgeInstallerDebug", "fixture", installerReleaseConfig,'))
+        self.assertTrue(any("bridgeInstallerDebug" in e for e in found), found)
+        found = self.violations(self.mutate('installerDebugKind,', 'installerReleaseKind,', 1))
+        self.assertTrue(any("debug build kind" in e or "bridgeInstallerDebug" in e for e in found), found)
+
+    def test_the_debug_artifact_must_be_the_finished_installer_not_the_input_tree(self):
+        found = self.violations(self.mutate('"package-debug"', '"finalize"', 1))
+        self.assertTrue(any("package-debug" in e or "finalize" in e or "finished installer" in e for e in found), found)
+        found = self.violations(self.mutate('environmentVariable("VELES_WORKFLOW_RUN_ID")', 'environmentVariable("OTHER_RUN_ID")'))
+        self.assertTrue(any("run id" in e for e in found), found)
+        found = self.violations(self.mutate('include("*.pdb")', 'include("*.txt")', 2))
+        self.assertTrue(any("PDB" in e or "symbols" in e for e in found), found)
+
+    def test_the_release_build_kind_cannot_lose_its_release_profile_or_static_crt(self):
+        found = self.violations(self.mutate('cargoProfileArguments = listOf("--release")', 'cargoProfileArguments = emptyList()', 1))
+        self.assertTrue(any("--release" in e for e in found), found)
+        found = self.violations(self.mutate('cargoBinaryDirectory = "release"', 'cargoBinaryDirectory = "debug"', 1))
+        self.assertTrue(any("release binary directory" in e for e in found), found)
+        found = self.violations(self.mutate("target-feature=+crt-static", "target-feature=+noop", 1))
+        self.assertTrue(any("static CRT" in e for e in found), found)
+
+
         block = producer_block(self.gradle)
         mutated = re.sub(r"(val installerFixtureConfig\s*=\s*)", r'\1providers.gradleProperty("installerReleaseConfig").map { layout.projectDirectory.file(it) }.orElse(', block)
         mutated = re.sub(r"(val installerFixtureConfig[^\n]*)", r"\1)", mutated, count=1)
@@ -825,6 +960,42 @@ class CompiledChannel(unittest.TestCase):
         self.assertIn("at most one veles_channel", done.stderr)
 
 
+class DebugTrustBoundary(unittest.TestCase):
+    """The debug fixture trust adapter is compile-time and fixture-only (OTP-25 PR path)."""
+
+    def test_the_adapter_is_a_compile_time_feature_with_no_runtime_switch(self):
+        manifest = read("native-bridge/installer/Cargo.toml")
+        self.assertIn("[features]\ndebug-fixture-trust = []", manifest)
+        build = read("native-bridge/installer/build.rs")
+        self.assertIn("CARGO_FEATURE_DEBUG_FIXTURE_TRUST", build)
+        self.assertIn("PROFILE", build)
+        self.assertIn("production", build)
+        platform = read("native-bridge/installer/src/platform.rs")
+        self.assertIn('#[cfg(feature = "debug-fixture-trust")]\npub mod debug_trust;', platform)
+        adapter = read("native-bridge/installer/src/platform/debug_trust.rs")
+        # No runtime input may select the adapter: it is a compile-time module and takes only the
+        # caller-authorized descriptor and package-derived carrier bytes.
+        for forbidden in ("std::env", "env::var", "std::env::args", "std::process::Command"):
+            self.assertNotIn(forbidden, adapter, forbidden)
+        for name in ("src/platform/windows.rs", "src/platform/macos.rs"):
+            body = read("native-bridge/installer/" + name)
+            self.assertIn('#[cfg(feature = "debug-fixture-trust")]', body, name)
+            self.assertIn('#[cfg(not(feature = "debug-fixture-trust"))]', body, name)
+            self.assertIn("super::debug_trust::", body, name)
+
+    def test_the_release_build_never_enables_the_feature(self):
+        gradle = producer_block(read("build.gradle.kts"))
+        self.assertIsNotNone(gradle)
+        release = kind_declaration(gradle, "installerReleaseKind")
+        debug = kind_declaration(gradle, "installerDebugKind")
+        self.assertIsNotNone(release)
+        self.assertIsNotNone(debug)
+        self.assertIn("cargoFeatures = emptyList()", release)
+        self.assertIn('cargoFeatures = listOf("--features", "debug-fixture-trust")', debug)
+        self.assertIn("slots = listOf(\"a\")", debug)
+        return
+
+
 class ProducerWorkflows(unittest.TestCase):
     def source(self, platform):
         return read(PRODUCERS[platform]["file"])
@@ -840,22 +1011,38 @@ class ProducerWorkflows(unittest.TestCase):
             "scaffold-package": source + "\n      - run: %s bridgePackage\n" % spec["gradle"],
             "tauri": source + "\n      - run: npm ci --prefix native-bridge\n",
             "second-unsigned": source + "\n      - run: %s bridgeInstallerUnsigned\n" % spec["gradle"],
-            "second-fixture": source + "\n      - run: %s bridgeInstallerPackageFixture\n" % spec["gradle"],
-            "unconditional-unsigned": re.sub(r"(if:[^\n]*== 'true'[^\n]*\n)(\s*run:[^\n]*bridgeInstallerUnsigned)", r"\2", source, count=1),
+            "second-debug": source + "\n      - run: %s bridgeInstallerDebug\n" % spec["gradle"],
+            "fixture-fallback": source + "\n      - run: %s bridgeInstallerPackageFixture\n" % spec["gradle"],
+            "unconditional-release": source.replace("        if: inputs.build-kind == 'release'\n", ""),
+            "unconditional-debug": source.replace("        if: inputs.build-kind == 'debug'\n", ""),
             "secret": source.replace("permissions:\n  contents: read", "permissions:\n  contents: read\nsecrets:\n  x: ${{ secrets.X }}", 1),
             "environment": source.replace("    steps:", "    environment: native-release\n    steps:", 1),
             "download": source.replace("    steps:", "    steps:\n      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n        with:\n          name: x\n          run-id: 1\n", 1),
             "unpinned": source.replace("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4", 1),
             "latest-runner": source.replace(spec["runner"], "%s-latest" % spec["runner"].split("-")[0], 1),
             "bare-glob-upload": source.replace("build/native-bridge/installer/out/production/tree.tar", "build/native-bridge/installer/out/production/*", 1),
-            "dropped-provenance": source.replace("build/native-bridge/installer/out/production/provenance.json", "", 1),
-            "dropped-checksums": source.replace("build/native-bridge/installer/out/fixture/SHA256SUMS", "", 1),
+            "dropped-provenance": source.replace("            build/native-bridge/installer/out/production/provenance.json\n", ""),
+            "dropped-debug-metadata": source.replace("            build/native-bridge/installer/out/debug/metadata.json\n", ""),
+            "dropped-debug-symbols": source.replace("            build/native-bridge/installer/out/debug/symbols\n", ""),
             "wrong-artifact-default": source.replace("default: %s" % spec["artifact"], "default: native-%s" % platform, 1),
-            "fixture-as-production": source.replace("name: %s" % spec["fixture"], "name: %s" % spec["artifact"], 1),
+            "fixture-mislabeled": source.replace("if: inputs.build-kind == 'debug'", "if: inputs.build-kind == 'release'", 1),
+            "missing-build-kind": re.sub(r"      build-kind:\n        required: true\n        type: string\n", "", source, count=1),
+            "build-kind-default": source.replace(
+                "      build-kind:\n        required: true\n        type: string\n",
+                "      build-kind:\n        required: true\n        type: string\n        default: release\n",
+                1,
+            ),
+            "unvalidated-kind": source.replace("build-kind must be release or debug", "build-kind is whatever"),
+            "config-probe": source.replace(
+                "      - name: Validate the build kind",
+                "      - name: Probe for the approved release config\n        run: test -f native-bridge/installer/config/release-%s.json\n"
+                "      - name: Validate the build kind" % platform,
+                1,
+            ),
             "unactivated-toolchain": source.replace("working-directory: native-bridge/installer\n        run: rustup show active-toolchain", "run: true", 1),
             "carrier-env": source.replace(
-                "      - name: Build the production-channel unsigned input tree",
-                "      - name: Build the production-channel unsigned input tree\n        env:\n          VELES_EMBEDDED_CARRIER: unverified.bin",
+                "      - name: Build the debug fixture-channel installer",
+                "      - name: Build the debug fixture-channel installer\n        env:\n          VELES_EMBEDDED_CARRIER: unverified.bin",
                 1,
             ),
             "silent-upload": source.replace("if-no-files-found: error", "if-no-files-found: ignore"),
@@ -868,6 +1055,21 @@ class ProducerWorkflows(unittest.TestCase):
                 if mutated == self.source(platform):
                     self.fail("%s/%s did not change the workflow" % (platform, label))
                 self.assertNotEqual(check_producer_workflow(mutated, platform), [], "%s/%s" % (platform, label))
+
+    def test_the_build_kind_is_a_required_explicit_selection(self):
+        for platform in PRODUCERS:
+            source = self.source(platform)
+            self.assertNotEqual(
+                check_producer_workflow(source.replace("      build-kind:\n        required: true", "      build-kind:\n        required: false", 1), platform),
+                [],
+                platform,
+            )
+            self.assertNotEqual(check_producer_workflow(source.replace("build-kind must be release or debug", "true"), platform), [], platform)
+            self.assertNotEqual(
+                check_producer_workflow(source.replace("if: inputs.build-kind == 'debug'", "if: inputs.build-kind == 'release'", 1), platform),
+                [],
+                platform,
+            )
 
     def test_macos_must_pin_xcode_and_windows_must_provision_nsis(self):
         source = self.source("macos")
@@ -912,6 +1114,22 @@ class Callers(unittest.TestCase):
         source = read(".github/workflows/release-build.yml")
         self.assertNotEqual(check_release_build(source.replace("artifact-name: native-unsigned-windows", "artifact-name: native-windows")), [])
         self.assertNotEqual(check_release_build(source.replace("artifact-name: native-unsigned-macos", "artifact-name: native-macos")), [])
+        self.assertNotEqual(
+            check_release_build(
+                source.replace(
+                    "artifact-name: native-unsigned-windows\n      build-kind: release",
+                    "artifact-name: native-unsigned-windows\n      build-kind: debug",
+                )
+            ),
+            [],
+        )
+
+    def test_native_callers_state_the_release_build_kind(self):
+        source = read(".github/workflows/release-build.yml")
+        for job in ("native-windows", "native-macos"):
+            block = job_block(source, job)
+            self.assertIn("build-kind: release\n", block + "\n", job)
+            self.assertNotIn("build-kind: debug", block, job)
 
     def workflows(self):
         directory = ROOT / ".github" / "workflows"

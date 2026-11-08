@@ -410,28 +410,29 @@ test('supply-chain workflow enforces reports before uploading exactly six SBOMs'
   assert.doesNotMatch(source, /secrets:/, 'Supply-chain workflow must not accept signing secrets');
 });
 
-// OTP-25 Task 14: the native producers build the standalone installers' UNSIGNED input trees with the
-// installer Gradle graph. There is no Tauri scaffold path, no secret, no protected environment and no
-// artifact taken from another run. The approved-config probe selects the channel: an approved
-// release-<platform>.json builds the production input tree (`native-unsigned-<platform>`), otherwise the
-// tracked fixture config builds a clearly named fixture tree (`native-fixture-<platform>`).
+// OTP-25 Task 14/15: the native producers take an explicit `build-kind`. `release` builds the
+// standalone installers' UNSIGNED input trees with the installer Gradle graph (two A/B slots); it
+// has no Tauri scaffold path, no secret, no protected environment and no artifact taken from
+// another run. `debug` builds the finished fixture-channel DEBUG installer (one slot, debug
+// Rust/Swift, setup.exe / ad-hoc-signed DMG, metadata and symbols). There is no config-file probe.
 const NATIVE_PRODUCERS = {
   windows: {
     file: 'build-native-windows.yml',
     runner: 'windows-2025',
     artifact: 'native-unsigned-windows',
-    fixture: 'native-fixture-windows',
     gradle: String.raw`.\gradlew.bat`,
+    debugInstaller: 'setup.exe',
   },
   macos: {
     file: 'build-native-macos.yml',
     runner: 'macos-26',
     artifact: 'native-unsigned-macos',
-    fixture: 'native-fixture-macos',
     gradle: './gradlew',
+    debugInstaller: 'Veles Bridge Installer.dmg',
   },
 };
-const PRODUCER_OUTPUT = (channel) => ['tree.tar', 'provenance.json', 'report-ab.json', 'SHA256SUMS'].map((name) => `build/native-bridge/installer/out/${channel}/${name}`);
+const RELEASE_OUTPUT = ['tree.tar', 'provenance.json', 'report-ab.json', 'SHA256SUMS'].map((name) => `build/native-bridge/installer/out/production/${name}`);
+const DEBUG_OUTPUT = (spec) => [spec.debugInstaller, 'metadata.json', 'SHA256SUMS', 'symbols'].map((name) => `build/native-bridge/installer/out/debug/${name}`);
 
 function assertInstallerProducer(source, platform) {
   const spec = NATIVE_PRODUCERS[platform];
@@ -439,6 +440,8 @@ function assertInstallerProducer(source, platform) {
   assert.match(source, /workflow_call:/, `${name} must be reusable`);
   assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
   assert.match(source, new RegExp(`artifact-name:\\s*\\n\\s*required:\\s*true\\s*\\n\\s*type:\\s*string\\s*\\n\\s*default:\\s*${spec.artifact}\\b`), `${name} must default to the neutral ${spec.artifact} artifact name`);
+  assert.match(source, /build-kind:\s*\n\s*required:\s*true\s*\n\s*type:\s*string\b/, `${name} must require a string build-kind`);
+  assert.doesNotMatch(source, /build-kind:\s*\n\s*required:\s*true\s*\n\s*type:\s*string\s*\n\s*default:/, `${name} must not default build-kind`);
   assert.doesNotMatch(source, /-latest/, `${name} must use pinned target runner labels`);
   assert.match(source, new RegExp(`runs-on:\\s*${spec.runner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${name} must target ${spec.runner}`);
   assert.equal((source.match(/runs-on:/g) ?? []).length, 1, `${name} must build and package in exactly one job`);
@@ -457,35 +460,45 @@ function assertInstallerProducer(source, platform) {
   ]) {
     assert.doesNotMatch(executable, forbidden, `${name} must not use ${forbidden}`);
   }
-  // Each channel's producer task is invoked exactly once, only for its selected input tree.
-  for (const task of ['bridgeInstallerUnsigned', 'bridgeInstallerPackageFixture']) {
-    assert.equal(executable.split(task).length - 1, 1, `${name} must invoke ${task} exactly once`);
-  }
-  assert.match(executable, /if: steps\.config\.outputs\.approved == 'true'\n\s*run: .*bridgeInstallerUnsigned/, `${name} must build production inputs only with an approved release config`);
-  assert.match(executable, /if: steps\.config\.outputs\.approved != 'true'\n\s*run: .*bridgeInstallerPackageFixture/, `${name} must build fixture inputs only without an approved release config`);
-  assert.ok(executable.includes(`release-${platform}.json`), `${name} must probe for the approved release-${platform}.json`);
-  assert.ok(executable.includes(`${spec.gradle} bridgeInstallerUnsigned`) && executable.includes(`${spec.gradle} bridgeInstallerPackageFixture`), `${name} must invoke Gradle directly with the platform wrapper`);
-  for (const [task, tool] of [['bridgeInstallerUnsigned', 'installer'], ['bridgeInstallerPackageFixture', 'installer']]) assert.ok(executable.includes(task), `${name} must run ${task} for the ${tool} graph`);
+  // The build kind is an explicit, validated selection; no config-file probe and no fixture fallback.
+  const validation = executable.indexOf('build-kind must be release or debug');
+  assert.ok(validation >= 0, `${name} must validate build-kind as release or debug`);
+  assert.doesNotMatch(executable, new RegExp(`release-${platform}\\.json`), `${name} must not select its channel from config-file existence`);
+  assert.equal(executable.split('bridgeInstallerUnsigned').length - 1, 1, `${name} must invoke bridgeInstallerUnsigned exactly once`);
+  assert.equal(executable.split('bridgeInstallerDebug').length - 1, 1, `${name} must invoke bridgeInstallerDebug exactly once`);
+  assert.doesNotMatch(executable, /bridgeInstallerPackageFixture/, `${name} must not silently build a fixture input tree`);
+  assert.ok(validation < Math.min(executable.indexOf('bridgeInstallerUnsigned'), executable.indexOf('bridgeInstallerDebug')), `${name} must validate build-kind before any build`);
+  const selection = (task, kind) => {
+    const index = executable.indexOf(task);
+    const condition = executable.lastIndexOf(`inputs.build-kind == '${kind}'`, index);
+    return index >= 0 && condition >= 0 && index - condition < 400;
+  };
+  assert.ok(selection('bridgeInstallerUnsigned', 'release'), `${name} must build production inputs only for build-kind release`);
+  assert.ok(selection('bridgeInstallerDebug', 'debug'), `${name} must build the debug installer only for build-kind debug`);
+  assert.ok(executable.includes(`VELES_WORKFLOW_RUN_ID: \${{ github.run_id }}`), `${name} must pass the workflow run id to the debug packaging`);
+  assert.ok(executable.includes(`${spec.gradle} bridgeInstallerUnsigned`) && executable.includes(`${spec.gradle} bridgeInstallerDebug`), `${name} must invoke Gradle directly with the platform wrapper`);
+  for (const scaffold of ['bridgePackage', 'bridgeHostBuild']) assert.ok(!executable.includes(scaffold), `${name} must not invoke ${scaffold}`);
   for (const directory of ['native-bridge/installer', 'native-bridge/host']) {
     assert.match(executable, new RegExp(`working-directory:\\s*${directory.replace(/\//g, '\\/')}\\s*\\n\\s*run:\\s*rustup show active-toolchain`), `${name} must activate the pinned Rust toolchain of ${directory}`);
   }
   assert.match(executable, /actions\/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1[\s\S]*?python-version:\s*['"]3\.12['"]/, `${name} must pin Python 3.12 for the assembler`);
-  // Hashes and modes travel inside a mode-preserving tar plus checksums; uploads are exact files, two channels, bounded.
+  // Hashes and modes travel inside a mode-preserving tar plus checksums; the debug artifact is the
+  // finished installer with metadata and symbols. Uploads are exact files, bounded.
   const uploads = uploadPaths(source, name);
-  assert.deepEqual(uploads, [PRODUCER_OUTPUT('production'), PRODUCER_OUTPUT('fixture')], `${name} must upload exactly the production and fixture output files`);
+  assert.deepEqual(uploads, [RELEASE_OUTPUT, DEBUG_OUTPUT(spec)], `${name} must upload exactly the release input tree and the finished debug installer`);
   const uploadSteps = steps(source).filter((step) => step.some((line) => isUploadArtifact(mappingEntry(line)?.value ?? '')));
   assert.equal(uploadSteps.length, 2, `${name} must have exactly two uploads`);
-  const [production, fixture] = uploadSteps.map((step) => step.join('\n'));
-  assert.match(production, /if: steps\.config\.outputs\.approved == 'true'/, `${name} production upload must be conditional on the approved config`);
-  assert.match(production, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must publish the caller-selected artifact`);
-  assert.match(fixture, /if: steps\.config\.outputs\.approved != 'true'/, `${name} fixture upload must be conditional on the missing approved config`);
-  assert.match(fixture, new RegExp(`name:\\s*${spec.fixture}\\b`), `${name} fixture upload must be named ${spec.fixture}`);
-  assert.notEqual(spec.fixture, spec.artifact);
-  for (const step of [production, fixture]) {
+  const [release, debug] = uploadSteps.map((step) => step.join('\n'));
+  assert.match(release, /if: inputs\.build-kind == 'release'/, `${name} release upload must be conditional on build-kind release`);
+  assert.match(debug, /if: inputs\.build-kind == 'debug'/, `${name} debug upload must be conditional on build-kind debug`);
+  for (const step of [release, debug]) {
+    assert.match(step, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must publish the caller-selected artifact name`);
     assert.match(step, /if-no-files-found:\s*error/, `${name} uploads must fail on missing files`);
     assert.match(step, /retention-days:\s*\d+/, `${name} uploads must be retention-bounded`);
     assert.doesNotMatch(step, /path:[^\n]*\*|^\s+build\/[^\n]*veles-native-host(?:\.exe)?\s*$/m, `${name} uploads must name exact files, never globs or bare executables whose exec bit upload drops`);
   }
+  assert.doesNotMatch(release, /out\/debug\//, `${name} release upload must not carry the debug installer`);
+  assert.doesNotMatch(debug, /out\/production\//, `${name} debug upload must not carry the production input tree`);
 }
 
 test('Windows native workflow builds unsigned installer inputs in one job with the pinned NSIS', async () => {
@@ -493,7 +506,7 @@ test('Windows native workflow builds unsigned installer inputs in one job with t
   assertInstallerProducer(source, 'windows');
   const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
   const provision = executable.indexOf('provision-nsis.ps1');
-  const firstBuild = executable.search(/bridgeInstaller(?:Unsigned|PackageFixture)/);
+  const firstBuild = executable.search(/bridgeInstaller(?:Unsigned|Debug)/);
   assert.ok(provision !== -1 && provision < firstBuild, 'Windows workflow must provision the pinned NSIS before building');
   assert.match(executable, /build\/native-bridge\/installer\/tools\/nsis/, 'NSIS must be provisioned under the mandated build root');
   assert.match(executable, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/, 'provisioning failure must propagate explicitly');
@@ -516,20 +529,27 @@ function mutateProducer(source, label, platform) {
     'scaffold packaging': (text) => `${text}\n      - run: ${spec.gradle} bridgePackage\n`,
     'node tooling': (text) => `${text}\n      - run: npm ci --prefix native-bridge\n`,
     'duplicate unsigned build': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerUnsigned\n`,
-    'duplicate fixture build': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerPackageFixture\n`,
-    'unconditional production build': (text) => text.replace("if: steps.config.outputs.approved == 'true'\n        run:", 'run:'),
+    'duplicate debug build': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerDebug\n`,
+    'fixture fallback': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerPackageFixture\n`,
+    'unconditional production build': (text) => text.replace("        if: inputs.build-kind == 'release'\n", ''),
+    'unconditional debug build': (text) => text.replace("        if: inputs.build-kind == 'debug'\n", ''),
     'secret input': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: read\n# secrets:\n    secrets:\n      X:\n        required: true'),
     'protected environment': (text) => text.replace('    steps:', '    environment: native-release\n    steps:'),
     'artifact from another run': (text) => text.replace('    steps:', '    steps:\n      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n        with:\n          name: x\n          run-id: 1\n'),
     'floating action': (text) => text.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v4'),
     'glob upload': (text) => text.replace('build/native-bridge/installer/out/production/tree.tar', 'build/native-bridge/installer/out/production/*'),
     'dropped provenance': (text) => text.replace('            build/native-bridge/installer/out/production/provenance.json\n', ''),
-    'dropped checksums': (text) => text.replace('            build/native-bridge/installer/out/fixture/SHA256SUMS\n', ''),
+    'dropped debug metadata': (text) => text.replace('            build/native-bridge/installer/out/debug/metadata.json\n', ''),
+    'dropped debug symbols': (text) => text.replace('            build/native-bridge/installer/out/debug/symbols\n', ''),
     'scaffold artifact default': (text) => text.replace(`default: ${spec.artifact}`, `default: native-${platform}`),
-    'fixture mislabeled production': (text) => text.replace(`name: ${spec.fixture}`, `name: ${spec.artifact}`),
+    'debug mislabeled release': (text) => text.replace("if: inputs.build-kind == 'debug'", "if: inputs.build-kind == 'release'"),
+    'missing build kind': (text) => text.replace('      build-kind:\n        required: true\n        type: string\n', ''),
+    'defaulted build kind': (text) => text.replace('      build-kind:\n        required: true\n        type: string\n', '      build-kind:\n        required: true\n        type: string\n        default: release\n'),
+    'unvalidated build kind': (text) => text.replace('build-kind must be release or debug', 'build-kind is whatever'),
+    'config-file probe': (text) => text.replace('      - name: Validate the build kind', `      - name: Probe for the approved release config\n        run: test -f native-bridge/installer/config/release-${platform}.json\n      - name: Validate the build kind`),
     'unactivated installer toolchain': (text) => text.replace('working-directory: native-bridge/installer\n        run: rustup show active-toolchain', 'run: true'),
     'silent upload': (text) => text.replaceAll('if-no-files-found: error', 'if-no-files-found: ignore'),
-    'offline wrapper': (text) => text.replace(`${spec.gradle} bridgeInstallerPackageFixture`, `${spec.gradle} --offline bridgeInstallerPackageFixture`),
+    'offline wrapper': (text) => text.replace(`${spec.gradle} bridgeInstallerDebug`, `${spec.gradle} --offline bridgeInstallerDebug`),
     'write permission': (text) => text.replace('contents: read', 'contents: write'),
   };
   return mutations[label](source);
@@ -537,9 +557,11 @@ function mutateProducer(source, label, platform) {
 
 test('native producer contract names every invariant it enforces (negative mutations)', async () => {
   const labels = [
-    'scaffold packaging', 'node tooling', 'duplicate unsigned build', 'duplicate fixture build', 'unconditional production build',
-    'secret input', 'protected environment', 'artifact from another run', 'floating action', 'glob upload', 'dropped provenance',
-    'dropped checksums', 'scaffold artifact default', 'fixture mislabeled production', 'unactivated installer toolchain',
+    'scaffold packaging', 'node tooling', 'duplicate unsigned build', 'duplicate debug build', 'fixture fallback',
+    'unconditional production build', 'unconditional debug build', 'secret input', 'protected environment',
+    'artifact from another run', 'floating action', 'glob upload', 'dropped provenance', 'dropped debug metadata',
+    'dropped debug symbols', 'scaffold artifact default', 'debug mislabeled release', 'missing build kind',
+    'defaulted build kind', 'unvalidated build kind', 'config-file probe', 'unactivated installer toolchain',
     'silent upload', 'offline wrapper', 'write permission',
   ];
   for (const platform of Object.keys(NATIVE_PRODUCERS)) {
@@ -568,7 +590,7 @@ test('host check workflow runs the installer format, lint and tests on all three
   }
   assert.equal(executable.split('bridgeInstallerScriptsTest').length - 1, 1, 'the Python script suites run once, in the portable job');
   assert.ok(executable.slice(0, executable.indexOf('  windows:')).includes('bridgeInstallerScriptsTest'), 'the Python script suites belong to the portable job');
-  for (const task of ['bridgeInstallerUnsigned', 'bridgeInstallerPackageFixture']) {
+  for (const task of ['bridgeInstallerUnsigned', 'bridgeInstallerPackageFixture', 'bridgeInstallerDebug']) {
     assert.ok(!executable.includes(task), `the check workflow must not build installer inputs (${task})`);
   }
   assert.match(executable, /working-directory:\s*native-bridge\/installer\s*\n\s*run:\s*rustup show active-toolchain/, 'the installer toolchain must be activated');

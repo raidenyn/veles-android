@@ -56,6 +56,7 @@ sys.path.insert(0, str(HERE))
 
 import package_inputs  # noqa: E402  (Task 9 inventory library; sibling module)
 import release_config  # noqa: E402  (tool-identity lock; sibling module)
+import assemble_unsigned  # noqa: E402  (fixture config/descriptor documents; sibling module)
 
 SCHEMA = 1
 TARGETS = ("windows-x86_64", "macos-arm64")
@@ -216,6 +217,23 @@ BOUNDARY_KEYS = {
     "credentials",
 }
 PREDECESSOR = {"nested": "verify-inputs", "outer": "assemble"}
+# A debug packaging run is not a signing job: none of these may be present, and it never calls
+# `authorize`, reads a boundary or produces release evidence.
+RELEASE_ONLY_ENV = frozenset(
+    {"VELES_SIGNING_ENVIRONMENT", "VELES_APPROVED_DESCRIPTOR_SHA256", "VELES_DESCRIPTOR_SHA256"}
+)
+DEBUG_RUN_ID_ENV = "VELES_WORKFLOW_RUN_ID"
+LOCAL_RUN_ID = "local"
+RUN_ID_RE = re.compile(r"^(?:local|[0-9]{1,20})$")
+DEBUG_METADATA_KEYS = frozenset({"source_commit", "build_kind", "channel", "platform", "workflow_run_id"})
+DESCRIPTOR_KEYS = frozenset(
+    {
+        "schema", "channel", "version", "source_commit", "target", "minimum_os", "extension_id",
+        "host_name", "bundle_id", "api_min", "api_max", "payload_id", "policy",
+    }
+)
+FIXTURE_CHANNEL = "fixture"
+FIXTURE_IDENTITY = "me.nagaev.veles.bridge.fixture"
 
 
 # ---------------------------------------------------------------------------
@@ -718,10 +736,24 @@ def _shown(argv: Sequence[Any]) -> str:
 
 
 class Stage:
-    """Runs commands, records what must be undone, and undoes it on every exit path."""
+    """Runs commands, records what must be undone, and undoes it on every exit path.
 
-    def __init__(self, request: SignRequest, env: dict[str, str], runner: Callable[..., RunResult]):
-        self.request, self.env, self.runner = request, env, runner
+    ``scratch`` is the per-run scratch root. ``request`` is the signing-stage request when the
+    stage is a release stage; the debug packaging path passes none, so a debug run can never read
+    or produce a release boundary.
+    """
+
+    def __init__(
+        self,
+        scratch: Path,
+        env: dict[str, str],
+        runner: Callable[..., RunResult],
+        *,
+        request: SignRequest | None = None,
+    ):
+        self.scratch = Path(scratch)
+        self.request = request
+        self.env, self.runner = env, runner
         self.undo: list[tuple[str, list[Any]]] = []
         self.cleanup_failures: list[str] = []
         self.tools: dict[str, dict] = {}
@@ -851,7 +883,7 @@ def run_stage(request: SignRequest, env: dict[str, str], runner: Callable[..., R
         return _fail("bad-request", "output and scratch must not exist")
     reports_existed = request.reports.exists()
 
-    stage_obj = Stage(request, env, runner)
+    stage_obj = Stage(request.scratch, env, runner, request=request)
     failure: StageFailure | None = None
     fragment: dict = {}
     try:
@@ -934,7 +966,7 @@ def _windows_store(stage: Stage, policy: dict) -> tuple[str, dict]:
     ``public_trust: false``.
     """
     thumb = stage.env["VELES_WIN_CERT_SHA1"]
-    keydir = stage.private_dir(stage.request.scratch / "keys")
+    keydir = stage.private_dir(stage.scratch / "keys")
     pfx = stage.write_secret(keydir / "release.pfx", stage.env["VELES_WIN_PFX_BASE64"])
     # Registered before the import: a failed import may still have left material behind.
     stage.register_undo("certutil -delstore", ["certutil", "-user", "-delstore", "My", EnvRef("VELES_WIN_CERT_SHA1")])
@@ -1111,7 +1143,7 @@ def _windows_outer(stage: Stage, policy: dict) -> dict:
 
 
 def _macos_keychain(stage: Stage) -> Path:
-    keydir = stage.private_dir(stage.request.scratch / "keys")
+    keydir = stage.private_dir(stage.scratch / "keys")
     p12 = stage.write_secret(keydir / "release.p12", stage.env["VELES_MAC_P12_BASE64"])
     keychain = keydir / "veles-signing.keychain-db"
     password = secrets.token_hex(24)  # protects only this throwaway keychain
@@ -1429,6 +1461,148 @@ def verify_unsigned_inputs(
     return Outcome(True, "", "", fragment)
 
 
+# ---------------------------------------------------------------------------
+# Containers: the one implementation of setup.exe / DMG construction
+# ---------------------------------------------------------------------------
+
+
+def build_windows_container(
+    *, output: Path, package: Path, uninstaller: Path, tool: str, stage: Stage
+) -> Path:
+    """Build ``setup.exe`` from a package directory with the pinned NSIS recipe.
+
+    No signing happens here: the release assembly passes the signed nested tree and the debug
+    packaging passes the unsigned fixture tree. The NSIS pin and command line are identical.
+    """
+    if not tool:
+        raise StageFailure("tool-missing", "NSIS_PATH is not set")
+    version = stage.run([tool, "/VERSION"], what="tool-pin-mismatch").output.strip()
+    if version != "v3.08":
+        raise StageFailure("tool-pin-mismatch", f"makensis reports {version!r}, not the pinned v3.08")
+    number = _descriptor_version(package / "descriptor.json")
+    produced = output / SETUP_NAME
+    stage.run(
+        [tool, "/NOCD", f"/DVERSION={number}", f"/DINPUT_DIR={package}", f"/DOUTFILE={produced}",
+         f"/DUNINSTALLER_SIGNED={uninstaller}", NSIS_RECIPE],
+        what="assemble-failed",
+    )  # fmt: skip
+    if not produced.is_file():
+        raise StageFailure("assemble-failed", f"{produced.name} was not produced")
+    return produced
+
+
+def stage_macos_app(*, app: Path, staging: Path) -> Path:
+    """Copy the installer bundle into a fresh DMG root outside the input tree."""
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.mkdir()
+    _copy_tree(app, staging / APP)
+    return staging / APP
+
+
+def build_macos_disk_image(*, staging: Path, output: Path, stage: Stage) -> Path:
+    """Build the UDZO disk image from an already-staged ``dmg-root`` directory."""
+    produced = output / DMG_NAME
+    stage.run(
+        ["hdiutil", "create", "-srcfolder", staging, "-volname", "Veles Bridge Installer",
+         "-fs", "HFS+", "-format", "UDZO", "-ov", produced],
+        what="assemble-failed",
+    )  # fmt: skip
+    if not produced.is_file():
+        raise StageFailure("assemble-failed", f"{produced.name} was not produced")
+    return produced
+
+
+def ad_hoc_sign_macos(
+    root: Path,
+    stage: Stage,
+    *,
+    after_payload: Callable[[], None] | None = None,
+) -> list[str]:
+    """Ad-hoc sign the staged installer bundle inside-out (no identity, no notarization).
+
+    The order is the reviewed ``COMPONENTS["macos"]`` inside-out order the release signer uses;
+    an ad-hoc signature has no Team ID and is not a release identity. It exists because the arm64
+    loader requires signed code. ``after_payload`` runs once the inventoried payload has been
+    signed (ad-hoc signing changes its bytes, so the signed-byte inventory must be written before
+    the outer bundles are sealed).
+    """
+    signed: list[str] = []
+    payload_prefix = f"{MAC_PAYLOAD}/"
+    sealed_payload = False
+    for component in COMPONENTS["macos"]:
+        target = Path(root) / component.path
+        if component.kind == "tree":
+            if not target.is_dir() or target.is_symlink():
+                raise StageFailure("sign-input-missing", f"required bundle {component.path} is missing")
+        elif not target.is_file():
+            raise StageFailure("sign-input-missing", f"required component {component.path} is missing")
+        argv: list[Any] = ["codesign", "--force", "--sign", "-"]
+        if component.entitled:
+            argv += ["--entitlements", str(HOST_ENTITLEMENTS)]
+        argv.append(str(target))
+        stage.run(argv, what="ad-hoc-sign-failed")
+        signed.append(component.path)
+        if after_payload is not None and not sealed_payload and not component.path.startswith(payload_prefix):
+            after_payload()
+            sealed_payload = True
+    if after_payload is not None and not sealed_payload:
+        after_payload()
+    return signed
+
+
+def seal_debug_package(platform: str, root: Path) -> str:
+    """Write the signed-byte inventory and seal the carrier document of a debug tree.
+
+    Ad-hoc signing (macOS) changes the inventoried payload bytes, and even an unsigned Windows
+    tree needs the carrier to stop asserting the producer's empty digest placeholder. Exactly as
+    the release signing stage does, the canonical ``inventory.json`` and the descriptor are left
+    untouched; ``sealed-inventory.json`` describes the bytes that will ship and the carrier asserts
+    that document's digest. Returns the digest.
+    """
+    package = root / (WIN_PACKAGE if platform == "windows" else MAC_PACKAGE)
+    try:
+        canonical_bytes = (package / "inventory.json").read_bytes()
+        descriptor = (package / "descriptor.json").read_bytes()
+        canonical = _parse_engine_inventory(canonical_bytes)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise StageFailure("seal-failed", f"the debug package is unreadable: {error}") from error
+    sealed = sealed_inventory_bytes(canonical, payload_view(platform, root))
+    (package / "sealed-inventory.json").write_bytes(sealed)
+    if platform == "windows":
+        image = package / "carrier.exe"
+        try:
+            data = image.read_bytes()
+        except OSError as error:
+            raise StageFailure("seal-failed", f"the carrier image is unreadable: {error}") from error
+        image.write_bytes(seal_carrier(data, sealed, descriptor, embedded=True))
+    else:
+        carrier = root / CARRIER_PATH["macos"]
+        try:
+            data = carrier.read_bytes()
+        except OSError as error:
+            raise StageFailure("seal-failed", f"the carrier document is unreadable: {error}") from error
+        carrier.write_bytes(seal_carrier(data, sealed, descriptor, embedded=False))
+    return sha256_bytes(sealed)
+
+
+def publish_symbols(source: Path | None, destination: Path) -> list[str]:
+    """Copy every available symbol file below ``source`` into ``destination`` (always created)."""
+    destination.mkdir(parents=True, exist_ok=True)
+    published: list[str] = []
+    if source is None:
+        return published
+    source = Path(source)
+    if not source.is_dir() or source.is_symlink():
+        raise StageFailure("symbols-invalid", f"{source} is not a symbol directory")
+    for path in sorted(p for p in source.rglob("*") if p.is_file() and not p.is_symlink()):
+        relative = path.relative_to(source)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        published.append(relative.as_posix())
+    return published
+
+
 def assemble(request: SignRequest, env: dict[str, str], runner: Callable[..., RunResult]) -> Outcome:
     """Job 3: build the container from the signed nested tree. Runs with NO credential."""
     present = sorted(name for name in ALL_CREDENTIAL_NAMES if env.get(name))
@@ -1461,34 +1635,21 @@ def assemble(request: SignRequest, env: dict[str, str], runner: Callable[..., Ru
         return _fail("input-mismatch", "; ".join(problems))
     if request.output.exists():
         return _fail("bad-request", "output must not exist")
-    stage = Stage(request, env, runner)
+    stage = Stage(request.scratch, env, runner, request=request)
     failure: StageFailure | None = None
     try:
         _copy_tree(request.inputs, request.output)
         if request.platform == "windows":
-            tool = env.get("NSIS_PATH", "")
-            if not tool:
-                raise StageFailure("tool-missing", "NSIS_PATH is not set")
-            version = stage.run([tool, "/VERSION"], what="tool-pin-mismatch").output.strip()
-            if version != "v3.08":
-                raise StageFailure("tool-pin-mismatch", f"makensis reports {version!r}, not the pinned v3.08")
-            package = request.output / WIN_PACKAGE
-            number = _descriptor_version(package / "descriptor.json")
-            stage.run(
-                [tool, "/NOCD", f"/DVERSION={number}", f"/DINPUT_DIR={package}", f"/DOUTFILE={request.output / SETUP_NAME}",
-                 f"/DUNINSTALLER_SIGNED={request.output / UNINSTALLER}", NSIS_RECIPE],
-                what="assemble-failed",
-            )  # fmt: skip
-            produced = request.output / SETUP_NAME
+            produced = build_windows_container(
+                output=request.output,
+                package=request.output / WIN_PACKAGE,
+                uninstaller=request.output / UNINSTALLER,
+                tool=env.get("NSIS_PATH", ""),
+                stage=stage,
+            )
         else:
-            staging = request.scratch / "dmg-root"
-            staging.parent.mkdir(parents=True, exist_ok=True)
-            staging.mkdir()
-            _copy_tree(request.output / APP, staging / APP)
-            produced = request.output / DMG_NAME
-            stage.run(["hdiutil", "create", "-srcfolder", staging, "-volname", "Veles Bridge Installer", "-fs", "HFS+", "-format", "UDZO", "-ov", produced], what="assemble-failed")
-        if not produced.is_file():
-            raise StageFailure("assemble-failed", f"{produced.name} was not produced")
+            staging = stage_macos_app(app=request.output / APP, staging=request.scratch / "dmg-root")
+            produced = build_macos_disk_image(staging=staging, output=request.output, stage=stage)
     except StageFailure as error:
         failure = error
     except Exception as error:  # noqa: BLE001
@@ -1515,6 +1676,202 @@ def _descriptor_version(path: Path) -> str:
     if not re.match(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$", str(version)):
         raise StageFailure("assemble-failed", "descriptor version is not MAJOR.MINOR.PATCH")
     return str(version)
+
+
+# ---------------------------------------------------------------------------
+# Debug installer packaging (OTP-25 PR path): a finished fixture installer, not an input tree
+# ---------------------------------------------------------------------------
+
+
+def _debug_descriptor(platform: str, tree: Path) -> tuple[dict | None, str, str]:
+    """The tree's fixture descriptor plus the refusal code/detail, for the debug packager."""
+    package = tree / (WIN_PACKAGE if platform == "windows" else MAC_PACKAGE)
+    try:
+        descriptor = load_json(package / "descriptor.json")
+    except (OSError, ValueError, TypeError) as error:
+        return None, "input-mismatch", f"descriptor.json is unreadable: {error}"
+    if not isinstance(descriptor, dict) or set(descriptor) != DESCRIPTOR_KEYS:
+        return None, "fixture-required", "descriptor.json is not a strict fixture descriptor"
+    if descriptor.get("channel") != FIXTURE_CHANNEL:
+        return None, "fixture-required", "the debug installer must be packaged from the fixture channel"
+    if descriptor.get("host_name") != FIXTURE_IDENTITY or descriptor.get("bundle_id") != FIXTURE_IDENTITY:
+        return None, "fixture-required", "the debug installer must use the fixture host/bundle identity"
+    if descriptor.get("target") != PLATFORM_TARGET[platform]:
+        return None, "fixture-required", "the debug installer must use the fixture target of this platform"
+    return descriptor, "", ""
+
+
+def _debug_config_problems(platform: str, config: Path, descriptor: dict) -> list[str]:
+    """Why the tree's descriptor is not the tracked fixture config's descriptor (empty: it is)."""
+    try:
+        value = assemble_unsigned.load_config(config)
+    except ValueError as error:
+        return [f"config is unreadable: {error}"]
+    problems = assemble_unsigned.check_config(value, channel=FIXTURE_CHANNEL, platform=platform)
+    if problems:
+        return problems
+    resolved = assemble_unsigned.resolve_extension_id(value["extension_id"])
+    for key, expected in value.items():
+        if key == "extension_id":
+            expected = resolved
+        if descriptor.get(key) != expected:
+            problems.append(f"descriptor {key} is not the tracked fixture config's value")
+    return problems
+
+
+def _debug_tree_problems(platform: str, tree: Path, descriptor: dict) -> list[str]:
+    """The unsigned input tree must be exactly the described package (empty: it is)."""
+    package = tree / (WIN_PACKAGE if platform == "windows" else MAC_PACKAGE)
+    problems: list[str] = []
+    if (package / "sealed-inventory.json").exists():
+        problems.append("the debug input must be the UNSIGNED tree (a sealed inventory means signed bytes)")
+    try:
+        inventory_bytes = (package / "inventory.json").read_bytes()
+    except OSError as error:
+        return [f"inventory.json is unreadable: {error}"]
+    payload_id = descriptor.get("payload_id")
+    if not isinstance(payload_id, str) or not SHA256_RE.match(payload_id):
+        return ["the descriptor carries no sha256 payload_id"]
+    if sha256_bytes(inventory_bytes) != payload_id:
+        problems.append("inventory.json does not hash to the descriptor's payload_id")
+    try:
+        entries = _parse_engine_inventory(inventory_bytes)
+    except (ValueError, KeyError, TypeError) as error:
+        return problems + [f"inventory.json is unreadable: {error}"]
+    problems += verify_payload(payload_view(platform, tree), entries)
+    for component in COMPONENTS[platform]:
+        target = tree / component.path
+        present = target.is_dir() if component.kind == "tree" else target.is_file()
+        if not present:
+            problems.append(f"required component {component.path} is missing")
+    links = [
+        path.relative_to(tree).as_posix()
+        for path in tree.rglob("*")
+        if path.is_symlink()
+    ]
+    problems += [f"the input tree contains a link: {relative}" for relative in links]
+    for relative in unexpected_executables(platform, tree):
+        problems.append(f"unexpected executable {relative} is not part of the installer plan")
+    return problems
+
+
+def package_debug(
+    *,
+    platform: str,
+    tree: Path,
+    config: Path,
+    output: Path,
+    commit: str,
+    env: dict[str, str],
+    runner: Callable[..., RunResult],
+    symbols: Path | None = None,
+    nsis_path: str | None = None,
+) -> Outcome:
+    """Build the FINISHED debug installer from a fixture input tree (OTP-25 PR path).
+
+    This is not a signing stage: it refuses any signing credential or release-only environment,
+    never calls ``authorize``, takes no boundary/recipe input and writes no release evidence. It
+    reuses the release container helpers on the unsigned fixture tree, ad-hoc signing the macOS
+    nested code inside-out (no identity, no notarization) and producing ``setup.exe`` on Windows.
+    """
+    present = sorted(
+        name for name in ALL_CREDENTIAL_NAMES | RELEASE_ONLY_ENV if (env.get(name) or "").strip()
+    )
+    if present:
+        return _fail(
+            "credentials-present",
+            "the debug packaging must not hold signing credentials or the release environment: "
+            + ", ".join(present),
+        )
+    if platform not in PLATFORM_TARGET:
+        return _fail("bad-request", f"unknown platform {platform!r}")
+    if not COMMIT_RE.match(commit or ""):
+        return _fail("bad-request", "commit is not a full commit id")
+    run_id = (env.get(DEBUG_RUN_ID_ENV) or "").strip() or LOCAL_RUN_ID
+    if not RUN_ID_RE.match(run_id):
+        return _fail("bad-request", f"{DEBUG_RUN_ID_ENV} is not a workflow run id")
+
+    tree, config, output = Path(tree), Path(config), Path(output)
+    if not tree.is_dir() or tree.is_symlink():
+        return _fail("input-mismatch", "the input tree is missing or linked")
+    if output.exists() or output.is_symlink():
+        return _fail("bad-request", "output must not exist")
+
+    descriptor, code, detail = _debug_descriptor(platform, tree)
+    if descriptor is None:
+        return _fail(code, detail)
+    if descriptor.get("source_commit") != commit:
+        return _fail("source-commit-mismatch", "the descriptor is not for the requested commit")
+    config_problems = _debug_config_problems(platform, config, descriptor)
+    if config_problems:
+        return _fail("config-refused", "; ".join(config_problems))
+    tree_problems = _debug_tree_problems(platform, tree, descriptor)
+    if tree_problems:
+        return _fail("input-mismatch", "; ".join(tree_problems))
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    stage = Stage(scratch, env, runner)
+    failure: StageFailure | None = None
+    metadata: dict = {}
+    published: list[str] = []
+    try:
+        working_tree = scratch / "tree"
+        _copy_tree(tree, working_tree)
+        output.mkdir()
+        if platform == "windows":
+            # The Windows debug package is unsigned, so its carrier must stop asserting the
+            # producer's empty sealed-digest placeholder; the shipped bytes equal the canonical
+            # inventory, which is exactly what the sealed document then records.
+            seal_debug_package("windows", working_tree)
+            build_windows_container(
+                output=output,
+                package=working_tree / WIN_PACKAGE,
+                uninstaller=working_tree / UNINSTALLER,
+                tool=nsis_path or env.get("NSIS_PATH", ""),
+                stage=stage,
+            )
+        else:
+            staging = scratch / "dmg-root"
+            stage_macos_app(app=working_tree / APP, staging=staging)
+            # Ad-hoc signing changes the inventoried payload, so the signed-byte inventory and the
+            # sealed carrier are written after the payload is signed and before the outer bundles.
+            ad_hoc_sign_macos(
+                staging,
+                stage,
+                after_payload=lambda: seal_debug_package("macos", staging),
+            )
+            build_macos_disk_image(staging=staging, output=output, stage=stage)
+        metadata = {
+            "source_commit": commit,
+            "build_kind": "debug",
+            "channel": FIXTURE_CHANNEL,
+            "platform": platform,
+            "workflow_run_id": run_id,
+        }
+        if set(metadata) != DEBUG_METADATA_KEYS:
+            raise StageFailure("internal-error", "the debug metadata has unexpected fields")
+        (output / "metadata.json").write_bytes(canonical_json(metadata))
+        published = publish_symbols(symbols, output / "symbols")
+        _write_sums(output, output / "SHA256SUMS")
+    except StageFailure as error:
+        failure = error
+    except Exception as error:  # noqa: BLE001
+        failure = StageFailure("internal-error", f"{type(error).__name__} while packaging")
+    finally:
+        if scratch.exists():
+            _remove_tree(scratch, stage)
+    if failure is not None:
+        _remove_tree(output, stage)
+        return _fail(failure.code, failure.detail, stage.cleanup_failures)
+    fragment = {
+        "platform": platform,
+        "stage": "package-debug",
+        "tools": dict(sorted(stage.tools.items())),
+        "metadata": metadata,
+        "symbols": published,
+    }
+    return Outcome(True, "", "", fragment)
 
 
 # ---------------------------------------------------------------------------
@@ -1975,6 +2332,14 @@ def main(argv: list[str] | None = None) -> int:
     val.add_argument("--bundle", type=Path, required=True)
     val.add_argument("--commit", required=True)
     val.add_argument("--descriptor-digest", required=True)
+    dbg = sub.add_parser("package-debug")
+    dbg.add_argument("--platform", choices=("windows", "macos"), required=True)
+    dbg.add_argument("--tree", type=Path, required=True)
+    dbg.add_argument("--config", type=Path, required=True)
+    dbg.add_argument("--output", type=Path, required=True)
+    dbg.add_argument("--commit", required=True)
+    dbg.add_argument("--symbols", type=Path)
+    dbg.add_argument("--nsis-path")
     args = parser.parse_args(argv)
     env = dict(os.environ)
 
@@ -1995,7 +2360,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"BLOCKED: {error}")
         print("ELIGIBLE" if not errors else f"NOT ELIGIBLE: {len(errors)} defect(s)")
         return 0 if not errors else 1
-    if args.command == "verify-inputs":
+    if args.command == "package-debug":
+        outcome = package_debug(
+            platform=args.platform,
+            tree=args.tree,
+            config=args.config,
+            output=args.output,
+            commit=args.commit,
+            env=env,
+            runner=SubprocessRunner(env),
+            symbols=args.symbols,
+            nsis_path=args.nsis_path,
+        )
+    elif args.command == "verify-inputs":
         outcome = verify_unsigned_inputs(
             platform=args.platform, a=args.a, b=args.b, provenance=args.provenance, descriptor_path=args.descriptor, env=env,
             expected_commit=args.commit, recipe=args.recipe_digest, output=args.output, reports=args.reports,
