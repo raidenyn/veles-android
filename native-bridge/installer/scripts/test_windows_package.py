@@ -195,8 +195,13 @@ class WindowsInstallerContract(unittest.TestCase):
                 command,
             )
             self.assertIsNotNone(match, f"unexpected engine command line: {command!r}")
-            self.assertIn(match.group("engine"), {"ENGINE_EXE", "MAINTENANCE_ENGINE_EXE"})
+            engine = match.group("engine")
+            self.assertIn(engine, {"ENGINE_EXE", "STAGED_ENGINE_EXE"})
             self.assertIn(match.group("operation"), allowed_operations)
+            # The installed maintenance image is never executed: a mapped image
+            # cannot be deleted while it runs, so uninstall stages a copy.
+            if engine == "STAGED_ENGINE_EXE":
+                self.assertEqual(match.group("operation"), "uninstall")
             if match.group("package"):
                 self.assertEqual(match.group("package"), "PACKAGE_DIR")
                 self.assertIn(match.group("operation"), {"install", "repair"})
@@ -213,12 +218,24 @@ class WindowsInstallerContract(unittest.TestCase):
         self.assertRegex(
             self.code, r'(?m)^\s*!define\s+ENGINE_EXE\s+"\$\{PACKAGE_DIR\}\\carrier\.exe"\s*$'
         )
-        # The uninstaller cannot carry files, so it runs the retained maintenance
-        # engine at one fixed path below the fixed per-user root.
+        # The uninstaller stages a copy of the retained maintenance engine under
+        # $PLUGINSDIR, outside the removable root, and runs that copy. The
+        # installed image is therefore not a running mapped file, so one pass can
+        # remove both maintenance images instead of ending cleanup-pending.
         self.assertRegex(
             self.code,
             r'(?m)^\s*!define\s+MAINTENANCE_ENGINE_EXE\s+'
             r'"\$LOCALAPPDATA\\Veles\\NativeBridge\\maintenance\\veles-bridge-maintenance\.exe"\s*$',
+        )
+        self.assertRegex(
+            self.code,
+            r'(?m)^\s*!define\s+STAGED_ENGINE_EXE\s+"\$PLUGINSDIR\\veles-bridge-maintenance\.exe"\s*$',
+        )
+        self.assertIn(
+            'CopyFiles /SILENT "${MAINTENANCE_ENGINE_EXE}" "${STAGED_ENGINE_EXE}"', self.code
+        )
+        self.assertNotRegex(
+            self.code, r'nsExec::ExecToStack \'"\$\{MAINTENANCE_ENGINE_EXE\}"'
         )
         # F6: the frontend and the engine agree on one path set. The NSIS defines
         # are the Rust engine's `maintenance_engine_relative` /

@@ -76,11 +76,12 @@ recovery assets.
   maintenance assets, then tears down the private layout (receipt, journal, lock, `state/`,
   `versions/`, `maintenance/` and the empty install root). A run that cannot observe an owned
   removal reports **cleanup-pending** and keeps its durable intent, never a claim of success;
-  unrelated files are left and reported. When the engine is executing the installed
-  maintenance image itself, Windows cannot delete that mapped image while it runs: the cleanup
-  helper is run from outside the removable root and the run ends **cleanup-pending**, and
-  running Uninstall again from the signed installer (whose engine is outside the root)
-  finishes it.
+  unrelated files are left and reported. Windows cannot delete a mapped image while it runs,
+  so the uninstaller (NSIS relaunches itself from `%TEMP%`) runs a staged copy of the
+  maintenance engine from its own private plugin directory, outside the removable root. Both
+  installed maintenance images are ordinary files by then, so an ordinary uninstall completes
+  in one pass; a file genuinely held by another process still ends **cleanup-pending** and is
+  finished by the outside-root cleanup helper on a retry.
 * **No trust reset.** None of these operations touches extension trust, Chrome profile data
   or the Bluetooth grant, and none should be worked around by resetting them. If macOS asks
   for Bluetooth consent again, answer the prompt; do not clear permissions to hide it.

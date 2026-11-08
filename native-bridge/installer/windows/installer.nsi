@@ -8,10 +8,11 @@
 ; touches Chrome registration (the engine alone publishes the Native Messaging
 ; manifest and key) and never starts the native host.
 ;
-; STATUS: this script is NOT COMPILED here (no makensis on the development host)
-; and NOT RUN (no Windows runner). Its contract is pinned by
-; scripts/test_windows_package.py; compilation with the pinned NSIS 3.08 and all
-; runtime behaviour are Task 13 / Windows-runner evidence.
+; STATUS: compiled on Windows with the pinned NSIS 3.08 on 2026-11-08; the
+; uninstall staging below was exercised with a stub engine that records its own
+; path and deletes the installed maintenance images. A full install/uninstall
+; run still needs a signed package (Task 13). The contract is pinned by
+; scripts/test_windows_package.py.
 ;
 ; Packaging contract (Task 13 drives these; the script refuses to compile without
 ; the required ones):
@@ -79,6 +80,9 @@ BrandingText "Veles Native Bridge ${VERSION}"
 ; references to its maintenance assets (Task 13 seam, see the header).
 !define MAINTENANCE_ENGINE_EXE "$LOCALAPPDATA\Veles\NativeBridge\maintenance\veles-bridge-maintenance.exe"
 !define UNINSTALL_EXE "$LOCALAPPDATA\Veles\NativeBridge\maintenance\uninstall.exe"
+; The uninstaller runs a copy of the maintenance engine here, outside the
+; removable root, so the installed image is not a running mapped file.
+!define STAGED_ENGINE_EXE "$PLUGINSDIR\veles-bridge-maintenance.exe"
 
 ; HKCU only: discoverable in Installed Apps without any machine-scope write.
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VelesNativeBridge"
@@ -426,6 +430,11 @@ Var /GLOBAL ExpectStateAlt
 !ifdef GENERATE_UNINSTALLER
 
 ; Packaging-time mode: emit the uninstaller beside this executable and quit.
+; A section is still required: an NSIS script with only .onInit is rejected
+; ("no sections specified"). It never executes because .onInit quits first.
+Section "Generate uninstaller"
+SectionEnd
+
 Function .onInit
   WriteUninstaller "$EXEDIR\uninstall.exe"
   Quit
@@ -576,9 +585,12 @@ SectionEnd
 !endif
 
 ; ---------------------------------------------------------------------------
-; The uninstaller. NSIS cannot carry files in an uninstaller, so it runs the
-; retained maintenance engine under the fixed per-user root. It is the signed
-; uninstaller embedded by packaging; nothing here is generated at runtime.
+; The uninstaller. NSIS relaunches an uninstaller from %TEMP%, so the installed
+; uninstall.exe is not the running image. The engine is likewise started from a
+; staged copy under PLUGINSDIR (never the installed maintenance path), so the
+; mapped images inside the removable root are deletable in one pass. It is the
+; signed uninstaller embedded by packaging; nothing here is generated at
+; runtime.
 ; ---------------------------------------------------------------------------
 
 Function un.onInit
@@ -590,8 +602,17 @@ FunctionEnd
 Section "Uninstall"
   StrCpy $Operation "uninstall"
   IfFileExists "${MAINTENANCE_ENGINE_EXE}" 0 EngineMissing
-  nsExec::ExecToStack '"${MAINTENANCE_ENGINE_EXE}" uninstall'
+  ; Windows cannot delete a mapped image while it runs. NSIS already relaunched
+  ; this uninstaller from %TEMP%, so the installed uninstaller is not running;
+  ; the engine is executed from a staged copy under PLUGINSDIR as well. Both
+  ; installed maintenance images are then ordinary files and one pass removes
+  ; them, instead of ending cleanup-pending until a second run from the
+  ; installer (whose engine is outside the root).
+  CopyFiles /SILENT "${MAINTENANCE_ENGINE_EXE}" "${STAGED_ENGINE_EXE}"
+  IfFileExists "${STAGED_ENGINE_EXE}" 0 EngineMissing
+  nsExec::ExecToStack '"${STAGED_ENGINE_EXE}" uninstall'
   Call un.HandleEngineResult
+  Delete "${STAGED_ENGINE_EXE}"
   ${If} $Succeeded == "1"
     Call un.RemoveUninstallEntry
   ${EndIf}
