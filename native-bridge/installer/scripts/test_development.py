@@ -239,6 +239,7 @@ class ProductionIsolation(Fixture):
                 shutil.copytree(SCRIPTS, scripts, ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
                 config = root / "config"
                 config.mkdir()
+                shutil.copy2(SCRIPTS.parent / "config" / "extension-ids.json", config / "extension-ids.json")
                 (config / config_name).write_text(
                     json.dumps({"channel": "production", "extension_id": PRODUCTION_ID})
                 )
@@ -478,6 +479,17 @@ class ProductionIdentitySource(unittest.TestCase):
             (root / "release-macos.json").write_text(json.dumps({"channel": "production", "extension_id": OTHER_ID}))
             (root / "fixture-windows.json").write_text(json.dumps({"channel": "fixture", "extension_id": DEV_ID}))
             self.assertEqual(development.production_extension_ids(root), frozenset({PRODUCTION_ID, OTHER_ID}))
+
+    def test_a_config_alias_resolves_to_the_raw_production_id(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "release-windows.json").write_text(
+                json.dumps({"channel": "production", "extension_id": "fixture"})
+            )
+            ids = development.production_extension_ids(root)
+            self.assertEqual(ids, frozenset({"f" * 32}))
+            with self.assertRaises(development.Refusal):
+                development.validate_extension_id("f" * 32, production_ids=ids)
 
     def test_an_unreadable_or_malformed_producer_config_fails_closed(self) -> None:
         for body in ("{", "[]", "x" * (development.MAX_DESCRIPTOR_BYTES + 1)):

@@ -133,10 +133,11 @@ recovery assets.
   `me.nagaev.veles.bridge.dev` and the `NativeBridgeDev` root; they refuse production IDs,
   roots and binaries, and never touch the production registration. A dev host is not a signed
   release and is never acceptance evidence.
-* The production extension ID is an external prerequisite. No `release-<platform>.json` is
-  tracked, so `./gradlew bridgeInstallerUnsigned` fails closed on every runner; do not invent
-  one. `bridgeInstallerPackageFixture` builds test-only fixture packages that cannot register
-  the production host.
+* The production extension ID is an external prerequisite. The Windows production config is
+  tracked (`config/release-windows.json`) and currently names the allowlist alias `production`,
+  which resolves to the development ID until plan Task 16 replaces it with the real Store item
+  ID. No macOS production config is tracked. `bridgeInstallerPackageFixture` builds test-only
+  fixture packages that cannot register the production host.
 * Checks: `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
   bridgeInstallerScriptsTest`. Native producers, signing and notarization run only on
   Windows/macOS runners and the protected `release-native-installers.yml`.

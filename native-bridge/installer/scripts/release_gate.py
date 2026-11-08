@@ -1828,12 +1828,20 @@ def _signature_errors(label: str, signature: dict, platform: str, policy: dict, 
         errors.append(f"{label}: no trusted timestamp")
     if platform == "windows":
         public_trust = signature.get("public_trust")
+        mode = signature.get("trust_mode")
+        anchor = signature.get("trust_anchor_sha256")
         if not isinstance(public_trust, bool):
             errors.append(f"{label}: signature trust is not recorded")
         elif public_trust is False:
-            anchor = signature.get("trust_anchor_sha256")
+            if mode != "self-signed":
+                errors.append(f"{label}: a self-signed signature records trust_mode {mode!r}, not 'self-signed'")
             if not (isinstance(anchor, str) and SHA256_RE.fullmatch(anchor)):
                 errors.append(f"{label}: a self-signed signature does not record its trust anchor")
+        else:
+            if mode != "os-store":
+                errors.append(f"{label}: an OS-trusted signature records trust_mode {mode!r}, not 'os-store'")
+            if anchor is not None:
+                errors.append(f"{label}: an OS-trusted signature must not record a self-signed trust anchor")
     expected = policy.get("publisher") if platform == "windows" else policy.get("identity")
     if not expected or signature.get("identity") != expected:
         errors.append(f"{label}: signer is not the approved publisher identity")

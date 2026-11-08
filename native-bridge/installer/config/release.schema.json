@@ -49,12 +49,9 @@
             "pattern": "^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*)){0,2}$"
         },
         "extension_id": {
-            "description": "Exactly one bare non-placeholder Chrome extension ID (32 characters a-p).",
+            "description": "Exactly one bare Chrome extension ID (32 characters a-p); the packaging allowlist in config/extension-ids.json decides which ids are accepted.",
             "type": "string",
-            "pattern": "^[a-p]{32}$",
-            "not": {
-                "const": "abcdefghijklmnopabcdefghijklmnop"
-            }
+            "pattern": "^[a-p]{32}$"
         },
         "host_name": {
             "description": "Native Messaging host name, selected by channel.",

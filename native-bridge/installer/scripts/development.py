@@ -53,6 +53,12 @@ import stat
 import subprocess
 import sys
 from pathlib import Path, PurePath
+
+# The wrappers run this file with `python -I`, which does not prepend the script
+# directory; make the sibling module importable explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import assemble_unsigned
 from typing import Any
 
 PRODUCTION_HOST_NAME = "me.nagaev.veles.bridge"
@@ -147,7 +153,20 @@ def production_extension_ids(config_dir: Path = _CONFIG_DIR) -> frozenset[str]:
         if not isinstance(config, dict):
             raise Refusal(f"approved release config {name} must be an object")
         if config.get("channel") == "production" and isinstance(config.get("extension_id"), str):
-            found.add(config["extension_id"])
+            raw = config["extension_id"]
+            try:
+                resolved = assemble_unsigned.resolve_extension_id(raw)
+            except ValueError as error:
+                raise Refusal(f"approved release config {name} has an unreadable extension allowlist") from error
+            if resolved is None:
+                # A raw id is a declared production id even if the packaging allowlist
+                # does not name it yet; an unknown alias or a malformed value is refused.
+                if not re.fullmatch(r"[a-p]{32}", raw):
+                    raise Refusal(
+                        f"approved release config {name} names an extension id that is neither an allowlist alias nor a 32-character id"
+                    )
+                resolved = raw
+            found.add(resolved)
     return frozenset(found)
 
 

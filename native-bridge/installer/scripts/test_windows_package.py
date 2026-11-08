@@ -106,6 +106,18 @@ class WindowsInstallerContract(unittest.TestCase):
         self.assertLess(call.index('"/NOCD"'), call.index("$script"), "options precede the script path")
         self.assertRegex(text, r"\$script\s*=\s*\(Resolve-Path .*installer\.nsi.*\)\.ProviderPath")
 
+    def test_the_generator_is_awaited_and_cleanup_retried(self) -> None:
+        text = (HERE / "generate-uninstaller.ps1").read_text(encoding="utf-8")
+        self.assertIn("Start-Process -FilePath $generator -Wait -PassThru", text)
+        self.assertIn("for ($attempt = 0", text, "a just-exited image may stay mapped briefly")
+        self.assertIn("SetErrorLevel 0", self.code, "the generate initializer must exit zero")
+
+    def test_the_carrier_is_verified_through_the_pe_resource(self) -> None:
+        text = (HERE / "embed-carrier.ps1").read_text(encoding="utf-8")
+        for symbol in ("FindResourceW", "SizeofResource", "LoadResource", "LockResource"):
+            self.assertIn(symbol, text)
+        self.assertNotIn("0x56,0x45,0x4C", text, "the magic-byte scan is not the verification")
+
     def test_request_execution_level_user_only(self) -> None:
         levels = re.findall(r"(?im)^\s*RequestExecutionLevel\s+(\S+)", self.code)
         self.assertEqual(levels, ["user"], "exactly one RequestExecutionLevel, and it is user")

@@ -999,8 +999,17 @@ class WindowsSignerIdentityTests(unittest.TestCase):
             self.assertIs(signature["public_trust"], False)
             self.assertEqual(signature["trust_mode"], "self-signed")
             self.assertEqual(signature["trust_anchor_sha256"], hashlib.sha256(root_der).hexdigest())
-        self.assertTrue(any(call[0] == "certutil" and "-addstore" in call for call in runner.calls))
-        self.assertTrue(any(call[0] == "certutil" and "-delstore" in call for call in runner.calls))
+        root_sha1 = hashlib.sha1(root_der).hexdigest()
+        self.assertTrue(
+            any(call[0] == "certutil" and "-addstore" in call and "Root" in call for call in runner.calls)
+        )
+        self.assertTrue(
+            any(
+                call[0] == "certutil" and "-delstore" in call and "Root" in call and root_sha1 in call
+                for call in runner.calls
+            ),
+            "the recorded anchor itself, not only the leaf, must be removed",
+        )
 
     def test_self_signed_mode_requires_a_well_formed_root_certificate(self) -> None:
         env = {**good_env("windows"), "VELES_WIN_TRUST_SELF_SIGNED": "1"}
@@ -1015,11 +1024,25 @@ class WindowsSignerIdentityTests(unittest.TestCase):
             "timestamped": True,
             "identity": WIN_PUBLISHER,
             "public_trust": False,
+            "trust_mode": "self-signed",
             "trust_anchor_sha256": "a" * 64,
         }
         self.assertEqual(gate._signature_errors("x", signature, "windows", policy, runtime=True), [])
-        del signature["trust_anchor_sha256"]
-        self.assertTrue(gate._signature_errors("x", signature, "windows", policy, runtime=True))
+        cases = (
+            ("missing mode", {**signature, "trust_mode": None}),
+            ("wrong mode", {**signature, "trust_mode": "os-store"}),
+            ("missing anchor", {key: value for key, value in signature.items() if key != "trust_anchor_sha256"}),
+            ("public trust with an anchor", {**signature, "public_trust": True}),
+            (
+                "public trust with the self-signed mode",
+                {**signature, "public_trust": True, "trust_anchor_sha256": None, "trust_mode": "self-signed"},
+            ),
+        )
+        for label, broken in cases:
+            with self.subTest(label):
+                self.assertTrue(gate._signature_errors("x", broken, "windows", policy, runtime=True), label)
+        os_store = {**signature, "public_trust": True, "trust_anchor_sha256": None, "trust_mode": "os-store"}
+        self.assertEqual(gate._signature_errors("x", os_store, "windows", policy, runtime=True), [])
 
 
 # ---------------------------------------------------------------------------

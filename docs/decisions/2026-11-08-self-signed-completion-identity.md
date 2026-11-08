@@ -44,11 +44,12 @@ completion.
 
 ## Still required for a complete signed candidate (not certificate-related)
 
-- **Release descriptor**: an approved `release-windows.json` with a real extension ID and
-  the self-signed publisher fingerprint (`sha256:<leaf DER>`).
-- **Tool identities**: the MSVC and Windows SDK entries in `tools.lock.json` are still
-  `required_unresolved`; `verify-inputs` blocks until they are observed on the approved
-  `windows-2025` runner.
+- **Release descriptor**: `release-windows.json` is tracked with the development allowlist
+  ID and the self-signed publisher fingerprint (`sha256:<leaf DER>`). Plan Task 16 replaces the
+  allowlist's production entry with the real Web Store item ID.
+- **Tool identities**: the MSVC and Windows SDK entries in `tools.lock.json` are pinned by
+  version only from the approved `windows-2025` runner (see below); the digests are deferred
+  and must not be invented.
 - **macOS**: the DER-entitlements decoder, notarization and a Developer ID identity.
 
 ## Consequences

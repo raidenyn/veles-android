@@ -920,6 +920,15 @@ class Callers(unittest.TestCase):
     def test_signed_candidates_never_come_from_pull_request_artifacts(self):
         self.assertEqual(check_gate_boundary(self.workflows()), [])
 
+    def test_windows_only_mode_cannot_skip_the_two_target_gate(self) -> None:
+        gate = read(".github/workflows/release-native-installers.yml")
+        self.assertIn("windows_only:", gate)
+        self.assertIn("if: ${{ !inputs.windows_only }}", gate, "the macOS jobs must be conditional")
+        self.assertIn("native-windows / build", gate, "the Windows job, not the whole run, is checked")
+        self.assertIn("RESULT_MACOS: ${{ needs.sign-macos-outer.result }}", gate)
+        self.assertIn('if [ "$result" != success ]', gate, "skipped macOS can never be eligible")
+        self.assertNotIn('or .event == "pull_request"', gate, "PR producer runs stay rejected")
+
     def test_gate_boundary_mutations_are_rejected(self):
         workflows = self.workflows()
         gate = workflows["release-native-installers.yml"]
