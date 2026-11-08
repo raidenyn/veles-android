@@ -1032,7 +1032,8 @@ class WindowsSignerIdentityTests(unittest.TestCase):
             ("missing mode", {**signature, "trust_mode": None}),
             ("wrong mode", {**signature, "trust_mode": "os-store"}),
             ("missing anchor", {key: value for key, value in signature.items() if key != "trust_anchor_sha256"}),
-            ("public trust with an anchor", {**signature, "public_trust": True}),
+            ("invalid anchor", {**signature, "trust_anchor_sha256": "not-a-hash"}),
+            ("public trust with an anchor", {**signature, "public_trust": True, "trust_mode": "os-store"}),
             (
                 "public trust with the self-signed mode",
                 {**signature, "public_trust": True, "trust_anchor_sha256": None, "trust_mode": "self-signed"},

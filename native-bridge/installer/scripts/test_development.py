@@ -491,6 +491,15 @@ class ProductionIdentitySource(unittest.TestCase):
             with self.assertRaises(development.Refusal):
                 development.validate_extension_id("f" * 32, production_ids=ids)
 
+    def test_a_non_string_production_extension_id_is_refused(self) -> None:
+        for bad in (None, 42, [], {}):
+            with self.subTest(value=repr(bad)), tempfile.TemporaryDirectory() as raw:
+                (Path(raw) / "release-windows.json").write_text(
+                    json.dumps({"channel": "production", "extension_id": bad})
+                )
+                with self.assertRaises(development.Refusal):
+                    development.production_extension_ids(Path(raw))
+
     def test_an_unreadable_or_malformed_producer_config_fails_closed(self) -> None:
         for body in ("{", "[]", "x" * (development.MAX_DESCRIPTOR_BYTES + 1)):
             with self.subTest(body=body[:8]), tempfile.TemporaryDirectory() as raw:

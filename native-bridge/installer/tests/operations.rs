@@ -7022,6 +7022,18 @@ fn uninstall_does_not_report_clean_when_outside_root_staging_fails() {
         Operation::Uninstall,
         None,
     ));
+    // An unaccounted outside-root stage is never clean. On Windows the residue's
+    // private DACL cannot be proven either, so the anchored open refuses it earlier as
+    // UnsafePath; both codes fail closed and keep the durable intent.
+    #[cfg(windows)]
+    assert!(
+        matches!(
+            failure,
+            FailureCode::CleanupPending | FailureCode::UnsafePath
+        ),
+        "an unaccounted outside-root stage is not clean: {failure:?}"
+    );
+    #[cfg(not(windows))]
     assert_eq!(
         failure,
         FailureCode::CleanupPending,

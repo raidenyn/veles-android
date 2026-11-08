@@ -152,8 +152,10 @@ def production_extension_ids(config_dir: Path = _CONFIG_DIR) -> frozenset[str]:
             raise Refusal(f"approved release config {name} is not valid JSON") from error
         if not isinstance(config, dict):
             raise Refusal(f"approved release config {name} must be an object")
-        if config.get("channel") == "production" and isinstance(config.get("extension_id"), str):
-            raw = config["extension_id"]
+        if config.get("channel") == "production":
+            raw = config.get("extension_id")
+            if not isinstance(raw, str):
+                raise Refusal(f"approved release config {name} has no string extension_id")
             try:
                 resolved = assemble_unsigned.resolve_extension_id(raw)
             except ValueError as error:

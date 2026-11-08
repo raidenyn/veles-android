@@ -5267,8 +5267,12 @@ mod tests {
             let file = std::fs::File::open(&path).expect("open created");
             identity_of_file(&file).expect("created identity")
         };
-        // A different object now holds the same leaf.
-        std::fs::remove_file(&path).expect("drop created");
+        // A different object now holds the same leaf. Keep the created object alive
+        // (renamed, not deleted): filesystems such as ext4 may reuse a just-freed inode
+        // immediately, which would make the two identities equal for reasons unrelated
+        // to the identity check under test.
+        let created_elsewhere = dir.join("carrier.created");
+        std::fs::rename(&path, &created_elsewhere).expect("keep the created object");
         std::fs::write(&path, b"foreign content").expect("foreign file");
         let occupant = {
             let file = std::fs::File::open(&path).expect("open occupant");
