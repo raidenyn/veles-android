@@ -59,6 +59,33 @@ jobs:
         with:
           distribution: temurin
           java-version-file: .java-version
+      # TEMPORARY (2026-11-08): observe the approved windows-2025 tool identities for
+      # config/tools.lock.json. Removed once the versions are recorded.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Enter the Visual Studio developer environment (tool observation)
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe is missing from the windows-2025 image' }
+          $install = (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath -all | Select-Object -First 1)
+          if (-not $install) { throw 'no Visual Studio installation with the MSVC x64 tools was found' }
+          $devShell = Join-Path $install 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Import-Module $devShell
+          $before = @{}
+          Get-ChildItem Env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          Enter-VsDevShell -VsInstallPath $install -SkipAutomaticLocation -DevCmdArguments '-arch=x64' | Out-Null
+          Get-ChildItem Env: |
+            Where-Object { $before[$_.Name] -ne $_.Value } |
+            ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+      - name: Observe Windows tool identities (temporary)
+        shell: pwsh
+        run: |
+          python native-bridge/installer/scripts/tool_observation.py observe --target windows-x86_64 --output observed.json
+          if ($LASTEXITCODE -ne 0) { throw 'observation failed' }
+          Get-Content observed.json
+          Get-Content observed.json | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Activate pinned Rust toolchain
         working-directory: native-bridge/host
         run: rustup show active-toolchain
