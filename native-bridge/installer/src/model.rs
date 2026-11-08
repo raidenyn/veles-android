@@ -574,7 +574,7 @@ fn validate_minimum_os(target: Target, channel: Channel, value: &str) -> Install
     let parts = os_parts(value).ok_or_else(invalid_package)?;
     if channel.is_production() {
         let baseline: &[u64] = match target {
-            Target::WindowsX64 => &[11],
+            Target::WindowsX64 => &[10],
             Target::MacosArm64 => &[26, 0],
         };
         if compare_components(&parts, baseline) == Ordering::Less {

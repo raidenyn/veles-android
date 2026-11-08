@@ -76,7 +76,7 @@ CHANNEL_IDENTITY = {
     "fixture": "me.nagaev.veles.bridge.fixture",
 }
 PACKAGEABLE_CHANNELS = ("production", "fixture")
-MINIMUM_OS = {"windows": (11,), "macos": (26, 0)}
+MINIMUM_OS = {"windows": (10,), "macos": (26, 0)}
 PLACEHOLDER_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop"
 CONFIG_KEYS = {
     "schema", "channel", "version", "target", "minimum_os", "extension_id", "host_name",

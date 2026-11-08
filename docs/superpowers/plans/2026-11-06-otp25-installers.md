@@ -59,7 +59,7 @@ of claiming the complete task/issue accepted.
 ### Fixed implementation choices
 
 - Build targets initially match existing native outputs: `x86_64-pc-windows-msvc`
-  and `aarch64-apple-darwin`. Acceptance baseline is Windows 11 x64 and macOS 26
+  and `aarch64-apple-darwin`. Acceptance baseline is Windows 10 x64 and macOS 26
   Apple Silicon, Chrome 132+. This does not promise older OSes, Intel Macs,
   Windows ARM64 or universal binaries. Use manifest OS guards and
   `MACOSX_DEPLOYMENT_TARGET=26.0`; record Windows builds' exact SDK/MSVC versions

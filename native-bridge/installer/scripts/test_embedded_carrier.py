@@ -46,7 +46,7 @@ def config(platform="windows", channel="production"):
         "channel": channel,
         "version": "1.2.3",
         "target": "windows-x86_64" if platform == "windows" else "macos-arm64",
-        "minimum_os": "11" if platform == "windows" else "26.0",
+        "minimum_os": "10" if platform == "windows" else "26.0",
         "extension_id": EXTENSION_ID,
         "host_name": identity,
         "bundle_id": identity,

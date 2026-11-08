@@ -3,7 +3,7 @@
   "channel": "fixture",
   "version": "0.1.0",
   "target": "windows-x86_64",
-  "minimum_os": "11",
+  "minimum_os": "10",
   "extension_id": "ffffffffffffffffffffffffffffffff",
   "host_name": "me.nagaev.veles.bridge.fixture",
   "bundle_id": "me.nagaev.veles.bridge.fixture",

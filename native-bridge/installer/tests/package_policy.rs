@@ -34,7 +34,7 @@ fn descriptor() -> ReleaseDescriptor {
         version: "1.2.3".to_owned(),
         source_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         target: Target::WindowsX64,
-        minimum_os: "11".to_owned(),
+        minimum_os: "10".to_owned(),
         extension_id: PROD_EXTENSION_ID.to_owned(),
         host_name: PRODUCTION_HOST_NAME.to_owned(),
         bundle_id: PRODUCTION_HOST_NAME.to_owned(),
@@ -173,7 +173,7 @@ fn descriptor_identity_is_strict_and_versions_compare_numerically() {
         ),
         (
             "minimum OS below the tested baseline",
-            |d| d.minimum_os = "10".to_owned(),
+            |d| d.minimum_os = "9".to_owned(),
             FailureCode::UnsupportedTarget,
         ),
         (

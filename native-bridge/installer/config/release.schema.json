@@ -44,7 +44,7 @@
       "enum": ["windows-x86_64", "macos-arm64"]
     },
     "minimum_os": {
-      "description": "Lowest supported OS version. Production targets must be at least Windows 11 or macOS 26.0.",
+      "description": "Lowest supported OS version. Production targets must be at least Windows 10 or macOS 26.0.",
       "type": "string",
       "pattern": "^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*)){0,2}$"
     },

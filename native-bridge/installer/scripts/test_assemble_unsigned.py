@@ -46,7 +46,7 @@ def config(platform="windows", channel="production", **overrides):
         "channel": channel,
         "version": "1.2.3",
         "target": "windows-x86_64" if platform == "windows" else "macos-arm64",
-        "minimum_os": "11" if platform == "windows" else "26.0",
+        "minimum_os": "10" if platform == "windows" else "26.0",
         "extension_id": EXTENSION_ID,
         "host_name": identity,
         "bundle_id": identity,
@@ -129,7 +129,7 @@ class ConfigChecks(Workspace):
 
     def test_target_and_minimum_os_must_match_the_platform(self):
         self.assertTrue(self.problems(config("macos"), platform="windows"))
-        self.assertTrue(self.problems(config(minimum_os="10")))
+        self.assertTrue(self.problems(config(minimum_os="9")))
         self.assertTrue(self.problems(config("macos", minimum_os="15.0"), platform="macos"))
 
     def test_extension_id_must_be_real_and_bare(self):
@@ -577,3 +577,4 @@ class CommandLine(Workspace):
 
 if __name__ == "__main__":
     unittest.main()
+

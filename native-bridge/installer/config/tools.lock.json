@@ -5,7 +5,7 @@
     "windows-x86_64": {
       "runner": "windows-2025",
       "build_target": "x86_64-pc-windows-msvc",
-      "minimum_os": "11"
+      "minimum_os": "10"
     },
     "macos-arm64": {
       "runner": "macos-26",
