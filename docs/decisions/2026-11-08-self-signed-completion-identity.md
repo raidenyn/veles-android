@@ -52,6 +52,25 @@ completion.
   and must not be invented.
 - **macOS**: the DER-entitlements decoder, notarization and a Developer ID identity.
 
+## Orchestration change (2026-11-08)
+
+The signing and trust model above is unchanged. Only the workflow authorization and
+producer selection changed:
+
+- Release initiation is an owner-only manual dispatch of
+  `release-native-installers.yml` on `master`, selecting `platform`
+  (`windows`, `macos`, `both`; default `windows`). There is no release tag, manually
+  supplied descriptor digest or external producer run ID.
+- The selected platform's unsigned input tree, provenance and A/B report are produced in
+  the same run. One protected `native-release` job per selected platform performs nested
+  signing, assembly, outer signing and verification; secret mappings stay in the signing
+  steps.
+- Debug installers are built only by the labeled pull-request workflow and hold no
+  release secret.
+- Certificate pins, the recorded ephemeral trust anchor, the timestamp, trust-mode
+  validation and signed-content correspondence checks are untouched. A green run is still
+  build/sign status, not acceptance-matrix completion.
+
 ## Consequences
 
 The gate is honest about what a self-signed signature proves: the bytes are signed by the

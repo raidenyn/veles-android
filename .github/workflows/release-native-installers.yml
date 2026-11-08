@@ -22,19 +22,21 @@ name: release-native-installers
 #   internally and publish the chosen A tree, the A/B provenance and the A/B report as one per-run
 #   artifact. Nothing here downloads another run's artifacts and nothing compiles source after the
 #   builds.
-# - Credentials exist only in the four sign-* jobs, which run in the protected environment
-#   `native-release`. They are mapped through the step-level `env:` of the single step that runs the
-#   signer and are read by NAME inside release_gate.py; no credential expression appears in a script
-#   body, and a job-level env block never carries a secret.
+# - Credentials exist only in the per-platform sign-* jobs, which run in the protected environment
+#   `native-release`. They are mapped through the step-level `env:` of the signer steps and are read
+#   by NAME inside release_gate.py; no credential expression appears in a script body, and neither a
+#   job-level env block nor a non-signing step carries a secret.
 # - Provenance, the producer's A/B report, payload hashes and the exact descriptor digest are verified
 #   BEFORE any key is touched, in a job that holds no credential. Every later job consumes the chosen
 #   A build WITHOUT rebuilding it.
-# - Each selected platform runs its own verification, signing, assembly and outer signing jobs. A
-#   Windows-only run needs no macOS artifact or job; when both are selected and one fails, the gate
-#   reports the per-platform status and fails, while the other selected platform's work still runs.
-# - Job graph: guard -> build-<os> -> verify-<os> -> sign-<os>-nested -> assemble-<os> ->
-#   sign-<os>-outer -> gate. The assemble jobs run pinned makensis / hdiutil over already-signed
-#   files and hold NO credential.
+# - Each selected platform runs one protected sign-* job that performs nested signing, assembly,
+#   outer signing and verification over the same-run verified inputs. A Windows-only run needs no
+#   macOS artifact or job; when both are selected and one fails, the gate reports each selected
+#   platform's status and fails, while the other selected platform's work still runs.
+# - Job graph: guard -> build-<os> -> verify-<os> -> sign-<os> -> gate. The sign job's assemble step
+#   runs pinned makensis / hdiutil over already-nested-signed files and holds NO credential.
+# - Debug installers are not built here. They are built only by build-pr-installers.yml calling the
+#   same producers with `build-kind: debug`; a failed release job never invokes debug packaging.
 #
 # Interfaces this workflow assumes from the unsigned producers: the per-run artifacts
 # `native-release-windows-<run>-<attempt>` and `native-release-macos-<run>-<attempt>` contain
@@ -219,7 +221,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  sign-windows-nested:
+  sign-windows:
     needs: [guard, verify-windows]
     if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && (inputs.platform == 'windows' || inputs.platform == 'both') && needs.verify-windows.result == 'success' }}
     runs-on: windows-2025
@@ -269,7 +271,7 @@ jobs:
             -Descriptor (Join-Path $in 'package/descriptor.json') `
             -Boundary (Join-Path $env:RUNNER_TEMP 'verified/reports/windows-verify-inputs.json') `
             -Commit $env:COMMIT -RecipeDigest $env:RECIPE_DIGEST
-      - name: Remove key material if the job was interrupted
+      - name: Remove nested key material if the job was interrupted
         if: ${{ always() }}
         env:
           VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
@@ -277,64 +279,13 @@ jobs:
           Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'sign-nested/scratch') -Recurse -Force -ErrorAction Ignore
           certutil -user -delstore My $env:VELES_WIN_CERT_SHA1 2>$null | Out-Null
           $global:LASTEXITCODE = 0
-      - name: Pack the signed tree
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $s = Join-Path $env:RUNNER_TEMP 'sign-nested'
-          tar -cpf (Join-Path $s 'tree.tar') -C (Join-Path $s 'tree') .
-          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: signed-nested-windows
-          path: |
-            ${{ runner.temp }}/sign-nested/tree.tar
-            ${{ runner.temp }}/sign-nested/reports
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: reports-sign-windows-nested
-          path: ${{ runner.temp }}/sign-nested/reports
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: ${{ failure() }}
-        with:
-          name: blocked-sign-windows-nested
-          path: ${{ runner.temp }}/sign-nested/reports
-          if-no-files-found: ignore
-          retention-days: 7
-
-  assemble-windows:
-    needs: [guard, verify-windows, sign-windows-nested]
-    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && (inputs.platform == 'windows' || inputs.platform == 'both') && needs.sign-windows-nested.result == 'success' }}
-    runs-on: windows-2025
-    permissions:
-      contents: read
-    env:
-      COMMIT: ${{ github.sha }}
-      VELES_DESCRIPTOR_SHA256: ${{ needs.verify-windows.outputs.descriptor-sha256 }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: signed-nested-windows
-          path: ${{ runner.temp }}/signed
       - name: Assemble the setup executable with the pinned makensis (no credential, no rebuild)
         run: |
           $ErrorActionPreference = 'Stop'
           $gate = 'native-bridge/installer/scripts/release_gate.py'
           $recipe = python -I $gate recipe-digest --platform windows
           if ($LASTEXITCODE -ne 0) { throw 'recipe-digest failed' }
-          $in = Join-Path $env:RUNNER_TEMP 'signed-tree'
-          New-Item -ItemType Directory -Path $in | Out-Null
-          tar -xpf (Join-Path $env:RUNNER_TEMP 'signed/tree.tar') -C $in
-          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+          $in = Join-Path $env:RUNNER_TEMP 'sign-nested/tree'
           $nsis = Join-Path $PWD 'build/native-bridge/installer/tools/nsis'
           ./native-bridge/installer/scripts/provision-nsis.ps1 -Destination $nsis
           $env:NSIS_PATH = Join-Path $nsis 'nsis-3.08/makensis.exe'
@@ -342,58 +293,9 @@ jobs:
           python -I $gate assemble --platform windows --inputs $in --output (Join-Path $out 'tree') `
             --scratch (Join-Path $out 'scratch') --reports (Join-Path $out 'reports') `
             --descriptor (Join-Path $in 'package/descriptor.json') `
-            --boundary (Join-Path $env:RUNNER_TEMP 'signed/reports/windows-nested.json') `
+            --boundary (Join-Path $env:RUNNER_TEMP 'sign-nested/reports/windows-nested.json') `
             --commit $env:COMMIT --recipe-digest $recipe
           if ($LASTEXITCODE -ne 0) { throw 'assemble failed' }
-          tar -cpf (Join-Path $out 'tree.tar') -C (Join-Path $out 'tree') .
-          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: assembled-windows
-          path: |
-            ${{ runner.temp }}/assemble/tree.tar
-            ${{ runner.temp }}/assemble/reports
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: reports-assemble-windows
-          path: ${{ runner.temp }}/assemble/reports
-          if-no-files-found: error
-          retention-days: 7
-
-  sign-windows-outer:
-    needs: [guard, verify-windows, assemble-windows]
-    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && (inputs.platform == 'windows' || inputs.platform == 'both') && needs.assemble-windows.result == 'success' }}
-    runs-on: windows-2025
-    environment: native-release
-    permissions:
-      contents: read
-    env:
-      COMMIT: ${{ github.sha }}
-      VELES_SIGNING_ENVIRONMENT: native-release
-      VELES_DESCRIPTOR_SHA256: ${{ needs.verify-windows.outputs.descriptor-sha256 }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: assembled-windows
-          path: ${{ runner.temp }}/assembled
-      - name: Unpack the assembled tree (no credential in this step)
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $tree = Join-Path $env:RUNNER_TEMP 'in'
-          New-Item -ItemType Directory -Path $tree | Out-Null
-          tar -xpf (Join-Path $env:RUNNER_TEMP 'assembled/tree.tar') -C $tree
-          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
-          $recipe = python -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform windows
-          if ($LASTEXITCODE -ne 0) { throw 'recipe-digest failed' }
-          "RECIPE_DIGEST=$recipe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Sign and verify the setup executable
         env:
           VELES_WIN_PFX_BASE64: ${{ secrets.VELES_WIN_PFX_BASE64 }}
@@ -404,15 +306,15 @@ jobs:
           VELES_WIN_ROOT_CER_BASE64: ${{ secrets.VELES_WIN_ROOT_CER_BASE64 }}
           VELES_WIN_TRUST_SELF_SIGNED: ${{ vars.VELES_WIN_TRUST_SELF_SIGNED }}
         run: |
-          $in = Join-Path $env:RUNNER_TEMP 'in'
+          $in = Join-Path $env:RUNNER_TEMP 'assemble/tree'
           $s = Join-Path $env:RUNNER_TEMP 'sign-outer'
           ./native-bridge/installer/scripts/sign-windows.ps1 -Stage outer `
             -Inputs $in -Output (Join-Path $s 'tree') `
             -Scratch (Join-Path $s 'scratch') -Reports (Join-Path $s 'reports') `
             -Descriptor (Join-Path $in 'package/descriptor.json') `
-            -Boundary (Join-Path $env:RUNNER_TEMP 'assembled/reports/windows-assemble.json') `
+            -Boundary (Join-Path $env:RUNNER_TEMP 'assemble/reports/windows-assemble.json') `
             -Commit $env:COMMIT -RecipeDigest $env:RECIPE_DIGEST
-      - name: Remove key material if the job was interrupted
+      - name: Remove outer key material if the job was interrupted
         if: ${{ always() }}
         env:
           VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
@@ -428,10 +330,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: signed-outer-windows
-          path: |
-            ${{ runner.temp }}/sign-outer/tree.tar
-            ${{ runner.temp }}/sign-outer/reports
+          name: signed-windows
+          path: ${{ runner.temp }}/sign-outer/tree.tar
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-windows-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-windows-assemble
+          path: ${{ runner.temp }}/assemble/reports
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -443,12 +355,15 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ failure() }}
         with:
-          name: blocked-sign-windows-outer
-          path: ${{ runner.temp }}/sign-outer/reports
+          name: blocked-sign-windows
+          path: |
+            ${{ runner.temp }}/sign-nested/reports
+            ${{ runner.temp }}/assemble/reports
+            ${{ runner.temp }}/sign-outer/reports
           if-no-files-found: ignore
           retention-days: 7
 
-  sign-macos-nested:
+  sign-macos:
     needs: [guard, verify-macos]
     if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && (inputs.platform == 'macos' || inputs.platform == 'both') && needs.verify-macos.result == 'success' }}
     runs-on: macos-26
@@ -494,116 +409,22 @@ jobs:
             --descriptor "$RUNNER_TEMP/in/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
             --boundary "$RUNNER_TEMP/verified/reports/macos-verify-inputs.json" \
             --commit "$COMMIT" --recipe-digest "$RECIPE_DIGEST"
-      - name: Remove key material if the job was interrupted
+      - name: Remove nested key material if the job was interrupted
         if: ${{ always() }}
         run: |
           security delete-keychain "$RUNNER_TEMP/sign-nested/scratch/keys/veles-signing.keychain-db" 2>/dev/null || true
           rm -rf "$RUNNER_TEMP/sign-nested/scratch"
-      - name: Pack the signed tree
-        run: |
-          set -euo pipefail
-          tar -cpf "$RUNNER_TEMP/sign-nested/tree.tar" -C "$RUNNER_TEMP/sign-nested/tree" .
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: signed-nested-macos
-          path: |
-            ${{ runner.temp }}/sign-nested/tree.tar
-            ${{ runner.temp }}/sign-nested/reports
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: reports-sign-macos-nested
-          path: ${{ runner.temp }}/sign-nested/reports
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: ${{ failure() }}
-        with:
-          name: blocked-sign-macos-nested
-          path: ${{ runner.temp }}/sign-nested/reports
-          if-no-files-found: ignore
-          retention-days: 7
-
-  assemble-macos:
-    needs: [guard, verify-macos, sign-macos-nested]
-    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && (inputs.platform == 'macos' || inputs.platform == 'both') && needs.sign-macos-nested.result == 'success' }}
-    runs-on: macos-26
-    permissions:
-      contents: read
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app
-      COMMIT: ${{ github.sha }}
-      VELES_DESCRIPTOR_SHA256: ${{ needs.verify-macos.outputs.descriptor-sha256 }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: signed-nested-macos
-          path: ${{ runner.temp }}/signed
       - name: Assemble the disk image from the signed app (no credential, no rebuild)
         run: |
           set -euo pipefail
           gate=native-bridge/installer/scripts/release_gate.py
           recipe="$(python3 -I "$gate" recipe-digest --platform macos)"
-          mkdir -p "$RUNNER_TEMP/signed-tree"
-          tar -xpf "$RUNNER_TEMP/signed/tree.tar" -C "$RUNNER_TEMP/signed-tree"
           out="$RUNNER_TEMP/assemble"
-          python3 -I "$gate" assemble --platform macos --inputs "$RUNNER_TEMP/signed-tree" --output "$out/tree" \
+          python3 -I "$gate" assemble --platform macos --inputs "$RUNNER_TEMP/sign-nested/tree" --output "$out/tree" \
             --scratch "$out/scratch" --reports "$out/reports" \
-            --descriptor "$RUNNER_TEMP/signed-tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
-            --boundary "$RUNNER_TEMP/signed/reports/macos-nested.json" \
+            --descriptor "$RUNNER_TEMP/sign-nested/tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/sign-nested/reports/macos-nested.json" \
             --commit "$COMMIT" --recipe-digest "$recipe"
-          tar -cpf "$out/tree.tar" -C "$out/tree" .
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: assembled-macos
-          path: |
-            ${{ runner.temp }}/assemble/tree.tar
-            ${{ runner.temp }}/assemble/reports
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: reports-assemble-macos
-          path: ${{ runner.temp }}/assemble/reports
-          if-no-files-found: error
-          retention-days: 7
-
-  sign-macos-outer:
-    needs: [guard, verify-macos, assemble-macos]
-    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && (inputs.platform == 'macos' || inputs.platform == 'both') && needs.assemble-macos.result == 'success' }}
-    runs-on: macos-26
-    environment: native-release
-    permissions:
-      contents: read
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app
-      COMMIT: ${{ github.sha }}
-      VELES_SIGNING_ENVIRONMENT: native-release
-      VELES_DESCRIPTOR_SHA256: ${{ needs.verify-macos.outputs.descriptor-sha256 }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: assembled-macos
-          path: ${{ runner.temp }}/assembled
-      - name: Unpack the assembled tree (no credential in this step)
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/in"
-          tar -xpf "$RUNNER_TEMP/assembled/tree.tar" -C "$RUNNER_TEMP/in"
-          echo "RECIPE_DIGEST=$(python3 -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform macos)" >> "$GITHUB_ENV"
       - name: Sign, notarize, staple and assess the disk image
         env:
           VELES_MAC_P12_BASE64: ${{ secrets.VELES_MAC_P12_BASE64 }}
@@ -617,14 +438,14 @@ jobs:
           set -euo pipefail
           s="$RUNNER_TEMP/sign-outer"
           native-bridge/installer/scripts/sign-macos.sh --stage outer \
-            --inputs "$RUNNER_TEMP/in" --output "$s/tree" --scratch "$s/scratch" --reports "$s/reports" \
-            --descriptor "$RUNNER_TEMP/in/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
-            --boundary "$RUNNER_TEMP/assembled/reports/macos-assemble.json" \
+            --inputs "$RUNNER_TEMP/assemble/tree" --output "$s/tree" --scratch "$s/scratch" --reports "$s/reports" \
+            --descriptor "$RUNNER_TEMP/assemble/tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/assemble/reports/macos-assemble.json" \
             --commit "$COMMIT" --recipe-digest "$RECIPE_DIGEST"
-      - name: Detach images and remove key material if the job was interrupted
+      - name: Detach images and remove outer key material if the job was interrupted
         if: ${{ always() }}
         run: |
-          for mount in "$RUNNER_TEMP"/sign-outer/scratch/mnt-*; do hdiutil detach "$mount" -force 2>/dev/null || true; done
+          for mount in "$RUNNER_TEMP"/sign-outer/scratch/mnt-* "$RUNNER_TEMP"/assemble/scratch/mnt-*; do hdiutil detach "$mount" -force 2>/dev/null || true; done
           security delete-keychain "$RUNNER_TEMP/sign-outer/scratch/keys/veles-signing.keychain-db" 2>/dev/null || true
           rm -rf "$RUNNER_TEMP/sign-outer/scratch"
       - name: Pack the signed tree
@@ -633,10 +454,20 @@ jobs:
           tar -cpf "$RUNNER_TEMP/sign-outer/tree.tar" -C "$RUNNER_TEMP/sign-outer/tree" .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: signed-outer-macos
-          path: |
-            ${{ runner.temp }}/sign-outer/tree.tar
-            ${{ runner.temp }}/sign-outer/reports
+          name: signed-macos
+          path: ${{ runner.temp }}/sign-outer/tree.tar
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-macos-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-macos-assemble
+          path: ${{ runner.temp }}/assemble/reports
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -648,13 +479,16 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ failure() }}
         with:
-          name: blocked-sign-macos-outer
-          path: ${{ runner.temp }}/sign-outer/reports
+          name: blocked-sign-macos
+          path: |
+            ${{ runner.temp }}/sign-nested/reports
+            ${{ runner.temp }}/assemble/reports
+            ${{ runner.temp }}/sign-outer/reports
           if-no-files-found: ignore
           retention-days: 7
 
   gate:
-    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows-outer, sign-macos-outer]
+    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]
     # Run even when a job failed or was skipped, so the verdict is a recorded failure of THIS job
     # rather than a skipped one, and only the selected platforms are required.
     if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' }}
@@ -669,12 +503,8 @@ jobs:
       RESULT_BUILD_MACOS: ${{ needs.build-macos.result }}
       RESULT_VERIFY_WINDOWS: ${{ needs.verify-windows.result }}
       RESULT_VERIFY_MACOS: ${{ needs.verify-macos.result }}
-      RESULT_NESTED_WINDOWS: ${{ needs.sign-windows-nested.result }}
-      RESULT_NESTED_MACOS: ${{ needs.sign-macos-nested.result }}
-      RESULT_ASSEMBLE_WINDOWS: ${{ needs.assemble-windows.result }}
-      RESULT_ASSEMBLE_MACOS: ${{ needs.assemble-macos.result }}
-      RESULT_WINDOWS: ${{ needs.sign-windows-outer.result }}
-      RESULT_MACOS: ${{ needs.sign-macos-outer.result }}
+      RESULT_SIGN_WINDOWS: ${{ needs.sign-windows.result }}
+      RESULT_SIGN_MACOS: ${{ needs.sign-macos.result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -682,6 +512,43 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+      - name: Report the selected platform build/sign status
+        run: |
+          set -euo pipefail
+          if [ "$RESULT_GUARD" != success ]; then
+            echo "BLOCKED: the owner master-dispatch guard did not pass" >&2
+            exit 1
+          fi
+          case "$PLATFORM" in
+            both) selected="windows macos" ;;
+            windows|macos) selected="$PLATFORM" ;;
+            *) echo "BLOCKED: platform must be windows, macos or both (got '$PLATFORM')" >&2; exit 1 ;;
+          esac
+          echo "Platform build/sign status (not acceptance-matrix completion):"
+          failed=""
+          for os in $selected; do
+            if [ "$os" = windows ]; then
+              results="$RESULT_BUILD_WINDOWS $RESULT_VERIFY_WINDOWS $RESULT_SIGN_WINDOWS"
+            else
+              results="$RESULT_BUILD_MACOS $RESULT_VERIFY_MACOS $RESULT_SIGN_MACOS"
+            fi
+            ok=true
+            for result in $results; do
+              [ "$result" = success ] || ok=false
+            done
+            if [ "$ok" = true ]; then
+              echo "$os: PASS"
+            else
+              echo "$os: BLOCKED"
+              failed="$failed $os"
+            fi
+          done
+          echo "PASS here means the selected platform built and signed in this run."
+          echo "It is not acceptance completion: every physical acceptance case remains BLOCKED until independently adjudicated."
+          if [ -n "$failed" ]; then
+            echo "BLOCKED: selected platform(s) failed:$failed; no candidate is eligible" >&2
+            exit 1
+          fi
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: reports-*
@@ -696,40 +563,14 @@ jobs:
         with:
           name: verified-macos
           path: ${{ runner.temp }}/verified-macos
-      - name: Report the selected platform statuses and apply the release gate
+      - name: Apply the release gate to the selected platforms
         run: |
           set -euo pipefail
-          if [ "$RESULT_GUARD" != success ]; then
-            echo "BLOCKED: the owner master-dispatch guard did not pass" >&2
-            exit 1
-          fi
           case "$PLATFORM" in
             both) selected="windows macos" ;;
             windows|macos) selected="$PLATFORM" ;;
             *) echo "BLOCKED: platform must be windows, macos or both (got '$PLATFORM')" >&2; exit 1 ;;
           esac
-          failed=""
-          for os in $selected; do
-            if [ "$os" = windows ]; then
-              results="$RESULT_BUILD_WINDOWS $RESULT_VERIFY_WINDOWS $RESULT_NESTED_WINDOWS $RESULT_ASSEMBLE_WINDOWS $RESULT_WINDOWS"
-            else
-              results="$RESULT_BUILD_MACOS $RESULT_VERIFY_MACOS $RESULT_NESTED_MACOS $RESULT_ASSEMBLE_MACOS $RESULT_MACOS"
-            fi
-            ok=true
-            for result in $results; do
-              [ "$result" = success ] || ok=false
-            done
-            if [ "$ok" = true ]; then
-              echo "$os: PASS"
-            else
-              echo "$os: BLOCKED"
-              failed="$failed $os"
-            fi
-          done
-          if [ -n "$failed" ]; then
-            echo "BLOCKED: selected platform(s) failed:$failed; no candidate is eligible" >&2
-            exit 1
-          fi
           gate=native-bridge/installer/scripts/release_gate.py
           root="$RUNNER_TEMP/reports-root"
           bundle="$RUNNER_TEMP/candidate-evidence"

@@ -2284,7 +2284,7 @@ def run_blocks(job: str) -> str:
     return "\n".join(blocks)
 
 
-SIGN_JOBS = ("sign-windows-nested", "sign-windows-outer", "sign-macos-nested", "sign-macos-outer")
+SIGN_JOBS = ("sign-windows", "sign-macos")
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -2353,7 +2353,7 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertNotIn("github-token", body)
         self.assertLess(
             max(self.text.index("  build-windows:"), self.text.index("  build-macos:")),
-            self.text.index("  sign-windows-nested:"),
+            self.text.index("  sign-windows:"),
             "unsigned builds happen before the first keyed job",
         )
 
@@ -2364,12 +2364,19 @@ class WorkflowContractTests(unittest.TestCase):
             has_env = re.search(r"(?m)^    environment:\s*native-release\s*$", body) is not None
             self.assertEqual(has_env, name in SIGN_JOBS, name)
         self.assertNotIn("secrets.", self.head)
-        # Secrets are mapped by a step-level env: on the single step that runs the signer, nowhere else.
-        for name in SIGN_JOBS:
-            steps = re.split(r"(?m)^      - ", self.jobs[name])
+        # Secrets are mapped by a step-level env: on the signing steps only, nowhere else.
+        # Each protected platform job has two signing steps: nested and outer.
+        expected_holders = {"sign-windows": 2, "sign-macos": 2}
+        for name, body in self.jobs.items():
+            steps = re.split(r"(?m)^      - ", body)
             holders = [s for s in steps if "secrets." in s]
-            self.assertEqual(len(holders), 1, name)
-            self.assertIn("sign-", holders[0])
+            if name in SIGN_JOBS:
+                self.assertEqual(len(holders), expected_holders[name], name)
+                for holder in holders:
+                    self.assertRegex(holder, r"name: Sign")
+                    self.assertIn("sign-", holder)
+            else:
+                self.assertEqual(holders, [], name)
         # The env-level (job-level) block never carries a secret.
         for name in SIGN_JOBS:
             job_env = self.jobs[name].split("    steps:", 1)[0]
@@ -2391,54 +2398,50 @@ class WorkflowContractTests(unittest.TestCase):
     def test_signing_jobs_never_compile_or_build_and_assembly_holds_no_credentials(self) -> None:
         for name in (*SIGN_JOBS, "verify-windows", "verify-macos", "gate"):
             body = run_blocks(self.jobs[name])
-            for token in ("cargo", "gradlew", "npm ", "swift build", "swift test", "xcodebuild", "makensis", "hdiutil create", "rustup", "tauri", "pip install"):
+            for token in ("cargo", "gradlew", "npm ", "swift build", "swift test", "xcodebuild", "hdiutil create", "rustup", "tauri", "pip install"):
                 self.assertNotIn(token, body, f"{name} must not compile source ({token})")
-        for name in ("assemble-windows", "assemble-macos"):
-            body = self.jobs[name]
-            self.assertNotIn("secrets.", body)
-            self.assertNotIn("environment:", body)
-            self.assertNotIn("VELES_WIN_", body)
-            self.assertNotIn("VELES_MAC_", body)
-            self.assertNotIn("VELES_NOTARY_", body)
-            self.assertNotIn("VELES_SIGNING_ENVIRONMENT", body)
-            self.assertNotIn("VELES_APPROVED", body)
-            self.assertTrue(" assemble --platform " in run_blocks(body), name)
-        self.assertTrue("NSIS_PATH" in self.jobs["assemble-windows"])
-        self.assertTrue("provision-nsis.ps1" in self.jobs["assemble-windows"])
+        # The assemble step runs inside the protected platform job but holds no credential:
+        # it packages already-nested-signed files only.
+        for name in SIGN_JOBS:
+            steps = re.split(r"(?m)^      - ", self.jobs[name])
+            assemble = [s for s in steps if " assemble --platform " in s]
+            self.assertEqual(len(assemble), 1, name)
+            for token in ("secrets.", "VELES_WIN_", "VELES_MAC_", "VELES_NOTARY_", "VELES_SIGNING_ENVIRONMENT", "VELES_APPROVED"):
+                self.assertNotIn(token, assemble[0], name)
+        self.assertTrue("NSIS_PATH" in self.jobs["sign-windows"])
+        self.assertTrue("provision-nsis.ps1" in self.jobs["sign-windows"])
 
     def _needs(self, name: str) -> set[str]:
         match = re.search(r"(?m)^    needs:\s*(\[.*?\]|\S+)\s*$", self.jobs[name])
         return set(re.findall(r"[A-Za-z0-9_-]+", match.group(1))) if match else set()
 
-    def test_job_graph_is_guard_build_verify_sign_assemble_sign_gate(self) -> None:
+    def test_job_graph_is_guard_build_verify_sign_gate(self) -> None:
         self.assertEqual(self._needs("guard"), set())
         for platform in ("windows", "macos"):
             self.assertEqual(self._needs(f"build-{platform}"), {"guard"})
             self.assertEqual(self._needs(f"verify-{platform}"), {"guard", f"build-{platform}"})
-            self.assertEqual(self._needs(f"sign-{platform}-nested"), {"guard", f"verify-{platform}"})
-            self.assertEqual(self._needs(f"assemble-{platform}"), {"guard", f"verify-{platform}", f"sign-{platform}-nested"})
-            self.assertEqual(self._needs(f"sign-{platform}-outer"), {"guard", f"verify-{platform}", f"assemble-{platform}"})
+            self.assertEqual(self._needs(f"sign-{platform}"), {"guard", f"verify-{platform}"})
         self.assertEqual(
             self._needs("gate"),
-            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows-outer", "sign-macos-outer"},
+            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos"},
         )
         self.assertEqual(
             set(self.jobs),
-            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", *SIGN_JOBS, "assemble-windows", "assemble-macos", "gate"},
+            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", *SIGN_JOBS, "gate"},
         )
         self.assertNotIn("environment:", self.jobs["gate"])
         self.assertNotIn("secrets.", self.jobs["gate"])
 
     def test_each_selected_platform_is_independent(self) -> None:
         for platform, other in (("windows", "macos"), ("macos", "windows")):
-            for job in (f"build-{platform}", f"verify-{platform}", f"sign-{platform}-nested", f"assemble-{platform}", f"sign-{platform}-outer"):
+            for job in (f"build-{platform}", f"verify-{platform}", f"sign-{platform}"):
                 condition = re.search(r"(?m)^    if:\s*(.+)$", self.jobs[job]).group(1)
                 self.assertIn(f"inputs.platform == '{platform}' || inputs.platform == 'both'", condition, job)
                 self.assertNotIn(f"'{other}'", condition, job)
                 self.assertNotIn(other, self._needs(job), job)
         # A Windows-only run never names the macOS artifact or its jobs.
         for platform in ("windows", "macos"):
-            body = self.jobs[f"verify-{platform}"] + self.jobs[f"sign-{platform}-nested"]
+            body = self.jobs[f"verify-{platform}"] + self.jobs[f"sign-{platform}"]
             self.assertNotIn(f"native-release-{PLATFORM_OTHER[platform]}", body)
             self.assertNotIn(f"--descriptor-{PLATFORM_OTHER[platform]}", body)
         # The gate reports per-platform status and has no platform condition of its own.
@@ -2447,8 +2450,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("inputs.platform", condition)
         blocks = run_blocks(gate_body)
         self.assertIn("selected=", blocks)
-        self.assertIn("RESULT_WINDOWS", blocks)
-        self.assertIn("RESULT_MACOS", blocks)
+        self.assertIn("RESULT_SIGN_WINDOWS", blocks)
+        self.assertIn("RESULT_SIGN_MACOS", blocks)
 
     def test_gate_decides_with_validate_and_publishes_nothing(self) -> None:
         gate_job = run_blocks(self.jobs["gate"])

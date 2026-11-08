@@ -64,7 +64,7 @@ function assertActionsPinned(source, name) {
   }
 }
 
-const FULL_GRAPH_JOBS = ['web-extension', 'rust', 'supply-chain', 'native-windows', 'native-macos'];
+const FULL_GRAPH_JOBS = ['web-extension', 'rust', 'supply-chain'];
 
 function callerJobKeys(source) {
   // Caller jobs reuse ./.github/workflows/*.yml; collect their top-level job keys.
@@ -627,6 +627,28 @@ function releaseJobBlock(source, job) {
   return next ? source.slice(match.index, match.index + match[0].length + next.index) : source.slice(match.index);
 }
 
+function jobStepRun(block, name) {
+  const lines = block.split('\n');
+  const start = lines.findIndex((line) => line.trim() === `- name: ${name}`);
+  assert.notEqual(start, -1, `job must declare the step "${name}"`);
+  let runIndex = -1;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^[ \t]*- /.test(lines[index])) break;
+    if (mappingEntry(lines[index])?.key === 'run') {
+      runIndex = index;
+      break;
+    }
+  }
+  assert.notEqual(runIndex, -1, `step "${name}" must declare a run command`);
+  const entry = mappingEntry(lines[runIndex]);
+  let command = entry.value;
+  for (let index = runIndex + 1; index < lines.length; index += 1) {
+    if (lines[index].trim() && lines[index].match(/^\s*/)[0].length <= entry.indent) break;
+    command += `\n${lines[index]}`;
+  }
+  return command.replace(/^[|>][-+]?\s*\n?/, '');
+}
+
 function evaluateJobCondition(condition, { platform, guard = 'success' }) {
   const expression = condition
     .replaceAll('${{', '')
@@ -680,8 +702,7 @@ function assertReleaseInstallerCaller(source) {
   const jobs = callerJobKeys(source);
   const allJobs = [
     'guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos',
-    'sign-windows-nested', 'sign-windows-outer', 'sign-macos-nested', 'sign-macos-outer',
-    'assemble-windows', 'assemble-macos', 'gate',
+    'sign-windows', 'sign-macos', 'gate',
   ];
   assert.deepEqual(Object.keys(jobs).sort(), allJobs.slice().sort(), `${name} must declare exactly the release graph`);
   for (const job of allJobs.filter((entry) => entry !== 'guard')) {
@@ -691,6 +712,9 @@ function assertReleaseInstallerCaller(source) {
     for (const part of ["github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/master'", "github.actor == 'raidenyn'", "github.triggering_actor == 'raidenyn'"]) {
       assert.ok(match[1].includes(part), `${name} job ${job} must re-check ${part}`);
     }
+    const needs = block.match(/^    needs: (.+)$/m);
+    assert.ok(needs, `${name} job ${job} must declare its dependencies`);
+    assert.match(needs[1], /\bguard\b/, `${name} job ${job} must depend directly on the guard`);
   }
 
   // Build the selected platforms from this run's master SHA, with per-run artifact names.
@@ -709,7 +733,7 @@ function assertReleaseInstallerCaller(source) {
   assert.doesNotMatch(executable, /unsigned_run|native-unsigned-windows|native-unsigned-macos/, `${name} must not consume another run's producer artifact`);
 
   // Verification and signing consume the same-run artifact, and every credential lives in native-release.
-  const signJobs = ['sign-windows-nested', 'sign-windows-outer', 'sign-macos-nested', 'sign-macos-outer'];
+  const signJobs = ['sign-windows', 'sign-macos'];
   const credentialed = allJobs.filter((job) => /secrets\./.test(releaseJobBlock(source, job)));
   assert.deepEqual(credentialed.sort(), signJobs.slice().sort(), `${name} must map secrets only in the signing jobs`);
   for (const job of allJobs) {
@@ -723,12 +747,32 @@ function assertReleaseInstallerCaller(source) {
     assert.match(block, /^      COMMIT: \$\{\{ github\.sha \}\}$/m, `${job} must sign this run's commit`);
     assert.match(block, /^      VELES_DESCRIPTOR_SHA256: \$\{\{ needs\.verify-[a-z]+\.outputs\.descriptor-sha256 \}\}$/m, `${job} must bind the verified descriptor`);
   }
+  // Secret expressions exist only inside the actual signing steps of the protected jobs. Every other
+  // step (download, unpack, assemble, cleanup, upload, gate) holds no credential.
+  for (const job of allJobs) {
+    const block = releaseJobBlock(source, job);
+    for (const step of steps(block)) {
+      const text = step.join('\n');
+      if (!/\$\{\{\s*secrets\./.test(text)) continue;
+      assert.ok(signJobs.includes(job), `${name} job ${job} must not map a secret`);
+      assert.match(text, /- name: Sign/, `${name} job ${job} may map secrets only in a signing step`);
+      assert.match(text, /sign-(?:windows\.ps1|macos\.sh)/, `${name} job ${job} may map secrets only in a signing step`);
+    }
+  }
   assert.doesNotMatch(executable, /VELES_APPROVED_DESCRIPTOR_SHA256/, `${name} must not keep the obsolete approval variable`);
+
+  // Debug packaging is reachable only through build-pr-installers.yml calling the debug builders.
+  for (const forbidden of [
+    /build-pr-installers\.yml/, /build-kind:\s*debug/, /bridgeInstallerDebug/,
+    /out\/debug\//, /debug-installer-pr-/, /debug trust/i,
+  ]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not invoke or select debug packaging (${forbidden})`);
+  }
 
   // Each platform is independent: a Windows-only run neither needs nor names a macOS job/artifact.
   for (const platform of Object.keys(RELEASE_BUILDERS)) {
     const other = platform === 'windows' ? 'macos' : 'windows';
-    for (const job of [`build-${platform}`, `verify-${platform}`, `sign-${platform}-nested`, `assemble-${platform}`, `sign-${platform}-outer`]) {
+    for (const job of [`build-${platform}`, `verify-${platform}`, `sign-${platform}`]) {
       const block = releaseJobBlock(source, job);
       assert.match(block, new RegExp(`inputs\\.platform == '${platform}' \\|\\| inputs\\.platform == 'both'`), `${job} must only run for its selected platform`);
       assert.ok(!block.includes(`inputs.platform == '${other}'`), `${job} must not select the other platform`);
@@ -742,8 +786,8 @@ function assertReleaseInstallerCaller(source) {
 
   // Behaviour matrix: windows -> windows jobs and gate; macos -> macOS jobs and gate; both -> all.
   const selectionJobs = {
-    windows: ['build-windows', 'verify-windows', 'sign-windows-nested', 'assemble-windows', 'sign-windows-outer'],
-    macos: ['build-macos', 'verify-macos', 'sign-macos-nested', 'assemble-macos', 'sign-macos-outer'],
+    windows: ['build-windows', 'verify-windows', 'sign-windows'],
+    macos: ['build-macos', 'verify-macos', 'sign-macos'],
   };
   for (const platform of ['windows', 'macos', 'both']) {
     const expected = platform === 'both' ? [...selectionJobs.windows, ...selectionJobs.macos] : selectionJobs[platform];
@@ -764,8 +808,14 @@ function assertReleaseInstallerCaller(source) {
   }
   assert.doesNotMatch(gate, /--descriptor-digest/, 'the gate must not take an external descriptor digest');
   assert.doesNotMatch(gate, /descriptor-set-digest/, 'the gate must not recompute an owner-approved digest');
-  for (const result of ['RESULT_WINDOWS', 'RESULT_MACOS', 'RESULT_BUILD_WINDOWS', 'RESULT_BUILD_MACOS']) {
+  for (const result of ['RESULT_GUARD', 'RESULT_BUILD_WINDOWS', 'RESULT_BUILD_MACOS', 'RESULT_VERIFY_WINDOWS', 'RESULT_VERIFY_MACOS', 'RESULT_SIGN_WINDOWS', 'RESULT_SIGN_MACOS']) {
     assert.ok(gate.includes(result), `gate must report ${result}`);
+  }
+  // Every result the gate reads has a direct needs entry, so a missing job is never
+  // silently reported as an empty result.
+  const gateNeeds = gate.match(/^    needs: \[([^\]]+)\]$/m)[1].split(',').map((value) => value.trim());
+  for (const job of ['guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos']) {
+    assert.ok(gateNeeds.includes(job), `the gate must depend directly on ${job}`);
   }
   for (const token of ['gh release', 'attest-build-provenance', 'git tag', 'git push']) {
     assert.ok(!executable.includes(token), `${name} must not publish (${token})`);
@@ -791,6 +841,14 @@ test('the release caller contract rejects tag, cross-run and approval regression
     'gh run view': (text) => `${text}\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh run view 1\n`,
     'approved descriptor variable': (text) => text.replace('      VELES_SIGNING_ENVIRONMENT: native-release\n', '      VELES_SIGNING_ENVIRONMENT: native-release\n      VELES_APPROVED_DESCRIPTOR_SHA256: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS }}\n', 1),
     'credentials outside native-release': (text) => text.replaceAll('    environment: native-release\n', ''),
+    'secret in a verify step': (text) => text.replace(
+      '      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)\n',
+      '      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)\n        env:\n          LEAK: ${{ secrets.LEAK }}\n',
+    ),
+    'gate result not in direct needs': (text) => text.replace(
+      '    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n',
+      '    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n',
+    ),
     'windows job needs macOS': (text) => text.replace('    needs: [guard, verify-windows]\n', '    needs: [guard, verify-windows, verify-macos]\n'),
     'macOS job runs for windows': (text) => text.replaceAll("inputs.platform == 'macos' || inputs.platform == 'both'", "inputs.platform == 'windows' || inputs.platform == 'both'"),
     'gate external digest': (text) => text.replace('--platform "$PLATFORM"', '--platform "$PLATFORM" --descriptor-digest "$DIGEST"'),
@@ -801,6 +859,75 @@ test('the release caller contract rejects tag, cross-run and approval regression
     assert.notEqual(mutated, source, `mutation "${label}" must change the workflow`);
     assert.throws(() => assertReleaseInstallerCaller(mutated), `the contract must reject "${label}"`);
   }
+});
+
+test('release gate reports per-selected-platform status before artifact downloads', async () => {
+  const source = await workflow('release-native-installers.yml');
+  const gate = releaseJobBlock(source, 'gate');
+
+  // Direct needs: a missing job result is never silently empty, and adding a direct
+  // need cannot make the gate succeed for a failed selected platform.
+  const needs = gate.match(/^    needs: \[([^\]]+)\]$/m);
+  assert.ok(needs, 'the gate must declare its dependencies inline');
+  for (const job of ['guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos']) {
+    assert.ok(needs[1].split(',').map((value) => value.trim()).includes(job), `the gate must depend directly on ${job}`);
+  }
+
+  // Status reporting is a distinct step placed before any artifact download, so a
+  // missing required artifact cannot hide the per-platform verdict.
+  const statusIndex = gate.indexOf('- name: Report the selected platform build/sign status');
+  const firstDownload = gate.indexOf('actions/download-artifact@');
+  assert.notEqual(statusIndex, -1, 'the gate must declare a status step');
+  assert.ok(firstDownload !== -1 && statusIndex < firstDownload, 'the gate must report status before any artifact download');
+  assert.match(gate, /acceptance/i, 'the gate must separate build/sign status from acceptance');
+
+  const script = jobStepRun(gate, 'Report the selected platform build/sign status');
+  const results = (overrides = {}) => ({
+    RESULT_GUARD: 'success',
+    RESULT_BUILD_WINDOWS: 'skipped',
+    RESULT_VERIFY_WINDOWS: 'skipped',
+    RESULT_SIGN_WINDOWS: 'skipped',
+    RESULT_BUILD_MACOS: 'skipped',
+    RESULT_VERIFY_MACOS: 'skipped',
+    RESULT_SIGN_MACOS: 'skipped',
+    ...overrides,
+  });
+  const run = (platform, overrides) => spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, PLATFORM: platform, ...results(overrides) },
+  });
+  const windowsSuccess = {
+    RESULT_BUILD_WINDOWS: 'success', RESULT_VERIFY_WINDOWS: 'success', RESULT_SIGN_WINDOWS: 'success',
+  };
+  const macosSuccess = {
+    RESULT_BUILD_MACOS: 'success', RESULT_VERIFY_MACOS: 'success', RESULT_SIGN_MACOS: 'success',
+  };
+
+  // Unselected platforms are irrelevant, even when their jobs failed or were skipped.
+  const windowsOnly = run('windows', { ...windowsSuccess, RESULT_BUILD_MACOS: 'failure', RESULT_VERIFY_MACOS: 'failure', RESULT_SIGN_MACOS: 'failure' });
+  assert.equal(windowsOnly.status, 0, windowsOnly.stderr);
+  assert.match(windowsOnly.stdout, /windows: PASS/);
+  assert.doesNotMatch(windowsOnly.stdout, /macos:/);
+  const macosOnly = run('macos', { ...macosSuccess, RESULT_BUILD_WINDOWS: 'failure', RESULT_VERIFY_WINDOWS: 'failure', RESULT_SIGN_WINDOWS: 'failure' });
+  assert.equal(macosOnly.status, 0, macosOnly.stderr);
+  assert.match(macosOnly.stdout, /macos: PASS/);
+  assert.doesNotMatch(macosOnly.stdout, /windows:/);
+
+  // A selected platform failure blocks the whole gate; each selected platform is reported.
+  const bothBlocked = run('both', { ...windowsSuccess, RESULT_SIGN_MACOS: 'failure' });
+  assert.notEqual(bothBlocked.status, 0);
+  assert.match(bothBlocked.stdout, /windows: PASS/);
+  assert.match(bothBlocked.stdout, /macos: BLOCKED/);
+  assert.match(bothBlocked.stderr, /selected platform\(s\) failed: macos/);
+  const verifyBlocked = run('windows', { ...windowsSuccess, RESULT_VERIFY_WINDOWS: 'failure' });
+  assert.notEqual(verifyBlocked.status, 0);
+  assert.match(verifyBlocked.stdout, /windows: BLOCKED/);
+  assert.doesNotMatch(verifyBlocked.stdout, /macos:/);
+
+  // The guard still fails closed before any platform verdict.
+  const guardBlocked = run('windows', { ...windowsSuccess, RESULT_GUARD: 'failure' });
+  assert.notEqual(guardBlocked.status, 0);
+  assert.match(guardBlocked.stderr, /guard did not pass/);
 });
 
 test('supply-chain consumers cover the installer crate, Swift frontend and NSIS toolchain', async () => {
@@ -1107,7 +1234,7 @@ test('release-build caller graph composes single-build workflows with default-re
   // Non-master dispatch guard must fail before any build.
   const guardIndex = source.indexOf('  guard:');
   const firstBuildIndex = Math.min(
-    ...['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml', 'build-native-windows.yml', 'build-native-macos.yml']
+    ...['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml']
       .map((file) => source.indexOf(`./.github/workflows/${file}`))
       .filter((index) => index !== -1),
   );
@@ -1183,8 +1310,6 @@ test('release-build caller graph composes single-build workflows with default-re
     'web-extension': 'web-extension',
     rust: 'rust-jni-wasm',
     'supply-chain': 'supply-chain-reports',
-    'native-windows': 'native-unsigned-windows',
-    'native-macos': 'native-unsigned-macos',
   };
   for (const [job, artifact] of Object.entries(neutralNames)) {
     const start = source.indexOf(`  ${job}:`);
@@ -1195,14 +1320,17 @@ test('release-build caller graph composes single-build workflows with default-re
     assert.match(jobBlock, new RegExp(`artifact-name: ${artifact}`), `release-build job ${job} must pass the neutral artifact name ${artifact}`);
   }
 
-  // Manual publication depends on the guard and every full-graph producer and
-  // policy job (no aggregate safety net), and is the only writer.
+  // Manual publication depends on the guard and every component producer and
+  // policy job (no aggregate safety net), and is the only writer. Native
+  // installers are released by release-native-installers.yml, never here.
   const publishStart = source.indexOf('  publish:');
   const publishBlock = source.slice(publishStart);
-  assert.match(publishBlock, /needs: \[guard, android, web-extension, rust, supply-chain, native-windows, native-macos\]/, 'release-build publish job must depend on guard and every full-graph producer and policy job');
-  for (const need of ['guard', 'android', 'web-extension', 'rust', 'supply-chain', 'native-windows', 'native-macos']) {
+  assert.match(publishBlock, /needs: \[guard, android, web-extension, rust, supply-chain\]/, 'release-build publish job must depend on guard and every component producer and policy job');
+  for (const need of ['guard', 'android', 'web-extension', 'rust', 'supply-chain']) {
     assert.match(publishBlock, new RegExp(`needs\\.${need}\\.result == 'success'`), `release-build publish job must explicitly require ${need} success`);
   }
+  assert.doesNotMatch(publishBlock, /needs\.(?:native-windows|native-macos)/, 'release-build publish job must not depend on native installers');
+  assert.doesNotMatch(publishBlock, /native-(?:windows|macos)/, 'release-build publish job must not name native installers');
   assert.doesNotMatch(publishBlock, /needs\.aggregate/, 'release-build publish job must not depend on the removed aggregate');
   assert.match(publishBlock, /github\.event_name == 'workflow_dispatch'[\s\S]*?github\.ref == 'refs\/heads\/master'/, 'release-build publish job must only run on a master manual dispatch');
   assert.match(publishBlock, /permissions:\n      contents: write/, 'release-build publish job must declare contents: write');
@@ -1222,6 +1350,41 @@ test('release-build caller graph composes single-build workflows with default-re
   assert.match(publishBlock, /gh release delete "\$VERSION" --cleanup-tag --yes/, 'release-build publish must replace a previous manual prerelease');
   assert.match(publishBlock, /gh release create "\$VERSION"/, 'release-build publish must create the prerelease from the single-build Android output');
   assertNoSecretRunInterpolation(publishBlock, 'release-build publish job');
+});
+
+test('release-build caller leaves native installers to the protected release workflow', async () => {
+  const source = await workflow('release-build.yml');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  for (const job of ['native-windows', 'native-macos']) {
+    assert.ok(!new RegExp(`^  ${escapeRegexp(job)}:\\s*$`, 'm').test(executable), `release-build must not define the ${job} job`);
+  }
+  for (const forbidden of [
+    /build-native-windows\.yml/, /build-native-macos\.yml/, /native-unsigned-(?:windows|macos)/,
+    /build-kind:/, /bridgeInstaller(?:Unsigned|Debug)/, /release-native-installers\.yml/,
+  ]) {
+    assert.doesNotMatch(executable, forbidden, `release-build must not produce or select native installers (${forbidden})`);
+  }
+  const publish = source.slice(source.indexOf('  publish:'));
+  assert.doesNotMatch(publish, /native-(?:windows|macos)/, 'release-build publish must not gate on native installers');
+
+  // The decoupling must not disturb any Android/web/Rust/supply-chain predicate.
+  assert.match(source, /^  android:\n[\s\S]*?github\.event_name == 'push'/m, 'ordinary master push must still build Android only');
+  const android = source.slice(source.indexOf('  android:'), source.indexOf('  web-extension:'));
+  assert.doesNotMatch(android, /native/, 'the Android job must not mention native installers');
+  for (const job of ['web-extension', 'rust', 'supply-chain']) {
+    const start = source.indexOf(`  ${job}:`);
+    const nextJobMatch = source.slice(start + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
+    const end = nextJobMatch ? start + 1 + nextJobMatch.index : source.length;
+    const block = source.slice(start, end);
+    assert.match(block, /github\.event_name == 'workflow_dispatch'/, `release-build ${job} must keep its dispatch predicate`);
+    assert.match(block, /github\.event\.action == 'labeled' && github\.event\.label\.name == 'release-build'/, `release-build ${job} must keep its labeled-PR predicate`);
+    assert.match(block, /github\.event\.action == 'synchronize' && contains\(github\.event\.pull_request\.labels\.\*\.name, 'release-build'\)/, `release-build ${job} must keep its synchronize predicate`);
+  }
+  assert.match(publish, /github\.event_name == 'workflow_dispatch'[\s\S]*?github\.ref == 'refs\/heads\/master'/, 'release-build publish must keep its master-dispatch predicate');
+  assert.match(publish, /needs\.android\.result == 'success'/, 'release-build publish must keep requiring Android success');
+  assert.match(publish, /needs\.web-extension\.result == 'success'/, 'release-build publish must keep requiring web success');
+  assert.match(publish, /needs\.rust\.result == 'success'/, 'release-build publish must keep requiring Rust success');
+  assert.match(publish, /needs\.supply-chain\.result == 'success'/, 'release-build publish must keep requiring supply-chain success');
 });
 
 test('tag release publishes from one build with provenance, checksums, and digest integrity intact', async () => {
@@ -1313,7 +1476,7 @@ test('artifact actions declare only their known inputs', async () => {
 
 test('reusable component workflows referenced by the caller graph exist and remain reusable', async () => {
   const caller = await workflow('release-build.yml');
-  for (const file of ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml', 'build-native-windows.yml', 'build-native-macos.yml']) {
+  for (const file of ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml']) {
     assert.match(caller, new RegExp(`uses: \\./\\.github/workflows/${file.replace(/\./g, '\\.')}`), `release-build caller must reuse ${file}`);
     const reusable = await workflow(file);
     assert.match(reusable, /workflow_call:/, `${file} must remain reusable (workflow_call)`);

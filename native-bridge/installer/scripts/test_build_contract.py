@@ -37,8 +37,8 @@ ONE_PUBLIC_TASKS = (
 )
 SHA_PINNED_USE = re.compile(r"uses:\s*(?:\./|[\w.-]+/[\w./-]+@[0-9a-f]{40}\b)")
 
-# The unchanged Android publication conditions (Task 14 must not touch them).
-PUBLISH_NEEDS = "needs: [guard, android, web-extension, rust, supply-chain, native-windows, native-macos]"
+# The unchanged Android publication conditions (native installers are not built by this caller).
+PUBLISH_NEEDS = "needs: [guard, android, web-extension, rust, supply-chain]"
 PUBLISH_IF = (
     "if: |\n"
     "      always() &&\n"
@@ -48,9 +48,7 @@ PUBLISH_IF = (
     "      needs.android.result == 'success' &&\n"
     "      needs.web-extension.result == 'success' &&\n"
     "      needs.rust.result == 'success' &&\n"
-    "      needs.supply-chain.result == 'success' &&\n"
-    "      needs.native-windows.result == 'success' &&\n"
-    "      needs.native-macos.result == 'success'"
+    "      needs.supply-chain.result == 'success'"
 )
 ANDROID_IF = (
     "    if: |\n"
@@ -616,17 +614,20 @@ def job_block(source, job):
 
 def check_release_build(source):
     errors = []
-    for job, artifact in (("native-windows", "native-unsigned-windows"), ("native-macos", "native-unsigned-macos")):
-        block = job_block(source, job)
-        if "artifact-name: %s\n" % artifact not in block + "\n":
-            errors.append("release-build %s must pass artifact-name %s" % (job, artifact))
-        if "build-kind: release\n" not in block + "\n":
-            errors.append("release-build %s must pass build-kind release" % job)
-        if "build-kind: debug" in block:
-            errors.append("release-build %s must not build the debug installer" % job)
-        if "uses: ./.github/workflows/build-%s.yml" % job not in block:
-            errors.append("release-build %s must reuse its producer workflow" % job)
-    # The Android-only publication conditions are untouched.
+    # Native installers are released only by release-native-installers.yml. This caller
+    # must neither define native jobs nor select a native build kind.
+    for job in ("native-windows", "native-macos"):
+        if job_block(source, job):
+            errors.append("release-build must not define the %s job" % job)
+    executable = strip_yaml_comments(source)
+    for token in (
+        "build-native-windows.yml", "build-native-macos.yml",
+        "native-unsigned-windows", "native-unsigned-macos", "build-kind:",
+        "bridgeInstallerUnsigned", "bridgeInstallerDebug",
+    ):
+        if token in executable:
+            errors.append("release-build must not produce native installers (%s)" % token)
+    # The component publication conditions are untouched.
     publish = source.split("\n  publish:", 1)[-1]
     if PUBLISH_NEEDS not in publish:
         errors.append("the publish job's needs changed")
@@ -636,7 +637,7 @@ def check_release_build(source):
         errors.append("the android job's condition changed")
     if source.count("contents: write") != 1 or "contents: write" not in publish:
         errors.append("contents: write must appear only in the publish job")
-    if "native-release" in source or "native-unsigned" in publish or "gh release create \"$VERSION\" \\\n            \"$APK\" \\\n            \"android-release/mapping.txt\" \\\n            \"android-release/SHA256SUMS\" \\" not in publish:
+    if "native-release" in executable or "native-unsigned" in publish or "gh release create \"$VERSION\" \\\n            \"$APK\" \\\n            \"android-release/mapping.txt\" \\\n            \"android-release/SHA256SUMS\" \\" not in publish:
         errors.append("the publish job must keep publishing only the Android artifacts")
     return errors
 
@@ -681,6 +682,23 @@ def check_gate_boundary(workflows):
         errors.append("the obsolete manual descriptor approval variable is back")
     if "pull_request" in body:
         errors.append("the release workflow must not accept pull-request context")
+    # One protected signing/packaging job per selected platform, and no debug packaging.
+    for platform in ("windows", "macos"):
+        if not job_block(gate, "sign-%s" % platform):
+            errors.append("the release path is missing sign-%s" % platform)
+    for legacy in ("sign-windows-nested", "sign-windows-outer", "assemble-windows", "assemble-macos"):
+        if re.search(r"(?m)^  %s:\s*$" % re.escape(legacy), gate):
+            errors.append("the release path still has a separate %s job" % legacy)
+    for token in ("build-kind: debug", "bridgeInstallerDebug", "build-pr-installers"):
+        if token in body:
+            errors.append("the release path can invoke debug packaging (%s)" % token)
+    # Every result the gate reads has a direct needs entry.
+    gate_job = job_block(gate, "gate")
+    needs = re.search(r"(?m)^    needs:\s*\[(.*?)\]\s*$", gate_job)
+    required = {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos"}
+    declared = {value.strip() for value in needs.group(1).split(",")} if needs else set()
+    if not required <= declared:
+        errors.append("the gate does not directly depend on every job whose result it reads: %s" % sorted(required - declared))
     for name, source in workflows.items():
         if name == "release-native-installers.yml":
             continue
@@ -1166,14 +1184,14 @@ class ProducerWorkflows(unittest.TestCase):
 
 
 class Callers(unittest.TestCase):
-    def test_release_build_passes_the_unsigned_names_and_keeps_android_publication(self):
+    def test_release_build_passes_the_component_names_and_keeps_android_publication(self):
         self.assertEqual(check_release_build(read(".github/workflows/release-build.yml")), [])
 
     def test_changed_publication_conditions_are_rejected(self):
         source = read(".github/workflows/release-build.yml")
         for old, new in (
-            (PUBLISH_NEEDS, PUBLISH_NEEDS.replace("native-macos]", "native-macos, native-unsigned]")),
-            ("needs.native-macos.result == 'success'", "needs.native-macos.result != 'failure'"),
+            (PUBLISH_NEEDS, PUBLISH_NEEDS.replace("supply-chain]", "supply-chain, native-windows]")),
+            ("needs.supply-chain.result == 'success'", "needs.supply-chain.result != 'failure'"),
             ("github.ref == 'refs/heads/master' &&", "github.ref != '' &&"),
             ('"android-release/SHA256SUMS" \\', '"android-release/SHA256SUMS" "native-unsigned.tar" \\'),
         ):
@@ -1181,26 +1199,30 @@ class Callers(unittest.TestCase):
             self.assertNotEqual(check_release_build(source.replace(old, new, 1)), [], old)
         self.assertNotEqual(check_release_build(source.replace("contents: read", "contents: write", 1)), [])
 
-    def test_native_callers_must_pass_the_new_artifact_names(self):
+    def test_native_installers_are_absent_and_reintroduction_is_rejected(self):
         source = read(".github/workflows/release-build.yml")
-        self.assertNotEqual(check_release_build(source.replace("artifact-name: native-unsigned-windows", "artifact-name: native-windows")), [])
-        self.assertNotEqual(check_release_build(source.replace("artifact-name: native-unsigned-macos", "artifact-name: native-macos")), [])
-        self.assertNotEqual(
-            check_release_build(
-                source.replace(
-                    "artifact-name: native-unsigned-windows\n      build-kind: release",
-                    "artifact-name: native-unsigned-windows\n      build-kind: debug",
-                )
-            ),
-            [],
+        executable = strip_yaml_comments(source)
+        for token in (
+            "  native-windows:", "  native-macos:",
+            "build-native-windows.yml", "build-native-macos.yml",
+            "native-unsigned-windows", "native-unsigned-macos", "build-kind:",
+        ):
+            self.assertNotIn(token, executable, token)
+        reintroduced = source + (
+            "\n  native-windows:\n"
+            "    needs: guard\n"
+            "    uses: ./.github/workflows/build-native-windows.yml\n"
+            "    with:\n"
+            "      commit-sha: ${{ github.sha }}\n"
+            "      artifact-name: native-unsigned-windows\n"
+            "      build-kind: release\n"
         )
-
-    def test_native_callers_state_the_release_build_kind(self):
-        source = read(".github/workflows/release-build.yml")
-        for job in ("native-windows", "native-macos"):
-            block = job_block(source, job)
-            self.assertIn("build-kind: release\n", block + "\n", job)
-            self.assertNotIn("build-kind: debug", block, job)
+        self.assertNotEqual(check_release_build(reintroduced), [])
+        self.assertNotEqual(
+            check_release_build(source.replace(PUBLISH_NEEDS, PUBLISH_NEEDS.replace("supply-chain]", "supply-chain, native-macos]"), 1)),
+            [],
+            "publish must not regain a native dependency",
+        )
 
     def workflows(self):
         directory = ROOT / ".github" / "workflows"
@@ -1217,8 +1239,8 @@ class Callers(unittest.TestCase):
         self.assertNotIn("windows_only:", gate)
         for platform in ("windows", "macos"):
             self.assertIn("inputs.platform == '%s' || inputs.platform == 'both'" % platform, gate)
-        self.assertIn("RESULT_WINDOWS: ${{ needs.sign-windows-outer.result }}", gate)
-        self.assertIn("RESULT_MACOS: ${{ needs.sign-macos-outer.result }}", gate)
+        self.assertIn("RESULT_SIGN_WINDOWS: ${{ needs.sign-windows.result }}", gate)
+        self.assertIn("RESULT_SIGN_MACOS: ${{ needs.sign-macos.result }}", gate)
         self.assertIn('for os in $selected', gate, "only the selected platforms are required")
         self.assertNotIn('or .event == "pull_request"', gate, "PR producer runs stay rejected")
 
@@ -1232,6 +1254,10 @@ class Callers(unittest.TestCase):
             ("commit-sha: ${{ github.sha }}", "commit-sha: ${{ inputs.commit }}"),
             ("build-kind: release", "build-kind: debug"),
             ("github.actor == 'raidenyn'", "github.actor != ''"),
+            (
+                "    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n",
+                "    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n",
+            ),
         ):
             self.assertIn(old, gate, old)
             self.assertNotEqual(check_gate_boundary({**workflows, "release-native-installers.yml": gate.replace(old, new, 1)}), [], old)

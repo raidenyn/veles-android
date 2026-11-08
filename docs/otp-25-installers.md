@@ -29,6 +29,12 @@ no Windows or macOS walkthrough has been performed. The recorded matrix
   cannot observe a machine. Acceptance is the owner's separate decision after independent
   adjudication of real evidence.
 
+A green native release run (per-platform `PASS` from `release-native-installers.yml`) means
+the selected platform built, signed and passed the internal verification gate in that run.
+It is **not** acceptance-matrix completion and does not change any row above. A Windows-only
+run may succeed as a signed Windows candidate while macOS and all 32 physical cases remain
+`BLOCKED`; the existing Windows-only completion scope and macOS blockers are unchanged.
+
 ## Signing identity for this completion (owner decision, 2026-11-08)
 
 The project completes with a **self-signed** signing identity. A publicly trusted CA
@@ -141,6 +147,21 @@ recovery assets.
 * Checks: `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
   bridgeInstallerScriptsTest`. Native producers, signing and notarization run only on
   Windows/macOS runners and the protected `release-native-installers.yml`.
+* **Debug installers (pull requests).** Add the label `windows installer build` and/or
+  `mac installer build`. A `raidenyn` approval of the secret-free
+  `native-installer-debug` environment precedes any PR-controlled build; the builders
+  compile the exact PR head SHA in debug configuration. Output is
+  **DEBUG / NOT FOR RELEASE** and does not require release A/B reproducibility.
+* **Signed release installers (owner-only).** Dispatch
+  `release-native-installers.yml` manually from `master`, choosing `platform` =
+  `windows`, `macos` or `both` (default `windows`). One protected `native-release` job
+  per selected platform performs nested signing, assembly, outer signing and
+  verification over inputs produced and verified in the same run. There is no release
+  tag, manually supplied descriptor digest, external producer run ID or
+  `release-build` label in this path. Owner setup, labels, environments and the secret
+  audit are in `docs/native-installer-owner-setup.md`.
+* `release-build.yml` still builds Android, web, Rust and supply-chain components; it no
+  longer builds or gates native installers.
 
 ### Provenance and clocks
 
