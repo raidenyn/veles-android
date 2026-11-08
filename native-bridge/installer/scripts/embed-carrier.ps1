@@ -68,7 +68,7 @@ if (-not [VelesResource]::EndUpdateResourceW($handle, $false)) {
 # (version 1, flags 1, header length 32, descriptor offset 32). Exactly one such document must exist
 # and it must equal the one embedded.
 $image = [IO.File]::ReadAllBytes($Image)
-$prefix = [byte[]]@(0x56,0x45,0x4C,0x45,0x53,0x50,0x43,0x31, 0x01,0x00, 0x01,0x00, 0x20,0x00,0x00,0x00, 0x20,0x00,0x00,0x00,0x00,0x00,0x00,0x00)
+$prefix = [byte[]]$carrierBytes[0..23]  # magic + version + flags + header length + descriptor offset
 $found = New-Object System.Collections.Generic.List[int]
 for ($i = 0; $i -le $image.Length - $prefix.Length; $i++) {
     if ($image[$i] -ne $prefix[0]) { continue }
