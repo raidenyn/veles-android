@@ -901,7 +901,21 @@ fn inventory_verification_rejects_an_escaping_ancestor_link() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, package.join("dir")).expect("ancestor symlink");
     #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(&outside, package.join("dir")).expect("ancestor link");
+    {
+        // A directory junction is a reparse point a standard user can create; a
+        // symbolic link needs SeCreateSymbolicLinkPrivilege, which the acceptance
+        // account does not hold. The inventory primitive must refuse both.
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(package.join("dir"))
+            .arg(&outside)
+            .status()
+            .expect("cmd is a standard Windows tool");
+        assert!(
+            status.success(),
+            "the fixture must stage an ancestor junction as a standard user"
+        );
+    }
 
     let entries = [InventoryEntry {
         path: "dir/host".to_owned(),
