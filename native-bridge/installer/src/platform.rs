@@ -82,8 +82,9 @@ pub(crate) use windows::{
     validate_private_staging_directory,
 };
 // The PE carrier-resource parser is Windows-only in production but portable in
-// tests, so its coverage checks are exercised on every host.
-#[cfg(any(windows, test))]
+// tests (and in the debug fixture trust build, whose adapter reads the carrier
+// resource from the package image), so its coverage checks are exercised on every host.
+#[cfg(any(windows, test, feature = "debug-fixture-trust"))]
 mod pe;
 // The debug fixture trust adapter exists only in a build that explicitly enables the feature;
 // `build.rs` refuses the feature outside a debug profile or for the production channel.

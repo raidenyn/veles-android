@@ -583,9 +583,8 @@ fn debug_fixture_trust(
     let carrier = open_carrier(source.path())?;
     let handle = ReadOnlyFile::open(carrier.path())?;
     let image = handle.read_all()?;
-    let carrier_bytes = pe::extract_carrier(&image, CARRIER_RESOURCE_NAME, MAX_CARRIER_BYTES)
-        .map_err(|_| trust_denied())?;
-    super::debug_trust::trust_proof(Target::WindowsX64, expected, carrier_bytes.to_vec())
+    let carrier_bytes = super::debug_trust::windows_carrier_from_image(&image)?;
+    super::debug_trust::trust_proof(Target::WindowsX64, expected, carrier_bytes)
 }
 
 #[cfg_attr(feature = "debug-fixture-trust", allow(dead_code))]

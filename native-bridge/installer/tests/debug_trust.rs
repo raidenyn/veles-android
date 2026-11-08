@@ -23,13 +23,17 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use veles_bridge_installer::platform::debug_trust::{
-    FIXTURE_PUBLISHER, host_assessment, trust_proof,
+    FIXTURE_PUBLISHER, host_assessment, macos_carrier_from_package, require_fixture, trust_proof,
+    windows_carrier_from_image,
 };
 use veles_bridge_installer::{
-    Channel, Digest, FIXTURE_HOST_NAME, FailureCode, FakePlatform, Faults, HostFault,
-    InventoryEntry, PRODUCTION_HOST_NAME, ReleaseDescriptor, ReleasePolicy,
+    Channel, Digest, FIXTURE_HOST_NAME, FailureCode, FakePlatform, Faults, HostAssessment,
+    HostFault, HostState, InstallFailure, InstallLock, InstallPaths, InstallResult, InventoryEntry,
+    OwnedEntry, PACKAGE_MACOS_CARRIER, PACKAGE_WINDOWS_CARRIER, PRODUCTION_HOST_NAME,
+    PackageSource, Platform, PortablePlatform, Registration, ReleaseDescriptor, ReleasePolicy,
     TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE, Target, TrustProof,
-    authenticate_package, canonical_json, write_carrier, write_inventory, write_sealed_carrier,
+    ValidatedPath, authenticate_package, canonical_json, normalize_relative_path, path_is_within,
+    write_carrier, write_inventory, write_sealed_carrier,
 };
 
 const EXTENSION_ID: &str = "ffffffffffffffffffffffffffffffff";
@@ -345,6 +349,419 @@ fn the_fixture_helper_path_is_bound_to_the_fixture_root_and_transaction() {
     // A malformed transaction is never a fixture helper identity.
     assert_eq!(fixture_cleanup_helper_path(&root, "ab"), None);
     assert_eq!(fixture_cleanup_helper_path(&production, &transaction), None);
+}
+
+/// The debug fixture adapter as the native Windows/macOS adapters implement it: the carrier bytes
+/// are read from the package on disk, extracted by the same `debug_trust` helpers the native
+/// adapters call, and turned into evidence by `trust_proof`/`host_assessment`. Only the OS signature
+/// assessment is replaced; no `TrustProof` is injected.
+struct DebugFixturePlatform {
+    inner: PortablePlatform,
+}
+
+impl DebugFixturePlatform {
+    fn new() -> Self {
+        Self {
+            inner: PortablePlatform::new(),
+        }
+    }
+}
+
+impl Platform for DebugFixturePlatform {
+    fn lock(&self, paths: &InstallPaths) -> InstallResult<InstallLock> {
+        self.inner.lock(paths)
+    }
+
+    fn write_durable(&self, path: &ValidatedPath, bytes: &[u8]) -> InstallResult<()> {
+        self.inner.write_durable(path, bytes)
+    }
+
+    fn replace_manifest(&self, staged: &ValidatedPath, live: &ValidatedPath) -> InstallResult<()> {
+        self.inner.replace_manifest(staged, live)
+    }
+
+    fn read_registration(&self, paths: &InstallPaths) -> InstallResult<Option<Registration>> {
+        self.inner.read_registration(paths)
+    }
+
+    fn publish_registration(
+        &self,
+        paths: &InstallPaths,
+        value: &Registration,
+    ) -> InstallResult<()> {
+        self.inner.publish_registration(paths, value)
+    }
+
+    fn remove_registration(
+        &self,
+        paths: &InstallPaths,
+        expected: &Registration,
+    ) -> InstallResult<()> {
+        self.inner.remove_registration(paths, expected)
+    }
+
+    fn inspect_hosts(&self, paths: &InstallPaths) -> InstallResult<HostState> {
+        self.inner.inspect_hosts(paths)
+    }
+
+    fn remove_owned(&self, entry: &OwnedEntry) -> InstallResult<()> {
+        self.inner.remove_owned(entry)
+    }
+
+    fn flush_parent(&self, path: &ValidatedPath) -> InstallResult<()> {
+        self.inner.flush_parent(path)
+    }
+
+    fn verify_trust(
+        &self,
+        source: &PackageSource,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<TrustProof> {
+        match expected.target {
+            Target::WindowsX64 => {
+                let image = fs::read(source.path().join(PACKAGE_WINDOWS_CARRIER))
+                    .map_err(|_| InstallFailure::new(FailureCode::InvalidPackage))?;
+                let bytes = windows_carrier_from_image(&image)?;
+                trust_proof(Target::WindowsX64, expected, bytes)
+            }
+            Target::MacosArm64 => {
+                let bytes = macos_carrier_from_package(source.path())?;
+                trust_proof(Target::MacosArm64, expected, bytes)
+            }
+        }
+    }
+
+    fn verify_host(
+        &self,
+        root: &Path,
+        executable: &str,
+        expected: &ReleaseDescriptor,
+    ) -> InstallResult<HostAssessment> {
+        let relative = normalize_relative_path(executable)?;
+        let path = root.join(&relative);
+        if !path_is_within(root, &path) || !path.is_file() {
+            return Err(InstallFailure::new(FailureCode::InvalidPackage));
+        }
+        match expected.target {
+            Target::WindowsX64 => host_assessment(Target::WindowsX64, expected),
+            Target::MacosArm64 => host_assessment(Target::MacosArm64, expected),
+        }
+    }
+}
+
+/// A minimal PE32+ image whose only section carries an `RT_RCDATA`/`VELES_POLICY_CARRIER`
+/// resource and whose terminal certificate table ends the file. Test support only; mirrors the
+/// fixture the `pe` unit tests use.
+fn minimal_pe_image(carrier: &[u8]) -> Vec<u8> {
+    const PE_OFFSET: usize = 0x40;
+    const OPTIONAL_LEN: usize = 0xF0;
+    const SECTION_TABLE: usize = PE_OFFSET + 4 + 20 + OPTIONAL_LEN;
+    const RAW_OFFSET: usize = 0x200;
+    const RAW_LEN: usize = 0x400;
+    const SECTION_VA: u32 = 0x1000;
+    const CARRIER_IN_SECTION: usize = 0xA0;
+    const CERTIFICATE_LEN: usize = 16;
+    const RESOURCE_TYPE_RCDATA: u32 = 10;
+    const RESOURCE_NAME: &str = "VELES_POLICY_CARRIER";
+
+    fn put_u16(image: &mut [u8], offset: usize, value: u16) {
+        image[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    fn put_u32(image: &mut [u8], offset: usize, value: u32) {
+        image[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    let certificate_offset = RAW_OFFSET + RAW_LEN;
+    let mut image = vec![0u8; certificate_offset + CERTIFICATE_LEN];
+    image[..2].copy_from_slice(b"MZ");
+    put_u32(&mut image, 0x3C, PE_OFFSET as u32);
+    image[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
+    let coff = PE_OFFSET + 4;
+    put_u16(&mut image, coff, 0x8664);
+    put_u16(&mut image, coff + 2, 1);
+    put_u16(&mut image, coff + 16, OPTIONAL_LEN as u16);
+    let optional = coff + 20;
+    put_u16(&mut image, optional, 0x20b);
+    let directory_base = optional + 112;
+    put_u32(&mut image, optional + 108, 16);
+    put_u32(&mut image, directory_base + 16, SECTION_VA);
+    put_u32(&mut image, directory_base + 20, 0x100);
+    put_u32(&mut image, directory_base + 32, certificate_offset as u32);
+    put_u32(&mut image, directory_base + 36, CERTIFICATE_LEN as u32);
+    image[SECTION_TABLE..SECTION_TABLE + 5].copy_from_slice(b".rsrc");
+    put_u32(&mut image, SECTION_TABLE + 8, RAW_LEN as u32);
+    put_u32(&mut image, SECTION_TABLE + 12, SECTION_VA);
+    put_u32(&mut image, SECTION_TABLE + 16, RAW_LEN as u32);
+    put_u32(&mut image, SECTION_TABLE + 20, RAW_OFFSET as u32);
+
+    let resource = |offset: usize| RAW_OFFSET + offset;
+    put_u16(&mut image, resource(0) + 14, 1);
+    put_u32(&mut image, resource(0x10), RESOURCE_TYPE_RCDATA);
+    put_u32(&mut image, resource(0x14), 0x8000_0018);
+    put_u16(&mut image, resource(0x18) + 12, 1);
+    put_u32(&mut image, resource(0x28), 0x8000_0040);
+    put_u32(&mut image, resource(0x2C), 0x8000_0070);
+    let name: Vec<u16> = RESOURCE_NAME.encode_utf16().collect();
+    put_u16(&mut image, resource(0x40), name.len() as u16);
+    for (index, unit) in name.iter().enumerate() {
+        put_u16(&mut image, resource(0x42 + index * 2), *unit);
+    }
+    put_u16(&mut image, resource(0x70) + 14, 1);
+    put_u32(&mut image, resource(0x80), 0x409);
+    put_u32(&mut image, resource(0x84), 0x88);
+    put_u32(
+        &mut image,
+        resource(0x88),
+        SECTION_VA + CARRIER_IN_SECTION as u32,
+    );
+    put_u32(&mut image, resource(0x8C), carrier.len() as u32);
+    image[resource(CARRIER_IN_SECTION)..resource(CARRIER_IN_SECTION) + carrier.len()]
+        .copy_from_slice(carrier);
+    image
+}
+
+/// Build the on-disk package document set (payload, canonical/sealed inventory, descriptor and the
+/// platform carrier artifact). The package root is `<root>/package`.
+fn write_real_package(
+    root: &Path,
+    target: Target,
+    descriptor: &ReleaseDescriptor,
+    payload: &[u8],
+    canonical_inventory: &[u8],
+    sealed_inventory: Option<&[u8]>,
+    carrier_document: &[u8],
+) -> PathBuf {
+    let package = root.join("package");
+    let payload_root = package.join("payload");
+    fs::create_dir_all(&payload_root).expect("payload root");
+    let payload_name = match target {
+        Target::WindowsX64 => "veles-native-host.exe",
+        Target::MacosArm64 => "veles-native-host",
+    };
+    fs::write(payload_root.join(payload_name), payload).expect("payload host");
+    fs::write(package.join("inventory.json"), canonical_inventory).expect("canonical inventory");
+    if let Some(sealed) = sealed_inventory {
+        fs::write(package.join("sealed-inventory.json"), sealed).expect("sealed inventory");
+    }
+    fs::write(
+        package.join("descriptor.json"),
+        canonical_json(descriptor).expect("descriptor JSON"),
+    )
+    .expect("descriptor");
+    match target {
+        Target::WindowsX64 => {
+            fs::write(
+                package.join(PACKAGE_WINDOWS_CARRIER),
+                minimal_pe_image(carrier_document),
+            )
+            .expect("carrier image");
+        }
+        Target::MacosArm64 => {
+            let resources = package
+                .join(PACKAGE_MACOS_CARRIER)
+                .join("Contents")
+                .join("Resources");
+            fs::create_dir_all(&resources).expect("carrier bundle");
+            fs::write(resources.join("veles-policy-carrier"), carrier_document)
+                .expect("carrier resource");
+        }
+    }
+    package
+}
+
+struct RealSealedWindowsPackage {
+    package: PathBuf,
+    descriptor: ReleaseDescriptor,
+    signed_payload: Vec<u8>,
+    sealed_inventory: Vec<u8>,
+}
+
+/// A real Windows fixture package whose payload is "ad-hoc signed": canonical inventory for the
+/// unsigned bytes, sealed inventory for the signed bytes, and a carrier asserting the sealed digest.
+fn sealed_windows_package(temp: &Temp) -> RealSealedWindowsPackage {
+    let target = Target::WindowsX64;
+    // A signable image (Mach-O magic) so the signed-byte correspondence may differ.
+    let unsigned = b"\xcf\xfa\xed\xfe-unsigned-fixture-host".to_vec();
+    let signed_payload = [unsigned.as_slice(), b"-AD-HOC-SIGNATURE"].concat();
+    let canonical = write_inventory(&[InventoryEntry {
+        path: "veles-native-host.exe".to_owned(),
+        size: unsigned.len() as u64,
+        sha256: Digest::of(&unsigned),
+        executable: true,
+    }])
+    .expect("canonical inventory");
+    let sealed = write_inventory(&[InventoryEntry {
+        path: "veles-native-host.exe".to_owned(),
+        size: signed_payload.len() as u64,
+        sha256: Digest::of(&signed_payload),
+        executable: true,
+    }])
+    .expect("sealed inventory");
+    let mut descriptor = descriptor(Channel::Fixture, target);
+    descriptor.payload_id = Digest::of(&canonical);
+    let carrier = write_sealed_carrier(
+        &canonical_json(&descriptor).expect("descriptor JSON"),
+        Digest::of(&sealed),
+    )
+    .expect("sealed carrier");
+    let package = write_real_package(
+        temp.path(),
+        target,
+        &descriptor,
+        &signed_payload,
+        &canonical,
+        Some(&sealed),
+        &carrier,
+    );
+    RealSealedWindowsPackage {
+        package,
+        descriptor,
+        signed_payload,
+        sealed_inventory: sealed,
+    }
+}
+
+fn must_deny(package: &Path, expected: &ReleaseDescriptor) -> FailureCode {
+    authenticate_package(&DebugFixturePlatform::new(), package, expected)
+        .expect_err("the package must be refused")
+        .code
+}
+
+#[test]
+fn a_real_windows_fixture_package_authenticates_through_the_fixture_adapter() {
+    let temp = Temp::new("real-windows");
+    let fixture = sealed_windows_package(&temp);
+    let authenticated = authenticate_package(
+        &DebugFixturePlatform::new(),
+        &fixture.package,
+        &fixture.descriptor,
+    )
+    .expect("the real on-disk fixture package authenticates");
+    assert_eq!(authenticated.signer(), FIXTURE_PUBLISHER);
+    assert_eq!(
+        authenticated.assessment(),
+        TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE
+    );
+    assert_eq!(
+        authenticated.sealed_inventory(),
+        Some(fixture.sealed_inventory.as_slice())
+    );
+    assert_eq!(
+        authenticated.payload()[0].sha256(),
+        Digest::of(&fixture.signed_payload)
+    );
+}
+
+#[test]
+fn a_real_macos_fixture_package_authenticates_through_the_fixture_adapter() {
+    let temp = Temp::new("real-macos");
+    let payload = b"\xcf\xfa\xed\xfe-macos-fixture-host";
+    let canonical = write_inventory(&[InventoryEntry {
+        path: "veles-native-host".to_owned(),
+        size: payload.len() as u64,
+        sha256: Digest::of(payload),
+        executable: true,
+    }])
+    .expect("canonical inventory");
+    let mut descriptor = descriptor(Channel::Fixture, Target::MacosArm64);
+    descriptor.payload_id = Digest::of(&canonical);
+    let carrier = carrier(&descriptor);
+    let package = write_real_package(
+        temp.path(),
+        Target::MacosArm64,
+        &descriptor,
+        payload,
+        &canonical,
+        None,
+        &carrier,
+    );
+    let authenticated = authenticate_package(&DebugFixturePlatform::new(), &package, &descriptor)
+        .expect("the real macOS fixture package authenticates");
+    assert_eq!(authenticated.signer(), FIXTURE_PUBLISHER);
+    assert_eq!(
+        authenticated.assessment(),
+        TRUST_ASSESSMENT_MACOS_GATEKEEPER
+    );
+}
+
+#[test]
+fn a_real_fixture_package_is_denied_when_the_payload_or_carrier_changes() {
+    let temp = Temp::new("real-mutated-payload");
+    let fixture = sealed_windows_package(&temp);
+    let payload_path = fixture
+        .package
+        .join("payload")
+        .join("veles-native-host.exe");
+    let mut bytes = fs::read(&payload_path).expect("payload");
+    bytes[8] ^= 0xff;
+    fs::write(&payload_path, &bytes).expect("mutated payload");
+    assert_eq!(
+        must_deny(&fixture.package, &fixture.descriptor),
+        FailureCode::TrustDenied
+    );
+
+    let temp = Temp::new("real-mutated-carrier");
+    let fixture = sealed_windows_package(&temp);
+    let carrier_path = fixture.package.join(PACKAGE_WINDOWS_CARRIER);
+    let image = fs::read(&carrier_path).expect("carrier image");
+    let embedded = windows_carrier_from_image(&image).expect("embedded carrier");
+    let mut mutated = embedded;
+    let last = mutated.len() - 1;
+    mutated[last] ^= 0xff; // the sealed-inventory digest no longer matches the document
+    fs::write(&carrier_path, minimal_pe_image(&mutated)).expect("mutated carrier image");
+    assert_eq!(
+        must_deny(&fixture.package, &fixture.descriptor),
+        FailureCode::TrustDenied
+    );
+}
+
+#[test]
+fn a_real_fixture_package_is_denied_for_a_descriptor_other_than_the_compiled_in_one() {
+    let temp = Temp::new("real-other-descriptor");
+    let fixture = sealed_windows_package(&temp);
+    let mut other = fixture.descriptor.clone();
+    other.version = "9.9.9".to_owned();
+    other.validate().expect("valid other descriptor");
+    assert_eq!(
+        must_deny(&fixture.package, &other),
+        FailureCode::TrustDenied
+    );
+}
+
+#[test]
+fn a_real_package_claiming_production_identity_never_uses_the_debug_path() {
+    assert_eq!(
+        require_fixture(&descriptor(Channel::Production, Target::WindowsX64))
+            .expect_err("production is never a fixture")
+            .code,
+        FailureCode::TrustDenied
+    );
+
+    let temp = Temp::new("real-production");
+    let payload = b"\xcf\xfa\xed\xfe-production-host";
+    let canonical = write_inventory(&[InventoryEntry {
+        path: "veles-native-host.exe".to_owned(),
+        size: payload.len() as u64,
+        sha256: Digest::of(payload),
+        executable: true,
+    }])
+    .expect("canonical inventory");
+    let mut production = descriptor(Channel::Production, Target::WindowsX64);
+    production.payload_id = Digest::of(&canonical);
+    let carrier = write_carrier(&canonical_json(&production).expect("descriptor JSON"))
+        .expect("production carrier");
+    let package = write_real_package(
+        temp.path(),
+        Target::WindowsX64,
+        &production,
+        payload,
+        &canonical,
+        None,
+        &carrier,
+    );
+    // The adapter reads the real carrier from the package and then refuses the production
+    // identity, so the package never authenticates through the debug path.
+    assert_eq!(must_deny(&package, &production), FailureCode::TrustDenied);
 }
 
 fn clean_command() -> Command {

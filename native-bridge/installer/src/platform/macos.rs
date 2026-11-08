@@ -489,8 +489,7 @@ fn debug_fixture_trust(
     if source.kind() != PackageKind::Directory {
         return Err(invalid_package());
     }
-    let carrier = open_carrier(source.path())?;
-    let carrier_bytes = read_carrier_resource(&carrier)?;
+    let carrier_bytes = super::debug_trust::macos_carrier_from_package(source.path())?;
     super::debug_trust::trust_proof(Target::MacosArm64, expected, carrier_bytes)
 }
 
