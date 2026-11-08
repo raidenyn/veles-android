@@ -5,7 +5,7 @@
   "source_commit": "0123456789abcdef0123456789abcdef01234567",
   "target": "macos-arm64",
   "minimum_os": "26.0",
-  "extension_id": "hgfedcbahgfedcbahgfedcbahgfedcba",
+  "extension_id": "abcdefghijklmnopabcdefghijklmnop",
   "host_name": "me.nagaev.veles.bridge.dev",
   "bundle_id": "me.nagaev.veles.bridge.dev",
   "api_min": 1,

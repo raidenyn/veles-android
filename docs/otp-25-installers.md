@@ -51,6 +51,15 @@ modified to accept that identity explicitly, not quietly:
 - macOS is **not** covered by this decision: the signed macOS host remains blocked by the
   DER-entitlements correspondence gate, which is independent of the certificate.
 
+### Extension identity (development for now)
+
+The installer gate resolves the extension id from a single file,
+`native-bridge/installer/config/extension-ids.json`. A release config names an alias
+(`production`), and the descriptor carries the resolved raw 32-character id. The
+`production` entry currently holds the repository development id so packaging and the
+signing gates are not blocked on a Web Store listing. Replace that one entry with the
+real Store item id at the final stage (plan Task 16); no other installer config changes.
+
 ## For users
 
 Installation is per user, needs no administrator password and never runs a service.

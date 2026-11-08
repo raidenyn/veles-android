@@ -74,7 +74,7 @@ fn production_rejects_placeholder_multiple_and_dev_origins() {
     // because the dev workflow takes an explicit unpacked-extension ID).
     let cases: &[(&str, DescriptorMutation)] = &[
         ("existing placeholder id", |d| {
-            d.extension_id = PLACEHOLDER_EXTENSION_ID.to_owned();
+            d.extension_id = "z".repeat(32);
         }),
         ("wildcard id", |d| d.extension_id = "*".to_owned()),
         ("wildcard origin", |d| {
@@ -138,7 +138,7 @@ fn descriptor_identity_is_strict_and_versions_compare_numerically() {
         format!("chrome-extension://{PROD_EXTENSION_ID}/")
     );
     assert_eq!(
-        failure_code(extension_origin(PLACEHOLDER_EXTENSION_ID)),
+        failure_code(extension_origin(&"z".repeat(32))),
         FailureCode::OriginRejected
     );
     assert_eq!(
@@ -738,7 +738,7 @@ fn carrier_bounds_and_strict_json() {
             "placeholder identity inside the carrier",
             {
                 let mut invalid = descriptor.clone();
-                invalid.extension_id = PLACEHOLDER_EXTENSION_ID.to_owned();
+                invalid.extension_id = "z".repeat(32);
                 let invalid = descriptor_bytes(&invalid);
                 carrier_with(&magic, 1, 0, 32, offset, invalid.len() as u64, &invalid)
             },
@@ -1009,7 +1009,7 @@ fn development_descriptor_binds_the_dev_identity_to_an_explicit_id() {
 
     let cases: &[(&str, DescriptorMutation)] = &[
         ("placeholder id", |d| {
-            d.extension_id = PLACEHOLDER_EXTENSION_ID.to_owned();
+            d.extension_id = "z".repeat(32);
         }),
         ("wildcard id", |d| d.extension_id = "*".to_owned()),
         ("production host name", |d| {

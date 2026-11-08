@@ -77,7 +77,41 @@ CHANNEL_IDENTITY = {
 }
 PACKAGEABLE_CHANNELS = ("production", "fixture")
 MINIMUM_OS = {"windows": (10,), "macos": (26, 0)}
-PLACEHOLDER_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop"
+# The single source of truth for installer extension IDs. A release config names an
+# alias here (not a raw id), so replacing the development id with the real Web Store
+# item ID is a one-file change (plan Task 16). The descriptor always carries the
+# resolved raw id.
+EXTENSION_IDS_PATH = Path(__file__).resolve().parent.parent / "config" / "extension-ids.json"
+
+
+def load_extension_ids() -> dict[str, str]:
+    try:
+        document = json.loads(EXTENSION_IDS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"config/extension-ids.json is unreadable: {error}") from error
+    if not isinstance(document, dict) or document.get("schema") != SCHEMA:
+        raise ValueError("config/extension-ids.json has an unknown schema")
+    if set(document) - {"schema", "ids", "note"}:
+        raise ValueError("config/extension-ids.json has unknown fields")
+    ids = document.get("ids")
+    if not isinstance(ids, dict) or not ids:
+        raise ValueError("config/extension-ids.json has no ids")
+    for alias, value in ids.items():
+        if not isinstance(alias, str) or not isinstance(value, str) or not EXTENSION_RE.match(value):
+            raise ValueError(f"config/extension-ids.json entry {alias!r} is not a 32-character a-p id")
+    return ids
+
+
+def resolve_extension_id(value: Any) -> str | None:
+    """Resolve an alias (or an already-resolved listed id) to the raw extension id."""
+    if not isinstance(value, str):
+        return None
+    ids = load_extension_ids()
+    if value in ids:
+        return ids[value]
+    if value in ids.values():
+        return value
+    return None
 CONFIG_KEYS = {
     "schema", "channel", "version", "target", "minimum_os", "extension_id", "host_name",
     "bundle_id", "api_min", "api_max", "policy",
@@ -206,8 +240,10 @@ def check_config(config: dict, *, channel: str, platform: str) -> list[str]:
         if parts + (0,) * (len(floor) - len(parts)) < floor:
             problems.append(f"minimum_os {minimum} is below the supported floor {'.'.join(map(str, floor))}")
     extension = config["extension_id"]
-    if not (isinstance(extension, str) and EXTENSION_RE.match(extension)) or extension == PLACEHOLDER_EXTENSION_ID:
-        problems.append("extension_id must be one real 32-character a-p Chrome extension ID (not the placeholder)")
+    if resolve_extension_id(extension) is None:
+        problems.append(
+            "extension_id must be an alias from config/extension-ids.json or a raw id listed there"
+        )
     api_min, api_max = config["api_min"], config["api_max"]
     if not (_is_int(api_min) and _is_int(api_max) and 1 <= api_min <= api_max <= 1000):
         problems.append("api_min/api_max must be integers with 1 <= api_min <= api_max <= 1000")
@@ -250,9 +286,9 @@ def tracked_problems(path: Path) -> list[str]:
 
 def origin(config: dict) -> str:
     """The single literal origin of a config's extension (the host's compiled-in allowlist)."""
-    extension = config.get("extension_id")
-    if not (isinstance(extension, str) and EXTENSION_RE.match(extension)) or extension == PLACEHOLDER_EXTENSION_ID:
-        raise ValueError("the config has no real extension_id")
+    extension = resolve_extension_id(config.get("extension_id"))
+    if extension is None:
+        raise ValueError("the config has no configured extension_id")
     return f"chrome-extension://{extension}/"
 
 
@@ -284,6 +320,10 @@ def descriptor_document(config: dict, commit: str, payload_id: str) -> bytes:
     if not HEX64.match(payload_id or ""):
         raise ValueError("payload_id must be a lowercase SHA-256")
     descriptor = dict(config)
+    resolved = resolve_extension_id(config.get("extension_id"))
+    if resolved is None:
+        raise ValueError("the config has no configured extension_id")
+    descriptor["extension_id"] = resolved
     descriptor["source_commit"] = commit
     descriptor["payload_id"] = payload_id
     return canonical_json(descriptor)

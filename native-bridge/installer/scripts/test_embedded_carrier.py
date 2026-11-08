@@ -35,7 +35,8 @@ sys.path.insert(0, str(HERE))
 import assemble_unsigned as au  # noqa: E402
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
-EXTENSION_ID = "hgfedcbahgfedcbahgfedcbahgfedcba"
+EXTENSION_ALIAS = "production"
+EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop"
 RUSTC = shutil.which("rustc")
 
 
@@ -47,7 +48,7 @@ def config(platform="windows", channel="production"):
         "version": "1.2.3",
         "target": "windows-x86_64" if platform == "windows" else "macos-arm64",
         "minimum_os": "10" if platform == "windows" else "26.0",
-        "extension_id": EXTENSION_ID,
+        "extension_id": EXTENSION_ALIAS,
         "host_name": identity,
         "bundle_id": identity,
         "api_min": 1,

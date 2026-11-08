@@ -47,8 +47,10 @@ pub const DEVELOPMENT_HOST_NAME: &str = "me.nagaev.veles.bridge.dev";
 /// Test-only fixture identity. Kept distinct from production *and* development so
 /// a fixture can never register over, or be mistaken for, either real install.
 pub const FIXTURE_HOST_NAME: &str = "me.nagaev.veles.bridge.fixture";
-/// The repository's existing development placeholder Chrome extension ID.
-/// It is never a real Web Store item ID and is rejected in every channel.
+/// The repository's development Chrome extension ID. It is a real-shaped id and is
+/// allowed when the installer allowlist (`config/extension-ids.json`) names it; it is
+/// not a Chrome Web Store item ID. The allowlist, not this engine, decides which ids
+/// a package may use.
 pub const PLACEHOLDER_EXTENSION_ID: &str = "abcdefghijklmnopabcdefghijklmnop";
 
 /// The shared installer result type.
@@ -427,11 +429,12 @@ fn numeric_component(part: &str) -> Option<u64> {
 }
 
 /// Validate a bare Chrome extension ID for any channel: exactly 32 characters
-/// from `a` to `p`, and never the repository placeholder.
+/// from `a` to `p`. Which ids a package may actually carry is decided by the
+/// packaging allowlist in `config/extension-ids.json`, not here.
 pub fn validate_extension_id(extension_id: &str) -> InstallResult<()> {
     let shaped =
         extension_id.len() == 32 && extension_id.bytes().all(|byte| matches!(byte, b'a'..=b'p'));
-    if !shaped || extension_id == PLACEHOLDER_EXTENSION_ID {
+    if !shaped {
         return Err(InstallFailure::new(FailureCode::OriginRejected));
     }
     Ok(())

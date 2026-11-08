@@ -709,3 +709,21 @@ initial matrix has no physical PASS. Validator success is necessary, not accepta
 - Review Focus: every named failure mode has a named owning regression test.
 - No product code, dependencies, accounts, signatures, release artifacts or physical
   acceptance is created by writing this plan. Stop after saving/reviewing it.
+
+### Task 16 (final stage): replace the development extension ID with the real one
+
+**Trigger:** the project reaches its final stage and the Chrome Web Store item exists.
+**Why deferred:** the owner decision of 2026-11-08 completes the project with the
+development extension ID, so packaging and the signing gates are not blocked on an
+external Store listing.
+
+- [ ] Edit `native-bridge/installer/config/extension-ids.json` only: set `production`
+      to the real 32-character Store item ID. Release configs name the alias, and the
+      descriptor carries the resolved raw id, so no other installer config changes.
+- [ ] Update `web-extension/src/manifest.ts` (development/production identity) and the
+      extension manifest key so the shipped extension uses the same id.
+- [ ] Revisit `scripts/development.py`'s production-id refusal if the new production
+      id was previously accepted as a development id.
+- [ ] Re-run `assemble_unsigned.py check-config`, the release gate and the acceptance
+      rows with the real id. Optionally replace the self-signed signing identity with
+      the CA certificate at the same time (clear `VELES_WIN_TRUST_SELF_SIGNED`).

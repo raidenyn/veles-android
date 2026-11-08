@@ -36,7 +36,8 @@ import release_gate  # noqa: E402
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 OTHER_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
-EXTENSION_ID = "hgfedcbahgfedcbahgfedcbahgfedcba"
+EXTENSION_ALIAS = "production"
+EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop"
 
 
 def config(platform="windows", channel="production", **overrides):
@@ -47,7 +48,7 @@ def config(platform="windows", channel="production", **overrides):
         "version": "1.2.3",
         "target": "windows-x86_64" if platform == "windows" else "macos-arm64",
         "minimum_os": "10" if platform == "windows" else "26.0",
-        "extension_id": EXTENSION_ID,
+        "extension_id": EXTENSION_ALIAS,
         "host_name": identity,
         "bundle_id": identity,
         "api_min": 1,
@@ -133,7 +134,7 @@ class ConfigChecks(Workspace):
         self.assertTrue(self.problems(config("macos", minimum_os="15.0"), platform="macos"))
 
     def test_extension_id_must_be_real_and_bare(self):
-        for bad in ("abcdefghijklmnopabcdefghijklmnop", "short", EXTENSION_ID.upper(), "z" * 32, EXTENSION_ID + "a"):
+        for bad in ("unknown-alias", "short", EXTENSION_ID.upper(), "z" * 32, EXTENSION_ID + "a"):
             self.assertTrue(self.problems(config(extension_id=bad)), bad)
 
     def test_unknown_missing_and_computed_fields_are_refused(self):

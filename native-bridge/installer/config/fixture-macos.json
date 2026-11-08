@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "target": "macos-arm64",
   "minimum_os": "26.0",
-  "extension_id": "ffffffffffffffffffffffffffffffff",
+  "extension_id": "fixture",
   "host_name": "me.nagaev.veles.bridge.fixture",
   "bundle_id": "me.nagaev.veles.bridge.fixture",
   "api_min": 1,
