@@ -437,6 +437,9 @@ SectionEnd
 
 Function .onInit
   WriteUninstaller "$EXEDIR\uninstall.exe"
+  ; `Quit` after an initializer-only run exits 2 on NSIS 3.08 even when the
+  ; uninstaller was written; the packaging step requires a zero exit.
+  SetErrorLevel 0
   Quit
 FunctionEnd
 
