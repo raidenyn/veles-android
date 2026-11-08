@@ -37,6 +37,10 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+# The producer runs this script with `python -I`, which does not prepend the
+# script directory to sys.path. Make the sibling module importable explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import release_config
 
 Runner = Callable[[list[str]], "tuple[int, str]"]
