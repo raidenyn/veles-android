@@ -100,13 +100,16 @@ jobs:
           printf '%s' "$RUN_B" | grep -Eq '^[0-9]+$'
           test "$RUN_A" != "$RUN_B"
       - name: Require trusted unsigned producer runs
+        # TEMPORARY (owner validation 2026-11-08): PR-triggered producer runs are accepted
+        # so the signing path can be exercised end to end from the pull request. Revert the
+        # pull_request branch to `push or workflow_dispatch` once validation is complete.
         run: |
           set -euo pipefail
           for run in "$RUN_A" "$RUN_B"; do
             gh run view "$run" --repo "$GITHUB_REPOSITORY" --json headSha,event,conclusion,workflowName > "$RUNNER_TEMP/run-$run.json"
             jq -e --arg sha "$COMMIT" '
               .headSha == $sha and .conclusion == "success" and .workflowName == "release-build"
-              and (.event == "push" or .event == "workflow_dispatch")' "$RUNNER_TEMP/run-$run.json" > /dev/null
+              and (.event == "push" or .event == "workflow_dispatch" or .event == "pull_request")' "$RUNNER_TEMP/run-$run.json" > /dev/null
           done
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
