@@ -92,6 +92,11 @@ _WIN = (
     "VELES_WIN_PUBLISHER",
     "VELES_WIN_TIMESTAMP_URL",
 )
+# Optional: the owner decision of 2026-11-08 completes the project with a self-signed
+# identity. In that mode the root certificate is imported as an explicit, recorded
+# trust anchor for the verification step and removed again; the leaf fingerprint,
+# timestamp and correspondence checks are unchanged.
+_WIN_SELF_SIGNED = ("VELES_WIN_ROOT_CER_BASE64", "VELES_WIN_TRUST_SELF_SIGNED")
 _MAC = ("VELES_MAC_P12_BASE64", "VELES_MAC_P12_PASSWORD", "VELES_MAC_IDENTITY", "VELES_MAC_TEAM_ID")
 _NOTARY = ("VELES_NOTARY_KEY_BASE64", "VELES_NOTARY_KEY_ID", "VELES_NOTARY_ISSUER")
 CREDENTIALS: dict[tuple[str, str], tuple[str, ...]] = {
@@ -100,7 +105,7 @@ CREDENTIALS: dict[tuple[str, str], tuple[str, ...]] = {
     ("macos", "nested"): _MAC,
     ("macos", "outer"): _MAC + _NOTARY,
 }
-ALL_CREDENTIAL_NAMES = frozenset(_WIN + _MAC + _NOTARY)
+ALL_CREDENTIAL_NAMES = frozenset(_WIN + _WIN_SELF_SIGNED + _MAC + _NOTARY)
 
 
 class PlanError(Exception):
@@ -366,7 +371,11 @@ def signer_policy(platform: str, env: dict[str, str], descriptor: bytes, expecte
 
 
 def missing_credentials(platform: str, stage: str, env: dict[str, str]) -> list[str]:
-    return sorted(name for name in CREDENTIALS[(platform, stage)] if not (env.get(name) or "").strip())
+    absent = sorted(name for name in CREDENTIALS[(platform, stage)] if not (env.get(name) or "").strip())
+    if platform == "windows" and env.get("VELES_WIN_TRUST_SELF_SIGNED") == "1":
+        if not (env.get("VELES_WIN_ROOT_CER_BASE64") or "").strip():
+            absent.append("VELES_WIN_ROOT_CER_BASE64")
+    return sorted(absent)
 
 
 def credential_format_errors(platform: str, env: dict[str, str]) -> list[str]:
@@ -376,6 +385,17 @@ def credential_format_errors(platform: str, env: dict[str, str]) -> list[str]:
             problems.append("VELES_WIN_CERT_SHA1 is not a 40-hex thumbprint")
         if not env.get("VELES_WIN_TIMESTAMP_URL", "").startswith("https://"):
             problems.append("VELES_WIN_TIMESTAMP_URL is not an https URL")
+        mode = env.get("VELES_WIN_TRUST_SELF_SIGNED", "")
+        if mode not in ("", "1"):
+            problems.append("VELES_WIN_TRUST_SELF_SIGNED must be empty or 1")
+        if mode == "1":
+            try:
+                der = base64.b64decode(env.get("VELES_WIN_ROOT_CER_BASE64", ""), validate=True)
+            except (binascii.Error, ValueError):
+                problems.append("VELES_WIN_ROOT_CER_BASE64 is not valid base64")
+            else:
+                if not der:
+                    problems.append("VELES_WIN_ROOT_CER_BASE64 is empty")
     else:
         if not TEAM_ID_RE.match(env.get("VELES_MAC_TEAM_ID", "")):
             problems.append("VELES_MAC_TEAM_ID is not a 10-character team id")
@@ -899,12 +919,18 @@ def _remove_tree(path: Path, stage_obj: Stage) -> None:
 # -- Windows ------------------------------------------------------------------
 
 
-def _windows_store(stage: Stage, policy: dict) -> str:
-    """Import the signing certificate into an ephemeral per-user store entry; returns its thumbprint.
+def _windows_store(stage: Stage, policy: dict) -> tuple[str, dict]:
+    """Import the signing certificate into an ephemeral per-user store entry; returns its thumbprint and trust record.
 
     The imported leaf certificate is exported (DER) and must (a) have the configured SHA-1 thumbprint and
     (b) hash, by SHA-256 of the DER, to the approved publisher fingerprint - the identity the engine
     authorizes at runtime. Nothing is signed with a certificate that fails either check.
+
+    With ``VELES_WIN_TRUST_SELF_SIGNED=1`` (the owner decision of 2026-11-08) the supplied root
+    certificate is imported as an explicit, recorded trust anchor for the verification step and removed
+    again by the stage undo. That is what lets a self-signed leaf pass ``signtool verify /pa``; the leaf
+    fingerprint, timestamp and correspondence checks are unchanged, and the report records
+    ``public_trust: false``.
     """
     thumb = stage.env["VELES_WIN_CERT_SHA1"]
     keydir = stage.private_dir(stage.request.scratch / "keys")
@@ -927,7 +953,27 @@ def _windows_store(stage: Stage, policy: dict) -> str:
         raise StageFailure("credential-import-failed", "the exported leaf certificate is not the one with the configured thumbprint")
     if f"sha256:{sha256_bytes(der)}" != policy["publisher"]:
         raise StageFailure("credential-import-failed", "the signing certificate does not hash to the approved publisher fingerprint")
-    return thumb
+    trust = {"mode": "os-store", "public_trust": True, "anchor_sha256": None}
+    if stage.env.get("VELES_WIN_TRUST_SELF_SIGNED") == "1":
+        root_der = base64.b64decode(stage.env["VELES_WIN_ROOT_CER_BASE64"], validate=True)
+        if not root_der:
+            raise StageFailure("credential-import-failed", "the self-signed root certificate is empty")
+        anchor_sha256 = sha256_bytes(root_der)
+        anchor_sha1 = hashlib.sha1(root_der).hexdigest()
+        root = stage.write_secret(keydir / "root.cer", stage.env["VELES_WIN_ROOT_CER_BASE64"])
+        stage.register_undo("certutil -delstore Root", ["certutil", "-delstore", "Root", anchor_sha1])
+        stage.run(["certutil", "-addstore", "-f", "Root", root], what="credential-import-failed")
+        trust = {"mode": "self-signed", "public_trust": False, "anchor_sha256": anchor_sha256}
+    return thumb, trust
+
+
+def _trust_fields(trust: dict) -> dict:
+    """The trust record every Windows signature carries into the report."""
+    return {
+        "public_trust": trust["public_trust"],
+        "trust_mode": trust["mode"],
+        "trust_anchor_sha256": trust["anchor_sha256"],
+    }
 
 
 def _signtool_sign(stage: Stage, target: Path) -> None:
@@ -968,7 +1014,7 @@ def _signtool_verify(stage: Stage, target: Path, policy: dict) -> dict:
 
 def _windows_nested(stage: Stage, policy: dict) -> dict:
     request = stage.request
-    _windows_store(stage, policy)
+    _, trust = _windows_store(stage, policy)
     _copy_tree(request.inputs, request.output)
     out, pre = request.output, request.scratch / "pre"
     pre.mkdir()
@@ -988,6 +1034,7 @@ def _windows_nested(stage: Stage, policy: dict) -> dict:
             shutil.copy2(out / component.path, pre / f"{component.role}.exe")
         _signtool_sign(stage, out / component.path)
         signatures[component.role] = _signtool_verify(stage, out / component.path, policy)
+        signatures[component.role].update(_trust_fields(trust))
 
     components = []
     for component in COMPONENTS["windows"]:
@@ -1015,7 +1062,7 @@ def _extract_inventory(root: Path) -> dict[str, str]:
 
 def _windows_outer(stage: Stage, policy: dict) -> dict:
     request = stage.request
-    _windows_store(stage, policy)
+    _, trust = _windows_store(stage, policy)
     _copy_tree(request.inputs, request.output)
     out = request.output
     setup = out / SETUP_NAME
@@ -1025,6 +1072,7 @@ def _windows_outer(stage: Stage, policy: dict) -> dict:
     pre_sha = sha256_file(setup)
     _signtool_sign(stage, setup)
     signature = _signtool_verify(stage, setup, policy)
+    signature.update(_trust_fields(trust))
     post_sha = sha256_file(setup)
     request.reports.mkdir(parents=True, exist_ok=True)
     report = request.reports / "corr-windows-setup.json"
@@ -1777,6 +1825,14 @@ def _signature_errors(label: str, signature: dict, platform: str, policy: dict, 
         errors.append(f"{label}: signature was not verified")
     if signature.get("timestamped") is not True:
         errors.append(f"{label}: no trusted timestamp")
+    if platform == "windows":
+        public_trust = signature.get("public_trust")
+        if not isinstance(public_trust, bool):
+            errors.append(f"{label}: signature trust is not recorded")
+        elif public_trust is False:
+            anchor = signature.get("trust_anchor_sha256")
+            if not (isinstance(anchor, str) and SHA256_RE.fullmatch(anchor)):
+                errors.append(f"{label}: a self-signed signature does not record its trust anchor")
     expected = policy.get("publisher") if platform == "windows" else policy.get("identity")
     if not expected or signature.get("identity") != expected:
         errors.append(f"{label}: signer is not the approved publisher identity")

@@ -29,12 +29,37 @@ no Windows or macOS walkthrough has been performed. The recorded matrix
   cannot observe a machine. Acceptance is the owner's separate decision after independent
   adjudication of real evidence.
 
+## Signing identity for this completion (owner decision, 2026-11-08)
+
+The project completes with a **self-signed** signing identity. A publicly trusted CA
+certificate is deferred; it will be obtained outside project completion. The gates were
+modified to accept that identity explicitly, not quietly:
+
+- The Windows sign stage reads `VELES_WIN_TRUST_SELF_SIGNED=1` and
+  `VELES_WIN_ROOT_CER_BASE64`. It imports the supplied root as an **ephemeral, recorded
+  trust anchor** only for the verification step, then removes it. The leaf SHA-1/SHA-256
+  pins, the RFC 3161 timestamp and the signed-content correspondence checks are unchanged.
+- Every Windows signature record carries `public_trust: false`, `trust_mode: "self-signed"`
+  and the anchor's SHA-256. `validate` refuses a self-signed signature that does not record
+  its anchor, and refuses an unrecorded trust mode.
+- **Not claimed:** public trust, CA chain, SmartScreen reputation, Gatekeeper, notarization
+  or stapling. A self-signed completion build is for acceptance testing, never general
+  distribution.
+- An acceptance machine must trust the anchor for the engine's `WinVerifyTrust` call:
+  `certutil -addstore -f Root <root.cer>` as an administrator, recorded in the run's
+  environment notes.
+- macOS is **not** covered by this decision: the signed macOS host remains blocked by the
+  DER-entitlements correspondence gate, which is independent of the certificate.
+
 ## For users
 
 Installation is per user, needs no administrator password and never runs a service.
 
 1. Download the **signed** installer for your OS from the official Veles release page
    (the project publishes none yet; do not use unsigned CI or fixture packages).
+   Completion builds under the 2026-11-08 decision are signed with a project self-signed
+   identity and are **not publicly trusted**; they are acceptance candidates, not a
+   general distribution.
    Windows: run the signed setup executable. macOS: open the signed disk image and run
    *Veles Bridge Installer*. Neither asks for elevation; if one appears, stop and report it.
 2. Choose **Install**. If a host is running the installer asks you to **close every Veles

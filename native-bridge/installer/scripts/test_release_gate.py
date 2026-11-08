@@ -992,6 +992,44 @@ class WindowsSignerIdentityTests(unittest.TestCase):
         _, outcome = case.run(NoHash(case.env))
         self.assertEqual((outcome.ok, outcome.code), (False, "signature-unverified"))
 
+    def test_self_signed_mode_records_the_anchor_and_removes_it(self) -> None:
+        root_der = b"0\x82fixture self-signing root"
+        case = Case(
+            self,
+            "windows",
+            "nested",
+            VELES_WIN_TRUST_SELF_SIGNED="1",
+            VELES_WIN_ROOT_CER_BASE64=base64.b64encode(root_der).decode(),
+        )
+        runner, outcome = case.run()
+        self.assertTrue(outcome.ok, outcome.detail)
+        for record in outcome.fragment["components"]:
+            signature = record["signature"]
+            self.assertIs(signature["public_trust"], False)
+            self.assertEqual(signature["trust_mode"], "self-signed")
+            self.assertEqual(signature["trust_anchor_sha256"], hashlib.sha256(root_der).hexdigest())
+        self.assertTrue(any(call[0] == "certutil" and "-addstore" in call for call in runner.calls))
+        self.assertTrue(any(call[0] == "certutil" and "-delstore" in call for call in runner.calls))
+
+    def test_self_signed_mode_requires_a_well_formed_root_certificate(self) -> None:
+        env = {**good_env("windows"), "VELES_WIN_TRUST_SELF_SIGNED": "1"}
+        self.assertIn("VELES_WIN_ROOT_CER_BASE64", gate.missing_credentials("windows", "nested", env))
+        env["VELES_WIN_ROOT_CER_BASE64"] = "not base64!"
+        self.assertTrue(any("ROOT_CER" in problem for problem in gate.credential_format_errors("windows", env)))
+
+    def test_a_self_signed_signature_must_record_its_anchor(self) -> None:
+        policy = {"publisher": WIN_PUBLISHER}
+        signature = {
+            "verified": True,
+            "timestamped": True,
+            "identity": WIN_PUBLISHER,
+            "public_trust": False,
+            "trust_anchor_sha256": "a" * 64,
+        }
+        self.assertEqual(gate._signature_errors("x", signature, "windows", policy, runtime=True), [])
+        del signature["trust_anchor_sha256"]
+        self.assertTrue(gate._signature_errors("x", signature, "windows", policy, runtime=True))
+
 
 # ---------------------------------------------------------------------------
 # Assembly (no credentials)

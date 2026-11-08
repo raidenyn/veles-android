@@ -209,6 +209,8 @@ jobs:
           VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
           VELES_WIN_PUBLISHER: ${{ vars.VELES_WIN_PUBLISHER }}
           VELES_WIN_TIMESTAMP_URL: ${{ vars.VELES_WIN_TIMESTAMP_URL }}
+          VELES_WIN_ROOT_CER_BASE64: ${{ secrets.VELES_WIN_ROOT_CER_BASE64 }}
+          VELES_WIN_TRUST_SELF_SIGNED: ${{ vars.VELES_WIN_TRUST_SELF_SIGNED }}
         run: |
           $in = Join-Path $env:RUNNER_TEMP 'in'
           $s = Join-Path $env:RUNNER_TEMP 'sign-nested'
@@ -349,6 +351,8 @@ jobs:
           VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
           VELES_WIN_PUBLISHER: ${{ vars.VELES_WIN_PUBLISHER }}
           VELES_WIN_TIMESTAMP_URL: ${{ vars.VELES_WIN_TIMESTAMP_URL }}
+          VELES_WIN_ROOT_CER_BASE64: ${{ secrets.VELES_WIN_ROOT_CER_BASE64 }}
+          VELES_WIN_TRUST_SELF_SIGNED: ${{ vars.VELES_WIN_TRUST_SELF_SIGNED }}
         run: |
           $in = Join-Path $env:RUNNER_TEMP 'in'
           $s = Join-Path $env:RUNNER_TEMP 'sign-outer'
