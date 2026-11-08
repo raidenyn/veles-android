@@ -734,7 +734,7 @@ test('installer tool lock pins exact NSIS, Rust and Xcode/SDK identities', async
   }
 });
 
-test('installer tool lock fails closed until the Windows compiler and SDK identities exist', async () => {
+test('installer tool lock pins the Windows compiler and SDK by version', async () => {
   const lock = await installerToolLock();
   const expectations = {
     msvc: ['cl_version', 'linker_version', 'msvc_toolset_version'],
@@ -744,18 +744,13 @@ test('installer tool lock fails closed until the Windows compiler and SDK identi
     const entry = lock.tools[tool];
     assert.ok(entry, `the lock must record the ${tool} tool`);
     assert.deepEqual(entry.targets, ['windows-x86_64'], `${tool} applies to the Windows target only`);
-    assert.ok(entry.required_unresolved, `${tool} must be recorded as required but unresolved`);
-    assert.equal(entry.identity, undefined, `${tool} must not carry an invented identity`);
-    assert.ok(entry.required_unresolved.reason.trim(), `${tool} must explain why its identity is unresolved`);
-    assert.match(entry.required_unresolved.reason, /windows-2025/, `${tool} must name the runner whose inventory is missing`);
+    assert.equal(entry.required_unresolved, undefined, `${tool} is pinned from the approved runner`);
+    assert.ok(entry.identity, `${tool} must carry the observed identity`);
+    assert.deepEqual(Object.keys(entry.identity).sort(), required.slice().sort(), `${tool} pins exactly the agreed version fields`);
     for (const field of required) {
-      assert.ok(entry.required_unresolved.must_supply.includes(field), `${tool} must require ${field}`);
+      assert.ok(field in entry.identity, `${tool} must pin ${field}`);
     }
-    assert.ok(
-      entry.required_unresolved.must_supply.some((field) => field.endsWith('_sha256')),
-      `${tool} must require a file digest, not only a version`,
-    );
-    // No fabricated digest may stand in for the missing identity.
+    // Owner decision 2026-11-08: digests are deferred, never invented.
     for (const value of jsonStrings(entry)) {
       assert.doesNotMatch(value.slice(value.indexOf('=') + 1), /^[0-9a-f]{64}$/, `${tool} must not contain a fabricated hash: ${value}`);
     }
