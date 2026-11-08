@@ -1172,3 +1172,344 @@ test('every workflow script invoked directly is committed executable in git', as
     assert.equal(mode, '100755', `directly-invoked workflow script ${path} must be committed with mode 100755, found ${mode}`);
   }
 });
+
+// OTP-25 Task 2: a labeled pull request may build the finished DEBUG installer
+// for Windows and/or macOS, but only after a secret-free `native-installer-debug`
+// approval. The approval job is a workflow-local convenience gate, not a
+// hostile-writer boundary (the workflow header states this); these tests pin the
+// exact triggers, the current-label predicates, the exact PR head SHA, approval
+// ordering, the read-only zero-secret scope, per-PR cancellation and fork
+// behavior.
+const PR_INSTALLER_FILE = 'build-pr-installers.yml';
+const PR_INSTALLER_EVENTS = ['opened', 'reopened', 'labeled', 'unlabeled', 'synchronize', 'ready_for_review'];
+const PR_INSTALLER_LABELS = {
+  windows: 'windows installer build',
+  macos: 'mac installer build',
+};
+const PR_INSTALLER_BUILDERS = {
+  windows: 'build-native-windows.yml',
+  macos: 'build-native-macos.yml',
+};
+const PR_INSTALLER_ARTIFACT_NAMES = {
+  windows: 'windows-debug-installer-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run-${{ github.run_id }}',
+  macos: 'macos-debug-installer-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run-${{ github.run_id }}',
+};
+
+function prWorkflowOnBlock(source) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => /^on:\s*$/.test(line));
+  assert.notEqual(start, -1, 'workflow must declare a top-level on: block');
+  const block = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && !line.startsWith(' ')) break;
+    block.push(line);
+  }
+  return block.join('\n');
+}
+
+function prWorkflowPermissions(source) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => /^permissions:\s*$/.test(line));
+  assert.notEqual(start, -1, 'workflow must declare permissions at workflow scope');
+  const values = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && !line.startsWith(' ')) break;
+    const entry = mappingEntry(line);
+    if (entry) values.push(`${entry.key}: ${entry.value}`.trim());
+  }
+  return values;
+}
+
+function prJobBlock(source, job) {
+  const match = source.match(new RegExp(`^  ${escapeRegexp(job)}:\\s*$`, 'm'));
+  assert.ok(match, `workflow must define job ${job}`);
+  const rest = source.slice(match.index + match[0].length);
+  const next = rest.match(/^  [A-Za-z0-9_-]+:\s*$/m);
+  return next ? source.slice(match.index, match.index + match[0].length + next.index) : source.slice(match.index);
+}
+
+function prJobCondition(block) {
+  const match = block.match(/^    if: \|\n((?:      [^\n]*\n)+)/m);
+  assert.ok(match, 'job must declare a folded if: block');
+  return match[1].split('\n').map((line) => line.trim()).filter(Boolean).join(' ');
+}
+
+function prContainsPredicate(label) {
+  return new RegExp(`contains\\(github\\.event\\.pull_request\\.labels\\.\\*\\.name, '${escapeRegexp(label)}'\\)`);
+}
+
+// Evaluate a job `if:` expression against a synthetic pull_request context.
+// Only the contexts this workflow is allowed to use are understood; anything
+// else (for example a pre-event `github.event.label.name` shortcut) fails.
+function evaluatePrLabels(condition, { labels, draft = false, eventName = 'pull_request' }) {
+  const expression = condition
+    .replaceAll('github.event_name', JSON.stringify(eventName))
+    .replaceAll('github.event.pull_request.draft', String(draft))
+    .replace(/contains\(github\.event\.pull_request\.labels\.\*\.name,\s*'([^']*)'\)/g, (_, label) => `labels.includes(${JSON.stringify(label)})`);
+  assert.doesNotMatch(expression, /github\./, `condition uses an unsupported pull_request context: ${condition}`);
+  return new Function('labels', `"use strict"; return (${expression});`)(labels);
+}
+
+function assertPrInstallerCaller(source) {
+  const name = PR_INSTALLER_FILE;
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+
+  // Trigger: exactly the reviewed pull_request events, never pull_request_target.
+  const onBlock = prWorkflowOnBlock(source);
+  const triggerKeys = onBlock.split('\n').flatMap((line) => {
+    const entry = mappingEntry(line);
+    return entry && entry.indent === 2 ? [entry.key] : [];
+  });
+  assert.deepEqual(triggerKeys, ['pull_request'], `${name} must trigger only on pull_request`);
+  const typesMatch = onBlock.match(/^  pull_request:\n    types: \[([^\]]+)\]$/m);
+  assert.ok(typesMatch, `${name} must declare the pull_request types list`);
+  assert.deepEqual(typesMatch[1].split(',').map((value) => value.trim()), PR_INSTALLER_EVENTS, `${name} must use exactly the reviewed pull_request events`);
+  assert.doesNotMatch(executable, /pull_request_target/, `${name} must never use pull_request_target`);
+  assert.doesNotMatch(executable, /github\.event\.label\.name/, `${name} must re-evaluate the post-event label set, not the event's own label`);
+
+  // Scope: read-only, zero secrets, no cache/write privileges, no cross-run artifact.
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must declare only contents: read at workflow scope`);
+  assert.equal((source.match(/^permissions:\s*$/gm) ?? []).length, 1, `${name} must declare workflow permissions exactly once`);
+  for (const forbidden of [/contents:\s*write/, /\bwrite-all\b/, /^\s*id-token:/m, /^\s*pull-requests:/m, /^\s*packages:/m, /^\s*cache:/m]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not grant ${forbidden}`);
+  }
+  assert.doesNotMatch(executable, /\$\{\{\s*secrets\./, `${name} must not reference any secret`);
+  assert.doesNotMatch(executable, /^\s*secrets:/m, `${name} must not declare a secrets mapping`);
+  assertNoSecretRunInterpolation(executable, name);
+  assert.doesNotMatch(executable, /actions\/download-artifact@/, `${name} must not download artifacts from another run`);
+
+  // Per-PR concurrency cancels a stale run when the head SHA or labels change.
+  assert.match(source, /^concurrency:\n  group: pr-installers-\$\{\{ github\.event\.pull_request\.number \}\}\n  cancel-in-progress: true$/m, `${name} must cancel stale runs per pull request`);
+
+  // Exactly the approval job and the two platform callers.
+  assert.deepEqual(Object.keys(callerJobKeys(source)).sort(), ['approve', 'macos', 'windows'], `${name} must declare exactly the approval job and both platform callers`);
+
+  const approve = prJobBlock(source, 'approve');
+  const windows = prJobBlock(source, 'windows');
+  const macos = prJobBlock(source, 'macos');
+
+  // The approval job is a secret-free environment gate that runs no PR code.
+  assert.match(approve, /^    runs-on: ubuntu-latest$/m, `${name} approval must run on ubuntu-latest`);
+  assert.match(approve, /^    environment: native-installer-debug$/m, `${name} approval must enter the secret-free native-installer-debug environment`);
+  assert.match(approve, /^    permissions:\n      contents: read$/m, `${name} approval must be read-only`);
+  assert.doesNotMatch(approve, /^\s+uses:/m, `${name} approval must call no action`);
+  assert.doesNotMatch(approve, /actions\/checkout|gradlew|bridgeInstaller|setup-java|setup-python/, `${name} approval must not check out or build anything`);
+  assert.doesNotMatch(approve, /secrets/, `${name} approval must be secret-free`);
+  assert.equal((executable.match(/^\s*environment:/gm) ?? []).length, 1, `${name} must assign a protected environment only to the approval job`);
+  const approveIndex = source.search(/^  approve:\s*$/m);
+  assert.ok(approveIndex !== -1, `${name} must declare the approve job`);
+
+  // The conditions: pull_request, non-draft, current label presence.
+  const conditions = {
+    approve: prJobCondition(approve),
+    windows: prJobCondition(windows),
+    macos: prJobCondition(macos),
+  };
+  assert.match(conditions.approve, /github\.event_name == 'pull_request'/, `${name} approval must be pull_request-only`);
+  assert.match(conditions.approve, /github\.event\.pull_request\.draft == false/, `${name} approval must skip drafts`);
+  for (const label of Object.values(PR_INSTALLER_LABELS)) {
+    assert.match(conditions.approve, prContainsPredicate(label), `${name} approval must run for the ${label} label`);
+  }
+
+  for (const [platform, builder] of Object.entries(PR_INSTALLER_BUILDERS)) {
+    const block = platform === 'windows' ? windows : macos;
+    const jobIndex = source.search(new RegExp(`^  ${platform}:\\s*$`, 'm'));
+    assert.ok(approveIndex < jobIndex, `${name} approval must precede the ${platform} build`);
+    assert.match(block, new RegExp(`^    uses: \\./\\.github/workflows/${escapeRegexp(builder)}$`, 'm'), `${platform} must call the ${builder} producer`);
+    assert.match(block, /^    needs: approve$/m, `${platform} must wait for approval`);
+    assert.doesNotMatch(block, /^\s*environment:/m, `${platform} must not enter a protected environment`);
+    assert.doesNotMatch(block, /^\s*secrets:/m, `${platform} must pass no secret`);
+    assert.doesNotMatch(block, /github\.sha\b/, `${platform} must build the pull request head commit, never the merge commit`);
+    assert.match(block, /^      commit-sha: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$/m, `${platform} must pass the exact PR head SHA`);
+    assert.match(block, /^      build-kind: debug$/m, `${platform} must build the debug installer only`);
+    assert.doesNotMatch(block, /build-kind: release/, `${platform} must never build a release channel`);
+    const artifact = block.match(/^      artifact-name: (.+)$/m);
+    assert.ok(artifact, `${platform} must name its debug artifact`);
+    assert.equal(artifact[1].trim(), PR_INSTALLER_ARTIFACT_NAMES[platform], `${platform} must encode the PR number, head SHA and run ID in the artifact name`);
+    const condition = conditions[platform];
+    assert.match(condition, /github\.event_name == 'pull_request'/, `${platform} must only run on pull_request`);
+    assert.match(condition, /github\.event\.pull_request\.draft == false/, `${platform} must skip drafts`);
+    assert.match(condition, prContainsPredicate(PR_INSTALLER_LABELS[platform]), `${platform} must require the ${PR_INSTALLER_LABELS[platform]} label`);
+    for (const [other, label] of Object.entries(PR_INSTALLER_LABELS)) {
+      if (other === platform) continue;
+      assert.doesNotMatch(condition, prContainsPredicate(label), `${platform} must not build for ${other}'s label`);
+    }
+  }
+
+  // Behavior: no label -> nothing, each label -> its platform, both -> both.
+  // `unlabeled` is modelled by the post-event label set, so removing a label
+  // deselects that platform on the next run.
+  const selected = (labels) => Object.keys(PR_INSTALLER_BUILDERS).filter((platform) => evaluatePrLabels(conditions[platform], { labels }));
+  const matrix = [
+    { labels: [], expected: [] },
+    { labels: ['unrelated label'], expected: [] },
+    { labels: [PR_INSTALLER_LABELS.windows], expected: ['windows'] },
+    { labels: [PR_INSTALLER_LABELS.macos], expected: ['macos'] },
+    { labels: [PR_INSTALLER_LABELS.windows, PR_INSTALLER_LABELS.macos], expected: ['windows', 'macos'] },
+    { labels: ['unrelated label', PR_INSTALLER_LABELS.macos], expected: ['macos'] },
+    { labels: [PR_INSTALLER_LABELS.macos], expected: ['macos'] }, // Windows label removed
+    { labels: [PR_INSTALLER_LABELS.windows], expected: ['windows'] }, // macOS label removed
+  ];
+  for (const { labels, expected } of matrix) {
+    assert.deepEqual(selected(labels), expected, `${name} labels ${JSON.stringify(labels)} must select ${JSON.stringify(expected)}`);
+    assert.equal(
+      evaluatePrLabels(conditions.approve, { labels }),
+      expected.length > 0,
+      `${name} approval must run exactly when a labeled platform is selected (${JSON.stringify(labels)})`,
+    );
+  }
+  for (const job of Object.keys(conditions)) {
+    assert.equal(evaluatePrLabels(conditions[job], { labels: Object.values(PR_INSTALLER_LABELS), draft: true }), false, `${name} job ${job} must skip drafts`);
+    assert.equal(evaluatePrLabels(conditions[job], { labels: Object.values(PR_INSTALLER_LABELS), eventName: 'push' }), false, `${name} job ${job} must only run on pull_request`);
+  }
+
+  // Approval-boundary honesty: a PR editing its own pull_request workflow can
+  // remove this workflow-local gate; resisting a malicious writer needs a
+  // separately approved trusted dispatcher. Do not claim tamper resistance.
+  const comments = source.split('\n').filter((line) => line.trimStart().startsWith('#')).join('\n');
+  assert.match(comments, /workflow-local convenience gate/, `${name} must document the approval boundary as a workflow-local convenience gate`);
+  assert.match(comments, /not a tamper-resistant/, `${name} must not claim the approval gate is tamper-resistant`);
+  assert.match(comments, /edits its own `?pull_request`? workflow/, `${name} must state that a PR can edit its own pull_request workflow`);
+  assert.match(comments, /can remove this job/, `${name} must state that such an edit can remove the approval job`);
+  assert.match(comments, /trusted-collaborator[^.]*zero-secret/, `${name} must scope the gate to the trusted-collaborator zero-secret debug model`);
+  assert.match(comments, /separately approved trusted dispatcher/, `${name} must point a hostile-writer requirement at a separately approved trusted dispatcher`);
+  assert.match(comments, /fork[^.]*workflow approval/i, `${name} must document GitHub's additional fork workflow approval`);
+  assert.match(comments, /NOT FOR RELEASE/, `${name} must mark the debug output as not for release`);
+}
+
+test('PR installer caller builds only labeled platforms from the exact PR head SHA after approval', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  assertPrInstallerCaller(source);
+  // The build jobs carry no secret and no environment, so fork PRs get nothing
+  // beyond the read-only token (GitHub may additionally hold fork runs for its
+  // own workflow approval; the workflow header says so).
+  for (const platform of Object.keys(PR_INSTALLER_BUILDERS)) {
+    const block = prJobBlock(source, platform);
+    assert.doesNotMatch(block, /secrets:/, `${platform} must remain secret-free for fork pull requests`);
+    assert.doesNotMatch(block, /^\s*environment:/m, `${platform} must remain outside the approval environment for fork pull requests`);
+  }
+});
+
+test('PR installer caller re-evaluates the current label set on every reviewed pull_request event', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  const onBlock = prWorkflowOnBlock(source);
+  assert.deepEqual(
+    onBlock.split('\n').flatMap((line) => {
+      const entry = mappingEntry(line);
+      return entry && entry.indent === 2 ? [entry.key] : [];
+    }),
+    ['pull_request'],
+    'the only trigger may be pull_request',
+  );
+  const types = onBlock.match(/^  pull_request:\n    types: \[([^\]]+)\]$/m);
+  assert.ok(types, 'pull_request types must be declared inline');
+  assert.deepEqual(types[1].split(',').map((value) => value.trim()), PR_INSTALLER_EVENTS, 'every reviewed event must re-evaluate the label set');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  for (const forbidden of [/pull_request_target/, /github\.event\.label\.name/, /^\s*push:/m, /^\s*schedule:/m, /^\s*workflow_dispatch:/m]) {
+    assert.doesNotMatch(executable, forbidden, `the PR installer caller must not use ${forbidden}`);
+  }
+  // The post-event label set is what `unlabeled` and `synchronize` see.
+  const conditions = {
+    approve: prJobCondition(prJobBlock(source, 'approve')),
+    windows: prJobCondition(prJobBlock(source, 'windows')),
+    macos: prJobCondition(prJobBlock(source, 'macos')),
+  };
+  assert.deepEqual(
+    Object.keys(PR_INSTALLER_BUILDERS).filter((platform) => evaluatePrLabels(conditions[platform], { labels: [PR_INSTALLER_LABELS.macos] })),
+    ['macos'],
+    'removing the Windows label must leave only the macOS build selected',
+  );
+  assert.deepEqual(
+    Object.keys(PR_INSTALLER_BUILDERS).filter((platform) => evaluatePrLabels(conditions[platform], { labels: [PR_INSTALLER_LABELS.windows] })),
+    ['windows'],
+    'removing the macOS label must leave only the Windows build selected',
+  );
+  assert.equal(evaluatePrLabels(conditions.approve, { labels: [] }), false, 'removing every label must not request approval');
+});
+
+test('PR installer approval job is secret-free and gates both platform builds', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  const approve = prJobBlock(source, 'approve');
+  assert.match(approve, /^    runs-on: ubuntu-latest$/m, 'the approval job must run on ubuntu-latest');
+  assert.match(approve, /^    environment: native-installer-debug$/m, 'the approval job must reference native-installer-debug');
+  assert.match(approve, /^    permissions:\n      contents: read$/m, 'the approval job must be read-only');
+  assert.doesNotMatch(approve, /secrets|actions\/checkout|gradlew|bridgeInstaller|bridgePackage/, 'the approval job must not use secrets, checkout or build');
+  const approveIndex = source.search(/^  approve:\s*$/m);
+  const windowsIndex = source.search(/^  windows:\s*$/m);
+  const macosIndex = source.search(/^  macos:\s*$/m);
+  assert.ok(approveIndex !== -1 && windowsIndex !== -1 && macosIndex !== -1, 'all three jobs must exist');
+  assert.ok(approveIndex < windowsIndex && approveIndex < macosIndex, 'the approval job must precede both platform builds');
+  for (const platform of Object.keys(PR_INSTALLER_BUILDERS)) {
+    const block = prJobBlock(source, platform);
+    assert.match(block, /^    needs: approve$/m, `${platform} must depend on the approval job`);
+    assert.doesNotMatch(block, /^\s*environment:/m, `${platform} must not repeat the environment`);
+  }
+});
+
+test('PR installer caller keeps a read-only zero-secret scope and cancels stale per-PR runs', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], 'workflow scope must be contents: read only');
+  assert.equal((source.match(/^permissions:\s*$/gm) ?? []).length, 1, 'only the workflow scope may declare permissions');
+  assert.match(source, /^concurrency:\n  group: pr-installers-\$\{\{ github\.event\.pull_request\.number \}\}\n  cancel-in-progress: true$/m, 'per-PR concurrency must cancel stale runs');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  assert.doesNotMatch(executable, /\$\{\{\s*secrets\./, 'no secret expression may appear');
+  assert.doesNotMatch(executable, /^\s*secrets:/m, 'no secrets mapping may appear');
+  assert.doesNotMatch(executable, /actions\/download-artifact@/, 'the PR path must not consume another run\'s artifacts');
+  for (const forbidden of [/contents:\s*write/, /write-all/, /id-token:/, /pull-requests:/, /packages:/, /cache:/]) {
+    assert.doesNotMatch(executable, forbidden, `the PR path must not grant ${forbidden}`);
+  }
+  for (const platform of Object.keys(PR_INSTALLER_BUILDERS)) {
+    const block = prJobBlock(source, platform);
+    assert.match(block, /^      build-kind: debug$/m, `${platform} must request a debug build`);
+    assert.match(block, /^      commit-sha: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$/m, `${platform} must build the PR head SHA`);
+    assert.doesNotMatch(block, /github\.sha\b/, `${platform} must not fall back to the merge SHA`);
+  }
+});
+
+test('PR installer caller contract rejects routing, approval, scope and boundary regressions', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  const mutations = {
+    'merge SHA instead of head SHA': (text) => text.replaceAll('commit-sha: ${{ github.event.pull_request.head.sha }}', 'commit-sha: ${{ github.sha }}'),
+    'missing approval dependency': (text) => text.replaceAll('    needs: approve\n', ''),
+    'draft PR allowed': (text) => text.replaceAll('      github.event.pull_request.draft == false &&\n', ''),
+    'wrong Windows label': (text) => text.replaceAll("'windows installer build'", "'windows build'"),
+    'pre-event label shortcut': (text) => text.replace(
+      "contains(github.event.pull_request.labels.*.name, 'windows installer build')",
+      "github.event.label.name == 'windows installer build'",
+    ),
+    'pull_request_target trigger': (text) => text.replace('  pull_request:\n    types:', '  pull_request_target:\n    types:'),
+    'extra push trigger': (text) => text.replace('  pull_request:\n    types:', '  push:\n  pull_request:\n    types:'),
+    'edited event list': (text) => text.replace('synchronize, ready_for_review]', 'synchronize, edited]'),
+    'secret mapping': (text) => text.replace(
+      '    uses: ./.github/workflows/build-native-windows.yml',
+      '    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n    uses: ./.github/workflows/build-native-windows.yml',
+    ),
+    'write permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'),
+    'cache permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: read\n  cache: write'),
+    'environment on a build job': (text) => text.replace(
+      '    uses: ./.github/workflows/build-native-macos.yml',
+      '    environment: native-installer-debug\n    uses: ./.github/workflows/build-native-macos.yml',
+    ),
+    'wrong approval environment': (text) => text.replace('environment: native-installer-debug', 'environment: native-installer'),
+    'release build kind': (text) => text.replaceAll('      build-kind: debug', '      build-kind: release'),
+    'artifact without head SHA': (text) => text.replaceAll('-${{ github.event.pull_request.head.sha }}-run-', '-run-'),
+    'artifact without run ID': (text) => text.replaceAll('}-run-${{ github.run_id }}', '}'),
+    'approval checks out code': (text) => text.replace(
+      '    steps:\n',
+      '    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n',
+    ),
+    'approval runs a build': (text) => text.replace('    steps:\n', '    steps:\n      - run: ./gradlew bridgeInstallerDebug\n'),
+    'non-cancelling concurrency': (text) => text.replace('cancel-in-progress: true', 'cancel-in-progress: false'),
+    'wrong concurrency group': (text) => text.replace('group: pr-installers-${{ github.event.pull_request.number }}', 'group: pr-installers'),
+    'artifact download': (text) => `${text}\n  stray:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n`,
+    'removed approval-boundary honesty': (text) => text.replaceAll('/', ' '),
+    'claimed tamper resistance': (text) => text.replace('not a tamper-resistant', 'a tamper-resistant'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change the workflow`);
+    assert.throws(() => assertPrInstallerCaller(mutated), `the contract must reject "${label}"`);
+  }
+});
