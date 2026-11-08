@@ -1632,6 +1632,7 @@ fun registerInstallerProducer(
                 commandLine(
                     "pwsh", "-NoProfile", "-File", installerDir.file("scripts/generate-uninstaller.ps1").asFile,
                     "-Makensis", installerMakensis.get(), "-Version", releaseVersion.get(),
+                    "-Channel", channel,
                     "-Output", uninstallerDir.get().file("uninstall.exe").asFile,
                 )
             }
@@ -1791,30 +1792,61 @@ fun registerInstallerProducer(
     }
     if (kind.name == "debug") {
         // Symbols travel beside the finished installer; both are uploaded, never mixed into a tree.
-        val symbols = tasks.register<Sync>("${taskName}Symbols") {
+        // A plain task (not Sync): on macOS there are no PDB sources, and a Sync would be skipped as
+        // NO-SOURCE, which would skip the dSYM generation too.
+        val symbols = tasks.register("${taskName}Symbols") {
             group = "native-bridge"
-            description = "Stages the available debug symbols (PDBs on Windows, dSYMs on macOS)."
+            description = "Generates and stages the debug symbols (PDBs on Windows, dSYMs on macOS)."
             dependsOn(slotFinishers)
-            into(lastSymbolsDir!!)
-            from(lastEmbeddedTargetDir!!.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) { include("*.pdb") }
-            from(lastHostTargetDir!!.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") }) { include("*.pdb") }
-            doFirst { lastSymbolsDir!!.get().asFile.mkdirs() }
-            doLast {
-                if (installerPlatform != "macos") return@doLast
+            inputs.files(lastEmbeddedTargetDir!!.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") })
+            inputs.files(lastHostTargetDir!!.map { it.dir("$installerRustTriple/${kind.cargoBinaryDirectory}") })
+            if (installerPlatform == "macos") {
+                inputs.files(lastFrontendScratchDir!!)
+            }
+            outputs.dir(lastSymbolsDir!!)
+            outputs.upToDateWhen { false }
+            doFirst {
                 val destination = lastSymbolsDir!!.get().asFile
+                delete(destination)
                 destination.mkdirs()
-                val binaries = listOf(
-                    lastEmbeddedTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-bridge-maintenance$installerExecutableSuffix"),
-                    lastEmbeddedTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-bridge-cleanup$installerExecutableSuffix"),
-                    lastHostTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-native-host$installerExecutableSuffix"),
-                )
-                for (binary in binaries) {
-                    if (!binary.isFile) continue
-                    val dSYM = destination.resolve("${binary.name}.dSYM")
-                    providers.exec {
-                        commandLine("xcrun", "dsymutil", binary.absolutePath, "-o", dSYM.absolutePath)
-                        isIgnoreExitValue = true
-                    }.result.get()
+            }
+            doLast {
+                val destination = lastSymbolsDir!!.get().asFile
+                // Windows: PDBs written beside both debug target images.
+                for (directory in listOf(
+                    lastEmbeddedTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}"),
+                    lastHostTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}"),
+                )) {
+                    if (!directory.isDirectory) continue
+                    directory.listFiles { file -> file.isFile && file.name.endsWith(".pdb") }?.forEach { source ->
+                        source.copyTo(destination.resolve(source.name), overwrite = true)
+                    }
+                }
+                if (installerPlatform == "macos") {
+                    val frontend = lastFrontendScratchDir!!.get().asFile.walkTopDown()
+                        .firstOrNull { it.isFile && it.name == "VelesBridgeInstaller" }
+                    val images = listOfNotNull(
+                        lastEmbeddedTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-bridge-maintenance"),
+                        lastEmbeddedTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-bridge-cleanup"),
+                        lastHostTargetDir!!.get().asFile.resolve("$installerRustTriple/${kind.cargoBinaryDirectory}/veles-native-host"),
+                        frontend,
+                    )
+                    for (binary in images) {
+                        if (!binary.isFile) {
+                            logger.warn("${taskName}Symbols: no debug image at $binary")
+                            continue
+                        }
+                        val dSYM = destination.resolve("${binary.name}.dSYM")
+                        val result = providers.exec {
+                            commandLine("xcrun", "dsymutil", binary.absolutePath, "-o", dSYM.absolutePath)
+                        }.result.get()
+                        check(result.exitValue == 0) {
+                            "dsymutil failed for ${binary.name} with exit code ${result.exitValue}"
+                        }
+                    }
+                }
+                check(destination.walkTopDown().any { it.isFile }) {
+                    "the debug build produced no PDB/dSYM symbols for the debug installer"
                 }
             }
         }
@@ -1823,10 +1855,13 @@ fun registerInstallerProducer(
             description = summary
             dependsOn(slotFinishers)
             dependsOn(symbols)
-            inputs.files(config)
+            inputs.files(config, installerReleaseGate, installerDir.file("windows/installer.nsi"),
+                installerDir.file("scripts/generate-uninstaller.ps1"))
             inputs.files(slotOutputs.getValue("a"))
-            outputs.dir(outDir)
+            inputs.dir(lastSymbolsDir!!)
             val runId = providers.environmentVariable("VELES_WORKFLOW_RUN_ID").orElse("local")
+            inputs.property("VELES_WORKFLOW_RUN_ID", runId)
+            outputs.dir(outDir)
             doFirst {
                 requireInstallerHost()
                 delete(outDir)

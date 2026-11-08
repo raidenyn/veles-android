@@ -237,7 +237,7 @@ class WindowsInstallerContract(unittest.TestCase):
         self.assertRegex(
             self.code,
             r'(?m)^\s*!define\s+MAINTENANCE_ENGINE_EXE\s+'
-            r'"\$LOCALAPPDATA\\Veles\\NativeBridge\\maintenance\\veles-bridge-maintenance\.exe"\s*$',
+            r'"\$LOCALAPPDATA\\Veles\\\$\{ROOT_DIR_NAME\}\\maintenance\\veles-bridge-maintenance\.exe"\s*$',
         )
         self.assertRegex(
             self.code,
@@ -267,7 +267,8 @@ class WindowsInstallerContract(unittest.TestCase):
         self.assertIn(engine, self.code, "NSIS names the engine path the engine publishes")
         self.assertRegex(
             self.code,
-            r'(?m)^\s*!define\s+UNINSTALL_EXE\s+"\$LOCALAPPDATA\\Veles\\NativeBridge\\'
+            r'(?m)^\s*!define\s+UNINSTALL_EXE\s+"\$LOCALAPPDATA\\Veles\\'
+            r'\$\{ROOT_DIR_NAME\}\\'
             + re.escape(uninstaller)
             + r'"\s*$',
         )

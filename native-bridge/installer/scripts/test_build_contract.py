@@ -396,12 +396,42 @@ def check_gradle(gradle, clean_script):
         errors.append("the debug packager does not receive the workflow run id")
     if debug_kind is None or "outputDirectory = \"debug\"" not in debug_kind:
         errors.append("the debug build kind does not publish to out/debug")
-    if '"*.pdb"' not in code or "dSYM" not in code:
-        errors.append("the debug producer does not collect the available PDB/dSYM symbols")
     if '"--symbols"' not in code:
         errors.append("the debug packager is not given the staged symbols")
     if code.count('"finalize"') != 1:
         errors.append("exactly the release finalizer may call assemble_unsigned finalize")
+    # Symbols: a plain, always-run task (a Sync would be NO-SOURCE on macOS and never generate
+    # dSYMs), real binary inputs, the Swift frontend included on macOS, and a failing dsymutil.
+    symbols = object_block(code, '"${taskName}Symbols"')
+    if symbols is None:
+        errors.append("no debug symbol task is registered")
+    else:
+        if 'tasks.register("${taskName}Symbols")' not in code:
+            errors.append("the symbol task must be a plain task, not a source-skipped Sync")
+        if 'tasks.register<Sync>("${taskName}Symbols")' in code:
+            errors.append("the symbol task must be a plain task, not a source-skipped Sync")
+        if "outputs.upToDateWhen { false }" not in symbols:
+            errors.append("the debug symbol task can be skipped as up to date")
+        if 'inputs.files(lastEmbeddedTargetDir!!' not in symbols or 'inputs.files(lastHostTargetDir!!' not in symbols:
+            errors.append("the debug symbol task does not declare its debug image inputs")
+        if "lastFrontendScratchDir!!" not in symbols:
+            errors.append("the debug symbol task does not include the Swift frontend")
+        if '.endsWith(".pdb")' not in symbols:
+            errors.append("the debug symbol task does not collect the available PDBs")
+        if '"xcrun", "dsymutil"' not in symbols or "exitValue == 0" not in symbols:
+            errors.append("dSYM generation is missing or its failure is ignored")
+        if "walkTopDown().any { it.isFile }" not in symbols:
+            errors.append("the debug symbol task does not require at least one symbol")
+    # The packaging task depends on metadata/symbol/script inputs, not only the tree.
+    packager = object_block(code, 'return tasks.register<Exec>(taskName)')
+    if packager is None or 'inputs.dir(lastSymbolsDir!!)' not in packager:
+        errors.append("the debug packaging task does not declare the symbol directory as an input")
+    if 'inputs.property("VELES_WORKFLOW_RUN_ID", runId)' not in code:
+        errors.append("the debug packaging task does not declare the workflow run id as an input")
+    if 'installerDir.file("windows/installer.nsi")' not in code:
+        errors.append("the debug packaging task does not declare the NSIS recipe as an input")
+    if '"-Channel", channel' not in code:
+        errors.append("the generated uninstaller is not compiled for the producer channel")
 
     # 8. Clean contract.
     clean = gradle.split('tasks.named<Delete>("clean")', 1)
@@ -829,8 +859,19 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("package-debug" in e or "finalize" in e or "finished installer" in e for e in found), found)
         found = self.violations(self.mutate('environmentVariable("VELES_WORKFLOW_RUN_ID")', 'environmentVariable("OTHER_RUN_ID")'))
         self.assertTrue(any("run id" in e for e in found), found)
-        found = self.violations(self.mutate('include("*.pdb")', 'include("*.txt")', 2))
+        found = self.violations(self.mutate('.endsWith(".pdb")', '.endsWith(".txt")', 1))
         self.assertTrue(any("PDB" in e or "symbols" in e for e in found), found)
+        found = self.violations(self.mutate('"xcrun", "dsymutil"', '"xcrun", "not-dsymutil"', 1))
+        self.assertTrue(any("dSYM" in e or "symbols" in e for e in found), found)
+        found = self.violations(self.mutate(
+            "outputs.dir(lastSymbolsDir!!)\n            outputs.upToDateWhen { false }",
+            "outputs.dir(lastSymbolsDir!!)\n            outputs.upToDateWhen { true }",
+        ))
+        self.assertTrue(any("skipped" in e for e in found), found)
+        found = self.violations(self.mutate('inputs.dir(lastSymbolsDir!!)', "", 1))
+        self.assertTrue(any("symbol directory" in e for e in found), found)
+        found = self.violations(self.mutate('inputs.property("VELES_WORKFLOW_RUN_ID", runId)', "", 1))
+        self.assertTrue(any("run id" in e for e in found), found)
 
     def test_the_release_build_kind_cannot_lose_its_release_profile_or_static_crt(self):
         found = self.violations(self.mutate('cargoProfileArguments = listOf("--release")', 'cargoProfileArguments = emptyList()', 1))

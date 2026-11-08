@@ -18,6 +18,10 @@ Absolute path to the provisioned nsis-3.08/makensis.exe (must lie under build/na
 .PARAMETER Version
 The release version (MAJOR.MINOR.PATCH) shown in Installed Apps.
 
+.PARAMETER Channel
+The install identity the generated uninstaller is compiled for: production or fixture. The fixture
+channel selects the isolated root/display name/Installed Apps key of the PR debug installer.
+
 .PARAMETER Output
 The uninstall.exe to create; it must not exist.
 #>
@@ -25,6 +29,7 @@ The uninstall.exe to create; it must not exist.
 param(
     [Parameter(Mandatory = $true)] [string]$Makensis,
     [Parameter(Mandatory = $true)] [string]$Version,
+    [Parameter(Mandatory = $true)] [ValidateSet('production', 'fixture')] [string]$Channel,
     [Parameter(Mandatory = $true)] [string]$Output
 )
 
@@ -50,7 +55,7 @@ try {
     $generator = Join-Path $work 'generator.exe'
     $inputs = Join-Path $work 'inputs'
     New-Item -ItemType Directory -Path $inputs | Out-Null
-    & $Makensis /V2 "/NOCD" "/DGENERATE_UNINSTALLER" "/DVERSION=$Version" "/DINPUT_DIR=$inputs" "/DOUTFILE=$generator" $script
+    & $Makensis /V2 "/NOCD" "/DGENERATE_UNINSTALLER" "/DCHANNEL=$Channel" "/DVERSION=$Version" "/DINPUT_DIR=$inputs" "/DOUTFILE=$generator" $script
     if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
     # The generator is a GUI-subsystem executable: `&` can return before it exits,
     # leaving generator.exe mapped and undeletable. Wait for the process explicitly.

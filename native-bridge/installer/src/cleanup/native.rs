@@ -485,7 +485,19 @@ mod windows_impl {
             hash_bounded(path, deadline)
         }
 
-        fn signature(&self, path: &Path, deadline: Instant) -> Result<String, CleanupFailure> {
+        fn signature(
+            &self,
+            path: &Path,
+            _root: &Path,
+            _transaction: &str,
+            deadline: Instant,
+        ) -> Result<String, CleanupFailure> {
+            #[cfg(feature = "debug-fixture-trust")]
+            if let Some(publisher) =
+                crate::platform::debug_trust::fixture_helper_publisher(path, _root, _transaction)
+            {
+                return Ok(publisher.to_owned());
+            }
             signature_bounded(path, deadline, |path| {
                 crate::platform::windows_verify_own_signature(path).map_err(|_| CleanupFailure)
             })
@@ -1634,7 +1646,19 @@ mod macos_impl {
             hash_bounded(path, deadline)
         }
 
-        fn signature(&self, path: &Path, deadline: Instant) -> Result<String, CleanupFailure> {
+        fn signature(
+            &self,
+            path: &Path,
+            _root: &Path,
+            _transaction: &str,
+            deadline: Instant,
+        ) -> Result<String, CleanupFailure> {
+            #[cfg(feature = "debug-fixture-trust")]
+            if let Some(publisher) =
+                crate::platform::debug_trust::fixture_helper_publisher(path, _root, _transaction)
+            {
+                return Ok(publisher.to_owned());
+            }
             signature_bounded(path, deadline, |path| {
                 crate::platform::macos_verify_own_signature(path).map_err(|_| CleanupFailure)
             })

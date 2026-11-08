@@ -27,6 +27,7 @@ use crate::platform::{
     HostAssessment, TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE,
     TrustProof,
 };
+use std::path::{Path, PathBuf};
 
 /// The publisher identity the tracked fixture config lists.
 ///
@@ -102,4 +103,64 @@ pub fn host_assessment(
 ) -> InstallResult<HostAssessment> {
     require_fixture_for(target, expected)?;
     HostAssessment::new(FIXTURE_PUBLISHER, assessment(target))
+}
+
+/// The fixture install root directory name (`%LOCALAPPDATA%\Veles\NativeBridgeFixture`).
+const FIXTURE_ROOT_DIR: &str = "NativeBridgeFixture";
+/// The parent of the fixture install root.
+const FIXTURE_ROOT_PARENT: &str = "Veles";
+
+/// Why `root` is not the fixture install root the debug helper may trust.
+fn is_fixture_root(root: &Path) -> bool {
+    root.file_name().and_then(|name| name.to_str()) == Some(FIXTURE_ROOT_DIR)
+        && root
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            == Some(FIXTURE_ROOT_PARENT)
+}
+
+/// The exact staged helper image the debug installer places for one fixture transaction.
+///
+/// This is the same deterministic outside-root staging path `RemovalCoordinator` uses; `None`
+/// means this is not a fixture install root or the transaction is not a 32-byte hex value.
+pub fn fixture_cleanup_helper_path(root: &Path, transaction: &str) -> Option<PathBuf> {
+    if !is_fixture_root(root)
+        || transaction.len() != 64
+        || !transaction
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return None;
+    }
+    let directory =
+        crate::removal::cleanup_staging_directory_for_root(&root.to_string_lossy(), transaction);
+    let helper = if cfg!(windows) {
+        "helper.exe"
+    } else {
+        "helper"
+    };
+    Some(directory.join(helper))
+}
+
+/// The fixture publisher for the cleanup helper's own image, or `None`.
+///
+/// The helper accepts its own unsigned image only when **all** of the following hold, so a
+/// production install (or an arbitrary executable) can never use the debug path:
+///
+/// * `root` is exactly `<...>/Veles/NativeBridgeFixture`;
+/// * `transaction` is a full 32-byte hex transaction id;
+/// * `helper` is exactly the deterministic staged image the removal coordinator creates for that
+///   root and transaction.
+pub fn fixture_helper_publisher(
+    helper: &Path,
+    root: &Path,
+    transaction: &str,
+) -> Option<&'static str> {
+    let expected = fixture_cleanup_helper_path(root, transaction)?;
+    // Compare the files, not the spelling: Windows canonicalisation may change case or short
+    // names while still naming the same staged image.
+    let helper = std::fs::canonicalize(helper).ok()?;
+    let expected = std::fs::canonicalize(expected).ok()?;
+    super::same_path(&helper, &expected).then_some(FIXTURE_PUBLISHER)
 }

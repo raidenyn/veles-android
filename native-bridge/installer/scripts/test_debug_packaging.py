@@ -163,6 +163,8 @@ class CapturingMacosRunner(FakeRunner):
             package = root / gate.MAC_PACKAGE
             carrier = root / gate.CARRIER_PATH["macos"]
             self.captured = {
+                "dmg_root": root,
+                "dmg_root_entries": sorted(p.name for p in root.iterdir()),
                 "canonical": (package / "inventory.json").read_bytes(),
                 "sealed": (package / "sealed-inventory.json").read_bytes(),
                 "carrier": carrier.read_bytes(),
@@ -200,9 +202,12 @@ class DebugPackagingTests(unittest.TestCase):
         listed = {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in sums}
         self.assertEqual(set(listed), {gate.SETUP_NAME, "metadata.json"})
         self.assertEqual(listed[gate.SETUP_NAME], sha(setup.read_bytes()))
-        # The container is built by the release assembly's NSIS arguments, with no signer.
+        # The container is built by the release assembly's NSIS arguments with the isolated
+        # fixture identity, with no signer.
         compile_call = next(c for c in runner.calls if any(a.startswith("/DOUTFILE=") for a in c))
         self.assertIn("/NOCD", compile_call)
+        self.assertIn("/DCHANNEL=fixture", compile_call)
+        self.assertNotIn("/DCHANNEL=production", compile_call)
         self.assertTrue(Path(compile_call[-1]).is_absolute())
         self.assertEqual(Path(compile_call[-1]), gate.NSIS_RECIPE)
         names = {Path(c[0]).stem for c in runner.calls}
@@ -251,6 +256,11 @@ class DebugPackagingTests(unittest.TestCase):
             done = case.run(runner)
             self.assertTrue(done.ok, done.detail)
             captured = runner.captured
+            self.assertEqual(
+                captured["dmg_root_entries"],
+                [gate.APP],
+                "the DMG root must contain the installer .app itself, not its contents",
+            )
             self.assertTrue(
                 captured["host_seal"],
                 "the inventoried payload host bundle must be ad-hoc signed in the shipped DMG",
@@ -396,6 +406,70 @@ class DebugPackagingTests(unittest.TestCase):
         for forbidden in ("boundary", "recipe_digest", "expected_commit"):
             self.assertNotIn(forbidden, parameters)
         self.assertNotIn("package-debug", gate.STAGES)
+
+
+class DebugIdentityIsolationTests(unittest.TestCase):
+    """The debug installer's Windows identity is isolated from production (OTP-25 PR path).
+
+    There is no makensis on this host: this pins the argument selection and the recipe's
+    per-channel identity (root directory, display name and Installed Apps key), and checks that
+    the generated uninstaller is compiled with the same channel. Native NSIS compilation/execution
+    remains NOT RUN.
+    """
+
+    def test_the_channel_define_is_explicit_for_both_production_and_fixture(self):
+        self.assertEqual(gate.windows_channel_defines("production"), ["/DCHANNEL=production"])
+        self.assertEqual(gate.windows_channel_defines("fixture"), ["/DCHANNEL=fixture"])
+        with self.assertRaises(gate.StageFailure):
+            gate.windows_channel_defines("development")
+
+    def test_production_defaults_are_unchanged_and_fixture_identity_is_distinct(self):
+        nsi = (gate.INSTALLER_DIR / "windows" / "installer.nsi").read_text(encoding="utf-8")
+        # No /DCHANNEL: the production identity is the default.
+        self.assertIn("!ifndef CHANNEL", nsi)
+        self.assertIn('!define ROOT_DIR_NAME "NativeBridge"', nsi)
+        self.assertIn(
+            '!define UNINSTALL_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge"',
+            nsi,
+        )
+        self.assertIn('!define DISPLAY_NAME "Veles Native Bridge"', nsi)
+        # The fixture branch selects a sibling root, a distinct display name and a distinct key.
+        self.assertIn('!if "${CHANNEL}" == "fixture"', nsi)
+        self.assertIn('!define ROOT_DIR_NAME "NativeBridgeFixture"', nsi)
+        self.assertIn(
+            '!define UNINSTALL_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridgeFixture"',
+            nsi,
+        )
+        self.assertIn('!define DISPLAY_NAME "Veles Native Bridge (Fixture DEBUG)"', nsi)
+        self.assertNotEqual(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridge",
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VelesNativeBridgeFixture",
+        )
+        self.assertNotEqual("NativeBridge", "NativeBridgeFixture")
+        self.assertNotEqual("Veles Native Bridge", "Veles Native Bridge (Fixture DEBUG)")
+
+    def test_installer_and_uninstaller_reference_only_the_selected_root(self):
+        nsi = (gate.INSTALLER_DIR / "windows" / "installer.nsi").read_text(encoding="utf-8")
+        # Both maintenance references are derived from the selected root, so the fixture
+        # uninstaller can never stage or execute the production maintenance engine.
+        self.assertIn(
+            "$LOCALAPPDATA\\Veles\\${ROOT_DIR_NAME}\\maintenance\\veles-bridge-maintenance.exe",
+            nsi,
+        )
+        self.assertIn(
+            "$LOCALAPPDATA\\Veles\\${ROOT_DIR_NAME}\\maintenance\\uninstall.exe",
+            nsi,
+        )
+        self.assertNotIn("$LOCALAPPDATA\\Veles\\NativeBridge\\maintenance", nsi)
+        self.assertIn('"DisplayName" "${DISPLAY_NAME}"', nsi)
+        self.assertIn('Name "${DISPLAY_NAME}"', nsi)
+
+    def test_the_generated_uninstaller_is_compiled_for_the_same_channel(self):
+        script = (gate.INSTALLER_DIR / "scripts" / "generate-uninstaller.ps1").read_text(encoding="utf-8")
+        self.assertIn("[ValidateSet('production', 'fixture')]", script)
+        self.assertIn('"/DCHANNEL=$Channel"', script)
+        gradle = (HERE.parents[2] / "build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn('"-Channel", channel', gradle)
 
 
 class DebugPackagingCommandLineTests(unittest.TestCase):

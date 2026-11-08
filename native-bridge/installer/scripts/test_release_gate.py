@@ -178,6 +178,8 @@ class FakeRunner:
         self.spctl_text = spctl_text or "accepted\nsource=Notarized Developer ID\n"
         self.calls: list[tuple] = []
         self.views: dict[str, dict] = {}
+        self.dmg_root: Path | None = None
+        self.dmg_root_entries: list[str] = []
 
     def identify(self, name: str) -> dict:
         return {"path": f"/fake/bin/{name}", "sha256": sha(name.encode())}
@@ -309,6 +311,8 @@ class FakeRunner:
             mountpoint = Path(args[args.index("-mountpoint") + 1])
             shutil.copytree(self.app_source, mountpoint / gate.APP, dirs_exist_ok=True, symlinks=True)
         elif args[0] == "create":
+            self.dmg_root = Path(args[args.index("-srcfolder") + 1])
+            self.dmg_root_entries = sorted(p.name for p in self.dmg_root.iterdir())
             Path(args[-1]).write_bytes(b"dmg-bytes")
         return RunResult(0, "")
 
@@ -1095,8 +1099,21 @@ class AssemblyTests(unittest.TestCase):
                 if platform == "windows":
                     cmd = next(c for c in runner.calls if "/DOUTFILE=" in " ".join(c))
                     self.assertTrue(any(a.startswith("/DUNINSTALLER_SIGNED=") for a in cmd))
+                    self.assertIn("/DCHANNEL=production", cmd)
                     self.assertTrue(cmd[-1].endswith("installer.nsi"))
                 self.assertFalse((tmp / "scratch").exists())
+
+    def test_the_release_dmg_contains_the_installer_app_at_the_volume_root(self) -> None:
+        case, outcome = self.nested_output("macos")
+        tmp = Path(tempfile.mkdtemp(prefix="gate-asm-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        env = ci_env("macos")
+        runner = FakeRunner(env)
+        self.assertTrue(gate.assemble(self.request(case, outcome, tmp), env, runner).ok)
+        self.assertIsNotNone(runner.dmg_root)
+        # The -srcfolder is the DMG ROOT that contains the .app, never the .app itself.
+        self.assertEqual(runner.dmg_root.name, "dmg-root")
+        self.assertEqual(runner.dmg_root_entries, [gate.APP])
 
     def test_assembly_refuses_credentials_wrong_inputs_and_wrong_tool_pin(self) -> None:
         case, outcome = self.nested_output("windows")

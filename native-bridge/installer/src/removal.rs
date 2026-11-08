@@ -197,7 +197,14 @@ pub fn cleanup_helper_digest(
 /// a retry can recognise the residue of a crash, and distinct per install root so
 /// independent installations never collide in the shared temporary directory.
 pub fn cleanup_staging_directory(paths: &InstallPaths, transaction: &str) -> PathBuf {
-    let root = paths.root().to_string_lossy();
+    cleanup_staging_directory_for_root(&paths.root().to_string_lossy(), transaction)
+}
+
+/// The same deterministic staging path, from the install root as a string.
+///
+/// The debug fixture helper binds its own image path to this exact directory; keep this the one
+/// implementation so the helper and the installer cannot drift apart.
+pub(crate) fn cleanup_staging_directory_for_root(root: &str, transaction: &str) -> PathBuf {
     let root_prefix = Digest::of(root.as_bytes()).to_hex();
     let suffix: String = transaction.chars().take(16).collect();
     std::env::temp_dir().join(format!("{STAGING_PREFIX}{}-{suffix}", &root_prefix[..8]))

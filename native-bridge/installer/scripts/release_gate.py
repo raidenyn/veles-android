@@ -1466,23 +1466,36 @@ def verify_unsigned_inputs(
 # ---------------------------------------------------------------------------
 
 
+def windows_channel_defines(channel: str) -> list[str]:
+    """The NSIS ``/D`` argument that selects the install identity for ``channel``.
+
+    The recipe defaults to production when no define is passed; the debug packager passes
+    ``fixture`` explicitly so the fixture installer and its generated uninstaller use the isolated
+    ``NativeBridgeFixture`` root, display name and Installed Apps key.
+    """
+    if channel not in ("production", "fixture"):
+        raise StageFailure("bad-request", f"unknown installer channel {channel!r}")
+    return [f"/DCHANNEL={channel}"]
+
+
 def build_windows_container(
-    *, output: Path, package: Path, uninstaller: Path, tool: str, stage: Stage
+    *, output: Path, package: Path, uninstaller: Path, tool: str, channel: str, stage: Stage
 ) -> Path:
     """Build ``setup.exe`` from a package directory with the pinned NSIS recipe.
 
-    No signing happens here: the release assembly passes the signed nested tree and the debug
-    packaging passes the unsigned fixture tree. The NSIS pin and command line are identical.
+    No signing happens here: the release assembly passes the production identity and the debug
+    packaging passes the fixture identity. The NSIS pin and command line are otherwise identical.
     """
     if not tool:
         raise StageFailure("tool-missing", "NSIS_PATH is not set")
+    defines = windows_channel_defines(channel)
     version = stage.run([tool, "/VERSION"], what="tool-pin-mismatch").output.strip()
     if version != "v3.08":
         raise StageFailure("tool-pin-mismatch", f"makensis reports {version!r}, not the pinned v3.08")
     number = _descriptor_version(package / "descriptor.json")
     produced = output / SETUP_NAME
     stage.run(
-        [tool, "/NOCD", f"/DVERSION={number}", f"/DINPUT_DIR={package}", f"/DOUTFILE={produced}",
+        [tool, "/NOCD", *defines, f"/DVERSION={number}", f"/DINPUT_DIR={package}", f"/DOUTFILE={produced}",
          f"/DUNINSTALLER_SIGNED={uninstaller}", NSIS_RECIPE],
         what="assemble-failed",
     )  # fmt: skip
@@ -1492,11 +1505,15 @@ def build_windows_container(
 
 
 def stage_macos_app(*, app: Path, staging: Path) -> Path:
-    """Copy the installer bundle into a fresh DMG root outside the input tree."""
+    """Copy the installer bundle into a fresh DMG root outside the input tree.
+
+    Returns the **enclosing** DMG root (the ``hdiutil -srcfolder`` argument), never the ``.app``
+    itself: the volume must contain the installer app at its root.
+    """
     staging.parent.mkdir(parents=True, exist_ok=True)
     staging.mkdir()
     _copy_tree(app, staging / APP)
-    return staging / APP
+    return staging
 
 
 def build_macos_disk_image(*, staging: Path, output: Path, stage: Stage) -> Path:
@@ -1645,6 +1662,7 @@ def assemble(request: SignRequest, env: dict[str, str], runner: Callable[..., Ru
                 package=request.output / WIN_PACKAGE,
                 uninstaller=request.output / UNINSTALLER,
                 tool=env.get("NSIS_PATH", ""),
+                channel="production",
                 stage=stage,
             )
         else:
@@ -1829,6 +1847,7 @@ def package_debug(
                 package=working_tree / WIN_PACKAGE,
                 uninstaller=working_tree / UNINSTALLER,
                 tool=nsis_path or env.get("NSIS_PATH", ""),
+                channel=FIXTURE_CHANNEL,
                 stage=stage,
             )
         else:

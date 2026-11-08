@@ -832,3 +832,108 @@ fn cleanup_helper_handoff_removes_the_image_only_after_an_authenticated_complete
     // `fixture` keeps the shared request fixture alive for the whole test.
     drop(fixture);
 }
+
+/// The compile-time debug fixture helper path (OTP-25 PR path).
+///
+/// These tests run the real cleanup engine over a real temporary tree with the portable
+/// `StdCleanupFs::debug_fixture` signature policy, which applies the same
+/// `debug_trust::fixture_helper_publisher` decision the native Windows/macOS adapters use. The
+/// native signature APIs themselves remain NOT RUN on this host.
+#[cfg(feature = "debug-fixture-trust")]
+mod debug_fixture_helper {
+    use super::*;
+    use veles_bridge_installer::platform::debug_trust::{
+        FIXTURE_PUBLISHER, fixture_cleanup_helper_path,
+    };
+
+    fn debug_root(temp: &TempRoot) -> PathBuf {
+        temp.path().join("Veles").join("NativeBridgeFixture")
+    }
+
+    fn build_debug_fixture(root: PathBuf) -> Fixture {
+        build_debug_fixture_with_helper_root(root.clone(), &root)
+    }
+
+    /// The helper image is always placed at the staging path of `helper_root`; a test can make
+    /// that differ from the install root the request names, which the policy must refuse.
+    fn build_debug_fixture_with_helper_root(root: PathBuf, helper_root: &Path) -> Fixture {
+        fs::create_dir_all(root.join("versions/1.0.0-debug")).expect("version dir");
+        fs::write(
+            root.join("versions/1.0.0-debug/host.exe"),
+            b"fixture-host-image",
+        )
+        .expect("host");
+        let transaction = encode_hex(&TRANSACTION);
+        let helper =
+            fixture_cleanup_helper_path(helper_root, &transaction).expect("fixture helper path");
+        fs::create_dir_all(helper.parent().expect("helper parent")).expect("helper dir");
+        fs::write(&helper, b"unsigned-fixture-helper").expect("helper");
+        let entries = vec![
+            entry("versions/1.0.0-debug/host.exe", b"fixture-host-image"),
+            CleanupEntry {
+                path: "versions/1.0.0-debug".to_owned(),
+                kind: OwnedKind::Directory,
+                size: 0,
+                sha256: None,
+            },
+            CleanupEntry {
+                path: "versions".to_owned(),
+                kind: OwnedKind::Directory,
+                size: 0,
+                sha256: None,
+            },
+        ];
+        Fixture {
+            root,
+            helper,
+            helper_sha256: Digest::of(b"unsigned-fixture-helper"),
+            entries,
+        }
+    }
+
+    fn run_debug_fixture(fixture: &Fixture) -> CleanupCompletion {
+        let mut request = request(fixture);
+        request.publisher = FIXTURE_PUBLISHER.to_owned();
+        let parent = request.parent;
+        let mut channel = ScriptedChannel::new(frame(&request), parent, ParentState::Exited);
+        let mut fs = StdCleanupFs::debug_fixture(fixture.helper.clone());
+        execute_cleanup(&mut channel, &mut fs, Duration::from_secs(2))
+    }
+
+    #[test]
+    fn the_unsigned_fixture_helper_completes_cleanup_at_the_fixture_staging_path() {
+        let temp = TempRoot::new("debug-fixture");
+        let fixture = build_debug_fixture(debug_root(&temp));
+        let done = run_debug_fixture(&fixture);
+        assert_eq!(done.status, CleanupStatus::Complete, "{:?}", done.reason);
+        assert!(!fixture.root.join("versions/1.0.0-debug/host.exe").exists());
+        assert!(!fixture.root.join("versions").exists());
+    }
+
+    #[test]
+    fn a_production_root_is_never_accepted_without_an_os_signature() {
+        let temp = TempRoot::new("debug-production");
+        let fixture = build_debug_fixture_with_helper_root(install_root(&temp), &debug_root(&temp));
+        let done = run_debug_fixture(&fixture);
+        assert_eq!(done.status, CleanupStatus::CleanupPending);
+        assert_eq!(done.reason, Some(CleanupReason::SelfMismatch));
+        // Nothing was removed: the production-shaped tree is untouched.
+        assert!(fixture.root.join("versions/1.0.0-debug/host.exe").exists());
+    }
+
+    #[test]
+    fn an_arbitrary_helper_path_with_the_fixture_publisher_is_still_refused() {
+        let temp = TempRoot::new("debug-arbitrary");
+        let root = debug_root(&temp);
+        let mut fixture = build_debug_fixture(root);
+        // A same-publisher helper outside the deterministic staging image is not this helper.
+        let arbitrary = temp.path().join("elsewhere").join("helper");
+        fs::create_dir_all(arbitrary.parent().expect("parent")).expect("dir");
+        fs::write(&arbitrary, b"unsigned-fixture-helper").expect("helper");
+        fixture.helper = arbitrary;
+        let done = run_debug_fixture(&fixture);
+        assert_eq!(done.status, CleanupStatus::CleanupPending);
+        assert_eq!(done.reason, Some(CleanupReason::SelfMismatch));
+        assert!(fixture.root.join("versions/1.0.0-debug/host.exe").exists());
+    }
+}

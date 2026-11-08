@@ -421,7 +421,17 @@ pub trait CleanupFileSystem {
     fn hash_file(&self, path: &Path, deadline: Instant) -> io::Result<Digest>;
     /// Verify one image's OS signature and return its publisher identity, bounded
     /// by `deadline`.
-    fn signature(&self, path: &Path, deadline: Instant) -> Result<String, CleanupFailure>;
+    ///
+    /// `root` and `transaction` are the install root and transaction the request names. A
+    /// compile-time debug fixture helper uses them to bind its own image to the deterministic
+    /// fixture staging path; the release path ignores them and requires the OS signature.
+    fn signature(
+        &self,
+        path: &Path,
+        root: &Path,
+        transaction: &str,
+        deadline: Instant,
+    ) -> Result<String, CleanupFailure>;
     /// Open the install root as an anchored traversal root.
     fn open_root(&mut self, root: &Path) -> Result<Box<dyn CleanupTree + '_>, CleanupFailure>;
 }
@@ -676,7 +686,10 @@ fn verify_self<F: CleanupFileSystem>(request: &CleanupRequest, fs: &F, deadline:
         Ok(digest) if digest == request.helper_sha256 => {}
         _ => return false,
     }
-    matches!(fs.signature(&own, deadline), Ok(publisher) if publisher == request.publisher)
+    matches!(
+        fs.signature(&own, Path::new(&request.root), &request.transaction, deadline),
+        Ok(publisher) if publisher == request.publisher
+    )
 }
 
 fn canonical(path: &Path) -> Result<PathBuf, CleanupFailure> {
@@ -1208,6 +1221,11 @@ pub enum SignaturePolicy {
     /// caller's fixture is asserted to be the helper. Never selected by a
     /// production binary (the native adapters use their own implementation).
     TrustedFixture,
+    /// The compile-time debug fixture policy: the unsigned helper is accepted only when its image
+    /// path is exactly the fixture staging path for this root and transaction. Compiled only with
+    /// `debug-fixture-trust`; never selected by a release binary.
+    #[cfg(feature = "debug-fixture-trust")]
+    FixtureDebug,
 }
 
 /// A portable [`CleanupFileSystem`] over `std`, used by the portable protocol
@@ -1242,6 +1260,17 @@ impl StdCleanupFs {
         }
     }
 
+    /// The compile-time debug fixture policy: the helper is accepted only at the exact fixture
+    /// staging image path (see `platform::debug_trust::fixture_helper_publisher`).
+    #[cfg(feature = "debug-fixture-trust")]
+    pub fn debug_fixture(own_path: PathBuf) -> Self {
+        Self {
+            own_path,
+            policy: SignaturePolicy::FixtureDebug,
+            publisher: String::new(),
+        }
+    }
+
     /// The closed signature policy this reference implementation applies.
     pub fn signature_policy(&self) -> SignaturePolicy {
         self.policy
@@ -1261,13 +1290,25 @@ impl CleanupFileSystem for StdCleanupFs {
             .map_err(|_| io::Error::other("file is not a readable, bounded regular file"))
     }
 
-    fn signature(&self, _path: &Path, deadline: Instant) -> Result<String, CleanupFailure> {
+    fn signature(
+        &self,
+        _path: &Path,
+        _root: &Path,
+        _transaction: &str,
+        deadline: Instant,
+    ) -> Result<String, CleanupFailure> {
         if Instant::now() >= deadline {
             return Err(CleanupFailure);
         }
         match self.policy {
             SignaturePolicy::TrustedFixture => Ok(self.publisher.clone()),
             SignaturePolicy::Unavailable => Err(CleanupFailure),
+            #[cfg(feature = "debug-fixture-trust")]
+            SignaturePolicy::FixtureDebug => {
+                crate::platform::debug_trust::fixture_helper_publisher(_path, _root, _transaction)
+                    .map(str::to_owned)
+                    .ok_or(CleanupFailure)
+            }
         }
     }
 

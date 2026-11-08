@@ -301,6 +301,52 @@ fn a_sealed_fixture_debug_package_authenticates_with_the_debug_proof() {
     assert_eq!(authenticated.payload()[0].sha256(), Digest::of(&signed));
 }
 
+/// The cleanup helper's compile-time fixture signature path is bound to the fixture root and the
+/// exact deterministic staging image for its transaction; nothing else is accepted.
+#[test]
+fn the_fixture_helper_path_is_bound_to_the_fixture_root_and_transaction() {
+    use veles_bridge_installer::platform::debug_trust::{
+        fixture_cleanup_helper_path, fixture_helper_publisher,
+    };
+
+    let temp = Temp::new("helper-path");
+    let root = temp.path().join("Veles").join("NativeBridgeFixture");
+    fs::create_dir_all(&root).expect("fixture root");
+    let transaction = "ab".repeat(32);
+    let helper = fixture_cleanup_helper_path(&root, &transaction).expect("bound helper path");
+    fs::create_dir_all(helper.parent().expect("stage parent")).expect("stage dir");
+    fs::write(&helper, b"unsigned-helper").expect("helper");
+    assert_eq!(
+        fixture_helper_publisher(&helper, &root, &transaction),
+        Some(FIXTURE_PUBLISHER)
+    );
+
+    // The production install root never selects the fixture path.
+    let production = temp.path().join("Veles").join("NativeBridge");
+    fs::create_dir_all(&production).expect("production root");
+    assert_eq!(
+        fixture_helper_publisher(&helper, &production, &transaction),
+        None
+    );
+
+    // A helper anywhere else is refused even with the fixture root and transaction.
+    let arbitrary = temp.path().join("elsewhere").join("helper");
+    fs::create_dir_all(arbitrary.parent().expect("parent")).expect("dir");
+    fs::write(&arbitrary, b"unsigned-helper").expect("helper");
+    assert_eq!(
+        fixture_helper_publisher(&arbitrary, &root, &transaction),
+        None
+    );
+
+    // A different transaction names a different staging directory.
+    let other = "cd".repeat(32);
+    assert_eq!(fixture_helper_publisher(&helper, &root, &other), None);
+
+    // A malformed transaction is never a fixture helper identity.
+    assert_eq!(fixture_cleanup_helper_path(&root, "ab"), None);
+    assert_eq!(fixture_cleanup_helper_path(&production, &transaction), None);
+}
+
 fn clean_command() -> Command {
     let mut command = Command::new(env!("CARGO"));
     command

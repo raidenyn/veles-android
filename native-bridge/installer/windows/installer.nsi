@@ -24,6 +24,9 @@
 ;                                  packaging (see below) and embedded verbatim
 ;   /DGENERATE_UNINSTALLER         packaging-time mode: the produced executable only
 ;                                  writes uninstall.exe next to itself and quits.
+;   /DCHANNEL=fixture              OPTIONAL: the isolated fixture identity (root dir, display
+;                                  name and Installed Apps key) used by the PR debug installer.
+;                                  Omitted means production; no other value is accepted.
 ;
 ; Signed uninstaller recipe (packaging time, never at end-user runtime):
 ;   1. makensis /DGENERATE_UNINSTALLER /DVERSION=... /DINPUT_DIR=... /DOUTFILE=gen.exe installer.nsi
@@ -59,6 +62,25 @@ CRCCheck on
   !endif
 !endif
 
+; Per-channel install identity (OTP-25 PR path). Release packaging passes no CHANNEL and gets the
+; production identity below; the debug packager passes /DCHANNEL=fixture so the fixture installer
+; AND its generated uninstaller use an isolated root, display name and Installed Apps key.
+!ifndef CHANNEL
+  !define CHANNEL "production"
+!endif
+!if "${CHANNEL}" == "fixture"
+  !define ROOT_DIR_NAME "NativeBridgeFixture"
+  !define DISPLAY_NAME "Veles Native Bridge (Fixture DEBUG)"
+  !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VelesNativeBridgeFixture"
+!else
+  !if "${CHANNEL}" != "production"
+    !error "CHANNEL must be production or fixture"
+  !endif
+  !define ROOT_DIR_NAME "NativeBridge"
+  !define DISPLAY_NAME "Veles Native Bridge"
+  !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VelesNativeBridge"
+!endif
+
 !include MUI2.nsh
 !include LogicLib.nsh
 !include nsDialogs.nsh
@@ -67,9 +89,9 @@ CRCCheck on
 !insertmacro GetParameters
 !insertmacro GetOptions
 
-Name "Veles Native Bridge"
+Name "${DISPLAY_NAME}"
 OutFile "${OUTFILE}"
-BrandingText "Veles Native Bridge ${VERSION}"
+BrandingText "${DISPLAY_NAME} ${VERSION}"
 
 ; Private staging only. The engine verifies this package (signature, descriptor,
 ; inventory) before trusting any byte; nothing here is a caller-selected path.
@@ -78,14 +100,14 @@ BrandingText "Veles Native Bridge ${VERSION}"
 
 ; The fixed per-user root is owned by the engine; these two paths are read-only
 ; references to its maintenance assets (Task 13 seam, see the header).
-!define MAINTENANCE_ENGINE_EXE "$LOCALAPPDATA\Veles\NativeBridge\maintenance\veles-bridge-maintenance.exe"
-!define UNINSTALL_EXE "$LOCALAPPDATA\Veles\NativeBridge\maintenance\uninstall.exe"
+!define MAINTENANCE_ENGINE_EXE "$LOCALAPPDATA\Veles\${ROOT_DIR_NAME}\maintenance\veles-bridge-maintenance.exe"
+!define UNINSTALL_EXE "$LOCALAPPDATA\Veles\${ROOT_DIR_NAME}\maintenance\uninstall.exe"
 ; The uninstaller runs a copy of the maintenance engine here, outside the
 ; removable root, so the installed image is not a running mapped file.
 !define STAGED_ENGINE_EXE "$PLUGINSDIR\veles-bridge-maintenance.exe"
 
 ; HKCU only: discoverable in Installed Apps without any machine-scope write.
-!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VelesNativeBridge"
+; UNINSTALL_KEY is the per-channel identity selected above.
 
 Var /GLOBAL Operation
 Var /GLOBAL Dialog
@@ -529,7 +551,7 @@ FunctionEnd
 ; when the signed maintenance entry really exists under the fixed root.
 Function PublishUninstallEntry
   IfFileExists "${UNINSTALL_EXE}" 0 EntryUnavailable
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "Veles Native Bridge"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${DISPLAY_NAME}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "Veles"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"${UNINSTALL_EXE}"'
