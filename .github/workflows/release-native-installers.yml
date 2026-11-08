@@ -62,6 +62,11 @@ on:
         description: Run id of the independent unsigned producer build B
         required: true
         type: string
+      windows_only:
+        description: TEMPORARY validation mode - verify and sign Windows only (revert after validation)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -82,6 +87,7 @@ jobs:
       RUN_B: ${{ inputs.unsigned_run_b }}
       DIGEST_WINDOWS: ${{ inputs.descriptor_sha256_windows }}
       DIGEST_MACOS: ${{ inputs.descriptor_sha256_macos }}
+      WINDOWS_ONLY: ${{ inputs.windows_only }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -101,15 +107,24 @@ jobs:
           test "$RUN_A" != "$RUN_B"
       - name: Require trusted unsigned producer runs
         # TEMPORARY (owner validation 2026-11-08): PR-triggered producer runs are accepted
-        # so the signing path can be exercised end to end from the pull request. Revert the
-        # pull_request branch to `push or workflow_dispatch` once validation is complete.
+        # so the signing path can be exercised end to end from the pull request. In
+        # windows_only mode the native-windows job must succeed, not the whole run (the
+        # macOS producer is blocked on its own A/B reproducibility defect). Revert this
+        # step to `push or workflow_dispatch` and the whole-run success check afterwards.
         run: |
           set -euo pipefail
           for run in "$RUN_A" "$RUN_B"; do
-            gh run view "$run" --repo "$GITHUB_REPOSITORY" --json headSha,event,conclusion,workflowName > "$RUNNER_TEMP/run-$run.json"
-            jq -e --arg sha "$COMMIT" '
-              .headSha == $sha and .conclusion == "success" and .workflowName == "release-build"
-              and (.event == "push" or .event == "workflow_dispatch" or .event == "pull_request")' "$RUNNER_TEMP/run-$run.json" > /dev/null
+            gh run view "$run" --repo "$GITHUB_REPOSITORY" --json headSha,event,conclusion,workflowName,jobs > "$RUNNER_TEMP/run-$run.json"
+            if [ "$WINDOWS_ONLY" = "true" ]; then
+              jq -e --arg sha "$COMMIT" '
+                .headSha == $sha and .workflowName == "release-build"
+                and (.event == "push" or .event == "workflow_dispatch" or .event == "pull_request")
+                and ([.jobs[] | select(.name == "native-windows / build") | .conclusion] | any(. == "success"))' "$RUNNER_TEMP/run-$run.json" > /dev/null
+            else
+              jq -e --arg sha "$COMMIT" '
+                .headSha == $sha and .conclusion == "success" and .workflowName == "release-build"
+                and (.event == "push" or .event == "workflow_dispatch" or .event == "pull_request")' "$RUNNER_TEMP/run-$run.json" > /dev/null
+            fi
           done
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -124,12 +139,14 @@ jobs:
           run-id: ${{ inputs.unsigned_run_b }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ !inputs.windows_only }}
         with:
           name: native-unsigned-macos
           path: ${{ runner.temp }}/a/macos
           run-id: ${{ inputs.unsigned_run_a }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ !inputs.windows_only }}
         with:
           name: native-unsigned-macos
           path: ${{ runner.temp }}/b/macos
@@ -139,7 +156,8 @@ jobs:
         run: |
           set -euo pipefail
           gate=native-bridge/installer/scripts/release_gate.py
-          for os in windows macos; do
+          if [ "$WINDOWS_ONLY" = "true" ]; then oses="windows"; else oses="windows macos"; fi
+          for os in $oses; do
             if [ "$os" = windows ]; then
               pkg="package"; digest="$DIGEST_WINDOWS"
             else
@@ -402,6 +420,7 @@ jobs:
           retention-days: 7
 
   sign-macos-nested:
+    if: ${{ !inputs.windows_only }}
     needs: [verify-inputs]
     runs-on: macos-26
     environment: native-release
@@ -479,6 +498,7 @@ jobs:
           retention-days: 7
 
   assemble-macos:
+    if: ${{ !inputs.windows_only }}
     needs: [sign-macos-nested]
     runs-on: macos-26
     permissions:
@@ -528,6 +548,7 @@ jobs:
           retention-days: 7
 
   sign-macos-outer:
+    if: ${{ !inputs.windows_only }}
     needs: [assemble-macos]
     runs-on: macos-26
     environment: native-release

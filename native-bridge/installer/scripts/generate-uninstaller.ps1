@@ -52,8 +52,10 @@ try {
     New-Item -ItemType Directory -Path $inputs | Out-Null
     & $Makensis /V2 "/NOCD" "/DGENERATE_UNINSTALLER" "/DVERSION=$Version" "/DINPUT_DIR=$inputs" "/DOUTFILE=$generator" $script
     if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
-    & $generator
-    if ($LASTEXITCODE -ne 0) { throw "the uninstaller generator failed with exit code $LASTEXITCODE" }
+    # The generator is a GUI-subsystem executable: `&` can return before it exits,
+    # leaving generator.exe mapped and undeletable. Wait for the process explicitly.
+    $process = Start-Process -FilePath $generator -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "the uninstaller generator failed with exit code $($process.ExitCode)" }
     $generated = Join-Path $work 'uninstall.exe'
     if (-not (Test-Path -LiteralPath $generated -PathType Leaf) -or (Get-Item -LiteralPath $generated).Length -eq 0) {
         throw 'the generator did not write uninstall.exe'
@@ -61,5 +63,18 @@ try {
     Copy-Item -LiteralPath $generated -Destination $Output
 }
 finally {
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop
+    # A just-exited Windows image can remain mapped for a moment (and antivirus may
+    # still be scanning it). Retry a bounded number of times instead of failing the task.
+    if (Test-Path -LiteralPath $work) {
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            try {
+                Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop
+                break
+            }
+            catch {
+                if ($attempt -eq 9) { throw }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+    }
 }
