@@ -21,6 +21,9 @@ name: release-native-installers
 # - Provenance and payload hashes are verified BEFORE any key is touched, in a job that holds no
 #   credential. That job also requires the independent unsigned builds A and B to be equal; every later
 #   job consumes the chosen A build WITHOUT rebuilding it. No job in this file compiles source.
+# - windows_only is the Windows completion-scope mode: the macOS jobs are skipped and the
+#   producer check requires only the native-windows job. It can produce a signed Windows
+#   candidate, but the two-target gate still records BLOCKED because macOS is not signed.
 # - Job graph: verify-inputs -> sign-<os>-nested -> assemble-<os> -> sign-<os>-outer -> gate.
 #   The assemble jobs run pinned makensis / hdiutil over already-signed files and hold NO credential.
 #
@@ -63,7 +66,7 @@ on:
         required: true
         type: string
       windows_only:
-        description: TEMPORARY validation mode - verify and sign Windows only (revert after validation)
+        description: Windows completion scope - verify and sign Windows only; the two-target gate stays BLOCKED
         required: false
         type: boolean
         default: false
@@ -106,25 +109,19 @@ jobs:
           printf '%s' "$RUN_B" | grep -Eq '^[0-9]+$'
           test "$RUN_A" != "$RUN_B"
       - name: Require trusted unsigned producer runs
-        # TEMPORARY (owner validation 2026-11-08): PR-triggered producer runs are accepted
-        # so the signing path can be exercised end to end from the pull request. In
-        # windows_only mode the native-windows job must succeed, not the whole run (the
-        # macOS producer is blocked on its own A/B reproducibility defect). Revert this
-        # step to `push or workflow_dispatch` and the whole-run success check afterwards.
+        # Windows-only completion scope: the native-windows job must succeed even when the
+        # macOS producer fails, because macOS is out of this project's completion scope.
+        # Producer runs must still come from master push or dispatch, never a pull request.
         run: |
           set -euo pipefail
           for run in "$RUN_A" "$RUN_B"; do
             gh run view "$run" --repo "$GITHUB_REPOSITORY" --json headSha,event,conclusion,workflowName,jobs > "$RUNNER_TEMP/run-$run.json"
-            if [ "$WINDOWS_ONLY" = "true" ]; then
-              jq -e --arg sha "$COMMIT" '
-                .headSha == $sha and .workflowName == "release-build"
-                and (.event == "push" or .event == "workflow_dispatch" or .event == "pull_request")
-                and ([.jobs[] | select(.name == "native-windows / build") | .conclusion] | any(. == "success"))' "$RUNNER_TEMP/run-$run.json" > /dev/null
-            else
-              jq -e --arg sha "$COMMIT" '
-                .headSha == $sha and .conclusion == "success" and .workflowName == "release-build"
-                and (.event == "push" or .event == "workflow_dispatch" or .event == "pull_request")' "$RUNNER_TEMP/run-$run.json" > /dev/null
-            fi
+            jq -e --arg sha "$COMMIT" --arg windows "$WINDOWS_ONLY" '
+              .headSha == $sha and .workflowName == "release-build"
+              and (.event == "push" or .event == "workflow_dispatch")
+              and (if $windows == "true"
+                   then ([.jobs[] | select(.name == "native-windows / build") | .conclusion] | any(. == "success"))
+                   else .conclusion == "success" end)' "$RUNNER_TEMP/run-$run.json" > /dev/null
           done
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
