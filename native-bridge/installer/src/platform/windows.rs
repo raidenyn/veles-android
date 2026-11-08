@@ -1960,8 +1960,23 @@ impl CleanupRoot {
             Err(_) => return RemoveOutcome::Preserved,
         }
         match delete_opened(&file) {
-            Ok(()) => RemoveOutcome::Removed,
-            Err(_) => RemoveOutcome::Preserved,
+            Ok(()) => {}
+            Err(_) => return RemoveOutcome::Preserved,
+        }
+        drop(file);
+        // Windows completes a delete-on-close when the last handle closes. A scanner
+        // can briefly hold the name, so never claim `Removed` before the anchored
+        // lookup reports the entry absent; a lingering entry is `Deferred`.
+        loop {
+            match self.open_entry(relative) {
+                Ok(None) => return RemoveOutcome::Removed,
+                Ok(Some(other)) => drop(other),
+                Err(_) => {}
+            }
+            if Instant::now() >= deadline {
+                return RemoveOutcome::Deferred;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 
