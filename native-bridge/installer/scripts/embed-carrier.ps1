@@ -45,6 +45,18 @@ public static class VelesResource {
     public static extern bool UpdateResourceW(IntPtr update, IntPtr type, string name, ushort language, byte[] data, uint size);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern bool EndUpdateResourceW(IntPtr update, bool discard);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr LoadLibraryExW(string fileName, IntPtr file, uint flags);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindResourceW(IntPtr module, string name, IntPtr type);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint SizeofResource(IntPtr module, IntPtr resource);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr LoadResource(IntPtr module, IntPtr resource);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr LockResource(IntPtr data);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool FreeLibrary(IntPtr module);
 }
 '@
 
@@ -67,19 +79,25 @@ if (-not [VelesResource]::EndUpdateResourceW($handle, $false)) {
 # carrier DOCUMENT is recognised by magic plus the fixed version/flags/header-length/offset words
 # (version 1, flags 1, header length 32, descriptor offset 32). Exactly one such document must exist
 # and it must equal the one embedded.
-$image = [IO.File]::ReadAllBytes($Image)
-$prefix = [byte[]]$carrierBytes[0..23]  # magic + version + flags + header length + descriptor offset
-$found = New-Object System.Collections.Generic.List[int]
-for ($i = 0; $i -le $image.Length - $prefix.Length; $i++) {
-    if ($image[$i] -ne $prefix[0]) { continue }
-    $match = $true
-    for ($j = 1; $j -lt $prefix.Length; $j++) {
-        if ($image[$i + $j] -ne $prefix[$j]) { $match = $false; break }
-    }
-    if ($match) { $found.Add($i) }
+# Read the resource back through the PE resource table. Scanning the file for the
+# magic is a heuristic (the engine also carries the magic as a code constant); the
+# named resource is the authoritative object.
+$module = [VelesResource]::LoadLibraryExW($Image, [IntPtr]::Zero, 0x2)  # LOAD_LIBRARY_AS_DATAFILE
+if ($module -eq [IntPtr]::Zero) { throw "LoadLibraryExW failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+try {
+    $resource = [VelesResource]::FindResourceW($module, 'VELES_POLICY_CARRIER', [IntPtr]10)
+    if ($resource -eq [IntPtr]::Zero) { throw "the VELES_POLICY_CARRIER resource is missing from $Image" }
+    $size = [VelesResource]::SizeofResource($module, $resource)
+    if ($size -ne $carrierBytes.Length) { throw "the embedded resource has $size bytes, expected $($carrierBytes.Length)" }
+    $data = [VelesResource]::LoadResource($module, $resource)
+    if ($data -eq [IntPtr]::Zero) { throw "LoadResource failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+    $pointer = [VelesResource]::LockResource($data)
+    if ($pointer -eq [IntPtr]::Zero) { throw "LockResource failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+    $embedded = New-Object byte[] $size
+    [Runtime.InteropServices.Marshal]::Copy($pointer, $embedded, 0, [int]$size)
+} finally {
+    [void][VelesResource]::FreeLibrary($module)
 }
-if ($found.Count -ne 1) { throw "expected exactly one embedded carrier document, found $($found.Count)" }
-$start = $found[0]
 for ($i = 0; $i -lt $carrierBytes.Length; $i++) {
-    if ($image[$start + $i] -ne $carrierBytes[$i]) { throw 'the embedded carrier differs from the requested document' }
+    if ($embedded[$i] -ne $carrierBytes[$i]) { throw "the embedded carrier differs from the requested document at byte $i" }
 }
