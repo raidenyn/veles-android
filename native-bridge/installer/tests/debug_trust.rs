@@ -349,6 +349,31 @@ fn the_fixture_helper_path_is_bound_to_the_fixture_root_and_transaction() {
     // A malformed transaction is never a fixture helper identity.
     assert_eq!(fixture_cleanup_helper_path(&root, "ab"), None);
     assert_eq!(fixture_cleanup_helper_path(&production, &transaction), None);
+
+    // A full-length transaction with a non-hex character is still not a transaction id, and the
+    // helper path for that transaction is refused.
+    let non_hex = format!("{}zz", "ab".repeat(31));
+    assert_eq!(non_hex.len(), 64);
+    assert_eq!(fixture_cleanup_helper_path(&root, &non_hex), None);
+    assert_eq!(fixture_helper_publisher(&helper, &root, &non_hex), None);
+    assert_eq!(
+        fixture_helper_publisher(&helper, &root, &format!("{}cd", "ab".repeat(31))),
+        Some(FIXTURE_PUBLISHER),
+        "a different valid transaction only changes the staging directory"
+    );
+
+    // The fixture root must sit directly below a directory named `Veles`, not merely end in
+    // `NativeBridgeFixture`.
+    let elsewhere_parent = temp.path().join("Other").join("NativeBridgeFixture");
+    fs::create_dir_all(&elsewhere_parent).expect("wrong-parent fixture root");
+    assert_eq!(
+        fixture_cleanup_helper_path(&elsewhere_parent, &transaction),
+        None
+    );
+    assert_eq!(
+        fixture_helper_publisher(&helper, &elsewhere_parent, &transaction),
+        None
+    );
 }
 
 /// The debug fixture adapter as the native Windows/macOS adapters implement it: the carrier bytes
