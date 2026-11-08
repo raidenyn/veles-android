@@ -383,8 +383,9 @@ def credential_format_errors(platform: str, env: dict[str, str]) -> list[str]:
     if platform == "windows":
         if not THUMBPRINT_RE.match(env.get("VELES_WIN_CERT_SHA1", "")):
             problems.append("VELES_WIN_CERT_SHA1 is not a 40-hex thumbprint")
-        if not env.get("VELES_WIN_TIMESTAMP_URL", "").startswith("https://"):
-            problems.append("VELES_WIN_TIMESTAMP_URL is not an https URL")
+        timestamp_url = env.get("VELES_WIN_TIMESTAMP_URL", "")
+        if not (timestamp_url.startswith("https://") or timestamp_url.startswith("http://")):
+            problems.append("VELES_WIN_TIMESTAMP_URL is not an http(s) URL")
         mode = env.get("VELES_WIN_TRUST_SELF_SIGNED", "")
         if mode not in ("", "1"):
             problems.append("VELES_WIN_TRUST_SELF_SIGNED must be empty or 1")

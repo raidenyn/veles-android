@@ -493,7 +493,7 @@ class CredentialAndAuthorizationTests(unittest.TestCase):
     def test_malformed_credentials_are_refused_before_any_tool_starts(self) -> None:
         for platform, stage, key, value in (
             ("windows", "nested", "VELES_WIN_CERT_SHA1", "not-a-thumbprint"),
-            ("windows", "nested", "VELES_WIN_TIMESTAMP_URL", "http://insecure.example.invalid/"),
+            ("windows", "nested", "VELES_WIN_TIMESTAMP_URL", "ftp://insecure.example.invalid/"),
             ("macos", "nested", "VELES_MAC_IDENTITY", "Apple Development: someone"),
         ):
             with self.subTest(key=key):
