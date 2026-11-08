@@ -52,6 +52,9 @@ from release_gate import EnvRef, RunResult  # noqa: E402
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 OTHER_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
+OWNER = "raidenyn"
+RUN_ID = "1234567890"
+MASTER_REF = "refs/heads/master"
 # The Windows leaf certificate is identified exactly as the engine's trust layer identifies it:
 # sha256:<SHA-256 of the leaf certificate DER>. The display name is NOT an authorization identifier.
 FAKE_DER = b"0\x82fixture leaf certificate DER"
@@ -63,6 +66,7 @@ MAC_IDENTITY = f"Developer ID Application: Veles Test ({TEAM})"
 SECRET_VALUES = ("hunter2-pfx-password", "p12-secret-password", "notary-key-secret-bytes")
 WORKFLOW = REPO / ".github" / "workflows" / "release-native-installers.yml"
 TARGET = {"windows": "windows-x86_64", "macos": "macos-arm64"}
+PLATFORM_OTHER = {"windows": "macos", "macos": "windows"}
 PACKAGE = {"windows": gate.WIN_PACKAGE, "macos": gate.MAC_PACKAGE}
 APP = gate.APP
 HOST_APP = gate.HOST_APP
@@ -120,11 +124,13 @@ def good_env(platform: str, descriptor: bytes | None = None) -> dict[str, str]:
     digest = sha(descriptor if descriptor is not None else descriptor_bytes(platform))
     env = {
         "GITHUB_EVENT_NAME": "workflow_dispatch",
-        "GITHUB_REF": "refs/tags/1.2.3",
+        "GITHUB_REF": MASTER_REF,
         "GITHUB_SHA": COMMIT,
+        "GITHUB_ACTOR": OWNER,
+        "GITHUB_TRIGGERING_ACTOR": OWNER,
+        "GITHUB_RUN_ID": RUN_ID,
         "VELES_SIGNING_ENVIRONMENT": "native-release",
         "VELES_DESCRIPTOR_SHA256": digest,
-        "VELES_APPROVED_DESCRIPTOR_SHA256": digest,
     }
     if platform == "windows":
         env.update(
@@ -497,7 +503,7 @@ class CredentialAndAuthorizationTests(unittest.TestCase):
                 self.assertEqual((outcome.ok, outcome.code, runner.calls), (False, "credential-invalid", []))
                 self.assertEqual(leftovers(case), [])
 
-    def test_pr_and_unapproved_descriptor_cannot_sign(self) -> None:
+    def test_owner_master_dispatch_is_the_only_authorization(self) -> None:
         bad_environments = {
             "pull_request": {"GITHUB_EVENT_NAME": "pull_request"},
             "pull_request_target": {"GITHUB_EVENT_NAME": "pull_request_target"},
@@ -505,21 +511,20 @@ class CredentialAndAuthorizationTests(unittest.TestCase):
             "schedule": {"GITHUB_EVENT_NAME": "schedule"},
             "workflow_run": {"GITHUB_EVENT_NAME": "workflow_run"},
             "dispatch carrying a PR head ref": {"GITHUB_HEAD_REF": "feature"},
-            "dispatch carrying a PR base ref": {"GITHUB_BASE_REF": "main"},
+            "dispatch carrying a PR base ref": {"GITHUB_BASE_REF": "master"},
             "branch ref": {"GITHUB_REF": "refs/heads/main"},
+            "feature branch": {"GITHUB_REF": "refs/heads/feature"},
+            "tag ref": {"GITHUB_REF": "refs/tags/1.2.3"},
             "pr merge ref": {"GITHUB_REF": "refs/pull/7/merge"},
-            "mutable tag shape": {"GITHUB_REF": "refs/tags/latest"},
-            "leading-zero tag": {"GITHUB_REF": "refs/tags/01.2.3"},
-            "version-shaped ref without refs/tags": {"GITHUB_REF": "refs/1.2.3"},
-            "version-shaped branch": {"GITHUB_REF": "refs/heads/1.2.3"},
-            "prefixed tag": {"GITHUB_REF": "refs/tags/v1.2.3"},
             "other commit": {"GITHUB_SHA": OTHER_COMMIT},
+            "wrong initial actor": {"GITHUB_ACTOR": "someone-else"},
+            "initial actor missing": {"GITHUB_ACTOR": ""},
+            "wrong rerun actor": {"GITHUB_TRIGGERING_ACTOR": "someone-else"},
+            "triggering actor missing": {"GITHUB_TRIGGERING_ACTOR": ""},
             "no protected environment": {"VELES_SIGNING_ENVIRONMENT": ""},
             "wrong environment": {"VELES_SIGNING_ENVIRONMENT": "production"},
             "claimed digest is not the file's": {"VELES_DESCRIPTOR_SHA256": "9" * 64},
-            "approval missing": {"VELES_APPROVED_DESCRIPTOR_SHA256": ""},
-            "approval malformed": {"VELES_APPROVED_DESCRIPTOR_SHA256": "not-a-digest"},
-            "approval is another descriptor": {"VELES_APPROVED_DESCRIPTOR_SHA256": "9" * 64},
+            "claimed digest missing": {"VELES_DESCRIPTOR_SHA256": ""},
         }
         for platform, stage in FLOWS:
             for name, override in bad_environments.items():
@@ -538,10 +543,26 @@ class CredentialAndAuthorizationTests(unittest.TestCase):
         self.assertEqual((outcome.ok, outcome.code, runner.calls), (False, "not-authorized", []))
         # The authorized baseline really is authorized, so every failure above is attributable to its override.
         self.assertEqual(gate.authorize(good_env("windows"), sha(descriptor_bytes("windows")), COMMIT), [])
-        # Credential-free jobs need the trusted context but not the protected environment or the approval.
+        # Credential-free jobs need the trusted context but not the protected environment.
         self.assertEqual(gate.authorize(ci_env("windows"), sha(descriptor_bytes("windows")), COMMIT, credentialed=False), [])
         self.assertTrue(gate.authorize({**ci_env("windows"), "GITHUB_EVENT_NAME": "pull_request"}, sha(descriptor_bytes("windows")), COMMIT, credentialed=False))
+        self.assertTrue(gate.authorize({**ci_env("windows"), "GITHUB_ACTOR": "someone-else"}, sha(descriptor_bytes("windows")), COMMIT, credentialed=False))
         self.assertTrue(gate.authorize(ci_env("windows"), sha(descriptor_bytes("windows")), COMMIT))
+
+    def test_the_old_approved_digest_variable_no_longer_participates(self) -> None:
+        # The manual approval variable is gone. Absent, empty, malformed or contrary values change nothing.
+        baseline = gate.authorize(good_env("windows"), sha(descriptor_bytes("windows")), COMMIT)
+        self.assertEqual(baseline, [])
+        for value in ("", "not-a-digest", "9" * 64, sha(descriptor_bytes("windows"))):
+            with self.subTest(value=value):
+                env = {**good_env("windows"), "VELES_APPROVED_DESCRIPTOR_SHA256": value}
+                self.assertEqual(gate.authorize(env, sha(descriptor_bytes("windows")), COMMIT), [])
+                case = Case(self, "windows", "nested", VELES_APPROVED_DESCRIPTOR_SHA256=value)
+                runner, outcome = case.run()
+                self.assertTrue(outcome.ok, outcome.detail)
+        self.assertNotIn("VELES_APPROVED_DESCRIPTOR_SHA256", gate.RELEASE_ONLY_ENV)
+        self.assertNotIn("VELES_APPROVED_DESCRIPTOR_SHA256", gate.ALL_CREDENTIAL_NAMES)
+        self.assertFalse(hasattr(gate, "TAG_REF"), "tag authorization is gone")
 
     def test_publisher_must_be_in_the_approved_descriptor_policy(self) -> None:
         # The installer's trust layer denies a valid signature by a publisher the descriptor does not list.
@@ -625,7 +646,7 @@ class CredentialAndAuthorizationTests(unittest.TestCase):
         other = descriptor_bytes("windows", publishers=[WIN_PUBLISHER, "Another"])
         approved_file = case.root / "approved-descriptor.json"
         approved_file.write_bytes(other)
-        case.env.update(VELES_DESCRIPTOR_SHA256=sha(other), VELES_APPROVED_DESCRIPTOR_SHA256=sha(other))
+        case.env.update(VELES_DESCRIPTOR_SHA256=sha(other))
         case.boundary["descriptor_digest"] = sha(other)
         runner, outcome = case.run(descriptor_path=approved_file)
         self.assertEqual((outcome.ok, outcome.code, runner.calls), (False, "input-mismatch", []))
@@ -1325,13 +1346,14 @@ class VerifyInputsTests(unittest.TestCase):
 
     def verify(self, root, pipeline, **changes):
         values = dict(
-            platform=pipeline.platform, a=pipeline.a, b=pipeline.b, provenance=pipeline.provenance, descriptor_path=pipeline.descriptor,
-            env=ci_env(pipeline.platform), expected_commit=COMMIT, recipe=pipeline.recipe, output=root / "verified", reports=root / "rep",
+            platform=pipeline.platform, tree=pipeline.a, provenance=pipeline.provenance, ab_report=pipeline.ab_report,
+            descriptor_path=pipeline.descriptor, env=ci_env(pipeline.platform), expected_commit=COMMIT,
+            recipe=pipeline.recipe, output=root / "verified", reports=root / "rep",
         )  # fmt: skip
         values.update(changes)
         return gate.verify_unsigned_inputs(**values)
 
-    def test_equal_builds_with_matching_provenance_pass_and_pin_build_a_unchanged(self) -> None:
+    def test_same_run_build_with_matching_provenance_passes_and_pins_build_a_unchanged(self) -> None:
         for platform in ("windows", "macos"):
             with self.subTest(platform=platform):
                 root, pipeline = self.setup(platform)
@@ -1339,27 +1361,52 @@ class VerifyInputsTests(unittest.TestCase):
                 self.assertTrue(done.ok, done.detail)
                 self.assertEqual(done.fragment["boundary"]["stage"], "verify-inputs")
                 self.assertIs(done.fragment["boundary"]["credentials"], False)
+                self.assertEqual(done.fragment["a_inventory_sha256"], done.fragment["b_inventory_sha256"], "the producer built A and B to the same bytes")
                 self.assertEqual(gate.inventory_digest(root / "verified"), gate.inventory_digest(pipeline.a), "build A is carried over byte for byte")
                 ab = json.loads((root / "rep" / f"ab-{TARGET[platform]}.json").read_text())
                 self.assertEqual((ab["verdict"], ab["differences"]), ("PASS", []))
 
     def test_unequal_builds_provenance_mismatch_credentials_and_untrusted_context_refuse(self) -> None:
+        # The same-run producer compares its two internal slots. A claimed difference fails here.
         root, pipeline = self.setup()
-        (pipeline.b / "package/payload/veles-native-host.exe").write_bytes(b"MZ-different")
+        record = json.loads(pipeline.provenance.read_text())
+        record["b_inventory_sha256"] = "9" * 64
+        pipeline.provenance.write_bytes(gate.canonical_json(record))
+        report = json.loads(pipeline.ab_report.read_text())
+        report["input_hashes"]["second"] = "9" * 64
+        pipeline.ab_report.write_bytes(gate.canonical_json(report))
         done = self.verify(root, pipeline)
         self.assertEqual((done.ok, done.code), (False, "ab-mismatch"))
         self.assertFalse((root / "verified").exists(), "an unequal pair produces no signable input")
-        # The comparator's FAIL report is kept as evidence.
-        self.assertEqual(json.loads((root / "rep" / "ab-windows-x86_64.json").read_text())["verdict"], "FAIL")
-        # B has a different inventory, so an inventory-only difference (a mode change) is also refused.
+        # A producer report that is not a PASS over the claimed inventories is refused and kept as evidence.
         root, pipeline = self.setup()
-        (pipeline.b / "package/payload/veles-native-host.exe").chmod(0o644)
+        report = json.loads(pipeline.ab_report.read_text())
+        report.update(verdict="FAIL", differences=[{"code": "payload-changed"}])
+        pipeline.ab_report.write_bytes(gate.canonical_json(report))
+        self.assertEqual(self.verify(root, pipeline).code, "ab-mismatch")
+        self.assertFalse((root / "verified").exists())
+        for name, mutate in (
+            ("report names other inventories", lambda r: r["input_hashes"].update(first="9" * 64)),
+            ("report has an extra field", lambda r: r.update(waiver=True)),
+            ("report is another schema", lambda r: r.update(schema=2)),
+        ):
+            with self.subTest(name):
+                root, pipeline = self.setup()
+                report = json.loads(pipeline.ab_report.read_text())
+                mutate(report)
+                pipeline.ab_report.write_bytes(gate.canonical_json(report))
+                self.assertEqual(self.verify(root, pipeline).code, "ab-mismatch")
+                self.assertFalse((root / "verified").exists())
+        root, pipeline = self.setup()
+        pipeline.ab_report.unlink()
         self.assertEqual(self.verify(root, pipeline).code, "ab-mismatch")
         for name, change in (
             ("credentials present", dict(env=ci_env("windows") | {"VELES_WIN_PFX_PASSWORD": "x"})),
             ("pull request", dict(env=ci_env("windows") | {"GITHUB_EVENT_NAME": "pull_request"})),
+            ("tag ref", dict(env=ci_env("windows") | {"GITHUB_REF": "refs/tags/1.2.3"})),
             ("branch ref", dict(env=ci_env("windows") | {"GITHUB_REF": "refs/heads/main"})),
             ("other commit", dict(expected_commit=OTHER_COMMIT)),
+            ("wrong actor", dict(env=ci_env("windows") | {"GITHUB_ACTOR": "someone-else"})),
             ("unapproved descriptor", dict(env=ci_env("windows") | {"VELES_DESCRIPTOR_SHA256": "9" * 64})),
         ):
             with self.subTest(name):
@@ -1373,6 +1420,7 @@ class VerifyInputsTests(unittest.TestCase):
             ("provenance names another descriptor", lambda r: r.update(descriptor_digest="9" * 64)),
             ("provenance names other inventories", lambda r: r.update(a_inventory_sha256="9" * 64, b_inventory_sha256="9" * 64)),
             ("provenance has an extra field", lambda r: r.update(waiver=True)),
+            ("provenance has no tool observation", lambda r: r.pop("tool_observation")),
         ):
             with self.subTest(name):
                 root, pipeline = self.setup()
@@ -1387,10 +1435,10 @@ class VerifyInputsTests(unittest.TestCase):
         self.assertEqual(self.verify(root, pipeline).code, "provenance-invalid")
         # Payload hashes are checked here too, before anything can be signed: a drifted payload is refused.
         root, pipeline = self.setup()
-        for side in (pipeline.a, pipeline.b):
-            (side / "package/payload/veles-native-host.exe").write_bytes(b"MZ-drifted")
+        (pipeline.a / "package/payload/veles-native-host.exe").write_bytes(b"MZ-drifted")
         first = gate.package_inputs.build_inventory(pipeline.a)["inventory_sha256"]
         pipeline.provenance.write_bytes(gate.canonical_json({"schema": 1, "source_commit": COMMIT, "descriptor_digest": sha(pipeline.descriptor.read_bytes()), "a_inventory_sha256": first, "b_inventory_sha256": first, "tool_observation": tool_observation(pipeline.platform)}))
+        pipeline.ab_report.write_bytes(gate.canonical_json({"schema": 1, "verdict": "PASS", "differences": [], "input_hashes": {"first": first, "second": first}}))
         done = self.verify(root, pipeline)
         self.assertEqual((done.ok, done.code), (False, "input-mismatch"))
         self.assertFalse((root / "verified").exists())
@@ -1522,11 +1570,16 @@ class Pipeline:
         shutil.copytree(self.a, self.b, symlinks=True)
         self.descriptor = self.a / PACKAGE[platform] / "descriptor.json"
         first = gate.package_inputs.build_inventory(self.a)["inventory_sha256"]
+        second = gate.package_inputs.build_inventory(self.b)["inventory_sha256"]
         self.provenance = root / platform / "provenance.json"
         self.provenance.write_bytes(
-            gate.canonical_json({"schema": 1, "source_commit": COMMIT, "descriptor_digest": sha(self.descriptor.read_bytes()), "a_inventory_sha256": first, "b_inventory_sha256": first,
+            gate.canonical_json({"schema": 1, "source_commit": COMMIT, "descriptor_digest": sha(self.descriptor.read_bytes()), "a_inventory_sha256": first, "b_inventory_sha256": second,
                                  "tool_observation": tool_observation(platform)})
         )
+        # The same-run producer compares its two internal slots and publishes the A/B report next to
+        # the chosen build A. The gate re-reads it instead of downloading a second external run.
+        self.ab_report = root / platform / "report-ab.json"
+        self.ab_report.write_bytes(gate.canonical_json({"schema": 1, "verdict": "PASS" if first == second else "FAIL", "differences": [], "input_hashes": {"first": first, "second": second}}))
         self.recipe = gate.recipe_digest(gate.INSTALLER_DIR, platform)
         self.reports_root = root / platform / "reports"
         self.failed: str | None = None
@@ -1538,7 +1591,7 @@ class Pipeline:
         p, root = self.platform, self.root / self.platform
         env_ci = ci_env(p) | ({"NSIS_PATH": "/fake/makensis.exe"} if p == "windows" else {})
         verified = gate.verify_unsigned_inputs(
-            platform=p, a=self.a, b=self.b, provenance=self.provenance, descriptor_path=self.descriptor, env=ci_env(p),
+            platform=p, tree=self.a, provenance=self.provenance, ab_report=self.ab_report, descriptor_path=self.descriptor, env=ci_env(p),
             expected_commit=COMMIT, recipe=self.recipe, output=root / "verified", reports=root / "rep-verify",
         )  # fmt: skip
         if not verified.ok:
@@ -1567,27 +1620,31 @@ class Pipeline:
         return self
 
 
-def build_pipeline_bundle(root: Path, **fake) -> tuple[Path, str]:
-    pipelines = [Pipeline(root, platform, **fake).run() for platform in ("windows", "macos")]
-    failed = [p.failed for p in pipelines if p.failed]
+def build_pipeline_bundle(root: Path, platforms=("windows", "macos"), **fake) -> tuple[Path, str]:
+    pipelines = {platform: Pipeline(root, platform, **fake).run() for platform in platforms}
+    failed = [p.failed for p in pipelines.values() if p.failed]
     if failed:
         raise AssertionError("pipeline did not complete: " + "; ".join(failed))
     merged = root / "reports-merged"
     merged.mkdir()
-    for pipeline in pipelines:
+    for pipeline in pipelines.values():
         for path in pipeline.reports_root.glob("*.json"):
             shutil.copy2(path, merged / path.name)
     bundle = root / "bundle"
-    env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/tags/1.2.3", "GITHUB_SHA": COMMIT, "VELES_SIGNING_ENVIRONMENT": "native-release"}
+    env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": MASTER_REF, "GITHUB_SHA": COMMIT, "GITHUB_ACTOR": OWNER, "GITHUB_TRIGGERING_ACTOR": OWNER, "GITHUB_RUN_ID": RUN_ID, "VELES_SIGNING_ENVIRONMENT": "native-release"}
+    arguments = ["bundle", "--reports-root", str(merged), "--bundle", str(bundle), "--commit", COMMIT]
+    if len(platforms) == 2:
+        arguments += ["--platform", "both"]
+    else:
+        arguments += ["--platform", platforms[0]]
+    for platform, pipeline in pipelines.items():
+        arguments += [f"--descriptor-{platform}", str(pipeline.descriptor)]
     with mock.patch.dict(os.environ, env, clear=False):
         os.environ.pop("GITHUB_HEAD_REF", None)
         os.environ.pop("GITHUB_BASE_REF", None)
-        code = gate.main(
-            ["bundle", "--reports-root", str(merged), "--bundle", str(bundle), "--commit", COMMIT,
-             "--descriptor-windows", str(pipelines[0].descriptor), "--descriptor-macos", str(pipelines[1].descriptor)]
-        )  # fmt: skip
+        code = gate.main(arguments)
     assert code == 0
-    expected = gate.descriptor_set_digest({"windows-x86_64": sha(pipelines[0].descriptor.read_bytes()), "macos-arm64": sha(pipelines[1].descriptor.read_bytes())})
+    expected = gate.descriptor_set_digest({TARGET[platform]: sha(pipeline.descriptor.read_bytes()) for platform, pipeline in pipelines.items()})
     return bundle, expected
 
 
@@ -1610,6 +1667,52 @@ def edit_evidence(bundle: Path, mutate) -> None:
 
 def component(report: dict, role: str) -> dict:
     return next(c for c in report["components"] if c["role"] == role)
+
+
+class DescriptorSetDigestTests(unittest.TestCase):
+    WINDOWS = sha(descriptor_bytes("windows"))
+    MACOS = sha(descriptor_bytes("macos"))
+
+    def cli(self, *targets):
+        arguments = [sys.executable, "-I", str(HERE / "release_gate.py"), "descriptor-set-digest"]
+        for target in targets:
+            arguments += ["--target", target]
+        return subprocess.run(arguments, capture_output=True, text=True)
+
+    def test_a_non_empty_subset_of_the_known_targets_is_a_deterministic_digest(self) -> None:
+        both = gate.descriptor_set_digest({"windows-x86_64": self.WINDOWS, "macos-arm64": self.MACOS})
+        self.assertEqual(both, gate.descriptor_set_digest({"macos-arm64": self.MACOS, "windows-x86_64": self.WINDOWS}))
+        self.assertNotEqual(both, gate.descriptor_set_digest({"windows-x86_64": self.WINDOWS}))
+        self.assertNotEqual(
+            gate.descriptor_set_digest({"windows-x86_64": self.WINDOWS}),
+            gate.descriptor_set_digest({"macos-arm64": self.MACOS}),
+        )
+        for target, digest in (("windows-x86_64", self.WINDOWS), ("macos-arm64", self.MACOS)):
+            with self.subTest(target=target):
+                done = self.cli(f"{target}={digest}")
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(done.stdout.strip(), gate.descriptor_set_digest({target: digest}))
+        done = self.cli(f"windows-x86_64={self.WINDOWS}", f"macos-arm64={self.MACOS}")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), both)
+
+    def test_empty_unknown_duplicate_and_malformed_targets_are_refused(self) -> None:
+        for label, targets in (
+            ("empty", ()),
+            ("unknown", (f"linux-x86_64={self.WINDOWS}",)),
+            ("duplicate target", (f"windows-x86_64={self.WINDOWS}", f"windows-x86_64={self.MACOS}")),
+            ("malformed pair", (self.WINDOWS,)),
+            ("uppercase digest", ("windows-x86_64=" + self.WINDOWS.upper(),)),
+            ("not a digest", ("windows-x86_64=not-a-digest",)),
+            ("three targets", (f"windows-x86_64={self.WINDOWS}", f"macos-arm64={self.MACOS}", f"windows-x86_64={self.WINDOWS}")),
+        ):
+            with self.subTest(label):
+                done = self.cli(*targets)
+                self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        for bad in ({}, {"linux-x86_64": self.WINDOWS}, {"windows-x86_64": "not-a-digest"}):
+            with self.subTest(function=bad):
+                with self.assertRaises(ValueError):
+                    gate.descriptor_set_digest(bad)
 
 
 class ToolIdentityBindingTests(unittest.TestCase):
@@ -1686,21 +1789,21 @@ class ToolIdentityBindingTests(unittest.TestCase):
             return bundle
 
         bundle = fresh()
-        self.assertEqual(gate.validate(bundle, COMMIT, expected), [])
+        self.assertEqual(gate.validate(bundle, COMMIT, "both"), [])
         rel = json.loads((bundle / "reports/macos-arm64.json").read_text())["unsigned"]["tool_observation"]
         self.assertEqual(rel, "reports/tools-macos-arm64.json")
         with self.subTest("tampered recorded observation"):
             bundle = fresh()
             edit_report(bundle, rel, lambda o: o["tools"]["xcode"].update(build="17F000"))
-            self.assertTrue(any("tool" in e and "xcode.build" in e for e in gate.validate(bundle, COMMIT, expected)))
+            self.assertTrue(any("tool" in e and "xcode.build" in e for e in gate.validate(bundle, COMMIT, "both")))
         with self.subTest("the pointer is removed"):
             bundle = fresh()
             edit_report(bundle, "reports/macos-arm64.json", lambda r: r["unsigned"].pop("tool_observation"))
-            self.assertTrue(any("tool observation" in e for e in gate.validate(bundle, COMMIT, expected)))
+            self.assertTrue(any("tool observation" in e for e in gate.validate(bundle, COMMIT, "both")))
         with self.subTest("the repository lock accepts its pinned Windows identity"):
             bundle = fresh()
             with mock.patch.object(gate, "tools_lock", lambda: REAL_LOCK, create=True):
-                self.assertEqual(gate.validate(bundle, COMMIT, expected), [])
+                self.assertEqual(gate.validate(bundle, COMMIT, "both"), [])
 
 
 class ValidateBundleTests(unittest.TestCase):
@@ -1719,8 +1822,8 @@ class ValidateBundleTests(unittest.TestCase):
         self.bundle = self.work / "bundle"
         shutil.copytree(self.golden, self.bundle)
 
-    def validate(self, commit: str = COMMIT, descriptor: str | None = None) -> list[str]:
-        return gate.validate(self.bundle, commit, descriptor or self.expected)
+    def validate(self, commit: str = COMMIT, platforms: str = "both") -> list[str]:
+        return gate.validate(self.bundle, commit, platforms)
 
     def report(self, target: str) -> dict:
         return json.loads((self.bundle / f"reports/{target}.json").read_text())
@@ -1738,13 +1841,17 @@ class ValidateBundleTests(unittest.TestCase):
         evidence = json.loads((self.bundle / "evidence.json").read_text())
         self.assertEqual(set(evidence["targets"]), {"windows-x86_64", "macos-arm64"})
         self.assertEqual(evidence["context"]["environment"], "native-release")
-        # The CLI computes the same single approved value from the two per-target digests.
+        self.assertEqual(evidence["context"]["ref"], MASTER_REF)
+        self.assertEqual((evidence["context"]["actor"], evidence["context"]["triggering_actor"]), (OWNER, OWNER))
+        self.assertEqual(evidence["context"]["run_id"], RUN_ID)
+        self.assertEqual(evidence["context"]["platforms"], ["macos-arm64", "windows-x86_64"])
+        # The CLI computes the same internal value from the selected per-target digests.
         windows, macos = (sha(descriptor_bytes(p)) for p in ("windows", "macos"))
-        printed = subprocess.run([sys.executable, "-I", str(HERE / "release_gate.py"), "descriptor-set-digest", "--windows-sha256", windows, "--macos-sha256", macos], capture_output=True, text=True, check=True).stdout.strip()
+        printed = subprocess.run([sys.executable, "-I", str(HERE / "release_gate.py"), "descriptor-set-digest", "--target", f"windows-x86_64={windows}", "--target", f"macos-arm64={macos}"], capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(printed, self.expected)
         # The shipped CLI reads the REAL lock, whose Windows MSVC/SDK identities are unresolved: even a complete,
         # internally consistent bundle is not ELIGIBLE until the owner records those identities (F8).
-        done = subprocess.run([sys.executable, "-I", str(HERE / "release_gate.py"), "validate", "--bundle", str(self.bundle), "--commit", COMMIT, "--descriptor-digest", self.expected], capture_output=True, text=True)
+        done = subprocess.run([sys.executable, "-I", str(HERE / "release_gate.py"), "validate", "--bundle", str(self.bundle), "--commit", COMMIT, "--platform", "both"], capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stdout)
         self.assertIn("ELIGIBLE", done.stdout)
 
@@ -1757,8 +1864,10 @@ class ValidateBundleTests(unittest.TestCase):
         edit_report(self.bundle, "reports/macos-arm64.json", lambda r: r.update(source_commit=OTHER_COMMIT))
         self.assertTrue([e for e in self.validate() if e.startswith("macos-arm64") and "source_commit" in e])
         self.setUp()
-        # -- descriptor / approval
-        self.assertTrue([e for e in self.validate(descriptor="9" * 64) if "descriptor" in e])
+        # -- descriptor: the evidence digest is internally consistent with its descriptors, never an external claim
+        edit_evidence(self.bundle, lambda e: e.update(descriptor_digest="9" * 64))
+        self.assertBlocked("descriptor digest")
+        self.setUp()
         edit_report(self.bundle, "reports/windows-x86_64.json", lambda r: r.update(descriptor_digest="9" * 64))
         self.assertBlocked("windows-x86_64", "descriptor")
         self.setUp()
@@ -1861,15 +1970,117 @@ class ValidateBundleTests(unittest.TestCase):
             edit_report(self.bundle, "reports/windows-x86_64.json", lambda r, mutate=mutate: mutate(r["tools"]))
             self.assertBlocked("tool identity for signtool")
 
-    def test_context_must_be_a_protected_tag_dispatch(self) -> None:
-        for field, value in (("event_name", "pull_request"), ("pull_request", True), ("environment", "production"), ("ref", "refs/heads/main"), ("sha", OTHER_COMMIT)):
-            with self.subTest(field=field):
+    def test_context_must_be_an_owner_master_dispatch(self) -> None:
+        for field, value in (
+            ("event_name", "pull_request"),
+            ("pull_request", True),
+            ("environment", "production"),
+            ("ref", "refs/heads/main"),
+            ("ref", "refs/tags/1.2.3"),
+            ("sha", OTHER_COMMIT),
+            ("actor", "someone-else"),
+            ("triggering_actor", "someone-else"),
+            ("run_id", "local"),
+            ("run_id", ""),
+            ("platforms", ["windows-x86_64"]),
+            ("platforms", ["macos-arm64"]),
+            ("platforms", ["windows-x86_64", "linux-x86_64"]),
+        ):
+            with self.subTest(field=field, value=value):
                 self.setUp()
                 edit_evidence(self.bundle, lambda e, field=field, value=value: e["context"].update({field: value}))
                 self.assertBlocked()
         self.setUp()
+        edit_evidence(self.bundle, lambda e: e["context"].pop("run_id"))
+        self.assertBlocked()
+        self.setUp()
+        edit_evidence(self.bundle, lambda e: e["context"].update(waiver=True))
+        self.assertBlocked()
+        self.setUp()
         edit_evidence(self.bundle, lambda e: e.pop("context"))
         self.assertBlocked("missing")
+
+    def test_one_selected_target_is_a_complete_bundle(self) -> None:
+        for platforms in (("windows",), ("macos",)):
+            with self.subTest(platforms=platforms):
+                root = Path(tempfile.mkdtemp(prefix="gate-selected-"))
+                self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+                bundle, expected = build_pipeline_bundle(root, platforms=platforms)
+                selected = [TARGET[p] for p in platforms]
+                self.assertEqual(gate.validate(bundle, COMMIT, platforms[0]), [], "a selected target must not need the other")
+                evidence = json.loads((bundle / "evidence.json").read_text())
+                self.assertEqual(set(evidence["descriptors"]), set(selected))
+                self.assertEqual(set(evidence["recipes"]), set(selected))
+                self.assertEqual(set(evidence["targets"]), set(selected))
+                self.assertEqual(evidence["context"]["platforms"], sorted(selected))
+                self.assertEqual(evidence["descriptor_digest"], expected)
+                self.assertTrue(gate.validate(bundle, COMMIT, "both"), "the other target is not evidenced")
+                self.assertTrue(gate.validate(bundle, COMMIT, PLATFORM_OTHER[platforms[0]]), "a different selection is not this bundle")
+
+    def test_evidence_must_name_exactly_the_selected_targets(self) -> None:
+        other = {"windows": "macos", "macos": "windows"}
+        for platforms in (("windows",), ("macos",)):
+            platform = platforms[0]
+            root = Path(tempfile.mkdtemp(prefix="gate-selected-"))
+            self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+            bundle, _ = build_pipeline_bundle(root, platforms=platforms)
+            # A missing selected target fails.
+            edit_evidence(bundle, lambda e, t=TARGET[platform]: e["targets"].pop(t))
+            self.assertTrue(gate.validate(bundle, COMMIT, platform))
+            # An unknown extra target fails.
+            bundle2, _ = build_pipeline_bundle(root / "second", platforms=platforms)
+            edit_evidence(bundle2, lambda e, t=TARGET[platform]: e["descriptors"].__setitem__("linux-x86_64", e["descriptors"][t]))
+            self.assertTrue(gate.validate(bundle2, COMMIT, platform))
+            # A context naming another target set fails.
+            bundle3, _ = build_pipeline_bundle(root / "third", platforms=platforms)
+            edit_evidence(bundle3, lambda e, t=TARGET[other[platform]]: e["context"].update(platforms=sorted([*e["context"]["platforms"], t])))
+            self.assertTrue(gate.validate(bundle3, COMMIT, platform))
+
+    def test_a_bundle_from_another_run_or_report_set_fails(self) -> None:
+        # Reports carrying another run's context, or a target report copied from another bundle, are refused.
+        root = Path(tempfile.mkdtemp(prefix="gate-context-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        bundle, _ = build_pipeline_bundle(root)
+        reports = root / "reports-merged"
+        env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": MASTER_REF, "GITHUB_SHA": COMMIT, "GITHUB_ACTOR": OWNER, "GITHUB_TRIGGERING_ACTOR": OWNER, "GITHUB_RUN_ID": RUN_ID}
+        descriptors = [arg for platform in ("windows", "macos") for arg in (f"--descriptor-{platform}", str(root / platform / "a" / PACKAGE[platform] / "descriptor.json"))]
+        for name, mutate in (
+            ("another run id", lambda r: r["context"].update(run_id="9999999999")),
+            ("another actor", lambda r: r["context"].update(actor="someone-else")),
+            ("another triggering actor", lambda r: r["context"].update(triggering_actor="someone-else")),
+            ("another ref", lambda r: r["context"].update(ref="refs/heads/feature")),
+            ("another sha", lambda r: r["context"].update(sha=OTHER_COMMIT)),
+        ):
+            with self.subTest(name):
+                path = reports / "windows-nested.json"
+                original = path.read_bytes()
+                record = json.loads(original)
+                mutate(record)
+                path.write_bytes(gate.canonical_json(record))
+                destination = root / f"bundle-{name.replace(' ', '-')}"
+                with mock.patch.dict(os.environ, env, clear=False):
+                    os.environ.pop("GITHUB_HEAD_REF", None)
+                    os.environ.pop("GITHUB_BASE_REF", None)
+                    code = gate.main(["bundle", "--reports-root", str(reports), "--bundle", str(destination), "--commit", COMMIT, "--platform", "both", *descriptors])
+                path.write_bytes(original)
+                self.assertNotEqual(code, 0, "a fragmented context must not compose a bundle")
+                self.assertFalse(destination.exists())
+        with self.subTest("target report from another commit"):
+            work = Path(tempfile.mkdtemp(prefix="gate-context-copy-"))
+            self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+            copy = work / "bundle"
+            shutil.copytree(bundle, copy)
+            edit_report(copy, "reports/windows-x86_64.json", lambda r: r.update(source_commit=OTHER_COMMIT))
+            self.assertTrue(any(e.startswith("windows-x86_64") for e in gate.validate(copy, COMMIT, "both")))
+        with self.subTest("gate job is not this run"):
+            env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": MASTER_REF, "GITHUB_SHA": COMMIT, "GITHUB_ACTOR": OWNER, "GITHUB_TRIGGERING_ACTOR": OWNER, "GITHUB_RUN_ID": "9999999999"}
+            destination = root / "bundle-other-gate-run"
+            with mock.patch.dict(os.environ, env, clear=False):
+                os.environ.pop("GITHUB_HEAD_REF", None)
+                os.environ.pop("GITHUB_BASE_REF", None)
+                code = gate.main(["bundle", "--reports-root", str(reports), "--bundle", str(destination), "--commit", COMMIT, "--platform", "both", *descriptors])
+            self.assertNotEqual(code, 0)
+            self.assertFalse(destination.exists())
 
     def test_unnotarized_unstapled_or_correspondence_failure_blocks(self) -> None:
         macos = "reports/macos-arm64.json"
@@ -2040,13 +2251,68 @@ class WorkflowContractTests(unittest.TestCase):
         cls.jobs = split_jobs(cls.text)
         cls.head = cls.jobs.pop("__head__")
 
-    def test_triggers_are_dispatch_only_and_permissions_are_read_only(self) -> None:
+    def test_only_the_platform_input_selects_the_target(self) -> None:
         on = self.head.split("on:", 1)[1].split("\npermissions:", 1)[0]
         self.assertIn("workflow_dispatch", on)
         for forbidden in ("pull_request", "pull_request_target", "push", "schedule", "workflow_run", "issue_comment"):
             self.assertNotRegex(on, rf"(?m)^\s*{forbidden}\s*:", forbidden)
+        self.assertRegex(on, r"(?m)^\s{6}platform:\s*$")
+        self.assertRegex(on, r"(?m)^\s{8}type:\s*choice\s*$")
+        self.assertRegex(on, r"(?m)^\s{8}options:\s*\[windows, macos, both\]\s*$")
+        self.assertRegex(on, r"(?m)^\s{8}default:\s*windows\s*$")
+        for obsolete in ("commit:", "descriptor_sha256", "unsigned_run", "windows_only"):
+            self.assertNotIn(obsolete, on, obsolete)
         self.assertRegex(self.head, r"(?m)^permissions:\s*\n\s+contents:\s*read\s*$")
         self.assertNotRegex(self.text, r"(?m)^\s*(contents|id-token|attestations|actions|packages|pull-requests):\s*write")
+
+    def test_every_job_is_guarded_by_the_owner_master_dispatch(self) -> None:
+        guard = self.jobs["guard"]
+        self.assertEqual(self._needs("guard"), set())
+        self.assertNotIn("actions/checkout", guard, "the guard rejects before any checkout")
+        for check in (
+            '"$EVENT" = workflow_dispatch',
+            '"$REF" = refs/heads/master',
+            '"$ACTOR" = raidenyn',
+            '"$TRIGGERING_ACTOR" = raidenyn',
+            "^[0-9a-f]{40}$",
+            "windows|macos|both",
+        ):
+            self.assertIn(check, guard, check)
+        # Every other job repeats the guard in its own `if:`, so a rerun re-evaluates it.
+        for name, body in self.jobs.items():
+            if name == "guard":
+                continue
+            condition = re.search(r"(?m)^    if:\s*(.+)$", body)
+            self.assertIsNotNone(condition, name)
+            for part in ("github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/master'", "github.actor == 'raidenyn'", "github.triggering_actor == 'raidenyn'"):
+                self.assertIn(part, condition.group(1), f"{name} must re-check the guard")
+        # The guard precedes every reusable build call in the file.
+        self.assertLess(self.text.index("  guard:"), self.text.index("uses: ./.github/workflows/build-native-windows.yml"))
+
+    def test_selected_platforms_are_built_in_this_run_before_any_key_import(self) -> None:
+        for platform, builder in (("windows", "build-native-windows.yml"), ("macos", "build-native-macos.yml")):
+            body = self.jobs[f"build-{platform}"]
+            self.assertIn(f"uses: ./.github/workflows/{builder}", body)
+            self.assertRegex(body, r"(?m)^      build-kind: release\s*$")
+            self.assertRegex(body, r"(?m)^      commit-sha: \$\{\{ github\.sha \}\}$")
+            self.assertIn(f"native-release-{platform}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}", body)
+            self.assertNotIn("secrets:", body)
+            self.assertNotIn("environment:", body)
+        # No external producer run and no cross-run download survives.
+        for token in ("gh run view", "run-id", "unsigned_run_a", "unsigned_run_b", "descriptor_sha256"):
+            self.assertNotIn(token, self.text, token)
+        # Verification downloads the same-run artifact, not a run id.
+        for platform, artifact in (("windows", "native-release-windows"), ("macos", "native-release-macos")):
+            body = self.jobs[f"verify-{platform}"]
+            self.assertIn(f"name: {artifact}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}", body)
+            self.assertIn("sha256sum -c SHA256SUMS", body, "the same-run artifact digest manifest is checked before use")
+            self.assertNotIn("run-id", body)
+            self.assertNotIn("github-token", body)
+        self.assertLess(
+            max(self.text.index("  build-windows:"), self.text.index("  build-macos:")),
+            self.text.index("  sign-windows-nested:"),
+            "unsigned builds happen before the first keyed job",
+        )
 
     def test_credentials_exist_only_in_protected_environment_jobs(self) -> None:
         credentialed = {name for name, body in self.jobs.items() if "secrets." in body}
@@ -2065,9 +2331,11 @@ class WorkflowContractTests(unittest.TestCase):
         for name in SIGN_JOBS:
             job_env = self.jobs[name].split("    steps:", 1)[0]
             self.assertNotIn("secrets.", job_env, name)
-        # The descriptor approval is a protected-environment variable consumed only by the credentialed jobs and the gate.
-        approved = {name for name, body in self.jobs.items() if "vars.VELES_APPROVED_DESCRIPTOR_SHA256_" in body}
-        self.assertEqual(approved, set(SIGN_JOBS) | {"gate"})
+            self.assertRegex(job_env, r"(?m)^      VELES_SIGNING_ENVIRONMENT: native-release\s*$")
+            self.assertRegex(job_env, r"(?m)^      VELES_DESCRIPTOR_SHA256: \$\{\{ needs\.verify-[a-z]+\.outputs\.descriptor-sha256 \}\}$")
+            self.assertRegex(job_env, r"(?m)^      COMMIT: \$\{\{ github\.sha \}\}$")
+        # The manual approval variable is gone everywhere.
+        self.assertNotIn("VELES_APPROVED_DESCRIPTOR_SHA256", self.text)
 
     def test_no_secret_or_untrusted_expression_reaches_a_shell(self) -> None:
         for name, body in self.jobs.items():
@@ -2078,7 +2346,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotRegex(self.text, r"(?i)secrets:\s*inherit")
 
     def test_signing_jobs_never_compile_or_build_and_assembly_holds_no_credentials(self) -> None:
-        for name in (*SIGN_JOBS, "verify-inputs", "gate"):
+        for name in (*SIGN_JOBS, "verify-windows", "verify-macos", "gate"):
             body = run_blocks(self.jobs[name])
             for token in ("cargo", "gradlew", "npm ", "swift build", "swift test", "xcodebuild", "makensis", "hdiutil create", "rustup", "tauri", "pip install"):
                 self.assertNotIn(token, body, f"{name} must not compile source ({token})")
@@ -2095,25 +2363,56 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertTrue("NSIS_PATH" in self.jobs["assemble-windows"])
         self.assertTrue("provision-nsis.ps1" in self.jobs["assemble-windows"])
 
-    def test_job_graph_is_verify_sign_assemble_sign_gate(self) -> None:
-        def needs(name):
-            match = re.search(r"(?m)^    needs:\s*(\[.*?\]|\S+)\s*$", self.jobs[name])
-            return set(re.findall(r"[A-Za-z0-9_-]+", match.group(1))) if match else set()
+    def _needs(self, name: str) -> set[str]:
+        match = re.search(r"(?m)^    needs:\s*(\[.*?\]|\S+)\s*$", self.jobs[name])
+        return set(re.findall(r"[A-Za-z0-9_-]+", match.group(1))) if match else set()
 
-        self.assertEqual(needs("verify-inputs"), set())
+    def test_job_graph_is_guard_build_verify_sign_assemble_sign_gate(self) -> None:
+        self.assertEqual(self._needs("guard"), set())
         for platform in ("windows", "macos"):
-            self.assertEqual(needs(f"sign-{platform}-nested"), {"verify-inputs"})
-            self.assertEqual(needs(f"assemble-{platform}"), {f"sign-{platform}-nested"})
-            self.assertEqual(needs(f"sign-{platform}-outer"), {f"assemble-{platform}"})
-        self.assertEqual(needs("gate"), {"verify-inputs", "sign-windows-outer", "sign-macos-outer"})
-        self.assertEqual(set(self.jobs), {"verify-inputs", *SIGN_JOBS, "assemble-windows", "assemble-macos", "gate"})
+            self.assertEqual(self._needs(f"build-{platform}"), {"guard"})
+            self.assertEqual(self._needs(f"verify-{platform}"), {"guard", f"build-{platform}"})
+            self.assertEqual(self._needs(f"sign-{platform}-nested"), {"guard", f"verify-{platform}"})
+            self.assertEqual(self._needs(f"assemble-{platform}"), {"guard", f"verify-{platform}", f"sign-{platform}-nested"})
+            self.assertEqual(self._needs(f"sign-{platform}-outer"), {"guard", f"verify-{platform}", f"assemble-{platform}"})
+        self.assertEqual(
+            self._needs("gate"),
+            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows-outer", "sign-macos-outer"},
+        )
+        self.assertEqual(
+            set(self.jobs),
+            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", *SIGN_JOBS, "assemble-windows", "assemble-macos", "gate"},
+        )
         self.assertNotIn("environment:", self.jobs["gate"])
         self.assertNotIn("secrets.", self.jobs["gate"])
 
+    def test_each_selected_platform_is_independent(self) -> None:
+        for platform, other in (("windows", "macos"), ("macos", "windows")):
+            for job in (f"build-{platform}", f"verify-{platform}", f"sign-{platform}-nested", f"assemble-{platform}", f"sign-{platform}-outer"):
+                condition = re.search(r"(?m)^    if:\s*(.+)$", self.jobs[job]).group(1)
+                self.assertIn(f"inputs.platform == '{platform}' || inputs.platform == 'both'", condition, job)
+                self.assertNotIn(f"'{other}'", condition, job)
+                self.assertNotIn(other, self._needs(job), job)
+        # A Windows-only run never names the macOS artifact or its jobs.
+        for platform in ("windows", "macos"):
+            body = self.jobs[f"verify-{platform}"] + self.jobs[f"sign-{platform}-nested"]
+            self.assertNotIn(f"native-release-{PLATFORM_OTHER[platform]}", body)
+            self.assertNotIn(f"--descriptor-{PLATFORM_OTHER[platform]}", body)
+        # The gate reports per-platform status and has no platform condition of its own.
+        gate_body = self.jobs["gate"]
+        condition = re.search(r"(?m)^    if:\s*(.+)$", gate_body).group(1)
+        self.assertNotIn("inputs.platform", condition)
+        blocks = run_blocks(gate_body)
+        self.assertIn("selected=", blocks)
+        self.assertIn("RESULT_WINDOWS", blocks)
+        self.assertIn("RESULT_MACOS", blocks)
+
     def test_gate_decides_with_validate_and_publishes_nothing(self) -> None:
         gate_job = run_blocks(self.jobs["gate"])
-        for command in (" validate ", "descriptor-set-digest", " bundle "):
+        for command in (" validate ", " bundle ", "--platform"):
             self.assertTrue(command in gate_job, command)
+        self.assertNotIn("--descriptor-digest", gate_job)
+        self.assertNotIn("descriptor-set-digest", gate_job)
         # A blocked candidate fails the job: the gate may not swallow a failure of an earlier job.
         self.assertRegex(self.jobs["gate"], r"needs\.[A-Za-z-]+\.result")
         for token in ("gh release", "action-gh-release", "attest-build-provenance", "gh api", "git push", "git tag"):
@@ -2125,6 +2424,8 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_actions_are_pinned_and_retention_is_bounded(self) -> None:
         for match in re.finditer(r"(?m)^\s*-?\s*uses:\s*(\S+)(.*)$", self.text):
+            if match.group(1).startswith("./"):
+                continue  # repository-local reusable workflows are not actions
             self.assertRegex(match.group(1), r"@[0-9a-f]{40}$")
             self.assertRegex(match.group(2), r"#\s*v\d+")
         uploads = self.text.count("actions/upload-artifact@")

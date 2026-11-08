@@ -499,25 +499,25 @@ class Finalize(Workspace):
         a, b = self.trees()
         out = self.root / "published"
         au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=a, slot_b=b, output=out, commit=COMMIT)
-        trees = {}
-        for tag in ("a", "b"):
-            trees[tag] = self.root / f"gate-{tag}"
-            trees[tag].mkdir()
-            with tarfile.open(out / "tree.tar") as archive:
-                archive.extractall(trees[tag], filter="tar")
-        descriptor = trees["a"] / "package" / "descriptor.json"
+        tree = self.root / "gate-tree"
+        tree.mkdir()
+        with tarfile.open(out / "tree.tar") as archive:
+            archive.extractall(tree, filter="tar")
+        descriptor = tree / "package" / "descriptor.json"
         digest = hashlib.sha256(descriptor.read_bytes()).hexdigest()
         env = {
-            "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/tags/1.2.3", "GITHUB_SHA": COMMIT,
+            "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/master", "GITHUB_SHA": COMMIT,
+            "GITHUB_ACTOR": "raidenyn", "GITHUB_TRIGGERING_ACTOR": "raidenyn", "GITHUB_RUN_ID": "1234567890",
             "VELES_DESCRIPTOR_SHA256": digest,
         }
         with mock.patch.object(release_gate, "tools_lock", lambda: RESOLVED_LOCK):
             outcome = release_gate.verify_unsigned_inputs(
-                platform="windows", a=trees["a"], b=trees["b"], provenance=out / "provenance.json", descriptor_path=descriptor,
+                platform="windows", tree=tree, provenance=out / "provenance.json", ab_report=out / "report-ab.json", descriptor_path=descriptor,
                 env=env, expected_commit=COMMIT, recipe="r" * 64, output=self.root / "chosen", reports=self.root / "reports",
             )
-        # Task 13's first job accepts exactly what the producer publishes: A/B equality, provenance,
-        # descriptor binding and the structural stage check (payload view == inventory.json).
+        # The release gate accepts exactly what the same-run producer publishes: the chosen build A
+        # matches the A/B provenance, the producer's own report is a PASS over both slots, the
+        # descriptor is bound to the source commit and the structural stage check passes.
         self.assertTrue(outcome.ok, f"{outcome.code}: {outcome.detail}")
 
 

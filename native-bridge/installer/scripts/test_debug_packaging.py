@@ -299,7 +299,6 @@ class DebugPackagingTests(unittest.TestCase):
             "VELES_MAC_P12_BASE64",
             "VELES_NOTARY_KEY_BASE64",
             "VELES_SIGNING_ENVIRONMENT",
-            "VELES_APPROVED_DESCRIPTOR_SHA256",
         ):
             with self.subTest(variable=variable):
                 case = DebugCase(self, "windows")

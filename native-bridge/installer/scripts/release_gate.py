@@ -63,10 +63,18 @@ TARGETS = ("windows-x86_64", "macos-arm64")
 PLATFORM_TARGET = {"windows": "windows-x86_64", "macos": "macos-arm64"}
 STAGES = ("verify-inputs", "sign-nested", "assemble", "sign-outer")
 PROTECTED_ENVIRONMENT = "native-release"
-TAG_REF = re.compile(r"^refs/tags/(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+MASTER_REF = "refs/heads/master"
+RELEASE_ACTOR = "raidenyn"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-WIN_PUBLISHER_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+GITHUB_RUN_ID_RE = re.compile(r"^[1-9][0-9]{0,19}$")
+# What a credentialed signing fragment recorded about the run that authorized it. The bundle adds
+# `platforms` from the gate's selection; `validate` requires the complete set.
+CONTEXT_FIELDS = (
+    "event_name", "pull_request", "environment", "ref", "sha", "actor", "triggering_actor", "run_id",
+)
+WIN_PUBLISHER_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 THUMBPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 TEAM_ID_RE = re.compile(r"^[0-9A-Z]{10}$")
 CARRIER_MAGIC = b"VELESPC1"
@@ -219,9 +227,7 @@ BOUNDARY_KEYS = {
 PREDECESSOR = {"nested": "verify-inputs", "outer": "assemble"}
 # A debug packaging run is not a signing job: none of these may be present, and it never calls
 # `authorize`, reads a boundary or produces release evidence.
-RELEASE_ONLY_ENV = frozenset(
-    {"VELES_SIGNING_ENVIRONMENT", "VELES_APPROVED_DESCRIPTOR_SHA256", "VELES_DESCRIPTOR_SHA256"}
-)
+RELEASE_ONLY_ENV = frozenset({"VELES_SIGNING_ENVIRONMENT", "VELES_DESCRIPTOR_SHA256"})
 DEBUG_RUN_ID_ENV = "VELES_WORKFLOW_RUN_ID"
 LOCAL_RUN_ID = "local"
 RUN_ID_RE = re.compile(r"^(?:local|[0-9]{1,20})$")
@@ -275,8 +281,35 @@ def inventory_digest(tree: Path) -> str:
     return package_inputs.build_inventory(tree)["inventory_sha256"]
 
 
+def selected_platforms(value: str | Sequence[str]) -> list[str]:
+    """The selected platforms from ``windows``/``macos``/``both`` or an explicit non-empty subset."""
+    if isinstance(value, str):
+        if value == "both":
+            return ["windows", "macos"]
+        if value not in PLATFORM_TARGET:
+            raise ValueError(f"unknown platform selection {value!r}")
+        return [value]
+    selected = list(value)
+    if not selected or len(set(selected)) != len(selected) or any(p not in PLATFORM_TARGET for p in selected):
+        raise ValueError(f"platform selection must be a non-empty, unique subset of {sorted(PLATFORM_TARGET)}")
+    return selected
+
+
 def descriptor_set_digest(digests: dict[str, str]) -> str:
-    """The single value the owner approves: a digest over every target's descriptor digest."""
+    """The deterministic digest over the selected targets' descriptor digests.
+
+    One selected target is a complete release, so one entry is a complete input here; there is no
+    fixed pair and no external approval. Unknown targets, an empty set and malformed digests are
+    refused rather than silently ignored.
+    """
+    if not isinstance(digests, dict) or not digests:
+        raise ValueError("a descriptor set needs at least one target")
+    unknown = sorted(set(digests) - set(TARGETS))
+    if unknown:
+        raise ValueError(f"unknown descriptor targets: {unknown}")
+    malformed = sorted(target for target, digest in digests.items() if not SHA256_RE.match(str(digest)))
+    if malformed:
+        raise ValueError(f"descriptor digests are not sha256: {malformed}")
     return sha256_bytes(canonical_json({"descriptors": dict(sorted(digests.items())), "schema": SCHEMA}))
 
 
@@ -318,31 +351,34 @@ check_inside_out(COMPONENTS["windows"])
 def authorize(env: dict[str, str], descriptor_digest: str, expected_commit: str, *, credentialed: bool = True) -> list[str]:
     """Why this process must not touch a private key (empty list: it may).
 
+    One owner-initiated master dispatch is the authorization: ``workflow_dispatch`` on
+    ``refs/heads/master``, triggered *and* (for reruns) re-triggered by ``raidenyn``, for the exact
+    40-hex commit this run checked out. ``VELES_DESCRIPTOR_SHA256`` must be the digest of the actual
+    descriptor file passed to this process, so a claimed digest that differs from the file fails.
+
     ``credentialed=False`` is for the jobs that hold no credential (input verification, container
-    assembly): they still require the trusted event, ref, commit and descriptor digest, but they do not
-    run in the protected environment and therefore cannot be asked for it.
+    assembly): they still require the trusted event, ref, actors and commit, but they do not run in
+    the protected environment and therefore cannot be asked for it.
     """
     problems = []
     if env.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
-        problems.append(f"event {env.get('GITHUB_EVENT_NAME')!r} may not sign; only a protected workflow_dispatch may")
+        problems.append(f"event {env.get('GITHUB_EVENT_NAME')!r} may not sign; only an owner master dispatch may")
     if env.get("GITHUB_HEAD_REF") or env.get("GITHUB_BASE_REF"):
         problems.append("pull-request context may not sign")
-    if not TAG_REF.match(env.get("GITHUB_REF", "")):
-        problems.append(f"ref {env.get('GITHUB_REF')!r} is not an immutable X.Y.Z release tag")
-    if not COMMIT_RE.match(expected_commit or ""):
-        problems.append("expected commit is not a full commit id")
+    if env.get("GITHUB_REF") != MASTER_REF:
+        problems.append(f"ref {env.get('GITHUB_REF')!r} is not {MASTER_REF!r}")
+    if not COMMIT_SHA_RE.match(expected_commit or ""):
+        problems.append("expected commit is not a full 40-hex commit id")
     elif env.get("GITHUB_SHA") != expected_commit:
         problems.append("workflow commit differs from the expected commit")
+    if env.get("GITHUB_ACTOR") != RELEASE_ACTOR:
+        problems.append(f"triggering actor {env.get('GITHUB_ACTOR')!r} is not the release owner")
+    if env.get("GITHUB_TRIGGERING_ACTOR") != RELEASE_ACTOR:
+        problems.append(f"rerun actor {env.get('GITHUB_TRIGGERING_ACTOR')!r} is not the release owner")
     if credentialed and env.get("VELES_SIGNING_ENVIRONMENT") != PROTECTED_ENVIRONMENT:
         problems.append(f"not running in the protected environment {PROTECTED_ENVIRONMENT!r}")
     if not SHA256_RE.match(descriptor_digest or ""):
         problems.append("descriptor digest is not a sha256")
-    if credentialed:
-        approved = env.get("VELES_APPROVED_DESCRIPTOR_SHA256", "")
-        if not SHA256_RE.match(approved):
-            problems.append("no approved descriptor digest was supplied")
-        elif approved != descriptor_digest:
-            problems.append("the descriptor is not the approved descriptor")
     if env.get("VELES_DESCRIPTOR_SHA256") != descriptor_digest:
         problems.append("the claimed descriptor digest is not the digest of the descriptor file")
     return problems
@@ -909,10 +945,13 @@ def run_stage(request: SignRequest, env: dict[str, str], runner: Callable[..., R
             # What this credentialed job itself saw; the bundle's context is built from these, never from the gate job.
             fragment["context"] = {
                 "event_name": env.get("GITHUB_EVENT_NAME", ""),
+                "pull_request": bool(env.get("GITHUB_HEAD_REF") or env.get("GITHUB_BASE_REF")),
+                "environment": env.get("VELES_SIGNING_ENVIRONMENT", ""),
                 "ref": env.get("GITHUB_REF", ""),
                 "sha": env.get("GITHUB_SHA", ""),
-                "environment": env.get("VELES_SIGNING_ENVIRONMENT", ""),
-                "pull_request": bool(env.get("GITHUB_HEAD_REF") or env.get("GITHUB_BASE_REF")),
+                "actor": env.get("GITHUB_ACTOR", ""),
+                "triggering_actor": env.get("GITHUB_TRIGGERING_ACTOR", ""),
+                "run_id": env.get("GITHUB_RUN_ID", ""),
             }
             request.reports.mkdir(parents=True, exist_ok=True)
             fragment["sums_sha256"] = _write_sums(request.output, request.reports / "SHA256SUMS")
@@ -1383,10 +1422,17 @@ def tool_observation_problems(target: str, observation: Any) -> list[str]:
 
 
 def verify_unsigned_inputs(
-    *, platform: str, a: Path, b: Path, provenance: Path, descriptor_path: Path, env: dict[str, str],
+    *, platform: str, tree: Path, provenance: Path, ab_report: Path, descriptor_path: Path, env: dict[str, str],
     expected_commit: str, recipe: str, output: Path, reports: Path,
 ) -> Outcome:  # fmt: skip
-    """Job 1: A/B unsigned equality, provenance and payload hashes. Runs with no credential."""
+    """Job 1: same-run A/B provenance, A/B report and payload hashes. Runs with no credential.
+
+    The producer built its two independent slots in the same run and published only the chosen slot A
+    tree, the provenance naming both inventories and its own A/B comparison. There is no second
+    external producer run to download: this job checks that the tree is exactly the A inventory the
+    provenance claims, that the producer's report is a PASS over A and B, and that B claims the same
+    inventory as A. Anything that does not line up is a blocker before a key is touched.
+    """
     if ALL_CREDENTIAL_NAMES & {k for k, v in env.items() if v}:
         return _fail("credentials-present", "the input-verification job must not hold signing credentials")
     try:
@@ -1399,17 +1445,16 @@ def verify_unsigned_inputs(
     if output.exists():
         return _fail("bad-request", "output must not exist")
     try:
-        first = package_inputs.build_inventory(a)
-        second = package_inputs.build_inventory(b)
+        inventory = package_inputs.build_inventory(tree)
     except (OSError, package_inputs.InventoryError) as error:
-        return _fail("input-mismatch", f"unsigned input is not a valid inventory: {error}")
-    differences = package_inputs.compare_inventories(first, second)
+        return _fail("input-mismatch", f"the unsigned input is not a valid inventory: {error}")
     reports.mkdir(parents=True, exist_ok=True)
     target = PLATFORM_TARGET[platform]
-    ab = {"schema": SCHEMA, "verdict": "PASS" if not differences else "FAIL", "differences": differences, "input_hashes": {"first": first["inventory_sha256"], "second": second["inventory_sha256"]}}
-    (reports / f"ab-{target}.json").write_bytes(canonical_json(ab))
-    if differences:
-        return _fail("ab-mismatch", "independent unsigned builds A and B differ: " + ", ".join(sorted({str(d.get('code')) for d in differences})))
+    try:
+        report = load_json(ab_report)
+    except (OSError, ValueError):
+        return _fail("ab-mismatch", "the producer's A/B report is missing or unreadable")
+    (reports / f"ab-{target}.json").write_bytes(canonical_json(report))
     try:
         record = load_json(provenance)
         if (
@@ -1419,34 +1464,45 @@ def verify_unsigned_inputs(
             raise ValueError("provenance shape")
     except (OSError, ValueError, TypeError) as error:
         return _fail("provenance-invalid", f"provenance is unreadable or malformed: {error}")
+    first, second = record["a_inventory_sha256"], record["b_inventory_sha256"]
     claims = {
         "source_commit": expected_commit,
         "descriptor_digest": sha256_bytes(descriptor),
-        "a_inventory_sha256": first["inventory_sha256"],
-        "b_inventory_sha256": second["inventory_sha256"],
+        "a_inventory_sha256": inventory["inventory_sha256"],
     }
     wrong = sorted(k for k, v in claims.items() if record.get(k) != v)
     if wrong:
         return _fail("provenance-invalid", "provenance disagrees with the inputs on: " + ", ".join(wrong))
+    if (
+        not isinstance(report, dict)
+        or set(report) != {"schema", "verdict", "differences", "input_hashes"}
+        or report.get("schema") != SCHEMA
+        or report.get("verdict") != "PASS"
+        or report.get("differences")
+        or report.get("input_hashes") != {"first": first, "second": second}
+    ):
+        return _fail("ab-mismatch", "the producer's A/B report is not a PASS over the claimed independent builds")
+    if not (SHA256_RE.match(str(first)) and SHA256_RE.match(str(second))) or first != second:
+        return _fail("ab-mismatch", "the producer's independent unsigned builds A and B differ")
     # Before any signing job can start: the tools that built these bytes must be the locked ones.
     tool_problems = tool_observation_problems(target, record["tool_observation"])
     if tool_problems:
         return _fail("tools-unverified", "; ".join(tool_problems[:6]))
     (reports / f"tools-{target}.json").write_bytes(canonical_json(record["tool_observation"]))
-    request = SignRequest(platform, "nested", a, output, Path("."), reports, expected_commit, descriptor_path, {}, recipe)
+    request = SignRequest(platform, "nested", tree, output, Path("."), reports, expected_commit, descriptor_path, {}, recipe)
     request.boundary = {
         "stage": "verify-inputs",
         "commit": expected_commit,
         "descriptor_digest": sha256_bytes(descriptor),
         "recipe_digest": recipe,
-        "input_inventory_sha256": first["inventory_sha256"],
-        "output_inventory_sha256": first["inventory_sha256"],
+        "input_inventory_sha256": first,
+        "output_inventory_sha256": first,
         "credentials": False,
     }
     structural = check_stage_inputs(request)
     if structural:
         return _fail("input-mismatch", "; ".join(structural))
-    _copy_tree(a, output)  # the already-built A bytes, unchanged; nothing is rebuilt
+    _copy_tree(tree, output)  # the already-built A bytes, unchanged; nothing is rebuilt
     boundary = dict(request.boundary, stage="verify-inputs")
     fragment = {
         "platform": platform,
@@ -1454,8 +1510,8 @@ def verify_unsigned_inputs(
         "boundary": boundary,
         "ab_report": f"ab-{target}.json",
         "tool_observation": f"tools-{target}.json",
-        "a_inventory_sha256": first["inventory_sha256"],
-        "b_inventory_sha256": second["inventory_sha256"],
+        "a_inventory_sha256": first,
+        "b_inventory_sha256": second,
     }
     (reports / f"{platform}-verify-inputs.json").write_bytes(canonical_json(fragment))
     return Outcome(True, "", "", fragment)
@@ -1943,8 +1999,37 @@ def compose_target_report(*, target: str, commit: str, descriptor: str, recipe: 
     }
 
 
+def _bundle_context(env: dict[str, str], fragments: Sequence[dict], platforms: Sequence[str]) -> dict:
+    """The context every credentialed signing job recorded, checked against this run and its selection."""
+    contexts = [fragment.get("context") for fragment in fragments]
+    if not contexts or any(not isinstance(context, dict) or set(context) != set(CONTEXT_FIELDS) for context in contexts):
+        raise StageFailure("report-incomplete", "the credentialed signing jobs did not record a complete context")
+    if any(context != contexts[0] for context in contexts):
+        raise StageFailure("report-incomplete", "the credentialed signing jobs did not all run in one recorded context")
+    context = dict(contexts[0])
+    expected = {
+        "event_name": env.get("GITHUB_EVENT_NAME", ""),
+        "pull_request": bool(env.get("GITHUB_HEAD_REF") or env.get("GITHUB_BASE_REF")),
+        "ref": env.get("GITHUB_REF", ""),
+        "sha": env.get("GITHUB_SHA", ""),
+        "actor": env.get("GITHUB_ACTOR", ""),
+        "triggering_actor": env.get("GITHUB_TRIGGERING_ACTOR", ""),
+        "run_id": env.get("GITHUB_RUN_ID", ""),
+    }
+    wrong = sorted(field for field, value in expected.items() if context.get(field) != value)
+    if wrong:
+        raise StageFailure("report-incomplete", "the signing context is not this run's context: " + ", ".join(wrong))
+    context["platforms"] = sorted(PLATFORM_TARGET[platform] for platform in platforms)
+    return context
+
+
 def build_bundle(*, bundle: Path, target_reports: dict[str, Path], reports_root: Path, context: dict, commit: str, descriptors: dict[str, str], recipes: dict[str, str]) -> None:
-    """Assemble ``evidence.json`` from stage outputs. ``reports_root`` holds every stage's reports."""
+    """Assemble ``evidence.json`` from stage outputs. ``reports_root`` holds every selected stage's reports."""
+    targets = set(target_reports)
+    if not targets or targets - set(TARGETS):
+        raise StageFailure("report-incomplete", f"a bundle needs a non-empty subset of {list(TARGETS)}")
+    if set(descriptors) != targets or set(recipes) != targets:
+        raise StageFailure("report-incomplete", "descriptors and recipes must name exactly the bundled targets")
     bundle.mkdir(parents=True)
     files: dict[str, str] = {}
     for source in sorted(p for p in reports_root.rglob("*.json") if p.is_file()):
@@ -1967,8 +2052,15 @@ def build_bundle(*, bundle: Path, target_reports: dict[str, Path], reports_root:
     (bundle / "evidence.json").write_bytes(canonical_json(evidence))
 
 
-def validate(bundle: Path, expected_commit: str, expected_descriptor: str) -> list[str]:
-    """Why this bundle may NOT be published (empty list: it is complete and independently verified)."""
+def validate(bundle: Path, expected_commit: str, platforms: str | Sequence[str]) -> list[str]:
+    """Why this bundle may NOT be published (empty list: it is complete and independently verified).
+
+    ``platforms`` is the dispatch selection (``windows``/``macos``/``both`` or an explicit subset).
+    Evidence must name exactly those targets; a Windows-only bundle is not invalidated by absent macOS
+    evidence, and a selected target that is absent is an error.
+    """
+    selected = selected_platforms(platforms)
+    expected_targets = sorted(PLATFORM_TARGET[platform] for platform in selected)
     errors: list[str] = []
     try:
         evidence = load_json(bundle / "evidence.json")
@@ -1988,46 +2080,60 @@ def validate(bundle: Path, expected_commit: str, expected_descriptor: str) -> li
         errors.append("evidence schema is unsupported")
     if evidence["source_commit"] != expected_commit:
         errors.append("evidence commit differs from the expected commit")
-    if evidence["descriptor_digest"] != expected_descriptor:
-        errors.append("evidence descriptor digest differs from the expected descriptor")
     descriptors = evidence["descriptors"]
-    if not isinstance(descriptors, dict) or set(descriptors) != set(TARGETS):
-        errors.append("evidence descriptors must name exactly the release targets")
+    if not isinstance(descriptors, dict) or set(descriptors) != set(expected_targets):
+        errors.append(f"evidence descriptors must name exactly the selected targets {expected_targets}")
         descriptors = {}
-    elif descriptor_set_digest(descriptors) != evidence["descriptor_digest"]:
-        errors.append("evidence descriptor digest is not the digest of its per-target descriptors")
+    else:
+        try:
+            internal = descriptor_set_digest(descriptors)
+        except ValueError as error:
+            errors.append(f"evidence descriptors are invalid: {error}")
+        else:
+            if internal != evidence["descriptor_digest"]:
+                errors.append("evidence descriptor digest is not the digest of its per-target descriptors")
     recipes = evidence["recipes"] if isinstance(evidence["recipes"], dict) else {}
-    if set(recipes) != set(TARGETS) or not all(SHA256_RE.match(str(v)) for v in recipes.values()):
-        errors.append("evidence recipes must be a sha256 for exactly the release targets")
+    if set(recipes) != set(expected_targets) or not all(SHA256_RE.match(str(v)) for v in recipes.values()):
+        errors.append(f"evidence recipes must be a sha256 for exactly the selected targets {expected_targets}")
         recipes = {}
-    errors += _validate_context(evidence["context"], expected_commit)
+    errors += _validate_context(evidence["context"], expected_commit, expected_targets)
     errors += _validate_files(bundle, evidence)
     targets = evidence["targets"]
-    if not isinstance(targets, dict) or set(targets) != set(TARGETS):
-        errors.append(f"evidence targets must be exactly {list(TARGETS)}; got {sorted(targets) if isinstance(targets, dict) else targets}")
-        targets = {t: p for t, p in (targets or {}).items() if t in TARGETS} if isinstance(targets, dict) else {}
+    if not isinstance(targets, dict) or set(targets) != set(expected_targets):
+        errors.append(f"evidence targets must be exactly the selected targets {expected_targets}; got {sorted(targets) if isinstance(targets, dict) else targets}")
+        targets = {t: p for t, p in (targets or {}).items() if t in expected_targets} if isinstance(targets, dict) else {}
     policies = {}
     for target, rel in sorted(targets.items()):
         report_errors, policy = _validate_target(bundle, evidence, target, rel, descriptors.get(target), recipes.get(target), expected_commit)
         errors += [f"{target}: {e}" for e in report_errors]
         policies[target] = policy
-    if len(policies) == len(TARGETS) and all(isinstance(p, dict) for p in policies.values()) and policy_digest(policies) != evidence["policy_digest"]:
+    if len(policies) == len(expected_targets) and all(isinstance(p, dict) for p in policies.values()) and policy_digest(policies) != evidence["policy_digest"]:
         errors.append("evidence policy digest is not the digest of the per-target signing policies")
     return errors
 
 
-def _validate_context(context: Any, expected_commit: str) -> list[str]:
+def _validate_context(context: Any, expected_commit: str, expected_targets: Sequence[str]) -> list[str]:
     if not isinstance(context, dict):
         return ["context is missing"]
     errors = []
+    if set(context) != set(CONTEXT_FIELDS) | {"platforms"}:
+        errors.append("context does not have exactly the owner master-dispatch fields")
     if context.get("event_name") != "workflow_dispatch" or context.get("pull_request") is not False:
-        errors.append("event is not a protected workflow_dispatch (a pull request can never publish)")
+        errors.append("event is not a manual dispatch (a pull request can never publish)")
     if context.get("environment") != PROTECTED_ENVIRONMENT:
         errors.append(f"protected environment is not {PROTECTED_ENVIRONMENT!r}")
-    if not TAG_REF.match(str(context.get("ref", ""))):
-        errors.append("ref is not an immutable release tag")
-    if context.get("sha") != expected_commit:
+    if context.get("ref") != MASTER_REF:
+        errors.append(f"ref is not {MASTER_REF!r}")
+    if not COMMIT_SHA_RE.match(str(context.get("sha", ""))) or context.get("sha") != expected_commit:
         errors.append("context sha differs from the expected commit")
+    if context.get("actor") != RELEASE_ACTOR:
+        errors.append(f"context actor is not {RELEASE_ACTOR!r}")
+    if context.get("triggering_actor") != RELEASE_ACTOR:
+        errors.append(f"context rerun actor is not {RELEASE_ACTOR!r}")
+    if not GITHUB_RUN_ID_RE.match(str(context.get("run_id", ""))):
+        errors.append("context run id is not a workflow run id")
+    if context.get("platforms") != sorted(expected_targets):
+        errors.append(f"context platforms are not the selected targets {sorted(expected_targets)}")
     return errors
 
 
@@ -2286,12 +2392,21 @@ def _request(args: argparse.Namespace, platform: str, stage: str) -> SignRequest
 
 
 def _cmd_bundle(args: argparse.Namespace, env: dict[str, str]) -> int:
+    try:
+        selected = selected_platforms(args.platform)
+    except ValueError as error:
+        print(f"bundle: BLOCKED {error}", file=sys.stderr)
+        return 2
     descriptors, recipes, targets = {}, {}, {}
     seen_fragments: list[dict] = []
     work = Path(tempfile.mkdtemp(prefix="gate-compose-"))
     try:
-        for platform, target in PLATFORM_TARGET.items():
-            descriptors[target] = sha256_file(getattr(args, f"descriptor_{platform}"))
+        for platform in selected:
+            target = PLATFORM_TARGET[platform]
+            descriptor = getattr(args, f"descriptor_{platform}", None)
+            if descriptor is None:
+                raise StageFailure("report-incomplete", f"the descriptor for the selected {platform} target is required")
+            descriptors[target] = sha256_file(descriptor)
             recipes[target] = recipe_digest(INSTALLER_DIR, platform)
             fragments = {}
             for stage, name in (("verify-inputs", "verify-inputs"), ("sign-nested", "nested"), ("assemble", "assemble"), ("sign-outer", "outer")):
@@ -2301,13 +2416,13 @@ def _cmd_bundle(args: argparse.Namespace, env: dict[str, str]) -> int:
             report = compose_target_report(target=target, commit=args.commit, descriptor=descriptors[target], recipe=recipes[target], fragments=fragments)
             (work / f"{target}.json").write_bytes(canonical_json(report))
             targets[target] = work / f"{target}.json"
-        contexts = [fragment.get("context") for fragment in seen_fragments]
-        if not contexts or any(c != contexts[0] or not isinstance(c, dict) for c in contexts):
-            raise StageFailure("report-incomplete", "the credentialed signing jobs did not all run in one recorded context")
-        context = contexts[0]
-        # Target reports are copied next to the stage reports so they are indexed like every other file.
+        context = _bundle_context(env, seen_fragments, selected)
+        # Target reports are copied next to the selected stage reports so they are indexed like every other file.
         staging = work / "reports"
-        shutil.copytree(args.reports_root, staging)
+        staging.mkdir()
+        for source in sorted(p for p in args.reports_root.rglob("*.json") if p.is_file()):
+            if any(platform in source.name for platform in selected):
+                shutil.copy2(source, staging / source.name)
         for path in targets.values():
             shutil.copy2(path, staging / path.name)
         build_bundle(bundle=args.bundle, target_reports={t: staging / p.name for t, p in targets.items()}, reports_root=staging, context=context, commit=args.commit, descriptors=descriptors, recipes=recipes)
@@ -2332,25 +2447,26 @@ def main(argv: list[str] | None = None) -> int:
     _request_args(asm)
     ver = sub.add_parser("verify-inputs")
     ver.add_argument("--platform", choices=("windows", "macos"), required=True)
-    for name in ("a", "b", "provenance", "descriptor", "output", "reports"):
+    for name in ("tree", "provenance", "ab-report", "descriptor", "output", "reports"):
         ver.add_argument(f"--{name}", type=Path, required=True)
     ver.add_argument("--commit", required=True)
     ver.add_argument("--recipe-digest", required=True)
     sdg = sub.add_parser("descriptor-set-digest")
-    sdg.add_argument("--windows-sha256", required=True)
-    sdg.add_argument("--macos-sha256", required=True)
+    sdg.add_argument("--target", action="append", required=True, metavar="TARGET=SHA256",
+                     help="one selected target and its descriptor digest; repeat for a second target")
     rec = sub.add_parser("recipe-digest")
     rec.add_argument("--platform", choices=("windows", "macos"), required=True)
     bun = sub.add_parser("bundle")
+    bun.add_argument("--platform", choices=("windows", "macos", "both"), required=True)
     bun.add_argument("--reports-root", type=Path, required=True)
     bun.add_argument("--bundle", type=Path, required=True)
     bun.add_argument("--commit", required=True)
     for platform in ("windows", "macos"):
-        bun.add_argument(f"--descriptor-{platform}", type=Path, required=True)
+        bun.add_argument(f"--descriptor-{platform}", type=Path)
     val = sub.add_parser("validate")
     val.add_argument("--bundle", type=Path, required=True)
     val.add_argument("--commit", required=True)
-    val.add_argument("--descriptor-digest", required=True)
+    val.add_argument("--platform", choices=("windows", "macos", "both"), required=True)
     dbg = sub.add_parser("package-debug")
     dbg.add_argument("--platform", choices=("windows", "macos"), required=True)
     dbg.add_argument("--tree", type=Path, required=True)
@@ -2363,10 +2479,24 @@ def main(argv: list[str] | None = None) -> int:
     env = dict(os.environ)
 
     if args.command == "descriptor-set-digest":
-        if not (SHA256_RE.match(args.windows_sha256) and SHA256_RE.match(args.macos_sha256)):
-            print("descriptor-set-digest: both digests must be lowercase sha256", file=sys.stderr)
+        digests: dict[str, str] = {}
+        for entry in args.target:
+            target, separator, digest = entry.partition("=")
+            if not separator or not target or not digest:
+                print("descriptor-set-digest: every --target must be TARGET=SHA256", file=sys.stderr)
+                return 2
+            if target in digests:
+                print(f"descriptor-set-digest: duplicate target {target!r}", file=sys.stderr)
+                return 2
+            digests[target] = digest
+        if len(digests) > len(TARGETS):
+            print("descriptor-set-digest: at most two targets are known", file=sys.stderr)
             return 2
-        print(descriptor_set_digest({"windows-x86_64": args.windows_sha256, "macos-arm64": args.macos_sha256}))
+        try:
+            print(descriptor_set_digest(digests))
+        except ValueError as error:
+            print(f"descriptor-set-digest: {error}", file=sys.stderr)
+            return 2
         return 0
     if args.command == "recipe-digest":
         print(recipe_digest(INSTALLER_DIR, args.platform))
@@ -2374,7 +2504,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "bundle":
         return _cmd_bundle(args, env)
     if args.command == "validate":
-        errors = validate(args.bundle, args.commit, args.descriptor_digest)
+        errors = validate(args.bundle, args.commit, args.platform)
         for error in errors:
             print(f"BLOCKED: {error}")
         print("ELIGIBLE" if not errors else f"NOT ELIGIBLE: {len(errors)} defect(s)")
@@ -2393,8 +2523,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "verify-inputs":
         outcome = verify_unsigned_inputs(
-            platform=args.platform, a=args.a, b=args.b, provenance=args.provenance, descriptor_path=args.descriptor, env=env,
-            expected_commit=args.commit, recipe=args.recipe_digest, output=args.output, reports=args.reports,
+            platform=args.platform, tree=args.tree, provenance=args.provenance, ab_report=args.ab_report, descriptor_path=args.descriptor,
+            env=env, expected_commit=args.commit, recipe=args.recipe_digest, output=args.output, reports=args.reports,
         )  # fmt: skip
     elif args.command == "assemble":
         outcome = assemble(_request(args, args.platform, "outer"), env, SubprocessRunner(env))

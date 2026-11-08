@@ -642,20 +642,50 @@ def check_release_build(source):
 
 
 def check_gate_boundary(workflows):
-    """Signed candidates come only from trusted producer runs; nothing else touches signing."""
+    """The release caller authorizes one owner master dispatch and builds the same run's inputs."""
     errors = []
     gate = workflows["release-native-installers.yml"]
-    if '.workflowName == "release-build"' not in gate or '(.event == "push" or .event == "workflow_dispatch")' not in gate:
-        errors.append("the gate no longer restricts producer runs to release-build push/workflow_dispatch (PR artifacts would qualify)")
-    if '.headSha == $sha' not in gate or '.conclusion == "success"' not in gate:
-        errors.append("the gate no longer binds producer runs to the commit and a successful conclusion")
-    if "pull_request" in strip_yaml_comments(gate).replace('.event == "push" or .event == "workflow_dispatch"', ""):
-        errors.append("the gate workflow must not be triggered by or accept pull_request context")
+    body = strip_yaml_comments(gate)
+    if 'github.event_name == \'workflow_dispatch\'' not in body or "github.ref == 'refs/heads/master'" not in body:
+        errors.append("the release caller no longer requires a manual dispatch on master")
+    for condition in re.findall(r"(?m)^    if:\s*(.+)$", gate):
+        if "github.actor == 'raidenyn'" not in condition or "github.triggering_actor == 'raidenyn'" not in condition:
+            errors.append("a release job condition does not re-check the owner and rerun actor")
+            break
+    for condition in re.findall(r"(?m)^    if:\s*(.+)$", gate):
+        if "github.event_name == 'workflow_dispatch'" not in condition or "github.ref == 'refs/heads/master'" not in condition:
+            errors.append("a release job condition does not re-check the master dispatch")
+            break
+    guard = job_block(gate, "guard")
+    for check in (
+        '[ "$EVENT" = workflow_dispatch ]',
+        '[ "$REF" = refs/heads/master ]',
+        '[ "$ACTOR" = raidenyn ]',
+        '[ "$TRIGGERING_ACTOR" = raidenyn ]',
+    ):
+        if check not in guard:
+            errors.append("the guard does not enforce %s before any build" % check)
+    if "- uses: actions/checkout@" in guard:
+        errors.append("the guard must reject before checkout")
+    for platform in ("windows", "macos"):
+        build = job_block(gate, "build-%s" % platform)
+        if "build-kind: release" not in build:
+            errors.append("build-%s is not a release-profile build" % platform)
+        if "commit-sha: ${{ github.sha }}" not in build:
+            errors.append("build-%s does not build this run's master commit" % platform)
+    if "gh run view" in body or "run-id:" in body or "unsigned_run_" in body:
+        errors.append("the release caller still consumes another run's artifacts")
+    if ".workflowName == \"release-build\"" in body or ".headSha == $sha" in body:
+        errors.append("the release caller still inspects external producer runs")
+    if "VELES_APPROVED_DESCRIPTOR_SHA256" in body:
+        errors.append("the obsolete manual descriptor approval variable is back")
+    if "pull_request" in body:
+        errors.append("the release workflow must not accept pull-request context")
     for name, source in workflows.items():
         if name == "release-native-installers.yml":
             continue
-        body = strip_yaml_comments(source)
-        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_|native-release|VELES_APPROVED_", body):
+        other = strip_yaml_comments(source)
+        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_|native-release|VELES_APPROVED_", other):
             errors.append("%s references signing credentials or the protected environment" % name)
     return errors
 
@@ -1179,27 +1209,38 @@ class Callers(unittest.TestCase):
     def test_signed_candidates_never_come_from_pull_request_artifacts(self):
         self.assertEqual(check_gate_boundary(self.workflows()), [])
 
-    def test_windows_only_mode_cannot_skip_the_two_target_gate(self) -> None:
+    def test_platform_selection_does_not_require_the_unselected_target(self) -> None:
         gate = read(".github/workflows/release-native-installers.yml")
-        self.assertIn("windows_only:", gate)
-        self.assertIn("if: ${{ !inputs.windows_only }}", gate, "the macOS jobs must be conditional")
-        self.assertIn("native-windows / build", gate, "the Windows job, not the whole run, is checked")
+        self.assertIn("      platform:\n", gate)
+        self.assertIn("options: [windows, macos, both]", gate)
+        self.assertIn("default: windows", gate)
+        self.assertNotIn("windows_only:", gate)
+        for platform in ("windows", "macos"):
+            self.assertIn("inputs.platform == '%s' || inputs.platform == 'both'" % platform, gate)
+        self.assertIn("RESULT_WINDOWS: ${{ needs.sign-windows-outer.result }}", gate)
         self.assertIn("RESULT_MACOS: ${{ needs.sign-macos-outer.result }}", gate)
-        self.assertIn('if [ "$result" != success ]', gate, "skipped macOS can never be eligible")
+        self.assertIn('for os in $selected', gate, "only the selected platforms are required")
         self.assertNotIn('or .event == "pull_request"', gate, "PR producer runs stay rejected")
 
     def test_gate_boundary_mutations_are_rejected(self):
         workflows = self.workflows()
         gate = workflows["release-native-installers.yml"]
         for old, new in (
-            ('(.event == "push" or .event == "workflow_dispatch")', '(.event == "push" or .event == "workflow_dispatch" or .event == "pull_request")'),
-            ('.workflowName == "release-build"', '.workflowName != ""'),
-            ('.headSha == $sha', 'true'),
+            ("[ \"$ACTOR\" = raidenyn ]", "[ \"$ACTOR\" = someone-else ]"),
+            ("[ \"$TRIGGERING_ACTOR\" = raidenyn ]", "[ \"$TRIGGERING_ACTOR\" = someone-else ]"),
+            ("[ \"$REF\" = refs/heads/master ]", "[ \"$REF\" = refs/heads/feature ]"),
+            ("commit-sha: ${{ github.sha }}", "commit-sha: ${{ inputs.commit }}"),
+            ("build-kind: release", "build-kind: debug"),
+            ("github.actor == 'raidenyn'", "github.actor != ''"),
         ):
             self.assertIn(old, gate, old)
             self.assertNotEqual(check_gate_boundary({**workflows, "release-native-installers.yml": gate.replace(old, new, 1)}), [], old)
         leaked = {**workflows, "build-native-windows.yml": workflows["build-native-windows.yml"] + "\n      env:\n        VELES_WIN_PFX_BASE64: x\n"}
         self.assertNotEqual(check_gate_boundary(leaked), [])
+        approved = {**workflows, "release-native-installers.yml": gate + "\n      VELES_APPROVED_DESCRIPTOR_SHA256: x\n"}
+        self.assertNotEqual(check_gate_boundary(approved), [])
+        external = {**workflows, "release-native-installers.yml": gate + "\n      - run: gh run view 1\n"}
+        self.assertNotEqual(check_gate_boundary(external), [])
 
     def test_host_check_workflow_runs_the_installer_checks_on_every_platform(self):
         source = read(".github/workflows/build-native-host.yml")
