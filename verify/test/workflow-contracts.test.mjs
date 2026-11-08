@@ -1851,7 +1851,12 @@ test('PR installer caller contract rejects routing, approval, scope and boundary
     'non-cancelling concurrency': (text) => text.replace('cancel-in-progress: true', 'cancel-in-progress: false'),
     'wrong concurrency group': (text) => text.replace('group: pr-installers-${{ github.event.pull_request.number }}', 'group: pr-installers'),
     'artifact download': (text) => `${text}\n  stray:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n`,
-    'removed approval-boundary honesty': (text) => text.replaceAll('/', ' '),
+    'removed approval-boundary honesty': (text) => text
+      // Remove only the honesty comment lines: replacing path separators would corrupt the
+      // reusable-workflow paths and fail the contract for an unrelated reason.
+      .replace('# - The approve job is a workflow-local convenience gate.\n', '')
+      .replace('# - It is not a tamper-resistant security boundary.\n', '')
+      .replace('# - A pull request that edits its own `pull_request` workflow can remove this job.\n', ''),
     'claimed tamper resistance': (text) => text.replace('not a tamper-resistant', 'a tamper-resistant'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
@@ -1859,4 +1864,12 @@ test('PR installer caller contract rejects routing, approval, scope and boundary
     assert.notEqual(mutated, source, `mutation "${label}" must change the workflow`);
     assert.throws(() => assertPrInstallerCaller(mutated), `the contract must reject "${label}"`);
   }
+  // The honesty mutation only removes comment lines, so it must fail on the specific
+  // approval-boundary diagnostic; failing elsewhere would mean an unrelated check fired.
+  const dishonest = mutations['removed approval-boundary honesty'](source);
+  assert.throws(
+    () => assertPrInstallerCaller(dishonest),
+    (error) => /approval boundary as a workflow-local convenience gate/.test(error.message),
+    'removing the approval-boundary honesty must fail the workflow-local convenience gate diagnostic',
+  );
 });

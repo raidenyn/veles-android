@@ -35,6 +35,7 @@ pub(crate) enum PeError {
     /// The resource is not completely inside one initialized section.
     OutsideImage,
     /// Bytes are not covered by the embedded Authenticode signature.
+    #[cfg(any(windows, test))]
     UnauthenticatedOverlay,
     /// The resource is larger than the caller's bound.
     TooLarge,
@@ -66,14 +67,51 @@ impl Section {
 }
 
 /// Extract the named `RT_RCDATA` resource if Authenticode covers its bytes.
+///
+/// Compiled only where it is used: the Windows release adapter and the unit tests. The debug
+/// fixture adapter always uses `extract_unsigned_carrier`, so the release coverage rules cannot
+/// be relaxed by the debug build.
+#[cfg(any(windows, test))]
 pub(crate) fn extract_carrier<'a>(
     image: &'a [u8],
     resource_name: &str,
     max_bytes: usize,
 ) -> Result<&'a [u8], PeError> {
-    let sections = parse_image(image)?;
+    let parsed = parse_image(image)?;
+    extract_resource(image, &parsed.sections, resource_name, max_bytes)
+}
+
+/// Extract the named `RT_RCDATA` resource from a **genuinely unsigned** image.
+///
+/// The Windows debug producer embeds the fixture carrier in a `carrier.exe` it never signs, so the
+/// certificate directory is empty and there is no signature that could cover the resource. The
+/// debug fixture trust adapter is the only caller, and it is compiled only with the
+/// `debug-fixture-trust` feature; the release adapter keeps using `extract_carrier` and its
+/// certificate/coverage requirements unchanged.
+///
+/// Only the signature requirement is dropped. Everything else is the same bounded reader: the
+/// image must be a structurally valid, untruncated PE whose resource directory and named resource
+/// lie completely inside one section's raw data, and the resource is refused when it is empty or
+/// larger than `max_bytes`.
+#[cfg(feature = "debug-fixture-trust")]
+pub(crate) fn extract_unsigned_carrier<'a>(
+    image: &'a [u8],
+    resource_name: &str,
+    max_bytes: usize,
+) -> Result<&'a [u8], PeError> {
+    let parsed = parse_sections(image)?;
+    extract_resource(image, &parsed.sections, resource_name, max_bytes)
+}
+
+/// Locate the named resource and map its complete byte range into section raw data.
+fn extract_resource<'a>(
+    image: &'a [u8],
+    sections: &[Section],
+    resource_name: &str,
+    max_bytes: usize,
+) -> Result<&'a [u8], PeError> {
     let resource_rva = resource_directory_rva(image)?;
-    let base = map_rva(&sections, resource_rva, 1).ok_or(PeError::OutsideImage)?;
+    let base = map_rva(sections, resource_rva, 1).ok_or(PeError::OutsideImage)?;
     // Directory entries may only be read from the resource directory's own
     // section raw data, never from the unauthenticated certificate table.
     let limit = sections
@@ -94,12 +132,31 @@ pub(crate) fn extract_carrier<'a>(
     if data_size == 0 || data_size > max_bytes {
         return Err(PeError::TooLarge);
     }
-    let start = map_rva(&sections, data_rva, data_size).ok_or(PeError::OutsideImage)?;
+    let start = map_rva(sections, data_rva, data_size).ok_or(PeError::OutsideImage)?;
     let end = start.checked_add(data_size).ok_or(PeError::OutsideImage)?;
     image.get(start..end).ok_or(PeError::OutsideImage)
 }
 
-fn parse_image(image: &[u8]) -> Result<Vec<Section>, PeError> {
+/// The structural parts of a parsed image the resource readers need.
+///
+/// The Authenticode fields are read only by the release coverage rule, which is compiled on
+/// Windows and in unit tests; the debug build keeps the same parser without them.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+struct ParsedImage {
+    sections: Vec<Section>,
+    optional_header: usize,
+    magic: u16,
+    number_of_directories: usize,
+}
+
+#[cfg(any(windows, test))]
+fn parse_image(image: &[u8]) -> Result<ParsedImage, PeError> {
+    let parsed = parse_sections(image)?;
+    require_authenticode_coverage(image, &parsed)?;
+    Ok(parsed)
+}
+
+fn parse_sections(image: &[u8]) -> Result<ParsedImage, PeError> {
     if image.len() < 0x40 || &image[..2] != b"MZ" {
         return Err(PeError::Malformed);
     }
@@ -148,15 +205,26 @@ fn parse_image(image: &[u8]) -> Result<Vec<Section>, PeError> {
         sections.push(section);
     }
 
+    Ok(ParsedImage {
+        sections,
+        optional_header: optional,
+        magic,
+        number_of_directories,
+    })
+}
+
+/// Require that an embedded Authenticode signature covers the image content.
+#[cfg(any(windows, test))]
+fn require_authenticode_coverage(image: &[u8], parsed: &ParsedImage) -> Result<(), PeError> {
     // An embedded Authenticode signature must exist, must not overlap section
     // raw data, and must end exactly at end-of-file so no unauthenticated overlay
     // follows it.
-    if number_of_directories <= 4 {
+    if parsed.number_of_directories <= 4 {
         return Err(PeError::UnauthenticatedOverlay);
     }
-    let directory_base = match magic {
-        0x10b => optional + 96,
-        _ => optional + 112,
+    let directory_base = match parsed.magic {
+        0x10b => parsed.optional_header + 96,
+        _ => parsed.optional_header + 112,
     };
     let certificate_offset = u32_at(image, directory_base + 32)? as usize;
     let certificate_size = u32_at(image, directory_base + 36)? as usize;
@@ -169,7 +237,7 @@ fn parse_image(image: &[u8]) -> Result<Vec<Section>, PeError> {
     if certificate_end != image.len() {
         return Err(PeError::UnauthenticatedOverlay);
     }
-    for section in &sections {
+    for section in &parsed.sections {
         if let Some(end) = section.raw_end()
             && section.size_of_raw_data > 0
             && end > certificate_offset
@@ -177,7 +245,7 @@ fn parse_image(image: &[u8]) -> Result<Vec<Section>, PeError> {
             return Err(PeError::UnauthenticatedOverlay);
         }
     }
-    Ok(sections)
+    Ok(())
 }
 
 fn resource_directory_rva(image: &[u8]) -> Result<usize, PeError> {
@@ -387,8 +455,21 @@ mod tests {
     /// `RT_RCDATA`/`VELES_POLICY_CARRIER` resource and whose (fake) certificate
     /// table is the terminal region of the file.
     fn fixture(carrier: &[u8], data_rva: u32) -> Fixture {
+        build_fixture(carrier, data_rva, true)
+    }
+
+    /// The same image without any certificate table: an empty certificate
+    /// directory and no trailing bytes, exactly like the unsigned `carrier.exe`
+    /// the Windows debug producer ships.
+    #[cfg(feature = "debug-fixture-trust")]
+    fn unsigned_fixture(carrier: &[u8], data_rva: u32) -> Fixture {
+        build_fixture(carrier, data_rva, false)
+    }
+
+    fn build_fixture(carrier: &[u8], data_rva: u32, signed: bool) -> Fixture {
         let certificate_offset = RAW_OFFSET + RAW_LEN;
-        let mut image = vec![0u8; certificate_offset + CERTIFICATE_LEN];
+        let certificate_len = if signed { CERTIFICATE_LEN } else { 0 };
+        let mut image = vec![0u8; certificate_offset + certificate_len];
         image[..2].copy_from_slice(b"MZ");
         put_u32(&mut image, 0x3C, PE_OFFSET as u32);
         image[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
@@ -403,9 +484,11 @@ mod tests {
         // Resource directory (index 2).
         put_u32(&mut image, directory_base + 16, SECTION_VA);
         put_u32(&mut image, directory_base + 20, 0x100);
-        // Certificate table (index 4) at end-of-file.
-        put_u32(&mut image, directory_base + 32, certificate_offset as u32);
-        put_u32(&mut image, directory_base + 36, CERTIFICATE_LEN as u32);
+        // Certificate table (index 4) at end-of-file, when there is one.
+        if signed {
+            put_u32(&mut image, directory_base + 32, certificate_offset as u32);
+            put_u32(&mut image, directory_base + 36, CERTIFICATE_LEN as u32);
+        }
         // Section header.
         image[SECTION_TABLE..SECTION_TABLE + 5].copy_from_slice(b".rsrc");
         put_u32(&mut image, SECTION_TABLE + 8, RAW_LEN as u32);
@@ -508,6 +591,73 @@ mod tests {
         assert_eq!(
             extract_carrier(&truncated, RESOURCE_NAME, 4096).expect_err("truncated"),
             PeError::Malformed
+        );
+    }
+
+    /// The debug producer writes `carrier.exe` without signing it, so its certificate directory is
+    /// empty. The release reader must keep refusing that image; only the debug reader may read the
+    /// named resource, and then under the same structural and size bounds.
+    #[cfg(feature = "debug-fixture-trust")]
+    #[test]
+    fn unsigned_debug_image_is_read_only_by_the_debug_reader() {
+        let carrier = b"VELESPC1-unsigned-debug-carrier";
+        let image = unsigned_fixture(carrier, SECTION_VA + CARRIER_IN_SECTION as u32);
+
+        assert_eq!(
+            extract_carrier(&image.image, RESOURCE_NAME, 4096)
+                .expect_err("the release reader requires a certificate table"),
+            PeError::UnauthenticatedOverlay
+        );
+        assert_eq!(
+            extract_unsigned_carrier(&image.image, RESOURCE_NAME, 4096)
+                .expect("the debug reader accepts the unsigned image"),
+            image.carrier.as_slice()
+        );
+
+        // The same bound and the same image-content rule apply to the debug reader.
+        assert_eq!(
+            extract_unsigned_carrier(&image.image, RESOURCE_NAME, carrier.len() - 1)
+                .expect_err("bound"),
+            PeError::TooLarge
+        );
+        assert_eq!(
+            extract_unsigned_carrier(&image.image, "SOME_OTHER_CARRIER", 4096)
+                .expect_err("missing"),
+            PeError::Missing
+        );
+
+        // A resource whose bytes are not inside the section's raw data stays refused.
+        let outside = unsigned_fixture(carrier, SECTION_VA + RAW_LEN as u32 + 0x100);
+        assert_eq!(
+            extract_unsigned_carrier(&outside.image, RESOURCE_NAME, 4096)
+                .expect_err("outside sections"),
+            PeError::OutsideImage
+        );
+
+        // Truncated images are malformed, not a shorter resource.
+        let mut truncated = image.image.clone();
+        truncated.truncate(0x20);
+        assert_eq!(
+            extract_unsigned_carrier(&truncated, RESOURCE_NAME, 4096).expect_err("truncated"),
+            PeError::Malformed
+        );
+        let mut truncated = image.image.clone();
+        truncated.truncate(RAW_OFFSET + 0x80);
+        assert_eq!(
+            extract_unsigned_carrier(&truncated, RESOURCE_NAME, 4096)
+                .expect_err("truncated resource directory"),
+            PeError::Malformed
+        );
+
+        // A malformed (oversized) resource size is refused by the bound, and an
+        // unparsable data entry by the section mapping.
+        let mut oversized = image.image.clone();
+        let entry = RAW_OFFSET + 0x88;
+        oversized[entry + 4..entry + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(
+            extract_unsigned_carrier(&oversized, RESOURCE_NAME, 4096)
+                .expect_err("oversized resource"),
+            PeError::TooLarge
         );
     }
 }

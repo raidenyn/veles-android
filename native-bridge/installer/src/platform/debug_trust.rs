@@ -111,13 +111,16 @@ pub const WINDOWS_CARRIER_RESOURCE: &str = "VELES_POLICY_CARRIER";
 /// The macOS carrier resource, relative to `carrier.app/Contents`.
 const MACOS_CARRIER_RESOURCE: &str = "Resources/veles-policy-carrier";
 
-/// Read the exact policy carrier bytes from a Windows carrier image.
+/// Read the exact policy carrier bytes from an **unsigned** Windows debug carrier image.
 ///
-/// The debug adapter uses this instead of WinVerifyTrust: the bytes are the resource the package
-/// actually carries, and the decision layer still requires them to equal the compiled-in expected
-/// descriptor. An image without the covered resource is refused.
+/// The Windows debug producer never signs `carrier.exe`, so its certificate directory is empty and
+/// the release `extract_carrier` path (which requires a
+/// signature-covered resource) would refuse the debug package's own carrier. This adapter instead
+/// uses the bounded unsigned-PE reader: the named resource, inside one section's raw data and
+/// within [`super::MAX_CARRIER_BYTES`], still has to equal the compiled-in expected descriptor at
+/// the decision layer, and the reader is compiled only with `debug-fixture-trust`.
 pub fn windows_carrier_from_image(image: &[u8]) -> InstallResult<Vec<u8>> {
-    super::pe::extract_carrier(image, WINDOWS_CARRIER_RESOURCE, super::MAX_CARRIER_BYTES)
+    super::pe::extract_unsigned_carrier(image, WINDOWS_CARRIER_RESOURCE, super::MAX_CARRIER_BYTES)
         .map(|bytes| bytes.to_vec())
         .map_err(|_| denied())
 }
@@ -125,18 +128,25 @@ pub fn windows_carrier_from_image(image: &[u8]) -> InstallResult<Vec<u8>> {
 /// Read the exact policy carrier resource from a macOS package root
 /// (`<root>/carrier.app/Contents/Resources/veles-policy-carrier`).
 ///
-/// The path is bounded to the package root and read without following a final link, mirroring the
-/// release adapter's resource read; only the OS signature assessment is replaced.
+/// `carrier.app` is validated exactly as the release adapter validates it - an existing, non-link
+/// directory below the package root - before the resource is read, and the resource is then
+/// contained to that canonical bundle and read without following a link. Only the OS signature
+/// assessment is replaced.
 pub fn macos_carrier_from_package(package_root: &Path) -> InstallResult<Vec<u8>> {
-    let resource = package_root
-        .join(super::PACKAGE_MACOS_CARRIER)
-        .join("Contents")
-        .join(MACOS_CARRIER_RESOURCE);
-    if !super::path_is_within(package_root, &resource) {
+    let candidate = package_root.join(super::PACKAGE_MACOS_CARRIER);
+    if !super::path_is_within(package_root, &candidate) {
+        return Err(denied());
+    }
+    let carrier = super::PackageSource::open(&candidate).map_err(|_| denied())?;
+    if carrier.kind() != super::PackageKind::Directory {
+        return Err(denied());
+    }
+    let resource = carrier.path().join("Contents").join(MACOS_CARRIER_RESOURCE);
+    if !super::path_is_within(carrier.path(), &resource) {
         return Err(denied());
     }
     let canonical = std::fs::canonicalize(&resource).map_err(|_| denied())?;
-    if !super::path_is_within(package_root, &canonical) {
+    if !super::path_is_within(carrier.path(), &canonical) {
         return Err(denied());
     }
     let metadata = std::fs::symlink_metadata(&canonical).map_err(|_| denied())?;

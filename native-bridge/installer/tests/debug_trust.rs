@@ -474,59 +474,71 @@ impl Platform for DebugFixturePlatform {
     }
 }
 
+// The geometry of the synthetic PE32+ image the Windows tests feed the `pe` reader.
+const PE_OFFSET: usize = 0x40;
+const PE_OPTIONAL_LEN: usize = 0xF0;
+const PE_OPTIONAL: usize = PE_OFFSET + 4 + 20;
+const PE_SECTION_TABLE: usize = PE_OPTIONAL + PE_OPTIONAL_LEN;
+const PE_DIRECTORY_BASE: usize = PE_OPTIONAL + 112;
+const PE_RAW_OFFSET: usize = 0x200;
+const PE_RAW_LEN: usize = 0x400;
+const PE_SECTION_VA: u32 = 0x1000;
+const PE_CARRIER_IN_SECTION: usize = 0xA0;
+const PE_CERTIFICATE_LEN: usize = 16;
+const PE_RESOURCE_TYPE_RCDATA: u32 = 10;
+const PE_RESOURCE_NAME: &str = "VELES_POLICY_CARRIER";
+/// Offset of the language directory's single data entry inside the resource section.
+const PE_CARRIER_DATA_ENTRY: usize = 0x88;
+
+fn put_u16(image: &mut [u8], offset: usize, value: u16) {
+    image[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u32(image: &mut [u8], offset: usize, value: u32) {
+    image[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
 /// A minimal PE32+ image whose only section carries an `RT_RCDATA`/`VELES_POLICY_CARRIER`
 /// resource and whose terminal certificate table ends the file. Test support only; mirrors the
 /// fixture the `pe` unit tests use.
 fn minimal_pe_image(carrier: &[u8]) -> Vec<u8> {
-    const PE_OFFSET: usize = 0x40;
-    const OPTIONAL_LEN: usize = 0xF0;
-    const SECTION_TABLE: usize = PE_OFFSET + 4 + 20 + OPTIONAL_LEN;
-    const RAW_OFFSET: usize = 0x200;
-    const RAW_LEN: usize = 0x400;
-    const SECTION_VA: u32 = 0x1000;
-    const CARRIER_IN_SECTION: usize = 0xA0;
-    const CERTIFICATE_LEN: usize = 16;
-    const RESOURCE_TYPE_RCDATA: u32 = 10;
-    const RESOURCE_NAME: &str = "VELES_POLICY_CARRIER";
-
-    fn put_u16(image: &mut [u8], offset: usize, value: u16) {
-        image[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-    }
-    fn put_u32(image: &mut [u8], offset: usize, value: u32) {
-        image[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-    }
-
-    let certificate_offset = RAW_OFFSET + RAW_LEN;
-    let mut image = vec![0u8; certificate_offset + CERTIFICATE_LEN];
+    let certificate_offset = PE_RAW_OFFSET + PE_RAW_LEN;
+    let mut image = vec![0u8; certificate_offset + PE_CERTIFICATE_LEN];
     image[..2].copy_from_slice(b"MZ");
     put_u32(&mut image, 0x3C, PE_OFFSET as u32);
     image[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
     let coff = PE_OFFSET + 4;
     put_u16(&mut image, coff, 0x8664);
     put_u16(&mut image, coff + 2, 1);
-    put_u16(&mut image, coff + 16, OPTIONAL_LEN as u16);
-    let optional = coff + 20;
-    put_u16(&mut image, optional, 0x20b);
-    let directory_base = optional + 112;
-    put_u32(&mut image, optional + 108, 16);
-    put_u32(&mut image, directory_base + 16, SECTION_VA);
-    put_u32(&mut image, directory_base + 20, 0x100);
-    put_u32(&mut image, directory_base + 32, certificate_offset as u32);
-    put_u32(&mut image, directory_base + 36, CERTIFICATE_LEN as u32);
-    image[SECTION_TABLE..SECTION_TABLE + 5].copy_from_slice(b".rsrc");
-    put_u32(&mut image, SECTION_TABLE + 8, RAW_LEN as u32);
-    put_u32(&mut image, SECTION_TABLE + 12, SECTION_VA);
-    put_u32(&mut image, SECTION_TABLE + 16, RAW_LEN as u32);
-    put_u32(&mut image, SECTION_TABLE + 20, RAW_OFFSET as u32);
+    put_u16(&mut image, coff + 16, PE_OPTIONAL_LEN as u16);
+    put_u16(&mut image, PE_OPTIONAL, 0x20b);
+    put_u32(&mut image, PE_OPTIONAL + 108, 16);
+    put_u32(&mut image, PE_DIRECTORY_BASE + 16, PE_SECTION_VA);
+    put_u32(&mut image, PE_DIRECTORY_BASE + 20, 0x100);
+    put_u32(
+        &mut image,
+        PE_DIRECTORY_BASE + 32,
+        certificate_offset as u32,
+    );
+    put_u32(
+        &mut image,
+        PE_DIRECTORY_BASE + 36,
+        PE_CERTIFICATE_LEN as u32,
+    );
+    image[PE_SECTION_TABLE..PE_SECTION_TABLE + 5].copy_from_slice(b".rsrc");
+    put_u32(&mut image, PE_SECTION_TABLE + 8, PE_RAW_LEN as u32);
+    put_u32(&mut image, PE_SECTION_TABLE + 12, PE_SECTION_VA);
+    put_u32(&mut image, PE_SECTION_TABLE + 16, PE_RAW_LEN as u32);
+    put_u32(&mut image, PE_SECTION_TABLE + 20, PE_RAW_OFFSET as u32);
 
-    let resource = |offset: usize| RAW_OFFSET + offset;
+    let resource = |offset: usize| PE_RAW_OFFSET + offset;
     put_u16(&mut image, resource(0) + 14, 1);
-    put_u32(&mut image, resource(0x10), RESOURCE_TYPE_RCDATA);
+    put_u32(&mut image, resource(0x10), PE_RESOURCE_TYPE_RCDATA);
     put_u32(&mut image, resource(0x14), 0x8000_0018);
     put_u16(&mut image, resource(0x18) + 12, 1);
     put_u32(&mut image, resource(0x28), 0x8000_0040);
     put_u32(&mut image, resource(0x2C), 0x8000_0070);
-    let name: Vec<u16> = RESOURCE_NAME.encode_utf16().collect();
+    let name: Vec<u16> = PE_RESOURCE_NAME.encode_utf16().collect();
     put_u16(&mut image, resource(0x40), name.len() as u16);
     for (index, unit) in name.iter().enumerate() {
         put_u16(&mut image, resource(0x42 + index * 2), *unit);
@@ -536,12 +548,27 @@ fn minimal_pe_image(carrier: &[u8]) -> Vec<u8> {
     put_u32(&mut image, resource(0x84), 0x88);
     put_u32(
         &mut image,
-        resource(0x88),
-        SECTION_VA + CARRIER_IN_SECTION as u32,
+        resource(PE_CARRIER_DATA_ENTRY),
+        PE_SECTION_VA + PE_CARRIER_IN_SECTION as u32,
     );
-    put_u32(&mut image, resource(0x8C), carrier.len() as u32);
-    image[resource(CARRIER_IN_SECTION)..resource(CARRIER_IN_SECTION) + carrier.len()]
+    put_u32(
+        &mut image,
+        resource(PE_CARRIER_DATA_ENTRY + 4),
+        carrier.len() as u32,
+    );
+    image[resource(PE_CARRIER_IN_SECTION)..resource(PE_CARRIER_IN_SECTION) + carrier.len()]
         .copy_from_slice(carrier);
+    image
+}
+
+/// A genuinely unsigned image, exactly like the Windows debug producer writes it: the named
+/// resource is embedded, but the certificate directory is empty and no certificate bytes follow
+/// the last section. The release reader refuses this image by design; the debug adapter must not.
+fn unsigned_pe_image(carrier: &[u8]) -> Vec<u8> {
+    let mut image = minimal_pe_image(carrier);
+    image.truncate(PE_RAW_OFFSET + PE_RAW_LEN);
+    put_u32(&mut image, PE_DIRECTORY_BASE + 32, 0);
+    put_u32(&mut image, PE_DIRECTORY_BASE + 36, 0);
     image
 }
 
@@ -599,6 +626,7 @@ struct RealSealedWindowsPackage {
     descriptor: ReleaseDescriptor,
     signed_payload: Vec<u8>,
     sealed_inventory: Vec<u8>,
+    carrier: Vec<u8>,
 }
 
 /// A real Windows fixture package whose payload is "ad-hoc signed": canonical inventory for the
@@ -643,7 +671,20 @@ fn sealed_windows_package(temp: &Temp) -> RealSealedWindowsPackage {
         descriptor,
         signed_payload,
         sealed_inventory: sealed,
+        carrier,
     }
+}
+
+/// The same real package, but with the carrier image the Windows debug producer actually ships:
+/// an unsigned `carrier.exe` with an empty certificate directory.
+fn unsigned_windows_package(temp: &Temp) -> RealSealedWindowsPackage {
+    let fixture = sealed_windows_package(temp);
+    fs::write(
+        fixture.package.join(PACKAGE_WINDOWS_CARRIER),
+        unsigned_pe_image(&fixture.carrier),
+    )
+    .expect("unsigned carrier image");
+    fixture
 }
 
 fn must_deny(package: &Path, expected: &ReleaseDescriptor) -> FailureCode {
@@ -678,6 +719,73 @@ fn a_real_windows_fixture_package_authenticates_through_the_fixture_adapter() {
 }
 
 #[test]
+fn an_unsigned_windows_debug_carrier_authenticates_only_through_the_debug_adapter() {
+    let temp = Temp::new("unsigned-windows");
+    let fixture = unsigned_windows_package(&temp);
+    let image = fs::read(fixture.package.join(PACKAGE_WINDOWS_CARRIER)).expect("carrier image");
+    // The Windows debug producer never signs `carrier.exe`, so its certificate directory is empty:
+    // exactly the image the release reader refuses (see the `pe` unit tests, which assert that on
+    // this same geometry). The debug reader must still return the exact embedded document.
+    let extracted =
+        windows_carrier_from_image(&image).expect("the debug reader reads an unsigned image");
+    assert_eq!(extracted, fixture.carrier);
+
+    // The unchanged decision layer authenticates the real on-disk package; only the OS signature
+    // assessment is replaced, never the package/carrier binding.
+    let authenticated = authenticate_package(
+        &DebugFixturePlatform::new(),
+        &fixture.package,
+        &fixture.descriptor,
+    )
+    .expect("the unsigned debug package authenticates");
+    assert_eq!(authenticated.signer(), FIXTURE_PUBLISHER);
+    assert_eq!(
+        authenticated.assessment(),
+        TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE
+    );
+    assert_eq!(
+        authenticated.sealed_inventory(),
+        Some(fixture.sealed_inventory.as_slice())
+    );
+    assert_eq!(
+        authenticated.payload()[0].sha256(),
+        Digest::of(&fixture.signed_payload)
+    );
+}
+
+#[test]
+fn a_windows_debug_carrier_with_a_malformed_resource_is_refused() {
+    let temp = Temp::new("unsigned-malformed");
+    let fixture = unsigned_windows_package(&temp);
+    let image = fs::read(fixture.package.join(PACKAGE_WINDOWS_CARRIER)).expect("carrier image");
+    windows_carrier_from_image(&image).expect("baseline unsigned image");
+    // Point the carrier data entry past the section's raw data: the bytes are no longer image
+    // content, so the bounded reader must refuse them rather than slice arbitrary file bytes.
+    let mut malformed = image;
+    put_u32(
+        &mut malformed,
+        PE_RAW_OFFSET + PE_CARRIER_DATA_ENTRY,
+        PE_SECTION_VA + PE_RAW_LEN as u32 + 0x100,
+    );
+    assert_eq!(
+        windows_carrier_from_image(&malformed)
+            .expect_err("a malformed resource")
+            .code,
+        FailureCode::TrustDenied
+    );
+    // A truncated image is not a PE image either.
+    let mut truncated =
+        fs::read(fixture.package.join(PACKAGE_WINDOWS_CARRIER)).expect("carrier image");
+    truncated.truncate(0x20);
+    assert_eq!(
+        windows_carrier_from_image(&truncated)
+            .expect_err("a truncated image")
+            .code,
+        FailureCode::TrustDenied
+    );
+}
+
+#[test]
 fn a_real_macos_fixture_package_authenticates_through_the_fixture_adapter() {
     let temp = Temp::new("real-macos");
     let payload = b"\xcf\xfa\xed\xfe-macos-fixture-host";
@@ -707,6 +815,85 @@ fn a_real_macos_fixture_package_authenticates_through_the_fixture_adapter() {
         authenticated.assessment(),
         TRUST_ASSESSMENT_MACOS_GATEKEEPER
     );
+}
+
+/// A real macOS fixture package, its descriptor and the carrier document it carries.
+fn macos_fixture_package(temp: &Temp) -> (PathBuf, ReleaseDescriptor, Vec<u8>) {
+    let payload = b"\xcf\xfa\xed\xfe-macos-fixture-host";
+    let canonical = write_inventory(&[InventoryEntry {
+        path: "veles-native-host".to_owned(),
+        size: payload.len() as u64,
+        sha256: Digest::of(payload),
+        executable: true,
+    }])
+    .expect("canonical inventory");
+    let mut descriptor = descriptor(Channel::Fixture, Target::MacosArm64);
+    descriptor.payload_id = Digest::of(&canonical);
+    let carrier = carrier(&descriptor);
+    let package = write_real_package(
+        temp.path(),
+        Target::MacosArm64,
+        &descriptor,
+        payload,
+        &canonical,
+        None,
+        &carrier,
+    );
+    (package, descriptor, carrier)
+}
+
+/// The debug adapter validates `carrier.app` before reading a resource byte: the carrier bundle must
+/// be an existing, non-link directory below the package root, exactly as the release adapter
+/// requires. A linked bundle - even one that resolves inside the same package - is refused.
+#[cfg(unix)]
+#[test]
+fn a_macos_debug_package_with_a_resolving_carrier_bundle_link_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let temp = Temp::new("macos-linked-bundle");
+    let (package, descriptor, _carrier) = macos_fixture_package(&temp);
+    let bundle = package.join(PACKAGE_MACOS_CARRIER);
+    let relocated = package.join("relocated-carrier.app");
+    fs::rename(&bundle, &relocated).expect("relocated carrier bundle");
+    symlink(&relocated, &bundle).expect("linked carrier bundle");
+
+    // Before the carrier validation was restored the resolved bundle was read and the package
+    // authenticated; a link is never the carrier this installer packaged.
+    assert_eq!(
+        macos_carrier_from_package(&package)
+            .expect_err("a linked carrier bundle")
+            .code,
+        FailureCode::TrustDenied
+    );
+    assert_eq!(must_deny(&package, &descriptor), FailureCode::TrustDenied);
+}
+
+/// The carrier resource itself must be contained in that validated bundle and is never read through
+/// a link, so a link that resolves to a document elsewhere in the package is refused.
+#[cfg(unix)]
+#[test]
+fn a_macos_debug_package_with_a_resolving_carrier_resource_link_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let temp = Temp::new("macos-linked-resource");
+    let (package, descriptor, carrier_document) = macos_fixture_package(&temp);
+    let resource = package
+        .join(PACKAGE_MACOS_CARRIER)
+        .join("Contents")
+        .join("Resources")
+        .join("veles-policy-carrier");
+    let relocated = package.join("relocated-carrier-document.bin");
+    fs::write(&relocated, &carrier_document).expect("relocated carrier document");
+    fs::remove_file(&resource).expect("removed carrier resource");
+    symlink(&relocated, &resource).expect("linked carrier resource");
+
+    assert_eq!(
+        macos_carrier_from_package(&package)
+            .expect_err("a linked carrier resource")
+            .code,
+        FailureCode::TrustDenied
+    );
+    assert_eq!(must_deny(&package, &descriptor), FailureCode::TrustDenied);
 }
 
 #[test]
