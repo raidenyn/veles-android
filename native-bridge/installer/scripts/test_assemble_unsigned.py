@@ -66,9 +66,9 @@ def config(platform="windows", channel="production", **overrides):
 
 RESOLVED_LOCK = json.loads(json.dumps(release_config.load_lock()))
 RESOLVED_LOCK["tools"]["msvc"] = {"targets": ["windows-x86_64"], "identity": {
-    "cl_version": "19.44.35211", "linker_version": "14.44.35211.0", "msvc_toolset_version": "14.44.35207", "msvc_toolset_sha256": "a" * 64}}
+    "cl_version": "19.44.35211", "linker_version": "14.44.35211.0", "msvc_toolset_version": "14.44.35207"}}
 RESOLVED_LOCK["tools"]["windows_sdk"] = {"targets": ["windows-x86_64"], "identity": {
-    "windows_sdk_version": "10.0.26100.0", "ucrt_version": "10.0.26100.0", "windows_sdk_sha256": "b" * 64}}
+    "windows_sdk_version": "10.0.26100.0", "ucrt_version": "10.0.26100.0"}}
 OBSERVED = {"target": "windows-x86_64", "tools": {name: dict(entry["identity"]) for name, entry in RESOLVED_LOCK["tools"].items()
                                                   if "windows-x86_64" in entry["targets"]}}
 

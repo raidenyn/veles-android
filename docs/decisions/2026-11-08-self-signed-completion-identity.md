@@ -58,3 +58,32 @@ pinned leaf, the timestamp exists and the signed tree corresponds to the unsigne
 It does not prove that any other machine trusts that leaf. Replacing the self-signed
 identity with a CA certificate later requires no gate change: clearing
 `VELES_WIN_TRUST_SELF_SIGNED` returns the gate to the OS-trusted-chain path.
+
+## Self-signed identity generated (2026-11-08)
+
+Generated with a two-level chain (root CA, pathlen 1, plus a code-signing leaf with the
+Code Signing EKU; two-year validity). A single self-signed end-entity does not work:
+WinVerifyTrust returns `TRUST_E_BASIC_CONSTRAINTS (0x80096019)`.
+
+| Value | |
+|---|---|
+| Publisher (`sha256:` leaf DER) | `sha256:e34913a76c5ac08260e4577862a3b7be6dcd9d95f52d5af9ac4f3d277cf24c26` |
+| Leaf SHA-1 thumbprint | `39F904EC9C78D951CDFD001D18FA6CE44E3A02FE` |
+| Root SHA-1 thumbprint | `C83F853AC2679E8318280088996639EB7B694BC8` |
+| Timestamp URL | `http://timestamp.digicert.com` (signtool rejects the https form) |
+
+Storage (owner action; the development CI account has no repository-admin rights):
+environment `native-release` secrets `VELES_WIN_PFX_BASE64`, `VELES_WIN_PFX_PASSWORD`,
+`VELES_WIN_ROOT_CER_BASE64`; variables `VELES_WIN_CERT_SHA1`, `VELES_WIN_PUBLISHER`,
+`VELES_WIN_TIMESTAMP_URL`, `VELES_WIN_TRUST_SELF_SIGNED=1`. The private key never enters
+the repository; delete the machine copy after the secrets are stored.
+
+## Tool identity pin (2026-11-08)
+
+Observed on the approved `windows-2025` runner and pinned by version only:
+
+- MSVC: `cl` 19.51.36260, linker 14.51.36260.0, toolset 14.51.36231.
+- Windows SDK: 10.0.26100.0, UCRT 10.0.26100.0.
+
+The toolset and SDK digest definitions are deferred; strengthening this pin is a
+standing improvement, not a completion requirement.

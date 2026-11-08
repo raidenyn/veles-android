@@ -117,23 +117,27 @@ class Parsing(unittest.TestCase):
         self.assertTrue(obs.check({**observed, "target": "windows-x86_64"}, "macos-arm64", LOCK))
 
 
-class WindowsIsAHardBlocker(unittest.TestCase):
-    def test_unresolved_compiler_and_sdk_identities_block_even_a_fully_observed_runner(self) -> None:
+class WindowsPinIsVersionOnly(unittest.TestCase):
+    def test_the_version_only_windows_pin_accepts_the_observed_runner(self) -> None:
         observed = obs.observe("windows-x86_64", win_script(), env=WIN_ENV)
         self.assertEqual(observed["tools"]["msvc"]["cl_version"], "19.44.35211")
         self.assertEqual(observed["tools"]["msvc"]["linker_version"], "14.44.35211.0")
         self.assertEqual(observed["tools"]["windows_sdk"], {"windows_sdk_version": "10.0.26100.0", "ucrt_version": "10.0.26100.0"})
-        errors = obs.check(observed, "windows-x86_64", LOCK)
-        text = "\n".join(errors)
-        self.assertIn("'msvc'", text)
-        self.assertIn("'windows_sdk'", text)
-        self.assertIn("unresolved", text)
+        changed = json.loads(json.dumps(observed))
+        changed["tools"]["msvc"]["cl_version"] = "19.00.00000"
+        self.assertTrue(obs.check(changed, "windows-x86_64", LOCK))
 
-    def test_the_repository_lock_still_records_both_as_unresolved(self) -> None:
-        # If this starts failing, the owner resolved the fingerprints and the Windows production
-        # path may open - which must be a deliberate, reviewed change to tools.lock.json.
-        self.assertIn("required_unresolved", LOCK["tools"]["msvc"])
-        self.assertIn("required_unresolved", LOCK["tools"]["windows_sdk"])
+    def test_the_repository_lock_pins_windows_versions_without_digests(self) -> None:
+        # Owner decision 2026-11-08: versions only; the digests are deferred and
+        # must not be invented. Improve this pin later.
+        self.assertEqual(
+            set(LOCK["tools"]["msvc"]["identity"]),
+            {"cl_version", "linker_version", "msvc_toolset_version"},
+        )
+        self.assertEqual(
+            set(LOCK["tools"]["windows_sdk"]["identity"]),
+            {"windows_sdk_version", "ucrt_version"},
+        )
 
     def test_digests_are_not_invented(self) -> None:
         observed = obs.observe("windows-x86_64", win_script(), env=WIN_ENV)

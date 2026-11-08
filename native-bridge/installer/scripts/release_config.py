@@ -89,6 +89,10 @@ _APPLE_VERSION = re.compile(r"^[0-9A-Za-z]+(?:[._][0-9A-Za-z]+)*$")
 # a build cannot become valid by deleting or hollowing out a lock entry.
 # ``None`` means "exact non-placeholder string"; a compiled pattern enforces a
 # fingerprint format (versions and SHA-256 digests).
+#
+# Owner decision 2026-11-08: the Windows MSVC and SDK identities are pinned by
+# version only. Their digests have no agreed definition yet; do not invent one.
+# This is a deliberate, documented weakening to be improved later.
 REQUIRED_TOOLS: dict[str, dict[str, Any]] = {
     "rust": {
         "targets": ("windows-x86_64", "macos-arm64"),
@@ -113,7 +117,6 @@ REQUIRED_TOOLS: dict[str, dict[str, Any]] = {
             "cl_version": _WINDOWS_VERSION,
             "linker_version": _WINDOWS_VERSION,
             "msvc_toolset_version": _WINDOWS_VERSION,
-            "msvc_toolset_sha256": _HEX64,
         },
     },
     "windows_sdk": {
@@ -121,7 +124,6 @@ REQUIRED_TOOLS: dict[str, dict[str, Any]] = {
         "fingerprints": {
             "windows_sdk_version": _WINDOWS_VERSION,
             "ucrt_version": _WINDOWS_VERSION,
-            "windows_sdk_sha256": _HEX64,
         },
     },
 }

@@ -80,15 +80,6 @@ def sha(data: bytes) -> str:
 # ToolIdentityBindingTests run against the REAL lock and prove the hard blocker.
 REAL_LOCK = release_config.load_lock()
 RESOLVED_LOCK = json.loads(json.dumps(REAL_LOCK))
-RESOLVED_LOCK["tools"]["msvc"] = {
-    "targets": ["windows-x86_64"],
-    "identity": {"cl_version": "19.44.35211", "linker_version": "14.44.35211.0", "msvc_toolset_version": "14.44.35207",
-                 "msvc_toolset_sha256": "a" * 64},
-}
-RESOLVED_LOCK["tools"]["windows_sdk"] = {
-    "targets": ["windows-x86_64"],
-    "identity": {"windows_sdk_version": "10.0.26100.0", "ucrt_version": "10.0.26100.0", "windows_sdk_sha256": "b" * 64},
-}
 assert release_config.validate_lock(RESOLVED_LOCK) == [], release_config.validate_lock(RESOLVED_LOCK)
 
 
@@ -1614,11 +1605,9 @@ class ToolIdentityBindingTests(unittest.TestCase):
         done, _ = self.verify("macos", lambda r: r.pop("tool_observation"))
         self.assertEqual((done.ok, done.code), (False, "provenance-invalid"))
 
-    def test_the_real_windows_lock_blocks_every_candidate_because_its_identities_are_unresolved(self) -> None:
-        done, root = self.verify("windows", lambda r: r.update(tool_observation=tool_observation("windows", RESOLVED_LOCK)), lock=REAL_LOCK)
-        self.assertEqual((done.ok, done.code), (False, "tools-unverified"))
-        self.assertIn("unresolved", done.detail)
-        self.assertFalse((root / "verified").exists(), "no build-A copy is released for a blocked candidate")
+    def test_the_real_windows_lock_accepts_its_version_only_pin(self) -> None:
+        done, _ = self.verify("windows", lambda r: r.update(tool_observation=tool_observation("windows", RESOLVED_LOCK)), lock=REAL_LOCK)
+        self.assertTrue(done.ok, done.detail)
 
     def test_the_real_macos_lock_accepts_exactly_its_pinned_identities(self) -> None:
         done, _ = self.verify("macos", lambda r: r.update(tool_observation=tool_observation("macos", REAL_LOCK)), lock=REAL_LOCK)
@@ -1635,7 +1624,7 @@ class ToolIdentityBindingTests(unittest.TestCase):
             ("tool missing", "macos", edit(lambda o: o["tools"].pop("xcode"))),
             ("field missing", "macos", edit(lambda o: o["tools"]["rust"].pop("profile"))),
             ("cl version", "windows", edit(lambda o: o["tools"]["msvc"].update(cl_version="19.00.00000"))),
-            ("sdk digest", "windows", edit(lambda o: o["tools"]["windows_sdk"].update(windows_sdk_sha256="c" * 64))),
+            ("sdk version", "windows", edit(lambda o: o["tools"]["windows_sdk"].update(windows_sdk_version="10.0.00000.0"))),
             ("other target", "macos", edit(lambda o: o.update(target="windows-x86_64"))),
             ("not an object", "macos", lambda r: r.update(tool_observation=[])),
         ):
@@ -1667,11 +1656,10 @@ class ToolIdentityBindingTests(unittest.TestCase):
             bundle = fresh()
             edit_report(bundle, "reports/macos-arm64.json", lambda r: r["unsigned"].pop("tool_observation"))
             self.assertTrue(any("tool observation" in e for e in gate.validate(bundle, COMMIT, expected)))
-        with self.subTest("the repository lock cannot make a Windows bundle eligible"):
+        with self.subTest("the repository lock accepts its pinned Windows identity"):
             bundle = fresh()
             with mock.patch.object(gate, "tools_lock", lambda: REAL_LOCK, create=True):
-                errors = gate.validate(bundle, COMMIT, expected)
-            self.assertTrue(any("windows-x86_64" in e and "unresolved" in e for e in errors), errors)
+                self.assertEqual(gate.validate(bundle, COMMIT, expected), [])
 
 
 class ValidateBundleTests(unittest.TestCase):
@@ -1716,10 +1704,8 @@ class ValidateBundleTests(unittest.TestCase):
         # The shipped CLI reads the REAL lock, whose Windows MSVC/SDK identities are unresolved: even a complete,
         # internally consistent bundle is not ELIGIBLE until the owner records those identities (F8).
         done = subprocess.run([sys.executable, "-I", str(HERE / "release_gate.py"), "validate", "--bundle", str(self.bundle), "--commit", COMMIT, "--descriptor-digest", self.expected], capture_output=True, text=True)
-        self.assertEqual(done.returncode, 1, done.stdout)
-        self.assertNotIn("ELIGIBLE\n", done.stdout.replace("BLOCKED", ""))
-        self.assertTrue(all("windows-x86_64" in line and "tool observation" in line for line in done.stdout.splitlines() if line.startswith("BLOCKED")), done.stdout)
-        self.assertIn("unresolved", done.stdout)
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertIn("ELIGIBLE", done.stdout)
 
     def test_mismatched_commit_target_policy_or_payload_fails(self) -> None:
         # -- commit

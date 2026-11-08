@@ -229,13 +229,14 @@ class ValidateToolsTests(unittest.TestCase):
         self.assertTrue(errors, "a missing Rust channel must block")
         self.assertTrue(any("rust.channel" in error for error in errors), errors)
 
-        # The real lock has no approved Windows compiler/linker/SDK identity, so
-        # every Windows build must block even with a complete observable inventory.
+        # The real lock pins Windows by version only (owner decision 2026-11-08):
+        # a complete matching inventory is accepted, a version mismatch blocks.
         windows = complete_observation(lock, "windows-x86_64")
-        errors = release_config.validate_tools(lock, windows)
-        self.assertTrue(errors, "the unresolved Windows toolchain must block")
-        self.assertTrue(any("msvc" in error and "unresolved" in error for error in errors), errors)
-        self.assertTrue(any("windows_sdk" in error and "unresolved" in error for error in errors), errors)
+        self.assertEqual(release_config.validate_tools(lock, windows), [])
+        wrong = copy.deepcopy(windows)
+        wrong["tools"]["msvc"]["cl_version"] = "19.00.00000"
+        errors = release_config.validate_tools(lock, wrong)
+        self.assertTrue(any("msvc.cl_version" in error for error in errors), errors)
 
         # Once the exact fingerprints are supplied (fixture values here), the same
         # mechanism compares them field by field and still blocks on any omission.
@@ -268,44 +269,21 @@ class ValidateToolsTests(unittest.TestCase):
         self.assertTrue(errors, "a build must report the verified NSIS archive digest")
         self.assertTrue(any("nsis" in error and "sha256" in error for error in errors), errors)
 
-    def test_windows_compiler_and_sdk_identity_is_unresolved_not_guessed(self):
+    def test_windows_compiler_and_sdk_identity_is_pinned_by_version_only(self):
+        """Owner decision 2026-11-08: versions only; the digests are deferred."""
         lock = load_lock()
-        for tool, required in (
-            ("msvc", {"cl_version", "linker_version"}),
-            ("windows_sdk", {"windows_sdk_version", "ucrt_version"}),
+        for tool, fields, digests in (
+            ("msvc", {"cl_version", "linker_version", "msvc_toolset_version"}, {"msvc_toolset_sha256"}),
+            ("windows_sdk", {"windows_sdk_version", "ucrt_version"}, {"windows_sdk_sha256"}),
         ):
             entry = lock["tools"][tool]
             self.assertEqual(entry["targets"], ["windows-x86_64"], f"{tool} is a Windows-target tool")
-            self.assertIn(
-                "required_unresolved", entry, f"{tool} must be recorded as required but unresolved"
-            )
-            self.assertNotIn("identity", entry, f"{tool} must not carry an invented identity")
-            unresolved = entry["required_unresolved"]
-            self.assertTrue(
-                unresolved["reason"].strip(), f"{tool} must explain why the identity is unresolved"
-            )
-            self.assertIn(
-                "windows-2025",
-                unresolved["reason"],
-                f"{tool} must name the runner whose inventory is missing",
-            )
-            supplied = set(unresolved["must_supply"])
-            self.assertTrue(
-                required <= supplied, f"{tool} must list {sorted(required)}, found {sorted(supplied)}"
-            )
-            self.assertTrue(
-                any(field.endswith("_sha256") for field in supplied),
-                f"{tool} must require a file digest, not only a version",
-            )
-            # No invented hash may stand in for the missing identity.
-            self.assertFalse(
-                [
-                    value
-                    for _, value in walk_strings(entry)
-                    if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
-                ],
-                f"{tool} must not contain a fabricated digest",
-            )
+            self.assertNotIn("required_unresolved", entry, f"{tool} is pinned now")
+            identity = entry["identity"]
+            self.assertEqual(set(identity), fields, f"{tool} carries only the agreed version fields")
+            self.assertFalse(digests & set(identity), f"{tool} must not invent a digest")
+            for field, value in identity.items():
+                self.assertTrue(isinstance(value, str) and value.strip(), f"{tool}.{field} is empty")
 
     def test_lock_pins_reviewed_rust_xcode_and_sdk_identities(self):
         lock = load_lock()
@@ -391,20 +369,20 @@ class ValidateToolsTests(unittest.TestCase):
 
         # required_unresolved must list every mandatory fingerprint.
         truncated = copy.deepcopy(lock)
-        truncated["tools"]["msvc"]["required_unresolved"]["must_supply"] = ["cl_version"]
+        del truncated["tools"]["msvc"]["identity"]
+        truncated["tools"]["msvc"]["required_unresolved"] = {
+            "reason": "test",
+            "must_supply": ["cl_version"],
+        }
         errors = release_config.validate_lock(truncated)
         self.assertTrue(any("linker_version" in error for error in errors), errors)
 
-        # A resolved identity must carry format-valid digests.
-        for tool, field in (
-            ("msvc", "msvc_toolset_sha256"),
-            ("windows_sdk", "windows_sdk_sha256"),
-        ):
-            filled = fill_unresolved(lock)
-            filled["tools"][tool]["identity"][field] = "NOT-A-DIGEST"
-            errors = release_config.validate_lock(filled)
-            self.assertTrue(any(field in error for error in errors), errors)
-            self.assertTrue(any("sha256" in error for error in errors), errors)
+        # A resolved identity must carry format-valid versions. Digests are not
+        # part of the Windows pin (owner decision 2026-11-08).
+        broken = copy.deepcopy(lock)
+        broken["tools"]["msvc"]["identity"]["msvc_toolset_version"] = "not-a-version"
+        errors = release_config.validate_lock(broken)
+        self.assertTrue(any("msvc_toolset_version" in error for error in errors), errors)
 
         # A resolved identity missing one fingerprint blocks even if the
         # observation matches the shrunken identity exactly.

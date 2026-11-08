@@ -19,10 +19,10 @@ verification and the release gate all stop on it. Exit 2 means the environment c
 all (a tool is absent), which blocks just the same.
 
 WHAT THIS DOES NOT PROVE. The parsers below are written from the documented output of each tool and have
-NOT been checked against real tool output on this host (it is Linux; neither Xcode nor MSVC exists here).
-The Windows observation collects versions only: the toolset/SDK digests the lock requires
-(``msvc_toolset_sha256``, ``windows_sdk_sha256``) have no agreed definition yet, so they are never invented
-here and the lock keeps them unresolved until the owner defines and records them from the approved runner.
+NOT been checked against real tool output on this Linux host (neither Xcode nor MSVC exists here).
+Owner decision 2026-11-08: the Windows MSVC and SDK identities are pinned by version only. The
+toolset/SDK digest definitions are deferred; they are never invented here, and the pin should be
+strengthened later.
 """
 
 from __future__ import annotations

@@ -7,13 +7,13 @@ Design/plan: `docs/superpowers/{specs,plans}/2026-11-06-otp25-installers*.md`.
 
 ## Layout
 
-| Path | What |
-|---|---|
-| `src/`, `tests/` | engine crate `veles-bridge-installer` (transactions, journal, policy, cleanup) |
-| `windows/installer.nsi`, `macos/` | native frontends |
-| `config/` | `release.schema.json`, fixture configs, `tools.lock.json`; no approved production config is tracked |
-| `scripts/` | unsigned input assembly, correspondence, signing gate, dev registration, **evidence validator** |
-| `acceptance/cases.json`, `acceptance/matrix.json` | acceptance case definitions and the recorded matrix |
+| Path                                              | What                                                                                                |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `src/`, `tests/`                                  | engine crate `veles-bridge-installer` (transactions, journal, policy, cleanup)                      |
+| `windows/installer.nsi`, `macos/`                 | native frontends                                                                                    |
+| `config/`                                         | `release.schema.json`, fixture configs, `tools.lock.json`; no approved production config is tracked |
+| `scripts/`                                        | unsigned input assembly, correspondence, signing gate, dev registration, **evidence validator**     |
+| `acceptance/cases.json`, `acceptance/matrix.json` | acceptance case definitions and the recorded matrix                                                 |
 
 ## Tests
 
@@ -48,9 +48,21 @@ or Gate B/C/D claim.
 ### Anchor file (supplied from outside the run)
 
 ```json
-{"schema": 1, "platforms": {"windows": {"source_commit": "<40 hex>", "config_sha256": "…",
-  "descriptor_sha256": "…", "tools_sha256": "…", "unsigned_sha256": "…",
-  "package_sha256": "…", "signer": "sha256:<leaf DER digest> or Developer ID identity"}, "macos": {"…": "…"}}}
+{
+    "schema": 1,
+    "platforms": {
+        "windows": {
+            "source_commit": "<40 hex>",
+            "config_sha256": "…",
+            "descriptor_sha256": "…",
+            "tools_sha256": "…",
+            "unsigned_sha256": "…",
+            "package_sha256": "…",
+            "signer": "sha256:<leaf DER digest> or Developer ID identity"
+        },
+        "macos": { "…": "…" }
+    }
+}
 ```
 
 Fill it from the release gate's authenticated output, not from the test operator's notes.
@@ -61,17 +73,17 @@ authorization identifier.
 
 ### Run bundle
 
-* `run.json`: `schema`, `run_id`, `platform`, `operator.id`, `binding` (the anchor fields plus
+- `run.json`: `schema`, `run_id`, `platform`, `operator.id`, `binding` (the anchor fields plus
   `captures.{package_digest,signature[,gatekeeper]}`), `environment.{os_version,arch,chrome_version}`,
   `clocks.{source,start_utc,end_utc,host_offset_seconds,offset_capture}`, `accounts[]`
   (`id`, `kind`, `fresh`, `identity_capture`, `fresh_evidence`), `captures[]` (`path`, `sha256`,
   `bytes` — every file under `captures/`), `publication.raw_captures`
   (`withheld` | `published` + `privacy_review`).
-* `ledger.jsonl`: one JSON object per line; `seq` from 1, `prev` = sha256 of the previous raw
+- `ledger.jsonl`: one JSON object per line; `seq` from 1, `prev` = sha256 of the previous raw
   line (first: 64 zeros); `attempt_id`, `case`, `account`, `started`, `ended`, `outcome`,
   `actions[]` (`id`, `at`, `step`, `capture`, `returns`, `elevated:false`), `observations[]`
   (`id`, `at`, `capture`), `reason` (required unless PASS), `resolves[]` (a PASS lists earlier FAILs).
-* `adjudication.json`: `adjudicator.{id,independent_of[]}`, `run_json_sha256`, `ledger_head_sha256`,
+- `adjudication.json`: `adjudicator.{id,independent_of[]}`, `run_json_sha256`, `ledger_head_sha256`,
   `adjudicated_at`, `verdicts[]` (`attempt_id`, `outcome`, `rationale`).
 
 Unit tests (`scripts/test_evidence.py`) use synthetic bundles in temp directories only; none is
@@ -84,8 +96,9 @@ Visual Studio environment (Windows) on the build machine; `check` holds that inv
 `bridgeInstallerUnsigned` depends on the check, so a production build cannot start on an unlocked toolchain;
 `bridgeInstallerPackageFixture` only records the observation. `finalize` binds the observation into
 `provenance.json`, and `release_gate.py` re-validates it in `verify-inputs` (before any key is used) and again in
-`validate` (eligibility). The Windows MSVC and SDK identities are still `required_unresolved` in the lock, so a
-Windows candidate is blocked until the owner records them from the approved runner; the observation collects
-versions only and never invents the toolset/SDK digests. macOS builds select the SDK (`SDKROOT`, `swift build
---sdk`) and the deployment target (`MACOSX_DEPLOYMENT_TARGET`, read from the lock) explicitly. None of this has
-run on a native runner: the parsers follow documented tool output and are unverified against real output.
+`validate` (eligibility). The Windows MSVC and SDK identities were observed on the approved `windows-2025`
+runner and are pinned by version only (owner decision 2026-11-08); the toolset/SDK digest definitions are
+deferred and this pin should be strengthened later. The observation never invents a digest. macOS builds
+select the SDK (`SDKROOT`, `swift build --sdk`) and the deployment target (`MACOSX_DEPLOYMENT_TARGET`, read
+from the lock) explicitly. None of this has run on a native runner: the parsers follow documented tool
+output and are unverified against real output.
