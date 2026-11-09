@@ -107,6 +107,11 @@ _WIN = (
 # timestamp and correspondence checks are unchanged.
 _WIN_SELF_SIGNED = ("VELES_WIN_ROOT_CER_BASE64", "VELES_WIN_TRUST_SELF_SIGNED")
 _MAC = ("VELES_MAC_P12_BASE64", "VELES_MAC_P12_PASSWORD", "VELES_MAC_IDENTITY", "VELES_MAC_TEAM_ID")
+# Owner decision (macOS acceptance completion): a self-signed leaf may complete the
+# macOS candidate when the workflow declares it explicitly. The descriptor names the
+# leaf by sha256:<DER digest>, the requirement pins the same leaf, and notarization,
+# stapling and Gatekeeper are recorded as not claimed rather than faked.
+_MAC_SELF_SIGNED = ("VELES_MAC_PUBLISHER", "VELES_MAC_TRUST_SELF_SIGNED")
 _NOTARY = ("VELES_NOTARY_KEY_BASE64", "VELES_NOTARY_KEY_ID", "VELES_NOTARY_ISSUER")
 CREDENTIALS: dict[tuple[str, str], tuple[str, ...]] = {
     ("windows", "nested"): _WIN,
@@ -114,7 +119,7 @@ CREDENTIALS: dict[tuple[str, str], tuple[str, ...]] = {
     ("macos", "nested"): _MAC,
     ("macos", "outer"): _MAC + _NOTARY,
 }
-ALL_CREDENTIAL_NAMES = frozenset(_WIN + _WIN_SELF_SIGNED + _MAC + _NOTARY)
+ALL_CREDENTIAL_NAMES = frozenset(_WIN + _WIN_SELF_SIGNED + _MAC + _MAC_SELF_SIGNED + _NOTARY)
 
 
 class PlanError(Exception):
@@ -408,23 +413,49 @@ def signer_policy(platform: str, env: dict[str, str], descriptor: bytes, expecte
             problems.append("the configured Windows publisher is not in the approved descriptor policy")
         policy = {"platform": platform, "publisher": publisher, "timestamp": True}
     else:
-        team = env.get("VELES_MAC_TEAM_ID", "")
-        if f"team:{team}" not in publishers:
-            problems.append("the configured Apple team is not in the approved descriptor policy")
         entitlements = plistlib.loads(HOST_ENTITLEMENTS.read_bytes())
-        policy = {
-            "platform": platform,
-            "identity": env.get("VELES_MAC_IDENTITY", ""),
-            "team_id": team,
-            "hardened_runtime": True,
-            "timestamp": True,
-            "host_entitlements_sha256": entitlements_digest(entitlements),
-            "host_entitlements_file_sha256": sha256_bytes(HOST_ENTITLEMENTS.read_bytes()),
-        }
+        if env.get("VELES_MAC_TRUST_SELF_SIGNED") == "1":
+            publisher = env.get("VELES_MAC_PUBLISHER", "")
+            if not WIN_PUBLISHER_RE.fullmatch(publisher):
+                problems.append("the configured macOS publisher is not a sha256:<64 lowercase hex> leaf-certificate fingerprint")
+            elif publisher not in publishers:
+                problems.append("the configured macOS publisher is not in the approved descriptor policy")
+            policy = {
+                "platform": platform,
+                "publisher": publisher,
+                "identity": env.get("VELES_MAC_IDENTITY", ""),
+                "trust_mode": "self-signed",
+                "public_trust": False,
+                "team_id": None,
+                "hardened_runtime": True,
+                "timestamp": False,
+                "host_entitlements_sha256": entitlements_digest(entitlements),
+                "host_entitlements_file_sha256": sha256_bytes(HOST_ENTITLEMENTS.read_bytes()),
+            }
+        else:
+            team = env.get("VELES_MAC_TEAM_ID", "")
+            if f"team:{team}" not in publishers:
+                problems.append("the configured Apple team is not in the approved descriptor policy")
+            policy = {
+                "platform": platform,
+                "identity": env.get("VELES_MAC_IDENTITY", ""),
+                "team_id": team,
+                "trust_mode": "os-store",
+                "public_trust": True,
+                "hardened_runtime": True,
+                "timestamp": True,
+                "host_entitlements_sha256": entitlements_digest(entitlements),
+                "host_entitlements_file_sha256": sha256_bytes(HOST_ENTITLEMENTS.read_bytes()),
+            }
     return policy, problems
 
 
 def missing_credentials(platform: str, stage: str, env: dict[str, str]) -> list[str]:
+    if platform == "macos" and env.get("VELES_MAC_TRUST_SELF_SIGNED") == "1":
+        # Self-signed completion: no Apple team, no notary key; the leaf fingerprint
+        # is the publisher identity the descriptor must already authorize.
+        required = ["VELES_MAC_P12_BASE64", "VELES_MAC_P12_PASSWORD", "VELES_MAC_IDENTITY", "VELES_MAC_PUBLISHER"]
+        return sorted(name for name in required if not (env.get(name) or "").strip())
     absent = sorted(name for name in CREDENTIALS[(platform, stage)] if not (env.get(name) or "").strip())
     if platform == "windows" and env.get("VELES_WIN_TRUST_SELF_SIGNED") == "1":
         if not (env.get("VELES_WIN_ROOT_CER_BASE64") or "").strip():
@@ -452,10 +483,20 @@ def credential_format_errors(platform: str, env: dict[str, str]) -> list[str]:
                 if not der:
                     problems.append("VELES_WIN_ROOT_CER_BASE64 is empty")
     else:
-        if not TEAM_ID_RE.match(env.get("VELES_MAC_TEAM_ID", "")):
-            problems.append("VELES_MAC_TEAM_ID is not a 10-character team id")
-        if not env.get("VELES_MAC_IDENTITY", "").startswith("Developer ID Application:"):
-            problems.append("VELES_MAC_IDENTITY is not a Developer ID Application identity")
+        mode = env.get("VELES_MAC_TRUST_SELF_SIGNED", "")
+        if mode not in ("", "1"):
+            problems.append("VELES_MAC_TRUST_SELF_SIGNED must be empty or 1")
+        if mode == "1":
+            publisher = env.get("VELES_MAC_PUBLISHER", "")
+            if not WIN_PUBLISHER_RE.fullmatch(publisher):
+                problems.append("VELES_MAC_PUBLISHER is not a sha256:<64 lowercase hex> leaf-certificate fingerprint")
+            if not env.get("VELES_MAC_IDENTITY", "").strip():
+                problems.append("VELES_MAC_IDENTITY is empty")
+        else:
+            if not TEAM_ID_RE.match(env.get("VELES_MAC_TEAM_ID", "")):
+                problems.append("VELES_MAC_TEAM_ID is not a 10-character team id")
+            if not env.get("VELES_MAC_IDENTITY", "").startswith("Developer ID Application:"):
+                problems.append("VELES_MAC_IDENTITY is not a Developer ID Application identity")
     return problems
 
 
@@ -1212,16 +1253,53 @@ def parse_codesign_display(output: str) -> dict:
     }
 
 
+def _leaf_certificate_sha256(stage: Stage, target: Path, scratch: Path) -> str:
+    """SHA-256 of the leaf certificate DER, exactly what a macOS publisher pin names."""
+    prefix = scratch / "leaf"
+    stage.run(["codesign", "-d", "--extract-certificates", prefix, target], what="signature-unverified")
+    leaf = Path(f"{prefix}0")
+    if not leaf.is_file():
+        raise StageFailure("signature-unverified", f"{target.name}: codesign did not extract a leaf certificate")
+    try:
+        return sha256_file(leaf)
+    finally:
+        leaf.unlink(missing_ok=True)
+
+
 def _codesign_check(stage: Stage, target: Path, policy: dict, *, runtime: bool, entitlements: bool = False) -> dict:
     stage.run(["codesign", "--verify", "--strict", "--verbose=2", target], what="signature-unverified")
     display = parse_codesign_display(stage.run(["codesign", "-dvv", target], what="signature-unverified").output)
-    if display["authority"] != policy["identity"] or display["team_id"] != policy["team_id"]:
-        raise StageFailure("signature-unverified", f"{target.name}: not signed by the approved identity/team")
-    if not display["timestamped"]:
-        raise StageFailure("signature-unverified", f"{target.name}: no secure timestamp")
+    if display["authority"] != policy["identity"]:
+        raise StageFailure("signature-unverified", f"{target.name}: not signed by the approved identity")
+    self_signed = policy.get("trust_mode") == "self-signed"
+    if self_signed:
+        observed = _leaf_certificate_sha256(stage, target, stage.private_dir(stage.scratch / "certs"))
+        if observed != policy.get("publisher"):
+            raise StageFailure("signature-unverified", f"{target.name}: leaf certificate is not the approved publisher")
+        evidence = {
+            "verified": True,
+            "timestamped": display["timestamped"],
+            "identity": display["authority"],
+            "team_id": display["team_id"],
+            "public_trust": False,
+            "trust_mode": "self-signed",
+            "publisher": observed,
+        }
+    else:
+        if display["team_id"] != policy["team_id"]:
+            raise StageFailure("signature-unverified", f"{target.name}: not signed by the approved team")
+        if not display["timestamped"]:
+            raise StageFailure("signature-unverified", f"{target.name}: no secure timestamp")
+        evidence = {
+            "verified": True,
+            "timestamped": True,
+            "identity": display["authority"],
+            "team_id": display["team_id"],
+            "public_trust": True,
+            "trust_mode": "os-store",
+        }
     if runtime and not display["hardened_runtime"]:
         raise StageFailure("signature-unverified", f"{target.name}: hardened runtime is not enabled")
-    evidence = {"verified": True, "timestamped": True, "identity": display["authority"], "team_id": display["team_id"]}
     if runtime:
         evidence["hardened_runtime"] = True
     if entitlements:
@@ -1238,8 +1316,12 @@ def _codesign_check(stage: Stage, target: Path, policy: dict, *, runtime: bool, 
     return evidence
 
 
-def _codesign(stage: Stage, target: Path, keychain: Path, *, runtime: bool, entitlements: bool = False) -> None:
-    argv: list[Any] = ["codesign", "--force", "--timestamp"]
+def _codesign(
+    stage: Stage, target: Path, keychain: Path, *, runtime: bool, entitlements: bool = False, timestamp: bool = True
+) -> None:
+    argv: list[Any] = ["codesign", "--force"]
+    if timestamp:
+        argv += ["--timestamp"]
     if runtime:
         argv += ["--options", "runtime"]
     argv += ["--sign", EnvRef("VELES_MAC_IDENTITY"), "--keychain", keychain]
@@ -1273,7 +1355,14 @@ def _macos_nested(stage: Stage, policy: dict) -> dict:
             seal = {"status": "sealed", "sealed_inventory_sha256": sha256_bytes(sealed), "carrier_sha256": sha256_bytes(carrier)}
             sealed_done = True
         target = out / component.path
-        _codesign(stage, target, keychain, runtime=True, entitlements=component.entitled)
+        _codesign(
+            stage,
+            target,
+            keychain,
+            runtime=True,
+            entitlements=component.entitled,
+            timestamp=policy.get("timestamp", True),
+        )
         signatures[component.role] = _codesign_check(stage, target, policy, runtime=True, entitlements=component.role == "host")
     request.reports.mkdir(parents=True, exist_ok=True)
     components = []
@@ -1315,8 +1404,10 @@ def _mount(stage: Stage, image: Path, mountpoint: Path) -> Path:
 def _macos_outer(stage: Stage, policy: dict) -> dict:
     request = stage.request
     keychain = _macos_keychain(stage)
-    notary_dir = stage.private_dir(request.scratch / "notary")
-    key = stage.write_secret(notary_dir / "AuthKey.p8", stage.env["VELES_NOTARY_KEY_BASE64"])
+    self_signed = policy.get("trust_mode") == "self-signed"
+    if not self_signed:
+        notary_dir = stage.private_dir(request.scratch / "notary")
+        key = stage.write_secret(notary_dir / "AuthKey.p8", stage.env["VELES_NOTARY_KEY_BASE64"])
     _copy_tree(request.inputs, request.output)
     out = request.output
     dmg = out / DMG_NAME
@@ -1331,24 +1422,41 @@ def _macos_outer(stage: Stage, policy: dict) -> dict:
     if _tree_digest(pre_mount / APP) != app_inventory["inventory_sha256"] or _extra_entries(pre_mount, {APP}):
         raise StageFailure("dmg-contents-mismatch", "the disk image does not contain exactly the signed installer app")
 
-    stage.run(["codesign", "--force", "--timestamp", "--sign", EnvRef("VELES_MAC_IDENTITY"), "--keychain", keychain, dmg], what="sign-failed")
-    submit = stage.run(["xcrun", "notarytool", "submit", dmg, *_notary_args(key), "--wait", "--output-format", "json"], what="notarization-failed")
-    submitted = _json_object(submit.output)
-    if submitted.get("status") != "Accepted" or not submitted.get("id"):
-        raise StageFailure("notarization-failed", f"notary status is {submitted.get('status')!r}, not Accepted")
-    log = stage.run(["xcrun", "notarytool", "log", str(submitted["id"]), *_notary_args(key)], what="notarization-failed")
-    notary_log = _json_object(log.output)
-    if notary_log.get("status") != "Accepted" or notary_log.get("issues"):
-        raise StageFailure("notarization-failed", "the notary log is not a clean Accepted result")
-    stage.run(["xcrun", "stapler", "staple", dmg], what="staple-failed")
-    stage.run(["xcrun", "stapler", "validate", dmg], what="staple-failed")
-    signature = _codesign_check(stage, dmg, policy, runtime=False)
-    assessed = stage.run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature", "-vv", dmg], what="gatekeeper-rejected")
-    app_assessed = stage.run(["spctl", "--assess", "--type", "exec", "-vv", out / APP], what="gatekeeper-rejected")
-    for text in (assessed.output, app_assessed.output):
-        if "accepted" not in text or "Notarized Developer ID" not in text:
-            raise StageFailure("gatekeeper-rejected", "Gatekeeper did not accept a notarized Developer ID result")
+    sign_argv: list[Any] = ["codesign", "--force"]
+    if not self_signed:
+        sign_argv += ["--timestamp"]
+    sign_argv += ["--sign", EnvRef("VELES_MAC_IDENTITY"), "--keychain", keychain, dmg]
+    stage.run(sign_argv, what="sign-failed")
 
+    if self_signed:
+        # Notarization, stapling and Gatekeeper are not available for a self-signed
+        # leaf. They are recorded as not attempted and not claimed, never as passed.
+        notarization = {"status": "not-attempted"}
+        staple = {"validated": False}
+        gatekeeper = {"accepted": False, "claimed": False}
+        inner_gatekeeper = {"accepted": False, "claimed": False}
+    else:
+        submit = stage.run(["xcrun", "notarytool", "submit", dmg, *_notary_args(key), "--wait", "--output-format", "json"], what="notarization-failed")
+        submitted = _json_object(submit.output)
+        if submitted.get("status") != "Accepted" or not submitted.get("id"):
+            raise StageFailure("notarization-failed", f"notary status is {submitted.get('status')!r}, not Accepted")
+        log = stage.run(["xcrun", "notarytool", "log", str(submitted["id"]), *_notary_args(key)], what="notarization-failed")
+        notary_log = _json_object(log.output)
+        if notary_log.get("status") != "Accepted" or notary_log.get("issues"):
+            raise StageFailure("notarization-failed", "the notary log is not a clean Accepted result")
+        stage.run(["xcrun", "stapler", "staple", dmg], what="staple-failed")
+        stage.run(["xcrun", "stapler", "validate", dmg], what="staple-failed")
+        assessed = stage.run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature", "-vv", dmg], what="gatekeeper-rejected")
+        app_assessed = stage.run(["spctl", "--assess", "--type", "exec", "-vv", out / APP], what="gatekeeper-rejected")
+        for text in (assessed.output, app_assessed.output):
+            if "accepted" not in text or "Notarized Developer ID" not in text:
+                raise StageFailure("gatekeeper-rejected", "Gatekeeper did not accept a notarized Developer ID result")
+        notarization = {"status": submitted["status"], "submission_id": str(submitted["id"]), "log_sha256": sha256_bytes(log.output.encode())}
+        staple = {"validated": True}
+        gatekeeper = {"accepted": True, "claimed": True}
+        inner_gatekeeper = {"accepted": True, "claimed": True}
+
+    signature = _codesign_check(stage, dmg, policy, runtime=False)
     post_mount = _mount(stage, dmg, request.scratch / "mnt-post")
     request.reports.mkdir(parents=True, exist_ok=True)
     report = request.reports / "corr-macos-dmg-contents.json"
@@ -1362,10 +1470,10 @@ def _macos_outer(stage: Stage, policy: dict) -> dict:
                 "pre_sign_sha256": pre_sha,
                 "post_sign_sha256": sha256_file(dmg),
                 "signature": signature,
-                "notarization": {"status": submitted["status"], "submission_id": str(submitted["id"]), "log_sha256": sha256_bytes(log.output.encode())},
-                "staple": {"validated": True},
-                "gatekeeper": {"accepted": True},
-                "inner_app_gatekeeper": {"accepted": True},
+                "notarization": notarization,
+                "staple": staple,
+                "gatekeeper": gatekeeper,
+                "inner_app_gatekeeper": inner_gatekeeper,
                 "contents_match": True,
                 "correspondence": {"report": report.name, "verdict": "PASS"},
             }
@@ -2336,9 +2444,10 @@ def _validate_components(bundle: Path, evidence: dict, report: dict, platform: s
 
 def _signature_errors(label: str, signature: dict, platform: str, policy: dict, *, runtime: bool) -> list[str]:
     errors = []
+    self_signed = policy.get("trust_mode") == "self-signed"
     if signature.get("verified") is not True:
         errors.append(f"{label}: signature was not verified")
-    if signature.get("timestamped") is not True:
+    if not self_signed and signature.get("timestamped") is not True:
         errors.append(f"{label}: no trusted timestamp")
     if platform == "windows":
         public_trust = signature.get("public_trust")
@@ -2356,14 +2465,21 @@ def _signature_errors(label: str, signature: dict, platform: str, policy: dict, 
                 errors.append(f"{label}: an OS-trusted signature records trust_mode {mode!r}, not 'os-store'")
             if anchor is not None:
                 errors.append(f"{label}: an OS-trusted signature must not record a self-signed trust anchor")
+    else:
+        if signature.get("public_trust") is not policy.get("public_trust"):
+            errors.append(f"{label}: signature public_trust does not match the declared trust mode")
+        if signature.get("trust_mode") != policy.get("trust_mode"):
+            errors.append(f"{label}: signature trust_mode is not the declared trust mode")
+        if self_signed:
+            if signature.get("publisher") != policy.get("publisher"):
+                errors.append(f"{label}: signature leaf certificate is not the approved publisher")
+        elif signature.get("team_id") != policy.get("team_id"):
+            errors.append(f"{label}: signing team is not the approved team")
     expected = policy.get("publisher") if platform == "windows" else policy.get("identity")
     if not expected or signature.get("identity") != expected:
         errors.append(f"{label}: signer is not the approved publisher identity")
-    if platform == "macos":
-        if signature.get("team_id") != policy.get("team_id"):
-            errors.append(f"{label}: signing team is not the approved team")
-        if runtime and signature.get("hardened_runtime") is not True:
-            errors.append(f"{label}: hardened runtime is not enabled")
+    if platform == "macos" and runtime and signature.get("hardened_runtime") is not True:
+        errors.append(f"{label}: hardened runtime is not enabled")
     return errors
 
 
@@ -2385,13 +2501,27 @@ def _validate_containers(bundle: Path, evidence: dict, report: dict, platform: s
         errors += _check_correspondence(bundle, evidence, entry, "container nsis-setup", "pe", (pre, post))
     else:
         notarization = entry.get("notarization") if isinstance(entry.get("notarization"), dict) else {}
-        if notarization.get("status") != "Accepted" or not notarization.get("submission_id"):
-            errors.append("container dmg is not notarized (status is not Accepted)")
-        if not (isinstance(entry.get("staple"), dict) and entry["staple"].get("validated") is True):
-            errors.append("container dmg is not stapled (staple validation is missing)")
-        for field_name in ("gatekeeper", "inner_app_gatekeeper"):
-            if not (isinstance(entry.get(field_name), dict) and entry[field_name].get("accepted") is True):
-                errors.append(f"container dmg Gatekeeper assessment ({field_name}) did not accept")
+        staple = entry.get("staple") if isinstance(entry.get("staple"), dict) else {}
+        if policy.get("trust_mode") == "self-signed":
+            # Honest negative evidence: the completion build did not attempt what a
+            # self-signed leaf cannot obtain, and says so instead of claiming it.
+            if notarization.get("status") != "not-attempted":
+                errors.append("a self-signed container records a notarization verdict")
+            if staple.get("validated") is not False:
+                errors.append("a self-signed container records a stapled ticket")
+            for field_name in ("gatekeeper", "inner_app_gatekeeper"):
+                field = entry.get(field_name) if isinstance(entry.get(field_name), dict) else {}
+                if field.get("claimed") is not False or field.get("accepted") is not False:
+                    errors.append(f"a self-signed container claims a Gatekeeper acceptance ({field_name})")
+        else:
+            if notarization.get("status") != "Accepted" or not notarization.get("submission_id"):
+                errors.append("container dmg is not notarized (status is not Accepted)")
+            if staple.get("validated") is not True:
+                errors.append("container dmg is not stapled (staple validation is missing)")
+            for field_name in ("gatekeeper", "inner_app_gatekeeper"):
+                field = entry.get(field_name) if isinstance(entry.get(field_name), dict) else {}
+                if field.get("accepted") is not True:
+                    errors.append(f"container dmg Gatekeeper assessment ({field_name}) did not accept")
         if entry.get("contents_match") is not True:
             errors.append("container dmg contents were not verified against the signed tree")
         ref = entry.get("correspondence")

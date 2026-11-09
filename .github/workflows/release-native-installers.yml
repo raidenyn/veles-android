@@ -399,6 +399,8 @@ jobs:
           VELES_NOTARY_KEY_BASE64: ${{ secrets.VELES_NOTARY_KEY_BASE64 }}
           VELES_MAC_IDENTITY: ${{ vars.VELES_MAC_IDENTITY }}
           VELES_MAC_TEAM_ID: ${{ vars.VELES_MAC_TEAM_ID }}
+          VELES_MAC_PUBLISHER: ${{ vars.VELES_MAC_PUBLISHER }}
+          VELES_MAC_TRUST_SELF_SIGNED: ${{ vars.VELES_MAC_TRUST_SELF_SIGNED }}
           VELES_NOTARY_KEY_ID: ${{ vars.VELES_NOTARY_KEY_ID }}
           VELES_NOTARY_ISSUER: ${{ vars.VELES_NOTARY_ISSUER }}
         run: |
@@ -432,6 +434,8 @@ jobs:
           VELES_NOTARY_KEY_BASE64: ${{ secrets.VELES_NOTARY_KEY_BASE64 }}
           VELES_MAC_IDENTITY: ${{ vars.VELES_MAC_IDENTITY }}
           VELES_MAC_TEAM_ID: ${{ vars.VELES_MAC_TEAM_ID }}
+          VELES_MAC_PUBLISHER: ${{ vars.VELES_MAC_PUBLISHER }}
+          VELES_MAC_TRUST_SELF_SIGNED: ${{ vars.VELES_MAC_TRUST_SELF_SIGNED }}
           VELES_NOTARY_KEY_ID: ${{ vars.VELES_NOTARY_KEY_ID }}
           VELES_NOTARY_ISSUER: ${{ vars.VELES_NOTARY_ISSUER }}
         run: |

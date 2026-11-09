@@ -70,7 +70,9 @@ Native trust obligations that this tool leaves open (``"verify_separately": true
 ``"cryptographic_signature_verified": false``): ``signtool verify`` of the Authenticode chain and
 timestamp, ``codesign --verify`` of the signature and seal, ``stapler validate`` of tickets and
 ``spctl`` assessment. A PASS here plus those checks is the release evidence; either alone is not.
-A DER entitlements slot is refused outright (``macho-der-entitlements-unsupported``) until it can be decoded.
+A DER entitlements slot is decoded (Apple's ``CESerializeCFDictionary`` encoding: an application-16
+wrapper holding an INTEGER version and a context-16 dictionary, or a universal SET of entries) and
+must canonically equal the XML entitlements slot and the declared policy; a disagreement is refused.
 
 Exit codes of the CLI: 0 verdict PASS, 1 verdict FAIL (readable but unexpected
 content), 2 invalid input or environment (missing/unreadable file, unsupported
@@ -959,6 +961,164 @@ def decode_entitlements_dict(payload: bytes, fmt, code: str, label: str) -> dict
     return value
 
 
+# --- DER entitlements (Apple CoreEntitlements encoding) --------------------------------------
+#
+# The signed slot is produced by `CESerializeCFDictionary` (see Security's signer.cpp). Its
+# shape, from the public `apple-codesign` decoder (src/plist_der.rs):
+#   top level  : application-16 wrapper { INTEGER version, dictionary }
+#                or a universal SET (0x31) of dictionary entries
+#   dictionary : context-16 constructed (0xB0) of SEQUENCE { UTF8String key, value }
+#   values     : BOOLEAN (0x01), INTEGER (0x02), UTF8String (0x0C), SEQUENCE array (0x30),
+#                context-16 dictionary (0xB0)
+# Only definite, minimal-length encodings are accepted. The decoded value is compared with the
+# XML slot through canonical_plist, so the two representations must carry identical semantics.
+
+MAX_DER_DEPTH = 16
+MAX_DER_VALUES = 4096
+_TAG_BOOLEAN = 0x01
+_TAG_INTEGER = 0x02
+_TAG_UTF8_STRING = 0x0C
+_TAG_SEQUENCE = 0x30
+_TAG_SET = 0x31
+_TAG_APPLICATION_16 = 0x70
+_TAG_DICTIONARY = 0xB0
+
+
+class DerReader:
+    """A bounded DER TLV reader over one byte buffer of the entitlements encoding."""
+
+    def __init__(self, data: bytes, code: str = "macho-invalid-entitlements", label: str = "DER entitlements") -> None:
+        self.data = data
+        self.code = code
+        self.label = label
+        self.values = 0
+
+    def refuse(self, detail: str) -> "Reject":
+        return Reject(self.code, f"{self.label}: {detail}")
+
+    def tlv(self, offset: int = 0) -> tuple[int, bytes, int]:
+        """Read one TLV; return (tag, body, next_offset)."""
+        data = self.data
+        limit = len(data)
+        if offset >= limit:
+            raise self.refuse("truncated value")
+        tag = data[offset]
+        offset += 1
+        if tag & 0x1F == 0x1F:
+            raise self.refuse("high-tag-number form is not used by entitlements")
+        if offset >= limit:
+            raise self.refuse("truncated length")
+        first = data[offset]
+        offset += 1
+        if first < 0x80:
+            length = first
+        else:
+            count = first & 0x7F
+            if first == 0x80 or not 1 <= count <= 4:
+                raise self.refuse("indefinite or implausible length")
+            if offset + count > limit:
+                raise self.refuse("truncated length")
+            raw = data[offset : offset + count]
+            offset += count
+            if raw[0] == 0:
+                raise self.refuse("non-minimal length")
+            length = int.from_bytes(raw, "big")
+            if length < 0x80:
+                raise self.refuse("non-minimal long-form length")
+        if length > limit - offset:
+            raise self.refuse("value overruns the slot")
+        self.values += 1
+        if self.values > MAX_DER_VALUES:
+            raise self.refuse("more values than the slot may carry")
+        return tag, data[offset : offset + length], offset + length
+
+    def value(self, tag: int, body: bytes, depth: int) -> Any:
+        if depth > MAX_DER_DEPTH:
+            raise self.refuse("nesting deeper than the entitlements bound")
+        if tag == _TAG_BOOLEAN:
+            if body == b"\x00":
+                return False
+            if body == b"\xff":
+                return True
+            raise self.refuse("a BOOLEAN is not DER true or false")
+        if tag == _TAG_INTEGER:
+            if not 1 <= len(body) <= 8:
+                raise self.refuse("an INTEGER is outside the plist integer range")
+            if len(body) > 1 and body[0] == 0 and body[1] < 0x80:
+                raise self.refuse("non-minimal INTEGER")
+            if len(body) > 1 and body[0] == 0xFF and body[1] >= 0x80:
+                raise self.refuse("non-minimal INTEGER")
+            return int.from_bytes(body, "big", signed=True)
+        if tag == _TAG_UTF8_STRING:
+            try:
+                return body.decode("utf-8", "strict")
+            except UnicodeDecodeError as error:
+                raise self.refuse("a string is not UTF-8") from error
+        if tag == _TAG_SEQUENCE:
+            return self.array(body, depth + 1)
+        if tag == _TAG_DICTIONARY:
+            return self.dictionary_entries(body, depth + 1)
+        raise Reject("macho-der-entitlements-unsupported", f"{self.label}: tag {tag:#x} has no plist meaning")
+
+    def array(self, body: bytes, depth: int) -> list[Any]:
+        reader = DerReader(body, self.code, self.label)
+        items: list[Any] = []
+        offset = 0
+        while offset < len(body):
+            tag, raw, offset = reader.tlv(offset)
+            items.append(reader.value(tag, raw, depth))
+        return items
+
+    def dictionary_entries(self, body: bytes, depth: int) -> dict:
+        reader = DerReader(body, self.code, self.label)
+        result: dict[str, Any] = {}
+        offset = 0
+        while offset < len(body):
+            tag, entry, offset = reader.tlv(offset)
+            if tag != _TAG_SEQUENCE:
+                raise self.refuse("a dictionary entry is not a SEQUENCE")
+            entry_reader = DerReader(entry, self.code, self.label)
+            key_tag, key, cursor = entry_reader.tlv(0)
+            if key_tag != _TAG_UTF8_STRING:
+                raise self.refuse("a dictionary key is not a UTF8String")
+            key = entry_reader.value(key_tag, key, depth)
+            value_tag, value, cursor = entry_reader.tlv(cursor)
+            if cursor != len(entry):
+                raise self.refuse("a dictionary entry carries trailing bytes")
+            if key in result:
+                raise self.refuse(f"duplicate dictionary key {key!r}")
+            result[key] = entry_reader.value(value_tag, value, depth)
+        return result
+
+
+def decode_entitlements_der(payload: bytes) -> dict:
+    """Decode the DER entitlements slot into the same Python values as the XML slot."""
+    code = "macho-invalid-entitlements"
+    label = "DER entitlements"
+    if len(payload) > MAX_ENTITLEMENTS_BYTES:
+        raise Reject(code, f"{label} is oversized")
+    reader = DerReader(payload, code, label)
+    tag, body, cursor = reader.tlv()
+    if cursor != len(payload):
+        raise Reject(code, f"{label} carries trailing bytes")
+    if tag == _TAG_APPLICATION_16:
+        wrapper = DerReader(body, code, label)
+        version_tag, version, offset = wrapper.tlv()
+        if version_tag != _TAG_INTEGER or version != b"\x01":
+            raise Reject(code, f"{label} version is not 1")
+        value_tag, value, offset = wrapper.tlv(offset)
+        if offset != len(body):
+            raise Reject(code, f"{label} wrapper carries trailing bytes")
+        decoded = wrapper.value(value_tag, value, 0)
+    elif tag == _TAG_SET:
+        decoded = reader.dictionary_entries(body, 0)
+    else:
+        raise Reject(code, f"{label} is not an application-16 wrapper or a SET")
+    if not isinstance(decoded, dict):
+        raise Reject(code, f"{label} is not a dictionary")
+    return decoded
+
+
 class SignatureInfo:
     def __init__(self) -> None:
         self.report: dict[str, Any] = {}
@@ -1021,10 +1181,6 @@ def parse_signature(slice_: MachSlice, *, signed: bool = True) -> SignatureInfo:
             raise Reject(code, "signature blobs overlap")
     if SLOT_CODE_DIRECTORY not in blobs:
         raise Reject(code, "no primary CodeDirectory")
-    if SLOT_DER_ENTITLEMENTS in blobs:
-        # The DER form is the one the kernel enforces. Until it is decoded and cross-checked against the
-        # XML form and the policy, its semantics are unverified: fail closed rather than disclaim.
-        raise Reject("macho-der-entitlements-unsupported", "a DER entitlements slot is present but this tool cannot decode it")
     cms = blobs.get(SLOT_CMS)
     if signed and (cms is None or len(cms) <= 8):
         raise Reject("macho-adhoc-signature", "no CMS signature wrapper: ad-hoc signatures are not an acceptable signed output")
@@ -1038,8 +1194,18 @@ def parse_signature(slice_: MachSlice, *, signed: bool = True) -> SignatureInfo:
         raise Reject(code, "CodeDirectories disagree on identifier or code limit")
     primary = directories[0]
     entitlements = blobs.get(SLOT_ENTITLEMENTS)
+    der_entitlements = blobs.get(SLOT_DER_ENTITLEMENTS)
+    xml_value = None
+    der_value = None
     if entitlements is not None:
-        info.entitlements = decode_entitlements_dict(entitlements[8:], plistlib.FMT_XML, "macho-invalid-entitlements", "entitlements plist")
+        xml_value = decode_entitlements_dict(entitlements[8:], plistlib.FMT_XML, "macho-invalid-entitlements", "entitlements plist")
+    if der_entitlements is not None:
+        der_value = decode_entitlements_der(der_entitlements[8:])
+    if xml_value is not None and der_value is not None and canonical_plist(xml_value) != canonical_plist(der_value):
+        # Both forms are read by the OS. A signature that carries two different entitlement sets is
+        # ambiguous, not a preference: fail closed rather than pick one.
+        raise Reject("macho-entitlements-disagree", "the XML and DER entitlements slots carry different entitlements")
+    info.entitlements = xml_value if xml_value is not None else der_value
     info.report = {
         "dataoff": slice_.dataoff,
         "datasize": slice_.datasize,
@@ -1047,6 +1213,8 @@ def parse_signature(slice_: MachSlice, *, signed: bool = True) -> SignatureInfo:
         "code_directory": primary,
         "alternate_code_directories": len(directories) - 1,
         "entitlements_sha256": sha256(entitlements) if entitlements is not None else None,
+        "entitlements_der_sha256": sha256(der_entitlements) if der_entitlements is not None else None,
+        "entitlements_der_cross_checked": xml_value is not None and der_value is not None,
         "cms_sha256": sha256(cms) if cms is not None else None,
         "cryptographic_signature_verified": False,
         "verify_separately": True,

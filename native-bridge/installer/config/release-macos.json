@@ -1,0 +1,18 @@
+{
+    "schema": 1,
+    "channel": "production",
+    "version": "0.1.0",
+    "target": "macos-arm64",
+    "minimum_os": "26.0",
+    "extension_id": "production",
+    "host_name": "me.nagaev.veles.bridge",
+    "bundle_id": "me.nagaev.veles.bridge",
+    "api_min": 1,
+    "api_max": 1,
+    "policy": {
+        "publishers": ["sha256:b525031772b4ff0b78972ed17063dca651045584d6efd6d4a04578f8b2d822dc"],
+        "denied_payloads": [],
+        "rollback_payloads": [],
+        "epoch": 1
+    }
+}

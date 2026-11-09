@@ -61,6 +61,8 @@ FAKE_DER = b"0\x82fixture leaf certificate DER"
 THUMB = hashlib.sha1(FAKE_DER).hexdigest().upper()
 WIN_PUBLISHER = "sha256:" + hashlib.sha256(FAKE_DER).hexdigest()
 WIN_DISPLAY_NAME = "Veles Test Publisher"
+MAC_LEAF = b"0\x82fixture macos leaf certificate DER"
+MAC_PUBLISHER = "sha256:" + hashlib.sha256(MAC_LEAF).hexdigest()
 TEAM = "TEAMID1234"
 MAC_IDENTITY = f"Developer ID Application: Veles Test ({TEAM})"
 SECRET_VALUES = ("hunter2-pfx-password", "p12-secret-password", "notary-key-secret-bytes")
@@ -1074,6 +1076,84 @@ class WindowsSignerIdentityTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Assembly (no credentials)
 # ---------------------------------------------------------------------------
+
+
+class MacosSelfSignedTests(unittest.TestCase):
+    """A self-signed acceptance leaf is authorized by its SHA-256 fingerprint, Windows-style."""
+
+    def self_signed_env(self, descriptor: bytes) -> dict[str, str]:
+        env = good_env("macos", descriptor)
+        env.pop("VELES_MAC_TEAM_ID", None)
+        env.pop("VELES_NOTARY_KEY_BASE64", None)
+        env.pop("VELES_NOTARY_KEY_ID", None)
+        env.pop("VELES_NOTARY_ISSUER", None)
+        env.update(
+            VELES_MAC_TRUST_SELF_SIGNED="1",
+            VELES_MAC_PUBLISHER=MAC_PUBLISHER,
+            VELES_MAC_IDENTITY="Veles Self-Signed Acceptance (not a release signer)",
+        )
+        return env
+
+    def test_policy_authorizes_the_leaf_and_records_the_unclaimed_trust(self) -> None:
+        descriptor = descriptor_bytes("macos", publishers=[MAC_PUBLISHER])
+        env = self.self_signed_env(descriptor)
+        policy, problems = gate.signer_policy("macos", env, descriptor, COMMIT)
+        self.assertEqual(problems, [])
+        self.assertEqual(policy["publisher"], MAC_PUBLISHER)
+        self.assertEqual(policy["trust_mode"], "self-signed")
+        self.assertIs(policy["public_trust"], False)
+        self.assertIs(policy["timestamp"], False)
+        self.assertIsNone(policy["team_id"])
+
+    def test_a_leaf_absent_from_the_descriptor_is_refused(self) -> None:
+        descriptor = descriptor_bytes("macos", publishers=[f"team:{TEAM}"])
+        env = self.self_signed_env(descriptor)
+        _, problems = gate.signer_policy("macos", env, descriptor, COMMIT)
+        self.assertTrue(any("not in the approved descriptor policy" in p for p in problems), problems)
+
+    def test_self_signed_mode_needs_no_team_or_notary_key(self) -> None:
+        descriptor = descriptor_bytes("macos", publishers=[MAC_PUBLISHER])
+        env = self.self_signed_env(descriptor)
+        self.assertEqual(gate.missing_credentials("macos", "nested", env), [])
+        self.assertEqual(gate.missing_credentials("macos", "outer", env), [])
+        env.pop("VELES_MAC_PUBLISHER")
+        self.assertEqual(gate.missing_credentials("macos", "nested", env), ["VELES_MAC_PUBLISHER"])
+
+    def test_the_mode_and_publisher_are_validated(self) -> None:
+        descriptor = descriptor_bytes("macos", publishers=[MAC_PUBLISHER])
+        env = self.self_signed_env(descriptor)
+        self.assertEqual(gate.credential_format_errors("macos", env), [])
+        env["VELES_MAC_TRUST_SELF_SIGNED"] = "yes"
+        self.assertTrue(gate.credential_format_errors("macos", env))
+        env["VELES_MAC_TRUST_SELF_SIGNED"] = "1"
+        env["VELES_MAC_PUBLISHER"] = MAC_PUBLISHER.upper()
+        self.assertTrue(any("VELES_MAC_PUBLISHER" in p for p in gate.credential_format_errors("macos", env)))
+
+    def test_a_team_mode_policy_still_requires_a_developer_id_identity(self) -> None:
+        descriptor = descriptor_bytes("macos")
+        env = good_env("macos", descriptor)
+        env["VELES_MAC_IDENTITY"] = "Apple Development: someone (TEAMID1234)"
+        self.assertTrue(any("Developer ID Application" in p for p in gate.credential_format_errors("macos", env)))
+        policy, problems = gate.signer_policy("macos", env, descriptor, COMMIT)
+        self.assertEqual(problems, [])
+        self.assertEqual(policy["trust_mode"], "os-store")
+        self.assertIs(policy["public_trust"], True)
+
+    def test_signature_records_must_match_the_declared_trust(self) -> None:
+        policy = {"platform": "macos", "identity": "Self Signed", "team_id": None, "trust_mode": "self-signed",
+                  "public_trust": False, "publisher": MAC_PUBLISHER}
+        good = {"verified": True, "timestamped": False, "identity": "Self Signed", "team_id": None,
+                "public_trust": False, "trust_mode": "self-signed", "publisher": MAC_PUBLISHER, "hardened_runtime": True}
+        self.assertEqual(gate._signature_errors("component x", good, "macos", policy, runtime=True), [])
+        for mutate in (
+            lambda s: s.update(publisher="sha256:" + "0" * 64),
+            lambda s: s.update(public_trust=True),
+            lambda s: s.update(trust_mode="os-store"),
+            lambda s: s.update(verified=False),
+        ):
+            bad = dict(good)
+            mutate(bad)
+            self.assertTrue(gate._signature_errors("component x", bad, "macos", policy, runtime=True), bad)
 
 
 class AssemblyTests(unittest.TestCase):

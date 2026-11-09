@@ -190,6 +190,45 @@ PKCS7_FIXTURE = der_sequence(bytes((i * 7 + 3) & 0xFF for i in range(0xFFB)))
 PKCS7_FIXTURE_TWO = der_sequence(bytes((i * 11 + 5) & 0xFF for i in range(0x400)))
 
 
+def der_tlv(tag, body):
+    """One definite, minimal-length DER TLV."""
+    size = len(body)
+    if size < 0x80:
+        return bytes([tag, size]) + body
+    raw = size.to_bytes((size.bit_length() + 7) // 8, "big")
+    return bytes([tag, 0x80 | len(raw)]) + raw + body
+
+
+def der_entitlement_value(value):
+    """Encode one entitlements value in the CoreEntitlements DER encoding."""
+    if isinstance(value, bool):
+        return der_tlv(0x01, b"\xff" if value else b"\x00")
+    if isinstance(value, int):
+        body = value.to_bytes(max(1, (value.bit_length() + 8) // 8), "big", signed=True)
+        return der_tlv(0x02, body)
+    if isinstance(value, str):
+        return der_tlv(0x0C, value.encode("utf-8"))
+    if isinstance(value, list):
+        return der_tlv(0x30, b"".join(der_entitlement_value(item) for item in value))
+    if isinstance(value, dict):
+        return der_tlv(0xB0, der_dictionary_entries(value))
+    raise TypeError(f"no DER encoding for {type(value).__name__}")
+
+
+def der_dictionary_entries(value):
+    return b"".join(
+        der_tlv(0x30, der_tlv(0x0C, key.encode("utf-8")) + der_entitlement_value(item))
+        for key, item in sorted(value.items())
+    )
+
+
+def der_entitlements(value, *, set_form=False):
+    """The DER entitlements blob Apple's ``CESerializeCFDictionary`` produces."""
+    if set_form:
+        return der_tlv(0x31, der_dictionary_entries(value))
+    return der_tlv(0x70, der_tlv(0x02, b"\x01") + der_entitlement_value(value))
+
+
 def authenticode_like(unsigned, meta, *, checksum=0x00ABCDEF, certs=None, pad=None):
     """Apply the documented Authenticode file mutation to a built PE.
 
@@ -1590,11 +1629,64 @@ class MachoReviewFindingTests(WorkDir):
 
     # ---- F3: entitlements semantics -------------------------------------------------------
 
-    def test_f3_der_entitlements_slot_fails_closed_until_it_is_decoded(self):
+    def test_f3_der_entitlements_slot_is_decoded_and_cross_checked(self):
+        ent = {
+            "com.apple.security.device.bluetooth": True,
+            "com.apple.security.cs.disable-library-validation": False,
+            "nested": {"count": 3, "ratio": -129, "list": ["a", 1, False]},
+        }
         unsigned, _ = build_macho()
-        signed, _ = build_signed_macho(der_entitlements=b"NOT-A-DER-ENTITLEMENTS-VALUE")
-        report = self.expect_fail(unsigned, signed, "macho-der-entitlements-unsupported")
-        self.assertEqual([d["code"] for d in report["differences"]], ["macho-der-entitlements-unsupported"])
+        policy = self.put("policy.plist", plistlib.dumps(ent))
+        signed, _ = build_signed_macho(entitlements=ent, der_entitlements=der_entitlements(ent))
+        report = self.passes(unsigned, signed, entitlements=policy)
+        self.assertEqual(report["differences"], [])
+        # The universal-SET form Apple also emits decodes to the same dictionary.
+        set_formed, _ = build_signed_macho(entitlements=ent, der_entitlements=der_entitlements(ent, set_form=True))
+        self.passes(unsigned, set_formed, entitlements=policy)
+
+    def test_f3_der_entitlements_must_agree_with_the_xml_slot(self):
+        unsigned, _ = build_macho()
+        signed, _ = build_signed_macho(
+            entitlements={"com.apple.security.device.bluetooth": True},
+            der_entitlements=der_entitlements({"com.apple.security.device.bluetooth": False}),
+        )
+        report = self.expect_fail(unsigned, signed, "macho-entitlements-disagree")
+        self.assertEqual(self.codes(report), ["macho-entitlements-disagree"])
+
+    def test_f3_der_only_entitlements_are_compared_against_the_policy(self):
+        ent = {"com.apple.security.device.bluetooth": True}
+        unsigned, _ = build_macho()
+        signed, _ = build_signed_macho(der_entitlements=der_entitlements(ent))
+        policy = self.put("policy.plist", plistlib.dumps(ent))
+        self.passes(unsigned, signed, entitlements=policy)
+        other = self.put("other.plist", plistlib.dumps({"com.apple.security.device.bluetooth": False}))
+        self.expect_fail(unsigned, signed, "macho-entitlements-mismatch", entitlements=other)
+
+    def test_f3_malformed_der_entitlements_are_refused(self):
+        unsigned, _ = build_macho()
+        cases = {
+            "arbitrary-bytes": b"NOT-A-DER-ENTITLEMENTS-VALUE",
+            "truncated": der_entitlements({"k": True})[:-1],
+            "non-minimal-length": b"\x70\x81\x07" + der_tlv(0x02, b"\x01") + der_tlv(0xB0, b""),
+            "wrong-version": der_tlv(0x70, der_tlv(0x02, b"\x02") + der_tlv(0xB0, b"")),
+            "not-a-dictionary": der_tlv(0x70, der_tlv(0x02, b"\x01") + der_tlv(0x01, b"\xff")),
+            "duplicate-key": der_tlv(
+                0x70,
+                der_tlv(0x02, b"\x01")
+                + der_tlv(0xB0, der_tlv(0x30, der_tlv(0x0C, b"k") + der_tlv(0x01, b"\xff")) * 2),
+            ),
+        }
+        for name, payload in cases.items():
+            with self.subTest(name=name):
+                signed, _ = build_signed_macho(der_entitlements=payload)
+                self.expect_fail(unsigned, signed, "macho-invalid-entitlements")
+
+    def test_f3_der_entitlements_with_an_unsupported_tag_are_refused(self):
+        unsigned, _ = build_macho()
+        # A REAL (0x09) value has no plist meaning in the entitlements schema.
+        payload = der_tlv(0x70, der_tlv(0x02, b"\x01") + der_tlv(0xB0, der_tlv(0x30, der_tlv(0x0C, b"k") + der_tlv(0x09, b"\x00"))))
+        signed, _ = build_signed_macho(der_entitlements=payload)
+        self.expect_fail(unsigned, signed, "macho-der-entitlements-unsupported")
 
     def test_f3_entitlement_value_types_are_compared_exactly(self):
         key = "com.apple.security.cs.allow-jit"
@@ -1659,9 +1751,9 @@ class MachoReviewFindingTests(WorkDir):
         duplicate = bytearray(with_ent)
         struct.pack_into(">I", duplicate, ent_blobs[2]["entry"], 5)  # two slot-5 entries
         self.expect_fail(bytes(duplicate), signed, "macho-invalid-signature-blob")
-        # A DER entitlements slot cannot be interpreted, on the unsigned side either.
+        # A DER entitlements slot that cannot be decoded is refused on the unsigned side too.
         with_der, _ = linker_signed(der_entitlements=b"DER")
-        self.expect_fail(with_der, signed, "macho-der-entitlements-unsupported")
+        self.expect_fail(with_der, signed, "macho-invalid-entitlements")
 
     # ---- F5: only understood CodeDirectory layouts are accepted ---------------------------
 
