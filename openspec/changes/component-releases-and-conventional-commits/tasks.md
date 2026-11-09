@@ -14,8 +14,8 @@
 
 ## 3. Component map and selection
 
-- [ ] 3.1 `.github/components.json` per design.md D1, after auditing cross-directory imports
-- [ ] 3.2 `scripts/components.py` (`check`, `changed` with `--no-renames`, global and unknown paths select everything) with tests
+- [x] 3.1 `.github/components.json` per design.md D1, after auditing cross-directory imports
+- [x] 3.2 `scripts/components.py` (`check`, `changed` with `--no-renames`, global and unknown paths select everything) with tests
 
 ## 4. Release tooling
 

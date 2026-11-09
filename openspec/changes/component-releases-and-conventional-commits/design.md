@@ -110,6 +110,10 @@ selection. JSON so `python3 -I` stdlib reads it on any runner (Python ≥ 3.8).
   commit there releases nothing, while a `fix(build): …` that changes outputs releases all three.
 - A changed file that is neither owned, global nor unowned selects every node, and the ownership
   check fails (see D7).
+- `ci-paths` (per node) and `ci-global` (top level) select CI nodes exactly like `paths`/`global` but are
+  never part of a release component's git-cliff paths: they hold inputs that only checks read
+  (contract-test fixtures such as `rust/scripts/assert-clean.sh` and `verify/` scripts, lint config
+  `config/detekt/`, formatter config `.editorconfig`), so changing them runs checks without releasing.
 
 | node | release | paths |
 |---|---|---|
