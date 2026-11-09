@@ -14,6 +14,9 @@ HEADER_RE = re.compile(
 BREAKING_RE = re.compile(r"^(BREAKING CHANGE|BREAKING-CHANGE):", re.MULTILINE)
 GIT_GENERATED_RE = re.compile(r'^(Merge |Revert "|fixup! |squash! |amend! )')
 MAX_HEADER = 100
+# GitHub appends " (#<PR number>)" to a squash commit title taken from the PR title. One such trailing
+# suffix is not counted, so a PR title that passes pr-title also passes commit-guard after the merge.
+SQUASH_SUFFIX_RE = re.compile(r" \(#\d+\)$")
 
 
 def _normalise(message):
@@ -33,16 +36,18 @@ def validate(message, *, allow_git_generated=False):
     if allow_git_generated and GIT_GENERATED_RE.match(header):
         return []
     reasons = []
-    match = HEADER_RE.match(header)
+    # The header without one trailing squash suffix must itself be a valid header.
+    measured = SQUASH_SUFFIX_RE.sub("", header, count=1)
+    match = HEADER_RE.match(measured)
     if not match:
         reasons.append(
             "header must match '<type>(<scope>)!: <subject>' with type one of "
             + ", ".join(TYPES.split("|"))
             + " and a lowercase scope: %r" % header
         )
-    if len(header) > MAX_HEADER:
+    if len(measured) > MAX_HEADER:
         reasons.append(
-            "header is %d characters; the maximum is %d" % (len(header), MAX_HEADER)
+            "header is %d characters; the maximum is %d" % (len(measured), MAX_HEADER)
         )
     if len(lines) > 1 and lines[1].strip():
         reasons.append("the second line must be blank (separate header from body)")

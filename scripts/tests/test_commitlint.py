@@ -30,6 +30,17 @@ class ValidateTest(unittest.TestCase):
         self.assertTrue(any("101" in r for r in validate("fix: " + "x" * 96)))
         self.assertEqual(validate("fix: " + "x" * 95), [])
 
+    def test_header_length_ignores_the_squash_pr_suffix(self):
+        # GitHub appends " (#N)" to a squash commit title taken from the PR title.
+        self.assertEqual(validate("fix: " + "x" * 95 + " (#123)"), [])
+        reasons = validate("fix: " + "x" * 96 + " (#123)")
+        self.assertTrue(any("101" in r for r in reasons), reasons)
+        self.assertEqual(validate("feat: a (#12)"), [])
+        # Only one trailing suffix is ignored, and it must follow a valid header.
+        self.assertTrue(any("105" in r for r in validate("fix: " + "x" * 95 + " (#1) (#123)")))
+        self.assertTrue(validate("feat: (#12)"))
+        self.assertTrue(validate("Update installer (#12)"))
+
     def test_misc_invalid(self):
         self.assertTrue(validate("fix: a\nbody"))
         self.assertTrue(validate("fix(Android): a"))
