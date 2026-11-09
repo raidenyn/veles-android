@@ -212,6 +212,87 @@ class InventoryDeterminismTests(Scratch):
         )
 
 
+class ExecutableDefinitionTests(Scratch):
+    """One executable-bit definition for the inventory and the release gate (PR #129 regression).
+
+    The Windows debug producer assembled its tree with ``st_mode & 0o111`` and ``package-debug``
+    re-computed the same bit through a different Windows mode view, so the two payload ``.exe``
+    files disagreed with their own inventory and packaging stopped.
+    """
+
+    def test_windows_semantics(self):
+        self.assertTrue(package_inputs.is_executable(Path("payload/veles-native-host.exe"), 0o644, windows=True))
+        self.assertTrue(package_inputs.is_executable(Path("payload/veles-bridge-cleanup.exe"), 0o644, windows=True))
+        for name in ("setup.EXE", "run.com", "run.bat", "run.CMD"):
+            with self.subTest(name=name):
+                self.assertTrue(package_inputs.is_executable(Path(name), 0o644, windows=True))
+        for name in ("veles.dll", "package.json", "notes.txt", "setup.msi", "host.exe.txt"):
+            with self.subTest(name=name):
+                self.assertFalse(package_inputs.is_executable(Path(name), 0o644, windows=True))
+        # The mode bit still counts on Windows, for any name.
+        self.assertTrue(package_inputs.is_executable(Path("host.exe"), 0o755, windows=True))
+        self.assertTrue(package_inputs.is_executable(Path("docs/README.txt"), 0o755, windows=True))
+
+    def test_non_windows_semantics(self):
+        self.assertFalse(package_inputs.is_executable(Path("payload/veles-native-host.exe"), 0o644, windows=False))
+        self.assertFalse(package_inputs.is_executable(Path("setup.bat"), 0o644, windows=False))
+        self.assertFalse(package_inputs.is_executable(Path("docs/README.txt"), 0o644, windows=False))
+        self.assertTrue(package_inputs.is_executable(Path("payload/veles-native-host.exe"), 0o755, windows=False))
+        self.assertTrue(package_inputs.is_executable(Path("bin/tool"), 0o755, windows=False))
+
+    def test_default_windows_value_follows_the_host(self):
+        sample = Path("payload/veles-native-host.exe")
+        self.assertEqual(
+            package_inputs.is_executable(sample, 0o644),
+            package_inputs.is_executable(sample, 0o644, windows=os.name == "nt"),
+        )
+
+    def test_inventory_and_release_gate_agree_for_exe_files_under_windows_semantics(self):
+        import release_gate  # sibling module; imported here so this suite stays focused on the inventory
+
+        root = materialize(
+            self.base / "windows-tree",
+            files={
+                "payload/veles-native-host.exe": (b"MZ-host", 0o644),
+                "payload/veles-bridge-cleanup.exe": (b"MZ-cleanup", 0o644),
+                "payload/notes.json": (b"{}\n", 0o644),
+                "uninstall.exe": (b"MZ-uninstaller", 0o644),
+            },
+            empty_dirs=(),
+        )
+        # Both sides of the comparison use the one definition with the same Windows view, which is
+        # what the Windows producer and its `package-debug` verifier do (each resolves the host).
+        real = package_inputs.is_executable
+
+        def windows_view(path, mode, *, windows=None):
+            return real(path, mode, windows=True)
+
+        with mock.patch.object(package_inputs, "is_executable", windows_view):
+            entries = {entry["path"]: entry for entry in package_inputs.build_inventory(root)["entries"]}
+            self.assertTrue(entries["payload/veles-native-host.exe"]["executable"])
+            self.assertTrue(entries["payload/veles-bridge-cleanup.exe"]["executable"])
+            self.assertFalse(entries["payload/notes.json"]["executable"])
+            # The exact check `package-debug` runs: the inventory must describe the tree it came from.
+            view = {rel: root / rel for rel in entries}
+            self.assertEqual(release_gate.verify_payload(view, list(entries.values())), [])
+
+    def test_release_gate_uses_the_shared_definition(self):
+        import release_gate
+
+        exe = materialize(
+            self.base / "gate", files={"veles-native-host.exe": (b"MZ-host", 0o644)}, empty_dirs=()
+        ) / "veles-native-host.exe"
+        with mock.patch.object(package_inputs, "is_executable", return_value=True) as helper:
+            self.assertTrue(release_gate._mode_exec(exe))
+        helper.assert_called_once_with(exe, exe.stat().st_mode)
+        # And on this host the gate and the definition really return the same value for a real file.
+        real_mode = exe.stat().st_mode
+        self.assertEqual(release_gate._mode_exec(exe), package_inputs.is_executable(exe, real_mode))
+        self.assertEqual(
+            release_gate._mode_exec(exe), package_inputs.is_executable(exe, real_mode, windows=os.name == "nt")
+        )
+
+
 class InventoryRejectionTests(Scratch):
     def assert_rejected(self, root, code=None):
         with self.assertRaises(package_inputs.InventoryError) as caught:

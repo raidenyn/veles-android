@@ -14,7 +14,10 @@ that two independent clean builds can be compared on byte for byte::
 The entry shape is the Rust ``InventoryEntry`` (path, size, SHA-256, executable);
 the path policy is the one ``src/inventory.rs::normalize_relative_path`` enforces.
 Nothing host-specific enters an inventory: not the absolute root, not mtimes or
-ownership, not permission bits other than "any execute bit set". Symlinks and
+ownership, not permission bits other than "any execute bit set". On Windows, where
+the mode bits do not describe an image's executability, the Windows executable
+suffixes count as well (one definition shared with ``release_gate``, see
+``is_executable``). Symlinks and
 non-regular files, case-folded duplicates, unsafe names and anything past the
 entry/size/depth bounds are rejected (``InventoryError``), never skipped.
 
@@ -96,6 +99,10 @@ MAX_PATH_BYTES = 1024  # model.rs MAX_PATH_BYTES
 MAX_DEPTH = 32
 MAX_ARCHIVE_MEMBER_BYTES = MAX_TOTAL_BYTES
 ARCHIVE_ENTRY_OVERHEAD = 4096  # per-node allowance for headers/padding when bounding the physical size
+# Windows has no execute permission bit: ``os.chmod`` only toggles the read-only attribute, so
+# ``st_mode & 0o111`` cannot describe whether an image is executable there. These are the suffixes
+# Windows itself treats as executable (the CRT ``_stat`` rule).
+WINDOWS_EXECUTABLE_SUFFIXES = frozenset({".exe", ".com", ".bat", ".cmd"})
 MAX_TAR_METADATA_BYTES = 4096  # one PAX / GNU long-name record (a path is at most MAX_PATH_BYTES)
 MAX_TAR_METADATA_TOTAL = 4 * 1024 * 1024  # all extension records of one archive
 ZIP_MAX_EXTRA = 256  # bytes of (allowlisted) extra fields per header
@@ -157,6 +164,22 @@ def check_depth(path: str, *, directory: bool) -> None:
     components = path.count("/") + 1
     if (components if directory else components - 1) > MAX_DEPTH:
         raise InventoryError(f"path nested deeper than {MAX_DEPTH} directories: {path[:80]!r}", "bound-exceeded")
+
+
+def is_executable(path: Path, mode: int, *, windows: bool | None = None) -> bool:
+    """The one executable-bit definition shared by the inventory and the release gate.
+
+    A file is executable when ``mode & 0o111``. On Windows that bit is meaningless for images
+    (``os.chmod`` can only set the read-only attribute), so a Windows executable suffix also
+    counts. ``windows=None`` means the current host (``os.name == "nt"``); elsewhere only the
+    mode bit counts. Callers that compare two inventories must pass the same ``windows`` value
+    to both sides of the comparison.
+    """
+    if mode & 0o111:
+        return True
+    if windows is None:
+        windows = os.name == "nt"
+    return windows and Path(path).suffix.lower() in WINDOWS_EXECUTABLE_SUFFIXES
 
 
 def _finish(entries: list[dict], empty_directories: list[str]) -> dict:
@@ -267,7 +290,7 @@ def build_inventory(root: Path) -> dict:
                     "path": relative,
                     "size": opened.st_size,
                     "sha256": _hash_open_file(fd, opened.st_size),
-                    "executable": bool(mode & 0o111),
+                    "executable": is_executable(Path(child.path), mode),
                 }
             )
     return _finish(entries, empty_directories)

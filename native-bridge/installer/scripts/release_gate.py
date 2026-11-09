@@ -460,7 +460,7 @@ def credential_format_errors(platform: str, env: dict[str, str]) -> list[str]:
 
 
 def _mode_exec(path: Path) -> bool:
-    return bool(path.stat().st_mode & 0o111)
+    return package_inputs.is_executable(path, path.stat().st_mode)
 
 
 def payload_view(platform: str, root: Path) -> dict[str, Path]:
