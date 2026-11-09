@@ -59,6 +59,6 @@
 
 ## 11. Verification and owner setup
 
-- [ ] 11.1 CLAUDE.md lint gate, all three contract suites, `scriptsTest`, host/installer/extension/Android unit tests
+- [x] 11.1 CLAUDE.md lint gate, all three contract suites, `scriptsTest`, host/installer/extension/Android unit tests
 - [ ] 11.2 Owner checklist in the PR: squash settings, `android-release` (keystore secrets moved, `VELES_ANDROID_CERT_SHA256`), `release-publish`, labels, then the `master` ruleset
 - [ ] 11.3 After merge: bootstrap publish of all three components at 0.1.0
