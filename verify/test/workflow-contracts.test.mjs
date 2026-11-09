@@ -1142,6 +1142,20 @@ function assertPublishReleaseCaller(source) {
       const actual = evaluatePublishCondition(condition, { plan, results, ancestors: [...(ancestry[job] ?? [])] });
       assert.equal(actual, expected, `${name} job ${job} must run=${expected} for ${JSON.stringify(plan)}`);
     }
+    // Failure cases: with !cancelled(), the explicit result terms are what stop drafting and publishing.
+    const run = (job, overrides) => evaluatePublishCondition(jobCondition(releaseJobBlock(source, job), job), {
+      plan, results: { ...results, ...overrides }, ancestors: [...(ancestry[job] ?? [])],
+    });
+    assert.equal(run('draft', { ready: 'failure' }), false, `${name} draft must not run after ready failed for ${JSON.stringify(plan)}`);
+    assert.equal(run('draft', { ready: 'cancelled' }), false, `${name} draft must not run after ready was cancelled`);
+    assert.equal(run('publish', { draft: 'failure' }), false, `${name} publish must not run after draft failed for ${JSON.stringify(plan)}`);
+    assert.equal(run('publish', { draft: 'skipped' }), false, `${name} publish must not run after draft was skipped`);
+    for (const job of PUBLISH_JOBS.filter((entry) => PUBLISH_COMPONENT_OF[entry] && plan[PUBLISH_COMPONENT_OF[entry]] === 'RELEASE')) {
+      // release_ready.py fails on any failed RELEASE job, so ready fails and nothing is drafted or published.
+      assert.equal(run('ready', { [job]: 'failure' }), true, `${name} ready must still decide after ${job} failed`);
+      assert.equal(run('draft', { [job]: 'failure', ready: 'failure' }), false, `${name} draft must not run after ${job} failed`);
+      assert.equal(run('publish', { [job]: 'failure', ready: 'failure', draft: 'skipped' }), false, `${name} publish must not run after ${job} failed`);
+    }
   }
   // A job that must still run after a CARRY-skippable ancestor needs an explicit status function;
   // otherwise GitHub's implicit success() skips it whenever any component is carried.
@@ -1303,6 +1317,7 @@ function assertPublishReleaseCaller(source) {
   const publish = releaseJobBlock(source, 'publish');
   const publishExecutable = executableYaml(publish);
   assert.match(publish, /^    needs: \[guard, plan, draft\]$/m, 'publish must need draft');
+  assert.ok(jobCondition(publish, 'publish').includes("needs.draft.result == 'success'"), 'publish must require a successful draft');
   const verifyDraft = publish.indexOf('release_assets.py verify-draft');
   const push = publish.indexOf('git push --atomic origin "${push[@]}"');
   const patch = publish.indexOf('-F draft=false');
@@ -1458,6 +1473,8 @@ test('the publish caller contract rejects trigger, guard, selection, credential,
     'publish without a status function': (text) => text.replace("    needs: [guard, plan, draft]\n    if: ${{ !cancelled() && ", "    needs: [guard, plan, draft]\n    if: ${{ "),
     'ready with implicit success': (text) => text.replace('if: ${{ always() && github.event_name', 'if: ${{ github.event_name'),
     'unaligned signed APK accepted': (text) => text.replace('"$ZIPALIGN" -c -P 16 -v 4 "$RUNNER_TEMP/signed/app-release.apk"', 'echo skipped alignment'),
+    'publish ignores draft failure': (text) => text.replace(" && needs.draft.result == 'success' }}", ' }}'),
+    'draft ignores ready failure': (text) => text.replace(" && needs.ready.result == 'success' }}", ' }}'),
     'publish without final tag check': (text) => text.replace('echo "::error::the release tag $TAG resolves to', 'echo "::warning::the release tag $TAG resolves to'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
