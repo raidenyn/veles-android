@@ -401,6 +401,7 @@ class WindowsInstallerContract(unittest.TestCase):
         self.assertRegex(self.code, r'StrCmp\s+\$\w+\s+"1"')
         self.assertRegex(self.code, r'StrCmp\s+\$\w+\s+"2"')
         for code in (
+            "unsafe-path",
             "host-active",
             "cleanup-pending",
             "unsupported-state",

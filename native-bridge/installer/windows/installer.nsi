@@ -224,6 +224,7 @@ Var /GLOBAL ExpectStateAlt
 !macro DefineGuidance PREFIX
   Function ${PREFIX}SelectGuidance
     StrCpy $Guidance "The operation did not complete. Your previous Veles connector installation was not changed by this attempt where it could be kept. Try again; if it persists, download a fresh installer."
+    StrCmpS $ReportFailure "unsafe-path" GuidanceUnsafe
     StrCmpS $ReportFailure "cleanup-pending" GuidancePending
     StrCmpS $ReportFailure "host-active" GuidanceHostActive
     StrCmpS $ReportFailure "unsupported-state" GuidanceUnsupported
@@ -234,6 +235,9 @@ Var /GLOBAL ExpectStateAlt
     StrCmpS $ReportFailure "no-rollback" GuidanceNoRollback
     StrCmpS $ReportFailure "repair-package-required" GuidanceRepairPackage
     Return
+    GuidanceUnsafe:
+      StrCpy $Guidance "Something unexpected is in the Veles folder in your user profile, so nothing was changed. Move that folder aside, or ask an administrator to fix its owner and permissions, then run the installer again."
+      Return
     GuidancePending:
       StrCpy $Guidance "Some files could not be removed yet. Close Chrome and the Veles connector, then run this again. The product is not reported as removed."
       Return
