@@ -51,7 +51,7 @@ What each check runs:
 | `native-host / unit-tests (linux)` | `bridgeHostTest` |
 | `native-host / unit-tests (windows, macos)` | `bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest`; lint runs here as well because clippy only sees the cfg-gated WinRT / CoreBluetooth adapters on their own OS |
 | `native-host / build-contract` | `python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py'` |
-| `native-host / compile (windows, macos)` | `bridgeHostBuild`; uploads the CI artifacts `native-host-windows` (exe + `SHA256SUMS`) and `native-host-macos` (mode-preserving tar + `.sha256`) |
+| `native-host / compile (windows, macos)` | `bridgeHostBuild`; uploads the CI artifacts `native-host-windows` (exe + `SHA256SUMS`) and `native-host-macos` (mode-preserving tar + `.sha256`). These are uploaded on every run of this node, an intentional exception to "no label, no component artifact": they are check artifacts, never release assets |
 | `installer / lint` | `bridgeInstallerFormat`, `bridgeInstallerLint` (Linux) |
 | `installer / unit-tests (linux)` | `bridgeInstallerTest` |
 | `installer / unit-tests (windows, macos)` | `bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest` |

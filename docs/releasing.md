@@ -47,7 +47,8 @@ Only `raidenyn` can publish. The `guard` job (and every other job's `if:`) requi
 
 1. **Check the preview** of the latest `master` push: the next versions are what you expect.
 2. **Dispatch** *Actions → publish-release → Run workflow* on `master`. The workflow has no inputs.
-   Runs are serialized (`concurrency: publish-release`, never cancelled): a second dispatch waits.
+   Runs are serialized (`concurrency: publish-release`, never cancelled): a second dispatch waits. GitHub keeps at most one pending run per concurrency group, so a third
+   dispatch while one run is active and one is waiting cancels the waiting one.
 3. `plan` classifies each component as RELEASE or CARRY. It fails, before anything is built, when:
    - nothing is RELEASE ("nothing to release");
    - the checkout is shallow;
@@ -95,6 +96,12 @@ failed `publish` job of the same run** (*Re-run failed jobs*). It is idempotent:
 - a release that is already published is left as it is;
 - the draft digests are checked again before anything else.
 
+This relies on the artifacts uploaded by the first attempt (`release-plan`, `expected-digests`) being
+available to the re-run attempt. That has **not been verified on GitHub yet: confirm it with one
+throwaway run on a fork before relying on it.** If the re-run cannot find them, use the fallback:
+delete the draft and any orphaned component tags as described under the next case, then dispatch a
+new run.
+
 Do not start a new dispatch instead: the new plan would see the pushed tags without a combined release
 that lists them, and `plan` fails with "orphaned tag". A re-run must again be started by `raidenyn`.
 
@@ -109,7 +116,10 @@ publication left behind, then dispatch again:
 3. dispatch `publish-release` again.
 
 **A job before `publish` failed** (build, signing, gate, carry, ready or draft). Nothing was tagged or
-published. Fix the cause on `master` and dispatch again, or re-run the failed jobs. A stale draft for
+published. Fix the cause on `master` and dispatch again, or re-run the jobs. For a failed installer
+`build-*`, `verify-*` or `sign-*` job use *Re-run all jobs*: the producer artifacts are named with
+`run_attempt`, so re-running only the failed jobs cannot find them (safe, because nothing is pushed
+before `publish`). A stale draft for
 the same date tag is replaced by the next `draft` job.
 
 ## Rollback
