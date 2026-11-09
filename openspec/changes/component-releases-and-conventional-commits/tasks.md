@@ -19,11 +19,11 @@
 
 ## 4. Release tooling
 
-- [ ] 4.1 Pinned git-cliff installer task, registered with the clean contract and supply-chain policy; `cliff.toml` with the pinned bump policy
-- [ ] 4.2 `scripts/release_plan.py` (`latest`, `plan`; RELEASE/CARRY, orphaned-tag and shallow-repo refusal, release tag naming, notes and summary) with fixture-repo tests
-- [ ] 4.3 `scripts/release_assets.py` (expected asset sets, manifest writing, carry verification, staging, draft verification) with tests
-- [ ] 4.4 `scripts/release_ready.py` (readiness over `toJSON(needs)` and the plan) with tests for every RELEASE/CARRY combination, failures and cancellations
-- [ ] 4.5 `scriptsTest` Gradle task running all `scripts/tests`
+- [x] 4.1 Pinned git-cliff installer task, registered with the clean contract and supply-chain policy; `cliff.toml` with the pinned bump policy
+- [x] 4.2 `scripts/release_plan.py` (`latest`, `plan`; RELEASE/CARRY, orphaned-tag and shallow-repo refusal, release tag naming, notes and summary) with fixture-repo tests
+- [x] 4.3 `scripts/release_assets.py` (expected asset sets, manifest writing, carry verification, staging, draft verification) with tests
+- [x] 4.4 `scripts/release_ready.py` (readiness over `toJSON(needs)` and the plan) with tests for every RELEASE/CARRY combination, failures and cancellations
+- [x] 4.5 `scriptsTest` Gradle task running all `scripts/tests`
 
 ## 5. Version injection
 
