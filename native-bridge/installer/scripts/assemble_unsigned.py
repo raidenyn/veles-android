@@ -314,12 +314,21 @@ def inventory_document(entries: list[dict]) -> bytes:
     return canonical_json({"entries": ordered, "schema": SCHEMA})
 
 
-def descriptor_document(config: dict, commit: str, payload_id: str) -> bytes:
+def _checked_version(version: str) -> str:
+    if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
+        raise ValueError(f"version must be MAJOR.MINOR.PATCH without leading zeros, not {version!r}")
+    return version
+
+
+def descriptor_document(config: dict, commit: str, payload_id: str, version: str | None = None) -> bytes:
+    """The descriptor bytes; ``version`` (the injected installer version) replaces the config's."""
     if not COMMIT_RE.match(commit or ""):
         raise ValueError("commit must be a full lowercase git commit id")
     if not HEX64.match(payload_id or ""):
         raise ValueError("payload_id must be a lowercase SHA-256")
     descriptor = dict(config)
+    if version is not None:
+        descriptor["version"] = _checked_version(version)
     resolved = resolve_extension_id(config.get("extension_id"))
     if resolved is None:
         raise ValueError("the config has no configured extension_id")
@@ -403,13 +412,23 @@ def _prepare_config(config: Path, channel: str, platform: str, commit: str) -> d
 
 def assemble(
     *, platform: str, channel: str, config: Path, commit: str, binaries: Path, output: Path,
-    frontend: Path | None, packager: Path | None,
+    frontend: Path | None, packager: Path | None, version: str | None = None,
 ) -> None:  # fmt: skip
-    """Write ``output/tree`` (and, on Windows, ``output/carrier.bin``); ``output`` must not exist."""
+    """Write ``output/tree`` (and, on Windows, ``output/carrier.bin``); ``output`` must not exist.
+
+    ``version`` is the injected installer version. It replaces the config's version once, before
+    anything is written, so the descriptor, the carriers and both macOS packaging passes' ``VERSION``
+    agree; omitted, the config's version is used.
+    """
     output = Path(output)
     if output.exists() or output.is_symlink():
         raise AssemblyError(f"output must not exist: {output}")
     value = _prepare_config(Path(config), channel, platform, commit)
+    if version is not None:
+        try:
+            value["version"] = _checked_version(version)
+        except ValueError as error:
+            raise AssemblyError(str(error)) from error
     files = _closed_binaries(Path(binaries), platform)
     output.parent.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
@@ -707,6 +726,7 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--output", type=Path, required=True)
     build.add_argument("--frontend", type=Path)
     build.add_argument("--packager", type=Path)
+    build.add_argument("--version", help="installer version MAJOR.MINOR.PATCH; replaces the config's version in every output")
     verify = sub.add_parser("verify-carrier")
     verify.add_argument("--carrier", type=Path, required=True)
     verify.add_argument("--descriptor", type=Path, required=True)
@@ -746,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
             assemble(
                 platform=args.platform, channel=args.channel, config=args.config, commit=args.commit,
                 binaries=args.binaries, output=args.output, frontend=args.frontend, packager=args.packager,
+                version=args.version,
             )  # fmt: skip
             return 0
         if args.command == "verify-carrier":

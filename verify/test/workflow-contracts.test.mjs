@@ -477,6 +477,16 @@ function assertInstallerProducer(source, platform) {
     assert.match(executable, new RegExp(`working-directory:\\s*${directory.replace(/\//g, '\\/')}\\s*\\n\\s*run:\\s*rustup show active-toolchain`), `${name} must activate the pinned Rust toolchain of ${directory}`);
   }
   assert.match(executable, /actions\/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1[\s\S]*?python-version:\s*['"]3\.12['"]/, `${name} must pin Python 3.12 for the assembler`);
+  // The planned installer version: an optional caller input exported, through the step env only,
+  // to the build-kind release bridgeInstallerUnsigned step. The debug build keeps its fixture version.
+  assert.match(executable, /\n      version:\s*\n\s*required:\s*false\s*\n\s*type:\s*string\s*\n\s*default:\s*''\s*\n/, `${name} must accept an optional version input defaulting to ''`);
+  assert.equal(executable.split('VELES_INSTALLER_VERSION').length - 1, 1, `${name} must export VELES_INSTALLER_VERSION exactly once`);
+  assert.equal(executable.split('inputs.version').length - 1, 1, `${name} must read inputs.version exactly once`);
+  const versionSteps = executable.split(/\n(?=      - )/).filter((step) => step.includes('VELES_INSTALLER_VERSION'));
+  assert.equal(versionSteps.length, 1, `${name} must export VELES_INSTALLER_VERSION from one step`);
+  assert.match(versionSteps[0], /\n        env:\n          VELES_INSTALLER_VERSION: \$\{\{ inputs\.version \}\}\n/, `${name} must pass the version through the step env`);
+  assert.ok(versionSteps[0].includes("if: inputs.build-kind == 'release'") && versionSteps[0].includes('bridgeInstallerUnsigned'), `${name} must export VELES_INSTALLER_VERSION only to the release build`);
+  assert.ok(!versionSteps[0].includes('bridgeInstallerDebug') && !versionSteps[0].includes("build-kind == 'debug'"), `${name} must not give the debug build VELES_INSTALLER_VERSION`);
   // Hashes and modes travel inside a mode-preserving tar plus checksums; the debug artifact is the
   // finished installer with metadata and symbols. Uploads are exact files, bounded.
   const uploads = uploadPaths(source, name);
@@ -546,6 +556,11 @@ function mutateProducer(source, label, platform) {
     'silent upload': (text) => text.replaceAll('if-no-files-found: error', 'if-no-files-found: ignore'),
     'offline wrapper': (text) => text.replace(`${spec.gradle} bridgeInstallerDebug`, `${spec.gradle} --offline bridgeInstallerDebug`),
     'write permission': (text) => text.replace('contents: read', 'contents: write'),
+    'version dropped': (text) => text.replace('        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n', ''),
+    'version to debug': (text) => text.replace('        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n', '').replace('          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}\n', '          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n'),
+    'version job env': (text) => text.replace('        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n', '').replace('    steps:', '    env:\n      VELES_INSTALLER_VERSION: ${{ inputs.version }}\n    steps:'),
+    'version inline': (text) => text.replace('        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n', '').replace('bridgeInstallerUnsigned\n', 'bridgeInstallerUnsigned -PinstallerVersion=${{ inputs.version }}\n'),
+    'version required': (text) => text.replace('      version:\n        required: false', '      version:\n        required: true'),
   };
   return mutations[label](source);
 }
@@ -557,7 +572,8 @@ test('native producer contract names every invariant it enforces (negative mutat
     'artifact from another run', 'floating action', 'glob upload', 'dropped provenance', 'dropped debug metadata',
     'dropped debug symbols', 'scaffold artifact default', 'debug mislabeled release', 'missing build kind',
     'defaulted build kind', 'unvalidated build kind', 'config-file probe', 'unactivated installer toolchain',
-    'silent upload', 'offline wrapper', 'write permission',
+    'silent upload', 'offline wrapper', 'write permission', 'version dropped', 'version to debug',
+    'version job env', 'version inline', 'version required',
   ];
   for (const platform of Object.keys(NATIVE_PRODUCERS)) {
     const source = await workflow(NATIVE_PRODUCERS[platform].file);

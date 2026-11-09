@@ -521,6 +521,90 @@ class Finalize(Workspace):
         self.assertTrue(outcome.ok, f"{outcome.code}: {outcome.detail}")
 
 
+class InjectedVersion(Workspace):
+    """One installer version, injected at build time, reaches the descriptor and every bundle."""
+
+    def run_cli(self, *arguments):
+        return subprocess.run([sys.executable, "-I", str(HERE / "assemble_unsigned.py"), *arguments], capture_output=True, text=True)
+
+    def test_an_injected_version_replaces_the_config_version_in_the_descriptor(self):
+        value = json.loads(au.descriptor_document(config(), COMMIT, "a" * 64, version="0.2.0"))
+        self.assertEqual("0.2.0", value["version"])
+
+    def test_an_omitted_version_keeps_the_config_value(self):
+        self.assertEqual("1.2.3", json.loads(au.descriptor_document(config(), COMMIT, "a" * 64))["version"])
+        self.assertEqual(au.descriptor_document(config(), COMMIT, "a" * 64), au.descriptor_document(config(), COMMIT, "a" * 64, version=None))
+
+    def test_a_malformed_version_is_refused(self):
+        for bad in ("1.2", "1.2.3.4", "01.2.3", "v1.2.3", "1.2.3-rc.1", "", " 1.2.3", "1.2.3\n"):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                au.descriptor_document(config(), COMMIT, "a" * 64, version=bad)
+
+    def test_the_assemble_cli_writes_the_version_to_the_windows_descriptor(self):
+        out = self.root / "out-win"
+        result = self.run_cli(
+            "assemble", "--platform", "windows", "--channel", "production", "--config", str(self.write_config(config())),
+            "--commit", COMMIT, "--binaries", str(self.binaries("w")), "--output", str(out), "--version", "0.2.0",
+        )  # fmt: skip
+        self.assertEqual(0, result.returncode, result.stderr)
+        descriptor = (out / "tree/package/descriptor.json").read_bytes()
+        self.assertEqual("0.2.0", json.loads(descriptor)["version"])
+        # The carriers the engine compiles in and embeds hold exactly that descriptor.
+        self.assertIn(descriptor, (out / "carrier.bin").read_bytes())
+        self.assertIn(descriptor, (out / "embedded-carrier.bin").read_bytes())
+
+    def test_a_malformed_cli_version_is_refused_and_leaves_nothing(self):
+        out = self.root / "out-bad"
+        result = self.run_cli(
+            "assemble", "--platform", "windows", "--channel", "production", "--config", str(self.write_config(config())),
+            "--commit", COMMIT, "--binaries", str(self.binaries("bad")), "--output", str(out), "--version", "1.2",
+        )  # fmt: skip
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse(out.exists())
+
+    def test_the_assemble_cli_writes_the_version_to_the_macos_descriptor_and_both_version_files(self):
+        # A wrapper around the real packager records the VERSION input of each of the two passes.
+        record = self.root / "versions.log"
+        wrapper = self.root / "record-version.sh"
+        wrapper.write_text(
+            "#!/usr/bin/env bash\nset -eu\n"
+            "args=(\"$@\")\n"
+            "while [ $# -gt 0 ]; do case $1 in --inputs) in=$2; shift 2;; *) shift;; esac; done\n"
+            f"cat \"$in/VERSION\" >>'{record}'\n"
+            f"exec bash '{HERE / 'package-macos.sh'}' \"${{args[@]}}\"\n",
+            encoding="utf-8",
+        )
+        frontend = self.root / "VelesBridgeInstaller"
+        frontend.write_bytes(b"frontend\n" * 8)
+        out = self.root / "out-mac"
+        result = self.run_cli(
+            "assemble", "--platform", "macos", "--channel", "production", "--config", str(self.write_config(config("macos"))),
+            "--commit", COMMIT, "--binaries", str(self.binaries("m", "macos")), "--output", str(out),
+            "--frontend", str(frontend), "--packager", str(wrapper), "--version", "0.2.0",
+        )  # fmt: skip
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("0.2.0\n0.2.0\n", record.read_text(encoding="utf-8"))
+        app = out / "tree" / "Veles Bridge Installer.app"
+        package = app / "Contents" / "Resources" / "package"
+        self.assertEqual("0.2.0", json.loads((package / "descriptor.json").read_bytes())["version"])
+        for plist in (app / "Contents" / "Info.plist", package / "payload" / "Veles Native Bridge.app" / "Contents" / "Info.plist"):
+            self.assertEqual("0.2.0", plistlib.loads(plist.read_bytes())["CFBundleShortVersionString"], plist)
+
+    def test_the_provenance_binds_the_injected_descriptor(self):
+        slots = []
+        for tag in ("a", "b"):
+            out = self.root / f"slot-{tag}"
+            au.assemble(platform="windows", channel="production", config=self.write_config(config()), commit=COMMIT,
+                        binaries=self.binaries(tag), output=out, frontend=None, packager=None, version="0.2.0")
+            slots.append(out)
+        published = self.root / "published"
+        au.finalize(platform="windows", tool_observation=OBSERVED, slot_a=slots[0], slot_b=slots[1], output=published, commit=COMMIT)
+        descriptor = (slots[0] / "tree/package/descriptor.json").read_bytes()
+        self.assertEqual("0.2.0", json.loads(descriptor)["version"])
+        provenance = json.loads((published / "provenance.json").read_bytes())
+        self.assertEqual(hashlib.sha256(descriptor).hexdigest(), provenance["descriptor_digest"])
+
+
 class CommandLine(Workspace):
     def run_cli(self, *arguments):
         return subprocess.run([sys.executable, "-I", str(HERE / "assemble_unsigned.py"), *arguments], capture_output=True, text=True)

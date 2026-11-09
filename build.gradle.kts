@@ -1430,6 +1430,8 @@ val installerPlatform = when {
 val installerRustTriple = if (installerPlatform == "windows") "x86_64-pc-windows-msvc" else "aarch64-apple-darwin"
 val installerPython = if (installerPlatform == "windows") "python" else "python3"
 val installerExecutableSuffix = if (installerPlatform == "windows") ".exe" else ""
+// MAJOR.MINOR.PATCH, unsigned numeric components without leading zeros (the release-config rule).
+val installerVersionPattern = Regex("""(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)""")
 val installerSources = fileTree(installerDir) {
     include("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/**", "tests/**", "config/**", "macos/**", "windows/**", "scripts/**")
     exclude("target/**", "macos/.build/**", "scripts/__pycache__/**")
@@ -1680,9 +1682,25 @@ fun registerInstallerProducer(
     val allowedOrigin = providers.exec {
         commandLine(installerPython, "-I", installerAssembler.asFile, "origin", "--config", config.get().asFile)
     }.standardOutput.asText.map { it.trim() }
-    val releaseVersion = providers.provider {
+    val configVersion = providers.provider {
         @Suppress("UNCHECKED_CAST")
         (groovy.json.JsonSlurper().parse(config.get().asFile) as Map<String, Any?>)["version"] as String
+    }
+    // The one installer version of this producer: the descriptor (both assembly passes), the macOS
+    // bundle VERSION, the NSIS uninstaller and the host's user agent all receive it. Only the
+    // production channel may take the planned version from VELES_INSTALLER_VERSION (an empty value
+    // keeps the config's); a fixture build always carries its tracked config's version.
+    val installerVersion = (
+        if (channel == "production") {
+            providers.environmentVariable("VELES_INSTALLER_VERSION").filter { it.isNotEmpty() }.orElse(configVersion)
+        } else {
+            configVersion
+        }
+    ).map { version ->
+        require(installerVersionPattern.matches(version)) {
+            "installer version must be MAJOR.MINOR.PATCH without leading zeros (got '$version')"
+        }
+        version
     }
     val slotFinishers = mutableListOf<TaskProvider<*>>()
     // One Swift argument list for the frontend build and the bin-path query, so the second can
@@ -1739,7 +1757,7 @@ fun registerInstallerProducer(
                 installerPython, "-I", installerAssembler.asFile.absolutePath, "assemble",
                 "--platform", installerPlatform, "--channel", channel, "--config", config.get().asFile.absolutePath,
                 "--commit", installerSourceCommit(), "--binaries", binaries.asFile.absolutePath,
-                "--output", output.asFile.absolutePath,
+                "--output", output.asFile.absolutePath, "--version", installerVersion.get(),
             )
             if (installerPlatform == "macos") {
                 val binPath = providers.exec {
@@ -1790,6 +1808,8 @@ fun registerInstallerProducer(
             inputs.files(config)
             // The allowlist is compiled in through option_env!, so the exact origin is a tracked build input.
             inputs.property("VELES_ALLOWED_ORIGINS", allowedOrigin)
+            // The user-agent version is compiled in through option_env!("VELES_HOST_VERSION").
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(hostTargetDir)
             workingDir(productionHostDir)
             doFirst {
@@ -1797,6 +1817,7 @@ fun registerInstallerProducer(
                 delete(hostTargetDir)
                 environment("CARGO_TARGET_DIR", hostTargetDir.get().asFile)
                 environment("VELES_ALLOWED_ORIGINS", allowedOrigin.get())
+                environment("VELES_HOST_VERSION", installerVersion.get())
                 installerCargoEnvironment()
             }
             commandLine(
@@ -1824,13 +1845,14 @@ fun registerInstallerProducer(
             enabled = installerPlatform == "windows"
             dependsOn(configCheck)
             inputs.files(installerSources)
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(uninstallerDir)
             doFirst {
                 delete(uninstallerDir)
                 uninstallerDir.get().asFile.mkdirs()
                 commandLine(
                     "pwsh", "-NoProfile", "-File", installerDir.file("scripts/generate-uninstaller.ps1").asFile,
-                    "-Makensis", installerMakensis.get(), "-Version", releaseVersion.get(),
+                    "-Makensis", installerMakensis.get(), "-Version", installerVersion.get(),
                     "-Channel", channel,
                     "-Output", uninstallerDir.get().file("uninstall.exe").asFile,
                 )
@@ -1856,6 +1878,7 @@ fun registerInstallerProducer(
             dependsOn(stage, frontend)
             inputs.files(config)
             inputs.files(installerSources)
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(assembledDir)
             doFirst {
                 delete(assembledDir)
@@ -1933,6 +1956,7 @@ fun registerInstallerProducer(
             dependsOn(stageEmbedded, frontend)
             inputs.files(config)
             inputs.files(installerSources)
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(assembledFinalDir)
             doFirst {
                 delete(assembledFinalDir)

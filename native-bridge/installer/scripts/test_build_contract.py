@@ -276,6 +276,41 @@ def check_gradle(gradle, clean_script):
     if not re.search(r"inputs\.files?\(config\)", code):
         errors.append("the release config is not declared as a task input")
 
+    # 5a. One installer version: the production channel may take VELES_INSTALLER_VERSION (validated,
+    # otherwise the config's version); the fixture channel always uses its config. The host, the
+    # uninstaller and both assembly passes declare it as an input and receive it.
+    if 'providers.environmentVariable("VELES_INSTALLER_VERSION")' not in code:
+        errors.append("installerVersion is not read from VELES_INSTALLER_VERSION")
+    elif code.count('environmentVariable("VELES_INSTALLER_VERSION")') != 1:
+        errors.append("VELES_INSTALLER_VERSION must be read exactly once")
+    version_decl = re.search(r"val installerVersion\s*=\s*(.*?)\n    val ", code, re.S)
+    if version_decl is None:
+        errors.append("no installerVersion provider is declared")
+    else:
+        decl = version_decl.group(1)
+        if not re.search(r'if \(channel == "production"\)\s*\{?\s*providers\.environmentVariable\("VELES_INSTALLER_VERSION"\)', decl):
+            errors.append("only the production channel may take VELES_INSTALLER_VERSION")
+        if "orElse(configVersion)" not in decl or not re.search(r"\}\s*else\s*\{\s*configVersion\s*\}", decl):
+            errors.append("installerVersion does not fall back to the config version")
+        if "installerVersionPattern.matches(version)" not in decl or "require(" not in decl:
+            errors.append("installerVersion is not validated as MAJOR.MINOR.PATCH")
+    if "releaseVersion" in code:
+        errors.append("a task still reads the config version directly instead of installerVersion")
+    declaration = 'inputs.property("installerVersion", installerVersion)'
+    for marker, label, passes in (
+        ('"${taskName}Host$suffix"', "host", 'environment("VELES_HOST_VERSION", installerVersion.get())'),
+        ('"${taskName}Uninstaller$suffix"', "uninstaller", '"-Version", installerVersion.get()'),
+        ('"${taskName}Assemble$suffix"', "bootstrap assembly", "assemblerArguments("),
+        ('"${taskName}AssembleFinal$suffix"', "final assembly", "assemblerArguments("),
+    ):
+        task = object_block(code, marker)
+        if task is None or declaration not in task:
+            errors.append("the %s task does not declare inputs.property(\"installerVersion\", installerVersion)" % label)
+        elif passes not in task:
+            errors.append("the %s task does not receive installerVersion" % label)
+    if '"--version", installerVersion.get()' not in code:
+        errors.append("the assembler arguments do not pass --version installerVersion")
+
     # 5b. The authenticated carrier is assembled FIRST, verified against the exact descriptor and
     # channel, and only then compiled into the engine that is published. A production build cannot
     # build without it; a fixture build consumes its own channel's assembly; no property may point
@@ -588,6 +623,22 @@ def check_producer_workflow(source, platform):
     # only coherent supply point. The workflow must not point the engine at a file it did not assemble.
     if "VELES_EMBEDDED_CARRIER" in body or "VELES_BUILD_CHANNEL" in body:
         errors.append("the producer workflow must not set the carrier channel itself; the Gradle producer supplies the assembled carrier")
+    # The planned installer version is an optional caller input that reaches ONLY the release build,
+    # through the step environment (never interpolated into a shell line); the debug build keeps its
+    # fixture config's version.
+    if not re.search(r"\n      version:\s*\n\s*required:\s*false\s*\n\s*type:\s*string\s*\n\s*default:\s*''\s*\n", body):
+        errors.append("the version input must be an optional string defaulting to ''")
+    version_steps = [step for step in re.split(r"\n(?=      - )", body) if "VELES_INSTALLER_VERSION" in step]
+    if body.count("VELES_INSTALLER_VERSION") != 1 or body.count("inputs.version") != 1 or len(version_steps) != 1:
+        errors.append("VELES_INSTALLER_VERSION must be exported exactly once, from inputs.version")
+    else:
+        step = version_steps[0]
+        if not re.search(r"\n        env:\n          VELES_INSTALLER_VERSION: \$\{\{ inputs\.version \}\}\n", step):
+            errors.append("VELES_INSTALLER_VERSION must be a step env entry set from ${{ inputs.version }}")
+        if "if: inputs.build-kind == 'release'" not in step or "bridgeInstallerUnsigned" not in step:
+            errors.append("VELES_INSTALLER_VERSION must be exported only to the build-kind release bridgeInstallerUnsigned step")
+        if "bridgeInstallerDebug" in step or "build-kind == 'debug'" in step:
+            errors.append("the debug build must not receive VELES_INSTALLER_VERSION")
     if not re.search(r"permissions:\n  contents: read\n", body) or body.count("permissions:") != 1:
         errors.append("permissions must be a single workflow-level contents: read")
     # Uploads: exactly the release input tree or the finished debug installer, exact files,
@@ -904,6 +955,31 @@ class GradleGraph(unittest.TestCase):
         found = self.violations(self.mutate('environment("VELES_ALLOWED_ORIGINS"', 'environment("OTHER"'))
         self.assertTrue(any("VELES_ALLOWED_ORIGINS" in e for e in found), found)
 
+    def test_the_installer_version_must_be_a_declared_input_of_every_consumer(self):
+        declaration = 'inputs.property("installerVersion", installerVersion)'
+        block = producer_block(self.gradle)
+        self.assertEqual(4, block.count(declaration))
+        # Dropping any one declaration (host, uninstaller, bootstrap or final assembly) is named.
+        for index in range(4):
+            start = -1
+            for _ in range(index + 1):
+                start = block.index(declaration, start + 1)
+            mutated = self.gradle.replace(block, block[:start] + block[start + len(declaration):])
+            found = self.violations(mutated)
+            self.assertTrue(any("installerVersion" in e for e in found), (index, found))
+        for old, new in (
+            ('environment("VELES_HOST_VERSION", installerVersion.get())', 'environment("VELES_HOST_VERSION", "0.0.0")'),
+            ('"-Version", installerVersion.get()', '"-Version", "0.0.0"'),
+            ('"--version", installerVersion.get()', '"--version", "0.0.0"'),
+            ('providers.environmentVariable("VELES_INSTALLER_VERSION")', 'providers.gradleProperty("installerVersion")'),
+            ('orElse(configVersion)', 'orElse("0.0.0")'),
+            ('if (channel == "production") {', 'if (true) {'),
+            ('require(installerVersionPattern.matches(version))', 'check(true)'),
+            ('} else {\n            configVersion\n        }', '} else {\n            providers.environmentVariable("X").orElse(configVersion)\n        }'),
+        ):
+            found = self.violations(self.mutate(old, new))
+            self.assertTrue(any("installerVersion" in e or "VELES_INSTALLER_VERSION" in e or "version" in e for e in found), (old, found))
+
     def test_the_engine_must_compile_in_the_assembled_and_verified_carrier(self):
         for old, new in (
             ('environment("VELES_EMBEDDED_CARRIER"', 'environment("VELES_CARRIER_IGNORED"'),
@@ -1178,6 +1254,15 @@ class ProducerWorkflows(unittest.TestCase):
                 "      - name: Build the debug fixture-channel installer\n        env:\n          VELES_EMBEDDED_CARRIER: unverified.bin",
                 1,
             ),
+            "version-dropped": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1),
+            "version-to-debug": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1).replace(
+                "          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}\n",
+                "          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", 1),
+            "version-job-env": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1).replace(
+                "    steps:", "    env:\n      VELES_INSTALLER_VERSION: ${{ inputs.version }}\n    steps:", 1),
+            "version-inline": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1).replace(
+                "bridgeInstallerUnsigned\n", "bridgeInstallerUnsigned -PinstallerVersion=${{ inputs.version }}\n", 1),
+            "version-required": source.replace("      version:\n        required: false", "      version:\n        required: true", 1),
             "silent-upload": source.replace("if-no-files-found: error", "if-no-files-found: ignore"),
             "write-permission": source.replace("contents: read", "contents: write", 1),
         }

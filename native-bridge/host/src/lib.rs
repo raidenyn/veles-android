@@ -19,6 +19,7 @@
 //! (`closejoin.rs`), the ordered-callback admission gate (`admission.rs`) and the partial-setup
 //! cleanup stack (`cleanup.rs`). Task 7 adds the macOS CoreBluetooth adapter (`macos.rs`,
 //! compiled on macOS only) with its portable mappings (`macos_map.rs`) and link-lifecycle logic (`macos_link.rs`).
+//! `version.rs` holds the host version reported in the user agent (injected by the installer build).
 
 pub mod admission;
 pub mod backend;
@@ -40,6 +41,7 @@ pub mod outqueue;
 pub mod protocol;
 pub mod runtime;
 pub mod strict_json;
+pub mod version;
 #[cfg(windows)]
 pub mod winrt;
 pub mod winrt_map;
