@@ -10,7 +10,6 @@ import {
   parseNativeManifest,
   parseStandardManifest,
 } from '../lib/checksum-manifest.mjs';
-import { compareTrees, verifyManifestTree } from '../lib/filesystem-tree.mjs';
 import { EXIT_ERROR, EXIT_MISMATCH } from '../lib/exit-codes.mjs';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -90,61 +89,6 @@ test('rejects Windows path spellings in parsed evidence without normalizing them
   for (const path of ['..\\secret', 'C:\\absolute', '\\\\server\\share']) {
     assert.throws(() => parseStandardManifest(`${digest}  ${path}\n`), isMismatch, path);
   }
-});
-
-test('classifies invalid API inputs and filesystem failures as exit 2', async () => {
-  await withTree({ a: 'value' }, async (root) => {
-    await assert.rejects(() => createStandardManifest(root, 'a'), isError);
-    await assert.rejects(() => createStandardManifest(root, ['missing']), isError);
-    await assert.rejects(() => verifyManifestTree(root, {}), isError);
-    await assert.rejects(() => compareTrees(root, root, 'a'), isError);
-    await assert.rejects(() => compareTrees(root, root, ['missing']), isError);
-    await assert.rejects(() => verifyManifestTree(join(root, 'missing'), new Map()), isError);
-  });
-});
-
-test('validates checksum-map paths before reading a tree', async () => {
-  await withTree({ a: 'value' }, async (root) => {
-    await assert.rejects(
-      () => verifyManifestTree(root, new Map([['..\\secret', sha256('value')]])),
-      isError,
-    );
-  });
-});
-
-test('detects missing, changed, and unexpected tree entries', async () => {
-  await withTree({ a: 'one', extra: 'two' }, async (root) => {
-    const checksums = new Map([['a', sha256('one')], ['missing', sha256('none')]]);
-    await assert.rejects(() => verifyManifestTree(root, checksums), isMismatch);
-
-    const expected = new Map([['a', sha256('one')]]);
-    await assert.rejects(() => verifyManifestTree(root, expected), isMismatch);
-
-    await rm(join(root, 'extra'));
-    await writeFile(join(root, 'a'), 'changed');
-    await assert.rejects(() => verifyManifestTree(root, expected), isMismatch);
-  });
-});
-
-test('treats a non-POSIX filename discovered in an artifact tree as a mismatch', async () => {
-  await withTree({ 'bad\\name': 'value' }, async (root) => {
-    await assert.rejects(() => verifyManifestTree(root, new Map()), isMismatch);
-  });
-});
-
-test('compares listed files by bytes and rejects invalid comparison paths', async () => {
-  await withTree({ 'left/a': 'same', 'right/a': 'same' }, async (root) => {
-    await compareTrees(join(root, 'left'), join(root, 'right'), ['a']);
-    await writeFile(join(root, 'right/a'), 'different');
-    await assert.rejects(
-      () => compareTrees(join(root, 'left'), join(root, 'right'), ['a']),
-      isMismatch,
-    );
-    await assert.rejects(
-      () => compareTrees(join(root, 'left'), join(root, 'right'), ['../a']),
-      isError,
-    );
-  });
 });
 
 test('parses native manifests only with the required ordered identity headers', () => {

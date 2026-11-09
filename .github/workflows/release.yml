@@ -163,11 +163,6 @@ jobs:
             echo '```'
             echo "gh attestation verify veles-$GITHUB_REF_NAME.apk --repo $GITHUB_REPOSITORY"
             echo '```'
-            echo "Zero-trust rebuild (needs only Docker; run from a checkout of tag $GITHUB_REF_NAME):"
-            echo '```'
-            echo "verify/verify.sh veles-$GITHUB_REF_NAME.apk $GITHUB_REF_NAME"
-            echo '```'
-            echo "Details: docs/reproducible-builds.md in this repo."
           } > notes.md
           NOTES="$(cat notes.md)"
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
