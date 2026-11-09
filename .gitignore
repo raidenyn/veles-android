@@ -18,7 +18,7 @@ local.properties
 .kotlin
 # verify/ local tooling: pre-existing untracked node_modules produced by the
 # documented `npm ci --prefix verify` prerequisite. Never committed or removed;
-# ignored so verify-all.sh's clean-checkout contract stays satisfiable locally.
+# ignored so clean-checkout contracts stay satisfiable locally.
 /verify/node_modules/
 # Local Android fixture signing material, never commit keys or passwords.
 /config/android_keys/
