@@ -567,7 +567,7 @@ fn verify_trust_os(
     // SHA-256 and the requirement pins Apple's SHA-1 form of the same leaf.
     // Gatekeeper is deliberately not assessed or claimed: a self-signed leaf has
     // no Gatekeeper acceptance, so the pinned signature and the resource seal are
-    // the whole evidence, and the acceptance machine trusts the project's root.
+    // the whole evidence, and the acceptance machine may trust this certificate.
     let Some((sha256, sha1)) = observed_leaf_digests(&static_code)? else {
         return Err(trust_denied());
     };
@@ -739,7 +739,8 @@ const MAX_CERTIFICATE_BYTES: usize = 16 * 1024;
 ///
 /// Returns `None` when the signature carries no certificates (an ad-hoc
 /// signature). Only the leaf is used: a self-signed completion identity is one
-/// leaf plus its own root, and the policy pin names that leaf.
+/// self-signed certificate (the leaf is its own anchor), and the policy pin
+/// names that leaf.
 fn observed_leaf_digests(static_code: &Cf) -> InstallResult<Option<(String, String)>> {
     let information = signing_information(static_code)?;
     // SAFETY: the dictionary is live; the key is the exported constant.
