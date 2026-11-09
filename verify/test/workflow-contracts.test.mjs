@@ -967,7 +967,43 @@ function jobCondition(block, name) {
 }
 
 // Evaluate a publish-release job condition for synthetic run facts and plan; any unknown context fails.
-function evaluatePublishCondition(condition, { facts = OWNER_FACTS, plan = {}, result = 'success', results = {} } = {}) {
+const STATUS_FUNCTION = /\b(?:always|success|failure|cancelled)\(\)/;
+
+// Transitive `needs` of every job of a workflow.
+function publishAncestors(source) {
+  const direct = {};
+  for (const job of Object.keys(callerJobKeys(source))) {
+    const needs = releaseJobBlock(source, job).match(/^    needs: \[([^\]]*)\]$/m);
+    direct[job] = needs ? needs[1].split(',').map((value) => value.trim()).filter(Boolean) : [];
+  }
+  const ancestors = {};
+  const walk = (job) => {
+    if (ancestors[job]) return ancestors[job];
+    const found = new Set();
+    for (const need of direct[job] ?? []) {
+      found.add(need);
+      for (const above of walk(need)) found.add(above);
+    }
+    ancestors[job] = found;
+    return found;
+  };
+  for (const job of Object.keys(direct)) walk(job);
+  return ancestors;
+}
+
+// Results of every job for a plan: a component's jobs succeed when it is RELEASE and are skipped when
+// it is CARRY; every other job succeeded.
+function planResults(plan) {
+  return Object.fromEntries(PUBLISH_JOBS.map((job) => [
+    job, PUBLISH_COMPONENT_OF[job] && plan[PUBLISH_COMPONENT_OF[job]] !== 'RELEASE' ? 'skipped' : 'success',
+  ]));
+}
+
+// Evaluate a publish-release job condition for synthetic run facts and plan; any unknown context fails.
+// Like GitHub, a condition without a status function gets an implicit success(), which is false when any
+// ANCESTOR job (transitively) did not succeed, including a skipped one.
+function evaluatePublishCondition(condition, { facts = OWNER_FACTS, plan = {}, result = 'success', results = {}, ancestors = [] } = {}) {
+  const implicit = !STATUS_FUNCTION.test(condition);
   const expression = condition
     .replaceAll('${{', '')
     .replaceAll('}}', '')
@@ -978,8 +1014,9 @@ function evaluatePublishCondition(condition, { facts = OWNER_FACTS, plan = {}, r
     .replace(/needs\.plan\.outputs\.([A-Za-z0-9_-]+)/g, (_, key) => JSON.stringify(plan[key] ?? ''))
     .replace(/needs\.([A-Za-z0-9_-]+)\.result/g, (_, job) => JSON.stringify(results[job] ?? result));
   assert.doesNotMatch(expression, /github\.|inputs\.|needs\.|vars\.|secrets\./, `condition uses an unsupported context: ${condition}`);
-  const evaluate = new Function('cancelled', 'always', `"use strict"; return (${expression});`);
-  return evaluate(() => false, () => true);
+  const succeeded = () => ancestors.every((job) => (results[job] ?? result) === 'success');
+  const evaluate = new Function('cancelled', 'always', 'success', 'failure', `"use strict"; return (${implicit ? 'success() && ' : ''}(${expression}));`);
+  return evaluate(() => false, () => true, succeeded, () => !succeeded());
 }
 
 function stepsWithSecrets(block) {
@@ -1092,15 +1129,26 @@ function assertPublishReleaseCaller(source) {
 
   // Component selection: every component job runs exactly when its component is RELEASE; installer
   // RELEASE always runs BOTH platforms and the gate; ALWAYS jobs run for every plan.
-  for (const action of ['RELEASE', 'CARRY']) {
-    for (const component of ['android', 'web-extension', 'installer']) {
-      const plan = { android: 'CARRY', 'web-extension': 'CARRY', installer: 'CARRY', [component]: action };
-      for (const job of PUBLISH_JOBS.filter((entry) => !['guard', 'ready', 'draft', 'publish'].includes(entry))) {
-        const condition = jobCondition(releaseJobBlock(source, job), job);
-        const expected = PUBLISH_COMPONENT_OF[job] ? plan[PUBLISH_COMPONENT_OF[job]] === 'RELEASE' : true;
-        assert.equal(evaluatePublishCondition(condition, { plan }), expected, `${name} job ${job} must run=${expected} for ${component} ${action}`);
-      }
+  // Every non-empty RELEASE combination, with skipped CARRY ancestors (implicit success() modelled):
+  // partial releases still reach ready, draft and publish.
+  const ancestry = publishAncestors(source);
+  const components = ['android', 'web-extension', 'installer'];
+  for (let mask = 1; mask < 2 ** components.length; mask += 1) {
+    const plan = Object.fromEntries(components.map((component, index) => [component, mask & (1 << index) ? 'RELEASE' : 'CARRY']));
+    const results = planResults(plan);
+    for (const job of PUBLISH_JOBS.filter((entry) => entry !== 'guard')) {
+      const condition = jobCondition(releaseJobBlock(source, job), job);
+      const expected = PUBLISH_COMPONENT_OF[job] ? plan[PUBLISH_COMPONENT_OF[job]] === 'RELEASE' : true;
+      const actual = evaluatePublishCondition(condition, { plan, results, ancestors: [...(ancestry[job] ?? [])] });
+      assert.equal(actual, expected, `${name} job ${job} must run=${expected} for ${JSON.stringify(plan)}`);
     }
+  }
+  // A job that must still run after a CARRY-skippable ancestor needs an explicit status function;
+  // otherwise GitHub's implicit success() skips it whenever any component is carried.
+  for (const job of PUBLISH_JOBS.filter((entry) => entry !== 'guard' && !PUBLISH_COMPONENT_OF[entry])) {
+    const skippable = [...(ancestry[job] ?? [])].filter((above) => PUBLISH_COMPONENT_OF[above]);
+    if (skippable.length === 0) continue;
+    assert.match(jobCondition(releaseJobBlock(source, job), job), STATUS_FUNCTION, `${name} job ${job} follows CARRY-skippable ${skippable.join(', ')} and must use an explicit status function`);
   }
   for (const job of Object.keys(PUBLISH_COMPONENT_OF)) {
     const condition = jobCondition(releaseJobBlock(source, job), job);
@@ -1155,6 +1203,9 @@ function assertPublishReleaseCaller(source) {
   assert.match(signAndroid, /printf '%s' "\$KEYSTORE_BASE64" \| base64 -d > "\$keys\/release\.jks"/, 'sign-android must decode the keystore from env into RUNNER_TEMP');
   assert.match(signAndroid, /--ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD/, 'sign-android must pass passwords by env, never argv');
   assert.match(signAndroid, /--v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true/, 'sign-android must sign v2+v3 without v1');
+  assert.match(signAndroid, /echo "ZIPALIGN=\$ANDROID_SDK_ROOT\/build-tools\/\$BUILD_TOOLS_VERSION\/zipalign"/, 'sign-android must use zipalign from the pinned build-tools');
+  assert.match(signAndroid, /"\$ZIPALIGN" -c -P 16 -v 4 "\$RUNNER_TEMP\/signed\/app-release\.apk" \|\| \{ echo "::error::the signed APK is not aligned"; exit 1; \}/, 'sign-android must fail on a misaligned signed APK');
+  assert.ok(signAndroid.indexOf('"$APKSIGNER" sign ') < signAndroid.indexOf('"$ZIPALIGN" -c'), 'sign-android must check alignment after signing');
   assert.match(signAndroid, /"\$APKSIGNER" verify --verbose --print-certs/, 'sign-android must verify and print the certificates');
   assert.match(signAndroid, /^          EXPECTED_CERT_SHA256: \$\{\{ vars\.VELES_ANDROID_CERT_SHA256 \}\}$/m, 'sign-android must compare against vars.VELES_ANDROID_CERT_SHA256');
   assert.match(signAndroid, /rust\/scripts\/verify-apk-jni\.sh "\$RUNNER_TEMP\/signed\/app-release\.apk"/, 'sign-android must check the JNI allow-list of the signed APK');
@@ -1403,6 +1454,10 @@ test('the publish caller contract rejects trigger, guard, selection, credential,
     'publish non-atomic push': (text) => text.replace('git push --atomic origin "${push[@]}"', 'git push origin "${push[@]}"'),
     'publish overwrites a moved tag': (text) => text.replace('already exists at $remote, not at $GITHUB_SHA"\n              exit 1', 'already exists at $remote, not at $GITHUB_SHA"\n              continue'),
     'publish without the date-tag re-check': (text) => text.replace(/(- name: Publish the draft with its date tag[\s\S]*?)remote="\$\(remote_commit "\$date_ref"\)"/, '$1remote=""'),
+    'draft without a status function': (text) => text.replace("    needs: [guard, plan, ready]\n    if: ${{ !cancelled() && ", "    needs: [guard, plan, ready]\n    if: ${{ "),
+    'publish without a status function': (text) => text.replace("    needs: [guard, plan, draft]\n    if: ${{ !cancelled() && ", "    needs: [guard, plan, draft]\n    if: ${{ "),
+    'ready with implicit success': (text) => text.replace('if: ${{ always() && github.event_name', 'if: ${{ github.event_name'),
+    'unaligned signed APK accepted': (text) => text.replace('"$ZIPALIGN" -c -P 16 -v 4 "$RUNNER_TEMP/signed/app-release.apk"', 'echo skipped alignment'),
     'publish without final tag check': (text) => text.replace('echo "::error::the release tag $TAG resolves to', 'echo "::warning::the release tag $TAG resolves to'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {

@@ -181,7 +181,9 @@ jobs:
           test -f "$RUNNER_TEMP/unsigned/mapping.txt"
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "build-tools;$BUILD_TOOLS_VERSION"
           test -x "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+          test -x "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/zipalign"
           echo "APKSIGNER=$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/apksigner" >> "$GITHUB_ENV"
+          echo "ZIPALIGN=$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/zipalign" >> "$GITHUB_ENV"
       - name: Sign the APK with apksigner (v2 + v3, no v1)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -206,6 +208,10 @@ jobs:
       - name: Remove the keystore if the job was interrupted
         if: ${{ always() }}
         run: rm -rf "$RUNNER_TEMP/android-keys"
+      - name: Check the signed APK's alignment (no credential)
+        run: |
+          set -euo pipefail
+          "$ZIPALIGN" -c -P 16 -v 4 "$RUNNER_TEMP/signed/app-release.apk" || { echo "::error::the signed APK is not aligned"; exit 1; }
       - name: Verify the signature and the signing certificate fingerprint (no credential)
         env:
           EXPECTED_CERT_SHA256: ${{ vars.VELES_ANDROID_CERT_SHA256 }}
@@ -832,9 +838,11 @@ jobs:
             --plan-json "$RUNNER_TEMP/release-plan/plan.json"
 
   # Stages and drafts the release. It creates no tag and pushes nothing: a draft has no git tag.
+  # `!cancelled()` replaces the implicit success() over ALL ancestors: in a partial release the CARRY
+  # components' jobs are skipped, and readiness is decided by `ready` alone.
   draft:
     needs: [guard, plan, ready]
-    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.ready.result == 'success' }}
+    if: ${{ !cancelled() && needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.ready.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -978,7 +986,7 @@ jobs:
   # components' tags atomically at github.sha, then publishes the draft. Safe to re-run.
   publish:
     needs: [guard, plan, draft]
-    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.draft.result == 'success' }}
+    if: ${{ !cancelled() && needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.draft.result == 'success' }}
     runs-on: ubuntu-latest
     environment: release-publish
     permissions:
