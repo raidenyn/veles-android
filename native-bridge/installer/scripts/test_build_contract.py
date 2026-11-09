@@ -793,22 +793,48 @@ def check_gate_boundary(workflows):
     return errors
 
 
+def installer_check_jobs(body):
+    """check-installer.yml top-level job key -> job body."""
+    jobs = {}
+    current = None
+    for line in body.split("\njobs:\n", 1)[-1].splitlines():
+        if line.strip() and not line.startswith(" "):
+            break
+        match = re.match(r"^  ([\w-]+):\s*$", line)
+        if match:
+            current = match.group(1)
+            jobs[current] = ""
+        elif current:
+            jobs[current] += line + "\n"
+    return jobs
+
+
 def check_host_workflow_installer(source):
+    """check-installer.yml: the `installer` CI node (lint, unit-tests per OS, scripts-tests)."""
     errors = []
     body = strip_yaml_comments(source)
+    jobs = installer_check_jobs(body)
+
+    def runner(job_body):
+        match = re.search(r"^    runs-on:\s*(\S+)\s*$", job_body, re.M)
+        return match.group(1) if match else None
+
     for task in ("bridgeInstallerFormat", "bridgeInstallerLint", "bridgeInstallerTest"):
-        if body.count(task) < 3:
-            errors.append("%s must run on all three platforms" % task)
+        runners = sorted(runner(job) for job in jobs.values() if re.search(r"\b%s\b" % task, job))
+        if runners != ["macos-26", "ubuntu-latest", "windows-2025"]:
+            errors.append("%s must run once on each of the three platforms (found %s)" % (task, runners))
     if body.count("bridgeInstallerScriptsTest") != 1:
-        errors.append("bridgeInstallerScriptsTest must run exactly once (the portable job)")
-    portable = body.split("  windows:", 1)[0]
-    if "bridgeInstallerScriptsTest" not in portable:
-        errors.append("bridgeInstallerScriptsTest must run in the portable job")
+        errors.append("bridgeInstallerScriptsTest must run exactly once (installer / scripts-tests)")
+    if "bridgeInstallerScriptsTest" not in jobs.get("scripts-tests", ""):
+        errors.append("bridgeInstallerScriptsTest must run in the scripts-tests job")
     for task in ("bridgeInstallerUnsigned", "bridgeInstallerPackageFixture", "bridgeInstallerDebug"):
         if task in body:
-            errors.append("the host check workflow must not build installer inputs (%s)" % task)
-    if len(re.findall(r"working-directory:\s*native-bridge/installer\s*\n\s*run:\s*rustup show active-toolchain", body)) < 3:
-        errors.append("the installer toolchain is not activated in each of the three host check jobs")
+            errors.append("the installer check workflow must not build installer inputs (%s)" % task)
+    for name, job in jobs.items():
+        if not re.search(r"working-directory:\s*native-bridge/installer\s*\n\s*run:\s*rustup show active-toolchain", job):
+            errors.append("the installer toolchain is not activated in %s" % name)
+    if len(jobs) < 3:
+        errors.append("the installer check workflow must have its lint, unit-tests and scripts-tests jobs")
     return errors
 
 
@@ -1416,14 +1442,18 @@ class Callers(unittest.TestCase):
         self.assertNotEqual(check_gate_boundary(external), [])
 
     def test_host_check_workflow_runs_the_installer_checks_on_every_platform(self):
-        source = read(".github/workflows/build-native-host.yml")
+        source = read(".github/workflows/check-installer.yml")
         self.assertEqual(check_host_workflow_installer(source), [])
         for mutated in (
             source.replace("bridgeInstallerLint", "bridgeInstallerLynt"),
             source.replace("bridgeInstallerScriptsTest", "bridgeInstallerTest", 1),
             source + "\n      - run: ./gradlew bridgeInstallerUnsigned\n",
             source.replace("working-directory: native-bridge/installer", "working-directory: native-bridge/host", 1),
+            source.replace(".\\gradlew.bat bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest",
+                           ".\\gradlew.bat bridgeInstallerFormat bridgeInstallerTest"),
+            source.replace("  scripts-tests:", "  scripts:"),
         ):
+            self.assertNotEqual(mutated, source)
             self.assertNotEqual(check_host_workflow_installer(mutated), [])
 
 

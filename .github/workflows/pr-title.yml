@@ -1,0 +1,52 @@
+name: pr-title
+
+# Validates the PR title and body (the future squash commit) with scripts/commitlint.py from the PR's BASE
+# commit, so a PR cannot loosen the validator it is checked by. Only the PR that introduces the validator
+# (its base has none) falls back to the head copy, with a warning annotation. The title and body reach the
+# validator through env, never interpolated into a script. This guards against mistakes by trusted
+# collaborators, not against a malicious workflow editor: a PR can edit this file, and the post-merge
+# commit-guard in ci.yml is the backstop.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - name: Select the validator
+        id: validator
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -f scripts/commitlint.py ]; then
+            echo "path=scripts/commitlint.py" >> "$GITHUB_OUTPUT"
+          else
+            git fetch --no-tags --depth=1 origin "$HEAD_SHA"
+            git show "$HEAD_SHA:scripts/commitlint.py" > "$RUNNER_TEMP/commitlint.py"
+            echo "::warning::bootstrap: validator taken from the PR head"
+            echo "path=$RUNNER_TEMP/commitlint.py" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Validate the PR title and body
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          VALIDATOR: ${{ steps.validator.outputs.path }}
+        run: |
+          message="$PR_TITLE"
+          if [ -n "$PR_BODY" ]; then
+            message="$(printf '%s\n\n%s' "$PR_TITLE" "$PR_BODY")"
+          fi
+          python3 -I "$VALIDATOR" --message "$message"

@@ -11,8 +11,8 @@ being submitted and confirm that every command succeeds:
 ./gradlew spotlessCheck detekt lintDebug
 ```
 
-Also run the raw `android.util.Log` guard from the `lint-check` job in
-`.github/workflows/ci.yml`. These are all parts of the CI lint gate;
+Also run the raw `android.util.Log` guard from the `android / lint` job in
+`.github/workflows/check-android.yml`. These are all parts of the CI lint gate;
 `detekt` and `lintDebug` alone are not sufficient because they do not check
 Spotless formatting.
 
@@ -173,7 +173,7 @@ or requires a Docker reference build:
 | `build-native-windows.yml` | OTP-25 Windows installer inputs (UNSIGNED): `bridgeInstallerUnsigned` (approved `release-windows.json`) or `bridgeInstallerPackageFixture`; each builds the tree twice (slots a/b) and publishes `tree.tar` + `provenance.json` + `report-ab.json` + `SHA256SUMS` as `native-unsigned-windows` / `native-fixture-windows`; provisions the pinned NSIS under `build/native-bridge/installer/tools/nsis`. No Tauri, no signing |
 | `build-native-macos.yml` | OTP-25 macOS installer inputs (UNSIGNED), same shape under the pinned Xcode: `native-unsigned-macos` / `native-fixture-macos`. No Tauri, no signing |
 | `build-supply-chain.yml` | SBOM/license/audit reports (`supply-chain-reports`); report validation + policy enforcement (six SBOMs incl. `native-host.cdx.json` and `native-installer.cdx.json`; vendored `bluest` patch provenance via `verify/check-vendored-patches.mjs`) |
-| `build-native-host.yml` | OTP-24 production host (called from `ci.yml`, not `release-build.yml`): Linux portable checks, `windows-2025`/`macos-26` compile + test + `bridgeHostBuild`; artifacts `native-host-windows` (exe + `SHA256SUMS`) / `native-host-macos` (mode-preserving tar of the executable + `SHA256SUMS`, plus archive sidecar; upload drops bare exec bits) (no installer, no Tauri). Not the scaffold's `native-windows`/`native-macos` archives |
+| `check-native-host.yml` | OTP-24 production host, the `native-host` node of `ci.yml` (see `docs/ci.md`), not `release-build.yml`: Linux `lint`/`unit-tests`/`build-contract`, `windows-2025`/`macos-26` `unit-tests` (format + lint + test) and `compile` (`bridgeHostBuild`); artifacts `native-host-windows` (exe + `SHA256SUMS`) / `native-host-macos` (mode-preserving tar of the executable + `SHA256SUMS`, plus archive sidecar; upload drops bare exec bits) (no installer, no Tauri). Not the scaffold's `native-windows`/`native-macos` archives |
 
 `release-build.yml` composes these with the neutral names, and its manual
 prerelease publisher depends on the guard plus every producer/policy job;

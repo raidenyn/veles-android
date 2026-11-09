@@ -491,7 +491,7 @@ The compile-time origin allowlist `VELES_ALLOWED_ORIGINS` is declared as a Gradl
 lint/test/build tasks, so changing only that variable re-runs cargo (regression: `GradleIncremental` in
 `test_build_contract.py` runs real Gradle builds). `CARGO_TARGET_DIR` is `build/native-bridge/host-target`, so `native-bridge/host/target` must never
 appear; the `host-test-driver` binary is behind the non-default `test-driver` feature and is neither
-built nor staged. `build-native-host.yml` (called from `ci.yml`) runs the portable checks on Linux and
+built nor staged. `check-native-host.yml` (the `native-host` node of `ci.yml`) runs the portable checks on Linux and
 compiles/tests the real WinRT / CoreBluetooth adapters on `windows-2025` and `macos-26` (job-level
 `DEVELOPER_DIR=/Applications/Xcode_26.6.app`, build `17F113`), uploading `native-host-windows` (exe + `SHA256SUMS`) and
 `native-host-macos` (`build/native-bridge/host-archive/veles-native-host-macos.tar.gz` + `.sha256`, made by

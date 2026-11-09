@@ -1,0 +1,81 @@
+name: check-web-extension
+
+# Web extension node of the CI component tree (ci.yml -> `web-extension / <job>`): format, lint and type
+# checks, the vitest source and bundle suites, and the Playwright browser check. Checks only: the extension
+# zip is produced by label-driven PR builds and master builds (release-build.yml), never by CI.
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Pinned, not ubuntu-latest: the browser check installs the Playwright Chromium build, and the pinned
+# Playwright rejects Ubuntu 26.04 ("Playwright does not support chromium on ubuntu26.04-x64"). Move these
+# jobs to ubuntu-latest only after the Playwright version supports that image.
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web-extension/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: web-extension
+      - run: npm run format:check
+        working-directory: web-extension
+      - run: npm run lint
+        working-directory: web-extension
+      - run: npm run typecheck
+        working-directory: web-extension
+
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web-extension/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: web-extension
+      - run: npm test
+        working-directory: web-extension
+      - run: npm run build && npm run test:bundle
+        working-directory: web-extension
+
+  browser-tests:
+    name: browser-tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web-extension/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: web-extension
+      # The browser check loads the built dist/ (scripts/test-browser.mjs).
+      - run: npm run build
+        working-directory: web-extension
+      - run: npx playwright-core install --with-deps chromium
+        working-directory: web-extension
+      - run: npm run test:browser
+        working-directory: web-extension

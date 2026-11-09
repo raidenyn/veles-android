@@ -134,12 +134,35 @@ def check_gradle(gradle, clean_script, toolchain_toml):
     return errors
 
 
+def workflow_jobs(source):
+    """Top-level job key -> job body (two-space job keys under `jobs:`)."""
+    jobs_text = source.split("\njobs:\n", 1)[-1]
+    jobs = {}
+    current = None
+    for line in jobs_text.splitlines():
+        if line.strip() and not line.startswith(" "):
+            break
+        match = re.match(r"^  ([\w-]+):\s*$", line)
+        if match:
+            current = match.group(1)
+            jobs[current] = ""
+        elif current:
+            jobs[current] += line + "\n"
+    return jobs
+
+
+def job_runner(body):
+    match = re.search(r"^    runs-on:\s*(\S+)\s*$", body, re.M)
+    return match.group(1) if match else None
+
+
 def check_host_workflow(source):
+    """check-native-host.yml: the `native-host` CI node (lint, unit-tests per OS, build-contract, compile)."""
     errors = []
     # Explanatory full-line comments may name the scaffold; only executable YAML is checked.
     source = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
     if "workflow_call:" not in source:
-        errors.append("build-native-host.yml is not reusable")
+        errors.append("check-native-host.yml is not reusable")
     if not re.search(r"commit-sha:\s*\n\s*required:\s*true", source):
         errors.append("commit-sha input is not required")
     for runner in ("ubuntu-latest", "windows-2025", "macos-26"):
@@ -147,20 +170,37 @@ def check_host_workflow(source):
             errors.append("no job on %s" % runner)
     if "DEVELOPER_DIR: /Applications/Xcode_26.6.app" not in source or "17F113" not in source:
         errors.append("macOS job does not use the repository Xcode pin")
-    # `bridgeInstall` is the scaffold's npm install task; the OTP-25 `bridgeInstaller*` check tasks are not it.
+    # `bridgeInstall` is the scaffold's npm install task; the OTP-25 installer checks belong to check-installer.yml.
     if re.search(r"(?i)tauri|npm|setup-node|node-version|bridgeInstall(?![A-Za-z])|bridgePackage|bridgeBundle|bridgeBuild\b", source):
         errors.append("host workflow uses Tauri/Node/npm or the scaffold tasks")
+    if "bridgeInstaller" in source:
+        errors.append("installer checks belong to check-installer.yml, not the native-host node")
     if "needs:" in source:
         errors.append("host workflow must not chain jobs")
     for line in source.splitlines():
         stripped = line.strip().lstrip("- ")
         if stripped.startswith("uses:") and not SHA_PINNED_USE.search(stripped):
             errors.append("unpinned action: %s" % stripped)
+    jobs = workflow_jobs(source)
+    # Every host check task runs on all three platforms (clippy and tests only see the cfg-gated adapters
+    # on their native OS), each platform at most once.
     for task in ("bridgeHostToolchainCheck", "bridgeHostFormat", "bridgeHostLint", "bridgeHostTest"):
-        if source.count(task) < 3:
-            errors.append("%s must run on all three platforms" % task)
+        runners = [job_runner(body) for body in jobs.values() if re.search(r"\b%s\b" % task, body)]
+        if sorted(runners) != ["macos-26", "ubuntu-latest", "windows-2025"]:
+            errors.append("%s must run once on each of the three platforms (found %s)" % (task, runners))
     if source.count("bridgeHostBuild") != 2:
         errors.append("bridgeHostBuild must run exactly on Windows and macOS")
+    compile_runners = sorted(job_runner(jobs[job]) for job in ("compile-windows", "compile-macos") if job in jobs)
+    if compile_runners != ["macos-26", "windows-2025"]:
+        errors.append("compile-windows / compile-macos must build on windows-2025 / macos-26")
+    for job in ("compile-windows", "compile-macos"):
+        if "bridgeHostBuild" not in jobs.get(job, ""):
+            errors.append("%s does not run bridgeHostBuild" % job)
+    contract = jobs.get("build-contract", "")
+    if "python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py'" not in contract:
+        errors.append("build-contract does not run the host build-contract suite")
+    if source.count("test_build_contract.py") != 1:
+        errors.append("the host build-contract suite must run exactly once")
     # Distinct artifacts; never the scaffold installer names.
     for need in ("name: native-host-windows", "name: native-host-macos"):
         if need not in source:
@@ -175,7 +215,7 @@ def check_host_workflow(source):
                  "build/native-bridge/host-archive/veles-native-host-macos.tar.gz.sha256"):
         if path not in source:
             errors.append("artifact path %s missing" % path)
-    macos = source.split("  macos:", 1)[-1]
+    macos = jobs.get("compile-macos", "")
     if re.search(r"^\s+build/native-bridge/host/veles-native-host\s*$", macos, re.M):
         errors.append("macOS job uploads the bare executable (upload drops the exec bit); use the tar archive")
     if "package-macos-artifact.sh" not in macos:
@@ -194,10 +234,14 @@ def check_ci(source):
     job = re.search(r"\n  native-host:\n(.*?)(?=\n  [\w-]+:\n|\Z)", source, re.S)
     if not job:
         return ["ci.yml has no native-host job"]
-    if "uses: ./.github/workflows/build-native-host.yml" not in job.group(1):
-        errors.append("ci native-host job does not reuse build-native-host.yml")
+    if "uses: ./.github/workflows/check-native-host.yml" not in job.group(1):
+        errors.append("ci native-host job does not reuse check-native-host.yml")
     if "commit-sha: ${{ github.sha }}" not in job.group(1):
         errors.append("ci native-host job does not pass the commit")
+    if "needs.changes.outputs.native-host == 'true'" not in job.group(1):
+        errors.append("ci native-host job is not selected by the changes job")
+    if "build-native-host.yml" in source:
+        errors.append("ci.yml still references the retired build-native-host.yml")
     return errors
 
 
@@ -381,10 +425,10 @@ class GradleGraph(unittest.TestCase):
 
 class Workflows(unittest.TestCase):
     def test_host_workflow_builds_each_supported_os_with_distinct_artifacts(self):
-        self.assertEqual(check_host_workflow(read(".github/workflows/build-native-host.yml")), [])
+        self.assertEqual(check_host_workflow(read(".github/workflows/check-native-host.yml")), [])
 
     def test_host_workflow_rejects_scaffold_relabeling(self):
-        source = read(".github/workflows/build-native-host.yml")
+        source = read(".github/workflows/check-native-host.yml")
         for mutated in (
             source.replace("name: native-host-windows", "name: native-windows"),
             source.replace("build/native-bridge/host/SHA256SUMS", "build/native-bridge/windows/SHA256SUMS"),
@@ -394,9 +438,24 @@ class Workflows(unittest.TestCase):
         ):
             self.assertNotEqual(check_host_workflow(mutated), [])
 
+    def test_host_workflow_rejects_dropped_platform_checks_and_contract_suite(self):
+        source = read(".github/workflows/check-native-host.yml")
+        for old, new in (
+            (".\\gradlew.bat bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest",
+             ".\\gradlew.bat bridgeHostToolchainCheck bridgeHostFormat bridgeHostTest"),
+            ("python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py'", "true"),
+            ("      - run: ./gradlew bridgeHostTest\n", "      - run: ./gradlew bridgeHostTest\n      - run: ./gradlew bridgeInstallerTest\n"),
+        ):
+            self.assertIn(old, source, old)
+            self.assertNotEqual(check_host_workflow(source.replace(old, new, 1)), [], old)
+
     def test_ci_runs_the_host_workflow(self):
         self.assertEqual(check_ci(read(".github/workflows/ci.yml")), [])
         self.assertNotEqual(check_ci("jobs:\n  native-bridge:\n    runs-on: ubuntu-latest\n"), [])
+        legacy = "jobs:\n  native-host:\n    name: native-host\n    uses: ./.github/workflows/build-native-host.yml\n    with:\n      commit-sha: ${{ github.sha }}\n"
+        self.assertNotEqual(check_ci(legacy), [])
+        ungated = read(".github/workflows/ci.yml").replace("needs.changes.outputs.native-host == 'true'", "true")
+        self.assertNotEqual(check_ci(ungated), [])
 
     def test_native_producers_are_the_installer_producers_not_the_host_and_not_the_scaffold(self):
         # OTP-25 Task 14 deliberately replaced the scaffold's native-windows / native-macos packaging with the

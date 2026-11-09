@@ -594,17 +594,280 @@ test('native producer contract names every invariant it enforces (negative mutat
 });
 
 test('host check workflow runs the installer format, lint and tests on all three platforms', async () => {
-  const source = await workflow('build-native-host.yml');
+  // The installer node owns the installer crate checks (check-installer.yml); the native-host node must not repeat them.
+  const source = await workflow('check-installer.yml');
   const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  const jobs = workflowJobBlocks(executable);
   for (const task of ['bridgeInstallerFormat', 'bridgeInstallerLint', 'bridgeInstallerTest']) {
-    assert.ok(executable.split(task).length - 1 >= 3, `${task} must run on the portable, Windows and macOS jobs`);
+    const runners = Object.values(jobs).filter((block) => new RegExp(`\\b${task}\\b`).test(block)).map(jobRunner);
+    for (const runner of ['ubuntu-latest', 'windows-2025', 'macos-26']) {
+      assert.ok(runners.includes(runner), `${task} must run on ${runner}`);
+    }
   }
-  assert.equal(executable.split('bridgeInstallerScriptsTest').length - 1, 1, 'the Python script suites run once, in the portable job');
-  assert.ok(executable.slice(0, executable.indexOf('  windows:')).includes('bridgeInstallerScriptsTest'), 'the Python script suites belong to the portable job');
+  assert.equal(executable.split('bridgeInstallerScriptsTest').length - 1, 1, 'the Python script suites run once');
+  assert.match(jobs['scripts-tests'] ?? '', /bridgeInstallerScriptsTest/, 'the Python script suites belong to installer / scripts-tests');
   for (const task of ['bridgeInstallerUnsigned', 'bridgeInstallerPackageFixture', 'bridgeInstallerDebug']) {
     assert.ok(!executable.includes(task), `the check workflow must not build installer inputs (${task})`);
   }
-  assert.match(executable, /working-directory:\s*native-bridge\/installer\s*\n\s*run:\s*rustup show active-toolchain/, 'the installer toolchain must be activated');
+  for (const [job, block] of Object.entries(jobs)) {
+    assert.match(block, /working-directory:\s*native-bridge\/installer\s*\n\s*run:\s*rustup show active-toolchain/, `${job} must activate the installer toolchain`);
+  }
+  const host = (await workflow('check-native-host.yml')).split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  assert.doesNotMatch(host, /bridgeInstaller/, 'the native-host node must not repeat the installer checks');
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Component-tree CI (ci.yml -> check-<node>.yml), the PR title check and the post-merge commit guard.
+
+const COMPONENT_MAP = JSON.parse(await readFile(new URL('.github/components.json', root), 'utf8'));
+const CI_NODES = Object.keys(COMPONENT_MAP.nodes);
+const CHECK_WORKFLOWS = ['android', 'web-extension', 'rust', 'protocol', 'native-host', 'installer', 'bridge-scaffold', 'tooling'];
+
+// Every command ci.yml and build-native-host.yml ran before the component split. Each must run in exactly
+// one check-*.yml (per owner: the host build-contract suite in native-host, the installer suites through
+// bridgeInstallerScriptsTest in installer).
+const CI_COMMAND_INVENTORY = [
+  'spotlessCheck', 'detekt', 'android.util.Log', 'lintDebug', 'testDebugUnitTest', 'connectedDebugAndroidTest',
+  'protocolCheck',
+  'npm run format:check', 'npm run lint', 'npm run typecheck', 'npm test', 'npm run test:bundle', 'npm run test:browser',
+  'rustFormat', 'rustLint', 'rustTest', 'verify-apk-jni.sh', 'assert-clean.sh',
+  'bridgeHostToolchainCheck', 'bridgeHostFormat', 'bridgeHostLint', 'bridgeHostTest', 'bridgeHostBuild', 'test_build_contract.py',
+  'bridgeInstallerFormat', 'bridgeInstallerLint', 'bridgeInstallerTest', 'bridgeInstallerScriptsTest',
+  'bridgeFormat', 'bridgeLint', 'bridgeTypecheck', 'bridgeNpmTest', 'bridgeRustFormat', 'bridgeRustLint', 'bridgeRustTest',
+  'workflow-contracts.test.mjs',
+];
+
+function executableYaml(source) {
+  return source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+}
+
+function workflowJobBlocks(source) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  assert.notEqual(start, -1, 'workflow must declare jobs');
+  const blocks = {};
+  let current = null;
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && !line.startsWith(' ')) break;
+    const match = line.match(/^  ([A-Za-z0-9_-]+):\s*$/);
+    if (match) {
+      current = match[1];
+      blocks[current] = '';
+      continue;
+    }
+    if (current) blocks[current] += `${line}\n`;
+  }
+  return blocks;
+}
+
+function jobRunner(block) {
+  return block.match(/^    runs-on:\s*(\S+)\s*$/m)?.[1] ?? null;
+}
+
+function jobNeeds(block) {
+  const match = block.match(/^    needs:\s*\[([^\]]*)\]\s*$/m);
+  return match ? match[1].split(',').map((need) => need.trim()).filter(Boolean) : [];
+}
+
+function commandPattern(command) {
+  return new RegExp(`(?<![\\w-])${escapeRegexp(command)}(?![\\w-])`);
+}
+
+// Shell commands of a workflow: `run:` bodies plus the emulator runner's `script:` input.
+function shellCommands(source) {
+  const scripts = source.split('\n').map(mappingEntry).filter((entry) => entry?.key === 'script').map((entry) => entry.value);
+  return [...runCommands(source), ...scripts];
+}
+
+function inventoryOwners(sources, command) {
+  return Object.entries(sources).filter(([, source]) => shellCommands(executableYaml(source)).some((run) => commandPattern(command).test(run))).map(([name]) => name);
+}
+
+function assertComponentCi(source, nodes) {
+  const jobs = workflowJobBlocks(executableYaml(source));
+  const changes = jobs.changes;
+  assert.ok(changes, 'ci.yml must define the changes job');
+  assert.match(changes, /fetch-depth:\s*0/, 'changes needs the full history');
+  assert.match(changes, /python3 -I scripts\/components\.py check/, 'changes must check the component map');
+  assert.match(changes, /python3 -I scripts\/components\.py changed --base "\$BASE" --github-output "\$GITHUB_OUTPUT"/, 'changes must select nodes');
+  assert.match(changes, /git merge-base "origin\/\$BASE_REF" HEAD/, 'PR base must be the merge base');
+  assert.match(changes, /BASE="\$BEFORE"/, 'push base must be github.event.before');
+  for (const node of nodes) {
+    assert.ok(changes.includes(`      ${node}: \${{ steps.select.outputs.${node} }}`), `changes must expose the ${node} output`);
+    const block = jobs[node];
+    assert.ok(block, `ci.yml must call the ${node} node`);
+    const file = node === 'supply-chain' ? 'build-supply-chain.yml' : `check-${node}.yml`;
+    assert.match(block, new RegExp(`^    uses: \\./\\.github/workflows/${escapeRegexp(file)}\\s*$`, 'm'), `${node} must call ${file}`);
+    assert.match(block, new RegExp(`^    name: ${escapeRegexp(node)}\\s*$`, 'm'), `${node} must report as ${node} / <check>`);
+    const condition = block.match(/^    if:\s*(.+)$/m)?.[1] ?? '';
+    assert.ok(condition.includes(`needs.changes.outputs.${node} == 'true'`), `${node} must run only when selected`);
+    assert.ok(condition.includes('!cancelled()'), `${node} must still run when changes failed after selecting every node`);
+    assert.deepEqual(jobNeeds(block), ['changes'], `${node} must depend on changes only`);
+  }
+  const callers = Object.entries(jobs).filter(([, block]) => /^    uses: \.\/\.github\/workflows\//m.test(block)).map(([job]) => job);
+  assert.deepEqual(callers.sort(), [...nodes].sort(), 'ci.yml must call exactly one workflow per node');
+  const guard = jobs['commit-guard'];
+  assert.ok(guard, 'ci.yml must define commit-guard');
+  assert.match(guard, /^    if: github\.event_name == 'push'\s*$/m, 'commit-guard runs on pushes only');
+  assert.match(guard, /git rev-list "\$BEFORE\.\.\$AFTER"/, 'commit-guard must validate every pushed commit');
+  assert.match(guard, /python3 -I scripts\/commitlint\.py --message "\$message"/, 'commit-guard must use the shared validator');
+  const ok = jobs['ci-ok'];
+  assert.ok(ok, 'ci.yml must define ci-ok');
+  assert.match(ok, /^    if: always\(\)\s*$/m, 'ci-ok must always run');
+  const needs = jobNeeds(ok);
+  for (const job of ['changes', ...nodes, 'commit-guard']) assert.ok(needs.includes(job), `ci-ok must need ${job}`);
+  assert.match(ok, /CHANGES_RESULT: \$\{\{ needs\.changes\.result \}\}/, 'ci-ok must read the changes result');
+  assert.match(ok, /if \[ "\$CHANGES_RESULT" != success \]/, 'ci-ok must fail when changes did not succeed');
+  assert.match(ok, /RESULTS: \$\{\{ join\(needs\.\*\.result, ' '\) \}\}/, 'ci-ok must read every needed result');
+  assert.match(ok, /failure\|cancelled\)/, 'ci-ok must fail on failure or cancelled');
+}
+
+test('ci.yml calls one change-gated check workflow per component node and gates on ci-ok', async () => {
+  const source = await workflow('ci.yml');
+  assertComponentCi(source, CI_NODES);
+  assert.match(source, /^permissions:\n  contents: read$/m, 'ci.yml must default to read-only contents');
+  for (const node of CHECK_WORKFLOWS) {
+    const check = await workflow(`check-${node}.yml`);
+    assert.match(check, /^on:\n  workflow_call:\n/m, `check-${node}.yml must be reusable`);
+    assert.match(check, /^permissions:\n  contents: read\n/m, `check-${node}.yml must be read-only`);
+    assert.doesNotMatch(check, /secrets\./, `check-${node}.yml must not use secrets`);
+  }
+  const mutations = {
+    'missing node': (text) => text.replace(/\n  tooling:\n[\s\S]*?(?=\n  [a-z-]+:\n)/, '\n'),
+    'unconditional node': (text) => text.replace("needs.changes.outputs.android == 'true'", "true"),
+    'ci-ok without always': (text) => text.replace('    if: always()\n', ''),
+    'ci-ok ignores changes': (text) => text.replace('if [ "$CHANGES_RESULT" != success ]', 'if false'),
+    'ci-ok misses a node': (text) => text.replace(/(    needs: \[changes, [^\]]*), tooling/, '$1'),
+    'no map check': (text) => text.replace('python3 -I scripts/components.py check', 'true'),
+    'push-only guard dropped': (text) => text.replace("    if: github.event_name == 'push'\n", ''),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change ci.yml`);
+    assert.throws(() => assertComponentCi(mutated, CI_NODES), `the contract must reject "${label}"`);
+  }
+});
+
+test('every pre-split CI command runs in exactly one check workflow', async () => {
+  const sources = {};
+  for (const node of CHECK_WORKFLOWS) sources[`check-${node}.yml`] = await workflow(`check-${node}.yml`);
+  for (const command of CI_COMMAND_INVENTORY) {
+    assert.deepEqual(inventoryOwners(sources, command).length, 1, `${command} must run in exactly one check workflow, found ${inventoryOwners(sources, command).join(', ') || 'none'}`);
+  }
+  assert.deepEqual(inventoryOwners(sources, 'test_build_contract.py'), ['check-native-host.yml'], 'the host build-contract suite belongs to native-host');
+  assert.deepEqual(inventoryOwners(sources, 'bridgeInstallerScriptsTest'), ['check-installer.yml'], 'the installer script suites belong to installer');
+  assert.deepEqual(inventoryOwners(sources, 'workflow-contracts.test.mjs'), ['check-tooling.yml'], 'the workflow contracts belong to tooling');
+  assert.match(sources['check-tooling.yml'], /\.\/gradlew scriptsTest/, 'tooling must run the scripts/ tests');
+  for (const [name, source] of Object.entries(sources)) {
+    for (const upload of uploadPathsOrEmpty(source)) {
+      for (const path of upload) {
+        assert.doesNotMatch(path, /\.(?:zip|apk)$|build\/web-extension\/?$|outputs\/apk/, `${name} must not upload a release zip or APK (${path})`);
+      }
+    }
+  }
+  assert.deepEqual(inventoryOwners({ 'a.yml': 'jobs:\n  a:\n    steps:\n      - run: ./gradlew bridgeHostLint\n', 'b.yml': 'jobs:\n  b:\n    steps:\n      - run: ./gradlew bridgeHostLint bridgeHostTest\n' }, 'bridgeHostLint'), ['a.yml', 'b.yml'], 'a duplicated command must be detected');
+  assert.deepEqual(inventoryOwners({ 'a.yml': 'jobs:\n  a:\n    steps:\n      # - run: ./gradlew detekt\n' }, 'detekt'), [], 'a commented-out command must not count');
+});
+
+function uploadPathsOrEmpty(source) {
+  return steps(source).some((step) => stepUses(step).some(isUploadArtifact)) ? uploadPaths(source, 'check workflow') : [];
+}
+
+const CLEAN_CONTRACT_ORDER = [
+  ':app:assembleDebug', 'verify-apk-jni.sh', 'npm run build', './gradlew clean', 'assert-clean.sh', ':app:assembleDebug', 'verify-apk-jni.sh',
+];
+
+function assertCleanContractOrder(source) {
+  const block = workflowJobBlocks(executableYaml(source))['jni-integration'];
+  assert.ok(block, 'rust must define jni-integration');
+  const runs = steps(block).map((step) => runCommands(step.join('\n')).join('\n'));
+  let previous = -1;
+  for (const marker of CLEAN_CONTRACT_ORDER) {
+    const index = runs.findIndex((run, position) => position > previous && run.includes(marker));
+    assert.ok(index > previous, `jni-integration must run ${marker} after step ${previous}`);
+    previous = index;
+  }
+  assert.match(runs.slice(previous + 1).join('\n'), /\.\/gradlew rustInstall/, 'jni-integration must refill the Rust tool cache last');
+}
+
+test('rust / jni-integration keeps the clean contract order in one job', async () => {
+  const source = await workflow('check-rust.yml');
+  assertCleanContractOrder(source);
+  const swapped = source.replace('      - run: ./gradlew clean\n      - run: rust/scripts/assert-clean.sh\n', '      - run: rust/scripts/assert-clean.sh\n      - run: ./gradlew clean\n');
+  assert.notEqual(swapped, source);
+  assert.throws(() => assertCleanContractOrder(swapped), /assert-clean\.sh|clean/);
+  const dropped = source.replace('      - run: npm ci && npm run build\n', '');
+  assert.notEqual(dropped, source);
+  assert.throws(() => assertCleanContractOrder(dropped));
+});
+
+const PR_TITLE_EVENTS = '[opened, edited, reopened, synchronize]';
+
+function assertNoPrTextInRun(source, name) {
+  for (const command of runCommands(source)) {
+    assert.doesNotMatch(command, /github\.event\.pull_request\.(?:title|body)|github\.head_ref/, `${name} run commands must not interpolate the PR title, body or head ref`);
+  }
+}
+
+function assertPrTitleWorkflow(source) {
+  assert.match(prWorkflowOnBlock(source), new RegExp(`^  pull_request:\\n    types: ${escapeRegexp(PR_TITLE_EVENTS)}\\n?$`), 'pr-title must trigger on exactly opened, edited, reopened, synchronize');
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], 'pr-title must be read-only');
+  const jobs = workflowJobBlocks(source);
+  assert.deepEqual(Object.keys(jobs), ['pr-title'], 'pr-title must define exactly one job');
+  const job = jobs['pr-title'];
+  assert.match(job, /^    name: pr-title\s*$/m, 'the required check is pr-title');
+  assert.doesNotMatch(job, /^    if:/m, 'pr-title must not skip any event');
+  assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/, 'pr-title must check out the base commit');
+  assertNoPrTextInRun(source, 'pr-title.yml');
+  assert.match(job, /PR_TITLE: \$\{\{ github\.event\.pull_request\.title \}\}/, 'the title must come from env');
+  assert.match(job, /PR_BODY: \$\{\{ github\.event\.pull_request\.body \}\}/, 'the body must come from env');
+  assert.match(job, /if \[ -f scripts\/commitlint\.py \]/, 'the base validator is preferred');
+  assert.match(job, /git show "\$HEAD_SHA:scripts\/commitlint\.py" > "\$RUNNER_TEMP\/commitlint\.py"/, 'bootstrap fallback reads the head validator');
+  assert.match(job, /::warning::bootstrap: validator taken from the PR head/, 'bootstrap fallback must warn');
+  assert.match(job, /python3 -I "\$VALIDATOR" --message "\$message"/, 'pr-title must run the validator on the message');
+  assert.doesNotMatch(job, /--allow-git-generated/, 'pr-title must not accept git-generated subjects');
+}
+
+test('pr-title validates the PR title and body from env with the base validator', async () => {
+  const source = await workflow('pr-title.yml');
+  assertPrTitleWorkflow(source);
+  assertActionsPinned(source, 'pr-title.yml');
+  const mutations = {
+    'title interpolated into run': (text) => text.replace('python3 -I "$VALIDATOR" --message "$message"', 'python3 -I "$VALIDATOR" --message "${{ github.event.pull_request.title }}"'),
+    'head checkout': (text) => text.replace('ref: ${{ github.event.pull_request.base.sha }}', 'ref: ${{ github.event.pull_request.head.sha }}'),
+    'missing edited': (text) => text.replace(PR_TITLE_EVENTS, '[opened, reopened, synchronize]'),
+    'silent bootstrap': (text) => text.replace('::warning::bootstrap: validator taken from the PR head', 'bootstrap'),
+    'write permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'),
+    'git-generated accepted': (text) => text.replace('--message "$message"', '--allow-git-generated --message "$message"'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change pr-title.yml`);
+    assert.throws(() => assertPrTitleWorkflow(mutated), `the contract must reject "${label}"`);
+  }
+});
+
+test('no workflow interpolates PR text into run and only pr-title triggers on edited', async () => {
+  for (const name of await workflowFiles()) {
+    const source = await workflow(name);
+    assertNoPrTextInRun(source, name);
+    if (name !== 'pr-title.yml') assert.doesNotMatch(prWorkflowOnBlock(source), /\bedited\b/, `${name} must not trigger on edited`);
+    assert.doesNotMatch(executableYaml(source), /build-native-host\.yml/, `${name} must not reference the retired build-native-host.yml`);
+  }
+  assert.throws(() => assertNoPrTextInRun('steps:\n  - run: echo "${{ github.event.pull_request.body }}"', 'fixture'), /must not interpolate/);
+  assert.throws(() => assertNoPrTextInRun("steps:\n  - { run: 'echo ${{ github.event.pull_request.title }}' }", 'fixture'), /must not interpolate/);
+});
+
+test('the remote-code scan scopes exist and cover the CI, tooling and hook sources', async () => {
+  const { REMOTE_CODE_SCOPES, missingScopes } = await import(new URL('verify/check-remote-code.mjs', root));
+  assert.deepEqual(await missingScopes(repository, REMOTE_CODE_SCOPES), [], 'every remote-code scope must exist');
+  assert.deepEqual(await missingScopes(repository, ['web-extension/manifest.json']), ['web-extension/manifest.json'], 'a missing scope must be reported');
+  for (const scope of ['.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml', '.github/workflows/ci.yml', '.github/workflows/pr-title.yml', 'scripts', '.githooks', 'web-extension/vite.config.ts']) {
+    assert.ok(REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must cover ${scope}`);
+  }
+  for (const scope of ['.github/workflows/build-native-host.yml', 'web-extension/manifest.json']) {
+    assert.ok(!REMOTE_CODE_SCOPES.includes(scope), `the remote-code scan must not list ${scope}`);
+  }
 });
 
 test('only the protected release workflow may reference signing credentials or sign anything', async () => {

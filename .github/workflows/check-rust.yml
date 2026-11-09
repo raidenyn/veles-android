@@ -1,0 +1,115 @@
+name: check-rust
+
+# Rust core node of the CI component tree (ci.yml -> `rust / <job>`): format and lint of the host, WASM and
+# Android targets, the native and WASM tests, and the JNI integration with the clean contract. The
+# jni-integration job keeps the whole pre-split sequence in one job and in this order: build the APK, verify
+# its JNI libraries, build the extension, clean, assert nothing survived, rebuild and re-verify the APK.
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Install pinned Android NDK
+        run: |
+          NDK_VERSION="$(./gradlew -q rustNdkVersion)"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/rust-tools
+          key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
+      - run: ./gradlew rustFormat rustLint
+      # The cache is saved by whichever job finishes first; leave it complete, not partial.
+      - name: Refill complete Rust tool cache
+        run: ./gradlew rustInstall
+
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      # The WASM smoke test runs under Node.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Install pinned Android NDK
+        run: |
+          NDK_VERSION="$(./gradlew -q rustNdkVersion)"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/rust-tools
+          key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
+      - run: ./gradlew rustTest
+      - name: Refill complete Rust tool cache
+        run: ./gradlew rustInstall
+
+  jni-integration:
+    name: jni-integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-extension/package-lock.json
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: rust
+        run: rustup show active-toolchain
+      - name: Install pinned Android NDK
+        run: |
+          NDK_VERSION="$(./gradlew -q rustNdkVersion)"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/rust-tools
+          key: rust-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/toolchain-tools.toml', 'rust/Cargo.lock') }}
+      - run: ./gradlew :app:assembleDebug
+      - run: rust/scripts/verify-apk-jni.sh app/build/outputs/apk/debug/app-debug.apk
+      - run: npm ci && npm run build
+        working-directory: web-extension
+      - run: ./gradlew clean
+      - run: rust/scripts/assert-clean.sh
+      - run: ./gradlew :app:assembleDebug
+      - run: rust/scripts/verify-apk-jni.sh app/build/outputs/apk/debug/app-debug.apk
+      - name: Refill complete Rust tool cache
+        run: ./gradlew rustInstall

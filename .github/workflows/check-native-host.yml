@@ -1,0 +1,176 @@
+name: check-native-host
+
+# Native-host node of the CI component tree (ci.yml -> `native-host / <job>`): the OTP-24 production Native
+# Messaging host (native-bridge/host, crate veles-ble-host).
+#
+# This is NOT the Tauri scaffold (check-bridge-scaffold.yml) and NOT the installer (check-installer.yml).
+# It checks and builds a plain Rust executable with locked cargo and the host's own pinned 1.98.0 toolchain:
+# no Node, npm, Tauri, installers or signing. The compile jobs' artifacts are named native-host-<platform>
+# and carry the executable plus SHA256SUMS only (macOS: inside a mode-preserving tar), so they cannot be
+# mistaken for installer archives. Nothing here registers the host with Chrome.
+#
+# The Linux jobs run the portable control-plane checks (the platform adapters are cfg-gated out on Linux).
+# The Windows and macOS unit-tests jobs also run the format, lint and toolchain checks, because clippy only
+# sees the real WinRT / CoreBluetooth adapters on their native runners. Hardware behaviour is NOT exercised.
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint
+
+  unit-tests-linux:
+    name: unit-tests (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeHostTest
+
+  unit-tests-windows:
+    name: unit-tests (windows)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - run: .\gradlew.bat bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest
+
+  unit-tests-macos:
+    name: unit-tests (macos)
+    runs-on: macos-26
+    # Job-level so the pinned Xcode reaches every step, including the cargo child processes.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - name: Validate pinned Xcode toolchain
+        run: |
+          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
+          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeHostToolchainCheck bridgeHostFormat bridgeHostLint bridgeHostTest
+
+  # The host's static build contract (Gradle graph, workflows, supply-chain consumers, vendored patch). Its
+  # allowlist test runs real Gradle builds of the host, so the pinned toolchain is activated here too.
+  build-contract:
+    name: build-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - run: python3 -m unittest discover -s native-bridge/host/scripts -p 'test_build_contract.py'
+
+  compile-windows:
+    name: compile (windows)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - run: .\gradlew.bat bridgeHostBuild
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-host-windows
+          path: |
+            build/native-bridge/host/veles-native-host.exe
+            build/native-bridge/host/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  compile-macos:
+    name: compile (macos)
+    runs-on: macos-26
+    # Job-level so the pinned Xcode reaches every step, including the cargo child processes.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - name: Validate pinned Xcode toolchain
+        run: |
+          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
+          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeHostBuild
+      # actions/upload-artifact drops the executable bit of bare files, so the macOS product is a
+      # mode-preserving tar holding only the executable and its SHA256SUMS (plus the archive sidecar).
+      - name: Package host executable (mode-preserving tar)
+        run: bash native-bridge/host/scripts/package-macos-artifact.sh build/native-bridge/host build/native-bridge/host-archive
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-host-macos
+          path: |
+            build/native-bridge/host-archive/veles-native-host-macos.tar.gz
+            build/native-bridge/host-archive/veles-native-host-macos.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
