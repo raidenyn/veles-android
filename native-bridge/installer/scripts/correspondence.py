@@ -987,11 +987,19 @@ _TAG_DICTIONARY = 0xB0
 class DerReader:
     """A bounded DER TLV reader over one byte buffer of the entitlements encoding."""
 
-    def __init__(self, data: bytes, code: str = "macho-invalid-entitlements", label: str = "DER entitlements") -> None:
+    def __init__(
+        self,
+        data: bytes,
+        code: str = "macho-invalid-entitlements",
+        label: str = "DER entitlements",
+        budget: list[int] | None = None,
+    ) -> None:
         self.data = data
         self.code = code
         self.label = label
-        self.values = 0
+        # One slot-wide value budget: nested readers share the same counter, so a
+        # fan-out of small arrays cannot multiply the advertised limit.
+        self.budget = [0] if budget is None else budget
 
     def refuse(self, detail: str) -> "Reject":
         return Reject(self.code, f"{self.label}: {detail}")
@@ -1027,8 +1035,8 @@ class DerReader:
                 raise self.refuse("non-minimal long-form length")
         if length > limit - offset:
             raise self.refuse("value overruns the slot")
-        self.values += 1
-        if self.values > MAX_DER_VALUES:
+        self.budget[0] += 1
+        if self.budget[0] > MAX_DER_VALUES:
             raise self.refuse("more values than the slot may carry")
         return tag, data[offset : offset + length], offset + length
 
@@ -1061,7 +1069,7 @@ class DerReader:
         raise Reject("macho-der-entitlements-unsupported", f"{self.label}: tag {tag:#x} has no plist meaning")
 
     def array(self, body: bytes, depth: int) -> list[Any]:
-        reader = DerReader(body, self.code, self.label)
+        reader = DerReader(body, self.code, self.label, self.budget)
         items: list[Any] = []
         offset = 0
         while offset < len(body):
@@ -1070,14 +1078,14 @@ class DerReader:
         return items
 
     def dictionary_entries(self, body: bytes, depth: int) -> dict:
-        reader = DerReader(body, self.code, self.label)
+        reader = DerReader(body, self.code, self.label, self.budget)
         result: dict[str, Any] = {}
         offset = 0
         while offset < len(body):
             tag, entry, offset = reader.tlv(offset)
             if tag != _TAG_SEQUENCE:
                 raise self.refuse("a dictionary entry is not a SEQUENCE")
-            entry_reader = DerReader(entry, self.code, self.label)
+            entry_reader = DerReader(entry, self.code, self.label, self.budget)
             key_tag, key, cursor = entry_reader.tlv(0)
             if key_tag != _TAG_UTF8_STRING:
                 raise self.refuse("a dictionary key is not a UTF8String")
@@ -1102,7 +1110,7 @@ def decode_entitlements_der(payload: bytes) -> dict:
     if cursor != len(payload):
         raise Reject(code, f"{label} carries trailing bytes")
     if tag == _TAG_APPLICATION_16:
-        wrapper = DerReader(body, code, label)
+        wrapper = DerReader(body, code, label, reader.budget)
         version_tag, version, offset = wrapper.tlv()
         if version_tag != _TAG_INTEGER or version != b"\x01":
             raise Reject(code, f"{label} version is not 1")

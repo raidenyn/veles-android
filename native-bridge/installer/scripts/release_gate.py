@@ -1261,7 +1261,7 @@ def _leaf_certificate_sha256(stage: Stage, target: Path, scratch: Path) -> str:
     if not leaf.is_file():
         raise StageFailure("signature-unverified", f"{target.name}: codesign did not extract a leaf certificate")
     try:
-        return sha256_file(leaf)
+        return f"sha256:{sha256_file(leaf)}"
     finally:
         leaf.unlink(missing_ok=True)
 
@@ -2068,6 +2068,19 @@ REPORT_KEYS = {"schema", "target", "source_commit", "descriptor_digest", "recipe
 STAGE_CREDENTIALS = {"verify-inputs": False, "sign-nested": True, "assemble": False, "sign-outer": True}
 
 
+def required_tools(target: str, policy: dict) -> tuple[str, ...]:
+    """Tool evidence a target's run must record, for the trust mode it used.
+
+    A self-signed macOS run never invokes the notary/stapler (`xcrun`) or
+    Gatekeeper (`spctl`); requiring their identities would reject a correct run
+    while demanding evidence the design says it does not collect. Developer ID
+    runs keep the full set.
+    """
+    if target == "macos-arm64" and policy.get("trust_mode") == "self-signed":
+        return ("codesign", "security", "hdiutil")
+    return REQUIRED_TOOLS[target]
+
+
 def compose_target_report(*, target: str, commit: str, descriptor: str, recipe: str, fragments: dict[str, dict]) -> dict:
     """One target's report from its four stage fragments; refuses fragments that disagree."""
     missing = [stage for stage in STAGES if stage not in fragments]
@@ -2301,7 +2314,7 @@ def _validate_target(bundle: Path, evidence: dict, target: str, rel: str, descri
     if not (isinstance(seal, dict) and seal.get("status") == "sealed" and SHA256_RE.match(str(seal.get("sealed_inventory_sha256"))) and SHA256_RE.match(str(seal.get("carrier_sha256")))):
         errors.append("seal evidence is missing or the sealed inventory was not bound into the carrier")
     tools = report["tools"]
-    for name in REQUIRED_TOOLS[target]:
+    for name in required_tools(target, policy):
         identity = tools.get(name) if isinstance(tools, dict) else None
         if not (isinstance(identity, dict) and SHA256_RE.match(str(identity.get("sha256"))) and identity.get("path")):
             errors.append(f"tool identity for {name} is missing or has no recorded sha256")
@@ -2471,10 +2484,19 @@ def _signature_errors(label: str, signature: dict, platform: str, policy: dict, 
         if signature.get("trust_mode") != policy.get("trust_mode"):
             errors.append(f"{label}: signature trust_mode is not the declared trust mode")
         if self_signed:
+            # The accepted decision forbids claiming any public trust for a
+            # self-signed leaf; a consistently contradictory pair is still wrong.
+            if signature.get("public_trust") is not False:
+                errors.append(f"{label}: a self-signed signature must record public_trust false")
+            if policy.get("public_trust") is not False:
+                errors.append(f"{label}: a self-signed policy must record public_trust false")
             if signature.get("publisher") != policy.get("publisher"):
                 errors.append(f"{label}: signature leaf certificate is not the approved publisher")
-        elif signature.get("team_id") != policy.get("team_id"):
-            errors.append(f"{label}: signing team is not the approved team")
+        else:
+            if signature.get("public_trust") is not True:
+                errors.append(f"{label}: an OS-trusted signature must record public_trust true")
+            if signature.get("team_id") != policy.get("team_id"):
+                errors.append(f"{label}: signing team is not the approved team")
     expected = policy.get("publisher") if platform == "windows" else policy.get("identity")
     if not expected or signature.get("identity") != expected:
         errors.append(f"{label}: signer is not the approved publisher identity")

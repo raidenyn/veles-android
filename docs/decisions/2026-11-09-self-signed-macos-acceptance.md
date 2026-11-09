@@ -88,7 +88,9 @@ values stay unset.
 - A macOS release dispatch can now build, verify, sign and assemble a candidate
   without an Apple account. The run is honest about what it did not obtain.
 - Replacing the self-signed leaf with a Developer ID later requires no gate
-  change: clear `VELES_MAC_TRUST_SELF_SIGNED`, set `VELES_MAC_TEAM_ID` and the
-  notary inputs, and the gate returns to the notarized Developer ID path.
+  change, but the descriptor must be updated too: clear `VELES_MAC_TRUST_SELF_SIGNED`,
+  replace the `sha256:` publisher in `config/release-macos.json` with
+  `team:<TEAMID>`, set `VELES_MAC_TEAM_ID` and the notary inputs, and the gate
+  returns to the notarized Developer ID path.
 - The acceptance matrix remains BLOCKED: a self-signed candidate is not physical
   acceptance evidence, and every row still needs independent adjudication.

@@ -713,17 +713,23 @@ fn observed_team_id(static_code: &Cf) -> InstallResult<Option<String>> {
     let information = signing_information(static_code)?;
     // SAFETY: the dictionary is a live retained signing-information dictionary
     // and the key is the exported CFString constant.
-    let team_id = unsafe {
-        cf_string(CFDictionaryGetValue(
-            information.0,
-            kSecCodeInfoTeamIdentifier,
-        ))
-    };
-    match team_id {
-        None => Ok(None),
-        Some(team_id) if policy::is_valid_team_id(&team_id) => Ok(Some(team_id)),
-        Some(_) => Err(trust_denied()),
+    let value = unsafe { CFDictionaryGetValue(information.0, kSecCodeInfoTeamIdentifier) };
+    if value.is_null() {
+        return Ok(None);
     }
+    // A present value that is not a string (or that the fixed buffer cannot
+    // render) is a signature this build does not understand: deny it rather
+    // than treating it as "no Team ID" and falling back to the certificate pin.
+    // SAFETY: both type IDs are process-wide CF constants.
+    if unsafe { CFGetTypeID(value) != CFStringGetTypeID() } {
+        return Err(trust_denied());
+    }
+    // SAFETY: `value` is a live CFString, checked above.
+    let team_id = cf_string(value).ok_or_else(trust_denied)?;
+    if !policy::is_valid_team_id(&team_id) {
+        return Err(trust_denied());
+    }
+    Ok(Some(team_id))
 }
 
 /// Bound on one signing certificate's DER (`SecCertificateCopyData`).

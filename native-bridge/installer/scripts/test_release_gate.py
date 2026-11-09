@@ -1139,6 +1139,56 @@ class MacosSelfSignedTests(unittest.TestCase):
         self.assertEqual(policy["trust_mode"], "os-store")
         self.assertIs(policy["public_trust"], True)
 
+    def test_observed_leaf_identity_is_a_publisher_and_codesign_check_accepts_it(self) -> None:
+        scratch = Path(tempfile.mkdtemp(prefix="gate-leaf-"))
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        der = b"0\x82leaf-certificate"
+        publisher = "sha256:" + hashlib.sha256(der).hexdigest()
+
+        class Stage:
+            def __init__(self) -> None:
+                self.scratch = scratch
+
+            def run(self, argv, what=None):
+                if "--extract-certificates" in argv:
+                    prefix = Path(argv[argv.index("--extract-certificates") + 1])
+                    Path(f"{prefix}0").write_bytes(der)
+                if "-dvv" in argv:
+                    return RunResult(0, "CodeDirectory v=20500 flags=0x10000(runtime)\nAuthority=Self Signed\nTeamIdentifier=not set\n")
+                return RunResult(0, "")
+
+            def private_dir(self, path):
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+        target = scratch / "app"
+        target.write_bytes(b"x")
+        policy = {"identity": "Self Signed", "trust_mode": "self-signed", "publisher": publisher, "team_id": None}
+        evidence = gate._codesign_check(Stage(), target, policy, runtime=True)
+        self.assertEqual(evidence["publisher"], publisher)
+        self.assertIs(evidence["public_trust"], False)
+        self.assertEqual(evidence["trust_mode"], "self-signed")
+
+    def test_required_tools_follow_the_trust_mode(self) -> None:
+        self.assertEqual(
+            gate.required_tools("macos-arm64", {"trust_mode": "self-signed"}),
+            ("codesign", "security", "hdiutil"),
+        )
+        self.assertIn("xcrun", gate.required_tools("macos-arm64", {"trust_mode": "os-store"}))
+        self.assertIn("spctl", gate.required_tools("macos-arm64", {}))
+        self.assertEqual(gate.required_tools("windows-x86_64", {"trust_mode": "self-signed"}), ("signtool", "certutil", "7z"))
+
+    def test_contradictory_public_trust_is_refused(self) -> None:
+        for policy_trust, signature_trust in ((True, True), (True, False), (False, True)):
+            with self.subTest(policy_trust=policy_trust, signature_trust=signature_trust):
+                policy = {"platform": "macos", "identity": "Self Signed", "team_id": None,
+                          "trust_mode": "self-signed", "public_trust": policy_trust, "publisher": MAC_PUBLISHER}
+                signature = {"verified": True, "timestamped": False, "identity": "Self Signed",
+                             "team_id": None, "public_trust": signature_trust, "trust_mode": "self-signed",
+                             "publisher": MAC_PUBLISHER, "hardened_runtime": True}
+                errors = gate._signature_errors("component x", signature, "macos", policy, runtime=True)
+                self.assertTrue(errors, "a self-signed record with contradictory public trust passed")
+
     def test_signature_records_must_match_the_declared_trust(self) -> None:
         policy = {"platform": "macos", "identity": "Self Signed", "team_id": None, "trust_mode": "self-signed",
                   "public_trust": False, "publisher": MAC_PUBLISHER}

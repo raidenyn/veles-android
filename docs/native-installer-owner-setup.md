@@ -99,7 +99,10 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 ```
 
 Clearing `VELES_MAC_TRUST_SELF_SIGNED` and setting a real team, notary key and
-Developer ID identity returns the gate to the notarized path with no code change.
+Developer ID identity returns the gate to the notarized path with no code change,
+but the descriptor must also be updated first: `config/release-macos.json` currently
+authorizes only the self-signed `sha256:` publisher. Replace that entry with
+`team:<TEAMID>` (or add it) before rebuilding, or `signer_policy` rejects the team.
 
 ## 4. Audit native signing secrets for duplicates
 

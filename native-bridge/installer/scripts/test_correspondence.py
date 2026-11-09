@@ -1681,6 +1681,12 @@ class MachoReviewFindingTests(WorkDir):
                 signed, _ = build_signed_macho(der_entitlements=payload)
                 self.expect_fail(unsigned, signed, "macho-invalid-entitlements")
 
+    def test_f3_der_value_budget_is_slot_wide(self):
+        payload = der_entitlements({f"k{index}": True for index in range(2100)})
+        with self.assertRaises(correspondence.Reject) as caught:
+            correspondence.decode_entitlements_der(payload)
+        self.assertIn("more values", str(caught.exception))
+
     def test_f3_der_entitlements_with_an_unsupported_tag_are_refused(self):
         unsigned, _ = build_macho()
         # A REAL (0x09) value has no plist meaning in the entitlements schema.
