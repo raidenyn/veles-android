@@ -318,13 +318,25 @@ def descriptor_set_digest(digests: dict[str, str]) -> str:
     return sha256_bytes(canonical_json({"descriptors": dict(sorted(digests.items())), "schema": SCHEMA}))
 
 
+def _recipe_bytes(path: Path) -> bytes:
+    """A recipe file's bytes with CRLF line endings normalized to LF.
+
+    The recipe digest is compared between the Linux ``verify-inputs`` job and the Windows/macOS
+    signing jobs on the same commit, and Git stores these text recipes with LF but checks them out
+    with CRLF on Windows (``core.autocrlf``). Hashing the raw checkout bytes would make a signing
+    job's digest differ from the boundary the verification job recorded. Only CRLF is normalized:
+    a lone CR, or any other content change, still changes the digest.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def recipe_digest(root: Path, platform: str) -> str:
     lines = []
     for rel in RECIPE_FILES[platform]:
         path = root / rel
         if not path.is_file() or path.is_symlink():
             raise StageFailure("recipe-missing", f"recipe file is missing: {rel}")
-        lines.append(f"{rel}\0{sha256_file(path)}\n")
+        lines.append(f"{rel}\0{sha256_bytes(_recipe_bytes(path))}\n")
     return sha256_bytes("".join(lines).encode())
 
 

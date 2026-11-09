@@ -2170,6 +2170,76 @@ class DescriptorSetDigestTests(unittest.TestCase):
                     gate.descriptor_set_digest(bad)
 
 
+class RecipeDigestTests(unittest.TestCase):
+    """The recipe digest names the recipe, not the line endings of the checkout that computed it.
+
+    ``verify-inputs`` runs on an ubuntu runner and the signing jobs run on Windows and macOS runners.
+    Git stores these text recipes with LF but checks them out with CRLF on Windows (``core.autocrlf``),
+    and a boundary's recipe digest is compared across those jobs on the same commit, so the digest
+    must be computed over the same bytes on every OS.
+    """
+
+    def copies(self, platform: str) -> tuple[Path, Path]:
+        """Two temp copies of a recipe set: the LF bytes as stored, and the CRLF bytes a Windows checkout has."""
+        root = Path(tempfile.mkdtemp(prefix="recipe-digest-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        stored, converted = root / "stored", root / "converted"
+        for rel in gate.RECIPE_FILES[platform]:
+            data = (gate.INSTALLER_DIR / rel).read_bytes()
+            self.assertNotIn(b"\r", data, f"{rel} is checked out with CRLF here; this fixture assumes the LF bytes")
+            write(stored, rel, data)
+            write(converted, rel, data.replace(b"\n", b"\r\n"))
+        return stored, converted
+
+    def test_a_crlf_checkout_hashes_like_the_lf_checkout(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            with self.subTest(platform=platform):
+                stored, converted = self.copies(platform)
+                expected = gate.recipe_digest(gate.INSTALLER_DIR, platform)
+                self.assertEqual(gate.recipe_digest(stored, platform), expected)
+                self.assertEqual(gate.recipe_digest(converted, platform), expected)
+
+    def test_a_real_content_change_still_changes_the_digest(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            with self.subTest(platform=platform):
+                stored, _ = self.copies(platform)
+                before = gate.recipe_digest(stored, platform)
+                path = stored / gate.RECIPE_FILES[platform][0]
+                data = path.read_bytes()
+                middle = len(data) // 2
+                path.write_bytes(data[:middle] + b"x" + data[middle:])
+                self.assertNotEqual(gate.recipe_digest(stored, platform), before)
+
+    def test_a_lone_carriage_return_still_changes_the_digest(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            with self.subTest(platform=platform):
+                stored, _ = self.copies(platform)
+                before = gate.recipe_digest(stored, platform)
+                path = stored / gate.RECIPE_FILES[platform][-1]
+                path.write_bytes(path.read_bytes() + b"\r")
+                self.assertNotEqual(gate.recipe_digest(stored, platform), before)
+
+    def test_a_missing_or_symlinked_recipe_file_is_refused(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            rel = gate.RECIPE_FILES[platform][0]
+            with self.subTest(platform=platform, defect="missing"):
+                stored, _ = self.copies(platform)
+                (stored / rel).unlink()
+                with self.assertRaises(gate.StageFailure) as caught:
+                    gate.recipe_digest(stored, platform)
+                self.assertEqual(caught.exception.code, "recipe-missing")
+            with self.subTest(platform=platform, defect="symlink"):
+                stored, _ = self.copies(platform)
+                target = stored / rel
+                elsewhere = stored / "elsewhere"
+                elsewhere.write_bytes(target.read_bytes())
+                target.unlink()
+                target.symlink_to(elsewhere)
+                with self.assertRaises(gate.StageFailure) as caught:
+                    gate.recipe_digest(stored, platform)
+                self.assertEqual(caught.exception.code, "recipe-missing")
+
+
 class ToolIdentityBindingTests(unittest.TestCase):
     """F8: the locked compiler/SDK identities are enforced where production eligibility is decided.
 
