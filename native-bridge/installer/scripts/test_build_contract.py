@@ -310,6 +310,20 @@ def check_gradle(gradle, clean_script):
             errors.append("the %s task does not receive installerVersion" % label)
     if '"--version", installerVersion.get()' not in code:
         errors.append("the assembler arguments do not pass --version installerVersion")
+    # The release finalizer publishes tree.tar/provenance.json from both slots: it must re-run when
+    # the version or either slot's final assembly changes, never stay UP-TO-DATE on a stale tree.
+    finalizer = None
+    position = code.find("tasks.register<Exec>(taskName)")
+    while position >= 0:
+        candidate = object_block(code[position:], "tasks.register<Exec>(taskName)")
+        if candidate is not None and '"finalize"' in candidate:
+            finalizer = candidate
+            break
+        position = code.find("tasks.register<Exec>(taskName)", position + 1)
+    if finalizer is None or declaration not in finalizer:
+        errors.append("the release finalize task does not declare inputs.property(\"installerVersion\", installerVersion)")
+    elif "inputs.files(slotOutputs.values)" not in finalizer:
+        errors.append("the release finalize task does not declare the slot trees it publishes as inputs")
 
     # 5b. The authenticated carrier is assembled FIRST, verified against the exact descriptor and
     # channel, and only then compiled into the engine that is published. A production build cannot
@@ -958,9 +972,9 @@ class GradleGraph(unittest.TestCase):
     def test_the_installer_version_must_be_a_declared_input_of_every_consumer(self):
         declaration = 'inputs.property("installerVersion", installerVersion)'
         block = producer_block(self.gradle)
-        self.assertEqual(4, block.count(declaration))
-        # Dropping any one declaration (host, uninstaller, bootstrap or final assembly) is named.
-        for index in range(4):
+        self.assertEqual(5, block.count(declaration))
+        # Dropping any one declaration (host, uninstaller, bootstrap or final assembly, finalize) is named.
+        for index in range(5):
             start = -1
             for _ in range(index + 1):
                 start = block.index(declaration, start + 1)
@@ -979,6 +993,10 @@ class GradleGraph(unittest.TestCase):
         ):
             found = self.violations(self.mutate(old, new))
             self.assertTrue(any("installerVersion" in e or "VELES_INSTALLER_VERSION" in e or "version" in e for e in found), (old, found))
+
+    def test_the_finalizer_must_track_the_slot_trees_it_publishes(self):
+        found = self.violations(self.mutate("inputs.files(slotOutputs.values)", "inputs.files()"))
+        self.assertTrue(any("slot trees it publishes" in e for e in found), found)
 
     def test_the_engine_must_compile_in_the_assembled_and_verified_carrier(self):
         for old, new in (

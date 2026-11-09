@@ -2111,6 +2111,10 @@ fun registerInstallerProducer(
         description = summary
         dependsOn(slotFinishers)
         inputs.files(config)
+        // The published tree.tar/provenance.json are made from both slots' final assemblies and carry
+        // the installer version: a changed version or slot tree must re-run the finalizer.
+        inputs.property("installerVersion", installerVersion)
+        inputs.files(slotOutputs.values)
         outputs.dir(outDir)
         doFirst {
             requireInstallerHost()
