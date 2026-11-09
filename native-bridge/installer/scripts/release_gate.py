@@ -870,8 +870,13 @@ _DETAIL_OUTPUT_LIMIT = 300
 
 
 def _output_tail(output: str) -> str:
-    """The last non-empty, whitespace-collapsed lines of a tool's output, bounded for a record."""
-    lines = [" ".join(line.split()) for line in output.splitlines()]
+    """The last non-empty, whitespace-collapsed lines of a tool's output, bounded for a record.
+
+    Non-printing controls are replaced with spaces: this text can reach a terminal, and a tool's
+    output must not be able to forge or erase the surrounding record (ANSI escapes, NUL, backspace).
+    """
+    printable = "".join(character if character.isprintable() else " " for character in output)
+    lines = [" ".join(line.split()) for line in printable.splitlines()]
     tail = " | ".join([line for line in lines if line][-_DETAIL_OUTPUT_LINES:])
     return tail[-_DETAIL_OUTPUT_LIMIT:]
 
@@ -1303,15 +1308,23 @@ def _windows_outer(stage: Stage, policy: dict) -> dict:
 def _keychain_search_list(stage: Stage) -> list[str]:
     """The user keychain search list, in order, as ``security list-keychains -d user`` prints it.
 
-    The tool prints one quoted path per line (indented); paths may contain spaces, so only the
-    surrounding double quotes and whitespace are trimmed.
+    The tool prints exactly one double-quoted path per line, indented. Only that one surrounding
+    quote pair is removed; the path itself is kept verbatim (it may contain spaces or quotes). Any
+    other shape is refused rather than guessed: the list is put back exactly, so an entry the parse
+    invented would be a change to the user's state.
     """
     output = stage.run(["security", "list-keychains", "-d", "user"], what="credential-import-failed").output
     entries = []
     for line in output.splitlines():
-        entry = line.strip().strip('"').strip()
-        if entry:
-            entries.append(entry)
+        entry = line.strip()
+        if not entry:
+            continue
+        if len(entry) < 3 or not entry.startswith('"') or not entry.endswith('"') or '"' in entry[1:-1]:
+            raise StageFailure(
+                "credential-import-failed",
+                "security list-keychains printed a line that is not one quoted keychain path",
+            )
+        entries.append(entry[1:-1])
     return entries
 
 
@@ -1332,7 +1345,8 @@ def _macos_keychain(stage: Stage) -> Path:
     stage.run(["security", "set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychain], what="credential-import-failed")
     # ``codesign --keychain`` does not make an identity resolvable by itself: codesign resolves
     # identities through the user keychain search list, so the ephemeral keychain must be in that
-    # list before the first sign. The previous list is restored exactly, in order.
+    # list before the first sign. The previous list is restored exactly, in order - registered
+    # BEFORE the write, so a setter that changes state and then fails is still undone.
     previous = _keychain_search_list(stage)
     if not previous:
         # ``security list-keychains -d user -s`` with no filenames is not a reliable way to put an
@@ -1343,10 +1357,10 @@ def _macos_keychain(stage: Stage) -> Path:
             "credential-import-failed",
             "the user keychain search list is empty; the signing keychain cannot be added to and restored from it",
         )
-    stage.run(["security", "list-keychains", "-d", "user", "-s", keychain, *previous], what="credential-import-failed")
     # Registered after the delete undo: cleanup runs undo in reverse order, so the search list is
     # restored before the keychain it names is deleted.
     stage.register_undo("security list-keychains restore", ["security", "list-keychains", "-d", "user", "-s", *previous])
+    stage.run(["security", "list-keychains", "-d", "user", "-s", keychain, *previous], what="credential-import-failed")
     return keychain
 
 

@@ -1153,6 +1153,39 @@ class MacosKeychainSearchListTests(unittest.TestCase):
         self.assertEqual(runner.keychain_list, list(DEFAULT_KEYCHAIN_LIST))
         self.assertEqual(leftovers(case), [])
 
+    def test_a_failed_search_list_write_is_still_restored(self) -> None:
+        # The restore is registered before the write, so a setter that changes state and then fails
+        # (or times out) is still undone.
+        case = Case(self, "macos", "nested")
+        runner = Failing(
+            case.env,
+            match=lambda text: "list-keychains -d user -s" in text and "veles-signing.keychain-db" in text,
+            output="",
+        )
+        _, outcome = case.run(runner)
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        restores = self.sets(runner, DEFAULT_KEYCHAIN_LIST[0])
+        self.assertEqual(len(restores), 1, "a failed write still restores the previous list")
+        self.assertEqual(runner.calls[restores[0]][5:], DEFAULT_KEYCHAIN_LIST)
+        self.assertEqual(runner.keychain_list, list(DEFAULT_KEYCHAIN_LIST))
+        self.assertEqual(outcome.cleanup_failures, [])
+        self.assertFalse([c for c in runner.calls if Path(c[0]).stem == "codesign" and "--sign" in c])
+
+    def test_a_search_list_line_that_is_not_one_quoted_path_is_refused(self) -> None:
+        # The list is restored exactly; an entry the parse invented would change the user's state.
+        class Unquoted(FakeRunner):
+            def tool_security(self, args):
+                if args == ["list-keychains", "-d", "user"]:
+                    return RunResult(0, "    /Users/fake/Library/Keychains/login.keychain-db\n")
+                return super().tool_security(args)
+
+        case = Case(self, "macos", "nested")
+        runner, outcome = case.run(Unquoted(case.env))
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        self.assertIn("not one quoted keychain path", outcome.detail)
+        self.assertEqual([c for c in runner.calls if c[:5] == ("security", "list-keychains", "-d", "user", "-s")], [])
+        self.assertFalse([c for c in runner.calls if Path(c[0]).stem == "codesign" and "--sign" in c])
+
     def test_an_empty_user_search_list_refuses_the_stage_instead_of_fabricating_an_entry(self) -> None:
         # ``security list-keychains -d user -s`` with no filenames is not a reliable way to restore an
         # empty list, and inventing a default path would change the user's state. An empty list is a
@@ -1199,6 +1232,23 @@ class StageFailureDiagnosticsTests(unittest.TestCase):
         _, outcome = case.run(runner)
         self.assertLessEqual(len(outcome.detail), 600)
         self.assertLessEqual(len(outcome.detail.split("; output: ", 1)[-1]), 300, "only the bounded tail is appended")
+
+    def test_terminal_control_characters_in_the_tail_are_neutralised(self) -> None:
+        case = Case(self, "macos", "nested")
+        runner = Failing(
+            case.env,
+            match=lambda text: text.startswith("codesign --force"),
+            output="\x1b[31mred\x1b[0m\x00back\x08space\x07\nok\n",
+        )
+        _, outcome = case.run(runner)
+        self.assertEqual((outcome.ok, outcome.code), (False, "sign-failed"))
+        self.assertIn("red", outcome.detail)
+        self.assertIn("back", outcome.detail)
+        self.assertTrue(
+            all(character.isprintable() or character == " " for character in outcome.detail),
+            "a tool's output must not be able to forge or erase the surrounding record",
+        )
+        self.assertNotIn("\x1b", outcome.detail)
 
     def test_no_other_tool_adds_its_output_to_the_failure_detail(self) -> None:
         marker = "TOOL-OUTPUT-MUST-NOT-APPEAR"
