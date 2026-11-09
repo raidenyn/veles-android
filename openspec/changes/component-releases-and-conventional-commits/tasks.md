@@ -33,7 +33,7 @@
 
 ## 6. Unsigned Android producer
 
-- [ ] 6.1 Remove the signing interface from `build-android.yml` and the secrets passed by `release-build.yml`; update the Node contract tests
+- [x] 6.1 Remove the signing interface from `build-android.yml` and the secrets passed by `release-build.yml`; update the Node contract tests
 
 ## 7. CI tree
 
