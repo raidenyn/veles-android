@@ -132,16 +132,54 @@ installer.
 
 ### D2. Versions and notes from tags with git-cliff
 
-`scripts/release_plan.py` runs a pinned git-cliff per release node with the node's
-`--include-path p/**` list, `--tag-pattern '^<prefix>[0-9]+\.[0-9]+\.[0-9]+$'`, `--bumped-version`
-and `--unreleased --strip all` (exact command lines confirmed by the Task 1 spike; fallback:
-`git describe --match '<prefix>*'` for the range, git-cliff only for parsing).
+`scripts/release_plan.py` runs a pinned git-cliff (spike: **2.14.2**) per release node. Confirmed by the
+Task 1 spike (git-cliff 2.14.2):
 
-- `cliff.toml` pins the bump policy: `features_always_bump_minor = true`,
-  `breaking_always_bump_major = true` (a breaking change bumps major even below 1.0); `feat` → minor;
-  `fix`/`perf` → patch; `!`, `BREAKING CHANGE:` or `BREAKING-CHANGE:` → major; all other types and all
-  non-conventional commits → no bump (`filter_unconventional = true`).
-- No tag → `initial-version`, notes limited to `since..HEAD`. Android starts at 0.1.0 (`versionCode`
+```bash
+git-cliff --config cliff.toml \
+  --include-path 'app/**' --include-path 'rust/**' \
+  --tag-pattern '^android-v[0-9]+\.[0-9]+\.[0-9]+$' --bumped-version     # -> android-v0.1.1
+git-cliff --config cliff.toml <same --include-path/--tag-pattern> --unreleased --strip all   # notes
+```
+
+- The range starts at the node's own latest matching tag; tags of other components have no effect, and a
+  `rust/`-only fix counts for Android. `--bumped-version` **carries the tag prefix** (`android-v0.1.1`),
+  so the planner strips the prefix. Output is on stdout; INFO/WARN logs go to stderr.
+- With zero relevant bumping commits it prints the current tag unchanged (no release).
+- With no matching tag, `--bumped-version` fails unless `initial_tag` matches the tag pattern, and
+  `initial_tag` in `cliff.toml` is global. The planner therefore handles the no-tag case itself (see below)
+  and never calls `--bumped-version` without a tag. (Fallback `git describe --match '<prefix>*'` is not
+  needed for tagged components.)
+- `cliff.toml` pins the bump policy. `breaking_always_bump_major` is a real option in 2.14.2:
+
+```toml
+[git]
+conventional_commits = true
+filter_unconventional = true
+commit_parsers = [
+  { field = "raw_message", pattern = "^[a-z]+(\\([^)]*\\))?!:", group = "Breaking" },
+  { field = "raw_message", pattern = "(?m)^BREAKING[ -]CHANGE:", group = "Breaking" },
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = ".*", skip = true },
+]
+
+[bump]
+features_always_bump_minor = true
+breaking_always_bump_major = true
+```
+
+  Without the final `skip` parser, git-cliff bumps patch for `docs`/`chore`/`refactor`/`test`/`build`/`ci`/
+  `style`/`revert`; with it they do not bump or appear in notes. The `raw_message` parsers keep
+  breaking commits of those types (`docs!:`, a `BREAKING CHANGE:` footer) from being skipped (the
+  `body`, `footer` and `breaking` parser fields did not work for this). Verified on 0.3.2 and 1.2.3:
+  `feat` → minor (0.4.0 / 1.3.0); `fix`/`perf` → patch; `feat!`, `fix(x)!`, `docs!`, `BREAKING CHANGE:`,
+  `BREAKING-CHANGE:` footer → major (0.3.2 → 1.0.0, 1.2.3 → 2.0.0); the other types and
+  non-conventional commits → unchanged. Known limit: the literal phrase inline in prose does not count
+  (needs a footer line).
+- No tag → `initial-version` (the planner sets it, not git-cliff); notes limited to `since..HEAD` by passing
+  the range positionally (`--unreleased --strip all <since>..HEAD`, verified to scope the notes). Android starts at 0.1.0 (`versionCode`
   100 > 3). Old plain tags `0.0.x` never match.
 - CHANGELOG files are not committed; notes live in combined release bodies.
 
@@ -149,7 +187,7 @@ and `--unreleased --strip all` (exact command lines confirmed by the Task 1 spik
 
 | component | mechanism |
 |---|---|
-| Android | `androidGitVersion { prefix = "android-v"; codeFormat = "MMNNPP" }` (or the spike's fallback). Publish creates the tag **only in the runner's checkout** before building; it reaches the remote only in the `publish` job. |
+| Android | `androidGitVersion { prefix = "android-v"; codeFormat = "MMNNPP" }` (spike: plugin 0.4.14 honours `prefix`; no fallback needed. Tag `android-v1.2.3` → name `1.2.3`, code `10203`; `android-v0.1.0` → code `100`; with no `android-v*` tag, old `0.0.x` tags are ignored → name `untagged-…`, code `0`, so `maxOf(code, 1)` stays; web tags do not interfere). Publish creates the tag **only in the runner's checkout** before building; it reaches the remote only in the `publish` job. |
 | web-extension | `resolveExtensionVersion()`: `VELES_EXTENSION_VERSION` if set, else `git describe --tags --match 'web-extension-v*'` (numeric part → `version`, full string → `version_name`), else `0.0.1`. Every value is validated against Chrome's rules. `build-web-extension.yml` gets an optional `version` input mapped to the build step env and checks out with `fetch-depth: 0`. `package.mjs` names the zip from the **emitted** `dist/manifest.json`; `smoke.test.ts` and `package-output.test.ts` stop asserting `package.json`'s version. |
 | installer + host | One effective version: Gradle `installerVersion = providers.environmentVariable("VELES_INSTALLER_VERSION").orElse(<config version>)` (production channel only; fixture keeps the config value). It feeds `assemble_unsigned.py assemble --version` (descriptor **and** the macOS `VERSION` file, both passes), `generate-uninstaller.ps1 -Version`, and the host cargo env `VELES_HOST_VERSION` (read by `option_env!`). It is declared `inputs.property("installerVersion", …)` on the host, uninstaller and assemble/stage tasks so a version-only change re-runs them. `build-native-{windows,macos}.yml` get an optional `version` input, exported only for `build-kind: release`. `Cargo.toml`/`Cargo.lock` are never modified. |
 
@@ -312,9 +350,9 @@ the same commit (Task 5 makes the old manual prerelease publisher consume the un
 
 ## Risks / Trade-offs
 
-- [git-cliff per-component tag resolution or prefix bumping misbehaves] → Task 1 spike; fallback
-  computes the range with `git describe` and uses git-cliff only for parsing.
-- [`androidGitVersion` 0.4.14 `prefix` unusable] → spike; fallback in `app/build.gradle.kts`.
+- [git-cliff per-component tag resolution or prefix bumping misbehaves] → resolved by the Task 1 spike
+  (2.14.2): works with `--tag-pattern` + `--include-path`; prefix is kept in output; no-tag handled by the planner.
+- [`androidGitVersion` 0.4.14 `prefix` unusable] → resolved by the spike: `prefix = "android-v"` works; no fallback.
 - [Merger hand-edits the squash dialog; PR edits `pr-title.yml`] → accepted limitation of route A;
   `commit-guard` makes it visible; the planner ignores non-conventional commits.
 - [Interrupted publish leaves tags or a draft] → tags pushed only after approval and atomically;
