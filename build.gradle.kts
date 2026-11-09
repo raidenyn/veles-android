@@ -154,7 +154,26 @@ abstract class InstallGitHooksTask @Inject constructor(
             logger.info("CI=true: skipping git hook installation")
             return
         }
-        val dir = repoDir.get().asFile
+        try {
+            configureHooks(repoDir.get().asFile)
+        } catch (e: Exception) {
+            logger.warn("Could not configure git hooks (${e.message}); skipping.")
+        }
+    }
+
+    private fun configureHooks(dir: File) {
+        val probe = ByteArrayOutputStream()
+        val inside = execOps.exec {
+            workingDir = dir
+            commandLine("git", "rev-parse", "--is-inside-work-tree")
+            standardOutput = probe
+            errorOutput = ByteArrayOutputStream()
+            isIgnoreExitValue = true
+        }
+        if (inside.exitValue != 0 || probe.toString(Charsets.UTF_8).trim() != "true") {
+            logger.info("Not inside a git work tree: skipping git hook installation")
+            return
+        }
         val out = ByteArrayOutputStream()
         val read = execOps.exec {
             workingDir = dir
@@ -164,9 +183,15 @@ abstract class InstallGitHooksTask @Inject constructor(
         }
         val current = out.toString(Charsets.UTF_8).trim()
         when {
-            read.exitValue != 0 || current.isEmpty() -> execOps.exec {
-                workingDir = dir
-                commandLine("git", "config", "core.hooksPath", ".githooks")
+            read.exitValue != 0 || current.isEmpty() -> {
+                val write = execOps.exec {
+                    workingDir = dir
+                    commandLine("git", "config", "core.hooksPath", ".githooks")
+                    isIgnoreExitValue = true
+                }
+                if (write.exitValue != 0) {
+                    logger.warn("git config core.hooksPath failed (exit ${write.exitValue}); hook not installed.")
+                }
             }
             current == ".githooks" -> Unit
             else -> logger.warn(
