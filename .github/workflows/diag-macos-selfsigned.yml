@@ -1,0 +1,135 @@
+name: diag-macos-selfsigned
+
+# TEMPORARY diagnostic only: no secrets, no release artifact. Reproduces the
+# self-signed codesign keychain recipes on the hosted macos-26 runner to find
+# why sign-macos gets errSecInternalComponent. Delete this file afterwards.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/diag-macos-selfsigned.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+    steps:
+      - name: Report the runner image
+        run: |
+          set +e
+          sw_vers
+          xcodebuild -version
+          security list-keychains -d user
+          security dump-trust-settings 2>&1 | head -5
+
+      - name: Build identities and try the recipes
+        run: |
+          set +e
+          work="$RUNNER_TEMP/diag"
+          mkdir -p "$work"; cd "$work"
+
+          OPENSSL=/usr/bin/openssl
+          [ -x /opt/homebrew/opt/openssl@3/bin/openssl ] && OPENSSL=/opt/homebrew/opt/openssl@3/bin/openssl
+          echo "openssl: $OPENSSL ($($OPENSSL version))"
+
+          cat > root.cnf <<'EOF'
+          [req]
+          distinguished_name=dn
+          x509_extensions=v3
+          prompt=no
+          [dn]
+          CN=Diag Root
+          [v3]
+          basicConstraints=critical,CA:TRUE
+          keyUsage=critical,keyCertSign,cRLSign
+          EOF
+          cat > leaf.cnf <<'EOF'
+          [req]
+          distinguished_name=dn
+          prompt=no
+          [dn]
+          CN=Diag Leaf
+          EOF
+          cat > ext.cnf <<'EOF'
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature
+          extendedKeyUsage=critical,codeSigning
+          EOF
+          cat > solo.cnf <<'EOF'
+          [req]
+          distinguished_name=dn
+          x509_extensions=v3
+          prompt=no
+          [dn]
+          CN=Diag Solo
+          [v3]
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature
+          extendedKeyUsage=critical,codeSigning
+          EOF
+
+          $OPENSSL req -x509 -newkey rsa:2048 -nodes -keyout root.key -out root.pem -days 30 -config root.cnf
+          $OPENSSL req -new -newkey rsa:2048 -nodes -keyout leaf.key -out leaf.csr -config leaf.cnf
+          $OPENSSL x509 -req -in leaf.csr -CA root.pem -CAkey root.key -CAcreateserial -out leaf.pem -days 30 -extfile ext.cnf
+          $OPENSSL pkcs12 -export -inkey leaf.key -in leaf.pem -certfile root.pem -out two.p12 -passout pass:test
+          $OPENSSL req -x509 -newkey rsa:2048 -nodes -keyout solo.key -out solo.pem -days 30 -config solo.cnf
+          $OPENSSL pkcs12 -export -inkey solo.key -in solo.pem -out solo.p12 -passout pass:test
+          echo "identities built: two.p12=$([ -s two.p12 ] && echo ok) solo.p12=$([ -s solo.p12 ] && echo ok)"
+
+          cat > Host.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>com.apple.security.device.bluetooth</key><true/></dict></plist>
+          EOF
+
+          make_kc() {
+            local kc="$1/veles-signing.keychain-db"
+            rm -rf "$1"; mkdir -p "$1"
+            security create-keychain -p testpass "$kc" || { echo "create-keychain failed"; return 1; }
+            security set-keychain-settings -lut 3600 "$kc" || { echo "settings failed"; return 1; }
+            security unlock-keychain -p testpass "$kc" || { echo "unlock failed"; return 1; }
+            security import "$2" -k "$kc" -P test -T /usr/bin/codesign -f pkcs12 || { echo "import failed"; return 1; }
+            security set-key-partition-list -S "$PARTITIONS" -s -k testpass "$kc" >/dev/null 2>&1 || { echo "partition failed"; return 1; }
+            echo "$kc"
+          }
+
+          sign() {
+            local tag="$1" identity="$2" keychain="$3"
+            cp /usr/bin/true "$work/target-$tag.bin"
+            echo "=== $tag ==="
+            security find-identity -p codesigning "$keychain" | sed -n '1,8p'
+            perl -e 'alarm shift; exec @ARGV' 120 codesign --force --options runtime --sign "$identity" --keychain "$keychain" --entitlements Host.entitlements "$work/target-$tag.bin" 2>&1
+            echo "sign_rc=$?"
+            codesign --verify --strict "$work/target-$tag.bin" 2>&1; echo "verify_rc=$?"
+          }
+
+          orig=$(security list-keychains -d user | tr -d ' "')
+          restore() { security list-keychains -d user -s $orig; }
+
+          PARTITIONS="apple-tool:,apple:"
+          kc=$(make_kc "$work/a" two.p12) && security list-keychains -d user -s "$kc" $orig
+          sign "A-two-level-gate-partitions" "Diag Leaf" "$kc"
+          restore
+
+          PARTITIONS="apple-tool:,apple:,codesign:"
+          kc=$(make_kc "$work/b" two.p12) && security list-keychains -d user -s "$kc" $orig
+          sign "B-two-level-codesign-partition" "Diag Leaf" "$kc"
+          restore
+
+          PARTITIONS="apple-tool:,apple:"
+          kc=$(make_kc "$work/d" solo.p12) && security list-keychains -d user -s "$kc" $orig
+          sign "D-single-self-signed" "Diag Solo" "$kc"
+          restore
+
+          PARTITIONS="apple-tool:,apple:"
+          kc=$(make_kc "$work/e" two.p12) && security list-keychains -d user -s "$kc" $orig
+          echo "=== E-two-level-no-search-list ==="
+          restore
+          cp /usr/bin/true "$work/target-e.bin"
+          perl -e 'alarm shift; exec @ARGV' 120 codesign --force --options runtime --sign "Diag Leaf" --keychain "$kc" --entitlements Host.entitlements "$work/target-e.bin" 2>&1
+          echo "sign_rc=$?"
+          echo "=== done ==="
