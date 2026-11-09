@@ -15,20 +15,22 @@ Create these labels with exactly these names (case and spaces included):
 
 | Label | Meaning |
 |---|---|
-| `windows-installer-build` | Build the Windows **DEBUG / NOT FOR RELEASE** installer for the pull request. |
-| `mac-installer-build` | Build the macOS **DEBUG / NOT FOR RELEASE** DMG for the pull request. |
+| `build-windows-installer` | Build the Windows **DEBUG / NOT FOR RELEASE** installer for the pull request. |
+| `build-macos-installer` | Build the macOS **DEBUG / NOT FOR RELEASE** DMG for the pull request. |
 
 `build-pr-installers.yml` re-evaluates the current label set on every reviewed
 `pull_request` event, so adding or removing a label selects or deselects that platform.
 Both labels select both builds; neither label selects nothing.
 
-The `release-build` label is **unrelated** to native installers. It still runs the
-Android/web/Rust/supply-chain component graph in `release-build.yml`; that caller no
-longer builds native installers. Do not use it to request an installer.
+The `build-android` and `build-web-extension` labels are **unrelated** to native installers:
+they select the unsigned component builds in `release-build.yml`, which never builds native
+installers (`build-watch` is reserved and builds nothing yet). The earlier installer labels
+`windows-installer-build` / `mac-installer-build` are retired and trigger nothing.
 
-Signed release installers are not selected by a label. They are dispatched manually by
-`raidenyn` on `master` with the `platform` input (`windows`, `macos` or `both`; default
-`windows`).
+Signed release installers are not selected by a label. They are built and signed by the
+owner-only `publish-release.yml` (dispatched by `raidenyn` on `master`, no inputs) whenever
+the installer component has releasable changes; both platforms are always built and signed
+together. See `docs/releasing.md`.
 
 ## 2. Debug approval environment: `native-installer-debug`
 
@@ -139,7 +141,7 @@ No secret values belong in this repository, in workflow files or in documentatio
 ## 5. Dispatch authorization is not an ACL
 
 GitHub has no per-workflow dispatch ACL. The repository cannot prevent another writer
-from **requesting** a `release-native-installers` run. The `guard` job rejects any request
+from **requesting** a `publish-release` run. The `guard` job rejects any request
 that is not all of:
 
 - event `workflow_dispatch`;
@@ -176,11 +178,12 @@ reads them.
 
 After the owner applies the settings, verify without publishing:
 
-- `release-build.yml` still runs Android on an ordinary `master` push and the
-  Android/web/Rust/supply-chain graph for a `release-build` label; it runs no native job.
+- `release-build.yml` builds only the changed release components on an ordinary `master` push
+  and the labeled components (`build-android`, `build-web-extension`) on a pull request; it runs
+  no native job.
 - A pull request with no installer label runs no installer builder.
-- A pull request with `windows-installer-build` waits for `native-installer-debug`
-  approval and builds only the Windows debug installer; `mac-installer-build` does the
+- A pull request with `build-windows-installer` waits for `native-installer-debug`
+  approval and builds only the Windows debug installer; `build-macos-installer` does the
   same for macOS; both labels build both.
 - A non-master or non-owner release dispatch fails in `guard` before checkout or build.
 - The release gate reports `windows: PASS|BLOCKED` and/or `macos: PASS|BLOCKED` for the

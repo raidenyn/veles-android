@@ -38,12 +38,13 @@ Everything Veles does happens locally, inside the Android NotificationListenerSe
 
 ### Verify your download
 
-Every release is built once by CI, attested, and published with a `SHA256SUMS`
-manifest covering the APK and its mapping. You can verify what you downloaded
+Each combined GitHub Release (tagged by date, `YYYY.MM.DD`) is built once by CI, attested, and
+published with a `release-manifest.json` and a `SHA256SUMS` manifest covering the APK, its
+mapping, the web extension and the native installers. You can verify what you downloaded
 in seconds:
 
 ```
-gh attestation verify veles-X.Y.Z.apk --repo raidenyn/veles-android
+gh attestation verify veles-android-X.Y.Z.apk --repo raidenyn/veles-android
 ```
 
 ## Requirements
@@ -71,6 +72,19 @@ For a release build:
 ```bash
 ./gradlew assembleRelease
 ```
+
+## Commits and releases
+
+Commit messages and pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/)
+(`feat:`, `fix:`, `feat!:` ...). Pull requests are squash-merged, so the PR title and body become the
+commit. Enable the local `commit-msg` hook with `./gradlew installGitHooks` (it also runs as part of
+`:app:preBuild`); CI enforces the same rules with the required `pr-title` check.
+
+The Android app, the web extension and the native installers are versioned independently (tags
+`android-v*`, `web-extension-v*`, `installer-v*`) from those commits. The repository owner publishes a
+combined GitHub Release tagged by date from the `publish-release` workflow. See
+[docs/ci.md](docs/ci.md) for the CI layout and [docs/releasing.md](docs/releasing.md) for versioning and
+the release runbook.
 
 ## OTP external-device toolchains
 

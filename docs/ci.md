@@ -58,13 +58,13 @@ What each check runs:
 | `installer / scripts-tests` | `bridgeInstallerScriptsTest` (all installer Python suites, including its `test_build_contract.py`) |
 | `bridge-scaffold / lint` | `bridgeFormat`, `bridgeLint`, `bridgeTypecheck`, `bridgeRustFormat`, `bridgeRustLint` |
 | `bridge-scaffold / unit-tests` | `bridgeNpmTest`, `bridgeRustTest` |
-| `supply-chain / build` | `verify/verify-supply-chain.sh` and the report upload (`build-supply-chain.yml`, shared with `release-build.yml`) |
+| `supply-chain / build` | `verify/verify-supply-chain.sh` and the report upload (`build-supply-chain.yml`, shared with `publish-release.yml`) |
 | `tooling / unit-tests` | `node --test verify/test/workflow-contracts.test.mjs`, `./gradlew scriptsTest` |
 
 Each command that ran in CI before the split runs in exactly one check workflow. The workflow contract
 suite (`verify/test/workflow-contracts.test.mjs`) holds that inventory and fails if a command is lost or
 duplicated. CI checks never upload a release APK or an extension zip: those come only from label-driven PR
-builds and master builds in `release-build.yml`.
+builds and changed-only master builds in `release-build.yml`; signed products come only from `publish-release.yml` (`docs/releasing.md`).
 
 ## Node selection
 

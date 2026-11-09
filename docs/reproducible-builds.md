@@ -20,7 +20,7 @@ paths below are opt-in diagnostics you can run yourself.
 ## Path 1 — attestation (seconds)
 
 ```bash
-gh attestation verify veles-X.Y.Z.apk --repo raidenyn/veles-android
+gh attestation verify veles-android-X.Y.Z.apk --repo raidenyn/veles-android
 ```
 
 Requires the [GitHub CLI](https://cli.github.com/). Output ends with
@@ -31,8 +31,8 @@ Requires the [GitHub CLI](https://cli.github.com/). Output ends with
 ```bash
 git clone https://github.com/raidenyn/veles-android
 cd veles-android
-git checkout X.Y.Z         # IMPORTANT: verify from the tag you are verifying
-verify/verify.sh /path/to/veles-X.Y.Z.apk X.Y.Z
+git checkout android-vX.Y.Z   # IMPORTANT: verify from the tag you are verifying
+verify/verify.sh /path/to/veles-android-X.Y.Z.apk android-vX.Y.Z
 ```
 
 The script builds a pinned reference environment (exact JDK, Android SDK,
@@ -166,8 +166,8 @@ with component checksums) and one optional local verifier:
 | Android APK | `./gradlew assembleRelease` in `build-android.yml`; artifact `android-release` = actual APK + `mapping.txt` + `SHA256SUMS` | `verify/verify.sh <apk> <ref>` (Docker rebuild + signature-stripped compare) | `build/verification/android/app-release-unsigned.apk` |
 | Web-extension | `npm run package` in `build-web-extension.yml`; artifact `web-extension` = ZIP + sidecar + `SHA256SUMS` | `verify/verify-web.sh` (candidate/reference byte compare) | `build/web-extension/{veles-extension-<version>.zip,.zip.sha256,SHA256SUMS}` |
 | Rust JNI/WASM | `./gradlew rustPackage` in `build-rust.yml`; artifact `rust-jni-wasm` | `verify/verify-rust.sh` (candidate/reference byte compare) | `build/rust-package/{jni,wasm,SHA256SUMS}` |
-| Native Windows | OTP-25: `bridgeInstallerUnsigned` **once** on `windows-2025` in `build-native-windows.yml`; it builds slots a and b in separate target directories; artifact `native-release-windows-<run>-<attempt>` = `tree.tar` + `provenance.json` + `report-ab.json` + `SHA256SUMS` | the protected `release-native-installers.yml` verifies that same run's A/B report before signing; the debug path uses `bridgeInstallerDebug` and needs no A/B | `build/native-bridge/installer/{target,slots,out}/` |
-| Native macOS | OTP-25: same release shape on `macos-26` under the pinned Xcode in `build-native-macos.yml`; artifact `native-release-macos-<run>-<attempt>` | the protected `release-native-installers.yml` verifies that same run's A/B report before signing; the debug path uses `bridgeInstallerDebug` and needs no A/B | `build/native-bridge/installer/{target,slots,out}/` |
+| Native Windows | OTP-25: `bridgeInstallerUnsigned` **once** on `windows-2025` in `build-native-windows.yml`; it builds slots a and b in separate target directories; artifact `native-release-windows-<run>-<attempt>` = `tree.tar` + `provenance.json` + `report-ab.json` + `SHA256SUMS` | `publish-release.yml` verifies that same run's A/B report before signing; the debug path uses `bridgeInstallerDebug` and needs no A/B | `build/native-bridge/installer/{target,slots,out}/` |
+| Native macOS | OTP-25: same release shape on `macos-26` under the pinned Xcode in `build-native-macos.yml`; artifact `native-release-macos-<run>-<attempt>` | `publish-release.yml` verifies that same run's A/B report before signing; the debug path uses `bridgeInstallerDebug` and needs no A/B | `build/native-bridge/installer/{target,slots,out}/` |
 | Supply chain | `verify/verify-supply-chain.sh` in `build-supply-chain.yml` (policy enforcement runs in CI); artifact `supply-chain-reports` | same script locally | `build/sbom/*.cdx.json`, `build/verification/supply-chain/*.txt` |
 
 #### What the native comparison actually proves
@@ -565,12 +565,11 @@ skipping any step can silently break reproducibility.
    The Docker-based verifiers (`verify.sh`, `verify-web.sh`, `verify-rust.sh`)
    require Docker; the native verifier requires two pre-built run directories.
 6. **Run the complete component graph before merging.** A pull request carrying the
-   `release-build` label, or a manual `workflow_dispatch` from `master`, runs the
-   Android/web/Rust/supply-chain component graph and the supply-chain policy checks; it
-   no longer builds native installers. Native **debug** installers use the
-   `windows-installer-build` / `mac-installer-build` labels. Signed **release** native
-   installers use the owner-only `release-native-installers.yml` dispatch from `master`
-   with the `platform` selection, which verifies the same run's release A/B report before
+   `build-android` / `build-web-extension` labels builds those components (unsigned), and
+   `ci.yml` runs the supply-chain policy checks; neither builds native installers. Native
+   **debug** installers use the `build-windows-installer` / `build-macos-installer` labels.
+   Signed **release** native installers come only from the owner-only `publish-release.yml`
+   dispatch from `master`, which verifies the same run's release A/B report before
    signing. These producers plus the optional local verifiers from step 5 are the
    determinism evidence: publication itself no longer gates on a reproducibility
    comparison, so a tool that breaks determinism shows up in step 5's local comparison
@@ -585,13 +584,13 @@ selecting a default.
 
 ## Caveats
 
-- Verification targets **tags**, not arbitrary commits (except pre-merge local
+- Verification targets **tags** (for the Android APK, `android-v<semver>`), not arbitrary commits (except pre-merge local
   verification, which may pass `HEAD`).
 - Verify a release with the `verify/` toolkit **from that release's tag** — each
   tag carries the exact pins used to build it, so old releases stay verifiable
   after later toolchain upgrades.
 - The rebuild clones with full history: `versionCode`/`versionName` come from git
-  tags via the androidgitversion plugin.
+  tags (`android-v*`) via the androidgitversion plugin.
 - Dependencies are downloaded during the rebuild, so Android verification needs
   network access (its reference build clones and `./gradlew assembleRelease` with
   networking — see "Offline acquisition and package boundary" above). Web and
@@ -626,7 +625,7 @@ reused), with the checkout and cargo-registry paths remapped (`--remap-path-pref
 clean Windows has no `vcruntime140.dll`, and the outside-root cleanup helper is staged into a temp directory by
 itself, so an adjacent DLL copy would not follow it. The slots are compared with Task 9's inventory comparison and the producer publishes nothing
 but a FAIL report if they differ. Release still requires that A/B report: the owner-only
-`release-native-installers.yml` verifies the **same run's** producer A/B report and provenance before importing a
+`publish-release.yml` verifies the **same run's** producer A/B report and provenance before importing a
 key; it no longer downloads or compares two separate producer runs. The debug PR path builds one slot with
 `bridgeInstallerDebug` and does not require release A/B.
 

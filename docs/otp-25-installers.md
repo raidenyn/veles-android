@@ -29,7 +29,7 @@ no Windows or macOS walkthrough has been performed. The recorded matrix
   cannot observe a machine. Acceptance is the owner's separate decision after independent
   adjudication of real evidence.
 
-A green native release run (per-platform `PASS` from `release-native-installers.yml`) means
+A green native release run (per-platform `PASS` from the `gate-installer` job of `publish-release.yml`) means
 the selected platform built, signed and passed the internal verification gate in that run.
 It is **not** acceptance-matrix completion and does not change any row above. A Windows-only
 run may succeed as a signed Windows candidate while macOS and all 32 physical cases remain
@@ -150,22 +150,23 @@ recovery assets.
   fixture packages that cannot register the production host.
 * Checks: `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
   bridgeInstallerScriptsTest`. Native producers, signing and notarization run only on
-  Windows/macOS runners and the protected `release-native-installers.yml`.
-* **Debug installers (pull requests).** Add the label `windows-installer-build` and/or
-  `mac-installer-build`. A `raidenyn` approval of the secret-free
+  Windows/macOS runners and the owner-only `publish-release.yml`.
+* **Debug installers (pull requests).** Add the label `build-windows-installer` and/or
+  `build-macos-installer`. A `raidenyn` approval of the secret-free
   `native-installer-debug` environment precedes any PR-controlled build; the builders
   compile the exact PR head SHA in debug configuration. Output is
   **DEBUG / NOT FOR RELEASE** and does not require release A/B reproducibility.
 * **Signed release installers (owner-only).** Dispatch
-  `release-native-installers.yml` manually from `master`, choosing `platform` =
-  `windows`, `macos` or `both` (default `windows`). One protected `native-release` job
-  per selected platform performs nested signing, assembly, outer signing and
-  verification over inputs produced and verified in the same run. There is no release
-  tag, manually supplied descriptor digest, external producer run ID or
-  `release-build` label in this path. Owner setup, labels, environments and the secret
+  `publish-release.yml` manually from `master` (no inputs). When the installer component
+  has releasable changes (`installer-v<semver>`, versioned from Conventional Commits, see
+  `docs/releasing.md`), one protected `native-release` job per platform (both are always
+  built and signed together) performs nested signing, assembly, outer signing and
+  verification over inputs produced and verified in the same run. There is no manually
+  supplied descriptor digest, external producer run ID or build label in this path; the
+  `installer-v*` tag is pushed only at the final `release-publish` step. Owner setup, labels, environments and the secret
   audit are in `docs/native-installer-owner-setup.md`.
-* `release-build.yml` still builds Android, web, Rust and supply-chain components; it no
-  longer builds or gates native installers.
+* `release-build.yml` builds only the Android, web and Rust components (by PR label, or changed-only
+  on master); it never builds or gates native installers.
 
 ### Provenance and clocks
 
