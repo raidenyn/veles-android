@@ -187,6 +187,7 @@ class PlannerTest(unittest.TestCase):
         with self.assertRaises(PlanError) as ctx:
             make_plan(repo.path, repo.cmap(), TODAY, ["2026.11.09"], ALL_010, cliff_path())
         self.assertIn("android", str(ctx.exception))
+        self.assertIn("docs/releasing.md", str(ctx.exception))
 
     def test_unrelated_and_prerelease_tags_are_ignored(self):
         repo = tagged(self)

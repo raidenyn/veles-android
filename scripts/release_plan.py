@@ -207,8 +207,8 @@ def make_plan(
             listed = str(previous[name].get("version", ""))
             if current is None or _semver(current) < _semver(listed):
                 raise PlanError(
-                    "%s: the previous combined release lists %s but no %s%s tag is reachable from HEAD"
-                    % (name, listed, prefix, listed)
+                    "%s: the previous combined release lists %s but no %s%s tag is reachable from HEAD; see %s"
+                    % (name, listed, prefix, listed, RUNBOOK)
                 )
             if _semver(current) > _semver(listed):
                 raise PlanError(
