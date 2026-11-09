@@ -66,6 +66,9 @@ MAC_PUBLISHER = "sha256:" + hashlib.sha256(MAC_LEAF).hexdigest()
 TEAM = "TEAMID1234"
 MAC_IDENTITY = f"Developer ID Application: Veles Test ({TEAM})"
 SECRET_VALUES = ("hunter2-pfx-password", "p12-secret-password", "notary-key-secret-bytes")
+# The user keychain search list a signing stage starts from; the gate must add its ephemeral
+# keychain to it and put exactly this list back.
+DEFAULT_KEYCHAIN_LIST = ("/Users/fake/Library/Keychains/login.keychain-db", "/Library/Keychains/System.keychain")
 WORKFLOW = REPO / ".github" / "workflows" / "release-native-installers.yml"
 TARGET = {"windows": "windows-x86_64", "macos": "macos-arm64"}
 PLATFORM_OTHER = {"windows": "macos", "macos": "windows"}
@@ -188,7 +191,7 @@ class FakeRunner:
     """
 
     def __init__(self, env, *, fail_at=None, corr=None, notary_status="Accepted", staple_ok=True, app_source=None, spctl_text=None,
-                 leaf_der=FAKE_DER, signed_leaf_sha1=THUMB):
+                 leaf_der=FAKE_DER, signed_leaf_sha1=THUMB, keychain_list=DEFAULT_KEYCHAIN_LIST):
         self.env = dict(env)
         self.leaf_der = leaf_der
         self.signed_leaf_sha1 = signed_leaf_sha1
@@ -197,6 +200,8 @@ class FakeRunner:
         self.notary_status = notary_status
         self.staple_ok = staple_ok
         self.app_source = app_source
+        # The user keychain search list, exactly what ``security list-keychains -d user`` reports.
+        self.keychain_list = list(keychain_list)
         self.spctl_text = spctl_text or "accepted\nsource=Notarized Developer ID\n"
         self.calls: list[tuple] = []
         self.views: dict[str, dict] = {}
@@ -291,6 +296,12 @@ class FakeRunner:
 
     # -- macOS ---------------------------------------------------------------
     def tool_security(self, args):
+        if args == ["list-keychains", "-d", "user"]:
+            # What the tool prints: one quoted path per line, indented.
+            return RunResult(0, "".join(f'    "{path}"\n' for path in self.keychain_list))
+        if args[:4] == ["list-keychains", "-d", "user", "-s"]:
+            self.keychain_list = list(args[4:])
+            return RunResult(0, "".join(f'    "{path}"\n' for path in self.keychain_list))
         return RunResult(0, "")
 
     def tool_codesign(self, args):
@@ -337,6 +348,25 @@ class FakeRunner:
             self.dmg_root_entries = sorted(p.name for p in self.dmg_root.iterdir())
             Path(args[-1]).write_bytes(b"dmg-bytes")
         return RunResult(0, "")
+
+
+class Failing(FakeRunner):
+    """Fails the first command matching ``match`` with tool output, and keeps the argv as passed.
+
+    Real tools print the diagnostic a failure detail has to carry (or must never carry); this
+    subclass gives them a voice without changing any other behaviour of the fake toolchain.
+    """
+
+    def __init__(self, env, *, match, output, **kwargs):
+        super().__init__(env, **kwargs)
+        self.match, self.output, self.failed = match, output, None
+
+    def __call__(self, argv, *, capture=False):
+        if self.failed is None and self.match(" ".join(self.flat(argv))):
+            self.failed = list(argv)
+            self.calls.append(tuple(f"${a.name}" if isinstance(a, EnvRef) else str(a) for a in argv))
+            return RunResult(1, self.output)
+        return super().__call__(argv, capture=capture)
 
 
 # ---------------------------------------------------------------------------
@@ -1064,6 +1094,180 @@ class OrchestrationShapeTests(unittest.TestCase):
         _, outcome = case.run(Other(case.env))
         self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
         self.assertEqual(leftovers(case), [])
+
+
+class MacosKeychainSearchListTests(unittest.TestCase):
+    """``codesign --keychain`` does not make an identity resolvable: codesign resolves identities
+    through the user keychain search list, so the stage must put its ephemeral keychain there and
+    put the exact previous list back before deleting the keychain.
+    """
+
+    #: Paths with an embedded space prove the list parse trims quotes but keeps the path intact.
+    PREVIOUS = ("/Users/fake user/Library/Keychains/login.keychain-db", "/Library/Keychains/System.keychain")
+
+    @staticmethod
+    def reads(runner):
+        return [i for i, c in enumerate(runner.calls) if c == ("security", "list-keychains", "-d", "user")]
+
+    @staticmethod
+    def sets(runner, first):
+        return [i for i, c in enumerate(runner.calls) if c[:5] == ("security", "list-keychains", "-d", "user", "-s") and c[5] == first]
+
+    def test_the_ephemeral_keychain_is_added_to_the_search_list_before_the_first_sign(self) -> None:
+        case = Case(self, "macos", "nested")
+        runner, outcome = case.run(case.runner(keychain_list=self.PREVIOUS))
+        self.assertTrue(outcome.ok, outcome.detail)
+        reads = self.reads(runner)
+        self.assertEqual(len(reads), 1, "the previous list is read exactly once")
+        adds = [i for i, c in enumerate(runner.calls) if c[:5] == ("security", "list-keychains", "-d", "user", "-s") and "veles-signing" in c[5]]
+        self.assertEqual(len(adds), 1, "the ephemeral keychain is added exactly once")
+        added = runner.calls[adds[0]]
+        self.assertTrue(added[5].endswith("veles-signing.keychain-db"))
+        self.assertEqual(added[6:], self.PREVIOUS, "the previous list follows, in order, with the quotes trimmed")
+        first_sign = next(i for i, c in enumerate(runner.calls) if Path(c[0]).stem == "codesign" and "--sign" in c)
+        self.assertLess(reads[0], adds[0], "the list is read before it is extended")
+        self.assertLess(adds[0], first_sign, "the search list is extended before the first sign")
+        # Cleanup restores the exact previous list, and the restore runs before the keychain is deleted.
+        restores = self.sets(runner, self.PREVIOUS[0])
+        self.assertEqual(len(restores), 1, "the previous list is restored exactly once")
+        self.assertEqual(runner.calls[restores[0]][5:], self.PREVIOUS)
+        deletes = [i for i, c in enumerate(runner.calls) if "delete-keychain" in c]
+        self.assertEqual(len(deletes), 1)
+        self.assertLess(restores[0], deletes[0], "undo runs in reverse registration order: restore, then delete")
+        self.assertGreater(restores[0], first_sign, "the restore happens in cleanup, not before signing")
+        self.assertGreater(deletes[0], restores[0])
+        self.assertEqual(runner.keychain_list, list(self.PREVIOUS), "no trace of the ephemeral keychain is left in the search list")
+
+    def test_the_previous_list_is_restored_even_when_signing_fails(self) -> None:
+        case = Case(self, "macos", "nested")
+        runner = case.runner(fail_at=lambda text: text.startswith("codesign --force"))
+        _, outcome = case.run(runner)
+        self.assertEqual((outcome.ok, outcome.code), (False, "sign-failed"))
+        self.assertEqual(outcome.cleanup_failures, [])
+        restores = self.sets(runner, DEFAULT_KEYCHAIN_LIST[0])
+        self.assertEqual(len(restores), 1, "a failure after the add still restores the list")
+        self.assertEqual(runner.calls[restores[0]][5:], DEFAULT_KEYCHAIN_LIST)
+        deletes = [i for i, c in enumerate(runner.calls) if "delete-keychain" in c]
+        self.assertEqual(len(deletes), 1, "the keychain is still deleted")
+        self.assertLess(restores[0], deletes[0])
+        self.assertEqual(runner.keychain_list, list(DEFAULT_KEYCHAIN_LIST))
+        self.assertEqual(leftovers(case), [])
+
+    def test_a_failed_search_list_write_is_still_restored(self) -> None:
+        # The restore is registered before the write, so a setter that changes state and then fails
+        # (or times out) is still undone.
+        case = Case(self, "macos", "nested")
+        runner = Failing(
+            case.env,
+            match=lambda text: "list-keychains -d user -s" in text and "veles-signing.keychain-db" in text,
+            output="",
+        )
+        _, outcome = case.run(runner)
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        restores = self.sets(runner, DEFAULT_KEYCHAIN_LIST[0])
+        self.assertEqual(len(restores), 1, "a failed write still restores the previous list")
+        self.assertEqual(runner.calls[restores[0]][5:], DEFAULT_KEYCHAIN_LIST)
+        self.assertEqual(runner.keychain_list, list(DEFAULT_KEYCHAIN_LIST))
+        self.assertEqual(outcome.cleanup_failures, [])
+        self.assertFalse([c for c in runner.calls if Path(c[0]).stem == "codesign" and "--sign" in c])
+
+    def test_a_search_list_line_that_is_not_one_quoted_path_is_refused(self) -> None:
+        # The list is restored exactly; an entry the parse invented would change the user's state.
+        class Unquoted(FakeRunner):
+            def tool_security(self, args):
+                if args == ["list-keychains", "-d", "user"]:
+                    return RunResult(0, "    /Users/fake/Library/Keychains/login.keychain-db\n")
+                return super().tool_security(args)
+
+        case = Case(self, "macos", "nested")
+        runner, outcome = case.run(Unquoted(case.env))
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        self.assertIn("not one quoted keychain path", outcome.detail)
+        self.assertEqual([c for c in runner.calls if c[:5] == ("security", "list-keychains", "-d", "user", "-s")], [])
+        self.assertFalse([c for c in runner.calls if Path(c[0]).stem == "codesign" and "--sign" in c])
+
+    def test_an_empty_user_search_list_refuses_the_stage_instead_of_fabricating_an_entry(self) -> None:
+        # ``security list-keychains -d user -s`` with no filenames is not a reliable way to restore an
+        # empty list, and inventing a default path would change the user's state. An empty list is a
+        # broken signing environment: refuse it before signing, after undoing the keychain creation.
+        case = Case(self, "macos", "nested")
+        runner, outcome = case.run(case.runner(keychain_list=()))
+        self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+        self.assertIn("keychain search list is empty", outcome.detail)
+        writes = [c for c in runner.calls if c[:5] == ("security", "list-keychains", "-d", "user", "-s")]
+        self.assertEqual(writes, [], "nothing is written into an empty list")
+        self.assertFalse([c for c in runner.calls if Path(c[0]).stem == "codesign" and "--sign" in c], "no signing without a resolvable identity")
+        self.assertEqual(len(self.reads(runner)), 1, "an empty list is read like any other")
+        self.assertEqual(
+            len([c for c in runner.calls if "delete-keychain" in c]),
+            1,
+            "the keychain created before the check is still deleted",
+        )
+        self.assertEqual(leftovers(case), [])
+
+
+class StageFailureDiagnosticsTests(unittest.TestCase):
+    """A failing tool's own diagnostic is what makes a BLOCKED record actionable - for codesign only."""
+
+    CODESIGN_OUTPUT = (
+        "Veles Native Bridge.app/Contents/MacOS/veles-native-host: replacing existing signature\n"
+        "Veles Native Bridge.app/Contents/MacOS/veles-native-host: errSecInternalComponent\n"
+        "no identity found\n\n"
+    )
+
+    def test_a_failing_codesign_reports_a_bounded_single_line_tail_of_its_output(self) -> None:
+        case = Case(self, "macos", "nested")
+        runner = Failing(case.env, match=lambda text: text.startswith("codesign --force"), output=self.CODESIGN_OUTPUT)
+        _, outcome = case.run(runner)
+        self.assertEqual((outcome.ok, outcome.code), (False, "sign-failed"))
+        self.assertIn("codesign exited 1", outcome.detail)
+        self.assertIn("$VELES_MAC_IDENTITY", outcome.detail, "the identity stays an EnvRef")
+        self.assertIn("errSecInternalComponent", outcome.detail)
+        self.assertIn("no identity found", outcome.detail)
+        self.assertNotIn("\n", outcome.detail, "the tail is collapsed to one line")
+        self.assertLessEqual(len(outcome.detail), 600, "the detail stays bounded")
+        # A flood of output cannot inflate the record either.
+        case = Case(self, "macos", "nested")
+        runner = Failing(case.env, match=lambda text: text.startswith("codesign --force"), output="x" * 5000 + "\n")
+        _, outcome = case.run(runner)
+        self.assertLessEqual(len(outcome.detail), 600)
+        self.assertLessEqual(len(outcome.detail.split("; output: ", 1)[-1]), 300, "only the bounded tail is appended")
+
+    def test_terminal_control_characters_in_the_tail_are_neutralised(self) -> None:
+        case = Case(self, "macos", "nested")
+        runner = Failing(
+            case.env,
+            match=lambda text: text.startswith("codesign --force"),
+            output="\x1b[31mred\x1b[0m\x00back\x08space\x07\nok\n",
+        )
+        _, outcome = case.run(runner)
+        self.assertEqual((outcome.ok, outcome.code), (False, "sign-failed"))
+        self.assertIn("red", outcome.detail)
+        self.assertIn("back", outcome.detail)
+        self.assertTrue(
+            all(character.isprintable() or character == " " for character in outcome.detail),
+            "a tool's output must not be able to forge or erase the surrounding record",
+        )
+        self.assertNotIn("\x1b", outcome.detail)
+
+    def test_no_other_tool_adds_its_output_to_the_failure_detail(self) -> None:
+        marker = "TOOL-OUTPUT-MUST-NOT-APPEAR"
+        for platform, match in (
+            ("windows", lambda text: text.startswith("certutil") and "-store" in text and "-importPFX" not in text),
+            ("macos", lambda text: "set-key-partition-list" in text),
+        ):
+            with self.subTest(platform=platform):
+                case = Case(self, platform, "nested")
+                runner = Failing(case.env, match=match, output=marker)
+                _, outcome = case.run(runner)
+                self.assertEqual((outcome.ok, outcome.code), (False, "credential-import-failed"))
+                self.assertIsNotNone(runner.failed)
+                self.assertEqual(
+                    outcome.detail,
+                    f"{Path(str(runner.failed[0])).stem} exited 1: {gate._shown(runner.failed)}",
+                    "the detail is the tool line only",
+                )
+                self.assertNotIn(marker, outcome.detail)
 
 
 class WindowsSignerIdentityTests(unittest.TestCase):
@@ -2014,6 +2218,76 @@ class DescriptorSetDigestTests(unittest.TestCase):
             with self.subTest(function=bad):
                 with self.assertRaises(ValueError):
                     gate.descriptor_set_digest(bad)
+
+
+class RecipeDigestTests(unittest.TestCase):
+    """The recipe digest names the recipe, not the line endings of the checkout that computed it.
+
+    ``verify-inputs`` runs on an ubuntu runner and the signing jobs run on Windows and macOS runners.
+    Git stores these text recipes with LF but checks them out with CRLF on Windows (``core.autocrlf``),
+    and a boundary's recipe digest is compared across those jobs on the same commit, so the digest
+    must be computed over the same bytes on every OS.
+    """
+
+    def copies(self, platform: str) -> tuple[Path, Path]:
+        """Two temp copies of a recipe set: the LF bytes as stored, and the CRLF bytes a Windows checkout has."""
+        root = Path(tempfile.mkdtemp(prefix="recipe-digest-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        stored, converted = root / "stored", root / "converted"
+        for rel in gate.RECIPE_FILES[platform]:
+            data = (gate.INSTALLER_DIR / rel).read_bytes()
+            self.assertNotIn(b"\r", data, f"{rel} is checked out with CRLF here; this fixture assumes the LF bytes")
+            write(stored, rel, data)
+            write(converted, rel, data.replace(b"\n", b"\r\n"))
+        return stored, converted
+
+    def test_a_crlf_checkout_hashes_like_the_lf_checkout(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            with self.subTest(platform=platform):
+                stored, converted = self.copies(platform)
+                expected = gate.recipe_digest(gate.INSTALLER_DIR, platform)
+                self.assertEqual(gate.recipe_digest(stored, platform), expected)
+                self.assertEqual(gate.recipe_digest(converted, platform), expected)
+
+    def test_a_real_content_change_still_changes_the_digest(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            with self.subTest(platform=platform):
+                stored, _ = self.copies(platform)
+                before = gate.recipe_digest(stored, platform)
+                path = stored / gate.RECIPE_FILES[platform][0]
+                data = path.read_bytes()
+                middle = len(data) // 2
+                path.write_bytes(data[:middle] + b"x" + data[middle:])
+                self.assertNotEqual(gate.recipe_digest(stored, platform), before)
+
+    def test_a_lone_carriage_return_still_changes_the_digest(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            with self.subTest(platform=platform):
+                stored, _ = self.copies(platform)
+                before = gate.recipe_digest(stored, platform)
+                path = stored / gate.RECIPE_FILES[platform][-1]
+                path.write_bytes(path.read_bytes() + b"\r")
+                self.assertNotEqual(gate.recipe_digest(stored, platform), before)
+
+    def test_a_missing_or_symlinked_recipe_file_is_refused(self) -> None:
+        for platform in gate.RECIPE_FILES:
+            rel = gate.RECIPE_FILES[platform][0]
+            with self.subTest(platform=platform, defect="missing"):
+                stored, _ = self.copies(platform)
+                (stored / rel).unlink()
+                with self.assertRaises(gate.StageFailure) as caught:
+                    gate.recipe_digest(stored, platform)
+                self.assertEqual(caught.exception.code, "recipe-missing")
+            with self.subTest(platform=platform, defect="symlink"):
+                stored, _ = self.copies(platform)
+                target = stored / rel
+                elsewhere = stored / "elsewhere"
+                elsewhere.write_bytes(target.read_bytes())
+                target.unlink()
+                target.symlink_to(elsewhere)
+                with self.assertRaises(gate.StageFailure) as caught:
+                    gate.recipe_digest(stored, platform)
+                self.assertEqual(caught.exception.code, "recipe-missing")
 
 
 class ToolIdentityBindingTests(unittest.TestCase):

@@ -318,13 +318,25 @@ def descriptor_set_digest(digests: dict[str, str]) -> str:
     return sha256_bytes(canonical_json({"descriptors": dict(sorted(digests.items())), "schema": SCHEMA}))
 
 
+def _recipe_bytes(path: Path) -> bytes:
+    """A recipe file's bytes with CRLF line endings normalized to LF.
+
+    The recipe digest is compared between the Linux ``verify-inputs`` job and the Windows/macOS
+    signing jobs on the same commit, and Git stores these text recipes with LF but checks them out
+    with CRLF on Windows (``core.autocrlf``). Hashing the raw checkout bytes would make a signing
+    job's digest differ from the boundary the verification job recorded. Only CRLF is normalized:
+    a lone CR, or any other content change, still changes the digest.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def recipe_digest(root: Path, platform: str) -> str:
     lines = []
     for rel in RECIPE_FILES[platform]:
         path = root / rel
         if not path.is_file() or path.is_symlink():
             raise StageFailure("recipe-missing", f"recipe file is missing: {rel}")
-        lines.append(f"{rel}\0{sha256_file(path)}\n")
+        lines.append(f"{rel}\0{sha256_bytes(_recipe_bytes(path))}\n")
     return sha256_bytes("".join(lines).encode())
 
 
@@ -849,6 +861,26 @@ def _shown(argv: Sequence[Any]) -> str:
     return " ".join(parts)[:240]
 
 
+# A tool's own diagnostic is what names a failure mode ("no identity found",
+# "errSecInternalComponent"). Only codesign's is copied into a StageFailure: security and certutil
+# print credential-adjacent text, and no record may carry that.
+_DETAIL_OUTPUT_TOOLS = frozenset({"codesign"})
+_DETAIL_OUTPUT_LINES = 3
+_DETAIL_OUTPUT_LIMIT = 300
+
+
+def _output_tail(output: str) -> str:
+    """The last non-empty, whitespace-collapsed lines of a tool's output, bounded for a record.
+
+    Non-printing controls are replaced with spaces: this text can reach a terminal, and a tool's
+    output must not be able to forge or erase the surrounding record (ANSI escapes, NUL, backspace).
+    """
+    printable = "".join(character if character.isprintable() else " " for character in output)
+    lines = [" ".join(line.split()) for line in printable.splitlines()]
+    tail = " | ".join([line for line in lines if line][-_DETAIL_OUTPUT_LINES:])
+    return tail[-_DETAIL_OUTPUT_LIMIT:]
+
+
 # ---------------------------------------------------------------------------
 # Stage machinery
 # ---------------------------------------------------------------------------
@@ -887,7 +919,12 @@ class Stage:
         except Exception as error:  # noqa: BLE001 - a runner that cannot start a tool is a stage failure
             raise StageFailure("tool-error", f"{name} could not be run ({type(error).__name__})") from error
         if result.returncode not in ok_codes:
-            raise StageFailure(what or "tool-failed", f"{name} exited {result.returncode}: {_shown(argv)}")
+            detail = f"{name} exited {result.returncode}: {_shown(argv)}"
+            if name in _DETAIL_OUTPUT_TOOLS:
+                tail = _output_tail(result.output)
+                if tail:
+                    detail = f"{detail}; output: {tail}"
+            raise StageFailure(what or "tool-failed", detail)
         return result
 
     def register_undo(self, label: str, argv: list[Any]) -> None:
@@ -1268,6 +1305,29 @@ def _windows_outer(stage: Stage, policy: dict) -> dict:
 # -- macOS --------------------------------------------------------------------
 
 
+def _keychain_search_list(stage: Stage) -> list[str]:
+    """The user keychain search list, in order, as ``security list-keychains -d user`` prints it.
+
+    The tool prints exactly one double-quoted path per line, indented. Only that one surrounding
+    quote pair is removed; the path itself is kept verbatim (it may contain spaces or quotes). Any
+    other shape is refused rather than guessed: the list is put back exactly, so an entry the parse
+    invented would be a change to the user's state.
+    """
+    output = stage.run(["security", "list-keychains", "-d", "user"], what="credential-import-failed").output
+    entries = []
+    for line in output.splitlines():
+        entry = line.strip()
+        if not entry:
+            continue
+        if len(entry) < 3 or not entry.startswith('"') or not entry.endswith('"') or '"' in entry[1:-1]:
+            raise StageFailure(
+                "credential-import-failed",
+                "security list-keychains printed a line that is not one quoted keychain path",
+            )
+        entries.append(entry[1:-1])
+    return entries
+
+
 def _macos_keychain(stage: Stage) -> Path:
     keydir = stage.private_dir(stage.scratch / "keys")
     p12 = stage.write_secret(keydir / "release.p12", stage.env["VELES_MAC_P12_BASE64"])
@@ -1283,6 +1343,24 @@ def _macos_keychain(stage: Stage) -> Path:
     )
     p12.unlink()
     stage.run(["security", "set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychain], what="credential-import-failed")
+    # ``codesign --keychain`` does not make an identity resolvable by itself: codesign resolves
+    # identities through the user keychain search list, so the ephemeral keychain must be in that
+    # list before the first sign. The previous list is restored exactly, in order - registered
+    # BEFORE the write, so a setter that changes state and then fails is still undone.
+    previous = _keychain_search_list(stage)
+    if not previous:
+        # ``security list-keychains -d user -s`` with no filenames is not a reliable way to put an
+        # empty list back, and naming a default would fabricate an entry the user did not have.
+        # An empty user search list is a signing environment in which no identity resolves: refuse
+        # it, after the keychain-creation undo runs, rather than guess.
+        raise StageFailure(
+            "credential-import-failed",
+            "the user keychain search list is empty; the signing keychain cannot be added to and restored from it",
+        )
+    # Registered after the delete undo: cleanup runs undo in reverse order, so the search list is
+    # restored before the keychain it names is deleted.
+    stage.register_undo("security list-keychains restore", ["security", "list-keychains", "-d", "user", "-s", *previous])
+    stage.run(["security", "list-keychains", "-d", "user", "-s", keychain, *previous], what="credential-import-failed")
     return keychain
 
 
