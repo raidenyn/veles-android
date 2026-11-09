@@ -49,9 +49,9 @@
 
 ## 9. Publish workflow
 
-- [ ] 9.1 `publish-release.yml` (guard, concurrency, plan, supply chain, Android build + `sign-android`, extension build, installer build/verify/sign moved verbatim, `gate-installer`, carry, ready, draft, publish)
-- [ ] 9.2 Delete `release.yml` and `release-native-installers.yml`; retarget `check_gate_boundary`, Node signing tests and `check-remote-code.mjs` scopes in the same commit
-- [ ] 9.3 `docs/releasing.md` with the runbook (bootstrap, orphaned tags, re-running `publish`, rollback) and owner settings
+- [x] 9.1 `publish-release.yml` (guard, concurrency, plan, supply chain, Android build + `sign-android`, extension build, installer build/verify/sign moved verbatim, `gate-installer`, carry, ready, draft, publish)
+- [x] 9.2 Delete `release.yml` and `release-native-installers.yml`; retarget `check_gate_boundary`, Node signing tests and `check-remote-code.mjs` scopes in the same commit
+- [x] 9.3 `docs/releasing.md` with the runbook (bootstrap, orphaned tags, re-running `publish`, rollback) and owner settings
 
 ## 10. Documentation
 
