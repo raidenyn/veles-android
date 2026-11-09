@@ -10,6 +10,7 @@ plugins {
 }
 
 androidGitVersion {
+    prefix = "android-v"
     codeFormat = "MMNNPP"
 }
 
