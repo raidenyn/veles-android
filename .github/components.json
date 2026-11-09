@@ -8,7 +8,9 @@
     "gradle/",
     "gradlew",
     "gradlew.bat",
-    ".java-version",
+    ".java-version"
+  ],
+  "ci-global": [
     ".editorconfig"
   ],
   "unowned": [
@@ -34,7 +36,9 @@
       "paths": [
         "app/",
         "rust/",
-        "protocol/",
+        "protocol/"
+      ],
+      "ci-paths": [
         "config/detekt/"
       ]
     },
@@ -56,7 +60,9 @@
       "paths": [
         "native-bridge/installer/",
         "native-bridge/host/",
-        "protocol/",
+        "protocol/"
+      ],
+      "ci-paths": [
         "rust/scripts/assert-clean.sh",
         "verify/check-cargo-build-scripts.mjs",
         "verify/check-npm-licenses.mjs",

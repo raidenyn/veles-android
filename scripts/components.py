@@ -34,14 +34,18 @@ def load_map(path):
         cmap = json.load(handle)
     if not SHA_RE.match(str(cmap.get("since", ""))):
         raise ValueError("since: must be a full 40-hex commit SHA")
-    for key in ("global", "unowned"):
+    for key in ("global", "ci-global", "unowned"):
         _check_paths(key, cmap.get(key, []))
         cmap.setdefault(key, [])
     nodes = cmap.get("nodes")
     if not isinstance(nodes, dict) or not nodes:
         raise ValueError("nodes: must be a non-empty object")
     for name, node in nodes.items():
+        if not isinstance(node, dict):
+            raise ValueError("%s: node must be an object" % name)
         _check_paths(name, node.get("paths"))
+        if "ci-paths" in node:
+            _check_paths(name + " ci-paths", node["ci-paths"])
         if not isinstance(node.get("release"), bool):
             raise ValueError("%s: 'release' must be true or false" % name)
         if node["release"]:
@@ -65,9 +69,12 @@ def _matches(file, paths):
 
 def owner_nodes(file, cmap):
     """None: global or unaccounted (select all); empty set: unowned."""
-    if _matches(file, cmap["global"]):
+    if _matches(file, cmap["global"]) or _matches(file, cmap["ci-global"]):
         return None
-    owners = {n for n, node in cmap["nodes"].items() if _matches(file, node["paths"])}
+    owners = {
+        n for n, node in cmap["nodes"].items()
+        if _matches(file, node["paths"]) or _matches(file, node.get("ci-paths", []))
+    }
     if owners:
         return owners
     if _matches(file, cmap["unowned"]):
@@ -90,10 +97,15 @@ def affected(files, cmap):
 
 
 def unaccounted(files, cmap):
-    return [f for f in files if owner_nodes(f, cmap) is None and not _matches(f, cmap["global"])]
+    return [
+        f for f in files
+        if owner_nodes(f, cmap) is None
+        and not _matches(f, cmap["global"]) and not _matches(f, cmap["ci-global"])
+    ]
 
 
 def release_paths(node, cmap):
+    """Node paths plus global; never ci-paths or ci-global (CI-only inputs must not cut releases)."""
     out = []
     for p in cmap["nodes"][node]["paths"] + cmap["global"]:
         if p not in out:

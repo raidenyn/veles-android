@@ -80,7 +80,8 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(affected(["protocol/v1/fixtures/crypto.json"], CMAP)["rust"])
         self.assertTrue(affected(["protocol/v1/limits.json"], CMAP)["bridge-scaffold"])
         self.assertTrue(affected(["verify/check-remote-code.mjs"], CMAP)["native-host"])
-        self.assertTrue(affected(["rust/scripts/assert-clean.sh"], CMAP)["installer"])
+        self.assertTrue(affected(["rust/scripts/assert-clean.sh"], CMAP)["installer"])  # via ci-paths
+        self.assertTrue(affected(["config/detekt/detekt.yml"], CMAP)["android"])  # via ci-paths
         self.assertTrue(affected([".license-policy.json"], CMAP)["supply-chain"])
         self.assertTrue(affected(["web-extension/src/connector.ts"], CMAP)["supply-chain"])
 
@@ -107,6 +108,22 @@ class SelectionTest(unittest.TestCase):
         self.assertIn("native-bridge/installer/", release_paths("installer", CMAP))
         self.assertNotIn("app/", release_paths("installer", CMAP))
 
+    def test_ci_paths_never_release(self):
+        rp = release_paths("installer", CMAP)
+        self.assertNotIn("rust/scripts/assert-clean.sh", rp)
+        self.assertFalse([p for p in rp if p.startswith("verify/")])
+        self.assertNotIn("config/detekt/", release_paths("android", CMAP))
+        for n, node in CMAP["nodes"].items():
+            if node["release"]:
+                self.assertNotIn(".editorconfig", release_paths(n, CMAP))
+                for p in node.get("ci-paths", []):
+                    self.assertNotIn(p, release_paths(n, CMAP))
+
+    def test_ci_global_selects_every_node(self):
+        self.assertTrue(all(affected([".editorconfig"], CMAP).values()))
+        self.assertIsNone(owner_nodes(".editorconfig", CMAP))
+        self.assertEqual(unaccounted([".editorconfig"], CMAP), [])
+
 
 class MapValidationTest(unittest.TestCase):
     def test_wildcard_rejected(self):
@@ -122,6 +139,18 @@ class MapValidationTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             load_map(tmp_map(nodes={"android": {"release": True, "paths": ["app/"], "tag-prefix": "android-v"}}))
         self.assertIn("initial-version", str(ctx.exception))
+
+    def test_ci_paths_and_ci_global_reject_wildcards(self):
+        with self.assertRaises(ValueError) as ctx:
+            load_map(tmp_map(nodes={"android": {"release": False, "paths": ["app/"], "ci-paths": ["verify/*.mjs"]}}))
+        self.assertIn("android", str(ctx.exception))
+        self.assertIn("verify/*.mjs", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            load_map(tmp_map(**{"ci-global": ["*.yml"]}))
+
+    def test_node_must_be_object(self):
+        with self.assertRaises(ValueError):
+            load_map(tmp_map(nodes={"android": ["app/"]}))
 
     def test_since_must_be_full_sha(self):
         with self.assertRaises(ValueError):
