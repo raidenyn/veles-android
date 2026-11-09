@@ -8,9 +8,9 @@
 
 ## 2. Commit conventions (local)
 
-- [ ] 2.1 `scripts/commitlint.py` with tests for every commit-conventions scenario (CRLF, `#` lines, git-generated subjects only with `--allow-git-generated`)
-- [ ] 2.2 `.githooks/commit-msg`
-- [ ] 2.3 Root `installGitHooks` task (only when unset, warn otherwise, skip on `CI=true`, configuration-cache safe) wired to `:app:preBuild`; verified in a disposable clone
+- [x] 2.1 `scripts/commitlint.py` with tests for every commit-conventions scenario (CRLF, `#` lines, git-generated subjects only with `--allow-git-generated`)
+- [x] 2.2 `.githooks/commit-msg`
+- [x] 2.3 Root `installGitHooks` task (only when unset, warn otherwise, skip on `CI=true`, configuration-cache safe) wired to `:app:preBuild`; verified in a disposable clone
 
 ## 3. Component map and selection
 
