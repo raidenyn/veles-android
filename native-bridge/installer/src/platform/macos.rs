@@ -85,8 +85,8 @@ use super::{
     CarrierEntry, HostAssessment, HostState, ImageClass, InstallLock, OwnedEntry, OwnedImages,
     PACKAGE_MACOS_CARRIER, PackageKind, PackageSource, PathKind, Platform, ProcessIdentity,
     ProcessImage, ProcessObservation, ProcessScope, ProcessTable, Registration,
-    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TrustProof, ValidatedPath, inspect_host_processes,
-    path_is_within,
+    TRUST_ASSESSMENT_MACOS_GATEKEEPER, TRUST_ASSESSMENT_MACOS_SELF_SIGNED, TrustProof,
+    ValidatedPath, inspect_host_processes, path_is_within,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -132,10 +132,13 @@ type CFTypeRef = *const c_void;
 type CFStringRef = *const c_void;
 type CFURLRef = *const c_void;
 type CFDictionaryRef = *const c_void;
+type CFArrayRef = *const c_void;
+type CFDataRef = *const c_void;
 type SecStaticCodeRef = *const c_void;
 type SecRequirementRef = *const c_void;
 type OSStatus = i32;
 type Boolean = u8;
+type CcLong = u32;
 
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
@@ -159,6 +162,11 @@ unsafe extern "C" {
         encoding: u32,
     ) -> Boolean;
     fn CFStringGetTypeID() -> usize;
+    fn CFArrayGetTypeID() -> usize;
+    fn CFArrayGetCount(array: CFArrayRef) -> isize;
+    fn CFArrayGetValueAtIndex(array: CFArrayRef, index: isize) -> *const c_void;
+    fn CFDataGetLength(data: CFDataRef) -> isize;
+    fn CFDataGetBytePtr(data: CFDataRef) -> *const u8;
     fn CFGetTypeID(value: CFTypeRef) -> usize;
     fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> CFTypeRef;
     fn CFRelease(value: CFTypeRef);
@@ -186,7 +194,17 @@ unsafe extern "C" {
         flags: u32,
         information: *mut CFDictionaryRef,
     ) -> OSStatus;
+    fn SecCertificateCopyData(certificate: CFTypeRef) -> CFDataRef;
     static kSecCodeInfoTeamIdentifier: CFStringRef;
+    static kSecCodeInfoCertificates: CFStringRef;
+}
+
+// CommonCrypto's SHA-1, used only to build Apple's `H"..."` leaf pin. The
+// requirement language has no SHA-256 certificate hash (`H` is exactly 20 bytes),
+// so the SHA-256 publisher stays the policy identity and this digest is derived
+// from the same leaf at verification time.
+unsafe extern "C" {
+    fn CC_SHA1(data: *const c_void, len: CcLong, digest: *mut u8) -> *mut u8;
 }
 
 // `libproc` and `libc` are part of libSystem, which every macOS binary links.
@@ -516,43 +534,68 @@ fn verify_trust_os(
     }
     let static_code = Cf::new(static_code).ok_or_else(unavailable)?;
 
-    let team_id = observed_team_id(&static_code)?;
-    // The requirement may only be built from a Team ID the caller-authorized
-    // release descriptor already allows. Pinning the requirement to a merely
-    // *observed* Team ID would accept any Apple-anchored Developer ID bundle.
-    if !policy::is_authorized_team(&expected.policy.publishers, &team_id) {
+    // Apple-anchored identity first: a Team ID pins the Developer ID leaf through
+    // `anchor apple generic`. A self-signed completion leaf has no Team ID, and a
+    // present-but-unauthorized Team ID is refused rather than downgraded.
+    if let Some(team_id) = observed_team_id(&static_code)? {
+        if !policy::is_authorized_team(&expected.policy.publishers, &team_id) {
+            return Err(trust_denied());
+        }
+        let requirement_text =
+            policy::publisher_requirement(expected.channel, &team_id).ok_or_else(trust_denied)?;
+        let requirement = create_requirement(&requirement_text)?;
+
+        // Strict signature, designated-requirement and resource-envelope
+        // validation. Revocation and expiration checks are enabled, never bypassed.
+        validate(&static_code, &requirement)?;
+        let carrier_bytes = read_carrier_resource(&carrier)?;
+        // Re-validate after reading the resource: any change to the bundle that
+        // happened before or during the read (including a replaced carrier) fails
+        // here. The sealed resource bytes cannot be fetched through a public API,
+        // so this second check is the documented, best-effort binding; the
+        // descriptor equality check in the decision layer bounds the content.
+        validate(&static_code, &requirement)?;
+        check_gatekeeper(carrier.path())?;
+        return TrustProof::new(
+            format!("team:{team_id}"),
+            TRUST_ASSESSMENT_MACOS_GATEKEEPER,
+            carrier_bytes,
+        );
+    }
+
+    // Self-signed completion identity: the policy names the leaf certificate by
+    // SHA-256 and the requirement pins Apple's SHA-1 form of the same leaf.
+    // Gatekeeper is deliberately not assessed or claimed: a self-signed leaf has
+    // no Gatekeeper acceptance, so the pinned signature and the resource seal are
+    // the whole evidence, and the acceptance machine trusts the project's root.
+    let Some((sha256, sha1)) = observed_leaf_digests(&static_code)? else {
+        return Err(trust_denied());
+    };
+    if !policy::is_authorized_certificate(&expected.policy.publishers, &sha256) {
         return Err(trust_denied());
     }
-    let requirement_text =
-        policy::publisher_requirement(expected.channel, &team_id).ok_or_else(trust_denied)?;
-    let requirement_text = cf_string_value(&requirement_text)?;
+    let requirement_text = policy::certificate_requirement(&sha1).ok_or_else(trust_denied)?;
+    let requirement = create_requirement(&requirement_text)?;
+    validate(&static_code, &requirement)?;
+    let carrier_bytes = read_carrier_resource(&carrier)?;
+    validate(&static_code, &requirement)?;
+    TrustProof::new(
+        format!("sha256:{sha256}"),
+        TRUST_ASSESSMENT_MACOS_SELF_SIGNED,
+        carrier_bytes,
+    )
+}
+
+/// Build a code requirement from text this module generated.
+fn create_requirement(text: &str) -> InstallResult<Cf> {
+    let text = cf_string_value(text)?;
     let mut requirement: SecRequirementRef = ptr::null();
     // SAFETY: the CFString is live and `requirement` is a live out-parameter.
-    let status = unsafe { SecRequirementCreateWithString(requirement_text.0, 0, &mut requirement) };
+    let status = unsafe { SecRequirementCreateWithString(text.0, 0, &mut requirement) };
     if status != 0 {
         return Err(classify(status));
     }
-    let requirement = Cf::new(requirement).ok_or_else(trust_denied)?;
-
-    // Strict signature, designated-requirement and resource-envelope validation.
-    // Revocation and expiration checks are enabled, never bypassed.
-    validate(&static_code, &requirement)?;
-
-    let carrier_bytes = read_carrier_resource(&carrier)?;
-    // Re-validate after reading the resource: any change to the bundle that
-    // happened before or during the read (including a replaced carrier) fails
-    // here. The sealed resource bytes cannot be fetched through a public API, so
-    // this second check is the documented, best-effort binding; the descriptor
-    // equality check in the decision layer is what actually bounds the content.
-    validate(&static_code, &requirement)?;
-
-    check_gatekeeper(carrier.path())?;
-
-    TrustProof::new(
-        format!("team:{team_id}"),
-        TRUST_ASSESSMENT_MACOS_GATEKEEPER,
-        carrier_bytes,
-    )
+    Cf::new(requirement).ok_or_else(trust_denied)
 }
 
 /// The code object the OS must assess for a host executable: the outermost
@@ -617,29 +660,35 @@ fn verify_host_os(
     }
     let static_code = Cf::new(static_code).ok_or_else(unavailable)?;
 
-    let team_id = observed_team_id(&static_code)?;
-    if !policy::is_authorized_team(&expected.policy.publishers, &team_id) {
+    if let Some(team_id) = observed_team_id(&static_code)? {
+        if !policy::is_authorized_team(&expected.policy.publishers, &team_id) {
+            return Err(trust_denied());
+        }
+        let requirement_text =
+            policy::publisher_requirement(expected.channel, &team_id).ok_or_else(trust_denied)?;
+        let requirement = create_requirement(&requirement_text)?;
+        validate(&static_code, &requirement)?;
+        check_gatekeeper(&subject)?;
+        return HostAssessment::new(format!("team:{team_id}"), TRUST_ASSESSMENT_MACOS_GATEKEEPER);
+    }
+
+    let Some((sha256, sha1)) = observed_leaf_digests(&static_code)? else {
+        return Err(trust_denied());
+    };
+    if !policy::is_authorized_certificate(&expected.policy.publishers, &sha256) {
         return Err(trust_denied());
     }
-    let requirement_text =
-        policy::publisher_requirement(expected.channel, &team_id).ok_or_else(trust_denied)?;
-    let requirement_text = cf_string_value(&requirement_text)?;
-    let mut requirement: SecRequirementRef = ptr::null();
-    // SAFETY: the CFString is live and `requirement` is a live out-parameter.
-    let status = unsafe { SecRequirementCreateWithString(requirement_text.0, 0, &mut requirement) };
-    if status != 0 {
-        return Err(classify(status));
-    }
-    let requirement = Cf::new(requirement).ok_or_else(trust_denied)?;
-
+    let requirement_text = policy::certificate_requirement(&sha1).ok_or_else(trust_denied)?;
+    let requirement = create_requirement(&requirement_text)?;
     validate(&static_code, &requirement)?;
-    check_gatekeeper(&subject)?;
-
-    HostAssessment::new(format!("team:{team_id}"), TRUST_ASSESSMENT_MACOS_GATEKEEPER)
+    HostAssessment::new(
+        format!("sha256:{sha256}"),
+        TRUST_ASSESSMENT_MACOS_SELF_SIGNED,
+    )
 }
 
 /// The OS-observed Team ID, shape-checked.
-fn observed_team_id(static_code: &Cf) -> InstallResult<String> {
+fn signing_information(static_code: &Cf) -> InstallResult<Cf> {
     let mut information: CFDictionaryRef = ptr::null();
     // SAFETY: `static_code` is a live static code reference and `information` is
     // a live out-parameter.
@@ -653,20 +702,82 @@ fn observed_team_id(static_code: &Cf) -> InstallResult<String> {
     if status != 0 {
         return Err(classify(status));
     }
-    let information = Cf::new(information).ok_or_else(unavailable)?;
+    Cf::new(information).ok_or_else(unavailable)
+}
+
+/// The OS-observed Apple Team ID, or `None` when the signature carries none.
+///
+/// A self-signed completion leaf has no Team ID; a present but malformed one is
+/// a signature this build does not understand and is refused.
+fn observed_team_id(static_code: &Cf) -> InstallResult<Option<String>> {
+    let information = signing_information(static_code)?;
     // SAFETY: the dictionary is a live retained signing-information dictionary
     // and the key is the exported CFString constant.
-    let team_id = unsafe {
-        cf_string(CFDictionaryGetValue(
-            information.0,
-            kSecCodeInfoTeamIdentifier,
-        ))
+    let value = unsafe { CFDictionaryGetValue(information.0, kSecCodeInfoTeamIdentifier) };
+    if value.is_null() {
+        return Ok(None);
     }
-    .ok_or_else(trust_denied)?;
+    // A present value that is not a string (or that the fixed buffer cannot
+    // render) is a signature this build does not understand: deny it rather
+    // than treating it as "no Team ID" and falling back to the certificate pin.
+    // SAFETY: both type IDs are process-wide CF constants.
+    if unsafe { CFGetTypeID(value) != CFStringGetTypeID() } {
+        return Err(trust_denied());
+    }
+    // SAFETY: `value` is a live CFString, checked above.
+    let team_id = cf_string(value).ok_or_else(trust_denied)?;
     if !policy::is_valid_team_id(&team_id) {
         return Err(trust_denied());
     }
-    Ok(team_id)
+    Ok(Some(team_id))
+}
+
+/// Bound on one signing certificate's DER (`SecCertificateCopyData`).
+const MAX_CERTIFICATE_BYTES: usize = 16 * 1024;
+
+/// The leaf certificate's SHA-256 publisher identity and SHA-1 requirement pin.
+///
+/// Returns `None` when the signature carries no certificates (an ad-hoc
+/// signature). Only the leaf is used: a self-signed completion identity is one
+/// leaf plus its own root, and the policy pin names that leaf.
+fn observed_leaf_digests(static_code: &Cf) -> InstallResult<Option<(String, String)>> {
+    let information = signing_information(static_code)?;
+    // SAFETY: the dictionary is live; the key is the exported constant.
+    let certificates = unsafe { CFDictionaryGetValue(information.0, kSecCodeInfoCertificates) };
+    if certificates.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: both type IDs are process-wide CF constants.
+    let is_array = unsafe { CFGetTypeID(certificates) == CFArrayGetTypeID() };
+    if !is_array {
+        return Err(unavailable());
+    }
+    // SAFETY: `certificates` is a live CFArray (checked above).
+    let count = unsafe { CFArrayGetCount(certificates) };
+    if !(1..=8).contains(&count) {
+        return Err(unavailable());
+    }
+    // SAFETY: index 0 exists because `count >= 1`.
+    let certificate = unsafe { CFArrayGetValueAtIndex(certificates, 0) };
+    if certificate.is_null() {
+        return Err(unavailable());
+    }
+    // SAFETY: `certificate` is a live SecCertificateRef from the array.
+    let data = unsafe { SecCertificateCopyData(certificate) };
+    let data = Cf::new(data).ok_or_else(unavailable)?;
+    // SAFETY: `data` is a live CFData.
+    let length = unsafe { CFDataGetLength(data.0) };
+    if length <= 0 || length as usize > MAX_CERTIFICATE_BYTES {
+        return Err(unavailable());
+    }
+    // SAFETY: the pointer is valid for `length` bytes while `data` is live.
+    let der = unsafe { std::slice::from_raw_parts(CFDataGetBytePtr(data.0), length as usize) };
+    let sha256 = format!("{:x}", Sha256::digest(der));
+    let mut sha1 = [0u8; 20];
+    // SAFETY: `der` is a live slice and `sha1` is 20 writable bytes.
+    unsafe { CC_SHA1(der.as_ptr().cast(), der.len() as CcLong, sha1.as_mut_ptr()) };
+    let sha1 = sha1.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(Some((sha256, sha1)))
 }
 
 /// Validate the carrier bundle against the policy-derived requirement.
@@ -1066,8 +1177,16 @@ pub(crate) fn macos_verify_own_signature(path: &Path) -> InstallResult<String> {
     if status != 0 {
         return Err(classify(status));
     }
-    let team = observed_team_id(&static_code)?;
-    Ok(format!("team:{team}"))
+    // The helper is signed by the same identity as the package: an Apple team for a
+    // Developer ID build, or the pinned leaf's SHA-256 for a self-signed acceptance
+    // build. The caller compares this exact string with the request's publisher.
+    if let Some(team) = observed_team_id(&static_code)? {
+        return Ok(format!("team:{team}"));
+    }
+    match observed_leaf_digests(&static_code)? {
+        Some((sha256, _)) => Ok(format!("sha256:{sha256}")),
+        None => Err(trust_denied()),
+    }
 }
 
 /// Classify a Security.framework status into the installer vocabulary.
