@@ -682,9 +682,11 @@ function inventoryOwners(sources, command) {
 }
 
 function assertComponentCi(source, nodes) {
-  // Master pushes are never cancelled: a cancelled push run would skip commit-guard for its commits, and the
-  // next push only validates its own before..after range.
+  // Each master push has its own group (per SHA) and is never cancelled: GitHub drops an older pending run when
+  // a newer one queues in the same group, and a cancelled or dropped push run would skip commit-guard for its
+  // commits (the next push only validates its own before..after range). PR runs share a per-ref group.
   const concurrency = executableYaml(source).match(/^concurrency:\n((?:  [^\n]*\n)+)/m)?.[1] ?? '';
+  assert.match(concurrency, /^  group: ci-\$\{\{ github\.event_name == 'pull_request' && github\.ref \|\| github\.sha \}\}$/m, 'ci.yml must group PR runs per ref and each master push per SHA');
   assert.match(concurrency, /^  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m, 'ci.yml may cancel superseded PR runs only, never master pushes');
   const jobs = workflowJobBlocks(executableYaml(source));
   const changes = jobs.changes;
@@ -743,6 +745,7 @@ test('ci.yml calls one change-gated check workflow per component node and gates 
     'no map check': (text) => text.replace('python3 -I scripts/components.py check', 'true'),
     'push-only guard dropped': (text) => text.replace("    if: github.event_name == 'push'\n", ''),
     'master runs cancelled': (text) => text.replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", 'cancel-in-progress: true'),
+    'shared push group': (text) => text.replace("group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}", 'group: ci-${{ github.ref }}'),
     'concurrency dropped': (text) => text.replace(/^concurrency:\n(?:  [^\n]*\n)+/m, ''),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
@@ -1557,8 +1560,9 @@ function assertReleaseBuildCaller(source) {
   assert.doesNotMatch(executable, /gh release (?:create|delete|upload|edit)|git push|git tag/, `${name} must not publish, tag or push`);
   assert.doesNotMatch(executable, /HAS_KEYSTORE|KEYSTORE|VELES_KEYSTORE/, `${name} must not reference signing credentials`);
 
-  // Superseded PR runs are cancelled; master pushes never are (changed-only builds use before..after).
-  assert.match(source, /^concurrency:\n  group: release-build-\$\{\{ github\.ref \}\}\n  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m, `${name} must cancel only superseded pull_request runs`);
+  // Superseded PR runs are cancelled; each master push has its own group (per SHA), so no push run is
+  // cancelled or dropped while pending (changed-only builds use before..after).
+  assert.match(source, /^concurrency:\n  group: release-build-\$\{\{ github\.event_name == 'pull_request' && github\.ref \|\| github\.sha \}\}\n  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m, `${name} must cancel only superseded pull_request runs`);
 
   assert.deepEqual(Object.keys(callerJobKeys(source)), RELEASE_BUILD_JOBS, `${name} must declare exactly ${RELEASE_BUILD_JOBS.join(', ')}`);
 
@@ -1667,6 +1671,7 @@ test('release-build contract rejects dispatch, publication, secret, routing and 
     'preview requires a release': (text) => text.replace('--summary "$GITHUB_STEP_SUMMARY"', '--summary "$GITHUB_STEP_SUMMARY" --require-release'),
     'shallow preview': (text) => text.replace(/(  preview:\n(?:.*\n)*?          )fetch-depth: 0/, '$1fetch-depth: 1'),
     'cancelled master pushes': (text) => text.replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", 'cancel-in-progress: true'),
+    'shared push group': (text) => text.replace("group: release-build-${{ github.event_name == 'pull_request' && github.ref || github.sha }}", 'group: release-build-${{ github.ref }}'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
     const mutated = mutate(source);

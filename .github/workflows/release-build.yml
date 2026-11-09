@@ -22,10 +22,11 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
 
-# Superseded PR runs are cancelled; master pushes never are, because each push only builds and
+# PR runs share one group per ref, so a superseded PR run is cancelled. Every master push gets its own
+# group (per SHA), so no push run is cancelled or dropped while pending: each push only builds and
 # previews its own before..after range.
 concurrency:
-  group: release-build-${{ github.ref }}
+  group: release-build-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

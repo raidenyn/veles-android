@@ -10,10 +10,12 @@ on:
   push:
     branches: [master]
 
-# Superseded PR runs are cancelled; master pushes never are, so every push keeps its commit-guard run (the
-# next push only validates its own before..after range).
+# PR runs share one group per ref, so a superseded PR run is cancelled. Every master push gets its own group
+# (per SHA): GitHub keeps only one pending run per group and drops the older pending one, so a shared push
+# group would lose a queued push's run. Each push therefore keeps its commit-guard run (the next push only
+# validates its own before..after range).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

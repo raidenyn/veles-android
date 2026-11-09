@@ -128,9 +128,13 @@ collaborators, not against a malicious workflow editor. `commit-guard` is the ba
 
 ## Commit guard
 
-`ci.yml` cancels superseded runs for pull requests only (`cancel-in-progress: ${{ github.event_name ==
-'pull_request' }}`). Master push runs are never cancelled, because the next push validates only its own
-range and a cancelled `commit-guard` would leave the earlier commits unchecked.
+`ci.yml` groups runs per ref for pull requests and per commit SHA for master pushes (`group: ci-${{
+github.event_name == 'pull_request' && github.ref || github.sha }}`) and cancels superseded runs for pull
+requests only (`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`). A shared push group would
+not be enough: GitHub keeps one pending run per group and drops the older pending one when a newer push
+arrives. Each master push therefore runs in its own group and is neither cancelled nor dropped, because the
+next push validates only its own range and a skipped `commit-guard` would leave the earlier commits
+unchecked. `release-build.yml` uses the same shape (`release-build-` prefix) for its changed-only builds.
 
 On a push to `master`, `commit-guard` runs `scripts/commitlint.py --message` on every commit in
 `git rev-list "$BEFORE..$AFTER"` (only the pushed head when `before` is missing or all zeros) and fails
