@@ -147,8 +147,8 @@ recovery assets.
 * Checks: `./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
   bridgeInstallerScriptsTest`. Native producers, signing and notarization run only on
   Windows/macOS runners and the protected `release-native-installers.yml`.
-* **Debug installers (pull requests).** Add the label `windows installer build` and/or
-  `mac installer build`. A `raidenyn` approval of the secret-free
+* **Debug installers (pull requests).** Add the label `windows-installer-build` and/or
+  `mac-installer-build`. A `raidenyn` approval of the secret-free
   `native-installer-debug` environment precedes any PR-controlled build; the builders
   compile the exact PR head SHA in debug configuration. Output is
   **DEBUG / NOT FOR RELEASE** and does not require release A/B reproducibility.

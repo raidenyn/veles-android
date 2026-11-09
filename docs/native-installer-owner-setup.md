@@ -15,8 +15,8 @@ Create these labels with exactly these names (case and spaces included):
 
 | Label | Meaning |
 |---|---|
-| `windows installer build` | Build the Windows **DEBUG / NOT FOR RELEASE** installer for the pull request. |
-| `mac installer build` | Build the macOS **DEBUG / NOT FOR RELEASE** DMG for the pull request. |
+| `windows-installer-build` | Build the Windows **DEBUG / NOT FOR RELEASE** installer for the pull request. |
+| `mac-installer-build` | Build the macOS **DEBUG / NOT FOR RELEASE** DMG for the pull request. |
 
 `build-pr-installers.yml` re-evaluates the current label set on every reviewed
 `pull_request` event, so adding or removing a label selects or deselects that platform.
@@ -135,8 +135,8 @@ After the owner applies the settings, verify without publishing:
 - `release-build.yml` still runs Android on an ordinary `master` push and the
   Android/web/Rust/supply-chain graph for a `release-build` label; it runs no native job.
 - A pull request with no installer label runs no installer builder.
-- A pull request with `windows installer build` waits for `native-installer-debug`
-  approval and builds only the Windows debug installer; `mac installer build` does the
+- A pull request with `windows-installer-build` waits for `native-installer-debug`
+  approval and builds only the Windows debug installer; `mac-installer-build` does the
   same for macOS; both labels build both.
 - A non-master or non-owner release dispatch fails in `guard` before checkout or build.
 - The release gate reports `windows: PASS|BLOCKED` and/or `macos: PASS|BLOCKED` for the

@@ -568,7 +568,7 @@ skipping any step can silently break reproducibility.
    `release-build` label, or a manual `workflow_dispatch` from `master`, runs the
    Android/web/Rust/supply-chain component graph and the supply-chain policy checks; it
    no longer builds native installers. Native **debug** installers use the
-   `windows installer build` / `mac installer build` labels. Signed **release** native
+   `windows-installer-build` / `mac-installer-build` labels. Signed **release** native
    installers use the owner-only `release-native-installers.yml` dispatch from `master`
    with the `platform` selection, which verifies the same run's release A/B report before
    signing. These producers plus the optional local verifiers from step 5 are the

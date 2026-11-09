@@ -47,13 +47,13 @@ Recommendation is an assistant proposal, not an already-approved owner choice.
 ## PR path
 
 ```text
-PR + windows installer build label -> raidenyn approval -> Windows debug setup
-PR + mac installer build label     -> raidenyn approval -> macOS debug DMG
+PR + windows-installer-build label -> raidenyn approval -> Windows debug setup
+PR + mac-installer-build label     -> raidenyn approval -> macOS debug DMG
 both labels                       -> approval -> both selected builds
 no labels                         -> no installer builds
 ```
 
-- Labels are exactly `windows installer build` and `mac installer build`.
+- Labels are exactly `windows-installer-build` and `mac-installer-build`.
 - Use `pull_request` events `opened`, `reopened`, `labeled`, `unlabeled`,
   `synchronize`, `ready_for_review`; drafts do not build. Re-evaluate current labels
   on every event. Label removal/new commits cancel obsolete debug runs. Checkout

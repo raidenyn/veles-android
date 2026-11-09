@@ -1530,8 +1530,8 @@ test('every workflow script invoked directly is committed executable in git', as
 const PR_INSTALLER_FILE = 'build-pr-installers.yml';
 const PR_INSTALLER_EVENTS = ['opened', 'reopened', 'labeled', 'unlabeled', 'synchronize', 'ready_for_review'];
 const PR_INSTALLER_LABELS = {
-  windows: 'windows installer build',
-  macos: 'mac installer build',
+  windows: 'windows-installer-build',
+  macos: 'mac-installer-build',
 };
 const PR_INSTALLER_BUILDERS = {
   windows: 'build-native-windows.yml',
@@ -1821,10 +1821,10 @@ test('PR installer caller contract rejects routing, approval, scope and boundary
     'merge SHA instead of head SHA': (text) => text.replaceAll('commit-sha: ${{ github.event.pull_request.head.sha }}', 'commit-sha: ${{ github.sha }}'),
     'missing approval dependency': (text) => text.replaceAll('    needs: approve\n', ''),
     'draft PR allowed': (text) => text.replaceAll('      github.event.pull_request.draft == false &&\n', ''),
-    'wrong Windows label': (text) => text.replaceAll("'windows installer build'", "'windows build'"),
+    'wrong Windows label': (text) => text.replaceAll("'windows-installer-build'", "'windows build'"),
     'pre-event label shortcut': (text) => text.replace(
-      "contains(github.event.pull_request.labels.*.name, 'windows installer build')",
-      "github.event.label.name == 'windows installer build'",
+      "contains(github.event.pull_request.labels.*.name, 'windows-installer-build')",
+      "github.event.label.name == 'windows-installer-build'",
     ),
     'pull_request_target trigger': (text) => text.replace('  pull_request:\n    types:', '  pull_request_target:\n    types:'),
     'extra push trigger': (text) => text.replace('  pull_request:\n    types:', '  push:\n  pull_request:\n    types:'),

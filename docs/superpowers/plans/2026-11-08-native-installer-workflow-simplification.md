@@ -14,7 +14,7 @@
 
 - Planning only: no implementation, merge, release run or settings mutation is authorized yet.
 - Windows 10+, static CRT; existing macOS arm64 / macOS 26.0 floor remains.
-- Labels: `windows installer build`, `mac installer build`.
+- Labels: `windows-installer-build`, `mac-installer-build`.
 - Only `raidenyn` may successfully initiate/rerun native release signing; dispatch ref must be `refs/heads/master`.
 - No release secrets in PR jobs; debug trust must be absent from release binaries.
 - Release builds retain A/B, inventory, provenance, signature and correspondence verification.
