@@ -685,7 +685,7 @@ def check_release_build(source):
         "build-native-windows.yml", "build-native-macos.yml",
         "native-unsigned-windows", "native-unsigned-macos", "build-kind:",
         "bridgeInstallerUnsigned", "bridgeInstallerDebug", "bridgeInstallerPackageFixture",
-        "release-native-installers.yml", "native-release", "native-installer-debug",
+        "publish-release.yml", "native-release", "native-installer-debug",
     ):
         if token in executable:
             errors.append("release-build must not produce native installers (%s)" % token)
@@ -703,10 +703,31 @@ def check_release_build(source):
     return errors
 
 
+PUBLISH_WORKFLOW = "publish-release.yml"
+# The only credentialed jobs of the publisher, and the protected environment each one runs in.
+SIGNING_JOBS = {"sign-windows": "native-release", "sign-macos": "native-release", "sign-android": "android-release"}
+INSTALLER_JOBS = ("build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos", "gate-installer")
+
+
+def workflow_jobs(source):
+    """Top-level job key -> job body (including its key line)."""
+    jobs = {}
+    body = source.split("\njobs:\n", 1)[-1]
+    for match in re.finditer(r"(?m)^  ([\w-]+):\s*$", body):
+        jobs[match.group(1)] = job_block("\n" + body, match.group(1))
+    return jobs
+
+
 def check_gate_boundary(workflows):
-    """The release caller authorizes one owner master dispatch and builds the same run's inputs."""
+    """The publisher authorizes one owner master dispatch, builds the same run's inputs, and maps
+    credentials only in sign-windows / sign-macos (native-release) and sign-android (android-release)."""
     errors = []
-    gate = workflows["release-native-installers.yml"]
+    gate = workflows.get(PUBLISH_WORKFLOW, "")
+    if not gate:
+        return ["%s is missing" % PUBLISH_WORKFLOW]
+    for retired in ("release-native-installers.yml", "release.yml"):
+        if retired in workflows:
+            errors.append("the retired %s is back" % retired)
     body = strip_yaml_comments(gate)
     if 'github.event_name == \'workflow_dispatch\'' not in body or "github.ref == 'refs/heads/master'" not in body:
         errors.append("the release caller no longer requires a manual dispatch on master")
@@ -743,29 +764,59 @@ def check_gate_boundary(workflows):
         errors.append("the obsolete manual descriptor approval variable is back")
     if "pull_request" in body:
         errors.append("the release workflow must not accept pull-request context")
-    # One protected signing/packaging job per selected platform, and no debug packaging.
+    # One protected signing/packaging job per platform, and no debug packaging.
     for platform in ("windows", "macos"):
         if not job_block(gate, "sign-%s" % platform):
             errors.append("the release path is missing sign-%s" % platform)
-    for legacy in ("sign-windows-nested", "sign-windows-outer", "assemble-windows", "assemble-macos"):
+    for legacy in ("sign-windows-nested", "sign-windows-outer", "assemble-windows", "assemble-macos", "gate"):
         if re.search(r"(?m)^  %s:\s*$" % re.escape(legacy), gate):
             errors.append("the release path still has a separate %s job" % legacy)
     for token in ("build-kind: debug", "bridgeInstallerDebug", "build-pr-installers"):
         if token in body:
             errors.append("the release path can invoke debug packaging (%s)" % token)
+    # Credentials: exactly the three signing jobs map secrets, each in its own protected environment.
+    jobs = workflow_jobs(gate)
+    credentialed = sorted(name for name, job in jobs.items() if "secrets." in strip_yaml_comments(job))
+    if credentialed != sorted(SIGNING_JOBS):
+        errors.append("credentialed jobs are %s, not exactly %s" % (credentialed, sorted(SIGNING_JOBS)))
+    for name, job in jobs.items():
+        environment = re.findall(r"(?m)^    environment:\s*(\S+)\s*$", job)
+        expected = [SIGNING_JOBS[name]] if name in SIGNING_JOBS else (["release-publish"] if name == "publish" else [])
+        if environment != expected:
+            errors.append("job %s runs in environment %s, expected %s" % (name, environment, expected))
+        executable = strip_yaml_comments(job)
+        if re.search(r"KEYSTORE_|KEY_ALIAS|KEY_PASSWORD", executable) and name != "sign-android":
+            errors.append("job %s references the Android keystore" % name)
+        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_", executable) and name not in ("sign-windows", "sign-macos"):
+            errors.append("job %s references native signing credentials" % name)
+        if name in SIGNING_JOBS and re.search(r"(?m)^    uses:", job):
+            errors.append("signing job %s must be an ordinary job, not a reusable-workflow caller" % name)
+    # Installer RELEASE runs both platforms: no platform input, every installer job gated on the plan.
+    if re.search(r"(?<![\w-])inputs\.[A-Za-z_]", body):
+        errors.append("the publisher reads a dispatch input (inputs.platform is retired)")
+    for name in INSTALLER_JOBS:
+        condition = re.search(r"(?m)^    if:\s*(.+)$", jobs.get(name, ""))
+        if not condition or "needs.plan.outputs.installer == 'RELEASE'" not in condition.group(1):
+            errors.append("%s does not gate on needs.plan.outputs.installer == 'RELEASE'" % name)
+    if not re.search(r"(?m)^      PLATFORM: both\s*$", jobs.get("gate-installer", "")):
+        errors.append("gate-installer does not check both platforms")
     # Every result the gate reads has a direct needs entry.
-    gate_job = job_block(gate, "gate")
+    gate_job = jobs.get("gate-installer", "")
     needs = re.search(r"(?m)^    needs:\s*\[(.*?)\]\s*$", gate_job)
     required = {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos"}
     declared = {value.strip() for value in needs.group(1).split(",")} if needs else set()
     if not required <= declared:
         errors.append("the gate does not directly depend on every job whose result it reads: %s" % sorted(required - declared))
     for name, source in workflows.items():
-        if name == "release-native-installers.yml":
+        if name == PUBLISH_WORKFLOW:
             continue
         other = strip_yaml_comments(source)
-        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_|native-release|VELES_APPROVED_", other):
+        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_|native-release|VELES_APPROVED_|KEYSTORE_|apksigner", other):
             errors.append("%s references signing credentials or the protected environment" % name)
+        if re.search(r"(?m)^\s*environment:\s*(?:android-release|release-publish)\s*$", other):
+            errors.append("%s enters a release environment" % name)
+        if re.search(r"gh release (?:create|edit|upload|delete)|git push[^\n]*(?:--tags|refs/tags)|git push --atomic", other):
+            errors.append("%s creates releases or pushes tags" % name)
     return errors
 
 
@@ -833,7 +884,7 @@ def check_supply_chain(files):
     for scope in ("native-bridge/installer/src", "native-bridge/installer/scripts", "native-bridge/installer/windows",
                   "native-bridge/installer/macos/Package.swift", "native-bridge/installer/macos/Sources",
                   ".github/workflows/build-native-windows.yml", ".github/workflows/build-native-macos.yml",
-                  ".github/workflows/release-native-installers.yml"):
+                  ".github/workflows/publish-release.yml"):
         if scope not in files["remote-code"]:
             errors.append("the remote-code scan omits %s" % scope)
     if "build/sbom/native-installer.cdx.json" not in files["supply-chain-workflow"]:
@@ -1383,41 +1434,69 @@ class Callers(unittest.TestCase):
     def test_signed_candidates_never_come_from_pull_request_artifacts(self):
         self.assertEqual(check_gate_boundary(self.workflows()), [])
 
-    def test_platform_selection_does_not_require_the_unselected_target(self) -> None:
-        gate = read(".github/workflows/release-native-installers.yml")
-        self.assertIn("      platform:\n", gate)
-        self.assertIn("options: [windows, macos, both]", gate)
-        self.assertIn("default: windows", gate)
+    def test_installer_release_selects_both_platforms_without_a_platform_input(self) -> None:
+        gate = read(".github/workflows/publish-release.yml")
+        body = strip_yaml_comments(gate)
+        self.assertNotRegex(body, r"(?<![\w-])inputs\.[A-Za-z_]", "no job reads a dispatch input (inputs.platform is retired)")
         self.assertNotIn("windows_only:", gate)
-        for platform in ("windows", "macos"):
-            self.assertIn("inputs.platform == '%s' || inputs.platform == 'both'" % platform, gate)
+        self.assertNotIn("      platform:\n", gate)
+        jobs = workflow_jobs(gate)
+        for name in INSTALLER_JOBS:
+            condition = re.search(r"(?m)^    if:\s*(.+)$", jobs[name]).group(1)
+            self.assertIn("needs.plan.outputs.installer == 'RELEASE'", condition, name)
+            self.assertNotIn("'windows'", condition, name)
+            self.assertNotIn("'macos'", condition, name)
+        self.assertRegex(jobs["gate-installer"], r"(?m)^      PLATFORM: both$")
         self.assertIn("RESULT_SIGN_WINDOWS: ${{ needs.sign-windows.result }}", gate)
         self.assertIn("RESULT_SIGN_MACOS: ${{ needs.sign-macos.result }}", gate)
-        self.assertIn('for os in $selected', gate, "only the selected platforms are required")
+        self.assertIn('for os in $selected', gate, "both platforms are required")
+        # Both descriptor downloads of the gate are unconditional.
+        for platform in ("windows", "macos"):
+            step = re.search(r"(?ms)^      - uses: actions/download-artifact@[^\n]*\n((?:        [^\n]*\n)*?)          name: verified-%s\n" % platform, jobs["gate-installer"])
+            self.assertIsNotNone(step, platform)
+            self.assertNotIn("if:", step.group(1), platform)
         self.assertNotIn('or .event == "pull_request"', gate, "PR producer runs stay rejected")
 
     def test_gate_boundary_mutations_are_rejected(self):
         workflows = self.workflows()
-        gate = workflows["release-native-installers.yml"]
+        gate = workflows["publish-release.yml"]
         for old, new in (
             ("[ \"$ACTOR\" = raidenyn ]", "[ \"$ACTOR\" = someone-else ]"),
             ("[ \"$TRIGGERING_ACTOR\" = raidenyn ]", "[ \"$TRIGGERING_ACTOR\" = someone-else ]"),
             ("[ \"$REF\" = refs/heads/master ]", "[ \"$REF\" = refs/heads/feature ]"),
-            ("commit-sha: ${{ github.sha }}", "commit-sha: ${{ inputs.commit }}"),
             ("build-kind: release", "build-kind: debug"),
             ("github.actor == 'raidenyn'", "github.actor != ''"),
             (
-                "    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n",
-                "    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n",
+                "    needs: [guard, plan, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n",
+                "    needs: [guard, plan, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n",
             ),
+            ("    environment: android-release\n", ""),
+            ("    environment: release-publish\n", ""),
+            ("    environment: native-release\n", "    environment: release-publish\n"),
+            ("      PLATFORM: both\n", "      PLATFORM: windows\n"),
+            ("needs.plan.outputs.installer == 'RELEASE'", "inputs.platform == 'windows'"),
+            ("      TAG: ${{ needs.plan.outputs.release-tag }}\n      ANDROID:", "      TAG: ${{ needs.plan.outputs.release-tag }}\n      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}\n      ANDROID:"),
+            ("    runs-on: ubuntu-latest\n    environment: android-release\n", "    uses: ./.github/workflows/build-android.yml\n    environment: android-release\n"),
         ):
             self.assertIn(old, gate, old)
-            self.assertNotEqual(check_gate_boundary({**workflows, "release-native-installers.yml": gate.replace(old, new, 1)}), [], old)
+            self.assertNotEqual(check_gate_boundary({**workflows, "publish-release.yml": gate.replace(old, new, 1)}), [], old)
+        self.assertNotEqual(
+            check_gate_boundary({**workflows, "publish-release.yml": gate.replace("commit-sha: ${{ github.sha }}", "commit-sha: ${{ inputs.commit }}")}),
+            [],
+        )
         leaked = {**workflows, "build-native-windows.yml": workflows["build-native-windows.yml"] + "\n      env:\n        VELES_WIN_PFX_BASE64: x\n"}
         self.assertNotEqual(check_gate_boundary(leaked), [])
-        approved = {**workflows, "release-native-installers.yml": gate + "\n      VELES_APPROVED_DESCRIPTOR_SHA256: x\n"}
+        keystore = {**workflows, "build-android.yml": workflows["build-android.yml"] + "\n      env:\n        KEYSTORE_PASSWORD: x\n"}
+        self.assertNotEqual(check_gate_boundary(keystore), [])
+        tagging = {**workflows, "release-build.yml": workflows["release-build.yml"] + "\n      - run: git push origin --tags\n"}
+        self.assertNotEqual(check_gate_boundary(tagging), [])
+        releasing = {**workflows, "ci.yml": workflows["ci.yml"] + "\n      - run: gh release create x\n"}
+        self.assertNotEqual(check_gate_boundary(releasing), [])
+        retired = {**workflows, "release-native-installers.yml": "name: release-native-installers\n"}
+        self.assertNotEqual(check_gate_boundary(retired), [])
+        approved = {**workflows, "publish-release.yml": gate + "\n      VELES_APPROVED_DESCRIPTOR_SHA256: x\n"}
         self.assertNotEqual(check_gate_boundary(approved), [])
-        external = {**workflows, "release-native-installers.yml": gate + "\n      - run: gh run view 1\n"}
+        external = {**workflows, "publish-release.yml": gate + "\n      - run: gh run view 1\n"}
         self.assertNotEqual(check_gate_boundary(external), [])
 
     def test_host_check_workflow_runs_the_installer_checks_on_every_platform(self):
@@ -1460,7 +1539,7 @@ class SupplyChain(unittest.TestCase):
             ("build-scripts", "native-bridge/installer/Cargo.toml"),
             ("licenses", "native-bridge/installer/Cargo.toml"),
             ("remote-code", "native-bridge/installer/scripts"),
-            ("remote-code", ".github/workflows/release-native-installers.yml"),
+            ("remote-code", ".github/workflows/publish-release.yml"),
             ("supply-chain-workflow", "build/sbom/native-installer.cdx.json"),
         ):
             files = self.files()

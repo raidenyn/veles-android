@@ -888,18 +888,417 @@ test('the remote-code scan scopes exist and cover the CI, tooling and hook sourc
   }
 });
 
+// publish-release.yml (design D4): the only release-producing workflow. It absorbed the retired
+// release-native-installers.yml (installer build/verify/sign/gate) and release.yml (draft -> digest
+// check -> publish); their invariants are asserted here against the new workflow.
+const PUBLISH_FILE = 'publish-release.yml';
+const PUBLISH_JOBS = [
+  'guard', 'plan', 'supply-chain', 'build-android', 'sign-android', 'build-web-extension',
+  'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos',
+  'gate-installer', 'carry', 'ready', 'draft', 'publish',
+];
+const PUBLISH_CALLERS = {
+  'supply-chain': 'build-supply-chain.yml',
+  'build-android': 'build-android.yml',
+  'build-web-extension': 'build-web-extension.yml',
+  'build-windows': 'build-native-windows.yml',
+  'build-macos': 'build-native-macos.yml',
+};
+// Component gate of every component job; jobs not listed run for every plan.
+const PUBLISH_COMPONENT_OF = {
+  'build-android': 'android',
+  'sign-android': 'android',
+  'build-web-extension': 'web-extension',
+  'build-windows': 'installer',
+  'build-macos': 'installer',
+  'verify-windows': 'installer',
+  'verify-macos': 'installer',
+  'sign-windows': 'installer',
+  'sign-macos': 'installer',
+  'gate-installer': 'installer',
+};
+const INSTALLER_PLATFORM_JOBS = {
+  windows: ['build-windows', 'verify-windows', 'sign-windows'],
+  macos: ['build-macos', 'verify-macos', 'sign-macos'],
+};
+const SIGN_ENVIRONMENTS = { 'sign-android': 'android-release', 'sign-windows': 'native-release', 'sign-macos': 'native-release' };
+const PUBLISH_ENVIRONMENTS = { ...SIGN_ENVIRONMENTS, publish: 'release-publish' };
+const PUBLISH_PERMISSIONS = {
+  draft: ['contents: write', 'id-token: write', 'attestations: write'],
+  publish: ['contents: write'],
+};
+const OWNER_FACTS = {
+  event: 'workflow_dispatch', ref: 'refs/heads/master', actor: 'raidenyn', triggeringActor: 'raidenyn',
+};
+const NATIVE_CREDENTIALS = /VELES_WIN_|VELES_MAC_|VELES_NOTARY_/;
+const ANDROID_CREDENTIALS = /KEYSTORE_|KEY_ALIAS|KEY_PASSWORD/;
+
+function releaseReadyContract() {
+  const result = spawnSync('python3', ['-I', '-c', [
+    'import json, sys',
+    `sys.path.insert(0, ${JSON.stringify(new URL('scripts', root).pathname)})`,
+    'import release_ready as r',
+    'print(json.dumps({"components": r.COMPONENT_JOBS, "always": r.ALWAYS}))',
+  ].join('\n')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+function jobPermissions(block) {
+  const lines = block.split('\n');
+  const start = lines.findIndex((line) => /^    permissions:\s*$/.test(line));
+  if (start === -1) {
+    assert.doesNotMatch(block, /^    permissions:/m, 'job permissions must use a block mapping');
+    return null;
+  }
+  const values = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() && line.match(/^\s*/)[0].length <= 4) break;
+    const entry = mappingEntry(line);
+    if (entry) values.push(`${entry.key}: ${entry.value}`.trim());
+  }
+  return values;
+}
+
+function jobCondition(block, name) {
+  const match = block.match(/^    if: (.+)$/m);
+  assert.ok(match, `${PUBLISH_FILE} job ${name} must declare its guard`);
+  return match[1];
+}
+
+// Evaluate a publish-release job condition for synthetic run facts and plan; any unknown context fails.
+function evaluatePublishCondition(condition, { facts = OWNER_FACTS, plan = {}, result = 'success', results = {} } = {}) {
+  const expression = condition
+    .replaceAll('${{', '')
+    .replaceAll('}}', '')
+    .replaceAll('github.event_name', JSON.stringify(facts.event))
+    .replaceAll('github.triggering_actor', JSON.stringify(facts.triggeringActor))
+    .replaceAll('github.actor', JSON.stringify(facts.actor))
+    .replaceAll('github.ref', JSON.stringify(facts.ref))
+    .replace(/needs\.plan\.outputs\.([A-Za-z0-9_-]+)/g, (_, key) => JSON.stringify(plan[key] ?? ''))
+    .replace(/needs\.([A-Za-z0-9_-]+)\.result/g, (_, job) => JSON.stringify(results[job] ?? result));
+  assert.doesNotMatch(expression, /github\.|inputs\.|needs\.|vars\.|secrets\./, `condition uses an unsupported context: ${condition}`);
+  const evaluate = new Function('cancelled', 'always', `"use strict"; return (${expression});`);
+  return evaluate(() => false, () => true);
+}
+
+function stepsWithSecrets(block) {
+  return steps(block).map((step) => step.join('\n')).filter((text) => /\$\{\{\s*secrets\./.test(text));
+}
+
+function assertPublishReleaseCaller(source) {
+  const name = PUBLISH_FILE;
+  const executable = executableYaml(source);
+
+  // One trigger, no inputs: no caller-supplied commit, platform, version, digest, tag or run.
+  const onBlock = prWorkflowOnBlock(source);
+  assert.equal(onBlock.trim(), 'workflow_dispatch:', `${name} must trigger only on a manual dispatch without inputs`);
+  assert.doesNotMatch(executable, /(?<![\w-])inputs\.[A-Za-z_]/, `${name} must not read any dispatch input (no inputs.platform)`);
+  for (const obsolete of [/descriptor_sha256/, /unsigned_run/, /windows_only/, /VELES_APPROVED_/]) {
+    assert.doesNotMatch(executable, obsolete, `${name} must not carry the obsolete dispatch input ${obsolete}`);
+  }
+
+  // Serialized, never cancelled; read-only by default.
+  assert.match(source, /^concurrency:\n  group: publish-release\n  cancel-in-progress: false$/m, `${name} must serialize runs without cancelling`);
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must declare only contents: read at workflow scope`);
+  assertNoSecretRunInterpolation(executable, name);
+  assert.doesNotMatch(executable, /secrets:\s*inherit|toJSON\(\s*secrets/i, `${name} must not forward secrets`);
+
+  // The guard rejects before checkout/build and every job repeats it, so reruns re-evaluate it.
+  const guard = releaseJobBlock(source, 'guard');
+  assert.ok(source.indexOf('  guard:') < source.indexOf('uses: ./.github/workflows/'), `${name} guard must precede every build`);
+  assert.doesNotMatch(guard, /actions\/checkout/, `${name} guard must reject before checkout`);
+  assert.doesNotMatch(guard, /^    needs:/m, `${name} guard must not depend on anything`);
+  for (const check of [
+    /"\$EVENT" = workflow_dispatch/,
+    /"\$REF" = refs\/heads\/master/,
+    /"\$ACTOR" = raidenyn/,
+    /"\$TRIGGERING_ACTOR" = raidenyn/,
+    /\^\[0-9a-f\]\{40\}\$/,
+  ]) {
+    assert.match(guard, check, `${name} guard must enforce ${check}`);
+  }
+  const jobs = callerJobKeys(source);
+  assert.deepEqual(Object.keys(jobs).sort(), PUBLISH_JOBS.slice().sort(), `${name} must declare exactly the publish graph`);
+  for (const job of PUBLISH_JOBS.filter((entry) => entry !== 'guard')) {
+    const block = releaseJobBlock(source, job);
+    const condition = jobCondition(block, job);
+    for (const part of ["github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/master'", "github.actor == 'raidenyn'", "github.triggering_actor == 'raidenyn'"]) {
+      assert.ok(condition.includes(part), `${name} job ${job} must re-check ${part}`);
+    }
+    const needs = block.match(/^    needs: (.+)$/m);
+    assert.ok(needs, `${name} job ${job} must declare its dependencies`);
+    assert.match(needs[1], /\bguard\b/, `${name} job ${job} must depend directly on the guard`);
+    // Any non-owner, non-master or non-dispatch fact skips every job, whatever the plan or results.
+    const plan = { android: 'RELEASE', 'web-extension': 'RELEASE', installer: 'RELEASE' };
+    for (const facts of [
+      { ...OWNER_FACTS, actor: 'mallory' },
+      { ...OWNER_FACTS, triggeringActor: 'mallory' },
+      { ...OWNER_FACTS, ref: 'refs/heads/feature' },
+      { ...OWNER_FACTS, event: 'push' },
+    ]) {
+      assert.equal(evaluatePublishCondition(condition, { facts, plan }), false, `${name} job ${job} must not run for ${JSON.stringify(facts)}`);
+    }
+  }
+
+  // Permissions: only draft and publish write, with exactly the reviewed scopes.
+  for (const job of PUBLISH_JOBS) {
+    const block = releaseJobBlock(source, job);
+    const permissions = jobPermissions(block);
+    if (PUBLISH_PERMISSIONS[job]) {
+      assert.deepEqual(permissions, PUBLISH_PERMISSIONS[job], `${name} job ${job} must have exactly ${PUBLISH_PERMISSIONS[job].join(', ')}`);
+    } else {
+      assert.ok(permissions === null || (permissions.length === 1 && permissions[0] === 'contents: read'), `${name} job ${job} must be read-only`);
+      assert.doesNotMatch(block, /:\s*write\b|write-all/, `${name} job ${job} must not grant a write permission`);
+    }
+  }
+
+  // Protected environments: exactly the signers and publish.
+  for (const job of PUBLISH_JOBS) {
+    const environments = [...releaseJobBlock(source, job).matchAll(/^    environment: (\S+)\s*$/gm)].map((match) => match[1]);
+    assert.deepEqual(environments, PUBLISH_ENVIRONMENTS[job] ? [PUBLISH_ENVIRONMENTS[job]] : [], `${name} job ${job} must enter ${PUBLISH_ENVIRONMENTS[job] ?? 'no protected environment'}`);
+  }
+
+  // Reusable callers build this run's master commit only; every other job is an ordinary job.
+  for (const job of PUBLISH_JOBS) {
+    const block = releaseJobBlock(source, job);
+    const uses = block.match(/^    uses: (.+)$/m);
+    if (!PUBLISH_CALLERS[job]) {
+      assert.equal(uses, null, `${name} job ${job} must not call a reusable workflow`);
+      continue;
+    }
+    assert.equal(uses[1].trim(), `./.github/workflows/${PUBLISH_CALLERS[job]}`, `${job} must reuse ${PUBLISH_CALLERS[job]}`);
+    for (const key of jobs[job]) {
+      assert.ok(['uses', 'with', 'needs', 'if'].includes(key), `${job} must contain only caller fields; found "${key}"`);
+    }
+    assert.match(block, /^      commit-sha: \$\{\{ github\.sha \}\}$/m, `${job} must build this run's master commit`);
+    assert.doesNotMatch(block, /github\.event\.pull_request|github\.head_ref|^    secrets:/m, `${job} must not accept another source or secrets`);
+    assert.equal((source.match(new RegExp(`uses: \\./\\.github/workflows/${escapeRegexp(PUBLISH_CALLERS[job])}`, 'g')) ?? []).length, 1, `${name} must build ${PUBLISH_CALLERS[job]} exactly once`);
+  }
+  assert.match(releaseJobBlock(source, 'build-android'), /^      version-tag: android-v\$\{\{ needs\.plan\.outputs\.android-version \}\}$/m, 'build-android must derive its version from the plan');
+  assert.match(releaseJobBlock(source, 'build-web-extension'), /^      version: \$\{\{ needs\.plan\.outputs\.web-extension-version \}\}$/m, 'build-web-extension must take the planned version');
+  for (const [platform, builder] of Object.entries(RELEASE_BUILDERS)) {
+    const block = releaseJobBlock(source, `build-${platform}`);
+    assert.match(block, new RegExp(`^    uses: \\./\\.github/workflows/${escapeRegexp(builder)}$`, 'm'), `build-${platform} must reuse ${builder}`);
+    assert.match(block, /^      build-kind: release$/m, `build-${platform} must request the release profile`);
+    assert.match(block, /^      version: \$\{\{ needs\.plan\.outputs\.installer-version \}\}$/m, `build-${platform} must take the planned installer version`);
+    const artifact = block.match(/^      artifact-name: (.+)$/m);
+    assert.ok(artifact, `build-${platform} must name its artifact`);
+    assert.equal(artifact[1].trim(), RELEASE_ARTIFACTS[platform], `build-${platform} must name a per-run artifact`);
+  }
+  assert.doesNotMatch(executable, /\bgh run view\b/, `${name} must not query an external run`);
+  assert.doesNotMatch(executable, /\brun-id:/, `${name} must download only same-run artifacts`);
+  assert.doesNotMatch(executable, /unsigned_run|native-unsigned-windows|native-unsigned-macos/, `${name} must not consume another run's producer artifact`);
+
+  // Component selection: every component job runs exactly when its component is RELEASE; installer
+  // RELEASE always runs BOTH platforms and the gate; ALWAYS jobs run for every plan.
+  for (const action of ['RELEASE', 'CARRY']) {
+    for (const component of ['android', 'web-extension', 'installer']) {
+      const plan = { android: 'CARRY', 'web-extension': 'CARRY', installer: 'CARRY', [component]: action };
+      for (const job of PUBLISH_JOBS.filter((entry) => !['guard', 'ready', 'draft', 'publish'].includes(entry))) {
+        const condition = jobCondition(releaseJobBlock(source, job), job);
+        const expected = PUBLISH_COMPONENT_OF[job] ? plan[PUBLISH_COMPONENT_OF[job]] === 'RELEASE' : true;
+        assert.equal(evaluatePublishCondition(condition, { plan }), expected, `${name} job ${job} must run=${expected} for ${component} ${action}`);
+      }
+    }
+  }
+  for (const job of Object.keys(PUBLISH_COMPONENT_OF)) {
+    const condition = jobCondition(releaseJobBlock(source, job), job);
+    assert.ok(condition.includes(`needs.plan.outputs.${PUBLISH_COMPONENT_OF[job]} == 'RELEASE'`), `${job} must gate on needs.plan.outputs.${PUBLISH_COMPONENT_OF[job]} == 'RELEASE'`);
+    assert.match(releaseJobBlock(source, job).match(/^    needs: (.+)$/m)[1], /\bplan\b/, `${job} must depend directly on plan`);
+  }
+  const gateCondition = jobCondition(releaseJobBlock(source, 'gate-installer'), 'gate-installer');
+  assert.equal(evaluatePublishCondition(gateCondition, { plan: { installer: 'RELEASE' }, result: 'failure' }), true, 'gate-installer must record a verdict even when a platform job failed');
+
+  // Each platform's chain is independent of the other's jobs and artifacts.
+  for (const [platform, platformJobs] of Object.entries(INSTALLER_PLATFORM_JOBS)) {
+    const other = platform === 'windows' ? 'macos' : 'windows';
+    for (const job of platformJobs) {
+      const block = releaseJobBlock(source, job);
+      assert.ok(!new RegExp(`needs[^\\n]*\\b${other}\\b`).test(block), `${job} must not depend on ${other}`);
+    }
+    const verify = releaseJobBlock(source, `verify-${platform}`);
+    assert.match(verify, new RegExp(`name: ${escapeRegexp(RELEASE_ARTIFACTS[platform])}`), `verify-${platform} must download its same-run artifact`);
+    assert.ok(verify.includes('sha256sum -c SHA256SUMS'), `verify-${platform} must check the same-run artifact digest manifest`);
+    assert.ok(!verify.includes(RELEASE_ARTIFACTS[other]), `verify-${platform} must not download the other platform`);
+  }
+
+  // Credentials: only the three signers map secrets, each only in its signing steps; KEYSTORE_* only in
+  // sign-android and the native credentials only in sign-windows / sign-macos.
+  const credentialed = PUBLISH_JOBS.filter((job) => /secrets\./.test(releaseJobBlock(source, job)));
+  assert.deepEqual(credentialed.sort(), Object.keys(SIGN_ENVIRONMENTS).sort(), `${name} must map secrets only in the signing jobs`);
+  for (const job of PUBLISH_JOBS) {
+    const block = executableYaml(releaseJobBlock(source, job));
+    assert.equal(ANDROID_CREDENTIALS.test(block), job === 'sign-android', `${name} job ${job} must ${job === 'sign-android' ? '' : 'not '}reference the keystore`);
+    assert.equal(NATIVE_CREDENTIALS.test(block), ['sign-windows', 'sign-macos'].includes(job), `${name} job ${job} must ${['sign-windows', 'sign-macos'].includes(job) ? '' : 'not '}reference the native credentials`);
+    for (const text of stepsWithSecrets(releaseJobBlock(source, job))) {
+      assert.match(text, /- name: Sign/, `${name} job ${job} may map secrets only in a signing step`);
+      assert.match(text, job === 'sign-android' ? /"\$APKSIGNER" sign / : /sign-(?:windows\.ps1|macos\.sh)/, `${name} job ${job} may map secrets only in a signing step`);
+    }
+    assert.doesNotMatch(block.split('    steps:')[0], /secrets\./, `${name} job ${job} must not map a secret at job level`);
+  }
+  for (const job of ['sign-windows', 'sign-macos']) {
+    const block = releaseJobBlock(source, job);
+    assert.match(block, /^      VELES_SIGNING_ENVIRONMENT: native-release$/m, `${job} must run in the release context`);
+    assert.match(block, /^      COMMIT: \$\{\{ github\.sha \}\}$/m, `${job} must sign this run's commit`);
+    assert.match(block, /^      VELES_DESCRIPTOR_SHA256: \$\{\{ needs\.verify-[a-z]+\.outputs\.descriptor-sha256 \}\}$/m, `${job} must bind the verified descriptor`);
+  }
+
+  // sign-android: an ordinary protected job that signs this run's unsigned APK without rebuilding it.
+  const signAndroid = releaseJobBlock(source, 'sign-android');
+  assert.match(signAndroid, /^      BUILD_TOOLS_VERSION: 36\.0\.0$/m, 'sign-android must pin build-tools 36.0.0');
+  assert.match(signAndroid, /sdkmanager" "build-tools;\$BUILD_TOOLS_VERSION"/, 'sign-android must install the pinned build-tools');
+  assert.match(signAndroid, /name: android-release\n/, 'sign-android must download the same-run unsigned APK');
+  const sums = signAndroid.indexOf('sha256sum -c SHA256SUMS');
+  const sign = signAndroid.indexOf('"$APKSIGNER" sign ');
+  assert.ok(sums !== -1 && sign !== -1 && sums < sign, 'sign-android must check the unsigned checksums before signing');
+  assert.match(signAndroid, /printf '%s' "\$KEYSTORE_BASE64" \| base64 -d > "\$keys\/release\.jks"/, 'sign-android must decode the keystore from env into RUNNER_TEMP');
+  assert.match(signAndroid, /--ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD/, 'sign-android must pass passwords by env, never argv');
+  assert.match(signAndroid, /--v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true/, 'sign-android must sign v2+v3 without v1');
+  assert.match(signAndroid, /"\$APKSIGNER" verify --verbose --print-certs/, 'sign-android must verify and print the certificates');
+  assert.match(signAndroid, /^          EXPECTED_CERT_SHA256: \$\{\{ vars\.VELES_ANDROID_CERT_SHA256 \}\}$/m, 'sign-android must compare against vars.VELES_ANDROID_CERT_SHA256');
+  assert.match(signAndroid, /rust\/scripts\/verify-apk-jni\.sh "\$RUNNER_TEMP\/signed\/app-release\.apk"/, 'sign-android must check the JNI allow-list of the signed APK');
+  assert.match(signAndroid, /sha256sum app-release\.apk mapping\.txt > SHA256SUMS/, 'sign-android must write new checksums');
+  assert.match(signAndroid, /name: android-signed\n/, 'sign-android must upload android-signed');
+  assert.match(signAndroid, /- name: Remove the keystore if the job was interrupted\n        if: \$\{\{ always\(\) \}\}/, 'sign-android must always remove the keystore');
+  assert.doesNotMatch(signAndroid, /gradlew|assembleRelease/, 'sign-android must not rebuild');
+
+  // Debug packaging is reachable only through build-pr-installers.yml calling the debug builders.
+  for (const forbidden of [
+    /build-pr-installers\.yml/, /build-kind:\s*debug/, /bridgeInstallerDebug/,
+    /out\/debug\//, /debug-installer-pr-/, /debug trust/i,
+  ]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not invoke or select debug packaging (${forbidden})`);
+  }
+
+  // The installer gate checks both platforms, from the direct results of every platform job.
+  const gate = releaseJobBlock(source, 'gate-installer');
+  assert.match(gate, /^      PLATFORM: both$/m, 'gate-installer must check both platforms');
+  for (const command of [' bundle ', ' validate ', '--platform']) {
+    assert.ok(gate.includes(command), `gate-installer must use ${command}`);
+  }
+  assert.match(gate, /release_gate\.py/, 'gate-installer must run release_gate.py');
+  assert.doesNotMatch(gate, /--descriptor-digest/, 'the gate must not take an external descriptor digest');
+  assert.doesNotMatch(gate, /descriptor-set-digest/, 'the gate must not recompute an owner-approved digest');
+  for (const result of ['RESULT_GUARD', 'RESULT_BUILD_WINDOWS', 'RESULT_BUILD_MACOS', 'RESULT_VERIFY_WINDOWS', 'RESULT_VERIFY_MACOS', 'RESULT_SIGN_WINDOWS', 'RESULT_SIGN_MACOS']) {
+    assert.ok(gate.includes(result), `gate-installer must report ${result}`);
+  }
+  const gateNeeds = gate.match(/^    needs: \[([^\]]+)\]$/m)[1].split(',').map((value) => value.trim());
+  for (const job of ['guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos']) {
+    assert.ok(gateNeeds.includes(job), `gate-installer must depend directly on ${job}`);
+  }
+  for (const platform of ['windows', 'macos']) {
+    const download = steps(gate).map((step) => step.join('\n')).find((text) => text.includes(`name: verified-${platform}\n`));
+    assert.ok(download, `gate-installer must download verified-${platform}`);
+    assert.doesNotMatch(download, /^\s*if:/m, `gate-installer must download verified-${platform} unconditionally`);
+  }
+
+  // Installer, signing, plan, carry and ready jobs never publish: only draft creates a release and only
+  // publish pushes tags or publishes it.
+  for (const job of PUBLISH_JOBS.filter((entry) => !['draft', 'publish'].includes(entry))) {
+    const block = executableYaml(releaseJobBlock(source, job));
+    for (const token of ['gh release create', 'gh release edit', 'gh release upload', 'gh release delete', 'attest-build-provenance', 'git tag', 'git push', 'gh api -X']) {
+      assert.ok(!block.includes(token), `${name} job ${job} must not publish (${token})`);
+    }
+  }
+
+  // plan: full history, pinned git-cliff, the previous manifest (fail closed), and nothing-to-release fails.
+  const planJob = releaseJobBlock(source, 'plan');
+  assert.match(planJob, /fetch-depth: 0/, 'plan must fetch full history and tags (the planner refuses shallow clones)');
+  assert.match(planJob, /\.\/gradlew installGitCliff/, 'plan must install the pinned git-cliff');
+  assert.match(planJob, /gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt/, 'plan must list releases with the planner fields');
+  assert.match(planJob, /scripts\/release_plan\.py latest --releases-json/, 'plan must resolve the previous combined release with the planner');
+  assert.match(planJob, /gh release download "\$prev" --pattern release-manifest\.json --pattern SHA256SUMS/, 'plan must download the previous manifest and checksums');
+  assert.doesNotMatch(planJob, /gh release download[^\n]*\|\|/, 'plan must not swallow a missing previous manifest');
+  assert.match(planJob, /scripts\/release_plan\.py plan [\s\S]*--require-release/, 'plan must fail when nothing is RELEASE');
+  for (const output of ['android', 'android-version', 'web-extension', 'web-extension-version', 'installer', 'installer-version', 'release-tag']) {
+    assert.match(planJob, new RegExp(`^      ${escapeRegexp(output)}: \\$\\{\\{ steps\\.plan\\.outputs\\.${escapeRegexp(output)} \\}\\}$`, 'm'), `plan must export ${output}`);
+  }
+
+  // carry: exactly the previous manifest's assets, verified against it and the previous SHA256SUMS.
+  const carry = releaseJobBlock(source, 'carry');
+  assert.match(carry, /select\(\.value\.action == "CARRY"\)/, 'carry must handle only CARRY components');
+  assert.match(carry, /gh release download "\$PREVIOUS_RELEASE" --pattern "\$asset"/, 'carry must download each listed asset of the previous release');
+  assert.match(carry, /release_assets\.py verify-carry --manifest-json [^\n]*\n[^\n]*--sha256sums/, 'carry must verify digests against the manifest and SHA256SUMS');
+
+  // ready: always runs and decides with release_ready.py over every job result.
+  const ready = releaseJobBlock(source, 'ready');
+  assert.match(jobCondition(ready, 'ready'), /^\$\{\{ always\(\) && /, 'ready must run with always()');
+  assert.match(ready, /^      NEEDS_JSON: \$\{\{ toJSON\(needs\) \}\}$/m, 'ready must pass toJSON(needs) through env');
+  assert.match(ready, /scripts\/release_ready\.py ready --needs-json "\$RUNNER_TEMP\/needs\.json"/, 'ready must decide with release_ready.py');
+  const contract = releaseReadyContract();
+  const expectedReadyNeeds = [...contract.always, ...Object.values(contract.components).flat()].sort();
+  const readyNeeds = ready.match(/^    needs: \[([^\]]+)\]$/m)[1].split(',').map((value) => value.trim());
+  assert.deepEqual(readyNeeds.slice().sort(), expectedReadyNeeds, 'ready must need exactly the jobs release_ready.py checks');
+  for (const job of expectedReadyNeeds) assert.ok(PUBLISH_JOBS.includes(job), `release_ready.py job ${job} must exist`);
+
+  // draft: after ready, version checks, staging, attestation, draft creation; never pushes.
+  const draft = releaseJobBlock(source, 'draft');
+  assert.match(draft, /^    needs: \[guard, plan, ready\]$/m, 'draft must need ready');
+  assert.ok(jobCondition(draft, 'draft').includes("needs.ready.result == 'success'"), 'draft must require a successful ready');
+  assert.doesNotMatch(executableYaml(draft), /git push|git tag/, 'draft must not push or tag');
+  assert.match(draft, /jq -r \.version "\$RUNNER_TEMP\/verified-\$os\/descriptor\.json"/, 'draft must check the authorized installer descriptor version');
+  assert.match(draft, /"\$embedded" != "\$INSTALLER_VERSION"/, 'draft must compare the descriptor version with the plan');
+  assert.match(draft, /unzip -p "\$\{zips\[0\]\}" manifest\.json \| jq -r \.version/, 'draft must read the extension manifest version');
+  assert.match(draft, /"\$embedded" != "\$WEB_EXTENSION_VERSION"/, 'draft must compare the extension version with the plan');
+  assert.match(draft, /cp "\$RUNNER_TEMP\/tree-windows\/setup\.exe"/, 'draft must take setup.exe from the signed Windows tree');
+  assert.match(draft, /cp "\$RUNNER_TEMP\/tree-macos\/Veles Bridge Installer\.dmg"/, 'draft must take the dmg from the signed macOS tree');
+  assert.match(draft, /scripts\/release_assets\.py stage --plan-json [\s\S]*--manifest-json "\$plan\/manifest\.json"[\s\S]*--digests-out/, 'draft must stage with the previous manifest and record digests');
+  assert.match(draft, /uses: actions\/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3\n        with:\n          subject-path: \$\{\{ runner\.temp \}\}\/new\/\*/, 'draft must attest the new assets');
+  assert.match(draft, /gh release create "\$TAG" --draft --target "\$GITHUB_SHA" --title "Veles \$TAG" \\\n\s+--notes-file "\$RUNNER_TEMP\/release-plan\/notes\.md" "\$RUNNER_TEMP"\/assets\/\*/, 'draft must create a draft at the release commit with the staged assets');
+  assert.match(draft, /name: expected-digests\n/, 'draft must upload the recorded digests');
+
+  // publish: approval, draft digest check, atomic RELEASE tags, date-tag re-check, then publication.
+  const publish = releaseJobBlock(source, 'publish');
+  const publishExecutable = executableYaml(publish);
+  assert.match(publish, /^    needs: \[guard, plan, draft\]$/m, 'publish must need draft');
+  const verifyDraft = publish.indexOf('release_assets.py verify-draft');
+  const push = publish.indexOf('git push --atomic origin "${push[@]}"');
+  const patch = publish.indexOf('-F draft=false');
+  assert.ok(verifyDraft !== -1 && push !== -1 && patch !== -1, 'publish must verify the draft, push tags atomically and publish');
+  assert.ok(verifyDraft < push && push < patch, 'publish must verify the draft before pushing tags, and push before publishing');
+  assert.match(publish, /select\(\.tag_name == env\.TAG\)/, 'publish must resolve the release by tag, drafts included');
+  assert.match(publish, /\[ "\$found" = "\$RELEASE_ID" \]/, 'publish must publish only the draft this run created');
+  assert.match(publish, /refs="\$\(python3 -I scripts\/release_plan\.py tags --plan-json "\$RUNNER_TEMP\/release-plan\/plan\.json"\)"/, 'publish must take the tags only from the RELEASE components of plan.json');
+  assert.doesNotMatch(publishExecutable, /CARRY|\.current\b/, 'publish must never reference CARRY components or their tags');
+  assert.match(publish, /elif \[ "\$remote" = "\$GITHUB_SHA" \]; then/, 'publish must accept a RELEASE tag already at github.sha');
+  assert.match(publish, /echo "::error::\$\{ref#refs\/tags\/\} already exists at \$remote, not at \$GITHUB_SHA"\n\s+exit 1/, 'publish must fail on a RELEASE tag elsewhere');
+  const dateChecks = [...publish.matchAll(/remote="\$\(remote_commit "\$date_ref"\)"/g)].map((match) => match.index);
+  assert.ok(dateChecks.length >= 3, 'publish must check the date tag before pushing, before publishing and after publishing');
+  assert.ok(dateChecks[0] < push && dateChecks.some((index) => index > push && index < patch) && dateChecks.some((index) => index > patch), 'publish must re-check the date tag before and after publishing');
+  assert.match(publish, /-f tag_name="\$TAG" -f target_commitish="\$GITHUB_SHA" -F draft=false/, 'publish must publish the draft on its date tag at github.sha');
+  assert.match(publish, /if \[ "\$remote" != "\$GITHUB_SHA" \]; then\n\s+echo "::error::the release tag \$TAG resolves to/, 'publish must verify the date tag resolves to github.sha');
+}
+
 test('only the protected release workflow may reference signing credentials or sign anything', async () => {
   for (const name of await workflowFiles()) {
-    if (name === 'release-native-installers.yml') continue;
-    const executable = (await workflow(name)).split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
-    assert.doesNotMatch(executable, /VELES_WIN_|VELES_MAC_|VELES_NOTARY_|VELES_APPROVED_|native-release|signtool|notarytool|codesign/, `${name} must not reference signing credentials or tools`);
+    if (name === PUBLISH_FILE) continue;
+    const executable = executableYaml(await workflow(name));
+    assert.doesNotMatch(executable, /VELES_WIN_|VELES_MAC_|VELES_NOTARY_|VELES_APPROVED_|native-release|signtool|notarytool|codesign|KEYSTORE_|apksigner|VELES_ANDROID_CERT/, `${name} must not reference signing credentials or tools`);
+    assert.doesNotMatch(executable, /^\s*environment:\s*(?:android-release|release-publish)\s*$/m, `${name} must not enter a release environment`);
   }
 });
 
-test('the release gate builds the selected platform in the same owner-master run', async () => {
-  const source = await workflow('release-native-installers.yml');
-  assertReleaseInstallerCaller(source);
-  // The owner guard is the only authorization; the old tag/two-run/approved-digest dispatch is gone.
+test('no workflow but publish-release creates releases or pushes tags, and the legacy release workflows are gone', async () => {
+  const files = await workflowFiles();
+  assert.ok(files.includes(PUBLISH_FILE), `${PUBLISH_FILE} must exist`);
+  for (const retired of ['release.yml', 'release-native-installers.yml']) {
+    assert.ok(!files.includes(retired), `${retired} must be retired`);
+  }
+  const publishing = /gh release (?:create|edit|upload|delete)|git push[^\n]*(?:--tags|refs\/tags)|git push --atomic/;
+  for (const name of files) {
+    if (name === PUBLISH_FILE) continue;
+    assert.doesNotMatch(executableYaml(await workflow(name)), publishing, `${name} must not create releases or push tags`);
+  }
+  for (const sample of ['- run: gh release edit 1 --draft=false', '- run: git push --tags', '- run: git push origin refs/tags/x']) {
+    assert.match(sample, publishing, `the isolation check must reject "${sample}"`);
+  }
+});
+
+test('the publish workflow builds RELEASE components in the same owner-master run, installers on both platforms', async () => {
+  const source = await workflow(PUBLISH_FILE);
+  assertPublishReleaseCaller(source);
+  // The owner guard is the only authorization; no tag or manual digest ceremony is described.
   const comments = source.split('\n').filter((line) => line.trimStart().startsWith('#')).join('\n');
   assert.match(comments, /owner-only master dispatch/i, 'the header states the authorization model');
   assert.doesNotMatch(comments, /immutable release tag|refs\/tags|two approved|approved descriptor/i, 'no tag or manual digest ceremony is described');
@@ -941,224 +1340,85 @@ function jobStepRun(block, name) {
   return command.replace(/^[|>][-+]?\s*\n?/, '');
 }
 
-function evaluateJobCondition(condition, { platform, guard = 'success' }) {
-  const expression = condition
-    .replaceAll('${{', '')
-    .replaceAll('}}', '')
-    .replaceAll('github.event_name', JSON.stringify('workflow_dispatch'))
-    .replaceAll('github.ref', JSON.stringify('refs/heads/master'))
-    .replaceAll('github.actor', JSON.stringify('raidenyn'))
-    .replaceAll('github.triggering_actor', JSON.stringify('raidenyn'))
-    .replace(/inputs\.platform/g, JSON.stringify(platform))
-    .replace(/needs\.([A-Za-z0-9_-]+)\.result/g, JSON.stringify(guard));
-  assert.doesNotMatch(expression, /github\.|inputs\.|needs\.|vars\.|secrets\./, `condition uses an unsupported context: ${condition}`);
-  const evaluate = new Function('cancelled', 'always', `"use strict"; return (${expression});`);
-  return evaluate(() => false, () => true);
-}
-
-function assertReleaseInstallerCaller(source) {
-  const name = 'release-native-installers.yml';
-  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
-
-  // One trigger and one input only: the platform selection.
-  const onBlock = prWorkflowOnBlock(source);
-  const triggerKeys = onBlock.split('\n').flatMap((line) => {
-    const entry = mappingEntry(line);
-    return entry && entry.indent === 2 ? [entry.key] : [];
-  });
-  assert.deepEqual(triggerKeys, ['workflow_dispatch'], `${name} must trigger only on manual dispatch`);
-  assert.match(onBlock, /^  workflow_dispatch:$/m, `${name} must be manual-only`);
-  assert.match(onBlock, /^      platform:\n        description: [^\n]+\n        required: true\n        type: choice\n        options: \[windows, macos, both\]\n        default: windows$/m, `${name} must expose exactly the platform selection`);
-  for (const obsolete of [/commit:/, /descriptor_sha256/, /unsigned_run/, /windows_only/, /inputs\.commit/, /inputs\.descriptor/, /inputs\.unsigned/, /inputs\.windows_only/]) {
-    assert.doesNotMatch(executable, obsolete, `${name} must not carry the obsolete dispatch input ${obsolete}`);
-  }
-
-  // Read-only, dispatch-only; secrets exist only in the signing steps checked below.
-  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must declare only contents: read`);
-  assertNoSecretRunInterpolation(executable, name);
-
-  // The guard rejects before checkout/build and every job repeats it, so reruns re-evaluate it.
-  const guard = releaseJobBlock(source, 'guard');
-  assert.ok(source.indexOf('  guard:') < source.indexOf('uses: ./.github/workflows/build-native-windows.yml'), `${name} guard must precede every build`);
-  assert.doesNotMatch(guard, /actions\/checkout/, `${name} guard must reject before checkout`);
-  for (const check of [
-    /"\$EVENT" = workflow_dispatch/,
-    /"\$REF" = refs\/heads\/master/,
-    /"\$ACTOR" = raidenyn/,
-    /"\$TRIGGERING_ACTOR" = raidenyn/,
-    /\^\[0-9a-f\]\{40\}\$/,
-    /windows\|macos\|both/,
-  ]) {
-    assert.match(guard, check, `${name} guard must enforce ${check}`);
-  }
-  const jobs = callerJobKeys(source);
-  const allJobs = [
-    'guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos',
-    'sign-windows', 'sign-macos', 'gate',
-  ];
-  assert.deepEqual(Object.keys(jobs).sort(), allJobs.slice().sort(), `${name} must declare exactly the release graph`);
-  for (const job of allJobs.filter((entry) => entry !== 'guard')) {
-    const block = releaseJobBlock(source, job);
-    const match = block.match(/^    if: (.+)$/m);
-    assert.ok(match, `${name} job ${job} must declare its guard`);
-    for (const part of ["github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/master'", "github.actor == 'raidenyn'", "github.triggering_actor == 'raidenyn'"]) {
-      assert.ok(match[1].includes(part), `${name} job ${job} must re-check ${part}`);
-    }
-    const needs = block.match(/^    needs: (.+)$/m);
-    assert.ok(needs, `${name} job ${job} must declare its dependencies`);
-    assert.match(needs[1], /\bguard\b/, `${name} job ${job} must depend directly on the guard`);
-  }
-
-  // Build the selected platforms from this run's master SHA, with per-run artifact names.
-  for (const [platform, builder] of Object.entries(RELEASE_BUILDERS)) {
-    const block = releaseJobBlock(source, `build-${platform}`);
-    assert.match(block, new RegExp(`^    uses: \\./\\.github/workflows/${escapeRegexp(builder)}$`, 'm'), `build-${platform} must reuse ${builder}`);
-    assert.match(block, /^      build-kind: release$/m, `build-${platform} must request the release profile`);
-    assert.match(block, /^      commit-sha: \$\{\{ github\.sha \}\}$/m, `build-${platform} must build this run's master commit`);
-    assert.doesNotMatch(block, /github\.event\.pull_request|inputs\.commit|github\.head_ref/, `build-${platform} must not accept another source`);
-    const artifact = block.match(/^      artifact-name: (.+)$/m);
-    assert.ok(artifact, `build-${platform} must name its artifact`);
-    assert.equal(artifact[1].trim(), RELEASE_ARTIFACTS[platform], `build-${platform} must name a per-run artifact`);
-  }
-  assert.doesNotMatch(executable, /\bgh run view\b/, `${name} must not query an external run`);
-  assert.doesNotMatch(executable, /\brun-id:/, `${name} must download only same-run artifacts`);
-  assert.doesNotMatch(executable, /unsigned_run|native-unsigned-windows|native-unsigned-macos/, `${name} must not consume another run's producer artifact`);
-
-  // Verification and signing consume the same-run artifact, and every credential lives in native-release.
-  const signJobs = ['sign-windows', 'sign-macos'];
-  const credentialed = allJobs.filter((job) => /secrets\./.test(releaseJobBlock(source, job)));
-  assert.deepEqual(credentialed.sort(), signJobs.slice().sort(), `${name} must map secrets only in the signing jobs`);
-  for (const job of allJobs) {
-    const block = releaseJobBlock(source, job);
-    const protectedJob = /^    environment: native-release$/m.test(block);
-    assert.equal(protectedJob, signJobs.includes(job), `${name} job ${job} must enter native-release only when it signs`);
-  }
-  for (const job of signJobs) {
-    const block = releaseJobBlock(source, job);
-    assert.match(block, /^      VELES_SIGNING_ENVIRONMENT: native-release$/m, `${job} must run in the release context`);
-    assert.match(block, /^      COMMIT: \$\{\{ github\.sha \}\}$/m, `${job} must sign this run's commit`);
-    assert.match(block, /^      VELES_DESCRIPTOR_SHA256: \$\{\{ needs\.verify-[a-z]+\.outputs\.descriptor-sha256 \}\}$/m, `${job} must bind the verified descriptor`);
-  }
-  // Secret expressions exist only inside the actual signing steps of the protected jobs. Every other
-  // step (download, unpack, assemble, cleanup, upload, gate) holds no credential.
-  for (const job of allJobs) {
-    const block = releaseJobBlock(source, job);
-    for (const step of steps(block)) {
-      const text = step.join('\n');
-      if (!/\$\{\{\s*secrets\./.test(text)) continue;
-      assert.ok(signJobs.includes(job), `${name} job ${job} must not map a secret`);
-      assert.match(text, /- name: Sign/, `${name} job ${job} may map secrets only in a signing step`);
-      assert.match(text, /sign-(?:windows\.ps1|macos\.sh)/, `${name} job ${job} may map secrets only in a signing step`);
-    }
-  }
-  assert.doesNotMatch(executable, /VELES_APPROVED_DESCRIPTOR_SHA256/, `${name} must not keep the obsolete approval variable`);
-
-  // Debug packaging is reachable only through build-pr-installers.yml calling the debug builders.
-  for (const forbidden of [
-    /build-pr-installers\.yml/, /build-kind:\s*debug/, /bridgeInstallerDebug/,
-    /out\/debug\//, /debug-installer-pr-/, /debug trust/i,
-  ]) {
-    assert.doesNotMatch(executable, forbidden, `${name} must not invoke or select debug packaging (${forbidden})`);
-  }
-
-  // Each platform is independent: a Windows-only run neither needs nor names a macOS job/artifact.
-  for (const platform of Object.keys(RELEASE_BUILDERS)) {
-    const other = platform === 'windows' ? 'macos' : 'windows';
-    for (const job of [`build-${platform}`, `verify-${platform}`, `sign-${platform}`]) {
-      const block = releaseJobBlock(source, job);
-      assert.match(block, new RegExp(`inputs\\.platform == '${platform}' \\|\\| inputs\\.platform == 'both'`), `${job} must only run for its selected platform`);
-      assert.ok(!block.includes(`inputs.platform == '${other}'`), `${job} must not select the other platform`);
-      assert.ok(!new RegExp(`needs[^\\n]*\\b${other}\\b`).test(block), `${job} must not depend on ${other}`);
-    }
-    const verify = releaseJobBlock(source, `verify-${platform}`);
-    assert.match(verify, new RegExp(`name: ${escapeRegexp(RELEASE_ARTIFACTS[platform])}`), `verify-${platform} must download its same-run artifact`);
-    assert.ok(verify.includes('sha256sum -c SHA256SUMS'), `verify-${platform} must check the same-run artifact digest manifest`);
-    assert.ok(!verify.includes(RELEASE_ARTIFACTS[other]), `verify-${platform} must not download the other platform`);
-  }
-
-  // Behaviour matrix: windows -> windows jobs and gate; macos -> macOS jobs and gate; both -> all.
-  const selectionJobs = {
-    windows: ['build-windows', 'verify-windows', 'sign-windows'],
-    macos: ['build-macos', 'verify-macos', 'sign-macos'],
-  };
-  for (const platform of ['windows', 'macos', 'both']) {
-    const expected = platform === 'both' ? [...selectionJobs.windows, ...selectionJobs.macos] : selectionJobs[platform];
-    for (const platformJobs of Object.values(selectionJobs)) {
-      for (const job of platformJobs) {
-        const match = releaseJobBlock(source, job).match(/^    if: (.+)$/m);
-        assert.equal(evaluateJobCondition(match[1], { platform }), expected.includes(job), `${name} job ${job} must run=${expected.includes(job)} for platform=${platform}`);
-      }
-    }
-    const gateCondition = releaseJobBlock(source, 'gate').match(/^    if: (.+)$/m)[1];
-    assert.equal(evaluateJobCondition(gateCondition, { platform }), true, `${name} gate must always report the selected status`);
-  }
-
-  // The gate composes only the selected targets and fails only when a selected platform failed.
-  const gate = source.slice(source.indexOf('  gate:'));
-  for (const command of [' bundle ', ' validate ', '--platform']) {
-    assert.ok(gate.includes(command), `gate must use ${command}`);
-  }
-  assert.doesNotMatch(gate, /--descriptor-digest/, 'the gate must not take an external descriptor digest');
-  assert.doesNotMatch(gate, /descriptor-set-digest/, 'the gate must not recompute an owner-approved digest');
-  for (const result of ['RESULT_GUARD', 'RESULT_BUILD_WINDOWS', 'RESULT_BUILD_MACOS', 'RESULT_VERIFY_WINDOWS', 'RESULT_VERIFY_MACOS', 'RESULT_SIGN_WINDOWS', 'RESULT_SIGN_MACOS']) {
-    assert.ok(gate.includes(result), `gate must report ${result}`);
-  }
-  // Every result the gate reads has a direct needs entry, so a missing job is never
-  // silently reported as an empty result.
-  const gateNeeds = gate.match(/^    needs: \[([^\]]+)\]$/m)[1].split(',').map((value) => value.trim());
-  for (const job of ['guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos']) {
-    assert.ok(gateNeeds.includes(job), `the gate must depend directly on ${job}`);
-  }
-  for (const token of ['gh release', 'attest-build-provenance', 'git tag', 'git push']) {
-    assert.ok(!executable.includes(token), `${name} must not publish (${token})`);
-  }
-}
-
-test('the release caller contract rejects tag, cross-run and approval regressions', async () => {
-  const source = await workflow('release-native-installers.yml');
+test('the publish caller contract rejects trigger, guard, selection, credential, permission and publication regressions', async () => {
+  const source = await workflow(PUBLISH_FILE);
+  const installerRelease = "needs.plan.outputs.installer == 'RELEASE'";
   const mutations = {
     'push trigger': (text) => text.replace('on:\n  workflow_dispatch:', 'on:\n  push:\n    branches: [master]\n  workflow_dispatch:'),
-    'commit input': (text) => text.replace('      platform:\n', '      commit:\n        required: true\n        type: string\n      platform:\n'),
-    'descriptor input': (text) => text.replace('      platform:\n', '      descriptor_sha256_windows:\n        required: true\n        type: string\n      platform:\n'),
-    'producer run input': (text) => text.replace('      platform:\n', '      unsigned_run_a:\n        required: true\n        type: string\n      platform:\n'),
-    'windows-only input': (text) => text.replace('      platform:\n', '      windows_only:\n        required: false\n        type: boolean\n      platform:\n'),
+    'platform input': (text) => text.replace('on:\n  workflow_dispatch:\n', 'on:\n  workflow_dispatch:\n    inputs:\n      platform:\n        type: choice\n        options: [windows, macos, both]\n'),
+    'platform predicate': (text) => text.replace(installerRelease, "inputs.platform == 'windows'"),
+    'macOS skipped on installer RELEASE': (text) => text.replace(/(  build-macos:\n    needs: \[guard, plan\]\n    if: .*?)needs\.plan\.outputs\.installer == 'RELEASE'/, "$1needs.plan.outputs.installer == 'MACOS'"),
+    'android built on CARRY': (text) => text.replace("needs.plan.outputs.android == 'RELEASE' }}\n    uses: ./.github/workflows/build-android.yml", "needs.plan.outputs.android != '' }}\n    uses: ./.github/workflows/build-android.yml"),
+    'cancelling concurrency': (text) => text.replace('  group: publish-release\n  cancel-in-progress: false', '  group: publish-release\n  cancel-in-progress: true'),
+    'per-ref concurrency': (text) => text.replace('  group: publish-release\n', '  group: publish-release-${{ github.ref }}\n'),
     'missing guard job': (text) => text.replace('  guard:\n', '  guard-disabled:\n'),
     'guard checks no actor': (text) => text.replace('[ "$ACTOR" = raidenyn ]', '[ true = true ]'),
     'guard checks no rerun actor': (text) => text.replace('[ "$TRIGGERING_ACTOR" = raidenyn ]', '[ true = true ]'),
     'guard checks no master ref': (text) => text.replace('[ "$REF" = refs/heads/master ]', '[ true = true ]'),
     'job without the guard': (text) => text.replace(/^    if: (.+)$/m, '    if: ${{ !cancelled() }}'),
+    'ready without the actor guard': (text) => text.replace("if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && ", "if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && "),
     'builder without release kind': (text) => text.replace('      build-kind: release', '      build-kind: debug'),
-    'builder reads another commit': (text) => text.replace('commit-sha: ${{ github.sha }}', 'commit-sha: ${{ inputs.commit }}', 1),
+    'builder reads another commit': (text) => text.replace('commit-sha: ${{ github.sha }}', 'commit-sha: ${{ github.event.after }}', 1),
+    'second android build': (text) => `${text}\n  rebuild:\n    needs: [guard]\n    if: \${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' }}\n    uses: ./.github/workflows/build-android.yml\n`,
     'external run download': (text) => text.replace('          name: native-release-windows-${{ github.run_id }}-${{ github.run_attempt }}\n', '          name: native-release-windows-${{ github.run_id }}-${{ github.run_attempt }}\n          run-id: 1\n'),
     'gh run view': (text) => `${text}\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh run view 1\n`,
     'approved descriptor variable': (text) => text.replace('      VELES_SIGNING_ENVIRONMENT: native-release\n', '      VELES_SIGNING_ENVIRONMENT: native-release\n      VELES_APPROVED_DESCRIPTOR_SHA256: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS }}\n', 1),
     'credentials outside native-release': (text) => text.replaceAll('    environment: native-release\n', ''),
+    'keystore outside android-release': (text) => text.replace('    environment: android-release\n', ''),
+    'publish without approval': (text) => text.replace('    environment: release-publish\n', ''),
     'secret in a verify step': (text) => text.replace(
       '      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)\n',
       '      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)\n        env:\n          LEAK: ${{ secrets.LEAK }}\n',
     ),
+    'keystore in the draft job': (text) => text.replace('      TAG: ${{ needs.plan.outputs.release-tag }}\n      ANDROID:', '      TAG: ${{ needs.plan.outputs.release-tag }}\n      KEYSTORE_PASSWORD: x\n      ANDROID:'),
+    'keystore at job level': (text) => text.replace('      BUILD_TOOLS_VERSION: 36.0.0\n', '      BUILD_TOOLS_VERSION: 36.0.0\n      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}\n'),
+    'v1 signing': (text) => text.replace('--v1-signing-enabled false', '--v1-signing-enabled true'),
+    'no fingerprint variable': (text) => text.replace('${{ vars.VELES_ANDROID_CERT_SHA256 }}', "''"),
+    'sign-android as a caller': (text) => text.replace('    runs-on: ubuntu-latest\n    environment: android-release\n', '    uses: ./.github/workflows/build-android.yml\n    environment: android-release\n'),
+    'unpinned build-tools': (text) => text.replace('BUILD_TOOLS_VERSION: 36.0.0', 'BUILD_TOOLS_VERSION: 35.0.0'),
     'gate result not in direct needs': (text) => text.replace(
-      '    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n',
-      '    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n',
+      '    needs: [guard, plan, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n',
+      '    needs: [guard, plan, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n',
     ),
-    'windows job needs macOS': (text) => text.replace('    needs: [guard, verify-windows]\n', '    needs: [guard, verify-windows, verify-macos]\n'),
-    'macOS job runs for windows': (text) => text.replaceAll("inputs.platform == 'macos' || inputs.platform == 'both'", "inputs.platform == 'windows' || inputs.platform == 'both'"),
-    'gate external digest': (text) => text.replace('--platform "$PLATFORM"', '--platform "$PLATFORM" --descriptor-digest "$DIGEST"'),
-    'gate publishes': (text) => `${text}\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create x\n`,
+    'gate one platform': (text) => text.replace('      PLATFORM: both\n', '      PLATFORM: windows\n'),
+    'gate conditional download': (text) => text.replace('      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n        with:\n          name: verified-macos\n          path: ${{ runner.temp }}/verified-macos\n', "      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n        if: ${{ needs.plan.outputs.installer == 'MACOS' }}\n        with:\n          name: verified-macos\n          path: ${{ runner.temp }}/verified-macos\n"),
+    'windows job needs macOS': (text) => text.replace('    needs: [guard, plan, verify-windows]\n', '    needs: [guard, plan, verify-windows, verify-macos]\n'),
+    'gate external digest': (text) => text.replace('--platform "$PLATFORM" "${descriptors[@]}"', '--platform "$PLATFORM" --descriptor-digest "$DIGEST" "${descriptors[@]}"'),
+    'gate publishes': (text) => text.replace('          python3 -I "$gate" validate --bundle', '          gh release create x\n          python3 -I "$gate" validate --bundle'),
+    'write permission elsewhere': (text) => text.replace(/(  carry:\n(?:.*\n)*?    permissions:\n      contents: )read/, '$1write'),
+    'draft extra permission': (text) => text.replace('      attestations: write\n', '      attestations: write\n      actions: write\n'),
+    'workflow write default': (text) => text.replace('permissions:\n  contents: read\n\nconcurrency', 'permissions:\n  contents: write\n\nconcurrency'),
+    'plan without full history': (text) => text.replace(/(  plan:\n(?:.*\n)*?          )fetch-depth: 0/, '$1fetch-depth: 1'),
+    'plan allows nothing to release': (text) => text.replace(' --require-release', ''),
+    'plan swallows a missing manifest': (text) => text.replace('--pattern SHA256SUMS --dir "$out/previous"', '--pattern SHA256SUMS --dir "$out/previous" || true'),
+    'carry without checksums': (text) => text.replace(' --sha256sums "$plan/previous/SHA256SUMS"', ''),
+    'ready without always': (text) => text.replace('if: ${{ always() && github.event_name', 'if: ${{ github.event_name'),
+    'ready misses a component job': (text) => text.replace('build-macos, verify-macos, sign-macos, gate-installer, carry]', 'build-macos, verify-macos, sign-macos, carry]'),
+    'draft before ready': (text) => text.replace('    needs: [guard, plan, ready]\n', '    needs: [guard, plan]\n'),
+    'draft pushes tags': (text) => text.replace('          echo "release-id=$id" >> "$GITHUB_OUTPUT"\n', '          echo "release-id=$id" >> "$GITHUB_OUTPUT"\n          git push origin --tags\n'),
+    'draft skips the installer version': (text) => text.replace('"$embedded" != "$INSTALLER_VERSION"', '"$embedded" = "$INSTALLER_VERSION"'),
+    'draft without attestation': (text) => text.replace('uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3\n', 'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n'),
+    'publish before digest check': (text) => text.replace('python3 -I scripts/release_assets.py verify-draft', 'echo skipped verify'),
+    'publish pushes CARRY tags': (text) => text.replace('refs="$(python3 -I scripts/release_plan.py tags --plan-json "$RUNNER_TEMP/release-plan/plan.json")"', 'refs="$(jq -r \'.components[] | select(.action == "CARRY") | "refs/tags/" + .tag\' "$RUNNER_TEMP/release-plan/plan.json")"'),
+    'publish non-atomic push': (text) => text.replace('git push --atomic origin "${push[@]}"', 'git push origin "${push[@]}"'),
+    'publish overwrites a moved tag': (text) => text.replace('already exists at $remote, not at $GITHUB_SHA"\n              exit 1', 'already exists at $remote, not at $GITHUB_SHA"\n              continue'),
+    'publish without the date-tag re-check': (text) => text.replace(/(- name: Publish the draft with its date tag[\s\S]*?)remote="\$\(remote_commit "\$date_ref"\)"/, '$1remote=""'),
+    'publish without final tag check': (text) => text.replace('echo "::error::the release tag $TAG resolves to', 'echo "::warning::the release tag $TAG resolves to'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
     const mutated = mutate(source);
     assert.notEqual(mutated, source, `mutation "${label}" must change the workflow`);
-    assert.throws(() => assertReleaseInstallerCaller(mutated), `the contract must reject "${label}"`);
+    assert.throws(() => assertPublishReleaseCaller(mutated), `the contract must reject "${label}"`);
   }
 });
 
-test('release gate reports per-selected-platform status before artifact downloads', async () => {
-  const source = await workflow('release-native-installers.yml');
-  const gate = releaseJobBlock(source, 'gate');
+test('the installer gate reports both platforms\' status before artifact downloads', async () => {
+  const source = await workflow(PUBLISH_FILE);
+  const gate = releaseJobBlock(source, 'gate-installer');
+  assert.match(gate, /^      PLATFORM: both$/m, 'installer RELEASE gates both platforms');
 
   // Direct needs: a missing job result is never silently empty, and adding a direct
-  // need cannot make the gate succeed for a failed selected platform.
+  // need cannot make the gate succeed for a failed platform.
   const needs = gate.match(/^    needs: \[([^\]]+)\]$/m);
   assert.ok(needs, 'the gate must declare its dependencies inline');
   for (const job of ['guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos']) {
@@ -1174,52 +1434,151 @@ test('release gate reports per-selected-platform status before artifact download
   assert.match(gate, /acceptance/i, 'the gate must separate build/sign status from acceptance');
 
   const script = jobStepRun(gate, 'Report the selected platform build/sign status');
-  const results = (overrides = {}) => ({
+  const success = {
     RESULT_GUARD: 'success',
-    RESULT_BUILD_WINDOWS: 'skipped',
-    RESULT_VERIFY_WINDOWS: 'skipped',
-    RESULT_SIGN_WINDOWS: 'skipped',
-    RESULT_BUILD_MACOS: 'skipped',
-    RESULT_VERIFY_MACOS: 'skipped',
-    RESULT_SIGN_MACOS: 'skipped',
-    ...overrides,
-  });
-  const run = (platform, overrides) => spawnSync('bash', ['-c', script], {
-    encoding: 'utf8',
-    env: { ...process.env, PLATFORM: platform, ...results(overrides) },
-  });
-  const windowsSuccess = {
     RESULT_BUILD_WINDOWS: 'success', RESULT_VERIFY_WINDOWS: 'success', RESULT_SIGN_WINDOWS: 'success',
-  };
-  const macosSuccess = {
     RESULT_BUILD_MACOS: 'success', RESULT_VERIFY_MACOS: 'success', RESULT_SIGN_MACOS: 'success',
   };
+  const run = (overrides) => spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, PLATFORM: 'both', ...success, ...overrides },
+  });
 
-  // Unselected platforms are irrelevant, even when their jobs failed or were skipped.
-  const windowsOnly = run('windows', { ...windowsSuccess, RESULT_BUILD_MACOS: 'failure', RESULT_VERIFY_MACOS: 'failure', RESULT_SIGN_MACOS: 'failure' });
-  assert.equal(windowsOnly.status, 0, windowsOnly.stderr);
-  assert.match(windowsOnly.stdout, /windows: PASS/);
-  assert.doesNotMatch(windowsOnly.stdout, /macos:/);
-  const macosOnly = run('macos', { ...macosSuccess, RESULT_BUILD_WINDOWS: 'failure', RESULT_VERIFY_WINDOWS: 'failure', RESULT_SIGN_WINDOWS: 'failure' });
-  assert.equal(macosOnly.status, 0, macosOnly.stderr);
-  assert.match(macosOnly.stdout, /macos: PASS/);
-  assert.doesNotMatch(macosOnly.stdout, /windows:/);
+  const both = run({});
+  assert.equal(both.status, 0, both.stderr);
+  assert.match(both.stdout, /windows: PASS/);
+  assert.match(both.stdout, /macos: PASS/);
 
-  // A selected platform failure blocks the whole gate; each selected platform is reported.
-  const bothBlocked = run('both', { ...windowsSuccess, RESULT_SIGN_MACOS: 'failure' });
-  assert.notEqual(bothBlocked.status, 0);
-  assert.match(bothBlocked.stdout, /windows: PASS/);
-  assert.match(bothBlocked.stdout, /macos: BLOCKED/);
-  assert.match(bothBlocked.stderr, /selected platform\(s\) failed: macos/);
-  const verifyBlocked = run('windows', { ...windowsSuccess, RESULT_VERIFY_WINDOWS: 'failure' });
+  // Either platform failing or being skipped blocks the gate; both platforms are reported.
+  const macosBlocked = run({ RESULT_SIGN_MACOS: 'failure' });
+  assert.notEqual(macosBlocked.status, 0);
+  assert.match(macosBlocked.stdout, /windows: PASS/);
+  assert.match(macosBlocked.stdout, /macos: BLOCKED/);
+  assert.match(macosBlocked.stderr, /selected platform\(s\) failed: macos/);
+  const windowsSkipped = run({ RESULT_BUILD_WINDOWS: 'skipped', RESULT_VERIFY_WINDOWS: 'skipped', RESULT_SIGN_WINDOWS: 'skipped' });
+  assert.notEqual(windowsSkipped.status, 0);
+  assert.match(windowsSkipped.stdout, /windows: BLOCKED/);
+  assert.match(windowsSkipped.stdout, /macos: PASS/);
+  const verifyBlocked = run({ RESULT_VERIFY_WINDOWS: 'failure' });
   assert.notEqual(verifyBlocked.status, 0);
   assert.match(verifyBlocked.stdout, /windows: BLOCKED/);
-  assert.doesNotMatch(verifyBlocked.stdout, /macos:/);
 
   // The guard still fails closed before any platform verdict.
-  const guardBlocked = run('windows', { ...windowsSuccess, RESULT_GUARD: 'failure' });
+  const guardBlocked = run({ RESULT_GUARD: 'failure' });
   assert.notEqual(guardBlocked.status, 0);
   assert.match(guardBlocked.stderr, /guard did not pass/);
+});
+
+test('sign-android accepts only the configured certificate on a v2+v3-only signature', async () => {
+  const source = await workflow(PUBLISH_FILE);
+  const script = jobStepRun(releaseJobBlock(source, 'sign-android'), 'Verify the signature and the signing certificate fingerprint (no credential)');
+  const digest = 'ab'.repeat(32);
+  const report = (overrides = {}) => [
+    'Verifies',
+    `Verified using v1 scheme (JAR signing): ${overrides.v1 ?? 'false'}`,
+    `Verified using v2 scheme (APK Signature Scheme v2): ${overrides.v2 ?? 'true'}`,
+    `Verified using v3 scheme (APK Signature Scheme v3): ${overrides.v3 ?? 'true'}`,
+    `Number of signers: ${overrides.signers ?? 1}`,
+    'Signer #1 certificate DN: CN=Veles',
+    `Signer #1 certificate SHA-256 digest: ${overrides.digest ?? digest}`,
+  ].join('\n');
+  const run = (expected, overrides) => {
+    const fake = `#!/usr/bin/env bash\ncat <<'EOF'\n${report(overrides)}\nEOF\n`;
+    return spawnSync('bash', ['-c', `fake="$(mktemp)"; printf '%s' "$FAKE" > "$fake"; chmod +x "$fake"; APKSIGNER="$fake"; ${script}`], {
+      encoding: 'utf8',
+      env: { ...process.env, FAKE: fake, RUNNER_TEMP: '/nonexistent', EXPECTED_CERT_SHA256: expected },
+    });
+  };
+  const colonUpper = digest.toUpperCase().match(/../g).join(':');
+  assert.equal(run(digest).status, 0, 'the configured fingerprint passes');
+  assert.equal(run(colonUpper).status, 0, 'colons and case are normalised');
+  assert.notEqual(run('cd'.repeat(32)).status, 0, 'a different certificate fails');
+  assert.notEqual(run('').status, 0, 'a missing fingerprint variable fails');
+  assert.notEqual(run(digest, { v1: 'true' }).status, 0, 'a v1 signature fails');
+  assert.notEqual(run(digest, { v3: 'false' }).status, 0, 'a missing v3 signature fails');
+  assert.notEqual(run(digest, { signers: 2 }).status, 0, 'a second signer fails');
+});
+
+test('publish pushes only RELEASE tags atomically at github.sha and is safe to re-run', async () => {
+  const source = await workflow(PUBLISH_FILE);
+  const script = jobStepRun(releaseJobBlock(source, 'publish'), "Push the RELEASE components' tags atomically at the release commit");
+  const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const gitEnv = {
+    ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't',
+    GIT_COMMITTER_EMAIL: 't@example.invalid', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+  };
+  const git = (cwd, ...args) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitEnv });
+    assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-tags-'));
+    const origin = join(dir, 'origin.git');
+    const work = join(dir, 'work');
+    git(dir, 'init', '-q', '--bare', origin);
+    git(dir, 'init', '-q', '-b', 'master', work);
+    git(work, 'commit', '-q', '--allow-empty', '-m', 'chore: old');
+    const old = git(work, 'rev-parse', 'HEAD');
+    git(work, 'commit', '-q', '--allow-empty', '-m', 'feat: new');
+    const sha = git(work, 'rev-parse', 'HEAD');
+    git(work, 'remote', 'add', 'origin', origin);
+    git(work, 'push', '-q', 'origin', 'master');
+    git(work, 'tag', 'android-v0.1.0', old);
+    git(work, 'tag', 'installer-v0.1.0', old);
+    git(work, 'push', '-q', 'origin', 'android-v0.1.0', 'installer-v0.1.0');
+    git(work, 'tag', '-d', 'android-v0.1.0', 'installer-v0.1.0');
+    symlinkSync(new URL('scripts', root).pathname, join(work, 'scripts'));
+    const temp = join(dir, 'runner');
+    mkdirSync(join(temp, 'release-plan'), { recursive: true });
+    writeFileSync(join(temp, 'release-plan', 'plan.json'), JSON.stringify({
+      release_tag: '2026.11.20', components: {
+        android: { action: 'CARRY', current: '0.1.0', next: '0.1.0', tag: 'android-v0.1.0' },
+        'web-extension': { action: 'RELEASE', current: null, next: '0.1.0', tag: 'web-extension-v0.1.0' },
+        installer: { action: 'CARRY', current: '0.1.0', next: '0.1.0', tag: 'installer-v0.1.0' },
+      },
+    }));
+    return { origin, work, old, sha, temp };
+  };
+  const step = ({ work, sha, temp }) => spawnSync('bash', ['-c', script], {
+    cwd: work, encoding: 'utf8', env: { ...gitEnv, GITHUB_SHA: sha, RUNNER_TEMP: temp, TAG: '2026.11.20' },
+  });
+  const remoteTags = ({ origin }) => Object.fromEntries(git(origin, 'show-ref', '--tags').split('\n').filter(Boolean).map((line) => {
+    const [object, ref] = line.split(' ');
+    return [ref.replace('refs/tags/', ''), object];
+  }));
+
+  // Only the RELEASE component's tag is pushed; carried tags stay at their old commit.
+  const fresh = setup();
+  const first = step(fresh);
+  assert.equal(first.status, 0, first.stderr + first.stdout);
+  assert.deepEqual(remoteTags(fresh), { 'android-v0.1.0': fresh.old, 'installer-v0.1.0': fresh.old, 'web-extension-v0.1.0': fresh.sha });
+  // A re-run accepts tags already at github.sha and pushes nothing.
+  const again = step(fresh);
+  assert.equal(again.status, 0, again.stderr + again.stdout);
+  assert.match(again.stdout, /already at/);
+  assert.deepEqual(remoteTags(fresh), { 'android-v0.1.0': fresh.old, 'installer-v0.1.0': fresh.old, 'web-extension-v0.1.0': fresh.sha });
+
+  // A RELEASE tag elsewhere fails without pushing anything.
+  const moved = setup();
+  git(moved.work, 'tag', 'web-extension-v0.1.0', moved.old);
+  git(moved.work, 'push', '-q', 'origin', 'web-extension-v0.1.0');
+  git(moved.work, 'tag', '-d', 'web-extension-v0.1.0');
+  const blocked = step(moved);
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stdout + blocked.stderr, /already exists at/);
+  assert.equal(remoteTags(moved)['web-extension-v0.1.0'], moved.old);
+
+  // A date tag at another commit fails before any component tag is pushed.
+  const dated = setup();
+  git(dated.work, 'tag', '2026.11.20', dated.old);
+  git(dated.work, 'push', '-q', 'origin', '2026.11.20');
+  git(dated.work, 'tag', '-d', '2026.11.20');
+  const early = step(dated);
+  assert.notEqual(early.status, 0);
+  assert.equal(remoteTags(dated)['web-extension-v0.1.0'], undefined);
 });
 
 test('supply-chain consumers cover the installer crate, Swift frontend and NSIS toolchain', async () => {
@@ -1689,50 +2048,56 @@ test('retired build labels appear in no workflow', async () => {
   }
 });
 
-test('tag release publishes from one build with provenance, checksums, and digest integrity intact', async () => {
-  const source = await workflow('release.yml');
-  // Semver tag trigger and collision-safe concurrency.
-  assert.match(source, /tags:\s*\n\s*- "\[0-9\]\+\\\\\.\[0-9\]\+\\\\\.\[0-9\]\+"/, 'release must trigger on semver tags only');
-  assert.match(source, /group: release-\$\{\{ github\.ref \}\}\s*\n\s*cancel-in-progress: false/, 'release concurrency must never cancel an in-flight publication');
-  // Build and publish only: no reproducibility verify job and no verify-only artifact.
-  assert.deepEqual(Object.keys(callerJobKeys(source)).sort(), ['build', 'publish'], 'tag release must define exactly build and publish jobs');
-  assert.doesNotMatch(source, /\n  verify:\s*$/, 'tag release must not run an independent reproducibility rebuild');
-  assert.doesNotMatch(source, /name: release-apk/, 'tag release must not upload a verify-only APK artifact');
-  assert.doesNotMatch(source, /Rebuild from source/, 'tag release must not rebuild from source in CI');
-  assert.doesNotMatch(source, /verify\/verify-web\.sh|verify\/verify-rust\.sh|verify\/verify-native\.sh|verify-all\.sh/, 'tag release must not add substitute rebuild gates');
-  assert.doesNotMatch(source, /verify\/verify\.sh/, 'tag release must not reference the removed reproducibility verifier');
-  const buildBlock = source.slice(source.indexOf('  build:'), source.indexOf('  publish:'));
-  // Build-job protections: version/tag validation and release collision guard.
-  assert.match(buildBlock, /Verify built version matches tag/, 'tag release must validate the built version against the tag');
-  assert.match(buildBlock, /if \[ "\$BUILT_NAME" != "\$GITHUB_REF_NAME" \]/, 'version mismatch must fail the build');
-  assert.match(buildBlock, /Guard against pre-existing release/, 'tag release must guard against a pre-existing release');
-  assert.match(buildBlock, /Deleting stale draft release/, 'a stale draft for the tag must be replaced');
-  assert.match(buildBlock, /A published release for tag \$GITHUB_REF_NAME already exists/, 'a published release for the tag must abort the run');
-  // Signed and unsigned references both handled.
-  assert.match(buildBlock, /cp app\/build\/outputs\/apk\/release\/app-release\.apk "veles-\$GITHUB_REF_NAME\.apk"/, 'signed path must publish the signed APK');
-  assert.match(buildBlock, /cp app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk "veles-\$GITHUB_REF_NAME\.apk"/, 'unsigned path must publish the unsigned APK');
-  assert.match(buildBlock, /suffix= \(unsigned\)/, 'unsigned publications must be titled unsigned');
-  // Provenance, checksums, and draft assets.
-  assert.match(buildBlock, /actions\/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3/, 'tag release must attest build provenance');
-  assert.match(buildBlock, /subject-path:/, 'provenance subjects must be declared explicitly');
-  assert.match(buildBlock, /sha256sum "veles-\$GITHUB_REF_NAME\.apk" mapping\.txt > SHA256SUMS/, 'tag release must produce SHA256SUMS over APK and mapping');
-  assert.match(buildBlock, /--draft/, 'tag release must create a draft first');
-  const draftAssets = buildBlock.slice(buildBlock.indexOf('gh release create'));
-  for (const asset of ['"veles-$GITHUB_REF_NAME.apk"', 'mapping.txt', 'SHA256SUMS']) {
-    assert.match(draftAssets, new RegExp(escapeRegexp(asset)), `draft release must attach ${asset}`);
+test('publish-release publishes from one build per component with provenance, checksums, and draft digest integrity intact', async () => {
+  const source = await workflow(PUBLISH_FILE);
+  const executable = executableYaml(source);
+  // Manual dispatch only (no tag trigger) and collision-safe concurrency that never cancels a publication.
+  assert.doesNotMatch(prWorkflowOnBlock(source), /tags:|push:/, 'publish-release must not trigger on tag or branch pushes');
+  assert.match(source, /^concurrency:\n  group: publish-release\n  cancel-in-progress: false$/m, 'publish concurrency must never cancel an in-flight publication');
+  // One build per component in this run: no reproducibility rebuild, no verify-only artifact, no rebuild in signing.
+  for (const builder of ['build-android.yml', 'build-web-extension.yml', 'build-native-windows.yml', 'build-native-macos.yml']) {
+    assert.equal((executable.match(new RegExp(`uses: \\./\\.github/workflows/${escapeRegexp(builder)}`, 'g')) ?? []).length, 1, `publish-release must build ${builder} exactly once`);
   }
-  // User-facing attestation instructions remain.
-  const notesBlock = source.slice(source.indexOf('- name: Append verification instructions'));
-  assert.match(notesBlock, /gh attestation verify veles-\$GITHUB_REF_NAME\.apk --repo \$GITHUB_REPOSITORY/, 'user-facing attestation verification instructions must remain');
-  // Publish depends on build only and keeps the draft-asset digest integrity check.
-  const publishBlock = source.slice(source.indexOf('  publish:'));
-  assert.match(publishBlock, /needs: \[build\]/, 'tag publish must depend on the build job only');
-  assert.match(publishBlock, /RELEASE_ID: \$\{\{ needs\.build\.outputs\.release_id \}\}/, 'publish must consume the draft release ID');
-  assert.match(publishBlock, /EXPECTED_SHA256: \$\{\{ needs\.build\.outputs\.apk_sha256 \}\}/, 'publish must consume the build APK digest');
-  assert.match(publishBlock, /DRAFT_SHA256=\$\(sha256sum "\$RUNNER_TEMP\/draft-check\/veles-\$GITHUB_REF_NAME\.apk" \| awk '\{print \$1\}'\)/, 'publish must hash the downloaded draft asset');
-  assert.match(publishBlock, /if \[ "\$DRAFT_SHA256" != "\$EXPECTED_SHA256" \]/, 'publish must refuse on draft asset digest mismatch');
-  assert.match(publishBlock, /-F draft=false/, 'publish must flip the draft to published');
-  assert.match(publishBlock, /if \[ "\$PUBLISHED_TAG" != "\$GITHUB_REF_NAME" \]/, 'publish must verify the release landed on the triggering tag');
+  assert.doesNotMatch(source, /\n  verify:\s*$/m, 'publish-release must not run an independent reproducibility rebuild');
+  assert.doesNotMatch(source, /name: release-apk/, 'publish-release must not upload a verify-only APK artifact');
+  assert.doesNotMatch(source, /Rebuild from source/, 'publish-release must not rebuild from source in CI');
+  assert.doesNotMatch(source, /verify\/verify-web\.sh|verify\/verify-rust\.sh|verify\/verify-native\.sh|verify-all\.sh|verify\/verify\.sh/, 'publish-release must not add substitute rebuild gates');
+  for (const job of ['sign-android', 'sign-windows', 'sign-macos', 'gate-installer', 'draft', 'publish']) {
+    assert.doesNotMatch(executableYaml(releaseJobBlock(source, job)), /gradlew|cargo |npm |swift build|xcodebuild/, `${job} must not rebuild`);
+  }
+  const draft = releaseJobBlock(source, 'draft');
+  const publish = releaseJobBlock(source, 'publish');
+  // Version validation: Android's derived version is asserted by build-android against the planned tag.
+  const builder = await workflow('build-android.yml');
+  assert.match(builder, /Assert derived version matches the version tag/, 'the Android build must validate the built version against the planned tag');
+  assert.match(builder, /if \[ "\$ACTUAL" != "\$EXPECTED" \]/, 'a version mismatch must fail the Android build');
+  // Release collision guard: a stale draft for the tag is replaced, a published release aborts.
+  assert.match(draft, /Deleting stale draft release/, 'a stale draft for the tag must be replaced');
+  assert.match(draft, /A published release for tag \$TAG already exists/, 'a published release for the tag must abort the run');
+  // Provenance, checksums and draft assets.
+  assert.match(draft, /actions\/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3/, 'publish-release must attest build provenance');
+  assert.match(draft, /subject-path:/, 'provenance subjects must be declared explicitly');
+  assert.match(draft, /release_assets\.py stage/, 'staging must write release-manifest.json and SHA256SUMS over every asset');
+  const assets = await readFile(new URL('scripts/release_assets.py', root), 'utf8');
+  assert.match(assets, /SUMS = "SHA256SUMS"/, 'the staged release must carry SHA256SUMS');
+  assert.match(assets, /MANIFEST = "release-manifest\.json"/, 'the staged release must carry release-manifest.json');
+  assert.match(releaseJobBlock(source, 'sign-android'), /sha256sum app-release\.apk mapping\.txt > SHA256SUMS/, 'the signed APK must ship with checksums over APK and mapping');
+  assert.match(draft, /--draft/, 'publish-release must create a draft first');
+  assert.match(draft, /"\$RUNNER_TEMP"\/assets\/\*/, 'the draft must attach every staged asset');
+  // User-facing attestation instructions remain in the notes.
+  assert.match(draft, /--notes-file "\$RUNNER_TEMP\/release-plan\/notes\.md"/, 'the draft must use the planned notes');
+  const planner = await readFile(new URL('scripts/release_plan.py', root), 'utf8');
+  assert.match(planner, /gh attestation verify <asset> --owner raidenyn/, 'user-facing attestation verification instructions must remain');
+  // Publish depends on the draft, consumes its release ID and the recorded digests, and verifies the
+  // downloaded draft assets before making anything public.
+  assert.match(publish, /^    needs: \[guard, plan, draft\]$/m, 'publish must depend on the draft');
+  assert.match(publish, /^      RELEASE_ID: \$\{\{ needs\.draft\.outputs\.release-id \}\}$/m, 'publish must consume the draft release ID');
+  assert.match(publish, /name: expected-digests\n/, 'publish must consume the recorded digests');
+  assert.match(publish, /releases\/assets\/\$asset_id" -H "Accept: application\/octet-stream"/, 'publish must download the draft assets by release ID');
+  assert.match(publish, /release_assets\.py verify-draft --expected-json "\$RUNNER_TEMP\/expected\/expected-digests\.json"/, 'publish must refuse on a draft asset digest mismatch');
+  assert.ok(publish.indexOf('verify-draft') < publish.indexOf('-F draft=false'), 'the digest check must precede publication');
+  assert.match(publish, /-F draft=false/, 'publish must flip the draft to published');
+  assert.match(publish, /if \[ "\$published" != "\$\(printf 'false\\t%s' "\$TAG"\)" \]; then/, 'publish must verify the release landed on its date tag');
 });
 
 test('every workflow pins external actions to the reviewed SHA plus version comment', async () => {
@@ -1778,6 +2143,7 @@ test('reusable component workflows referenced by the caller graph exist and rema
   const callers = {
     'release-build.yml': ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml'],
     'ci.yml': ['build-supply-chain.yml'],
+    'publish-release.yml': ['build-android.yml', 'build-web-extension.yml', 'build-native-windows.yml', 'build-native-macos.yml', 'build-supply-chain.yml'],
   };
   for (const [callerFile, files] of Object.entries(callers)) {
     const caller = await workflow(callerFile);

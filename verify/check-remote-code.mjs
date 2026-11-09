@@ -97,11 +97,11 @@ export const REMOTE_CODE_SCOPES = [
   'web-extension/src', 'web-extension/scripts', 'web-extension/vite.config.ts',
   'native-bridge/src-tauri', 'native-bridge/scripts', 'native-bridge/package.json',
   'native-bridge/host/src', 'native-bridge/host/scripts', 'native-bridge/host/Cargo.toml',
-  // OTP-25 standalone installers: engine, scripts, NSIS and Swift frontends, producer and release workflows.
+  // OTP-25 standalone installers: engine, scripts, NSIS and Swift frontends, producer workflows and the publisher.
   'native-bridge/installer/src', 'native-bridge/installer/scripts', 'native-bridge/installer/windows',
   'native-bridge/installer/macos/Package.swift', 'native-bridge/installer/macos/Sources', 'native-bridge/installer/Cargo.toml',
   '.github/workflows/build-native-windows.yml', '.github/workflows/build-native-macos.yml',
-  '.github/workflows/release-native-installers.yml',
+  '.github/workflows/publish-release.yml',
   // Component-tree CI, the PR title check, the release/commit tooling and the commit hook.
   '.github/workflows/ci.yml', '.github/workflows/pr-title.yml',
   '.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml',
