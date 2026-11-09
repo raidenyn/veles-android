@@ -136,13 +136,33 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(plan.release_tag, "2026.11.20")
         self.assertTrue(plan.any_release)
 
-    def test_bootstrap_fill_releases_missing_component_at_current_version(self):
-        repo = tagged(self)
+    def test_untagged_component_missing_from_manifest_releases_at_initial_version(self):
+        repo = make_repo(self)
+        repo.tag("android-v0.1.0")
+        repo.tag("web-extension-v0.1.0")
         repo.commit("docs: x", touching="web-extension/a.ts")
         previous = manifest({"android": "0.1.0", "web-extension": "0.1.0"})
         c = comps(make_plan(repo.path, repo.cmap(), TODAY, ["2026.11.09"], previous, cliff_path()))
-        self.assertEqual((c["installer"].current, c["installer"].next, c["installer"].action), ("0.1.0", "0.1.0", "RELEASE"))
+        self.assertEqual((c["installer"].current, c["installer"].next, c["installer"].action), (None, "0.1.0", "RELEASE"))
         self.assertEqual(c["android"].action, "CARRY")
+
+    def test_tagged_component_missing_from_manifest_fails(self):
+        repo = tagged(self)
+        repo.commit("docs: x", touching="web-extension/a.ts")
+        previous = manifest({"android": "0.1.0", "web-extension": "0.1.0"})
+        with self.assertRaises(PlanError) as ctx:
+            make_plan(repo.path, repo.cmap(), TODAY, ["2026.11.09"], previous, cliff_path())
+        self.assertIn("installer-v0.1.0", str(ctx.exception))
+        self.assertIn("docs/releasing.md", str(ctx.exception))
+
+    def test_tags_without_any_combined_release_fail(self):
+        repo = make_repo(self)
+        repo.tag("android-v0.1.0")  # e.g. a first publish that pushed tags but never published
+        repo.commit("fix: x", touching="app/a.kt")
+        with self.assertRaises(PlanError) as ctx:
+            make_plan(repo.path, repo.cmap(), TODAY, [], None, cliff_path())
+        self.assertIn("android-v0.1.0", str(ctx.exception))
+        self.assertIn("docs/releasing.md", str(ctx.exception))
 
     def test_nothing_to_release(self):
         repo = tagged(self)
@@ -314,17 +334,19 @@ class PlannerWithoutCliffTest(unittest.TestCase):
         self.assertIsNone(latest_combined_release(rows[:3]))
         self.assertIsNone(latest_combined_release([]))
 
-    def test_release_refs_only_new_release_tags(self):
+    def test_release_refs_lists_release_components_only(self):
         plan = {
             "release_tag": "2026.11.20",
             "components": {
                 "android": {"current": "0.1.0", "next": "0.1.0", "action": "CARRY", "tag": "android-v0.1.0"},
                 "web-extension": {"current": "0.1.0", "next": "0.2.0", "action": "RELEASE", "tag": "web-extension-v0.2.0"},
-                # bootstrap fill: re-released at an existing tag, which stays where it is
-                "installer": {"current": "0.1.0", "next": "0.1.0", "action": "RELEASE", "tag": "installer-v0.1.0"},
+                "installer": {"current": None, "next": "0.1.0", "action": "RELEASE", "tag": "installer-v0.1.0"},
             },
         }
-        self.assertEqual(release_refs(plan), ["refs/tags/web-extension-v0.2.0"])
+        self.assertEqual(release_refs(plan), ["refs/tags/web-extension-v0.2.0", "refs/tags/installer-v0.1.0"])
+        plan["components"]["android"]["action"] = "RELEASE"  # RELEASE must always mean a new version
+        with self.assertRaises(PlanError):
+            release_refs(plan)
 
     def test_skip_message_names_the_gradle_task(self):
         self.assertIn("scriptsTest", gitfixture.SKIP_REASON)

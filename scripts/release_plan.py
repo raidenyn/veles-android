@@ -7,9 +7,9 @@ the pinned git-cliff over the component's release paths (`components.release_pat
 components start at `initial-version` with notes limited to `<since>..HEAD` (git-cliff is never asked
 for `--bumped-version` without a tag; cliff.toml has no `initial_tag`).
 
-A component is RELEASE when its next version differs from its current one, or when the previous
-combined release's manifest lacks it (bootstrap); otherwise CARRY. Fails closed on shallow
-repositories and on tags that no published combined release accounts for.
+A component is RELEASE when its next version differs from its current one (an untagged component is
+RELEASE at its initial-version); otherwise CARRY. Fails closed on shallow repositories and on tags
+that no published combined release manifest accounts for (newer than listed, or not listed at all).
 """
 from __future__ import annotations
 
@@ -197,6 +197,12 @@ def make_plan(
         prefix = node["tag-prefix"]
         tag = latest_component_tag(repo, prefix)
         current = tag[len(prefix):] if tag else None
+        if tag and (previous is None or name not in previous):
+            raise PlanError(
+                "%s: tag %s exists but no published combined release manifest lists %s; "
+                "see %s (re-run the failed publish job, or delete the orphaned tags and draft)"
+                % (name, tag, name, RUNBOOK)
+            )
         if previous is not None and name in previous:
             listed = str(previous[name].get("version", ""))
             if current is None or _semver(current) < _semver(listed):
@@ -232,8 +238,8 @@ def make_plan(
                 )
         else:
             nxt = node["initial-version"]
-        listed_before = previous is not None and name in previous
-        action = "RELEASE" if nxt != current or not listed_before else "CARRY"
+        # Untagged components (never released) start at initial-version; tagged ones are in the manifest.
+        action = "RELEASE" if nxt != current else "CARRY"
         result.append(Component(
             name=name, display=DISPLAY.get(name, name), current=current, next=nxt,
             action=action, tag=prefix + nxt, notes=notes, reasons=reasons,
@@ -256,13 +262,15 @@ def plan_to_json(plan: Plan) -> dict:
 
 
 def release_refs(plan: dict) -> List[str]:
-    """Tags to push for RELEASE components only; a version that already has its tag (bootstrap
-    fill) and every CARRY component's tag stay where they are."""
-    return [
-        "refs/tags/" + c["tag"]
-        for c in plan["components"].values()
-        if c["action"] == "RELEASE" and c["next"] != c["current"]
-    ]
+    """Tags to push for RELEASE components only; every CARRY component's tag stays where it is."""
+    refs = []
+    for name, c in plan["components"].items():
+        if c["action"] != "RELEASE":
+            continue
+        if c["next"] == c["current"]:
+            raise PlanError("%s: RELEASE without a new version (%s)" % (name, c["next"]))
+        refs.append("refs/tags/" + c["tag"])
+    return refs
 
 
 def render_notes(plan: Plan, previous_manifest: Optional[dict]) -> str:
