@@ -248,6 +248,26 @@ def check_gradle(gradle, clean_script):
     if not re.search(r'fun Exec\.installerCargoEnvironment\(\) \{(?:(?!\n\}).)*environment\("RUSTFLAGS"', code, re.S):
         errors.append("RUSTFLAGS is not set explicitly (an ambient value could drop the remap)")
 
+    # 4b. Both release slots must link a byte-identical Swift frontend. SwiftPM's release link
+    #     records the per-slot scratch path (the object files' debug map) in the executable and
+    #     `-file-prefix-map` only rewrites Swift source paths, so `ld -S` omits that debug map. The
+    #     debug kind keeps its debug map for dsymutil, so the flag is release-only, and the bin-path
+    #     query shares the same list so it can never rebuild a different frontend.
+    if code.count("installerSwiftArguments(") < 3:
+        errors.append("the Swift frontend build and the bin-path query do not share one argument list")
+    swift = re.search(r"fun installerSwiftArguments\(.*?\n    \}", code, re.S)
+    if swift is None:
+        errors.append("no installerSwiftArguments helper")
+    else:
+        helper = swift.group(0)
+        release = re.search(r'if \(kind\.name == "release"\) \{(.*?)\n        \}', helper, re.S)
+        if release is None:
+            errors.append("the release Swift frontend does not scope ld -S to the release kind")
+        elif '"-Xswiftc", "-Xlinker", "-Xswiftc", "-S"' not in release.group(1):
+            errors.append("the release Swift frontend does not drop the per-slot debug map (ld -S)")
+        if helper.count('"-Xswiftc", "-Xlinker", "-Xswiftc", "-S"') != 1:
+            errors.append("the per-slot debug map flag is not confined to the release branch")
+
     # 5. The exact origin is a tracked build input of the host build.
     if 'environment("VELES_ALLOWED_ORIGINS"' not in code or 'inputs.property("VELES_ALLOWED_ORIGINS"' not in code:
         errors.append("VELES_ALLOWED_ORIGINS is not both a build input and the host build environment")
@@ -853,6 +873,30 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("static CRT" in e for e in found), found)
         found = self.violations(self.mutate('environment("RUSTFLAGS"', 'environment("RUSTFLAGZ"'))
         self.assertTrue(any("RUSTFLAGS" in e for e in found), found)
+
+    def test_the_release_swift_frontend_must_not_record_the_slot_path(self):
+        # SwiftPM's release link records the per-slot scratch path (object files and debug map) in
+        # the executable; -file-prefix-map only rewrites Swift source paths, so without `ld -S` the
+        # two release slots differ and the producer refuses to publish.
+        found = self.violations(self.mutate('"-Xswiftc", "-Xlinker", "-Xswiftc", "-S"', '"-Xswiftc", "-no-debug-map"'))
+        self.assertTrue(any("debug map" in e for e in found), found)
+        block = producer_block(self.gradle)
+        mutated = self.gradle.replace(block, block.replace("installerSwiftArguments(", "installerSwiftBuild("))
+        self.assertTrue(any("argument list" in e for e in self.violations(mutated)))
+
+    def test_the_debug_map_flag_must_stay_release_only(self):
+        # Moving `-S` out of an (otherwise empty) release branch would strip the debug kind's
+        # symbols too; a presence-only check would accept that.
+        moved = self.mutate(
+            '        if (kind.name == "release") {\n'
+            '            arguments += listOf("-Xswiftc", "-Xlinker", "-Xswiftc", "-S")\n'
+            '        }\n',
+            '        if (kind.name == "release") {\n'
+            '        }\n'
+            '        arguments += listOf("-Xswiftc", "-Xlinker", "-Xswiftc", "-S")\n',
+        )
+        found = self.violations(moved)
+        self.assertTrue(any("debug map" in e or "release kind" in e for e in found), found)
 
     def test_the_origin_must_be_a_tracked_build_input(self):
         found = self.violations(self.mutate('inputs.property("VELES_ALLOWED_ORIGINS"', 'inputs.property("OTHER"'))

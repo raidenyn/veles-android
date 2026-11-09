@@ -1499,6 +1499,26 @@ fun registerInstallerProducer(
         (groovy.json.JsonSlurper().parse(config.get().asFile) as Map<String, Any?>)["version"] as String
     }
     val slotFinishers = mutableListOf<TaskProvider<*>>()
+    // One Swift argument list for the frontend build and the bin-path query, so the second can
+    // never rebuild a different executable. SwiftPM's release link records the per-slot scratch
+    // path (the object files' debug map) in the linked frontend, and `-file-prefix-map` only
+    // rewrites Swift source paths, so slot a and slot b differ by that path alone and the A/B
+    // producer refuses to publish. `ld -S` omits the debug map; the release kind publishes no
+    // symbols, so nothing is lost, while the debug kind keeps its map for `dsymutil`.
+    fun installerSwiftArguments(scratch: File, configuration: String, binPath: Boolean): MutableList<String> {
+        val arguments = mutableListOf(
+            "xcrun", "swift", "build", "--configuration", configuration, "--arch", "arm64",
+            "--sdk", installerMacosSdkPath.get(), "--scratch-path", scratch.absolutePath,
+            "-Xswiftc", "-file-prefix-map", "-Xswiftc", "${layout.projectDirectory.asFile.absolutePath}=/veles-src",
+        )
+        if (kind.name == "release") {
+            arguments += listOf("-Xswiftc", "-Xlinker", "-Xswiftc", "-S")
+        }
+        if (binPath) {
+            arguments += "--show-bin-path"
+        }
+        return arguments
+    }
     val slotOutputs = mutableMapOf<String, Provider<Directory>>()
     var previousFinisher: TaskProvider<*>? = null
     var lastEmbeddedTargetDir: Provider<Directory>? = null
@@ -1538,10 +1558,7 @@ fun registerInstallerProducer(
             if (installerPlatform == "macos") {
                 val binPath = providers.exec {
                     workingDir(installerDir.dir("macos"))
-                    commandLine(
-                        "xcrun", "swift", "build", "--configuration", kind.swiftConfiguration, "--arch", "arm64",
-                        "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile, "--show-bin-path",
-                    )
+                    commandLine(installerSwiftArguments(frontendScratchDir.get().asFile, kind.swiftConfiguration, true))
                 }.standardOutput.asText.get().trim()
                 arguments += listOf(
                     "--frontend", "$binPath/VelesBridgeInstaller",
@@ -1612,11 +1629,7 @@ fun registerInstallerProducer(
             doFirst {
                 delete(frontendScratchDir)
                 // Resolved at execution: the SDK path exists only on a macOS runner.
-                commandLine(
-                    "xcrun", "swift", "build", "--configuration", kind.swiftConfiguration, "--arch", "arm64",
-                    "--sdk", installerMacosSdkPath.get(), "--scratch-path", frontendScratchDir.get().asFile,
-                    "-Xswiftc", "-file-prefix-map", "-Xswiftc", "${layout.projectDirectory.asFile.absolutePath}=/veles-src",
-                )
+                commandLine(installerSwiftArguments(frontendScratchDir.get().asFile, kind.swiftConfiguration, false))
             }
         }
         val uninstaller = tasks.register<Exec>("${taskName}Uninstaller$suffix") {
