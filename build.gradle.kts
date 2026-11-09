@@ -994,10 +994,9 @@ val bridgeBundle = tasks.register<Exec>("bridgeBundle") {
         // Tauri 2.6.0 locates WiX under <cargo target dir>/.tauri/WixTools314
         // and NSIS under <cargo target dir>/.tauri/NSIS when
         // bundle.useLocalToolsDir is true (see native-bridge/src-tauri/
-        // tauri.conf.json). The verification workflow provisions a reviewed,
-        // hash-pinned toolset into native-bridge/src-tauri/target/.tauri/ via
-        // verify/native/provision-windows-tools.ps1 before denying outbound
-        // network for bridgePackage. TAURI_WIX_PATH / TAURI_NSIS_PATH env vars
+        // tauri.conf.json). The toolset must be provisioned into
+        // native-bridge/src-tauri/target/.tauri/ before bridgePackage runs.
+        // TAURI_WIX_PATH / TAURI_NSIS_PATH env vars
         // are NOT read by Tauri 2.6.0 (the NSIS bundler reads NSIS_PATH, not
         // TAURI_NSIS_PATH; WiX has no env override). Forward NSIS_PATH from
         // the provisioned cache as a belt-and-suspenders override so a stale

@@ -25,7 +25,7 @@ const ACTION_PINS = {
   'actions/cache': { sha: 'caa296126883cff596d87d8935842f9db880ef25', version: 'v5' },
   'actions/upload-artifact': { sha: '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', version: 'v7' },
   'actions/download-artifact': { sha: '37930b1c2abaa49bbe596cd826c3c89aef350131', version: 'v7' },
-  // Verified against the upstream v6 tag (git/ref/tags/v6 -> this commit) on 2026-11-01; used by otp23-feasibility.yml.
+  // Verified against the upstream v6 tag (git/ref/tags/v6 -> this commit) on 2026-11-01.
   'actions/setup-python': { sha: 'ece7cb06caefa5fff74198d8649806c4678c61a1', version: 'v6' },
   'actions/setup-node': { sha: '249970729cb0ef3589644e2896645e5dc5ba9c38', version: 'v6' },
   'actions/attest-build-provenance': { sha: '43d14bc2b83dec42d39ecae14e916627a18bb661', version: 'v3' },
@@ -1111,24 +1111,6 @@ test('producer workflows never invoke reproducibility verifiers or A/B machinery
   }
 });
 
-test('Windows wrapper and provisioner declare parameters before executable statements', async () => {
-  for (const name of ['network-deny-windows.ps1', 'provision-windows-tools.ps1']) {
-    const source = await readFile(new URL(`verify/native/${name}`, root), 'utf8');
-    assert.match(source, /^\s*(?:#.*\n\s*)*param\(/, `${name} must declare param before every executable statement`);
-  }
-});
-
-test('aggregate artifact-name guard accepts only the five verified producers', () => {
-  for (const name of ['verified-android', 'verified-web-extension', 'rust-jni-wasm', 'verified-native-windows', 'verified-native-macos']) {
-    const result = spawnSync('bash', ['verify/validate-verified-artifact-names.sh', name], { cwd: repository, encoding: 'utf8' });
-    assert.equal(result.status, 0, `must accept ${name}: ${result.stderr}`);
-  }
-  for (const name of ['', 'unverified-windows-run-a', 'verified-evil', 'rust-jni-wasm-extra', '../verified-android']) {
-    const result = spawnSync('bash', ['verify/validate-verified-artifact-names.sh', name], { cwd: repository, encoding: 'utf8' });
-    assert.notEqual(result.status, 0, `must reject malicious artifact name ${JSON.stringify(name)}`);
-  }
-});
-
 test('workflow contract helpers reject elevated permissions, extra uploads, and every run syntax secret interpolation', () => {
   const upload = `      - uses: actions/upload-artifact@v7
         with:
@@ -1398,8 +1380,7 @@ test('tag release publishes from one build with provenance, checksums, and diges
   assert.doesNotMatch(source, /name: release-apk/, 'tag release must not upload a verify-only APK artifact');
   assert.doesNotMatch(source, /Rebuild from source/, 'tag release must not rebuild from source in CI');
   assert.doesNotMatch(source, /verify\/verify-web\.sh|verify\/verify-rust\.sh|verify\/verify-native\.sh|verify-all\.sh/, 'tag release must not add substitute rebuild gates');
-  // verify.sh survives only as user-facing release-notes instructions, never as a run gate.
-  assert.equal((source.match(/verify\/verify\.sh/g) ?? []).length, 1, 'verify.sh may appear only inside the user-facing rebuild instructions');
+  assert.doesNotMatch(source, /verify\/verify\.sh/, 'tag release must not reference the removed reproducibility verifier');
   const buildBlock = source.slice(source.indexOf('  build:'), source.indexOf('  publish:'));
   // Build-job protections: version/tag validation and release collision guard.
   assert.match(buildBlock, /Verify built version matches tag/, 'tag release must validate the built version against the tag');
@@ -1420,10 +1401,9 @@ test('tag release publishes from one build with provenance, checksums, and diges
   for (const asset of ['"veles-$GITHUB_REF_NAME.apk"', 'mapping.txt', 'SHA256SUMS']) {
     assert.match(draftAssets, new RegExp(escapeRegexp(asset)), `draft release must attach ${asset}`);
   }
-  // User-facing rebuild instructions remain (optional diagnostics, not a gate).
+  // User-facing attestation instructions remain.
   const notesBlock = source.slice(source.indexOf('- name: Append verification instructions'));
   assert.match(notesBlock, /gh attestation verify veles-\$GITHUB_REF_NAME\.apk --repo \$GITHUB_REPOSITORY/, 'user-facing attestation verification instructions must remain');
-  assert.match(notesBlock, /verify\/verify\.sh veles-\$GITHUB_REF_NAME\.apk \$GITHUB_REF_NAME/, 'user-facing rebuild instructions must remain');
   // Publish depends on build only and keeps the draft-asset digest integrity check.
   const publishBlock = source.slice(source.indexOf('  publish:'));
   assert.match(publishBlock, /needs: \[build\]/, 'tag publish must depend on the build job only');
