@@ -37,31 +37,6 @@ ONE_PUBLIC_TASKS = (
 )
 SHA_PINNED_USE = re.compile(r"uses:\s*(?:\./|[\w.-]+/[\w./-]+@[0-9a-f]{40}\b)")
 
-# The unchanged Android publication conditions (native installers are not built by this caller).
-PUBLISH_NEEDS = "needs: [guard, android, web-extension, rust, supply-chain]"
-PUBLISH_IF = (
-    "if: |\n"
-    "      always() &&\n"
-    "      github.event_name == 'workflow_dispatch' &&\n"
-    "      github.ref == 'refs/heads/master' &&\n"
-    "      needs.guard.result == 'success' &&\n"
-    "      needs.android.result == 'success' &&\n"
-    "      needs.web-extension.result == 'success' &&\n"
-    "      needs.rust.result == 'success' &&\n"
-    "      needs.supply-chain.result == 'success'"
-)
-ANDROID_IF = (
-    "    if: |\n"
-    "      always() &&\n"
-    "      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||\n"
-    "      (github.event_name == 'pull_request' && (\n"
-    "        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||\n"
-    "        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))\n"
-    "      ))) &&\n"
-    "      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')"
-)
-
-
 def read(relative):
     return (ROOT / relative).read_text(encoding="utf-8")
 
@@ -699,31 +674,32 @@ def job_block(source, job):
 
 def check_release_build(source):
     errors = []
-    # Native installers are released only by release-native-installers.yml. This caller
-    # must neither define native jobs nor select a native build kind.
-    for job in ("native-windows", "native-macos"):
+    executable = strip_yaml_comments(source)
+    # Native installers are built only by build-pr-installers.yml (debug) and the release
+    # publisher. This label/change-driven build caller must neither define native jobs nor
+    # select a native build kind.
+    for job in ("native-windows", "native-macos", "windows", "macos"):
         if job_block(source, job):
             errors.append("release-build must not define the %s job" % job)
-    executable = strip_yaml_comments(source)
     for token in (
         "build-native-windows.yml", "build-native-macos.yml",
         "native-unsigned-windows", "native-unsigned-macos", "build-kind:",
-        "bridgeInstallerUnsigned", "bridgeInstallerDebug",
+        "bridgeInstallerUnsigned", "bridgeInstallerDebug", "bridgeInstallerPackageFixture",
+        "release-native-installers.yml", "native-release", "native-installer-debug",
     ):
         if token in executable:
             errors.append("release-build must not produce native installers (%s)" % token)
-    # The component publication conditions are untouched.
-    publish = source.split("\n  publish:", 1)[-1]
-    if PUBLISH_NEEDS not in publish:
-        errors.append("the publish job's needs changed")
-    if PUBLISH_IF not in publish:
-        errors.append("the publish job's if condition changed")
-    if ANDROID_IF not in job_block(source, "android"):
-        errors.append("the android job's condition changed")
-    if source.count("contents: write") != 1 or "contents: write" not in publish:
-        errors.append("contents: write must appear only in the publish job")
-    if "native-release" in executable or "native-unsigned" in publish or "gh release create \"$VERSION\" \\\n            \"$APK\" \\\n            \"android-release/mapping.txt\" \\\n            \"android-release/SHA256SUMS\" \\" not in publish:
-        errors.append("the publish job must keep publishing only the Android artifacts")
+    # No publication: no dispatch, no write token, no secrets, no release mutation.
+    if "workflow_dispatch" in executable:
+        errors.append("release-build must not be manually dispatchable")
+    if "contents: write" in executable or "write-all" in executable:
+        errors.append("release-build must not grant a write token")
+    if re.search(r"(?m)^\s*secrets:", executable) or "${{ secrets." in executable:
+        errors.append("release-build must not pass or reference secrets")
+    if re.search(r"(?m)^\s*environment:", executable):
+        errors.append("release-build must not enter a protected environment")
+    if re.search(r"gh release (?:create|delete|upload|edit)|git push|git tag ", executable):
+        errors.append("release-build must not publish, tag or push")
     return errors
 
 
@@ -1357,45 +1333,48 @@ class ProducerWorkflows(unittest.TestCase):
 
 
 class Callers(unittest.TestCase):
-    def test_release_build_passes_the_component_names_and_keeps_android_publication(self):
+    def test_release_build_calls_no_native_producer_and_publishes_nothing(self):
         self.assertEqual(check_release_build(read(".github/workflows/release-build.yml")), [])
 
-    def test_changed_publication_conditions_are_rejected(self):
+    def test_publication_paths_are_rejected(self):
         source = read(".github/workflows/release-build.yml")
-        for old, new in (
-            (PUBLISH_NEEDS, PUBLISH_NEEDS.replace("supply-chain]", "supply-chain, native-windows]")),
-            ("needs.supply-chain.result == 'success'", "needs.supply-chain.result != 'failure'"),
-            ("github.ref == 'refs/heads/master' &&", "github.ref != '' &&"),
-            ('"android-release/SHA256SUMS" \\', '"android-release/SHA256SUMS" "native-unsigned.tar" \\'),
+        self.assertIn("permissions:\n  contents: read", source)
+        self.assertIn("  pull_request:\n", source)
+        for label, mutated in (
+            ("write token", source.replace("permissions:\n  contents: read", "permissions:\n  contents: write", 1)),
+            ("dispatch", source.replace("  pull_request:\n", "  workflow_dispatch:\n  pull_request:\n", 1)),
+            ("secrets", source + "\n  publish:\n    uses: ./.github/workflows/build-android.yml\n    secrets: inherit\n"),
+            ("secret expression", source + "\n  publish:\n    env:\n      KEY: ${{ secrets.KEY }}\n"),
+            ("environment", source + "\n  publish:\n    runs-on: ubuntu-latest\n    environment: release-publish\n"),
+            ("release create", source + "\n  publish:\n    steps:\n      - run: gh release create \"$TAG\"\n"),
+            ("release upload", source + "\n  publish:\n    steps:\n      - run: gh release upload \"$TAG\" a.apk\n"),
         ):
-            self.assertIn(old, source, old)
-            self.assertNotEqual(check_release_build(source.replace(old, new, 1)), [], old)
-        self.assertNotEqual(check_release_build(source.replace("contents: read", "contents: write", 1)), [])
+            self.assertNotEqual(mutated, source, label)
+            self.assertNotEqual(check_release_build(mutated), [], label)
 
     def test_native_installers_are_absent_and_reintroduction_is_rejected(self):
         source = read(".github/workflows/release-build.yml")
         executable = strip_yaml_comments(source)
         for token in (
-            "  native-windows:", "  native-macos:",
+            "  native-windows:", "  native-macos:", "  windows:", "  macos:",
             "build-native-windows.yml", "build-native-macos.yml",
             "native-unsigned-windows", "native-unsigned-macos", "build-kind:",
         ):
             self.assertNotIn(token, executable, token)
-        reintroduced = source + (
-            "\n  native-windows:\n"
-            "    needs: guard\n"
-            "    uses: ./.github/workflows/build-native-windows.yml\n"
-            "    with:\n"
-            "      commit-sha: ${{ github.sha }}\n"
-            "      artifact-name: native-unsigned-windows\n"
-            "      build-kind: release\n"
-        )
-        self.assertNotEqual(check_release_build(reintroduced), [])
-        self.assertNotEqual(
-            check_release_build(source.replace(PUBLISH_NEEDS, PUBLISH_NEEDS.replace("supply-chain]", "supply-chain, native-macos]"), 1)),
-            [],
-            "publish must not regain a native dependency",
-        )
+        for job, builder, kind in (
+            ("native-windows", "build-native-windows.yml", "release"),
+            ("windows", "build-native-windows.yml", "debug"),
+            ("macos", "build-native-macos.yml", "debug"),
+        ):
+            reintroduced = source + (
+                "\n  %s:\n"
+                "    needs: [changes]\n"
+                "    uses: ./.github/workflows/%s\n"
+                "    with:\n"
+                "      commit-sha: ${{ github.sha }}\n"
+                "      build-kind: %s\n" % (job, builder, kind)
+            )
+            self.assertNotEqual(check_release_build(reintroduced), [], job)
 
     def workflows(self):
         directory = ROOT / ".github" / "workflows"

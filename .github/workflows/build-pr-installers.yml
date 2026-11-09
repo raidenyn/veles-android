@@ -1,9 +1,12 @@
 name: build-pr-installers
 
 # PR debug installers: a labeled pull request may build the finished DEBUG
-# (not for release) installer for Windows and/or macOS.
+# (not for release) installer for Windows and/or macOS, including the native host
+# built from the PR head. Master pushes never build installers.
 #
-# Labels (exactly): `windows-installer-build` and `mac-installer-build`. Every
+# Labels (exactly): `build-windows-installer` and `build-macos-installer` (the other
+# component build labels live in release-build.yml; the retired installer labels
+# trigger nothing). Every
 # reviewed pull_request event (opened, reopened, labeled, unlabeled, synchronize,
 # ready_for_review) re-evaluates the current label set; drafts do not build. The
 # per-PR concurrency group cancels an obsolete run when a new commit or a label
@@ -43,8 +46,8 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
-      (contains(github.event.pull_request.labels.*.name, 'windows-installer-build') ||
-      contains(github.event.pull_request.labels.*.name, 'mac-installer-build'))
+      (contains(github.event.pull_request.labels.*.name, 'build-windows-installer') ||
+      contains(github.event.pull_request.labels.*.name, 'build-macos-installer'))
     runs-on: ubuntu-latest
     environment: native-installer-debug
     permissions:
@@ -63,7 +66,7 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
-      contains(github.event.pull_request.labels.*.name, 'windows-installer-build')
+      contains(github.event.pull_request.labels.*.name, 'build-windows-installer')
     uses: ./.github/workflows/build-native-windows.yml
     with:
       commit-sha: ${{ github.event.pull_request.head.sha }}
@@ -75,7 +78,7 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
-      contains(github.event.pull_request.labels.*.name, 'mac-installer-build')
+      contains(github.event.pull_request.labels.*.name, 'build-macos-installer')
     uses: ./.github/workflows/build-native-macos.yml
     with:
       commit-sha: ${{ github.event.pull_request.head.sha }}

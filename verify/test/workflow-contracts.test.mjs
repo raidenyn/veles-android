@@ -64,8 +64,6 @@ function assertActionsPinned(source, name) {
   }
 }
 
-const FULL_GRAPH_JOBS = ['web-extension', 'rust', 'supply-chain'];
-
 function callerJobKeys(source) {
   // Caller jobs reuse ./.github/workflows/*.yml; collect their top-level job keys.
   const lines = source.split('\n');
@@ -1494,173 +1492,196 @@ jobs:
   }
 });
 
-test('release-build caller graph composes single-build workflows with default-read and publisher-only write', async () => {
-  const source = await workflow('release-build.yml');
-  assert.match(source, /^permissions:\n  contents: read$/m, 'release-build default permissions must be contents: read only');
+// release-build.yml (design D5/D8): label-driven PR builds, changed-only master builds and the master
+// release preview. No dispatch, no publication, no secrets, no native installers.
+const RELEASE_BUILD_FILE = 'release-build.yml';
+const RELEASE_BUILD_PR_EVENTS = ['opened', 'reopened', 'synchronize', 'labeled', 'unlabeled'];
+const RELEASE_BUILD_JOBS = ['changes', 'android', 'web-extension', 'rust', 'preview'];
+const RELEASE_BUILD_PRODUCERS = {
+  android: { file: 'build-android.yml', artifact: 'android-release', label: 'build-android' },
+  'web-extension': { file: 'build-web-extension.yml', artifact: 'web-extension', label: 'build-web-extension' },
+  rust: { file: 'build-rust.yml', artifact: 'rust-jni-wasm', label: null },
+};
+const LEGACY_BUILD_LABELS = ["'release-build'", 'windows-installer-build', 'mac-installer-build'];
 
-  // Triggers: master push, release-build labeled PR, manual dispatch.
-  assert.match(source, /^on:\n  push:\n    branches: \[master\]/m, 'release-build must trigger on master push');
-  assert.match(source, /^  pull_request:\n    types: \[labeled, synchronize\]/m, 'release-build must trigger on labeled/synchronize PR events');
-  assert.doesNotMatch(source, /^  pull_request:\n    branches:/m, 'release-build must not restrict pull_request branches');
-  assert.match(source, /^  workflow_dispatch:\s*$/m, 'release-build must remain manually dispatchable');
+function labelOrChangeCondition(node, label) {
+  return `always() && ((github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, '${label}')) || (github.event_name == 'push' && needs.changes.outputs.${node} == 'true'))`;
+}
 
-  // Non-master dispatch guard must fail before any build.
-  const guardIndex = source.indexOf('  guard:');
-  const firstBuildIndex = Math.min(
-    ...['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml']
-      .map((file) => source.indexOf(`./.github/workflows/${file}`))
-      .filter((index) => index !== -1),
-  );
-  assert.ok(guardIndex !== -1, 'release-build must declare a guard job');
-  assert.ok(firstBuildIndex !== -1, 'release-build must call at least one reusable workflow');
-  assert.ok(guardIndex < firstBuildIndex, 'release-build guard must precede every reusable-workflow call');
-  const guardBlock = source.slice(guardIndex, firstBuildIndex);
-  assert.match(guardBlock, /if: github\.event_name == 'workflow_dispatch'/, 'release-build guard must only run on workflow_dispatch');
-  assert.match(guardBlock, /github\.ref != 'refs\/heads\/master'/, 'release-build guard must test for a non-master ref');
-  assert.match(guardBlock, /::error::|exit 1/, 'release-build guard must fail the dispatch before builds');
+function normalizedCondition(block) {
+  const folded = block.match(/^    if: \|\n((?:      [^\n]*\n)+)/m);
+  const inline = block.match(/^    if: (?!\|)(.+)$/m);
+  assert.ok(folded || inline, 'job must declare an if: condition');
+  const text = folded ? folded[1].split('\n').map((line) => line.trim()).filter(Boolean).join(' ') : inline[1].trim();
+  return text.replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
+}
 
-  // Reusable-workflow caller jobs contain only uses/with/secrets/needs/if/permissions.
-  const jobs = callerJobKeys(source);
-  for (const [job, keys] of Object.entries(jobs)) {
-    if (job === 'guard') continue; // guard is a local gate, not a reusable-workflow caller
-    // Only reusable-workflow caller jobs (uses: ./.github/workflows/...) are constrained.
-    const jobStart = source.indexOf(`  ${job}:`);
-    const nextJobMatch = source.slice(jobStart + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
-    const jobEnd = nextJobMatch ? jobStart + 1 + nextJobMatch.index : source.length;
-    const jobBlock = source.slice(jobStart, jobEnd);
-    if (!/uses: \.\/\.github\/workflows\//.test(jobBlock)) continue;
-    for (const key of keys) {
-      assert.ok(
-        ['uses', 'with', 'secrets', 'needs', 'if', 'permissions'].includes(key),
-        `release-build reusable-workflow caller job "${job}" must contain only caller fields; found "${key}"`,
-      );
-    }
-  }
+// Evaluate a release-build job condition for a synthetic event; any unknown context fails.
+function evaluateBuildCondition(condition, { eventName, labels = [], changes = {} }) {
+  const expression = condition
+    .replaceAll('always()', 'true')
+    .replaceAll('github.event_name', JSON.stringify(eventName))
+    .replace(/contains\(github\.event\.pull_request\.labels\.\*\.name,\s*'([^']*)'\)/g, (_, label) => `labels.includes(${JSON.stringify(label)})`)
+    .replace(/needs\.changes\.outputs\.([A-Za-z0-9_-]+)/g, (_, node) => JSON.stringify(eventName === 'push' ? String(changes[node] ?? '') : ''));
+  assert.doesNotMatch(expression, /github\.|needs\./, `condition uses an unsupported context: ${condition}`);
+  return new Function('labels', `"use strict"; return (${expression});`)(labels);
+}
 
-  const labelCondition = "github.event.action == 'labeled' && github.event.label.name == 'release-build'";
-  const synchronizeCondition = "github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build')";
-
-  // Android-only ordinary master push: android job's if includes push; the
-  // full-graph jobs exclude push and require workflow_dispatch or the label.
-  const androidBlock = source.slice(source.indexOf('  android:'), source.indexOf('  web-extension:'));
-  assert.match(androidBlock, /github\.event_name == 'push'/, 'release-build android job must run on ordinary master push');
-
-  for (const job of FULL_GRAPH_JOBS) {
-    const start = source.indexOf(`  ${job}:`);
-    const nextJobMatch = source.slice(start + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
-    const end = nextJobMatch ? start + 1 + nextJobMatch.index : source.length;
-    const jobBlock = source.slice(start, end);
-    assert.ok(jobBlock.length > 0, `release-build must define job ${job}`);
-    assert.doesNotMatch(jobBlock, /github\.event_name == 'push'/, `release-build job ${job} must not run on ordinary master push`);
-    assert.match(jobBlock, /github\.event_name == 'workflow_dispatch'/, `release-build job ${job} must gate on workflow_dispatch`);
-    assert.match(jobBlock, new RegExp(escapeRegexp(labelCondition)), `release-build job ${job} must include the labeled pull_request trigger`);
-    assert.match(jobBlock, new RegExp(escapeRegexp(synchronizeCondition)), `release-build job ${job} must include the synchronize pull_request trigger`);
-  }
-
-  // Labeled PR runs the complete component graph (every full-graph job).
-  assert.ok(FULL_GRAPH_JOBS.every((job) => source.includes(`  ${job}:`)), 'release-build labeled PR must run every full-graph component');
-
-  // The aggregate reusable workflow and its CI dependencies are gone.
-  assert.doesNotMatch(source, /build-toolchain-manifest\.yml/, 'release-build must not call the removed aggregate workflow');
-  assert.doesNotMatch(source, /\n  aggregate:\s*$/, 'release-build must not define an aggregate job');
-  assert.doesNotMatch(source, /release-evidence-artifact-name/, 'release-build must not pass the removed release-evidence input');
-  assert.doesNotMatch(source, /android-release-evidence/, 'release-build must not reference the removed release-evidence artifact');
-  // No automatic reproducibility machinery may creep into the manual graph —
-  // same forbidden set as the producers (the tag workflow keeps exactly one
-  // user-facing verify.sh string in release notes, guarded by its own test).
-  for (const forbidden of [
-    /verify\/verify\.sh/, /verify\/verify-web\.sh/, /verify\/verify-rust\.sh/, /verify\/verify-native\.sh/,
-    /verify\/verify-all\.sh/, /verify\/aggregate-checksums\.sh/, /docker/i,
-    /network-deny-windows\.ps1/, /network-deny-macos\.sh/, /sandbox-exec/, /NetFirewallRule/,
-    /extract-view\.mjs/, /prepare-run\.(?:sh|ps1)/, /verified-artifact\.mjs/, /native-runs/, /unverified-/,
-  ]) {
-    assert.doesNotMatch(source, forbidden, `release-build.yml must not contain automatic reproducibility machinery (${forbidden})`);
-  }
-
-  // Every caller passes the neutral component artifact names from Task 1.
-  const neutralNames = {
-    android: 'android-release',
-    'web-extension': 'web-extension',
-    rust: 'rust-jni-wasm',
-    'supply-chain': 'supply-chain-reports',
-  };
-  for (const [job, artifact] of Object.entries(neutralNames)) {
-    const start = source.indexOf(`  ${job}:`);
-    const nextJobMatch = source.slice(start + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
-    const end = nextJobMatch ? start + 1 + nextJobMatch.index : source.length;
-    const jobBlock = source.slice(start, end);
-    assert.ok(jobBlock.length > 0, `release-build must define job ${job}`);
-    assert.match(jobBlock, new RegExp(`artifact-name: ${artifact}`), `release-build job ${job} must pass the neutral artifact name ${artifact}`);
-  }
-
-  // Manual publication depends on the guard and every component producer and
-  // policy job (no aggregate safety net), and is the only writer. Native
-  // installers are released by release-native-installers.yml, never here.
-  const publishStart = source.indexOf('  publish:');
-  const publishBlock = source.slice(publishStart);
-  assert.match(publishBlock, /needs: \[guard, android, web-extension, rust, supply-chain\]/, 'release-build publish job must depend on guard and every component producer and policy job');
-  for (const need of ['guard', 'android', 'web-extension', 'rust', 'supply-chain']) {
-    assert.match(publishBlock, new RegExp(`needs\\.${need}\\.result == 'success'`), `release-build publish job must explicitly require ${need} success`);
-  }
-  assert.doesNotMatch(publishBlock, /needs\.(?:native-windows|native-macos)/, 'release-build publish job must not depend on native installers');
-  assert.doesNotMatch(publishBlock, /native-(?:windows|macos)/, 'release-build publish job must not name native installers');
-  assert.doesNotMatch(publishBlock, /needs\.aggregate/, 'release-build publish job must not depend on the removed aggregate');
-  assert.match(publishBlock, /github\.event_name == 'workflow_dispatch'[\s\S]*?github\.ref == 'refs\/heads\/master'/, 'release-build publish job must only run on a master manual dispatch');
-  assert.match(publishBlock, /permissions:\n      contents: write/, 'release-build publish job must declare contents: write');
-  // No other job grants contents: write.
-  const beforePublish = source.slice(0, publishStart);
-  assert.doesNotMatch(beforePublish, /contents: write/, 'release-build must grant contents: write only in the publish job');
-
-  // Publisher downloads the single android-release artifact and publishes the
-  // actual APK, mapping, and its SHA256SUMS.
-  assert.match(publishBlock, /actions\/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7/, 'release-build publisher must download the Android artifact via the pinned download-artifact action');
-  assert.match(publishBlock, /name: android-release/, 'release-build publisher must download the single android-release artifact');
-  assert.match(publishBlock, /APK="android-release\/app-release-unsigned\.apk"/, 'publisher must select only the unsigned APK');
-  assert.doesNotMatch(publishBlock, /app-release\.apk/, 'publisher must not name a signed APK');
-  assert.doesNotMatch(source, /HAS_KEYSTORE|secrets\.KEYSTORE/, 'release-build must not reference keystore secrets');
-  assert.doesNotMatch(source, /^\s*secrets:/m, 'release-build must pass no secrets to build-android');
-  assert.match(publishBlock, /\(manual build\) \(unsigned\)/, 'publisher title must say unsigned');
-  assert.match(publishBlock, /"android-release\/mapping\.txt"/, 'release-build publisher must publish the mapping');
-  assert.match(publishBlock, /"android-release\/SHA256SUMS"/, 'release-build publisher must publish the artifact checksums');
-  assert.match(publishBlock, /gh release view "\$VERSION" --json isPrerelease/, 'release-build publish must preserve prerelease collision/replacement behavior');
-  assert.match(publishBlock, /gh release delete "\$VERSION" --cleanup-tag --yes/, 'release-build publish must replace a previous manual prerelease');
-  assert.match(publishBlock, /gh release create "\$VERSION"/, 'release-build publish must create the prerelease from the single-build Android output');
-  assertNoSecretRunInterpolation(publishBlock, 'release-build publish job');
-});
-
-test('release-build caller leaves native installers to the protected release workflow', async () => {
-  const source = await workflow('release-build.yml');
+function assertReleaseBuildCaller(source) {
+  const name = RELEASE_BUILD_FILE;
   const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
-  for (const job of ['native-windows', 'native-macos']) {
-    assert.ok(!new RegExp(`^  ${escapeRegexp(job)}:\\s*$`, 'm').test(executable), `release-build must not define the ${job} job`);
+
+  // Triggers: master push and the reviewed pull_request events only.
+  const onBlock = prWorkflowOnBlock(source);
+  const triggers = onBlock.split('\n').flatMap((line) => {
+    const entry = mappingEntry(line);
+    return entry && entry.indent === 2 ? [entry.key] : [];
+  });
+  assert.deepEqual(triggers, ['push', 'pull_request'], `${name} must trigger only on push and pull_request`);
+  assert.match(onBlock, /^  push:\n    branches: \[master\]$/m, `${name} must build on master pushes only`);
+  const types = onBlock.match(/^  pull_request:\n    types: \[([^\]]+)\]$/m);
+  assert.ok(types, `${name} must declare the pull_request types inline`);
+  assert.deepEqual(types[1].split(',').map((value) => value.trim()), RELEASE_BUILD_PR_EVENTS, `${name} must re-evaluate labels on exactly the reviewed events`);
+  for (const forbidden of [/workflow_dispatch/, /pull_request_target/, /github\.event\.label\.name/, /^\s*schedule:/m]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not use ${forbidden}`);
   }
+
+  // Scope: read-only, zero secrets, no publication.
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must declare only contents: read at workflow scope`);
+  for (const forbidden of [/contents:\s*write/, /\bwrite-all\b/, /^\s*id-token:/m, /^\s*pull-requests:/m, /^\s*packages:/m, /^\s*environment:/m]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not grant ${forbidden}`);
+  }
+  assert.doesNotMatch(executable, /^\s*secrets:/m, `${name} must pass no secrets`);
+  assert.doesNotMatch(executable, /\$\{\{\s*secrets\./, `${name} must reference no secret`);
+  assertNoSecretRunInterpolation(executable, name);
+  assert.doesNotMatch(executable, /gh release (?:create|delete|upload|edit)|git push|git tag/, `${name} must not publish, tag or push`);
+  assert.doesNotMatch(executable, /HAS_KEYSTORE|KEYSTORE|VELES_KEYSTORE/, `${name} must not reference signing credentials`);
+
+  // Superseded PR runs are cancelled; master pushes never are (changed-only builds use before..after).
+  assert.match(source, /^concurrency:\n  group: release-build-\$\{\{ github\.ref \}\}\n  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m, `${name} must cancel only superseded pull_request runs`);
+
+  assert.deepEqual(Object.keys(callerJobKeys(source)), RELEASE_BUILD_JOBS, `${name} must declare exactly ${RELEASE_BUILD_JOBS.join(', ')}`);
+
+  // changes: push-only, before..after selection with the component map.
+  const changes = prJobBlock(source, 'changes');
+  assert.equal(normalizedCondition(changes), "github.event_name == 'push'", 'changes must be push-only');
+  assert.match(changes, /fetch-depth: 0/, 'changes must fetch full history for the before..after diff');
+  assert.match(changes, /^          BEFORE: \$\{\{ github\.event\.before \}\}$/m, 'changes must take the push base from github.event.before via env');
+  assert.match(changes, /python3 -I scripts\/components\.py changed --base "\$BEFORE" --github-output "\$GITHUB_OUTPUT"/, 'changes must select nodes with components.py changed');
+  for (const node of Object.keys(RELEASE_BUILD_PRODUCERS)) {
+    assert.match(changes, new RegExp(`^      ${escapeRegexp(node)}: \\$\\{\\{ steps\\.select\\.outputs\\.${escapeRegexp(node)} \\}\\}$`, 'm'), `changes must export the ${node} output`);
+  }
+
+  // Producers: android and web-extension by label on PRs or by change on master; rust by change on master only.
+  for (const [job, { file, artifact, label }] of Object.entries(RELEASE_BUILD_PRODUCERS)) {
+    const block = prJobBlock(source, job);
+    const keys = callerJobKeys(source)[job];
+    for (const key of keys) {
+      assert.ok(['name', 'uses', 'with', 'needs', 'if', 'permissions'].includes(key), `${job} must contain only caller fields; found "${key}"`);
+    }
+    assert.match(block, new RegExp(`^    uses: \\./\\.github/workflows/${escapeRegexp(file)}$`, 'm'), `${job} must call ${file}`);
+    assert.match(block, /^    needs: \[changes\]$/m, `${job} must depend on changes`);
+    assert.match(block, new RegExp(`^      artifact-name: ${escapeRegexp(artifact)}$`, 'm'), `${job} must pass the neutral artifact name ${artifact}`);
+    assert.doesNotMatch(block, /^      (?:version|version-tag):/m, `${job} must not inject a release version`);
+    const condition = normalizedCondition(block);
+    if (label) {
+      assert.equal(condition, labelOrChangeCondition(job, label), `${job} must build by the ${label} label on PRs or by change on master`);
+      assert.match(block, /^      commit-sha: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}$/m, `${job} must build the PR head or the pushed commit`);
+    } else {
+      assert.equal(condition, `always() && github.event_name == 'push' && needs.changes.outputs.${job} == 'true'`, `${job} must build only on master pushes that change it`);
+      assert.match(block, /^      commit-sha: \$\{\{ github\.sha \}\}$/m, `${job} must build the pushed commit`);
+    }
+    const run = (event) => evaluateBuildCondition(condition, event);
+    assert.equal(run({ eventName: 'pull_request', labels: [] }), false, `${job} must not build an unlabeled PR`);
+    assert.equal(run({ eventName: 'pull_request', labels: ['release-build', 'windows-installer-build', 'mac-installer-build'] }), false, `${job} must ignore the retired labels`);
+    assert.equal(run({ eventName: 'pull_request', labels: ['build-android', 'build-web-extension'] }), Boolean(label), `${job} PR selection must follow only its own label`);
+    for (const [other, spec] of Object.entries(RELEASE_BUILD_PRODUCERS)) {
+      if (other === job || !spec.label) continue;
+      assert.equal(run({ eventName: 'pull_request', labels: [spec.label] }), false, `${job} must not build for ${other}'s label`);
+    }
+    assert.equal(run({ eventName: 'push', changes: { [job]: 'true' } }), true, `${job} must build on a master push that changes it`);
+    assert.equal(run({ eventName: 'push', changes: { [job]: 'false' } }), false, `${job} must not build on a master push that leaves it unchanged`);
+    assert.equal(run({ eventName: 'push', labels: label ? [label] : [], changes: {} }), false, `${job} must not build on a master push without a change output`);
+  }
+
+  // preview: push-only release plan into the job summary, read-only token, no secrets.
+  const preview = prJobBlock(source, 'preview');
+  assert.equal(normalizedCondition(preview), "github.event_name == 'push'", 'preview must be push-only');
+  assert.match(preview, /^    runs-on: ubuntu-latest$/m, 'preview must run on ubuntu-latest');
+  assert.match(preview, /^    permissions:\n      contents: read$/m, 'preview must be read-only');
+  assert.match(preview, /^      GH_TOKEN: \$\{\{ github\.token \}\}$/m, 'preview must use the read-only workflow token');
+  assert.match(preview, /fetch-depth: 0/, 'preview must fetch full history and tags (the planner refuses shallow clones)');
+  assert.match(preview, /\.\/gradlew installGitCliff/, 'preview must install the pinned git-cliff');
+  assert.match(preview, /gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt > releases\.json/, 'preview must list releases with the planner fields');
+  assert.match(preview, /TAG="\$\(python3 -I scripts\/release_plan\.py latest --releases-json releases\.json\)"/, 'preview must resolve the latest combined release with the planner');
+  assert.match(preview, /gh release download "\$TAG" --pattern release-manifest\.json/, 'preview must download the previous release manifest');
+  assert.match(preview, /echo '\{\}' > manifest\.json/, 'preview must fall back to an empty manifest');
+  assert.match(preview, /python3 -I scripts\/release_plan\.py plan --releases-json releases\.json --manifest-json manifest\.json --out plan\.json --summary "\$GITHUB_STEP_SUMMARY"/, 'preview must write the plan to the job summary');
+  assert.doesNotMatch(preview, /--require-release/, 'preview must not fail when nothing would be released');
+
+  // Native installers are built only by build-pr-installers.yml (debug) and the publisher; never here.
   for (const forbidden of [
     /build-native-windows\.yml/, /build-native-macos\.yml/, /native-unsigned-(?:windows|macos)/,
-    /build-kind:/, /bridgeInstaller(?:Unsigned|Debug)/, /release-native-installers\.yml/,
+    /build-kind:/, /bridgeInstaller(?:Unsigned|Debug|PackageFixture)/, /release-native-installers\.yml/,
+    /build-supply-chain\.yml/, /build-toolchain-manifest\.yml/,
   ]) {
-    assert.doesNotMatch(executable, forbidden, `release-build must not produce or select native installers (${forbidden})`);
+    assert.doesNotMatch(executable, forbidden, `${name} must not build installers or other components (${forbidden})`);
   }
-  const publish = source.slice(source.indexOf('  publish:'));
-  assert.doesNotMatch(publish, /native-(?:windows|macos)/, 'release-build publish must not gate on native installers');
+  // No reproducibility machinery.
+  for (const forbidden of [
+    /verify\/verify(?:-web|-rust|-native|-all)?\.sh/, /verify\/aggregate-checksums\.sh/, /docker/i,
+    /network-deny-(?:windows\.ps1|macos\.sh)/, /sandbox-exec/, /extract-view\.mjs/, /native-runs/, /unverified-/,
+  ]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not contain reproducibility machinery (${forbidden})`);
+  }
+}
 
-  // The decoupling must not disturb any Android/web/Rust/supply-chain predicate.
-  assert.match(source, /^  android:\n[\s\S]*?github\.event_name == 'push'/m, 'ordinary master push must still build Android only');
-  const android = source.slice(source.indexOf('  android:'), source.indexOf('  web-extension:'));
-  assert.doesNotMatch(android, /native/, 'the Android job must not mention native installers');
-  for (const job of ['web-extension', 'rust', 'supply-chain']) {
-    const start = source.indexOf(`  ${job}:`);
-    const nextJobMatch = source.slice(start + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
-    const end = nextJobMatch ? start + 1 + nextJobMatch.index : source.length;
-    const block = source.slice(start, end);
-    assert.match(block, /github\.event_name == 'workflow_dispatch'/, `release-build ${job} must keep its dispatch predicate`);
-    assert.match(block, /github\.event\.action == 'labeled' && github\.event\.label\.name == 'release-build'/, `release-build ${job} must keep its labeled-PR predicate`);
-    assert.match(block, /github\.event\.action == 'synchronize' && contains\(github\.event\.pull_request\.labels\.\*\.name, 'release-build'\)/, `release-build ${job} must keep its synchronize predicate`);
+test('release-build builds by label on PRs and by change on master, and previews the release on master', async () => {
+  assertReleaseBuildCaller(await workflow(RELEASE_BUILD_FILE));
+});
+
+test('release-build contract rejects dispatch, publication, secret, routing and preview regressions', async () => {
+  const source = await workflow(RELEASE_BUILD_FILE);
+  const androidPr = "contains(github.event.pull_request.labels.*.name, 'build-android')";
+  const mutations = {
+    'manual dispatch': (text) => text.replace('  pull_request:\n    types:', '  workflow_dispatch:\n  pull_request:\n    types:'),
+    'missing unlabeled event': (text) => text.replace('labeled, unlabeled]', 'labeled]'),
+    'legacy label': (text) => text.replace(androidPr, "contains(github.event.pull_request.labels.*.name, 'release-build')"),
+    'pre-event label shortcut': (text) => text.replace(androidPr, "github.event.label.name == 'build-android'"),
+    'android built on every push': (text) => text.replace("needs.changes.outputs.android == 'true'", "true"),
+    'rust built on PR': (text) => text.replace(
+      "always() && github.event_name == 'push' && needs.changes.outputs.rust == 'true'",
+      "always() && needs.changes.outputs.rust == 'true' || github.event_name == 'pull_request'",
+    ),
+    'write permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'),
+    'secrets passed': (text) => text.replace(
+      '    uses: ./.github/workflows/build-android.yml\n',
+      '    uses: ./.github/workflows/build-android.yml\n    secrets: inherit\n',
+    ),
+    'publication': (text) => text.replace('--summary "$GITHUB_STEP_SUMMARY"', '--summary "$GITHUB_STEP_SUMMARY"\n          gh release create "$TAG"'),
+    'injected version': (text) => text.replace('      artifact-name: web-extension\n', '      artifact-name: web-extension\n      version: 1.0.0\n'),
+    'native producer': (text) => `${text}\n  windows:\n    needs: [changes]\n    uses: ./.github/workflows/build-native-windows.yml\n    with:\n      commit-sha: \${{ github.sha }}\n      build-kind: debug\n`,
+    'supply-chain producer': (text) => `${text}\n  supply-chain:\n    needs: [changes]\n    uses: ./.github/workflows/build-supply-chain.yml\n`,
+    'preview on PR': (text) => text.replace(/(  preview:\n(?:.*\n)*?    if: )github\.event_name == 'push'/, "$1always()"),
+    'preview without summary': (text) => text.replace(' --summary "$GITHUB_STEP_SUMMARY"', ''),
+    'preview requires a release': (text) => text.replace('--summary "$GITHUB_STEP_SUMMARY"', '--summary "$GITHUB_STEP_SUMMARY" --require-release'),
+    'shallow preview': (text) => text.replace(/(  preview:\n(?:.*\n)*?          )fetch-depth: 0/, '$1fetch-depth: 1'),
+    'cancelled master pushes': (text) => text.replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", 'cancel-in-progress: true'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change the workflow`);
+    assert.throws(() => assertReleaseBuildCaller(mutated), `the release-build contract must reject "${label}"`);
   }
-  assert.match(publish, /github\.event_name == 'workflow_dispatch'[\s\S]*?github\.ref == 'refs\/heads\/master'/, 'release-build publish must keep its master-dispatch predicate');
-  assert.match(publish, /needs\.android\.result == 'success'/, 'release-build publish must keep requiring Android success');
-  assert.match(publish, /needs\.web-extension\.result == 'success'/, 'release-build publish must keep requiring web success');
-  assert.match(publish, /needs\.rust\.result == 'success'/, 'release-build publish must keep requiring Rust success');
-  assert.match(publish, /needs\.supply-chain\.result == 'success'/, 'release-build publish must keep requiring supply-chain success');
+});
+
+test('retired build labels appear in no workflow', async () => {
+  for (const file of await workflowFiles()) {
+    const source = await workflow(file);
+    for (const label of LEGACY_BUILD_LABELS) {
+      assert.ok(!source.includes(label), `${file} must not mention the retired label ${label}`);
+    }
+  }
 });
 
 test('tag release publishes from one build with provenance, checksums, and digest integrity intact', async () => {
@@ -1749,11 +1770,25 @@ test('artifact actions declare only their known inputs', async () => {
 });
 
 test('reusable component workflows referenced by the caller graph exist and remain reusable', async () => {
-  const caller = await workflow('release-build.yml');
-  for (const file of ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml']) {
-    assert.match(caller, new RegExp(`uses: \\./\\.github/workflows/${file.replace(/\./g, '\\.')}`), `release-build caller must reuse ${file}`);
-    const reusable = await workflow(file);
-    assert.match(reusable, /workflow_call:/, `${file} must remain reusable (workflow_call)`);
+  const callers = {
+    'release-build.yml': ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml'],
+    'ci.yml': ['build-supply-chain.yml'],
+  };
+  for (const [callerFile, files] of Object.entries(callers)) {
+    const caller = await workflow(callerFile);
+    for (const file of files) {
+      assert.match(caller, new RegExp(`uses: \\./\\.github/workflows/${file.replace(/\./g, '\\.')}`), `${callerFile} must reuse ${file}`);
+      const reusable = await workflow(file);
+      assert.match(reusable, /workflow_call:/, `${file} must remain reusable (workflow_call)`);
+    }
+  }
+  // Every repository-local workflow any caller references stays reusable.
+  for (const callerFile of await workflowFiles()) {
+    for (const ref of usesReferences(await workflow(callerFile))) {
+      const local = ref.match(/^\.\/\.github\/workflows\/([^\s@]+\.yml)$/);
+      if (!local) continue;
+      assert.match(await workflow(local[1]), /^  workflow_call:/m, `${local[1]} (called by ${callerFile}) must remain reusable (workflow_call)`);
+    }
   }
 });
 
@@ -1804,8 +1839,8 @@ test('every workflow script invoked directly is committed executable in git', as
 const PR_INSTALLER_FILE = 'build-pr-installers.yml';
 const PR_INSTALLER_EVENTS = ['opened', 'reopened', 'labeled', 'unlabeled', 'synchronize', 'ready_for_review'];
 const PR_INSTALLER_LABELS = {
-  windows: 'windows-installer-build',
-  macos: 'mac-installer-build',
+  windows: 'build-windows-installer',
+  macos: 'build-macos-installer',
 };
 const PR_INSTALLER_BUILDERS = {
   windows: 'build-native-windows.yml',
@@ -2095,10 +2130,12 @@ test('PR installer caller contract rejects routing, approval, scope and boundary
     'merge SHA instead of head SHA': (text) => text.replaceAll('commit-sha: ${{ github.event.pull_request.head.sha }}', 'commit-sha: ${{ github.sha }}'),
     'missing approval dependency': (text) => text.replaceAll('    needs: approve\n', ''),
     'draft PR allowed': (text) => text.replaceAll('      github.event.pull_request.draft == false &&\n', ''),
-    'wrong Windows label': (text) => text.replaceAll("'windows-installer-build'", "'windows build'"),
+    'wrong Windows label': (text) => text.replaceAll("'build-windows-installer'", "'windows build'"),
+    'retired Windows label': (text) => text.replaceAll("'build-windows-installer'", "'windows-installer-build'"),
+    'retired macOS label': (text) => text.replaceAll("'build-macos-installer'", "'mac-installer-build'"),
     'pre-event label shortcut': (text) => text.replace(
-      "contains(github.event.pull_request.labels.*.name, 'windows-installer-build')",
-      "github.event.label.name == 'windows-installer-build'",
+      "contains(github.event.pull_request.labels.*.name, 'build-windows-installer')",
+      "github.event.label.name == 'build-windows-installer'",
     ),
     'pull_request_target trigger': (text) => text.replace('  pull_request:\n    types:', '  pull_request_target:\n    types:'),
     'extra push trigger': (text) => text.replace('  pull_request:\n    types:', '  push:\n  pull_request:\n    types:'),
