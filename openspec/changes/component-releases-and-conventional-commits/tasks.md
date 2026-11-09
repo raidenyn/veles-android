@@ -44,8 +44,8 @@
 
 ## 8. Builds
 
-- [ ] 8.1 `release-build.yml`: label PR builds, changed-only master builds, preview job; no dispatch or publish; migrate `check_release_build` and Node tests
-- [ ] 8.2 `build-pr-installers.yml` label rename (+ tests)
+- [x] 8.1 `release-build.yml`: label PR builds, changed-only master builds, preview job; no dispatch or publish; migrate `check_release_build` and Node tests
+- [x] 8.2 `build-pr-installers.yml` label rename (+ tests)
 
 ## 9. Publish workflow
 
