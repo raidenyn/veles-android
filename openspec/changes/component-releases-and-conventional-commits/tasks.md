@@ -1,10 +1,10 @@
 ## 1. Spike: confirm the versioning tools (throwaway, results recorded in design.md)
 
-- [ ] 1.1 In a scratch repo, prove the pinned git-cliff resolves each component's previous tag independently with repeated `--include-path` and a per-component `--tag-pattern`, bumps from prefixed tags, and emits per-component unreleased notes
-- [ ] 1.2 Prove the bump policy with the pinned `[bump]` settings: `feat`, `fix`, `perf`, `!`, `BREAKING CHANGE:`, `BREAKING-CHANGE:` (including below 1.0) and every non-bumping type
-- [ ] 1.3 Prove the no-tag case (initial version, notes after an onboarding SHA)
-- [ ] 1.4 Prove `androidGitVersion` 0.4.14 honours `prefix = "android-v"` and ignores plain `0.0.x` tags, or choose the documented fallback
-- [ ] 1.5 Record the confirmed commands or fallbacks in design.md D2/D3
+- [x] 1.1 In a scratch repo, prove the pinned git-cliff resolves each component's previous tag independently with repeated `--include-path` and a per-component `--tag-pattern`, bumps from prefixed tags, and emits per-component unreleased notes
+- [x] 1.2 Prove the bump policy with the pinned `[bump]` settings: `feat`, `fix`, `perf`, `!`, `BREAKING CHANGE:`, `BREAKING-CHANGE:` (including below 1.0) and every non-bumping type
+- [x] 1.3 Prove the no-tag case (initial version, notes after an onboarding SHA)
+- [x] 1.4 Prove `androidGitVersion` 0.4.14 honours `prefix = "android-v"` and ignores plain `0.0.x` tags, or choose the documented fallback
+- [x] 1.5 Record the confirmed commands or fallbacks in design.md D2/D3
 
 ## 2. Commit conventions (local)
 
