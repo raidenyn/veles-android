@@ -51,11 +51,12 @@ The macOS trust path has two independent requirements:
 
 ## Acceptance machine prerequisite
 
-The installer app and the installed host are signed by the same self-signed leaf.
-On the acceptance Mac, trust the project root once before opening the disk image:
+The installer app and the installed host are signed by the same self-signed
+certificate. On the acceptance Mac, that certificate may be trusted once before
+opening the disk image:
 
 ```sh
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.pem
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain leaf.pem
 ```
 
 Alternatively, open the installer with the Finder's **Open** (right-click) and
@@ -66,17 +67,28 @@ Gatekeeper was not assessed.
 
 ## Identity
 
-A two-level chain is generated once (root CA, pathlen 1, plus a code-signing leaf
-with the codeSigning EKU; 730-day validity), the same shape the Windows identity
-uses. The private key never enters the repository; delete the machine copy after
-the secrets are stored.
+One **single** self-signed code-signing certificate is generated once
+(`basicConstraints CA:FALSE`, `keyUsage digitalSignature`, `extendedKeyUsage
+codeSigning`; 730-day validity). The leaf is its own anchor: there is no separate
+root certificate. The private key never enters the repository; delete the machine
+copy after the secrets are stored.
 
 | Value | |
 |---|---|
-| Leaf CN (identity name) | `Veles Self-Signed Acceptance (not a release signer)` |
-| Publisher (`sha256:` leaf DER) | `sha256:b525031772b4ff0b78972ed17063dca651045584d6efd6d4a04578f8b2d822dc` |
-| Requirement pin (SHA-1) | `18449208e130f5b709f2ef82f55959b2820ce81e` |
-| Root | `Veles Self-Signed Acceptance Root (not a release signer)` |
+| CN (identity name) | `Veles Self-Signed Acceptance (not a release signer)` |
+| Publisher (`sha256:` certificate DER) | `sha256:9d0d1948de28df32ef23091fab0805894d531863ca0b42c44f9ed1b4eb042cc6` |
+| Requirement pin (SHA-1) | `24ac699b7ac5aa84f555461adc30b776bbbaa370` |
+
+**Why not a root plus leaf?** On the hosted `macos-26` image (macOS 26.7.2,
+`macos-26-arm64` 20261102) `codesign --sign` refuses a certificate whose chain does
+not validate: it prints `Warning: unable to build chain to self-signed root for
+signer` and then fails with `errSecInternalComponent`. A two-level chain (separate
+root plus leaf) fails that way; a single self-signed certificate signs and
+`codesign --verify --strict` passes. The same two-level identity signs on macOS
+26.5, so the constraint is the runner OS. Trusting the separate root headlessly is
+not available (the user-domain `security add-trusted-cert` waits for interactive
+authorization), so the identity is one certificate. Reproduced on that runner in a
+credential-free probe.
 
 Storage in the `native-release` environment: secrets `VELES_MAC_P12_BASE64`,
 `VELES_MAC_P12_PASSWORD`; variables `VELES_MAC_IDENTITY`, `VELES_MAC_PUBLISHER`,
