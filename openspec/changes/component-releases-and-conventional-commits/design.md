@@ -145,10 +145,11 @@ git-cliff --config cliff.toml <same --include-path/--tag-pattern> --unreleased -
 - The range starts at the node's own latest matching tag; tags of other components have no effect, and a
   `rust/`-only fix counts for Android. `--bumped-version` **carries the tag prefix** (`android-v0.1.1`),
   so the planner strips the prefix. Output is on stdout; INFO/WARN logs go to stderr.
-- With zero relevant bumping commits it prints the current tag unchanged (no release).
+- With zero relevant bumping commits it prints the current tag unchanged, which means **no release**: the
+  planner compares the output to the current tag.
 - With no matching tag, `--bumped-version` fails unless `initial_tag` matches the tag pattern, and
   `initial_tag` in `cliff.toml` is global. The planner therefore handles the no-tag case itself (see below)
-  and never calls `--bumped-version` without a tag. (Fallback `git describe --match '<prefix>*'` is not
+  and never calls `--bumped-version` without a tag. Task 4 must keep `initial_tag` out of `cliff.toml`. (Fallback `git describe --match '<prefix>*'` is not
   needed for tagged components.)
 - `cliff.toml` pins the bump policy. `breaking_always_bump_major` is a real option in 2.14.2:
 
@@ -170,6 +171,8 @@ features_always_bump_minor = true
 breaking_always_bump_major = true
 ```
 
+  Parser order matters; the catch-all `skip` must be last.
+
   Without the final `skip` parser, git-cliff bumps patch for `docs`/`chore`/`refactor`/`test`/`build`/`ci`/
   `style`/`revert`; with it they do not bump or appear in notes. The `raw_message` parsers keep
   breaking commits of those types (`docs!:`, a `BREAKING CHANGE:` footer) from being skipped (the
@@ -178,6 +181,16 @@ breaking_always_bump_major = true
   `BREAKING-CHANGE:` footer → major (0.3.2 → 1.0.0, 1.2.3 → 2.0.0); the other types and
   non-conventional commits → unchanged. Known limit: the literal phrase inline in prose does not count
   (needs a footer line).
+- Pinned git-cliff **2.14.2**, download base `https://github.com/orhun/git-cliff/releases/download/v2.14.2/`;
+  archive SHA-256 (computed locally; Task 4 pins these):
+
+  | asset | sha256 |
+  |---|---|
+  | `git-cliff-2.14.2-x86_64-unknown-linux-gnu.tar.gz` | `24f397c733add5390fdceee3a2088588ab0d5f944ce00d34cb7029b888cf2db4` |
+  | `git-cliff-2.14.2-aarch64-apple-darwin.tar.gz` | `a0be97e237d440d34c5e508ec21d070b2c85cbb8be48a46a56f9a4e8bd247f05` |
+  | `git-cliff-2.14.2-x86_64-apple-darwin.tar.gz` | `4e647d2deb152aca1e987f225cf42b080b991dd98f3bce4027ef95446d982ac3` |
+  | `git-cliff-2.14.2-x86_64-pc-windows-msvc.zip` | `6ece2112b3f4af462190ecbea4aeb1315fff6af415629b597f84319073c31131` |
+
 - No tag → `initial-version` (the planner sets it, not git-cliff); notes limited to `since..HEAD` by passing
   the range positionally (`--unreleased --strip all <since>..HEAD`, verified to scope the notes). Android starts at 0.1.0 (`versionCode`
   100 > 3). Old plain tags `0.0.x` never match.
