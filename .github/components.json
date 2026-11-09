@@ -1,0 +1,187 @@
+{
+  "since": "e98c371881aef547fc842207f44cb24b31ddcfae",
+  "global": [
+    ".github/",
+    "build.gradle.kts",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "gradle/",
+    "gradlew",
+    "gradlew.bat",
+    ".java-version",
+    ".editorconfig"
+  ],
+  "unowned": [
+    "docs/",
+    "site/",
+    "openspec/",
+    "native-bridge/feasibility/",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md",
+    ".gitignore",
+    ".dockerignore",
+    ".claude/",
+    ".idea/",
+    ".opencode/",
+    ".superpowers/"
+  ],
+  "nodes": {
+    "android": {
+      "release": true,
+      "tag-prefix": "android-v",
+      "initial-version": "0.1.0",
+      "paths": [
+        "app/",
+        "rust/",
+        "protocol/",
+        "config/detekt/"
+      ]
+    },
+    "web-extension": {
+      "release": true,
+      "tag-prefix": "web-extension-v",
+      "initial-version": "0.1.0",
+      "paths": [
+        "web-extension/",
+        "rust/",
+        "protocol/",
+        "verify/lib/"
+      ]
+    },
+    "installer": {
+      "release": true,
+      "tag-prefix": "installer-v",
+      "initial-version": "0.1.0",
+      "paths": [
+        "native-bridge/installer/",
+        "native-bridge/host/",
+        "protocol/",
+        "rust/scripts/assert-clean.sh",
+        "verify/check-cargo-build-scripts.mjs",
+        "verify/check-npm-licenses.mjs",
+        "verify/check-remote-code.mjs",
+        "verify/generate-sboms.sh",
+        "verify/verify-sboms.mjs",
+        "verify/verify-supply-chain.sh"
+      ]
+    },
+    "rust": {
+      "release": false,
+      "paths": [
+        "rust/",
+        "protocol/"
+      ]
+    },
+    "protocol": {
+      "release": false,
+      "paths": [
+        "protocol/",
+        "rust/",
+        "app/",
+        "web-extension/",
+        "native-bridge/host/",
+        "native-bridge/installer/",
+        "native-bridge/.gitignore",
+        "native-bridge/.npmrc",
+        "native-bridge/.prettierignore",
+        "native-bridge/.prettierrc",
+        "native-bridge/eslint.config.js",
+        "native-bridge/index.html",
+        "native-bridge/package-lock.json",
+        "native-bridge/package.json",
+        "native-bridge/tsconfig.json",
+        "native-bridge/scripts/",
+        "native-bridge/src/",
+        "native-bridge/src-tauri/",
+        "native-bridge/test/"
+      ]
+    },
+    "native-host": {
+      "release": false,
+      "paths": [
+        "native-bridge/host/",
+        "protocol/",
+        "rust/scripts/assert-clean.sh",
+        "verify/check-cargo-build-scripts.mjs",
+        "verify/check-npm-licenses.mjs",
+        "verify/check-remote-code.mjs",
+        "verify/generate-sboms.sh",
+        "verify/verify-sboms.mjs",
+        "verify/verify-supply-chain.sh"
+      ]
+    },
+    "bridge-scaffold": {
+      "release": false,
+      "paths": [
+        "native-bridge/.gitignore",
+        "native-bridge/.npmrc",
+        "native-bridge/.prettierignore",
+        "native-bridge/.prettierrc",
+        "native-bridge/eslint.config.js",
+        "native-bridge/index.html",
+        "native-bridge/package-lock.json",
+        "native-bridge/package.json",
+        "native-bridge/tsconfig.json",
+        "native-bridge/scripts/",
+        "native-bridge/src/",
+        "native-bridge/src-tauri/",
+        "native-bridge/test/",
+        "verify/lib/",
+        "protocol/"
+      ]
+    },
+    "supply-chain": {
+      "release": false,
+      "paths": [
+        "verify/",
+        "licenses.toml",
+        ".license-policy.json",
+        "native-bridge/feasibility/Cargo.lock",
+        "native-bridge/feasibility/Cargo.toml",
+        "native-bridge/feasibility/evidence/package1-connected-2026-10-28/producer-pc-snapshot-20261028/package1-p1/Cargo.lock",
+        "native-bridge/feasibility/evidence/package1-connected-2026-10-28/producer-pc-snapshot-20261028/package1-p1/Cargo.toml",
+        "native-bridge/host/Cargo.lock",
+        "native-bridge/host/Cargo.toml",
+        "native-bridge/host/fuzz/Cargo.lock",
+        "native-bridge/host/fuzz/Cargo.toml",
+        "native-bridge/host/vendor/bluest/Cargo.toml",
+        "native-bridge/installer/Cargo.lock",
+        "native-bridge/installer/Cargo.toml",
+        "native-bridge/package-lock.json",
+        "native-bridge/package.json",
+        "native-bridge/src-tauri/Cargo.lock",
+        "native-bridge/src-tauri/Cargo.toml",
+        "protocol/package-lock.json",
+        "protocol/package.json",
+        "rust/Cargo.lock",
+        "rust/Cargo.toml",
+        "rust/veles-crypto/Cargo.toml",
+        "verify/package-lock.json",
+        "verify/package.json",
+        "web-extension/package-lock.json",
+        "web-extension/package.json",
+        "web-extension/src/",
+        "web-extension/scripts/",
+        "web-extension/manifest.json",
+        "native-bridge/src-tauri/",
+        "native-bridge/scripts/",
+        "native-bridge/host/src/",
+        "native-bridge/host/scripts/",
+        "native-bridge/installer/src/",
+        "native-bridge/installer/scripts/",
+        "native-bridge/installer/windows/",
+        "native-bridge/installer/macos/"
+      ]
+    },
+    "tooling": {
+      "release": false,
+      "paths": [
+        "scripts/",
+        ".githooks/",
+        "cliff.toml",
+        "verify/test/"
+      ]
+    }
+  }
+}
