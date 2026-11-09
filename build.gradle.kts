@@ -8,10 +8,13 @@ import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Sync
 import org.gradle.api.DefaultTask
+import org.gradle.api.file.ArchiveOperations
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import javax.inject.Inject
@@ -179,6 +182,135 @@ tasks.register<InstallGitHooksTask>("installGitHooks") {
     description = "Points git core.hooksPath at .githooks unless already configured (skipped on CI)."
     repoDir.set(layout.projectDirectory)
     onCi.set(providers.environmentVariable("CI").map { it == "true" }.orElse(false))
+}
+
+// ---- Release tooling: pinned git-cliff (scripts/release-tools.toml) and the scripts/ test suite ----
+val releaseToolsFile = layout.projectDirectory.file("scripts/release-tools.toml")
+val releaseToolsDir = layout.buildDirectory.dir("release-tools")
+
+fun pinnedReleaseTool(name: String): String {
+    val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
+    return requireNotNull(pattern.find(releaseToolsFile.asFile.readText())) {
+        "Missing '$name' pin in ${releaseToolsFile.asFile}"
+    }.groupValues[1]
+}
+
+val gitCliffTarget: String? = run {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = when (System.getProperty("os.arch").lowercase()) {
+        "amd64", "x86_64" -> "x86_64"
+        "aarch64", "arm64" -> "aarch64"
+        else -> null
+    }
+    when {
+        arch == null -> null
+        os.startsWith("linux") -> "$arch-unknown-linux-gnu"
+        os.startsWith("mac") -> "$arch-apple-darwin"
+        os.startsWith("windows") && arch == "x86_64" -> "x86_64-pc-windows-msvc"
+        else -> null
+    }
+}
+
+// Downloads the pinned git-cliff archive, verifies its SHA-256 BEFORE extracting anything, then
+// extracts only the executable to build/release-tools/git-cliff/ and checks `--version`.
+abstract class InstallGitCliffTask @Inject constructor(
+    private val execOps: ExecOperations,
+    private val archiveOps: ArchiveOperations,
+    private val fsOps: FileSystemOperations,
+) : DefaultTask() {
+    @get:Input
+    abstract val version: Property<String>
+
+    @get:Input
+    abstract val target: Property<String>
+
+    @get:Input
+    abstract val sha256: Property<String>
+
+    @get:OutputDirectory
+    abstract val installDir: DirectoryProperty
+
+    @get:Internal
+    abstract val downloadDir: DirectoryProperty
+
+    @TaskAction
+    fun install() {
+        val windows = target.get().contains("windows")
+        val extension = if (windows) "zip" else "tar.gz"
+        val archiveName = "git-cliff-${version.get()}-${target.get()}.$extension"
+        val url = "https://github.com/orhun/git-cliff/releases/download/v${version.get()}/$archiveName"
+        val download = downloadDir.get().asFile.apply { mkdirs() }.resolve(archiveName)
+        val client = java.net.http.HttpClient.newBuilder()
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+            .build()
+        val response = client.send(
+            java.net.http.HttpRequest.newBuilder(java.net.URI(url)).GET().build(),
+            java.net.http.HttpResponse.BodyHandlers.ofFile(download.toPath()),
+        )
+        check(response.statusCode() == 200) { "Downloading $url failed with HTTP ${response.statusCode()}" }
+        val actual = MessageDigest.getInstance("SHA-256").digest(download.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        if (actual != sha256.get()) {
+            download.delete()
+            error("SHA-256 mismatch for $archiveName: expected ${sha256.get()}, got $actual")
+        }
+        val binaryName = if (windows) "git-cliff.exe" else "git-cliff"
+        val out = installDir.get().asFile
+        fsOps.delete { delete(out) }
+        fsOps.copy {
+            from(if (windows) archiveOps.zipTree(download) else archiveOps.tarTree(download)) {
+                include("git-cliff-${version.get()}/$binaryName")
+                eachFile { path = name }
+            }
+            includeEmptyDirs = false
+            into(out)
+        }
+        val binary = out.resolve(binaryName)
+        check(binary.isFile) { "$archiveName does not contain git-cliff-${version.get()}/$binaryName" }
+        binary.setExecutable(true)
+        val stdout = ByteArrayOutputStream()
+        execOps.exec {
+            commandLine(binary.absolutePath, "--version")
+            standardOutput = stdout
+        }
+        val reported = stdout.toString(Charsets.UTF_8).trim()
+        check(reported == "git-cliff ${version.get()}") {
+            "Expected git-cliff ${version.get()} at $binary, got: $reported"
+        }
+    }
+}
+
+val installGitCliff = tasks.register<InstallGitCliffTask>("installGitCliff") {
+    group = "build setup"
+    description = "Installs the pinned, SHA-256-verified git-cliff into build/release-tools/git-cliff."
+    val pinnedVersion = pinnedReleaseTool("git-cliff")
+    version.set(pinnedVersion)
+    target.set(
+        providers.provider {
+            requireNotNull(gitCliffTarget) {
+                "No pinned git-cliff archive for ${System.getProperty("os.name")}/${System.getProperty("os.arch")}"
+            }
+        },
+    )
+    sha256.set(target.map { pinnedReleaseTool("git-cliff-$it") })
+    installDir.set(releaseToolsDir.map { it.dir("git-cliff") })
+    downloadDir.set(releaseToolsDir.map { it.dir("downloads") })
+}
+
+// Python tooling tests (scripts/tests: commitlint, component map, release planner/assets/readiness).
+val scriptsTest = tasks.register<Exec>("scriptsTest") {
+    group = "verification"
+    description = "Runs the scripts/ unit tests (stdlib Python) against the pinned git-cliff."
+    dependsOn(installGitCliff)
+    workingDir(layout.projectDirectory)
+    environment(
+        "VELES_GIT_CLIFF",
+        releaseToolsDir.get().file("git-cliff/git-cliff$windowsExecutableSuffix").asFile.absolutePath,
+    )
+    commandLine(
+        if (windowsExecutableSuffix.isNotEmpty()) "python" else "python3",
+        "-I", "-m", "unittest", "discover", "-s", "scripts/tests", "-v",
+    )
 }
 
 val rustToolchainCheck = tasks.register("rustToolchainCheck") {
@@ -2060,5 +2192,7 @@ tasks.named<Delete>("clean") {
         layout.buildDirectory.dir("rust"),
         layout.buildDirectory.dir("rust-tools"),
         layout.buildDirectory.dir("protocol"),
+        // Pinned release tooling (git-cliff install root and verified download cache).
+        releaseToolsDir,
     )
 }
