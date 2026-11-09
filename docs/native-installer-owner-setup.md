@@ -72,6 +72,17 @@ Configure the repository environment named `native-release`:
 - The release workflow reads these only in the step-level `env:` of the signing steps.
   Build, verification, assembly, packaging without signing, cleanup and gate steps hold
   no credential.
+- Every `*_BASE64` credential secret may be single-line or line-wrapped base64, with or
+  without a trailing newline: the 76-column output of `base64` and the 64-column output
+  of `openssl base64` are accepted, as are the unframed base64 bodies those tools emit
+  for `certutil -encode`. ASCII whitespace inside the value is ignored; everything else
+  outside the base64 alphabet is refused.
+- `VELES_WIN_ROOT_CER_BASE64` may instead be one complete PEM certificate
+  (`-----BEGIN CERTIFICATE-----` … `-----END CERTIFICATE-----`, any line wrapping, which
+  is what `certutil -encode` writes). The gate stores it as the certificate DER and
+  records `trust_anchor_sha256` over those DER bytes, so the recorded anchor is the same
+  whether the value is base64 or PEM. PEM framing is accepted for this secret only; the
+  PFX, P12 and notary-key secrets are raw file bytes encoded as base64.
 
 Only `raidenyn` should be able to manage repository administration, environments and
 secrets. A collaborator who can request a workflow run is not thereby allowed to approve

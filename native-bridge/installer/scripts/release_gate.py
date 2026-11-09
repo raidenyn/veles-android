@@ -463,6 +463,51 @@ def missing_credentials(platform: str, stage: str, env: dict[str, str]) -> list[
     return sorted(absent)
 
 
+class CredentialFormatError(ValueError):
+    """A ``*_BASE64`` secret is not an accepted encoding. The text never contains the value."""
+
+
+# The wrapping and trailing newline that ``base64``, ``openssl base64`` and ``certutil -encode``
+# emit. Only ASCII whitespace is ignored; every other non-alphabet character is still refused.
+_BASE64_WHITESPACE = re.compile(r"[ \t\r\n\f\v]")
+_PEM_CERTIFICATE = re.compile(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", re.DOTALL)
+_BASE64_ACCEPTED = "is not valid base64 (single-line or line-wrapped)"
+_PEM_ACCEPTED = _BASE64_ACCEPTED + " or a single PEM certificate"
+
+
+def decode_credential(value: str, *, pem: bool = False) -> bytes:
+    """Decode a ``*_BASE64`` credential secret, refusing anything but the documented encodings.
+
+    ASCII whitespace anywhere in the value is ignored, so single-line and 64/76-column wrapped
+    base64 (with or without a trailing newline) decode to the same bytes. With ``pem`` the value
+    may instead be exactly one ``-----BEGIN CERTIFICATE-----`` block; its body is decoded and the
+    DER bytes are returned. Multiple blocks, other labels and any text around the block are
+    refused. An empty value, or one that decodes to zero bytes, raises ``CredentialFormatError``;
+    no error text ever includes the value.
+    """
+    reason = _PEM_ACCEPTED if pem else _BASE64_ACCEPTED
+    # Strip only the ASCII whitespace this decoder documents: `str.strip()` would also remove
+    # Unicode spaces, accepting a value the documented alphabet does not allow.
+    text = value.strip(" \t\r\n\f\v")
+    if pem and text.startswith("-----BEGIN"):
+        match = _PEM_CERTIFICATE.fullmatch(text)
+        if match is None or "-----" in match.group(1):
+            raise CredentialFormatError(reason)
+        text = match.group(1)
+    compact = _BASE64_WHITESPACE.sub("", text)
+    try:
+        data = base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise CredentialFormatError(reason) from error
+    if base64.b64encode(data).decode("ascii") != compact:
+        # Non-zero trailing pad bits decode to bytes but are not base64; only the canonical
+        # encoding of those bytes is accepted, exactly as strict validation refuses bad padding.
+        raise CredentialFormatError(reason)
+    if not data:
+        raise CredentialFormatError("is empty")
+    return data
+
+
 def credential_format_errors(platform: str, env: dict[str, str]) -> list[str]:
     problems = []
     if platform == "windows":
@@ -476,12 +521,9 @@ def credential_format_errors(platform: str, env: dict[str, str]) -> list[str]:
             problems.append("VELES_WIN_TRUST_SELF_SIGNED must be empty or 1")
         if mode == "1":
             try:
-                der = base64.b64decode(env.get("VELES_WIN_ROOT_CER_BASE64", ""), validate=True)
-            except (binascii.Error, ValueError):
-                problems.append("VELES_WIN_ROOT_CER_BASE64 is not valid base64")
-            else:
-                if not der:
-                    problems.append("VELES_WIN_ROOT_CER_BASE64 is empty")
+                decode_credential(env.get("VELES_WIN_ROOT_CER_BASE64", ""), pem=True)
+            except CredentialFormatError as error:
+                problems.append(f"VELES_WIN_ROOT_CER_BASE64 {error}")
     else:
         mode = env.get("VELES_MAC_TRUST_SELF_SIGNED", "")
         if mode not in ("", "1"):
@@ -866,11 +908,11 @@ class Stage:
         path.chmod(0o700)
         return path
 
-    def write_secret(self, path: Path, value: str) -> Path:
+    def write_secret(self, path: Path, value: str, *, pem: bool = False) -> Path:
         try:
-            data = base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError) as error:
-            raise StageFailure("credential-invalid", f"{path.name} is not valid base64") from error
+            data = decode_credential(value, pem=pem)
+        except CredentialFormatError as error:
+            raise StageFailure("credential-invalid", f"{path.name} {error}") from error
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -1068,12 +1110,16 @@ def _windows_store(stage: Stage, policy: dict) -> tuple[str, dict]:
         raise StageFailure("credential-import-failed", "the signing certificate does not hash to the approved publisher fingerprint")
     trust = {"mode": "os-store", "public_trust": True, "anchor_sha256": None}
     if stage.env.get("VELES_WIN_TRUST_SELF_SIGNED") == "1":
-        root_der = base64.b64decode(stage.env["VELES_WIN_ROOT_CER_BASE64"], validate=True)
-        if not root_der:
-            raise StageFailure("credential-import-failed", "the self-signed root certificate is empty")
+        try:
+            # One decoder for both the recorded anchor and the written file: base64 (single-line or
+            # wrapped) or one PEM certificate. A PEM value is stored and hashed as its DER body, so
+            # trust_anchor_sha256 does not depend on which encoding the operator supplied.
+            root_der = decode_credential(stage.env["VELES_WIN_ROOT_CER_BASE64"], pem=True)
+        except CredentialFormatError as error:
+            raise StageFailure("credential-import-failed", f"the self-signed root certificate {error}") from error
         anchor_sha256 = sha256_bytes(root_der)
         anchor_sha1 = hashlib.sha1(root_der).hexdigest()
-        root = stage.write_secret(keydir / "root.cer", stage.env["VELES_WIN_ROOT_CER_BASE64"])
+        root = stage.write_secret(keydir / "root.cer", stage.env["VELES_WIN_ROOT_CER_BASE64"], pem=True)
         stage.register_undo("certutil -delstore Root", ["certutil", "-delstore", "Root", anchor_sha1])
         stage.run(["certutil", "-addstore", "-f", "Root", root], what="credential-import-failed")
         trust = {"mode": "self-signed", "public_trust": False, "anchor_sha256": anchor_sha256}

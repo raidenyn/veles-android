@@ -42,8 +42,10 @@ certificate is deferred; it will be obtained outside project completion. The gat
 modified to accept that identity explicitly, not quietly:
 
 - The Windows sign stage reads `VELES_WIN_TRUST_SELF_SIGNED=1` and
-  `VELES_WIN_ROOT_CER_BASE64`. It imports the supplied root as an **ephemeral, recorded
-  trust anchor** only for the verification step, then removes it. The leaf SHA-1/SHA-256
+  `VELES_WIN_ROOT_CER_BASE64`. The secret may be single-line or line-wrapped base64, or
+  one complete PEM certificate, which is stored and recorded as the certificate DER. It
+  imports the supplied root as an **ephemeral, recorded trust anchor** only for the
+  verification step, then removes it. The leaf SHA-1/SHA-256
   pins, the RFC 3161 timestamp and the signed-content correspondence checks are unchanged.
 - Every Windows signature record carries `public_trust: false`, `trust_mode: "self-signed"`
   and the anchor's SHA-256. `validate` refuses a self-signed signature that does not record
