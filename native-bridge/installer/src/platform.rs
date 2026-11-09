@@ -2257,6 +2257,11 @@ pub const TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE: &str = "windows-authenticode-tr
 /// code/resource seal, the policy-pinned designated requirement and the
 /// Gatekeeper assessment.
 pub const TRUST_ASSESSMENT_MACOS_GATEKEEPER: &str = "macos-gatekeeper-assessed";
+/// Native assessment verdict: the macOS adapter accepted the strict
+/// code/resource seal and a designated requirement pinned to the SHA-256 of the
+/// self-signed leaf certificate. Gatekeeper, notarization and public trust are
+/// **not** claimed; the acceptance machine trusts the project's own root.
+pub const TRUST_ASSESSMENT_MACOS_SELF_SIGNED: &str = "macos-self-signed-pinned";
 /// Windows package member holding the Authenticode-signed policy carrier binary.
 pub const PACKAGE_WINDOWS_CARRIER: &str = "carrier.exe";
 /// macOS package member holding the sealed signed policy-carrier app bundle.
@@ -2393,6 +2398,7 @@ pub fn assessment_target(assessment: &str) -> Option<Target> {
     match assessment {
         TRUST_ASSESSMENT_WINDOWS_AUTHENTICODE => Some(Target::WindowsX64),
         TRUST_ASSESSMENT_MACOS_GATEKEEPER => Some(Target::MacosArm64),
+        TRUST_ASSESSMENT_MACOS_SELF_SIGNED => Some(Target::MacosArm64),
         _ => None,
     }
 }

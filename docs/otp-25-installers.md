@@ -54,8 +54,10 @@ modified to accept that identity explicitly, not quietly:
 - An acceptance machine must trust the anchor for the engine's `WinVerifyTrust` call:
   `certutil -addstore -f Root <root.cer>` as an administrator, recorded in the run's
   environment notes.
-- macOS is **not** covered by this decision: the signed macOS host remains blocked by the
-  DER-entitlements correspondence gate, which is independent of the certificate.
+- macOS is covered by the separate [2026-11-09 decision](decisions/2026-11-09-self-signed-macos-acceptance.md):
+  a self-signed leaf is authorized by its SHA-256 fingerprint, the DER-entitlements slot is decoded and
+  cross-checked, and notarization, stapling and Gatekeeper are recorded as not attempted or not claimed.
+  A self-signed macOS candidate is not publicly trusted and is not notarized.
 
 ### Extension identity (development for now)
 

@@ -30,8 +30,10 @@ completion.
 5. Acceptance machines must trust the anchor for the engine's `WinVerifyTrust` call
    (`certutil -addstore -f Root <root.cer>` as administrator); the run records that this
    was done.
-6. macOS is out of scope: the signed macOS host remains blocked by the DER-entitlements
-   correspondence gate, independently of the certificate.
+6. macOS was out of scope of *this* decision; it is covered by the separate
+   [2026-11-09 decision](2026-11-09-self-signed-macos-acceptance.md), which decodes the
+   DER-entitlements slot and adds a leaf-pinned self-signed macOS mode. Notarization,
+   stapling and Gatekeeper remain unclaimed there too.
 
 ## Changes
 

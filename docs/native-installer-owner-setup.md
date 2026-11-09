@@ -67,7 +67,8 @@ Configure the repository environment named `native-release`:
   - `VELES_WIN_CERT_SHA1`, `VELES_WIN_PUBLISHER`, `VELES_WIN_TIMESTAMP_URL`,
     `VELES_WIN_TRUST_SELF_SIGNED` (variables);
   - the macOS signing/notarization secrets and variables named in the `sign-macos` job,
-    when that platform is in scope.
+    when that platform is in scope. Without an Apple Developer ID, use the self-signed
+    acceptance identity instead (next section).
 - The release workflow reads these only in the step-level `env:` of the signing steps.
   Build, verification, assembly, packaging without signing, cleanup and gate steps hold
   no credential.
@@ -75,6 +76,33 @@ Configure the repository environment named `native-release`:
 Only `raidenyn` should be able to manage repository administration, environments and
 secrets. A collaborator who can request a workflow run is not thereby allowed to approve
 the environment or read its secrets.
+
+### macOS self-signed acceptance identity
+
+When no Apple Developer ID is available, the macOS candidate uses the project
+self-signed leaf from `docs/decisions/2026-11-09-self-signed-macos-acceptance.md`.
+In `native-release` set:
+
+| Kind | Name | Value |
+|---|---|---|
+| secret | `VELES_MAC_P12_BASE64` | base64 of the leaf+root PKCS#12 |
+| secret | `VELES_MAC_P12_PASSWORD` | that PKCS#12's password |
+| variable | `VELES_MAC_IDENTITY` | `Veles Self-Signed Acceptance (not a release signer)` |
+| variable | `VELES_MAC_PUBLISHER` | `sha256:b525031772b4ff0b78972ed17063dca651045584d6efd6d4a04578f8b2d822dc` |
+| variable | `VELES_MAC_TRUST_SELF_SIGNED` | `1` |
+
+`VELES_MAC_TEAM_ID` and `VELES_NOTARY_*` stay unset in this mode. The acceptance
+Mac must trust the root certificate once before opening the disk image:
+
+```sh
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.pem
+```
+
+Clearing `VELES_MAC_TRUST_SELF_SIGNED` and setting a real team, notary key and
+Developer ID identity returns the gate to the notarized path with no code change,
+but the descriptor must also be updated first: `config/release-macos.json` currently
+authorizes only the self-signed `sha256:` publisher. Replace that entry with
+`team:<TEAMID>` (or add it) before rebuilding, or `signer_policy` rejects the team.
 
 ## 4. Audit native signing secrets for duplicates
 

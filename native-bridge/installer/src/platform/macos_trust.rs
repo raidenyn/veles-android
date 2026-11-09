@@ -107,8 +107,51 @@ pub(super) fn publisher_requirement(channel: Channel, team_id: &str) -> Option<S
     }
 }
 
-/// The fixed Gatekeeper assessment argv for `carrier`.
+/// Publisher identity for a self-signed completion leaf: the SHA-256 of the
+/// certificate DER (`sha256:<64 lowercase hex>`), the macOS counterpart of the
+/// Windows publisher fingerprint.
+pub(super) const CERTIFICATE_PUBLISHER_PREFIX: &str = "sha256:";
+
+/// The certificate digest named by a `sha256:<hex>` publisher, when well formed.
+pub(super) fn certificate_publisher(publisher: &str) -> Option<&str> {
+    let digest = publisher.strip_prefix(CERTIFICATE_PUBLISHER_PREFIX)?;
+    is_lower_hex(digest, 32).then_some(digest)
+}
+
+/// Every certificate digest a policy authorizes.
+pub(super) fn authorized_certificates(publishers: &[String]) -> Vec<&str> {
+    publishers
+        .iter()
+        .filter_map(|publisher| certificate_publisher(publisher))
+        .collect()
+}
+
+/// Whether the leaf-certificate SHA-256 the OS observed is authorized.
+pub(super) fn is_authorized_certificate(publishers: &[String], digest_sha256: &str) -> bool {
+    is_lower_hex(digest_sha256, 32) && authorized_certificates(publishers).contains(&digest_sha256)
+}
+
+/// Build the leaf-pinned requirement for a self-signed completion identity.
 ///
+/// `H"..."` is Apple's SHA-1 certificate hash (20 bytes). The requirement
+/// deliberately carries no `anchor apple generic`: a self-signed acceptance
+/// leaf has no Apple-anchored chain, and the pin is the whole authorization.
+/// Returns `None` for anything that is not 40 lowercase hex characters, so the
+/// requirement can never be built from free-form text.
+pub(super) fn certificate_requirement(certificate_sha1: &str) -> Option<String> {
+    is_lower_hex(certificate_sha1, 20)
+        .then(|| format!("certificate leaf = H\"{certificate_sha1}\""))
+}
+
+/// Exactly `bytes` lowercase hexadecimal characters.
+fn is_lower_hex(text: &str, bytes: usize) -> bool {
+    text.len() == bytes * 2
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// The fixed Gatekeeper assessment argv for `carrier`.
 /// `--assess --type exec` is the documented execution-policy assessment; the
 /// carrier path is one argument, so it cannot introduce further options through
 /// word splitting.
@@ -447,6 +490,61 @@ mod tests {
             &publishers(&["Publisher One"]),
             "ABCDE12345"
         ));
+    }
+
+    #[test]
+    fn certificate_publishers_are_sha256_leaf_fingerprints() {
+        let digest = "e34913a76c5ac08260e4577862a3b7be6dcd9d95f52d5af9ac4f3d277cf24c26";
+        assert_eq!(
+            certificate_publisher(&format!("sha256:{digest}")),
+            Some(digest)
+        );
+        for invalid in [
+            "".to_owned(),
+            "sha256:".to_owned(),
+            format!("sha256:{}", digest.to_uppercase()),
+            format!("sha256:{}", &digest[..62]),
+            format!("sha256:{}0", digest),
+            format!("team:{digest}"),
+            format!("sha256:{digest} "),
+        ] {
+            assert_eq!(certificate_publisher(&invalid), None, "{invalid}");
+        }
+    }
+
+    #[test]
+    fn policy_authors_only_well_formed_certificate_publishers() {
+        let first = "e34913a76c5ac08260e4577862a3b7be6dcd9d95f52d5af9ac4f3d277cf24c26";
+        let second = "b6f771b4d8fc23af8f854415036cdafe799265fc803f49b6b844aeedf43a3ba5";
+        let policy = publishers(&[
+            &format!("sha256:{first}"),
+            "team:ABCDE12345",
+            "Publisher One",
+            &format!("sha256:{}", first.to_uppercase()),
+        ]);
+        assert_eq!(authorized_certificates(&policy), vec![first]);
+        assert!(is_authorized_certificate(&policy, first));
+        assert!(!is_authorized_certificate(&policy, second));
+        assert!(!is_authorized_certificate(&policy, &first.to_uppercase()));
+        assert!(!is_authorized_certificate(
+            &publishers(&["team:ABCDE12345"]),
+            first
+        ));
+    }
+
+    #[test]
+    fn self_signed_requirement_is_leaf_pinned_and_never_free_form() {
+        let sha1 = "efdf48f3b802d2575fb1eb14b2543d5c7d187bbb";
+        assert_eq!(
+            certificate_requirement(sha1).as_deref(),
+            Some("certificate leaf = H\"efdf48f3b802d2575fb1eb14b2543d5c7d187bbb\"")
+        );
+        for invalid in ["", "efdf", &sha1.to_uppercase(), &format!("{sha1}0"), "a b"] {
+            assert_eq!(certificate_requirement(invalid), None, "{invalid}");
+        }
+        // The requirement carries no Apple anchor: a self-signed leaf has none.
+        let requirement = certificate_requirement(sha1).expect("requirement");
+        assert!(!requirement.contains("anchor apple generic"));
     }
 
     #[test]
