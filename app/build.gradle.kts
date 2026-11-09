@@ -219,3 +219,7 @@ protobuf {
         }
     }
 }
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(":installGitHooks")
+}

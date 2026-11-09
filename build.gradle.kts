@@ -7,6 +7,14 @@ import java.util.Properties
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Sync
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
 
 plugins {
     base
@@ -124,6 +132,53 @@ fun cargoRegistryRemapRustFlags(): String {
     }
     val registrySrc = File(cargoHome, "registry/src").absolutePath
     return "--remap-path-prefix=$registrySrc=/cargo-registry/src"
+}
+
+// Enables the repo's Conventional Commits commit-msg hook (.githooks) for local clones.
+// Never overrides a hooksPath the developer already configured; skipped on CI.
+abstract class InstallGitHooksTask @Inject constructor(
+    private val execOps: ExecOperations,
+) : DefaultTask() {
+    @get:Internal
+    abstract val repoDir: DirectoryProperty
+
+    @get:Input
+    abstract val onCi: Property<Boolean>
+
+    @TaskAction
+    fun install() {
+        if (onCi.get()) {
+            logger.info("CI=true: skipping git hook installation")
+            return
+        }
+        val dir = repoDir.get().asFile
+        val out = ByteArrayOutputStream()
+        val read = execOps.exec {
+            workingDir = dir
+            commandLine("git", "config", "--get", "core.hooksPath")
+            standardOutput = out
+            isIgnoreExitValue = true
+        }
+        val current = out.toString(Charsets.UTF_8).trim()
+        when {
+            read.exitValue != 0 || current.isEmpty() -> execOps.exec {
+                workingDir = dir
+                commandLine("git", "config", "core.hooksPath", ".githooks")
+            }
+            current == ".githooks" -> Unit
+            else -> logger.warn(
+                "git core.hooksPath is already set to '$current'; leaving it unchanged, " +
+                    "so the Conventional Commits commit-msg hook in .githooks is not active.",
+            )
+        }
+    }
+}
+
+tasks.register<InstallGitHooksTask>("installGitHooks") {
+    group = "build setup"
+    description = "Points git core.hooksPath at .githooks unless already configured (skipped on CI)."
+    repoDir.set(layout.projectDirectory)
+    onCi.set(providers.environmentVariable("CI").map { it == "true" }.orElse(false))
 }
 
 val rustToolchainCheck = tasks.register("rustToolchainCheck") {

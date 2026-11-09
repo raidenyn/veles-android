@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python3 -I "$(git rev-parse --show-toplevel)/scripts/commitlint.py" --allow-git-generated --file "$1"
