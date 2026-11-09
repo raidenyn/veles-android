@@ -55,7 +55,7 @@
 
 ## 10. Documentation
 
-- [ ] 10.1 `CLAUDE.md` and `README.md`
+- [x] 10.1 `CLAUDE.md` and `README.md`
 
 ## 11. Verification and owner setup
 
