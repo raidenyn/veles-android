@@ -310,43 +310,34 @@ function assertReusableWorkflow(source, name) {
 test('Android workflow builds one release variant and stages its APK, mapping, and checksums', async () => {
   const source = await workflow('build-android.yml');
   assertReusableWorkflow(source, 'build-android.yml');
-  assert.match(source, /secrets:[\s\S]*?KEYSTORE_BASE64/, 'Android workflow must accept signing secrets');
+  assert.doesNotMatch(source, /^\s*secrets:/m, 'Android workflow must declare no secrets block');
+  assert.doesNotMatch(source, /KEYSTORE|VELES_KEY|\$\{\{\s*secrets\./, 'Android workflow must carry no signing material');
   assert.doesNotMatch(source, /release-evidence-artifact-name/, 'Android workflow must drop the release-evidence artifact input');
   assert.match(source, /artifact-name:[\s\S]*?default:\s*android-release/, 'Android artifact name must default to the neutral android-release');
-  assert.match(source, /env:\s*\n\s*KEYSTORE_BASE64:\s*\$\{\{ secrets\.KEYSTORE_BASE64 \}\}/, 'Android workflow must map the keystore secret into env');
-  assert.match(source, /if:\s*env\.KEYSTORE_BASE64 != ''/, 'Android workflow must test secret presence through env');
-  assert.doesNotMatch(source, /if:\s*secrets\./, 'Android workflow must not reference secrets directly in if conditions');
-  for (const secret of ['KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD']) {
-    assert.match(source, new RegExp(`env:\\s*\\n[\\s\\S]*?${secret}:\\s*\\$\\{\\{ secrets\\.${secret} \\}\\}`), `Android workflow must map ${secret} into env`);
-  }
+  assert.match(source, /version-tag:\s*\n\s*required:\s*false\s*\n\s*type:\s*string/, 'Android workflow must accept an optional string version-tag');
   assertNoSecretRunInterpolation(source, 'build-android.yml');
-  // One mutually exclusive signed/unsigned assembly path: exactly two
-  // assembleRelease steps exist in the file, gated on opposite env
-  // conditions, so every invocation assembles exactly one release variant
-  // (the signed APK when signing material is present, the unsigned APK
-  // otherwise) with no second canonical/reference build.
-  assert.equal((source.match(/\.\/gradlew assembleRelease/g) ?? []).length, 2, 'Android workflow must declare exactly one signed and one unsigned assembly step');
-  const signedStep = source.slice(source.indexOf('- name: Build signed release APK'), source.indexOf('- name: Build unsigned release APK'));
-  assert.match(signedStep, /if:\s*env\.KEYSTORE_BASE64 != ''/, 'the signed assembly must run only when signing material is present');
-  assert.match(signedStep, /\.\/gradlew assembleRelease/, 'the signed assembly must build the release APK');
-  assert.match(signedStep, /VELES_KEYSTORE_FILE:\s*\$\{\{ runner\.temp \}\}\/keystore\.jks/, 'the signed assembly must receive the decoded keystore');
-  assert.match(signedStep, /VELES_KEYSTORE_PASSWORD:\s*\$\{\{ env\.KEYSTORE_PASSWORD \}\}/, 'the signed assembly must receive signing material through env');
-  const unsignedStep = source.slice(source.indexOf('- name: Build unsigned release APK'), source.indexOf('- name: Verify APK JNI allow-list'));
-  assert.match(unsignedStep, /if:\s*env\.KEYSTORE_BASE64 == ''/, 'the unsigned assembly must run only when signing material is absent');
-  assert.match(unsignedStep, /\.\/gradlew assembleRelease/, 'the unsigned assembly must build the release APK');
-  assert.doesNotMatch(unsignedStep, /VELES_KEYSTORE/, 'the unsigned assembly must not receive any signing environment');
-  // JNI validation routes to the APK that was actually assembled.
+  assert.equal((source.match(/\.\/gradlew assembleRelease/g) ?? []).length, 1, 'Android workflow must declare exactly one assembly step');
+  const tagStep = source.slice(source.indexOf('- name: Create local version tag'), source.indexOf('- name: Build unsigned release APK'));
+  assert.match(tagStep, /if:\s*inputs\.version-tag != ''/, 'version tag must be created only when requested');
+  assert.match(tagStep, /VERSION_TAG:\s*\$\{\{ inputs\.version-tag \}\}/, 'version tag must reach the shell through env');
+  assert.match(tagStep, /git tag "\$VERSION_TAG" "\$COMMIT"/, 'version tag must be created locally on the checked-out commit');
+  assert.doesNotMatch(tagStep.split('run:')[1], /\$\{\{/, 'version tag script must not interpolate expressions');
+  assert.doesNotMatch(source, /git push/, 'Android workflow must never push');
+  const versionStep = source.slice(source.indexOf('- name: Assert derived version matches'), source.indexOf('- name: Verify APK JNI allow-list'));
+  assert.match(versionStep, /if:\s*inputs\.version-tag != ''/, 'version assertion must run only when a tag is requested');
+  assert.doesNotMatch(versionStep.split('run:')[1], /\$\{\{/, 'version assertion script must not interpolate expressions');
+  assert.match(versionStep, /:app:androidGitVersion/, 'version assertion must read androidGitVersion');
+  assert.match(versionStep, /\$\{VERSION_TAG#android-v\}/, 'version assertion must strip the android-v prefix');
   const jniStep = source.slice(source.indexOf('- name: Verify APK JNI allow-list'), source.indexOf('- name: Stage release APK, mapping, and checksums'));
-  assert.match(jniStep, /if \[ -n "\$KEYSTORE_BASE64" \]; then[\s\S]*?APK="app\/build\/outputs\/apk\/release\/app-release\.apk"/, 'JNI validation must select the signed APK on the signed path');
-  assert.match(jniStep, /APK="app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk"/, 'JNI validation must select the unsigned APK on the unsigned path');
-  assert.match(jniStep, /rust\/scripts\/verify-apk-jni\.sh "\$APK"/, 'JNI allow-list must run against the selected APK');
+  assert.match(jniStep, /APK="app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk"/, 'JNI validation must select the unsigned APK');
+  assert.match(jniStep, /rust\/scripts\/verify-apk-jni\.sh "\$APK"/, 'JNI allow-list must run against the unsigned APK');
   // No Docker reference rebuild and no canonical unsigned export.
   assert.doesNotMatch(source, /verify\/verify\.sh/, 'Android workflow must not run the Docker reference rebuild');
   assert.doesNotMatch(source, /build\/verification\/android\/app-release-unsigned\.apk/, 'Android workflow must not export a canonical unsigned APK');
   // Staging: the actual APK, the mapping, and SHA256SUMS travel together.
   const stageStep = source.slice(source.indexOf('- name: Stage release APK, mapping, and checksums'), source.indexOf('- uses: actions/upload-artifact'));
-  assert.match(stageStep, /if \[ -n "\$KEYSTORE_BASE64" \]; then[\s\S]*?APK="app-release\.apk"/, 'staging must select the signed APK name on the signed path');
-  assert.match(stageStep, /APK="app-release-unsigned\.apk"/, 'staging must select the unsigned APK name on the unsigned path');
+  assert.match(stageStep, /APK="app-release-unsigned\.apk"/, 'staging must select the unsigned APK');
+  assert.doesNotMatch(stageStep, /app-release\.apk/, 'staging must not name a signed APK');
   assert.match(stageStep, /cp "app\/build\/outputs\/apk\/release\/\$APK" "build\/verification\/android-release\/\$APK"/, 'Android workflow must stage the actual release APK under its selected name');
   assert.match(stageStep, /cp app\/build\/outputs\/mapping\/release\/mapping\.txt build\/verification\/android-release\/mapping\.txt/, 'Android workflow must stage the mapping');
   assert.match(stageStep, /sha256sum "\$APK" mapping\.txt > SHA256SUMS/, 'Android workflow must stage SHA256SUMS over the APK and mapping');
@@ -1324,8 +1315,11 @@ test('release-build caller graph composes single-build workflows with default-re
   // actual APK, mapping, and its SHA256SUMS.
   assert.match(publishBlock, /actions\/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7/, 'release-build publisher must download the Android artifact via the pinned download-artifact action');
   assert.match(publishBlock, /name: android-release/, 'release-build publisher must download the single android-release artifact');
-  assert.match(publishBlock, /APK="android-release\/app-release\.apk"/, 'signed configuration must select the actual signed APK');
-  assert.match(publishBlock, /APK="android-release\/app-release-unsigned\.apk"/, 'unsigned configuration must select the actual unsigned APK');
+  assert.match(publishBlock, /APK="android-release\/app-release-unsigned\.apk"/, 'publisher must select only the unsigned APK');
+  assert.doesNotMatch(publishBlock, /app-release\.apk/, 'publisher must not name a signed APK');
+  assert.doesNotMatch(source, /HAS_KEYSTORE|secrets\.KEYSTORE/, 'release-build must not reference keystore secrets');
+  assert.doesNotMatch(source, /^\s*secrets:/m, 'release-build must pass no secrets to build-android');
+  assert.match(publishBlock, /\(manual build\) \(unsigned\)/, 'publisher title must say unsigned');
   assert.match(publishBlock, /"android-release\/mapping\.txt"/, 'release-build publisher must publish the mapping');
   assert.match(publishBlock, /"android-release\/SHA256SUMS"/, 'release-build publisher must publish the artifact checksums');
   assert.match(publishBlock, /gh release view "\$VERSION" --json isPrerelease/, 'release-build publish must preserve prerelease collision/replacement behavior');

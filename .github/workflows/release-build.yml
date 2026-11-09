@@ -64,11 +64,6 @@ jobs:
     with:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       artifact-name: android-release
-    secrets:
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
   web-extension:
     if: |
@@ -139,8 +134,6 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    env:
-      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -161,13 +154,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if [ "$HAS_KEYSTORE" = "true" ]; then
-            SUFFIX=""
-            APK="android-release/app-release.apk"
-          else
-            SUFFIX=" (unsigned)"
-            APK="android-release/app-release-unsigned.apk"
-          fi
+          APK="android-release/app-release-unsigned.apk"
           test -f "$APK"
           test -f "android-release/mapping.txt"
           test -f "android-release/SHA256SUMS"
@@ -190,7 +177,7 @@ jobs:
             "$APK" \
             "android-release/mapping.txt" \
             "android-release/SHA256SUMS" \
-            --title "Veles $VERSION (manual build)$SUFFIX" \
+            --title "Veles $VERSION (manual build) (unsigned)" \
             --prerelease \
             --generate-notes \
             --target "$GITHUB_SHA"
