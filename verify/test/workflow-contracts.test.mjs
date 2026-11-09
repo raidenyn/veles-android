@@ -351,6 +351,10 @@ test('web extension workflow packages the extension after its ordinary checks', 
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Web workflow must use Node 26.8.1');
   assert.match(source, /npm ci --ignore-scripts/, 'Web workflow must disable install scripts');
   assert.match(source, /npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:bundle && npm run package/, 'Web workflow must retain its format/lint/typecheck/test/bundle checks and package');
+  assert.match(source, /version:\s*\n\s*required:\s*false\s*\n\s*type:\s*string\s*\n\s*default:\s*''/, 'Web workflow must take an optional string version input defaulting to empty');
+  assert.match(source, /npm run package\n\s*working-directory: web-extension\n\s*env:\n\s*VELES_EXTENSION_VERSION:\s*\$\{\{ inputs\.version \}\}/, 'Web workflow must map the version input to VELES_EXTENSION_VERSION via env');
+  assert.doesNotMatch(source, /run:[^\n]*inputs\.version/, 'Web workflow must not interpolate the version input into a shell command');
+  assert.match(source, /actions\/checkout@[0-9a-f]{40}[^\n]*\n\s*with:\n\s*ref:[^\n]*\n\s*fetch-depth:\s*0/, 'Web workflow must fetch full history so git describe sees component tags');
   assert.doesNotMatch(source, /verify\/verify-web\.sh/, 'Web workflow must not run the reference verifier automatically');
   assert.match(source, /artifact-name:[\s\S]*?default:\s*web-extension/, 'Web artifact name must default to the neutral web-extension');
   assertExactUploadPaths(source, 'build-web-extension.yml', [

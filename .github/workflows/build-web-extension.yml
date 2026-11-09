@@ -10,6 +10,10 @@ on:
         required: true
         type: string
         default: web-extension
+      version:
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -21,6 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.commit-sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '26.8.1'
@@ -30,6 +35,8 @@ jobs:
         working-directory: web-extension
       - run: npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:bundle && npm run package
         working-directory: web-extension
+        env:
+          VELES_EXTENSION_VERSION: ${{ inputs.version }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ inputs.artifact-name }}

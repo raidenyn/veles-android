@@ -6,8 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const WEB_EXTENSION = join(__dirname, '..');
 const OUTPUT = join(WEB_EXTENSION, '..', 'build', 'web-extension');
-const ZIP = 'veles-extension-0.1.0.zip';
-const SIDECAR = `${ZIP}.sha256`;
+const SIDECAR_SUFFIX = '.sha256';
 
 function packageExtension(): void {
     execFileSync('npm', ['run', 'package'], {
@@ -16,12 +15,22 @@ function packageExtension(): void {
     });
 }
 
+// The package script rebuilds dist/, so the zip name comes from the built manifest.
+function builtZipName(): string {
+    const manifest = JSON.parse(
+        readFileSync(join(WEB_EXTENSION, 'dist', 'manifest.json'), 'utf8'),
+    ) as { version: string };
+    return `veles-extension-${manifest.version}.zip`;
+}
+
 afterEach(() => rmSync(OUTPUT, { recursive: true, force: true }));
 
 describe('npm run package', () => {
     it('recreates the accepted package output and is byte-identical on repeat', () => {
         rmSync(OUTPUT, { recursive: true, force: true });
         packageExtension();
+        const ZIP = builtZipName();
+        const SIDECAR = `${ZIP}${SIDECAR_SUFFIX}`;
         writeFileSync(join(OUTPUT, 'stale-sentinel'), 'stale');
 
         packageExtension();

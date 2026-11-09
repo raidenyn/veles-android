@@ -2,14 +2,19 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildExtensionManifest } from '../src/manifest';
-import pkg from '../package.json';
+import { gitDescribe, resolveExtensionVersion } from '../src/version';
 
 describe('extension manifest', () => {
     it('is a valid MV3 manifest with the connector permissions', () => {
         const m = buildExtensionManifest();
         expect(m.manifest_version).toBe(3);
         expect(m.name).toBe('Veles OTP');
-        expect(m.version).toBe(pkg.version);
+        expect(m.version).toBe(
+            resolveExtensionVersion(
+                { VELES_EXTENSION_VERSION: process.env.VELES_EXTENSION_VERSION || undefined },
+                gitDescribe,
+            ).version,
+        );
         expect(m.permissions).toEqual([
             'storage',
             'nativeMessaging',

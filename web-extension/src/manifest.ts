@@ -1,4 +1,4 @@
-import pkg from '../package.json';
+import { currentExtensionVersion } from './version';
 
 // Development-only Chrome extension ID placeholder shared with the native-bridge
 // host manifest generator (native-bridge/src/manifest.mjs) and the host's
@@ -86,12 +86,14 @@ export function resolveReleaseIdentity(
 }
 
 export function buildExtensionManifest(): chrome.runtime.ManifestV3 {
+    const { version, versionName } = currentExtensionVersion();
     return {
         manifest_version: 3,
         // frozen tab transitions require Chrome 132 (offscreen requires 109).
         minimum_chrome_version: '132',
         name: 'Veles OTP',
-        version: pkg.version,
+        version,
+        ...(versionName === undefined ? {} : { version_name: versionName }),
         description:
             'Delivers one-time passcodes from the Veles Android app to this browser over an authenticated local channel.',
         permissions: ['storage', 'nativeMessaging', 'offscreen', 'clipboardWrite'],
