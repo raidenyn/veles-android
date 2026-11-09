@@ -44,9 +44,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           VALIDATOR: ${{ steps.validator.outputs.path }}
+        # Written to a file, not passed as one argv string, so a very large body cannot hit the argv limit.
         run: |
-          message="$PR_TITLE"
+          message_file="$RUNNER_TEMP/pr-message.txt"
+          printf '%s\n' "$PR_TITLE" > "$message_file"
           if [ -n "$PR_BODY" ]; then
-            message="$(printf '%s\n\n%s' "$PR_TITLE" "$PR_BODY")"
+            printf '\n%s\n' "$PR_BODY" >> "$message_file"
           fi
-          python3 -I "$VALIDATOR" --message "$message"
+          python3 -I "$VALIDATOR" --file "$message_file"

@@ -10,9 +10,11 @@ on:
   push:
     branches: [master]
 
+# Superseded PR runs are cancelled; master pushes never are, so every push keeps its commit-guard run (the
+# next push only validates its own before..after range).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

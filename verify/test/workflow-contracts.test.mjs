@@ -684,6 +684,10 @@ function inventoryOwners(sources, command) {
 }
 
 function assertComponentCi(source, nodes) {
+  // Master pushes are never cancelled: a cancelled push run would skip commit-guard for its commits, and the
+  // next push only validates its own before..after range.
+  const concurrency = executableYaml(source).match(/^concurrency:\n((?:  [^\n]*\n)+)/m)?.[1] ?? '';
+  assert.match(concurrency, /^  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m, 'ci.yml may cancel superseded PR runs only, never master pushes');
   const jobs = workflowJobBlocks(executableYaml(source));
   const changes = jobs.changes;
   assert.ok(changes, 'ci.yml must define the changes job');
@@ -740,6 +744,8 @@ test('ci.yml calls one change-gated check workflow per component node and gates 
     'ci-ok misses a node': (text) => text.replace(/(    needs: \[changes, [^\]]*), tooling/, '$1'),
     'no map check': (text) => text.replace('python3 -I scripts/components.py check', 'true'),
     'push-only guard dropped': (text) => text.replace("    if: github.event_name == 'push'\n", ''),
+    'master runs cancelled': (text) => text.replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", 'cancel-in-progress: true'),
+    'concurrency dropped': (text) => text.replace(/^concurrency:\n(?:  [^\n]*\n)+/m, ''),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
     const mutated = mutate(source);
@@ -819,12 +825,20 @@ function assertPrTitleWorkflow(source) {
   assert.doesNotMatch(job, /^    if:/m, 'pr-title must not skip any event');
   assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/, 'pr-title must check out the base commit');
   assertNoPrTextInRun(source, 'pr-title.yml');
-  assert.match(job, /PR_TITLE: \$\{\{ github\.event\.pull_request\.title \}\}/, 'the title must come from env');
-  assert.match(job, /PR_BODY: \$\{\{ github\.event\.pull_request\.body \}\}/, 'the body must come from env');
+  // Title AND body (the future squash commit) reach the validator together, as a file (no argv size limit).
+  const validate = steps(job).map((step) => step.join('\n')).filter((step) => step.includes('"$VALIDATOR"'));
+  assert.equal(validate.length, 1, 'pr-title must run the validator in exactly one step');
+  const [step] = validate;
+  assert.match(step, /PR_TITLE: \$\{\{ github\.event\.pull_request\.title \}\}/, 'the title must come from env');
+  assert.match(step, /PR_BODY: \$\{\{ github\.event\.pull_request\.body \}\}/, 'the body must come from env');
+  const run = runCommands(step).join('\n');
+  assert.match(run, /message_file="\$RUNNER_TEMP\/pr-message\.txt"/, 'the message must be written under RUNNER_TEMP');
+  assert.match(run, /printf '%s\\n' "\$PR_TITLE" > "\$message_file"/, 'the title must start the validated message');
+  assert.match(run, /printf '\\n%s\\n' "\$PR_BODY" >> "\$message_file"/, 'the body must follow the title after a blank line');
+  assert.match(run, /python3 -I "\$VALIDATOR" --file "\$message_file"/, 'pr-title must validate the written title and body');
   assert.match(job, /if \[ -f scripts\/commitlint\.py \]/, 'the base validator is preferred');
   assert.match(job, /git show "\$HEAD_SHA:scripts\/commitlint\.py" > "\$RUNNER_TEMP\/commitlint\.py"/, 'bootstrap fallback reads the head validator');
   assert.match(job, /::warning::bootstrap: validator taken from the PR head/, 'bootstrap fallback must warn');
-  assert.match(job, /python3 -I "\$VALIDATOR" --message "\$message"/, 'pr-title must run the validator on the message');
   assert.doesNotMatch(job, /--allow-git-generated/, 'pr-title must not accept git-generated subjects');
 }
 
@@ -833,12 +847,15 @@ test('pr-title validates the PR title and body from env with the base validator'
   assertPrTitleWorkflow(source);
   assertActionsPinned(source, 'pr-title.yml');
   const mutations = {
-    'title interpolated into run': (text) => text.replace('python3 -I "$VALIDATOR" --message "$message"', 'python3 -I "$VALIDATOR" --message "${{ github.event.pull_request.title }}"'),
+    'title interpolated into run': (text) => text.replace('printf \'%s\\n\' "$PR_TITLE"', 'printf \'%s\\n\' "${{ github.event.pull_request.title }}"'),
+    'body not validated': (text) => text.replace(/^ *if \[ -n "\$PR_BODY" \]; then\n *printf[^\n]*\n *fi\n/m, ''),
+    'body env dropped': (text) => text.replace('          PR_BODY: ${{ github.event.pull_request.body }}\n', ''),
+    'title only on argv': (text) => text.replace('--file "$message_file"', '--message "$PR_TITLE"'),
     'head checkout': (text) => text.replace('ref: ${{ github.event.pull_request.base.sha }}', 'ref: ${{ github.event.pull_request.head.sha }}'),
     'missing edited': (text) => text.replace(PR_TITLE_EVENTS, '[opened, reopened, synchronize]'),
     'silent bootstrap': (text) => text.replace('::warning::bootstrap: validator taken from the PR head', 'bootstrap'),
     'write permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'),
-    'git-generated accepted': (text) => text.replace('--message "$message"', '--allow-git-generated --message "$message"'),
+    'git-generated accepted': (text) => text.replace('--file "$message_file"', '--allow-git-generated --file "$message_file"'),
   };
   for (const [label, mutate] of Object.entries(mutations)) {
     const mutated = mutate(source);

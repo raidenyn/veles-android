@@ -110,9 +110,14 @@ outputs and then fails (an unaccounted path), the selected nodes still run and `
 workflow triggers on `edited`, so editing a title re-runs only this check. It:
 
 1. checks out the PR's base commit, not the head;
-2. runs the base commit's `scripts/commitlint.py` on the title, a blank line and the body;
+2. writes the title, a blank line and the body to `$RUNNER_TEMP/pr-message.txt` and runs the base
+   commit's `scripts/commitlint.py --file` on it (a file, so a large body cannot hit the argv limit);
 3. passes the title and body through `env:` (`PR_TITLE`, `PR_BODY`), never interpolated into a script, so
    a title such as ``feat: `rm -rf /` $(id)`` is validated as text.
+
+GitHub appends ` (#<PR number>)` to the squash commit title. The validator does not count one such trailing
+suffix towards the 100-character header limit, so a title that passes `pr-title` also passes
+`commit-guard` after the merge.
 
 Bootstrap: if the base has no `scripts/commitlint.py` (only the PR that introduces it), the job fetches
 the head commit, runs `git show "$HEAD_SHA:scripts/commitlint.py"` into `$RUNNER_TEMP` and emits the
@@ -122,6 +127,10 @@ Limitation: a PR can edit `pr-title.yml` itself. The check protects against mist
 collaborators, not against a malicious workflow editor. `commit-guard` is the backstop.
 
 ## Commit guard
+
+`ci.yml` cancels superseded runs for pull requests only (`cancel-in-progress: ${{ github.event_name ==
+'pull_request' }}`). Master push runs are never cancelled, because the next push validates only its own
+range and a cancelled `commit-guard` would leave the earlier commits unchecked.
 
 On a push to `master`, `commit-guard` runs `scripts/commitlint.py --message` on every commit in
 `git rev-list "$BEFORE..$AFTER"` (only the pushed head when `before` is missing or all zeros) and fails
