@@ -37,10 +37,10 @@
 
 ## 7. CI tree
 
-- [ ] 7.1 `check-*.yml` workflows with the existing steps; `rust / jni-integration` keeps the full clean-contract sequence
-- [ ] 7.2 `ci.yml` orchestrator (`changes` with map check, node callers, `commit-guard`, `ci-ok`) and `pr-title.yml` with the bootstrap fallback
-- [ ] 7.3 Delete `build-native-host.yml`; migrate the host and installer Python contract tests, the Node contract tests and `check-remote-code.mjs` scopes in the same commit
-- [ ] 7.4 `docs/ci.md`
+- [x] 7.1 `check-*.yml` workflows with the existing steps; `rust / jni-integration` keeps the full clean-contract sequence
+- [x] 7.2 `ci.yml` orchestrator (`changes` with map check, node callers, `commit-guard`, `ci-ok`) and `pr-title.yml` with the bootstrap fallback
+- [x] 7.3 Delete `build-native-host.yml`; migrate the host and installer Python contract tests, the Node contract tests and `check-remote-code.mjs` scopes in the same commit
+- [x] 7.4 `docs/ci.md`
 
 ## 8. Builds
 
