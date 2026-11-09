@@ -4,13 +4,19 @@ name: release-build
 # - Ordinary push to master runs only build-android.yml (preserves the existing
 #   release-build cost profile).
 # - A pull request carrying the `release-build` label runs the complete
-#   component graph (Android, web, Rust, supply-chain, both native platforms).
+#   component graph (Android, web, Rust, supply-chain).
 # - A manual workflow_dispatch has an initial guard requiring
 #   github.ref == 'refs/heads/master'; a dispatch from any selectable non-master
 #   ref fails before any build or publication. A valid master dispatch runs the
-#   complete graph and then publishes a prerelease from the single-build
+#   complete component graph and then publishes a prerelease from the single-build
 #   Android artifact, preserving the existing prerelease collision/replacement
 #   behavior.
+# - Native installers are NOT built or gated here. `release-native-installers.yml`
+#   is the only release producer/signer for them; this caller neither selects a
+#   native build kind nor waits for a native artifact. PR debug installers are
+#   built only by `build-pr-installers.yml`. Keep that separation: adding native
+#   jobs here would let an unrelated label or publication path reach installer
+#   tooling again.
 
 on:
   push:
@@ -115,40 +121,6 @@ jobs:
       commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       artifact-name: supply-chain-reports
 
-  native-windows:
-    if: |
-      always() &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && (
-        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
-        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
-      ))) &&
-      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
-    needs: guard
-    permissions:
-      contents: read
-    uses: ./.github/workflows/build-native-windows.yml
-    with:
-      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: native-windows
-
-  native-macos:
-    if: |
-      always() &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && (
-        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||
-        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))
-      ))) &&
-      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')
-    needs: guard
-    permissions:
-      contents: read
-    uses: ./.github/workflows/build-native-macos.yml
-    with:
-      commit-sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      artifact-name: native-macos
-
   publish:
     name: publish prerelease
     # Publication requires the master guard and the explicit success of every
@@ -162,10 +134,8 @@ jobs:
       needs.android.result == 'success' &&
       needs.web-extension.result == 'success' &&
       needs.rust.result == 'success' &&
-      needs.supply-chain.result == 'success' &&
-      needs.native-windows.result == 'success' &&
-      needs.native-macos.result == 'success'
-    needs: [guard, android, web-extension, rust, supply-chain, native-windows, native-macos]
+      needs.supply-chain.result == 'success'
+    needs: [guard, android, web-extension, rust, supply-chain]
     permissions:
       contents: write
     runs-on: ubuntu-latest

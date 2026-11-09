@@ -1,0 +1,83 @@
+name: build-pr-installers
+
+# PR debug installers: a labeled pull request may build the finished DEBUG
+# (not for release) installer for Windows and/or macOS.
+#
+# Labels (exactly): `windows-installer-build` and `mac-installer-build`. Every
+# reviewed pull_request event (opened, reopened, labeled, unlabeled, synchronize,
+# ready_for_review) re-evaluates the current label set; drafts do not build. The
+# per-PR concurrency group cancels an obsolete run when a new commit or a label
+# change arrives, so a removed label or a new head SHA never races an older run.
+#
+# The approve job enters the secret-free native-installer-debug environment
+# before either builder runs. It checks out and builds nothing, so no
+# PR-controlled code executes before the owner approval. The builders compile
+# the event's exact PR head SHA in debug configuration; no release environment,
+# secret or write token is involved, and no artifact from another run is used.
+#
+# Approval boundary, stated honestly:
+# - The approve job is a workflow-local convenience gate.
+# - It is not a tamper-resistant security boundary.
+# - A pull request that edits its own `pull_request` workflow can remove this job.
+# - That is acceptable only under the trusted-collaborator, zero-secret debug model:
+#   the environment holds no secrets and every job has only contents: read.
+# - If approval must also resist a malicious workflow-changing writer, design a
+#   separately approved trusted dispatcher first; this workflow does not provide it.
+# - GitHub may additionally hold fork-originated runs for its own workflow approval;
+#   forks receive no secrets here.
+# - The produced installers are DEBUG / NOT FOR RELEASE.
+
+on:
+  pull_request:
+    types: [opened, reopened, labeled, unlabeled, synchronize, ready_for_review]
+
+concurrency:
+  group: pr-installers-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  approve:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      (contains(github.event.pull_request.labels.*.name, 'windows-installer-build') ||
+      contains(github.event.pull_request.labels.*.name, 'mac-installer-build'))
+    runs-on: ubuntu-latest
+    environment: native-installer-debug
+    permissions:
+      contents: read
+    steps:
+      - name: Record the approved debug installer request
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Approved secret-free DEBUG installer build for PR #$PR_NUMBER at $PR_HEAD_SHA."
+          echo "The produced packages are DEBUG / NOT FOR RELEASE."
+
+  windows:
+    needs: approve
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      contains(github.event.pull_request.labels.*.name, 'windows-installer-build')
+    uses: ./.github/workflows/build-native-windows.yml
+    with:
+      commit-sha: ${{ github.event.pull_request.head.sha }}
+      artifact-name: windows-debug-installer-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run-${{ github.run_id }}
+      build-kind: debug
+
+  macos:
+    needs: approve
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      contains(github.event.pull_request.labels.*.name, 'mac-installer-build')
+    uses: ./.github/workflows/build-native-macos.yml
+    with:
+      commit-sha: ${{ github.event.pull_request.head.sha }}
+      artifact-name: macos-debug-installer-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run-${{ github.run_id }}
+      build-kind: debug

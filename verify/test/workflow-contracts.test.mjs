@@ -64,7 +64,7 @@ function assertActionsPinned(source, name) {
   }
 }
 
-const FULL_GRAPH_JOBS = ['web-extension', 'rust', 'supply-chain', 'native-windows', 'native-macos'];
+const FULL_GRAPH_JOBS = ['web-extension', 'rust', 'supply-chain'];
 
 function callerJobKeys(source) {
   // Caller jobs reuse ./.github/workflows/*.yml; collect their top-level job keys.
@@ -384,7 +384,7 @@ test('Rust workflow packages rust-jni-wasm without a reference rebuild', async (
   assert.doesNotMatch(source, /secrets:/, 'Rust workflow must not accept signing secrets');
 });
 
-test('supply-chain workflow enforces reports before uploading exactly five SBOMs', async () => {
+test('supply-chain workflow enforces reports before uploading exactly six SBOMs', async () => {
   const source = await workflow('build-supply-chain.yml');
   assertReusableWorkflow(source, 'build-supply-chain.yml');
   assert.match(source, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/, 'Supply-chain workflow must use Node 26.8.1');
@@ -399,6 +399,7 @@ test('supply-chain workflow enforces reports before uploading exactly five SBOMs
     'build/sbom/rust.cdx.json',
     'build/sbom/native-bridge.cdx.json',
     'build/sbom/native-host.cdx.json',
+    'build/sbom/native-installer.cdx.json',
     'build/verification/supply-chain/npm-licenses.txt',
     'build/verification/supply-chain/cargo-licenses.txt',
     'build/verification/supply-chain/npm-install-scripts.txt',
@@ -409,90 +410,693 @@ test('supply-chain workflow enforces reports before uploading exactly five SBOMs
   assert.doesNotMatch(source, /secrets:/, 'Supply-chain workflow must not accept signing secrets');
 });
 
-function assertSingleBuildNativeWorkflow(source, name, platform, packageCommand, artifactDefault, uploadPaths_) {
+// OTP-25 Task 14/15: the native producers take an explicit `build-kind`. `release` builds the
+// standalone installers' UNSIGNED input trees with the installer Gradle graph (two A/B slots); it
+// has no Tauri scaffold path, no secret, no protected environment and no artifact taken from
+// another run. `debug` builds the finished fixture-channel DEBUG installer (one slot, debug
+// Rust/Swift, setup.exe / ad-hoc-signed DMG, metadata and symbols). There is no config-file probe.
+const NATIVE_PRODUCERS = {
+  windows: {
+    file: 'build-native-windows.yml',
+    runner: 'windows-2025',
+    artifact: 'native-unsigned-windows',
+    gradle: String.raw`.\gradlew.bat`,
+    debugInstaller: 'setup.exe',
+  },
+  macos: {
+    file: 'build-native-macos.yml',
+    runner: 'macos-26',
+    artifact: 'native-unsigned-macos',
+    gradle: './gradlew',
+    debugInstaller: 'Veles Bridge Installer.dmg',
+  },
+};
+const RELEASE_OUTPUT = ['tree.tar', 'provenance.json', 'report-ab.json', 'SHA256SUMS'].map((name) => `build/native-bridge/installer/out/production/${name}`);
+const DEBUG_OUTPUT = (spec) => [spec.debugInstaller, 'metadata.json', 'SHA256SUMS', 'symbols'].map((name) => `build/native-bridge/installer/out/debug/${name}`);
+
+function assertInstallerProducer(source, platform) {
+  const spec = NATIVE_PRODUCERS[platform];
+  const name = spec.file;
   assert.match(source, /workflow_call:/, `${name} must be reusable`);
   assert.match(source, /commit-sha:[\s\S]*?required:\s*true/, `${name} must require the source commit`);
-  assert.match(source, /artifact-name:[\s\S]*?required:\s*true/, `${name} must require an artifact name`);
-  assert.match(source, new RegExp(`artifact-name:[\\s\\S]*?default:\\s*${artifactDefault}`), `${name} must default to the neutral ${artifactDefault} artifact name`);
+  assert.match(source, new RegExp(`artifact-name:\\s*\\n\\s*required:\\s*true\\s*\\n\\s*type:\\s*string\\s*\\n\\s*default:\\s*${spec.artifact}\\b`), `${name} must default to the neutral ${spec.artifact} artifact name`);
+  assert.match(source, /build-kind:\s*\n\s*required:\s*true\s*\n\s*type:\s*string\b/, `${name} must require a string build-kind`);
+  assert.doesNotMatch(source, /build-kind:\s*\n\s*required:\s*true\s*\n\s*type:\s*string\s*\n\s*default:/, `${name} must not default build-kind`);
   assert.doesNotMatch(source, /-latest/, `${name} must use pinned target runner labels`);
-  assert.match(source, new RegExp(`runs-on:\\s*${platform.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${name} must target ${platform}`);
+  assert.match(source, new RegExp(`runs-on:\\s*${spec.runner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${name} must target ${spec.runner}`);
   assert.equal((source.match(/runs-on:/g) ?? []).length, 1, `${name} must build and package in exactly one job`);
   assert.deepEqual(Object.keys(callerJobKeys(source)), ['build'], `${name} must define exactly one native job`);
   assert.doesNotMatch(source, /secrets:/, `${name} must not accept signing secrets`);
+  assert.doesNotMatch(source, /^\s*environment:/m, `${name} must not enter a protected environment`);
   assertNoSecretRunInterpolation(source, name);
-  assert.equal((source.match(/actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38[\s\S]*?node-version:\s*['"]26\.8\.1['"]/g) ?? []).length, 1, `${name} must pin Node 26.8.1 in its single job`);
   assert.match(source, /ref:\s*\$\{\{ inputs\.commit-sha \}\}/, `${name} must build the requested commit`);
-  // Normal packaging only: no offline/firewall/sandbox wrapper, no extracted
-  // verification view, no A/B run transports, no cross-run byte comparison,
-  // and no metadata-preserving re-staging of the product tree.
+  // No Tauri scaffold production path, no Node, no A/B transports, no offline wrapper, no other run's artifacts.
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
   for (const forbidden of [
-    /network-deny-windows\.ps1/, /network-deny-macos\.sh/, /sandbox-exec/, /NetFirewallRule/, /pfctl/,
+    /tauri/i, /\bnpm\b/, /setup-node/, /bridgePackage/, /bridgeBundle/, /bridgeBuild\b/, /bridgeManifests/, /provision-windows-tools/, /NSIS_PATH/,
+    /veles-native-bridge/, /network-deny-windows\.ps1/, /network-deny-macos\.sh/, /sandbox-exec/, /NetFirewallRule/, /pfctl/,
     /extract-view\.mjs/, /prepare-run\.(?:sh|ps1)/, /verify\/verify-native\.sh/, /verified-artifact\.mjs/,
-    /native-runs/, /unverified-/, /needs:/, /actions\/download-artifact@/,
+    /native-runs/, /unverified-/, /needs:/, /actions\/download-artifact@/, /--offline/, /\bgh run\b/, /run-id/,
   ]) {
-    assert.doesNotMatch(source, forbidden, `${name} must not reproduce the A/B verification machinery`);
+    assert.doesNotMatch(executable, forbidden, `${name} must not use ${forbidden}`);
   }
-  assert.equal(
-    (source.match(new RegExp(packageCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length,
-    1,
-    `${name} must invoke the normal packaging command exactly once`,
-  );
-  assert.match(source, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must publish the caller-selected artifact`);
-  assertExactUploadPaths(source, name, uploadPaths_);
+  // The build kind is an explicit, validated selection; no config-file probe and no fixture fallback.
+  const validation = executable.indexOf('build-kind must be release or debug');
+  assert.ok(validation >= 0, `${name} must validate build-kind as release or debug`);
+  assert.doesNotMatch(executable, new RegExp(`release-${platform}\\.json`), `${name} must not select its channel from config-file existence`);
+  assert.equal(executable.split('bridgeInstallerUnsigned').length - 1, 1, `${name} must invoke bridgeInstallerUnsigned exactly once`);
+  assert.equal(executable.split('bridgeInstallerDebug').length - 1, 1, `${name} must invoke bridgeInstallerDebug exactly once`);
+  assert.doesNotMatch(executable, /bridgeInstallerPackageFixture/, `${name} must not silently build a fixture input tree`);
+  assert.ok(validation < Math.min(executable.indexOf('bridgeInstallerUnsigned'), executable.indexOf('bridgeInstallerDebug')), `${name} must validate build-kind before any build`);
+  const selection = (task, kind) => {
+    const index = executable.indexOf(task);
+    const condition = executable.lastIndexOf(`inputs.build-kind == '${kind}'`, index);
+    return index >= 0 && condition >= 0 && index - condition < 400;
+  };
+  assert.ok(selection('bridgeInstallerUnsigned', 'release'), `${name} must build production inputs only for build-kind release`);
+  assert.ok(selection('bridgeInstallerDebug', 'debug'), `${name} must build the debug installer only for build-kind debug`);
+  assert.ok(executable.includes(`VELES_WORKFLOW_RUN_ID: \${{ github.run_id }}`), `${name} must pass the workflow run id to the debug packaging`);
+  assert.ok(executable.includes(`${spec.gradle} bridgeInstallerUnsigned`) && executable.includes(`${spec.gradle} bridgeInstallerDebug`), `${name} must invoke Gradle directly with the platform wrapper`);
+  for (const scaffold of ['bridgePackage', 'bridgeHostBuild']) assert.ok(!executable.includes(scaffold), `${name} must not invoke ${scaffold}`);
+  for (const directory of ['native-bridge/installer', 'native-bridge/host']) {
+    assert.match(executable, new RegExp(`working-directory:\\s*${directory.replace(/\//g, '\\/')}\\s*\\n\\s*run:\\s*rustup show active-toolchain`), `${name} must activate the pinned Rust toolchain of ${directory}`);
+  }
+  assert.match(executable, /actions\/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1[\s\S]*?python-version:\s*['"]3\.12['"]/, `${name} must pin Python 3.12 for the assembler`);
+  // Hashes and modes travel inside a mode-preserving tar plus checksums; the debug artifact is the
+  // finished installer with metadata and symbols. Uploads are exact files, bounded.
+  const uploads = uploadPaths(source, name);
+  assert.deepEqual(uploads, [RELEASE_OUTPUT, DEBUG_OUTPUT(spec)], `${name} must upload exactly the release input tree and the finished debug installer`);
+  const uploadSteps = steps(source).filter((step) => step.some((line) => isUploadArtifact(mappingEntry(line)?.value ?? '')));
+  assert.equal(uploadSteps.length, 2, `${name} must have exactly two uploads`);
+  const [release, debug] = uploadSteps.map((step) => step.join('\n'));
+  assert.match(release, /if: inputs\.build-kind == 'release'/, `${name} release upload must be conditional on build-kind release`);
+  assert.match(debug, /if: inputs\.build-kind == 'debug'/, `${name} debug upload must be conditional on build-kind debug`);
+  for (const step of [release, debug]) {
+    assert.match(step, /name:\s*\$\{\{ inputs\.artifact-name \}\}/, `${name} must publish the caller-selected artifact name`);
+    assert.match(step, /if-no-files-found:\s*error/, `${name} uploads must fail on missing files`);
+    assert.match(step, /retention-days:\s*\d+/, `${name} uploads must be retention-bounded`);
+    assert.doesNotMatch(step, /path:[^\n]*\*|^\s+build\/[^\n]*veles-native-host(?:\.exe)?\s*$/m, `${name} uploads must name exact files, never globs or bare executables whose exec bit upload drops`);
+  }
+  assert.doesNotMatch(release, /out\/debug\//, `${name} release upload must not carry the debug installer`);
+  assert.doesNotMatch(debug, /out\/production\//, `${name} debug upload must not carry the production input tree`);
 }
 
-test('Windows native workflow packages its installer in one job with provisioned tools', async () => {
+test('Windows native workflow builds unsigned installer inputs in one job with the pinned NSIS', async () => {
   const source = await workflow('build-native-windows.yml');
-  assertSingleBuildNativeWorkflow(
-    source,
-    'build-native-windows.yml',
-    'windows-2025',
-    String.raw`.\gradlew.bat bridgePackage`,
-    'native-windows',
-    [
-      'build/native-bridge/windows/veles-native-bridge-*.zip',
-      'build/native-bridge/windows/veles-native-bridge-*.zip.sha256',
-      'build/native-bridge/windows/SHA256SUMS',
-    ],
-  );
-  const provisionIndex = source.indexOf('- name: Provision pinned Windows installer tools');
-  const packageIndex = source.indexOf('- name: Package native bridge');
-  assert.ok(provisionIndex !== -1, 'Windows workflow must provision installer tools');
-  assert.ok(packageIndex !== -1 && provisionIndex < packageIndex, 'Windows workflow must provision installer tools before packaging');
-  const provisionStep = source.slice(provisionIndex, packageIndex);
-  assert.match(provisionStep, /\$cache = \[IO\.Path\]::GetFullPath\('native-bridge\/src-tauri\/target\/\.tauri'\)/, 'Windows provisioning must resolve the isolated Tauri cache path');
-  assert.match(provisionStep, /pwsh -NoProfile -File verify\/native\/provision-windows-tools\.ps1 -TauriCachePath \$cache/, 'Windows workflow must provision the pinned WiX/NSIS toolset');
-  assert.match(provisionStep, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/, 'provisioning failure must propagate explicitly');
-  assert.match(provisionStep, /"NSIS_PATH=\$\(Join-Path \$cache 'NSIS'\)" >> \$env:GITHUB_ENV/, 'Windows workflow must export the absolute NSIS_PATH the packaging build reads');
-  const provisionInvoke = provisionStep.indexOf('pwsh -NoProfile -File');
-  const exitCheck = provisionStep.indexOf('if ($LASTEXITCODE -ne 0)');
-  const nsisPersist = provisionStep.indexOf('"NSIS_PATH=');
-  assert.ok(provisionInvoke !== -1 && provisionInvoke < exitCheck && exitCheck < nsisPersist, 'the exit-code check must sit between provisioning and persisting NSIS_PATH');
-  const packageStep = source.slice(packageIndex);
-  assert.match(packageStep, /run: \.\\gradlew\.bat bridgePackage/, 'Windows packaging must invoke Gradle directly');
+  assertInstallerProducer(source, 'windows');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  const provision = executable.indexOf('provision-nsis.ps1');
+  const firstBuild = executable.search(/bridgeInstaller(?:Unsigned|Debug)/);
+  assert.ok(provision !== -1 && provision < firstBuild, 'Windows workflow must provision the pinned NSIS before building');
+  assert.match(executable, /build\/native-bridge\/installer\/tools\/nsis/, 'NSIS must be provisioned under the mandated build root');
+  assert.match(executable, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/, 'provisioning failure must propagate explicitly');
 });
 
-test('macOS native workflow packages its installer in one job under the pinned Xcode', async () => {
+test('macOS native workflow builds unsigned installer inputs in one job under the pinned Xcode', async () => {
   const source = await workflow('build-native-macos.yml');
-  assertSingleBuildNativeWorkflow(
-    source,
-    'build-native-macos.yml',
-    'macos-26',
-    String.raw`./gradlew bridgePackage`,
-    'native-macos',
-    [
-      'build/native-bridge/macos/veles-native-bridge-*.tar.gz',
-      'build/native-bridge/macos/veles-native-bridge-*.tar.gz.sha256',
-      'build/native-bridge/macos/SHA256SUMS',
-    ],
-  );
+  assertInstallerProducer(source, 'macos');
   const jobBlock = source.slice(source.indexOf('  build:'));
   assert.match(jobBlock, /^    env:\n      DEVELOPER_DIR: \/Applications\/Xcode_26\.6\.app$/m, 'macOS workflow must set the pinned Xcode in job environment so it reaches every build step');
   for (const contract of ['17F113', 'macosx26.5']) {
     assert.match(jobBlock, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `macOS workflow must enforce the pinned ${contract}`);
   }
-  assert.match(jobBlock, /run: \.\/gradlew bridgePackage/, 'macOS packaging must invoke Gradle directly');
   assert.doesNotMatch(jobBlock, /export DEVELOPER_DIR/, 'macOS Xcode selection must not depend on a per-step shell export');
+});
+
+function mutateProducer(source, label, platform) {
+  const spec = NATIVE_PRODUCERS[platform];
+  const mutations = {
+    'scaffold packaging': (text) => `${text}\n      - run: ${spec.gradle} bridgePackage\n`,
+    'node tooling': (text) => `${text}\n      - run: npm ci --prefix native-bridge\n`,
+    'duplicate unsigned build': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerUnsigned\n`,
+    'duplicate debug build': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerDebug\n`,
+    'fixture fallback': (text) => `${text}\n      - run: ${spec.gradle} bridgeInstallerPackageFixture\n`,
+    'unconditional production build': (text) => text.replace("        if: inputs.build-kind == 'release'\n", ''),
+    'unconditional debug build': (text) => text.replace("        if: inputs.build-kind == 'debug'\n", ''),
+    'secret input': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: read\n# secrets:\n    secrets:\n      X:\n        required: true'),
+    'protected environment': (text) => text.replace('    steps:', '    environment: native-release\n    steps:'),
+    'artifact from another run': (text) => text.replace('    steps:', '    steps:\n      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n        with:\n          name: x\n          run-id: 1\n'),
+    'floating action': (text) => text.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v4'),
+    'glob upload': (text) => text.replace('build/native-bridge/installer/out/production/tree.tar', 'build/native-bridge/installer/out/production/*'),
+    'dropped provenance': (text) => text.replace('            build/native-bridge/installer/out/production/provenance.json\n', ''),
+    'dropped debug metadata': (text) => text.replace('            build/native-bridge/installer/out/debug/metadata.json\n', ''),
+    'dropped debug symbols': (text) => text.replace('            build/native-bridge/installer/out/debug/symbols\n', ''),
+    'scaffold artifact default': (text) => text.replace(`default: ${spec.artifact}`, `default: native-${platform}`),
+    'debug mislabeled release': (text) => text.replace("if: inputs.build-kind == 'debug'", "if: inputs.build-kind == 'release'"),
+    'missing build kind': (text) => text.replace('      build-kind:\n        required: true\n        type: string\n', ''),
+    'defaulted build kind': (text) => text.replace('      build-kind:\n        required: true\n        type: string\n', '      build-kind:\n        required: true\n        type: string\n        default: release\n'),
+    'unvalidated build kind': (text) => text.replace('build-kind must be release or debug', 'build-kind is whatever'),
+    'config-file probe': (text) => text.replace('      - name: Validate the build kind', `      - name: Probe for the approved release config\n        run: test -f native-bridge/installer/config/release-${platform}.json\n      - name: Validate the build kind`),
+    'unactivated installer toolchain': (text) => text.replace('working-directory: native-bridge/installer\n        run: rustup show active-toolchain', 'run: true'),
+    'silent upload': (text) => text.replaceAll('if-no-files-found: error', 'if-no-files-found: ignore'),
+    'offline wrapper': (text) => text.replace(`${spec.gradle} bridgeInstallerDebug`, `${spec.gradle} --offline bridgeInstallerDebug`),
+    'write permission': (text) => text.replace('contents: read', 'contents: write'),
+  };
+  return mutations[label](source);
+}
+
+test('native producer contract names every invariant it enforces (negative mutations)', async () => {
+  const labels = [
+    'scaffold packaging', 'node tooling', 'duplicate unsigned build', 'duplicate debug build', 'fixture fallback',
+    'unconditional production build', 'unconditional debug build', 'secret input', 'protected environment',
+    'artifact from another run', 'floating action', 'glob upload', 'dropped provenance', 'dropped debug metadata',
+    'dropped debug symbols', 'scaffold artifact default', 'debug mislabeled release', 'missing build kind',
+    'defaulted build kind', 'unvalidated build kind', 'config-file probe', 'unactivated installer toolchain',
+    'silent upload', 'offline wrapper', 'write permission',
+  ];
+  for (const platform of Object.keys(NATIVE_PRODUCERS)) {
+    const source = await workflow(NATIVE_PRODUCERS[platform].file);
+    for (const label of labels) {
+      const mutated = mutateProducer(source, label, platform);
+      assert.notEqual(mutated, source, `${platform}: mutation "${label}" must change the workflow`);
+      let rejected = false;
+      try {
+        assertInstallerProducer(mutated, platform);
+        assertActionsPinned(mutated, NATIVE_PRODUCERS[platform].file);
+        assert.match(mutated, /permissions:\n  contents: read\n/);
+      } catch {
+        rejected = true;
+      }
+      assert.ok(rejected, `${platform}: the contract must reject "${label}"`);
+    }
+  }
+});
+
+test('host check workflow runs the installer format, lint and tests on all three platforms', async () => {
+  const source = await workflow('build-native-host.yml');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  for (const task of ['bridgeInstallerFormat', 'bridgeInstallerLint', 'bridgeInstallerTest']) {
+    assert.ok(executable.split(task).length - 1 >= 3, `${task} must run on the portable, Windows and macOS jobs`);
+  }
+  assert.equal(executable.split('bridgeInstallerScriptsTest').length - 1, 1, 'the Python script suites run once, in the portable job');
+  assert.ok(executable.slice(0, executable.indexOf('  windows:')).includes('bridgeInstallerScriptsTest'), 'the Python script suites belong to the portable job');
+  for (const task of ['bridgeInstallerUnsigned', 'bridgeInstallerPackageFixture', 'bridgeInstallerDebug']) {
+    assert.ok(!executable.includes(task), `the check workflow must not build installer inputs (${task})`);
+  }
+  assert.match(executable, /working-directory:\s*native-bridge\/installer\s*\n\s*run:\s*rustup show active-toolchain/, 'the installer toolchain must be activated');
+});
+
+test('only the protected release workflow may reference signing credentials or sign anything', async () => {
+  for (const name of await workflowFiles()) {
+    if (name === 'release-native-installers.yml') continue;
+    const executable = (await workflow(name)).split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+    assert.doesNotMatch(executable, /VELES_WIN_|VELES_MAC_|VELES_NOTARY_|VELES_APPROVED_|native-release|signtool|notarytool|codesign/, `${name} must not reference signing credentials or tools`);
+  }
+});
+
+test('the release gate builds the selected platform in the same owner-master run', async () => {
+  const source = await workflow('release-native-installers.yml');
+  assertReleaseInstallerCaller(source);
+  // The owner guard is the only authorization; the old tag/two-run/approved-digest dispatch is gone.
+  const comments = source.split('\n').filter((line) => line.trimStart().startsWith('#')).join('\n');
+  assert.match(comments, /owner-only master dispatch/i, 'the header states the authorization model');
+  assert.doesNotMatch(comments, /immutable release tag|refs\/tags|two approved|approved descriptor/i, 'no tag or manual digest ceremony is described');
+});
+
+const RELEASE_BUILDERS = { windows: 'build-native-windows.yml', macos: 'build-native-macos.yml' };
+const RELEASE_ARTIFACTS = {
+  windows: 'native-release-windows-${{ github.run_id }}-${{ github.run_attempt }}',
+  macos: 'native-release-macos-${{ github.run_id }}-${{ github.run_attempt }}',
+};
+
+function releaseJobBlock(source, job) {
+  const match = source.match(new RegExp(`^  ${escapeRegexp(job)}:\\s*$`, 'm'));
+  assert.ok(match, `release caller must define job ${job}`);
+  const rest = source.slice(match.index + match[0].length);
+  const next = rest.match(/^  [A-Za-z0-9_-]+:\s*$/m);
+  return next ? source.slice(match.index, match.index + match[0].length + next.index) : source.slice(match.index);
+}
+
+function jobStepRun(block, name) {
+  const lines = block.split('\n');
+  const start = lines.findIndex((line) => line.trim() === `- name: ${name}`);
+  assert.notEqual(start, -1, `job must declare the step "${name}"`);
+  let runIndex = -1;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^[ \t]*- /.test(lines[index])) break;
+    if (mappingEntry(lines[index])?.key === 'run') {
+      runIndex = index;
+      break;
+    }
+  }
+  assert.notEqual(runIndex, -1, `step "${name}" must declare a run command`);
+  const entry = mappingEntry(lines[runIndex]);
+  let command = entry.value;
+  for (let index = runIndex + 1; index < lines.length; index += 1) {
+    if (lines[index].trim() && lines[index].match(/^\s*/)[0].length <= entry.indent) break;
+    command += `\n${lines[index]}`;
+  }
+  return command.replace(/^[|>][-+]?\s*\n?/, '');
+}
+
+function evaluateJobCondition(condition, { platform, guard = 'success' }) {
+  const expression = condition
+    .replaceAll('${{', '')
+    .replaceAll('}}', '')
+    .replaceAll('github.event_name', JSON.stringify('workflow_dispatch'))
+    .replaceAll('github.ref', JSON.stringify('refs/heads/master'))
+    .replaceAll('github.actor', JSON.stringify('raidenyn'))
+    .replaceAll('github.triggering_actor', JSON.stringify('raidenyn'))
+    .replace(/inputs\.platform/g, JSON.stringify(platform))
+    .replace(/needs\.([A-Za-z0-9_-]+)\.result/g, JSON.stringify(guard));
+  assert.doesNotMatch(expression, /github\.|inputs\.|needs\.|vars\.|secrets\./, `condition uses an unsupported context: ${condition}`);
+  const evaluate = new Function('cancelled', 'always', `"use strict"; return (${expression});`);
+  return evaluate(() => false, () => true);
+}
+
+function assertReleaseInstallerCaller(source) {
+  const name = 'release-native-installers.yml';
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+
+  // One trigger and one input only: the platform selection.
+  const onBlock = prWorkflowOnBlock(source);
+  const triggerKeys = onBlock.split('\n').flatMap((line) => {
+    const entry = mappingEntry(line);
+    return entry && entry.indent === 2 ? [entry.key] : [];
+  });
+  assert.deepEqual(triggerKeys, ['workflow_dispatch'], `${name} must trigger only on manual dispatch`);
+  assert.match(onBlock, /^  workflow_dispatch:$/m, `${name} must be manual-only`);
+  assert.match(onBlock, /^      platform:\n        description: [^\n]+\n        required: true\n        type: choice\n        options: \[windows, macos, both\]\n        default: windows$/m, `${name} must expose exactly the platform selection`);
+  for (const obsolete of [/commit:/, /descriptor_sha256/, /unsigned_run/, /windows_only/, /inputs\.commit/, /inputs\.descriptor/, /inputs\.unsigned/, /inputs\.windows_only/]) {
+    assert.doesNotMatch(executable, obsolete, `${name} must not carry the obsolete dispatch input ${obsolete}`);
+  }
+
+  // Read-only, dispatch-only; secrets exist only in the signing steps checked below.
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must declare only contents: read`);
+  assertNoSecretRunInterpolation(executable, name);
+
+  // The guard rejects before checkout/build and every job repeats it, so reruns re-evaluate it.
+  const guard = releaseJobBlock(source, 'guard');
+  assert.ok(source.indexOf('  guard:') < source.indexOf('uses: ./.github/workflows/build-native-windows.yml'), `${name} guard must precede every build`);
+  assert.doesNotMatch(guard, /actions\/checkout/, `${name} guard must reject before checkout`);
+  for (const check of [
+    /"\$EVENT" = workflow_dispatch/,
+    /"\$REF" = refs\/heads\/master/,
+    /"\$ACTOR" = raidenyn/,
+    /"\$TRIGGERING_ACTOR" = raidenyn/,
+    /\^\[0-9a-f\]\{40\}\$/,
+    /windows\|macos\|both/,
+  ]) {
+    assert.match(guard, check, `${name} guard must enforce ${check}`);
+  }
+  const jobs = callerJobKeys(source);
+  const allJobs = [
+    'guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos',
+    'sign-windows', 'sign-macos', 'gate',
+  ];
+  assert.deepEqual(Object.keys(jobs).sort(), allJobs.slice().sort(), `${name} must declare exactly the release graph`);
+  for (const job of allJobs.filter((entry) => entry !== 'guard')) {
+    const block = releaseJobBlock(source, job);
+    const match = block.match(/^    if: (.+)$/m);
+    assert.ok(match, `${name} job ${job} must declare its guard`);
+    for (const part of ["github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/master'", "github.actor == 'raidenyn'", "github.triggering_actor == 'raidenyn'"]) {
+      assert.ok(match[1].includes(part), `${name} job ${job} must re-check ${part}`);
+    }
+    const needs = block.match(/^    needs: (.+)$/m);
+    assert.ok(needs, `${name} job ${job} must declare its dependencies`);
+    assert.match(needs[1], /\bguard\b/, `${name} job ${job} must depend directly on the guard`);
+  }
+
+  // Build the selected platforms from this run's master SHA, with per-run artifact names.
+  for (const [platform, builder] of Object.entries(RELEASE_BUILDERS)) {
+    const block = releaseJobBlock(source, `build-${platform}`);
+    assert.match(block, new RegExp(`^    uses: \\./\\.github/workflows/${escapeRegexp(builder)}$`, 'm'), `build-${platform} must reuse ${builder}`);
+    assert.match(block, /^      build-kind: release$/m, `build-${platform} must request the release profile`);
+    assert.match(block, /^      commit-sha: \$\{\{ github\.sha \}\}$/m, `build-${platform} must build this run's master commit`);
+    assert.doesNotMatch(block, /github\.event\.pull_request|inputs\.commit|github\.head_ref/, `build-${platform} must not accept another source`);
+    const artifact = block.match(/^      artifact-name: (.+)$/m);
+    assert.ok(artifact, `build-${platform} must name its artifact`);
+    assert.equal(artifact[1].trim(), RELEASE_ARTIFACTS[platform], `build-${platform} must name a per-run artifact`);
+  }
+  assert.doesNotMatch(executable, /\bgh run view\b/, `${name} must not query an external run`);
+  assert.doesNotMatch(executable, /\brun-id:/, `${name} must download only same-run artifacts`);
+  assert.doesNotMatch(executable, /unsigned_run|native-unsigned-windows|native-unsigned-macos/, `${name} must not consume another run's producer artifact`);
+
+  // Verification and signing consume the same-run artifact, and every credential lives in native-release.
+  const signJobs = ['sign-windows', 'sign-macos'];
+  const credentialed = allJobs.filter((job) => /secrets\./.test(releaseJobBlock(source, job)));
+  assert.deepEqual(credentialed.sort(), signJobs.slice().sort(), `${name} must map secrets only in the signing jobs`);
+  for (const job of allJobs) {
+    const block = releaseJobBlock(source, job);
+    const protectedJob = /^    environment: native-release$/m.test(block);
+    assert.equal(protectedJob, signJobs.includes(job), `${name} job ${job} must enter native-release only when it signs`);
+  }
+  for (const job of signJobs) {
+    const block = releaseJobBlock(source, job);
+    assert.match(block, /^      VELES_SIGNING_ENVIRONMENT: native-release$/m, `${job} must run in the release context`);
+    assert.match(block, /^      COMMIT: \$\{\{ github\.sha \}\}$/m, `${job} must sign this run's commit`);
+    assert.match(block, /^      VELES_DESCRIPTOR_SHA256: \$\{\{ needs\.verify-[a-z]+\.outputs\.descriptor-sha256 \}\}$/m, `${job} must bind the verified descriptor`);
+  }
+  // Secret expressions exist only inside the actual signing steps of the protected jobs. Every other
+  // step (download, unpack, assemble, cleanup, upload, gate) holds no credential.
+  for (const job of allJobs) {
+    const block = releaseJobBlock(source, job);
+    for (const step of steps(block)) {
+      const text = step.join('\n');
+      if (!/\$\{\{\s*secrets\./.test(text)) continue;
+      assert.ok(signJobs.includes(job), `${name} job ${job} must not map a secret`);
+      assert.match(text, /- name: Sign/, `${name} job ${job} may map secrets only in a signing step`);
+      assert.match(text, /sign-(?:windows\.ps1|macos\.sh)/, `${name} job ${job} may map secrets only in a signing step`);
+    }
+  }
+  assert.doesNotMatch(executable, /VELES_APPROVED_DESCRIPTOR_SHA256/, `${name} must not keep the obsolete approval variable`);
+
+  // Debug packaging is reachable only through build-pr-installers.yml calling the debug builders.
+  for (const forbidden of [
+    /build-pr-installers\.yml/, /build-kind:\s*debug/, /bridgeInstallerDebug/,
+    /out\/debug\//, /debug-installer-pr-/, /debug trust/i,
+  ]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not invoke or select debug packaging (${forbidden})`);
+  }
+
+  // Each platform is independent: a Windows-only run neither needs nor names a macOS job/artifact.
+  for (const platform of Object.keys(RELEASE_BUILDERS)) {
+    const other = platform === 'windows' ? 'macos' : 'windows';
+    for (const job of [`build-${platform}`, `verify-${platform}`, `sign-${platform}`]) {
+      const block = releaseJobBlock(source, job);
+      assert.match(block, new RegExp(`inputs\\.platform == '${platform}' \\|\\| inputs\\.platform == 'both'`), `${job} must only run for its selected platform`);
+      assert.ok(!block.includes(`inputs.platform == '${other}'`), `${job} must not select the other platform`);
+      assert.ok(!new RegExp(`needs[^\\n]*\\b${other}\\b`).test(block), `${job} must not depend on ${other}`);
+    }
+    const verify = releaseJobBlock(source, `verify-${platform}`);
+    assert.match(verify, new RegExp(`name: ${escapeRegexp(RELEASE_ARTIFACTS[platform])}`), `verify-${platform} must download its same-run artifact`);
+    assert.ok(verify.includes('sha256sum -c SHA256SUMS'), `verify-${platform} must check the same-run artifact digest manifest`);
+    assert.ok(!verify.includes(RELEASE_ARTIFACTS[other]), `verify-${platform} must not download the other platform`);
+  }
+
+  // Behaviour matrix: windows -> windows jobs and gate; macos -> macOS jobs and gate; both -> all.
+  const selectionJobs = {
+    windows: ['build-windows', 'verify-windows', 'sign-windows'],
+    macos: ['build-macos', 'verify-macos', 'sign-macos'],
+  };
+  for (const platform of ['windows', 'macos', 'both']) {
+    const expected = platform === 'both' ? [...selectionJobs.windows, ...selectionJobs.macos] : selectionJobs[platform];
+    for (const platformJobs of Object.values(selectionJobs)) {
+      for (const job of platformJobs) {
+        const match = releaseJobBlock(source, job).match(/^    if: (.+)$/m);
+        assert.equal(evaluateJobCondition(match[1], { platform }), expected.includes(job), `${name} job ${job} must run=${expected.includes(job)} for platform=${platform}`);
+      }
+    }
+    const gateCondition = releaseJobBlock(source, 'gate').match(/^    if: (.+)$/m)[1];
+    assert.equal(evaluateJobCondition(gateCondition, { platform }), true, `${name} gate must always report the selected status`);
+  }
+
+  // The gate composes only the selected targets and fails only when a selected platform failed.
+  const gate = source.slice(source.indexOf('  gate:'));
+  for (const command of [' bundle ', ' validate ', '--platform']) {
+    assert.ok(gate.includes(command), `gate must use ${command}`);
+  }
+  assert.doesNotMatch(gate, /--descriptor-digest/, 'the gate must not take an external descriptor digest');
+  assert.doesNotMatch(gate, /descriptor-set-digest/, 'the gate must not recompute an owner-approved digest');
+  for (const result of ['RESULT_GUARD', 'RESULT_BUILD_WINDOWS', 'RESULT_BUILD_MACOS', 'RESULT_VERIFY_WINDOWS', 'RESULT_VERIFY_MACOS', 'RESULT_SIGN_WINDOWS', 'RESULT_SIGN_MACOS']) {
+    assert.ok(gate.includes(result), `gate must report ${result}`);
+  }
+  // Every result the gate reads has a direct needs entry, so a missing job is never
+  // silently reported as an empty result.
+  const gateNeeds = gate.match(/^    needs: \[([^\]]+)\]$/m)[1].split(',').map((value) => value.trim());
+  for (const job of ['guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos']) {
+    assert.ok(gateNeeds.includes(job), `the gate must depend directly on ${job}`);
+  }
+  for (const token of ['gh release', 'attest-build-provenance', 'git tag', 'git push']) {
+    assert.ok(!executable.includes(token), `${name} must not publish (${token})`);
+  }
+}
+
+test('the release caller contract rejects tag, cross-run and approval regressions', async () => {
+  const source = await workflow('release-native-installers.yml');
+  const mutations = {
+    'push trigger': (text) => text.replace('on:\n  workflow_dispatch:', 'on:\n  push:\n    branches: [master]\n  workflow_dispatch:'),
+    'commit input': (text) => text.replace('      platform:\n', '      commit:\n        required: true\n        type: string\n      platform:\n'),
+    'descriptor input': (text) => text.replace('      platform:\n', '      descriptor_sha256_windows:\n        required: true\n        type: string\n      platform:\n'),
+    'producer run input': (text) => text.replace('      platform:\n', '      unsigned_run_a:\n        required: true\n        type: string\n      platform:\n'),
+    'windows-only input': (text) => text.replace('      platform:\n', '      windows_only:\n        required: false\n        type: boolean\n      platform:\n'),
+    'missing guard job': (text) => text.replace('  guard:\n', '  guard-disabled:\n'),
+    'guard checks no actor': (text) => text.replace('[ "$ACTOR" = raidenyn ]', '[ true = true ]'),
+    'guard checks no rerun actor': (text) => text.replace('[ "$TRIGGERING_ACTOR" = raidenyn ]', '[ true = true ]'),
+    'guard checks no master ref': (text) => text.replace('[ "$REF" = refs/heads/master ]', '[ true = true ]'),
+    'job without the guard': (text) => text.replace(/^    if: (.+)$/m, '    if: ${{ !cancelled() }}'),
+    'builder without release kind': (text) => text.replace('      build-kind: release', '      build-kind: debug'),
+    'builder reads another commit': (text) => text.replace('commit-sha: ${{ github.sha }}', 'commit-sha: ${{ inputs.commit }}', 1),
+    'external run download': (text) => text.replace('          name: native-release-windows-${{ github.run_id }}-${{ github.run_attempt }}\n', '          name: native-release-windows-${{ github.run_id }}-${{ github.run_attempt }}\n          run-id: 1\n'),
+    'gh run view': (text) => `${text}\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh run view 1\n`,
+    'approved descriptor variable': (text) => text.replace('      VELES_SIGNING_ENVIRONMENT: native-release\n', '      VELES_SIGNING_ENVIRONMENT: native-release\n      VELES_APPROVED_DESCRIPTOR_SHA256: ${{ vars.VELES_APPROVED_DESCRIPTOR_SHA256_WINDOWS }}\n', 1),
+    'credentials outside native-release': (text) => text.replaceAll('    environment: native-release\n', ''),
+    'secret in a verify step': (text) => text.replace(
+      '      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)\n',
+      '      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)\n        env:\n          LEAK: ${{ secrets.LEAK }}\n',
+    ),
+    'gate result not in direct needs': (text) => text.replace(
+      '    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n',
+      '    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n',
+    ),
+    'windows job needs macOS': (text) => text.replace('    needs: [guard, verify-windows]\n', '    needs: [guard, verify-windows, verify-macos]\n'),
+    'macOS job runs for windows': (text) => text.replaceAll("inputs.platform == 'macos' || inputs.platform == 'both'", "inputs.platform == 'windows' || inputs.platform == 'both'"),
+    'gate external digest': (text) => text.replace('--platform "$PLATFORM"', '--platform "$PLATFORM" --descriptor-digest "$DIGEST"'),
+    'gate publishes': (text) => `${text}\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh release create x\n`,
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change the workflow`);
+    assert.throws(() => assertReleaseInstallerCaller(mutated), `the contract must reject "${label}"`);
+  }
+});
+
+test('release gate reports per-selected-platform status before artifact downloads', async () => {
+  const source = await workflow('release-native-installers.yml');
+  const gate = releaseJobBlock(source, 'gate');
+
+  // Direct needs: a missing job result is never silently empty, and adding a direct
+  // need cannot make the gate succeed for a failed selected platform.
+  const needs = gate.match(/^    needs: \[([^\]]+)\]$/m);
+  assert.ok(needs, 'the gate must declare its dependencies inline');
+  for (const job of ['guard', 'build-windows', 'build-macos', 'verify-windows', 'verify-macos', 'sign-windows', 'sign-macos']) {
+    assert.ok(needs[1].split(',').map((value) => value.trim()).includes(job), `the gate must depend directly on ${job}`);
+  }
+
+  // Status reporting is a distinct step placed before any artifact download, so a
+  // missing required artifact cannot hide the per-platform verdict.
+  const statusIndex = gate.indexOf('- name: Report the selected platform build/sign status');
+  const firstDownload = gate.indexOf('actions/download-artifact@');
+  assert.notEqual(statusIndex, -1, 'the gate must declare a status step');
+  assert.ok(firstDownload !== -1 && statusIndex < firstDownload, 'the gate must report status before any artifact download');
+  assert.match(gate, /acceptance/i, 'the gate must separate build/sign status from acceptance');
+
+  const script = jobStepRun(gate, 'Report the selected platform build/sign status');
+  const results = (overrides = {}) => ({
+    RESULT_GUARD: 'success',
+    RESULT_BUILD_WINDOWS: 'skipped',
+    RESULT_VERIFY_WINDOWS: 'skipped',
+    RESULT_SIGN_WINDOWS: 'skipped',
+    RESULT_BUILD_MACOS: 'skipped',
+    RESULT_VERIFY_MACOS: 'skipped',
+    RESULT_SIGN_MACOS: 'skipped',
+    ...overrides,
+  });
+  const run = (platform, overrides) => spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, PLATFORM: platform, ...results(overrides) },
+  });
+  const windowsSuccess = {
+    RESULT_BUILD_WINDOWS: 'success', RESULT_VERIFY_WINDOWS: 'success', RESULT_SIGN_WINDOWS: 'success',
+  };
+  const macosSuccess = {
+    RESULT_BUILD_MACOS: 'success', RESULT_VERIFY_MACOS: 'success', RESULT_SIGN_MACOS: 'success',
+  };
+
+  // Unselected platforms are irrelevant, even when their jobs failed or were skipped.
+  const windowsOnly = run('windows', { ...windowsSuccess, RESULT_BUILD_MACOS: 'failure', RESULT_VERIFY_MACOS: 'failure', RESULT_SIGN_MACOS: 'failure' });
+  assert.equal(windowsOnly.status, 0, windowsOnly.stderr);
+  assert.match(windowsOnly.stdout, /windows: PASS/);
+  assert.doesNotMatch(windowsOnly.stdout, /macos:/);
+  const macosOnly = run('macos', { ...macosSuccess, RESULT_BUILD_WINDOWS: 'failure', RESULT_VERIFY_WINDOWS: 'failure', RESULT_SIGN_WINDOWS: 'failure' });
+  assert.equal(macosOnly.status, 0, macosOnly.stderr);
+  assert.match(macosOnly.stdout, /macos: PASS/);
+  assert.doesNotMatch(macosOnly.stdout, /windows:/);
+
+  // A selected platform failure blocks the whole gate; each selected platform is reported.
+  const bothBlocked = run('both', { ...windowsSuccess, RESULT_SIGN_MACOS: 'failure' });
+  assert.notEqual(bothBlocked.status, 0);
+  assert.match(bothBlocked.stdout, /windows: PASS/);
+  assert.match(bothBlocked.stdout, /macos: BLOCKED/);
+  assert.match(bothBlocked.stderr, /selected platform\(s\) failed: macos/);
+  const verifyBlocked = run('windows', { ...windowsSuccess, RESULT_VERIFY_WINDOWS: 'failure' });
+  assert.notEqual(verifyBlocked.status, 0);
+  assert.match(verifyBlocked.stdout, /windows: BLOCKED/);
+  assert.doesNotMatch(verifyBlocked.stdout, /macos:/);
+
+  // The guard still fails closed before any platform verdict.
+  const guardBlocked = run('windows', { ...windowsSuccess, RESULT_GUARD: 'failure' });
+  assert.notEqual(guardBlocked.status, 0);
+  assert.match(guardBlocked.stderr, /guard did not pass/);
+});
+
+test('supply-chain consumers cover the installer crate, Swift frontend and NSIS toolchain', async () => {
+  const generate = await readFile(new URL('verify/generate-sboms.sh', root), 'utf8');
+  assert.match(generate, /generate_cargo native-bridge\/installer\/Cargo\.toml native-bridge\/installer native-installer\.cdx\.json/);
+  const sboms = await import(new URL('verify/verify-sboms.mjs', root));
+  assert.equal(sboms.PRODUCTION_SBOM_ROOTS['native-installer'], 'veles-bridge-installer@0.1.0');
+  assert.deepEqual(sboms.PRODUCTION_LOCKFILES['native-installer'], { path: ['native-bridge', 'installer', 'Cargo.lock'], ecosystem: 'cargo' });
+  assert.equal(typeof sboms.verifyInstallerToolchainCoverage, 'function');
+  assert.deepEqual(await sboms.verifyInstallerToolchainCoverage(repository), [], 'the repository installer toolchain must be fully covered');
+  const scan = await readFile(new URL('verify/check-remote-code.mjs', root), 'utf8');
+  for (const scope of ['native-bridge/installer/src', 'native-bridge/installer/scripts', 'native-bridge/installer/windows', 'native-bridge/installer/macos/Package.swift', 'native-bridge/installer/macos/Sources']) {
+    assert.ok(scan.includes(`'${scope}'`), `the remote-code scan must cover ${scope}`);
+  }
+  assert.match(await readFile(new URL('verify/check-cargo-build-scripts.mjs', root), 'utf8'), /native-bridge\/installer\/Cargo\.toml/);
+  assert.match(await readFile(new URL('verify/check-npm-licenses.mjs', root), 'utf8'), /native-bridge\/installer\/Cargo\.toml/);
+  assert.match(await workflow('build-supply-chain.yml'), /build\/sbom\/native-installer\.cdx\.json/);
+});
+
+test('installer toolchain coverage fails closed on an uncovered Swift package or an unpinned NSIS archive', async () => {
+  const { verifyInstallerToolchainCoverage } = await import(new URL('verify/verify-sboms.mjs', root));
+  const { mkdtemp, mkdir, writeFile, cp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const copy = async (mutate) => {
+    const directory = await mkdtemp(join(tmpdir(), 'installer-coverage-'));
+    await mkdir(join(directory, 'native-bridge/installer/macos'), { recursive: true });
+    await mkdir(join(directory, 'native-bridge/installer/config'), { recursive: true });
+    await cp(new URL('native-bridge/installer/macos/Package.swift', root), join(directory, 'native-bridge/installer/macos/Package.swift'));
+    await cp(new URL('native-bridge/installer/config/tools.lock.json', root), join(directory, 'native-bridge/installer/config/tools.lock.json'));
+    await cp(new URL('native-bridge/installer/Cargo.lock', root), join(directory, 'native-bridge/installer/Cargo.lock'));
+    await mutate(directory);
+    return directory;
+  };
+  assert.deepEqual(await verifyInstallerToolchainCoverage(await copy(async () => {})), []);
+  const external = await copy(async (directory) => {
+    const path = join(directory, 'native-bridge/installer/macos/Package.swift');
+    await writeFile(path, (await readFile(path, 'utf8')).replace('targets: [', 'dependencies: [.package(url: "https://example.invalid/x.git", from: "1.0.0")],\n    targets: ['));
+  });
+  assert.match((await verifyInstallerToolchainCoverage(external)).join('\n'), /Swift package declares an external dependency/);
+  const resolved = await copy(async (directory) => { await writeFile(join(directory, 'native-bridge/installer/macos/Package.resolved'), '{}'); });
+  assert.match((await verifyInstallerToolchainCoverage(resolved)).join('\n'), /Package\.resolved/);
+  const unpinned = await copy(async (directory) => {
+    const path = join(directory, 'native-bridge/installer/config/tools.lock.json');
+    const lock = JSON.parse(await readFile(path, 'utf8'));
+    lock.archives.nsis.sha256 = 'latest';
+    await writeFile(path, JSON.stringify(lock));
+  });
+  assert.match((await verifyInstallerToolchainCoverage(unpinned)).join('\n'), /NSIS archive is not pinned/);
+  const lockless = await copy(async (directory) => { await writeFile(join(directory, 'native-bridge/installer/Cargo.lock'), ''); });
+  assert.match((await verifyInstallerToolchainCoverage(lockless)).join('\n'), /Cargo\.lock/);
+});
+
+// OTP-25 Task 1: the standalone installer toolchain is pinned independently of
+// the runner labels. These tests read the checked-in tool lock directly (they do
+// not shell out to the Python validator) and tie each pinned identity back to the
+// workflow that has to enforce it.
+const INSTALLER_LOCK = 'native-bridge/installer/config/tools.lock.json';
+const INSTALLER_TOOLCHAIN = 'native-bridge/installer/rust-toolchain.toml';
+const REVIEWED_NSIS_URL = 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-3/nsis-3.zip';
+const REVIEWED_NSIS_SHA256 = '1bb9fc85ee5b220d3869325dbb9d191dfe6537070f641c30fbb275c97051fd0c';
+const INEXACT_PIN_VALUES = new Set(['', '*', 'latest', 'current', 'stable', 'nightly', 'any', 'unspecified', 'tbd', 'todo']);
+
+async function installerToolLock() {
+  return JSON.parse(await readFile(new URL(INSTALLER_LOCK, root), 'utf8'));
+}
+
+// Every string (keys included) in a nested JSON value, as `path=value` entries.
+function jsonStrings(value, path = '') {
+  if (Array.isArray(value)) return value.flatMap((item, index) => jsonStrings(item, `${path}[${index}]`));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, item]) => [
+      `${path}.${key}=${key}`,
+      ...jsonStrings(item, `${path}.${key}`),
+    ]);
+  }
+  return [`${path}=${value}`];
+}
+
+test('installer tool lock pins exact NSIS, Rust and Xcode/SDK identities', async () => {
+  const lock = await installerToolLock();
+  assert.equal(lock.schema, 1, 'the installer tool lock must declare schema 1');
+
+  // Exactly one archive, the reviewed NSIS mirror. No WiX, no Tauri plugin.
+  assert.deepEqual(Object.keys(lock.archives), ['nsis'], 'the lock must pin exactly the reviewed NSIS archive');
+  const nsis = lock.archives.nsis;
+  assert.equal(nsis.url, REVIEWED_NSIS_URL, 'NSIS must come from the reviewed archive URL');
+  assert.equal(nsis.sha256, REVIEWED_NSIS_SHA256, 'NSIS must be pinned to the reviewed SHA-256');
+  assert.equal(nsis.version, '3.08', 'the reviewed NSIS archive is 3.08');
+  assert.equal(nsis.extract_root, 'nsis-3.08', 'the archive extracts under nsis-3.08/');
+  assert.equal(nsis.makensis, 'nsis-3.08/makensis.exe', 'the locked compiler path must be explicit');
+
+  // No pin may be a wildcard, placeholder or "latest" alias.
+  for (const entry of jsonStrings(lock)) {
+    const value = entry.slice(entry.indexOf('=') + 1);
+    assert.ok(!value.includes('*'), `installer tool pin must not contain a wildcard: ${entry}`);
+    assert.ok(!INEXACT_PIN_VALUES.has(value.toLowerCase()), `installer tool pin must be exact: ${entry}`);
+  }
+  const lockText = await readFile(new URL(INSTALLER_LOCK, root), 'utf8');
+  assert.doesNotMatch(lockText, /wix|nsis_tauri_utils/i, 'the standalone installer lock must not name WiX or the Tauri NSIS plugin');
+
+  // Runner labels are recorded for provenance, but they are not the pin: the
+  // compiler/SDK identities below carry the contract.
+  assert.deepEqual(Object.keys(lock.targets).sort(), ['macos-arm64', 'windows-x86_64']);
+  assert.equal(lock.targets['windows-x86_64'].runner, 'windows-2025');
+  assert.equal(lock.targets['windows-x86_64'].build_target, 'x86_64-pc-windows-msvc');
+  assert.equal(lock.targets['macos-arm64'].runner, 'macos-26');
+  assert.equal(lock.targets['macos-arm64'].build_target, 'aarch64-apple-darwin');
+
+  // A recorded identity the workflow does not actually enforce would be fiction:
+  // each pin must appear in the workflow that builds that target.
+  const windows = await workflow('build-native-windows.yml');
+  assert.match(windows, new RegExp(`runs-on:\\s*${lock.targets['windows-x86_64'].runner}\\b`), 'the Windows producer must run on the locked runner');
+  const macos = await workflow('build-native-macos.yml');
+  assert.match(macos, new RegExp(`runs-on:\\s*${lock.targets['macos-arm64'].runner}\\b`), 'the macOS producer must run on the locked runner');
+  const xcode = lock.tools.xcode.identity;
+  const sdk = lock.tools.macos_sdk.identity;
+  assert.equal(xcode.build, '17F113', 'the locked Xcode build must be the reviewed 17F113');
+  assert.equal(xcode.version, '26.6');
+  assert.equal(sdk.version, 'macosx26.5');
+  assert.match(macos, /DEVELOPER_DIR:\s*\/Applications\/Xcode_26\.6\.app/, 'the macOS producer must select the locked Xcode');
+  assert.ok(macos.includes(xcode.build), 'the macOS producer must enforce the locked Xcode build');
+  assert.ok(macos.includes(sdk.version), 'the macOS producer must enforce the locked macOS SDK');
+
+  // Rust is pinned by rust-toolchain.toml and the lock must agree with it.
+  const toolchain = await readFile(new URL(INSTALLER_TOOLCHAIN, root), 'utf8');
+  const rust = lock.tools.rust.identity;
+  assert.equal(rust.channel, '1.98.0', 'the installer crate pins Rust 1.98.0');
+  assert.match(toolchain, /^\[toolchain\]$/m, 'the installer crate must carry rust-toolchain.toml');
+  assert.match(toolchain, new RegExp(`channel\\s*=\\s*"${rust.channel.replace(/\./g, '\\.')}"`), 'rust-toolchain.toml must pin the locked Rust channel');
+  assert.match(toolchain, /profile\s*=\s*"minimal"/, 'the installer crate must use the minimal Rust profile');
+  for (const component of rust.components.split(',')) {
+    assert.match(toolchain, new RegExp(`components\\s*=\\s*\\[[^\\]]*"${component}"`), `rust-toolchain.toml must declare ${component}`);
+  }
+  for (const target of rust.targets.split(',')) {
+    assert.match(toolchain, new RegExp(`targets\\s*=\\s*\\[[^\\]]*"${target.replace(/\./g, '\\.')}"`), `rust-toolchain.toml must declare the ${target} target`);
+  }
+});
+
+test('installer tool lock pins the Windows compiler and SDK by version', async () => {
+  const lock = await installerToolLock();
+  const expectations = {
+    msvc: ['cl_version', 'linker_version', 'msvc_toolset_version'],
+    windows_sdk: ['windows_sdk_version', 'ucrt_version'],
+  };
+  for (const [tool, required] of Object.entries(expectations)) {
+    const entry = lock.tools[tool];
+    assert.ok(entry, `the lock must record the ${tool} tool`);
+    assert.deepEqual(entry.targets, ['windows-x86_64'], `${tool} applies to the Windows target only`);
+    assert.equal(entry.required_unresolved, undefined, `${tool} is pinned from the approved runner`);
+    assert.ok(entry.identity, `${tool} must carry the observed identity`);
+    assert.deepEqual(Object.keys(entry.identity).sort(), required.slice().sort(), `${tool} pins exactly the agreed version fields`);
+    for (const field of required) {
+      assert.ok(field in entry.identity, `${tool} must pin ${field}`);
+    }
+    // Owner decision 2026-11-08: digests are deferred, never invented.
+    for (const value of jsonStrings(entry)) {
+      assert.doesNotMatch(value.slice(value.indexOf('=') + 1), /^[0-9a-f]{64}$/, `${tool} must not contain a fabricated hash: ${value}`);
+    }
+  }
+
+  // Every Windows-target tool is either a pinned identity or explicitly unresolved;
+  // there is no third, silently permissive state.
+  for (const [tool, entry] of Object.entries(lock.tools)) {
+    if (!entry.targets.includes('windows-x86_64')) continue;
+    const resolved = entry.identity !== undefined;
+    const unresolved = entry.required_unresolved !== undefined;
+    assert.ok(resolved !== unresolved, `${tool} must be exactly one of pinned or required_unresolved`);
+  }
 });
 
 test('producer workflows never invoke reproducibility verifiers or A/B machinery', async () => {
@@ -630,7 +1234,7 @@ test('release-build caller graph composes single-build workflows with default-re
   // Non-master dispatch guard must fail before any build.
   const guardIndex = source.indexOf('  guard:');
   const firstBuildIndex = Math.min(
-    ...['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml', 'build-native-windows.yml', 'build-native-macos.yml']
+    ...['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml']
       .map((file) => source.indexOf(`./.github/workflows/${file}`))
       .filter((index) => index !== -1),
   );
@@ -706,8 +1310,6 @@ test('release-build caller graph composes single-build workflows with default-re
     'web-extension': 'web-extension',
     rust: 'rust-jni-wasm',
     'supply-chain': 'supply-chain-reports',
-    'native-windows': 'native-windows',
-    'native-macos': 'native-macos',
   };
   for (const [job, artifact] of Object.entries(neutralNames)) {
     const start = source.indexOf(`  ${job}:`);
@@ -718,14 +1320,17 @@ test('release-build caller graph composes single-build workflows with default-re
     assert.match(jobBlock, new RegExp(`artifact-name: ${artifact}`), `release-build job ${job} must pass the neutral artifact name ${artifact}`);
   }
 
-  // Manual publication depends on the guard and every full-graph producer and
-  // policy job (no aggregate safety net), and is the only writer.
+  // Manual publication depends on the guard and every component producer and
+  // policy job (no aggregate safety net), and is the only writer. Native
+  // installers are released by release-native-installers.yml, never here.
   const publishStart = source.indexOf('  publish:');
   const publishBlock = source.slice(publishStart);
-  assert.match(publishBlock, /needs: \[guard, android, web-extension, rust, supply-chain, native-windows, native-macos\]/, 'release-build publish job must depend on guard and every full-graph producer and policy job');
-  for (const need of ['guard', 'android', 'web-extension', 'rust', 'supply-chain', 'native-windows', 'native-macos']) {
+  assert.match(publishBlock, /needs: \[guard, android, web-extension, rust, supply-chain\]/, 'release-build publish job must depend on guard and every component producer and policy job');
+  for (const need of ['guard', 'android', 'web-extension', 'rust', 'supply-chain']) {
     assert.match(publishBlock, new RegExp(`needs\\.${need}\\.result == 'success'`), `release-build publish job must explicitly require ${need} success`);
   }
+  assert.doesNotMatch(publishBlock, /needs\.(?:native-windows|native-macos)/, 'release-build publish job must not depend on native installers');
+  assert.doesNotMatch(publishBlock, /native-(?:windows|macos)/, 'release-build publish job must not name native installers');
   assert.doesNotMatch(publishBlock, /needs\.aggregate/, 'release-build publish job must not depend on the removed aggregate');
   assert.match(publishBlock, /github\.event_name == 'workflow_dispatch'[\s\S]*?github\.ref == 'refs\/heads\/master'/, 'release-build publish job must only run on a master manual dispatch');
   assert.match(publishBlock, /permissions:\n      contents: write/, 'release-build publish job must declare contents: write');
@@ -745,6 +1350,41 @@ test('release-build caller graph composes single-build workflows with default-re
   assert.match(publishBlock, /gh release delete "\$VERSION" --cleanup-tag --yes/, 'release-build publish must replace a previous manual prerelease');
   assert.match(publishBlock, /gh release create "\$VERSION"/, 'release-build publish must create the prerelease from the single-build Android output');
   assertNoSecretRunInterpolation(publishBlock, 'release-build publish job');
+});
+
+test('release-build caller leaves native installers to the protected release workflow', async () => {
+  const source = await workflow('release-build.yml');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  for (const job of ['native-windows', 'native-macos']) {
+    assert.ok(!new RegExp(`^  ${escapeRegexp(job)}:\\s*$`, 'm').test(executable), `release-build must not define the ${job} job`);
+  }
+  for (const forbidden of [
+    /build-native-windows\.yml/, /build-native-macos\.yml/, /native-unsigned-(?:windows|macos)/,
+    /build-kind:/, /bridgeInstaller(?:Unsigned|Debug)/, /release-native-installers\.yml/,
+  ]) {
+    assert.doesNotMatch(executable, forbidden, `release-build must not produce or select native installers (${forbidden})`);
+  }
+  const publish = source.slice(source.indexOf('  publish:'));
+  assert.doesNotMatch(publish, /native-(?:windows|macos)/, 'release-build publish must not gate on native installers');
+
+  // The decoupling must not disturb any Android/web/Rust/supply-chain predicate.
+  assert.match(source, /^  android:\n[\s\S]*?github\.event_name == 'push'/m, 'ordinary master push must still build Android only');
+  const android = source.slice(source.indexOf('  android:'), source.indexOf('  web-extension:'));
+  assert.doesNotMatch(android, /native/, 'the Android job must not mention native installers');
+  for (const job of ['web-extension', 'rust', 'supply-chain']) {
+    const start = source.indexOf(`  ${job}:`);
+    const nextJobMatch = source.slice(start + 1).match(/\n  [A-Za-z0-9_-]+:\s*$/);
+    const end = nextJobMatch ? start + 1 + nextJobMatch.index : source.length;
+    const block = source.slice(start, end);
+    assert.match(block, /github\.event_name == 'workflow_dispatch'/, `release-build ${job} must keep its dispatch predicate`);
+    assert.match(block, /github\.event\.action == 'labeled' && github\.event\.label\.name == 'release-build'/, `release-build ${job} must keep its labeled-PR predicate`);
+    assert.match(block, /github\.event\.action == 'synchronize' && contains\(github\.event\.pull_request\.labels\.\*\.name, 'release-build'\)/, `release-build ${job} must keep its synchronize predicate`);
+  }
+  assert.match(publish, /github\.event_name == 'workflow_dispatch'[\s\S]*?github\.ref == 'refs\/heads\/master'/, 'release-build publish must keep its master-dispatch predicate');
+  assert.match(publish, /needs\.android\.result == 'success'/, 'release-build publish must keep requiring Android success');
+  assert.match(publish, /needs\.web-extension\.result == 'success'/, 'release-build publish must keep requiring web success');
+  assert.match(publish, /needs\.rust\.result == 'success'/, 'release-build publish must keep requiring Rust success');
+  assert.match(publish, /needs\.supply-chain\.result == 'success'/, 'release-build publish must keep requiring supply-chain success');
 });
 
 test('tag release publishes from one build with provenance, checksums, and digest integrity intact', async () => {
@@ -836,7 +1476,7 @@ test('artifact actions declare only their known inputs', async () => {
 
 test('reusable component workflows referenced by the caller graph exist and remain reusable', async () => {
   const caller = await workflow('release-build.yml');
-  for (const file of ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml', 'build-native-windows.yml', 'build-native-macos.yml']) {
+  for (const file of ['build-android.yml', 'build-web-extension.yml', 'build-rust.yml', 'build-supply-chain.yml']) {
     assert.match(caller, new RegExp(`uses: \\./\\.github/workflows/${file.replace(/\./g, '\\.')}`), `release-build caller must reuse ${file}`);
     const reusable = await workflow(file);
     assert.match(reusable, /workflow_call:/, `${file} must remain reusable (workflow_call)`);
@@ -878,4 +1518,358 @@ test('every workflow script invoked directly is committed executable in git', as
     const [mode] = result.stdout.trim().split(/\s+/);
     assert.equal(mode, '100755', `directly-invoked workflow script ${path} must be committed with mode 100755, found ${mode}`);
   }
+});
+
+// OTP-25 Task 2: a labeled pull request may build the finished DEBUG installer
+// for Windows and/or macOS, but only after a secret-free `native-installer-debug`
+// approval. The approval job is a workflow-local convenience gate, not a
+// hostile-writer boundary (the workflow header states this); these tests pin the
+// exact triggers, the current-label predicates, the exact PR head SHA, approval
+// ordering, the read-only zero-secret scope, per-PR cancellation and fork
+// behavior.
+const PR_INSTALLER_FILE = 'build-pr-installers.yml';
+const PR_INSTALLER_EVENTS = ['opened', 'reopened', 'labeled', 'unlabeled', 'synchronize', 'ready_for_review'];
+const PR_INSTALLER_LABELS = {
+  windows: 'windows-installer-build',
+  macos: 'mac-installer-build',
+};
+const PR_INSTALLER_BUILDERS = {
+  windows: 'build-native-windows.yml',
+  macos: 'build-native-macos.yml',
+};
+const PR_INSTALLER_ARTIFACT_NAMES = {
+  windows: 'windows-debug-installer-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run-${{ github.run_id }}',
+  macos: 'macos-debug-installer-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-run-${{ github.run_id }}',
+};
+
+function prWorkflowOnBlock(source) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => /^on:\s*$/.test(line));
+  assert.notEqual(start, -1, 'workflow must declare a top-level on: block');
+  const block = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && !line.startsWith(' ')) break;
+    block.push(line);
+  }
+  return block.join('\n');
+}
+
+function prWorkflowPermissions(source) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => /^permissions:\s*$/.test(line));
+  assert.notEqual(start, -1, 'workflow must declare permissions at workflow scope');
+  const values = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && !line.startsWith(' ')) break;
+    const entry = mappingEntry(line);
+    if (entry) values.push(`${entry.key}: ${entry.value}`.trim());
+  }
+  return values;
+}
+
+function prJobBlock(source, job) {
+  const match = source.match(new RegExp(`^  ${escapeRegexp(job)}:\\s*$`, 'm'));
+  assert.ok(match, `workflow must define job ${job}`);
+  const rest = source.slice(match.index + match[0].length);
+  const next = rest.match(/^  [A-Za-z0-9_-]+:\s*$/m);
+  return next ? source.slice(match.index, match.index + match[0].length + next.index) : source.slice(match.index);
+}
+
+function prJobCondition(block) {
+  const match = block.match(/^    if: \|\n((?:      [^\n]*\n)+)/m);
+  assert.ok(match, 'job must declare a folded if: block');
+  return match[1].split('\n').map((line) => line.trim()).filter(Boolean).join(' ');
+}
+
+function prContainsPredicate(label) {
+  return new RegExp(`contains\\(github\\.event\\.pull_request\\.labels\\.\\*\\.name, '${escapeRegexp(label)}'\\)`);
+}
+
+// Evaluate a job `if:` expression against a synthetic pull_request context.
+// Only the contexts this workflow is allowed to use are understood; anything
+// else (for example a pre-event `github.event.label.name` shortcut) fails.
+function evaluatePrLabels(condition, { labels, draft = false, eventName = 'pull_request' }) {
+  const expression = condition
+    .replaceAll('github.event_name', JSON.stringify(eventName))
+    .replaceAll('github.event.pull_request.draft', String(draft))
+    .replace(/contains\(github\.event\.pull_request\.labels\.\*\.name,\s*'([^']*)'\)/g, (_, label) => `labels.includes(${JSON.stringify(label)})`);
+  assert.doesNotMatch(expression, /github\./, `condition uses an unsupported pull_request context: ${condition}`);
+  return new Function('labels', `"use strict"; return (${expression});`)(labels);
+}
+
+function assertPrInstallerCaller(source) {
+  const name = PR_INSTALLER_FILE;
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+
+  // Trigger: exactly the reviewed pull_request events, never pull_request_target.
+  const onBlock = prWorkflowOnBlock(source);
+  const triggerKeys = onBlock.split('\n').flatMap((line) => {
+    const entry = mappingEntry(line);
+    return entry && entry.indent === 2 ? [entry.key] : [];
+  });
+  assert.deepEqual(triggerKeys, ['pull_request'], `${name} must trigger only on pull_request`);
+  const typesMatch = onBlock.match(/^  pull_request:\n    types: \[([^\]]+)\]$/m);
+  assert.ok(typesMatch, `${name} must declare the pull_request types list`);
+  assert.deepEqual(typesMatch[1].split(',').map((value) => value.trim()), PR_INSTALLER_EVENTS, `${name} must use exactly the reviewed pull_request events`);
+  assert.doesNotMatch(executable, /pull_request_target/, `${name} must never use pull_request_target`);
+  assert.doesNotMatch(executable, /github\.event\.label\.name/, `${name} must re-evaluate the post-event label set, not the event's own label`);
+
+  // Scope: read-only, zero secrets, no cache/write privileges, no cross-run artifact.
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], `${name} must declare only contents: read at workflow scope`);
+  assert.equal((source.match(/^permissions:\s*$/gm) ?? []).length, 1, `${name} must declare workflow permissions exactly once`);
+  for (const forbidden of [/contents:\s*write/, /\bwrite-all\b/, /^\s*id-token:/m, /^\s*pull-requests:/m, /^\s*packages:/m, /^\s*cache:/m]) {
+    assert.doesNotMatch(executable, forbidden, `${name} must not grant ${forbidden}`);
+  }
+  assert.doesNotMatch(executable, /\$\{\{\s*secrets\./, `${name} must not reference any secret`);
+  assert.doesNotMatch(executable, /^\s*secrets:/m, `${name} must not declare a secrets mapping`);
+  assertNoSecretRunInterpolation(executable, name);
+  assert.doesNotMatch(executable, /actions\/download-artifact@/, `${name} must not download artifacts from another run`);
+
+  // Per-PR concurrency cancels a stale run when the head SHA or labels change.
+  assert.match(source, /^concurrency:\n  group: pr-installers-\$\{\{ github\.event\.pull_request\.number \}\}\n  cancel-in-progress: true$/m, `${name} must cancel stale runs per pull request`);
+
+  // Exactly the approval job and the two platform callers.
+  assert.deepEqual(Object.keys(callerJobKeys(source)).sort(), ['approve', 'macos', 'windows'], `${name} must declare exactly the approval job and both platform callers`);
+
+  const approve = prJobBlock(source, 'approve');
+  const windows = prJobBlock(source, 'windows');
+  const macos = prJobBlock(source, 'macos');
+
+  // The approval job is a secret-free environment gate that runs no PR code.
+  assert.match(approve, /^    runs-on: ubuntu-latest$/m, `${name} approval must run on ubuntu-latest`);
+  assert.match(approve, /^    environment: native-installer-debug$/m, `${name} approval must enter the secret-free native-installer-debug environment`);
+  assert.match(approve, /^    permissions:\n      contents: read$/m, `${name} approval must be read-only`);
+  assert.doesNotMatch(approve, /^\s+uses:/m, `${name} approval must call no action`);
+  assert.doesNotMatch(approve, /actions\/checkout|gradlew|bridgeInstaller|setup-java|setup-python/, `${name} approval must not check out or build anything`);
+  assert.doesNotMatch(approve, /secrets/, `${name} approval must be secret-free`);
+  assert.equal((executable.match(/^\s*environment:/gm) ?? []).length, 1, `${name} must assign a protected environment only to the approval job`);
+  const approveIndex = source.search(/^  approve:\s*$/m);
+  assert.ok(approveIndex !== -1, `${name} must declare the approve job`);
+
+  // The conditions: pull_request, non-draft, current label presence.
+  const conditions = {
+    approve: prJobCondition(approve),
+    windows: prJobCondition(windows),
+    macos: prJobCondition(macos),
+  };
+  assert.match(conditions.approve, /github\.event_name == 'pull_request'/, `${name} approval must be pull_request-only`);
+  assert.match(conditions.approve, /github\.event\.pull_request\.draft == false/, `${name} approval must skip drafts`);
+  for (const label of Object.values(PR_INSTALLER_LABELS)) {
+    assert.match(conditions.approve, prContainsPredicate(label), `${name} approval must run for the ${label} label`);
+  }
+
+  for (const [platform, builder] of Object.entries(PR_INSTALLER_BUILDERS)) {
+    const block = platform === 'windows' ? windows : macos;
+    const jobIndex = source.search(new RegExp(`^  ${platform}:\\s*$`, 'm'));
+    assert.ok(approveIndex < jobIndex, `${name} approval must precede the ${platform} build`);
+    assert.match(block, new RegExp(`^    uses: \\./\\.github/workflows/${escapeRegexp(builder)}$`, 'm'), `${platform} must call the ${builder} producer`);
+    assert.match(block, /^    needs: approve$/m, `${platform} must wait for approval`);
+    assert.doesNotMatch(block, /^\s*environment:/m, `${platform} must not enter a protected environment`);
+    assert.doesNotMatch(block, /^\s*secrets:/m, `${platform} must pass no secret`);
+    assert.doesNotMatch(block, /github\.sha\b/, `${platform} must build the pull request head commit, never the merge commit`);
+    assert.match(block, /^      commit-sha: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$/m, `${platform} must pass the exact PR head SHA`);
+    assert.match(block, /^      build-kind: debug$/m, `${platform} must build the debug installer only`);
+    assert.doesNotMatch(block, /build-kind: release/, `${platform} must never build a release channel`);
+    const artifact = block.match(/^      artifact-name: (.+)$/m);
+    assert.ok(artifact, `${platform} must name its debug artifact`);
+    assert.equal(artifact[1].trim(), PR_INSTALLER_ARTIFACT_NAMES[platform], `${platform} must encode the PR number, head SHA and run ID in the artifact name`);
+    const condition = conditions[platform];
+    assert.match(condition, /github\.event_name == 'pull_request'/, `${platform} must only run on pull_request`);
+    assert.match(condition, /github\.event\.pull_request\.draft == false/, `${platform} must skip drafts`);
+    assert.match(condition, prContainsPredicate(PR_INSTALLER_LABELS[platform]), `${platform} must require the ${PR_INSTALLER_LABELS[platform]} label`);
+    for (const [other, label] of Object.entries(PR_INSTALLER_LABELS)) {
+      if (other === platform) continue;
+      assert.doesNotMatch(condition, prContainsPredicate(label), `${platform} must not build for ${other}'s label`);
+    }
+  }
+
+  // Behavior: no label -> nothing, each label -> its platform, both -> both.
+  // `unlabeled` is modelled by the post-event label set, so removing a label
+  // deselects that platform on the next run.
+  const selected = (labels) => Object.keys(PR_INSTALLER_BUILDERS).filter((platform) => evaluatePrLabels(conditions[platform], { labels }));
+  const matrix = [
+    { labels: [], expected: [] },
+    { labels: ['unrelated label'], expected: [] },
+    { labels: [PR_INSTALLER_LABELS.windows], expected: ['windows'] },
+    { labels: [PR_INSTALLER_LABELS.macos], expected: ['macos'] },
+    { labels: [PR_INSTALLER_LABELS.windows, PR_INSTALLER_LABELS.macos], expected: ['windows', 'macos'] },
+    { labels: ['unrelated label', PR_INSTALLER_LABELS.macos], expected: ['macos'] },
+    { labels: [PR_INSTALLER_LABELS.macos], expected: ['macos'] }, // Windows label removed
+    { labels: [PR_INSTALLER_LABELS.windows], expected: ['windows'] }, // macOS label removed
+  ];
+  for (const { labels, expected } of matrix) {
+    assert.deepEqual(selected(labels), expected, `${name} labels ${JSON.stringify(labels)} must select ${JSON.stringify(expected)}`);
+    assert.equal(
+      evaluatePrLabels(conditions.approve, { labels }),
+      expected.length > 0,
+      `${name} approval must run exactly when a labeled platform is selected (${JSON.stringify(labels)})`,
+    );
+  }
+  for (const job of Object.keys(conditions)) {
+    assert.equal(evaluatePrLabels(conditions[job], { labels: Object.values(PR_INSTALLER_LABELS), draft: true }), false, `${name} job ${job} must skip drafts`);
+    assert.equal(evaluatePrLabels(conditions[job], { labels: Object.values(PR_INSTALLER_LABELS), eventName: 'push' }), false, `${name} job ${job} must only run on pull_request`);
+  }
+
+  // Approval-boundary honesty: a PR editing its own pull_request workflow can
+  // remove this workflow-local gate; resisting a malicious writer needs a
+  // separately approved trusted dispatcher. Do not claim tamper resistance.
+  const comments = source.split('\n').filter((line) => line.trimStart().startsWith('#')).join('\n');
+  assert.match(comments, /workflow-local convenience gate/, `${name} must document the approval boundary as a workflow-local convenience gate`);
+  assert.match(comments, /not a tamper-resistant/, `${name} must not claim the approval gate is tamper-resistant`);
+  assert.match(comments, /edits its own `?pull_request`? workflow/, `${name} must state that a PR can edit its own pull_request workflow`);
+  assert.match(comments, /can remove this job/, `${name} must state that such an edit can remove the approval job`);
+  assert.match(comments, /trusted-collaborator[^.]*zero-secret/, `${name} must scope the gate to the trusted-collaborator zero-secret debug model`);
+  assert.match(comments, /separately approved trusted dispatcher/, `${name} must point a hostile-writer requirement at a separately approved trusted dispatcher`);
+  assert.match(comments, /fork[^.]*workflow approval/i, `${name} must document GitHub's additional fork workflow approval`);
+  assert.match(comments, /NOT FOR RELEASE/, `${name} must mark the debug output as not for release`);
+}
+
+test('PR installer caller builds only labeled platforms from the exact PR head SHA after approval', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  assertPrInstallerCaller(source);
+  // The build jobs carry no secret and no environment, so fork PRs get nothing
+  // beyond the read-only token (GitHub may additionally hold fork runs for its
+  // own workflow approval; the workflow header says so).
+  for (const platform of Object.keys(PR_INSTALLER_BUILDERS)) {
+    const block = prJobBlock(source, platform);
+    assert.doesNotMatch(block, /secrets:/, `${platform} must remain secret-free for fork pull requests`);
+    assert.doesNotMatch(block, /^\s*environment:/m, `${platform} must remain outside the approval environment for fork pull requests`);
+  }
+});
+
+test('PR installer caller re-evaluates the current label set on every reviewed pull_request event', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  const onBlock = prWorkflowOnBlock(source);
+  assert.deepEqual(
+    onBlock.split('\n').flatMap((line) => {
+      const entry = mappingEntry(line);
+      return entry && entry.indent === 2 ? [entry.key] : [];
+    }),
+    ['pull_request'],
+    'the only trigger may be pull_request',
+  );
+  const types = onBlock.match(/^  pull_request:\n    types: \[([^\]]+)\]$/m);
+  assert.ok(types, 'pull_request types must be declared inline');
+  assert.deepEqual(types[1].split(',').map((value) => value.trim()), PR_INSTALLER_EVENTS, 'every reviewed event must re-evaluate the label set');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  for (const forbidden of [/pull_request_target/, /github\.event\.label\.name/, /^\s*push:/m, /^\s*schedule:/m, /^\s*workflow_dispatch:/m]) {
+    assert.doesNotMatch(executable, forbidden, `the PR installer caller must not use ${forbidden}`);
+  }
+  // The post-event label set is what `unlabeled` and `synchronize` see.
+  const conditions = {
+    approve: prJobCondition(prJobBlock(source, 'approve')),
+    windows: prJobCondition(prJobBlock(source, 'windows')),
+    macos: prJobCondition(prJobBlock(source, 'macos')),
+  };
+  assert.deepEqual(
+    Object.keys(PR_INSTALLER_BUILDERS).filter((platform) => evaluatePrLabels(conditions[platform], { labels: [PR_INSTALLER_LABELS.macos] })),
+    ['macos'],
+    'removing the Windows label must leave only the macOS build selected',
+  );
+  assert.deepEqual(
+    Object.keys(PR_INSTALLER_BUILDERS).filter((platform) => evaluatePrLabels(conditions[platform], { labels: [PR_INSTALLER_LABELS.windows] })),
+    ['windows'],
+    'removing the macOS label must leave only the Windows build selected',
+  );
+  assert.equal(evaluatePrLabels(conditions.approve, { labels: [] }), false, 'removing every label must not request approval');
+});
+
+test('PR installer approval job is secret-free and gates both platform builds', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  const approve = prJobBlock(source, 'approve');
+  assert.match(approve, /^    runs-on: ubuntu-latest$/m, 'the approval job must run on ubuntu-latest');
+  assert.match(approve, /^    environment: native-installer-debug$/m, 'the approval job must reference native-installer-debug');
+  assert.match(approve, /^    permissions:\n      contents: read$/m, 'the approval job must be read-only');
+  assert.doesNotMatch(approve, /secrets|actions\/checkout|gradlew|bridgeInstaller|bridgePackage/, 'the approval job must not use secrets, checkout or build');
+  const approveIndex = source.search(/^  approve:\s*$/m);
+  const windowsIndex = source.search(/^  windows:\s*$/m);
+  const macosIndex = source.search(/^  macos:\s*$/m);
+  assert.ok(approveIndex !== -1 && windowsIndex !== -1 && macosIndex !== -1, 'all three jobs must exist');
+  assert.ok(approveIndex < windowsIndex && approveIndex < macosIndex, 'the approval job must precede both platform builds');
+  for (const platform of Object.keys(PR_INSTALLER_BUILDERS)) {
+    const block = prJobBlock(source, platform);
+    assert.match(block, /^    needs: approve$/m, `${platform} must depend on the approval job`);
+    assert.doesNotMatch(block, /^\s*environment:/m, `${platform} must not repeat the environment`);
+  }
+});
+
+test('PR installer caller keeps a read-only zero-secret scope and cancels stale per-PR runs', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  assert.deepEqual(prWorkflowPermissions(source), ['contents: read'], 'workflow scope must be contents: read only');
+  assert.equal((source.match(/^permissions:\s*$/gm) ?? []).length, 1, 'only the workflow scope may declare permissions');
+  assert.match(source, /^concurrency:\n  group: pr-installers-\$\{\{ github\.event\.pull_request\.number \}\}\n  cancel-in-progress: true$/m, 'per-PR concurrency must cancel stale runs');
+  const executable = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  assert.doesNotMatch(executable, /\$\{\{\s*secrets\./, 'no secret expression may appear');
+  assert.doesNotMatch(executable, /^\s*secrets:/m, 'no secrets mapping may appear');
+  assert.doesNotMatch(executable, /actions\/download-artifact@/, 'the PR path must not consume another run\'s artifacts');
+  for (const forbidden of [/contents:\s*write/, /write-all/, /id-token:/, /pull-requests:/, /packages:/, /cache:/]) {
+    assert.doesNotMatch(executable, forbidden, `the PR path must not grant ${forbidden}`);
+  }
+  for (const platform of Object.keys(PR_INSTALLER_BUILDERS)) {
+    const block = prJobBlock(source, platform);
+    assert.match(block, /^      build-kind: debug$/m, `${platform} must request a debug build`);
+    assert.match(block, /^      commit-sha: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$/m, `${platform} must build the PR head SHA`);
+    assert.doesNotMatch(block, /github\.sha\b/, `${platform} must not fall back to the merge SHA`);
+  }
+});
+
+test('PR installer caller contract rejects routing, approval, scope and boundary regressions', async () => {
+  const source = await workflow(PR_INSTALLER_FILE);
+  const mutations = {
+    'merge SHA instead of head SHA': (text) => text.replaceAll('commit-sha: ${{ github.event.pull_request.head.sha }}', 'commit-sha: ${{ github.sha }}'),
+    'missing approval dependency': (text) => text.replaceAll('    needs: approve\n', ''),
+    'draft PR allowed': (text) => text.replaceAll('      github.event.pull_request.draft == false &&\n', ''),
+    'wrong Windows label': (text) => text.replaceAll("'windows-installer-build'", "'windows build'"),
+    'pre-event label shortcut': (text) => text.replace(
+      "contains(github.event.pull_request.labels.*.name, 'windows-installer-build')",
+      "github.event.label.name == 'windows-installer-build'",
+    ),
+    'pull_request_target trigger': (text) => text.replace('  pull_request:\n    types:', '  pull_request_target:\n    types:'),
+    'extra push trigger': (text) => text.replace('  pull_request:\n    types:', '  push:\n  pull_request:\n    types:'),
+    'edited event list': (text) => text.replace('synchronize, ready_for_review]', 'synchronize, edited]'),
+    'secret mapping': (text) => text.replace(
+      '    uses: ./.github/workflows/build-native-windows.yml',
+      '    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n    uses: ./.github/workflows/build-native-windows.yml',
+    ),
+    'write permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write'),
+    'cache permission': (text) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: read\n  cache: write'),
+    'environment on a build job': (text) => text.replace(
+      '    uses: ./.github/workflows/build-native-macos.yml',
+      '    environment: native-installer-debug\n    uses: ./.github/workflows/build-native-macos.yml',
+    ),
+    'wrong approval environment': (text) => text.replace('environment: native-installer-debug', 'environment: native-installer'),
+    'release build kind': (text) => text.replaceAll('      build-kind: debug', '      build-kind: release'),
+    'artifact without head SHA': (text) => text.replaceAll('-${{ github.event.pull_request.head.sha }}-run-', '-run-'),
+    'artifact without run ID': (text) => text.replaceAll('}-run-${{ github.run_id }}', '}'),
+    'approval checks out code': (text) => text.replace(
+      '    steps:\n',
+      '    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n',
+    ),
+    'approval runs a build': (text) => text.replace('    steps:\n', '    steps:\n      - run: ./gradlew bridgeInstallerDebug\n'),
+    'non-cancelling concurrency': (text) => text.replace('cancel-in-progress: true', 'cancel-in-progress: false'),
+    'wrong concurrency group': (text) => text.replace('group: pr-installers-${{ github.event.pull_request.number }}', 'group: pr-installers'),
+    'artifact download': (text) => `${text}\n  stray:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7\n`,
+    'removed approval-boundary honesty': (text) => text
+      // Remove only the honesty comment lines: replacing path separators would corrupt the
+      // reusable-workflow paths and fail the contract for an unrelated reason.
+      .replace('# - The approve job is a workflow-local convenience gate.\n', '')
+      .replace('# - It is not a tamper-resistant security boundary.\n', '')
+      .replace('# - A pull request that edits its own `pull_request` workflow can remove this job.\n', ''),
+    'claimed tamper resistance': (text) => text.replace('not a tamper-resistant', 'a tamper-resistant'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const mutated = mutate(source);
+    assert.notEqual(mutated, source, `mutation "${label}" must change the workflow`);
+    assert.throws(() => assertPrInstallerCaller(mutated), `the contract must reject "${label}"`);
+  }
+  // The honesty mutation only removes comment lines, so it must fail on the specific
+  // approval-boundary diagnostic; failing elsewhere would mean an unrelated check fired.
+  const dishonest = mutations['removed approval-boundary honesty'](source);
+  assert.throws(
+    () => assertPrInstallerCaller(dishonest),
+    (error) => /approval boundary as a workflow-local convenience gate/.test(error.message),
+    'removing the approval-boundary honesty must fail the workflow-local convenience gate diagnostic',
+  );
 });

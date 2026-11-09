@@ -259,6 +259,8 @@ export const PRODUCTION_SBOM_ROOTS = {
   rust: 'veles-crypto@0.1.0',
   'native-bridge': 'veles-native-bridge@0.1.0',
   'native-host': 'veles-ble-host@0.1.0',
+  // OTP-25: the standalone installer engine and its cleanup helper (native-bridge/installer, plain Rust).
+  'native-installer': 'veles-bridge-installer@0.1.0',
 };
 
 export const PRODUCTION_LOCKFILES = {
@@ -267,7 +269,34 @@ export const PRODUCTION_LOCKFILES = {
   rust: { path: ['rust', 'Cargo.lock'], ecosystem: 'cargo' },
   'native-bridge': { path: ['native-bridge', 'src-tauri', 'Cargo.lock'], ecosystem: 'cargo' },
   'native-host': { path: ['native-bridge', 'host', 'Cargo.lock'], ecosystem: 'cargo' },
+  'native-installer': { path: ['native-bridge', 'installer', 'Cargo.lock'], ecosystem: 'cargo' },
 };
+
+// OTP-25: the installer ships more than Rust. The SwiftPM frontend and the NSIS compiler have no SBOM
+// generator in this repository, so their coverage is proven by what they are allowed to depend on:
+// the Swift package may declare NO external package (nothing to list), and the only build tool archive is
+// the one hash-pinned NSIS recorded in the tool lock. Returns one message per gap; empty means covered.
+export async function verifyInstallerToolchainCoverage(root) {
+  const installer = join(root, 'native-bridge', 'installer');
+  const problems = [];
+  const text = async (...path) => readFile(join(installer, ...path), 'utf8').catch(() => null);
+  const lockfile = await text('Cargo.lock');
+  if (!lockfile || !/^name = "veles-bridge-installer"$/m.test(lockfile)) problems.push('native-bridge/installer/Cargo.lock is missing or does not lock veles-bridge-installer');
+  const swift = await text('macos', 'Package.swift');
+  if (swift === null) problems.push('native-bridge/installer/macos/Package.swift is missing');
+  else if (/\.package\s*\(/.test(swift.replace(/\/\/[^\n]*/g, ''))) problems.push('the Swift package declares an external dependency, which no SBOM in this repository would list');
+  if (await text('macos', 'Package.resolved') !== null) problems.push('a Swift Package.resolved exists although the package must have no external dependency');
+  let lock = null;
+  try { lock = JSON.parse(await text('config', 'tools.lock.json')); } catch { problems.push('native-bridge/installer/config/tools.lock.json is missing or not JSON'); }
+  if (lock) {
+    const archives = Object.keys(lock.archives ?? {});
+    const nsis = lock.archives?.nsis;
+    if (archives.length !== 1 || archives[0] !== 'nsis' || !/^[0-9a-f]{64}$/.test(nsis?.sha256 ?? '') || !/^https:\/\//.test(nsis?.url ?? '') || !/^\d+\.\d+(?:\.\d+)?$/.test(nsis?.version ?? '')) {
+      problems.push('the NSIS archive is not pinned by an exact version, https URL and SHA-256 as the only build-tool archive');
+    }
+  }
+  return problems;
+}
 
 if (import.meta.main) {
   const root = process.cwd();
@@ -276,7 +305,11 @@ if (import.meta.main) {
     if (ecosystem !== 'cargo') return [name, await deriveLockComponents(lockfile, ecosystem)];
     return [name, await deriveShippedCargoComponents(join(root, ...path.slice(0, -1), 'Cargo.toml'), lockfile)];
   }))
-    .then((entries) => validateSboms(root, PRODUCTION_SBOM_ROOTS, Object.fromEntries(entries))).catch((error) => {
+    .then((entries) => validateSboms(root, PRODUCTION_SBOM_ROOTS, Object.fromEntries(entries)))
+    .then(async () => {
+      const problems = await verifyInstallerToolchainCoverage(root);
+      if (problems.length > 0) throw failure(`Installer toolchain coverage gap: ${problems.join('; ')}`);
+    }).catch((error) => {
       console.error(error.message);
       process.exitCode = error.exitCode ?? 2;
     });

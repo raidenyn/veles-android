@@ -147,7 +147,8 @@ def check_host_workflow(source):
             errors.append("no job on %s" % runner)
     if "DEVELOPER_DIR: /Applications/Xcode_26.6.app" not in source or "17F113" not in source:
         errors.append("macOS job does not use the repository Xcode pin")
-    if re.search(r"(?i)tauri|npm|setup-node|node-version|bridgeInstall|bridgePackage|bridgeBundle|bridgeBuild\b", source):
+    # `bridgeInstall` is the scaffold's npm install task; the OTP-25 `bridgeInstaller*` check tasks are not it.
+    if re.search(r"(?i)tauri|npm|setup-node|node-version|bridgeInstall(?![A-Za-z])|bridgePackage|bridgeBundle|bridgeBuild\b", source):
         errors.append("host workflow uses Tauri/Node/npm or the scaffold tasks")
     if "needs:" in source:
         errors.append("host workflow must not chain jobs")
@@ -397,12 +398,18 @@ class Workflows(unittest.TestCase):
         self.assertEqual(check_ci(read(".github/workflows/ci.yml")), [])
         self.assertNotEqual(check_ci("jobs:\n  native-bridge:\n    runs-on: ubuntu-latest\n"), [])
 
-    def test_scaffold_packaging_ownership_is_unchanged(self):
-        for name, artifact in (("build-native-windows.yml", "native-windows"), ("build-native-macos.yml", "native-macos")):
-            source = read(".github/workflows/" + name)
+    def test_native_producers_are_the_installer_producers_not_the_host_and_not_the_scaffold(self):
+        # OTP-25 Task 14 deliberately replaced the scaffold's native-windows / native-macos packaging with the
+        # unsigned installer producers. The production host workflow still owns native-host-* and is not
+        # relabeled as, nor mixed into, either of them.
+        for name, artifact in (("build-native-windows.yml", "native-unsigned-windows"), ("build-native-macos.yml", "native-unsigned-macos")):
+            # Explanatory full-line comments may name the scaffold they replaced; only executable YAML counts.
+            source = "\n".join(line for line in read(".github/workflows/" + name).splitlines() if not line.lstrip().startswith("#"))
             self.assertIn("default: " + artifact, source)
             self.assertNotIn("native-host", source)
             self.assertNotIn("bridgeHost", source)
+            self.assertNotIn("bridgePackage", source)
+            self.assertNotIn("tauri", source.lower())
 
 
 class SupplyChain(unittest.TestCase):
@@ -525,6 +532,7 @@ class GradleIncremental(unittest.TestCase):
         code = strip_kotlin_comments(host_block(read("build.gradle.kts")))
         helper = code.split("fun Exec.productionHostEnvironment()", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('inputs.property("VELES_ALLOWED_ORIGINS", providers.environmentVariable("VELES_ALLOWED_ORIGINS").orElse(""))', helper)
+        self.assertIn("target-feature=+crt-static", helper)
         for task in ("bridgeHostLint", "bridgeHostTest", "bridgeHostBuild"):
             self.assertIn("productionHostEnvironment()", task_body(code, task), task)
 

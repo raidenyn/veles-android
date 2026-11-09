@@ -1,0 +1,67 @@
+{
+    "schema": 1,
+    "reviewed": "2026-11-06",
+    "targets": {
+        "windows-x86_64": {
+            "runner": "windows-2025",
+            "build_target": "x86_64-pc-windows-msvc",
+            "minimum_os": "10"
+        },
+        "macos-arm64": {
+            "runner": "macos-26",
+            "build_target": "aarch64-apple-darwin",
+            "developer_dir": "/Applications/Xcode_26.6.app",
+            "minimum_os": "26.0"
+        }
+    },
+    "tools": {
+        "rust": {
+            "targets": ["windows-x86_64", "macos-arm64"],
+            "identity": {
+                "channel": "1.98.0",
+                "profile": "minimal",
+                "components": "clippy,rustfmt",
+                "targets": "aarch64-apple-darwin,x86_64-pc-windows-msvc"
+            }
+        },
+        "xcode": {
+            "targets": ["macos-arm64"],
+            "identity": {
+                "version": "26.6",
+                "build": "17F113"
+            }
+        },
+        "macos_sdk": {
+            "targets": ["macos-arm64"],
+            "identity": {
+                "version": "macosx26.5"
+            }
+        },
+        "msvc": {
+            "targets": ["windows-x86_64"],
+            "identity": {
+                "cl_version": "19.51.36260",
+                "linker_version": "14.51.36260.0",
+                "msvc_toolset_version": "14.51.36231"
+            }
+        },
+        "windows_sdk": {
+            "targets": ["windows-x86_64"],
+            "identity": {
+                "windows_sdk_version": "10.0.26100.0",
+                "ucrt_version": "10.0.26100.0"
+            }
+        }
+    },
+    "archives": {
+        "nsis": {
+            "version": "3.08",
+            "url": "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3/nsis-3.zip",
+            "sha256": "1bb9fc85ee5b220d3869325dbb9d191dfe6537070f641c30fbb275c97051fd0c",
+            "archive_file": "nsis-3.zip",
+            "extract_root": "nsis-3.08",
+            "makensis": "nsis-3.08/makensis.exe",
+            "version_argument": "/VERSION"
+        }
+    }
+}

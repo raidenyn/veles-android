@@ -222,9 +222,23 @@ jobs:
       - run: ./gradlew bridgeFormat bridgeLint bridgeTypecheck bridgeNpmTest bridgeRustFormat bridgeRustLint bridgeRustTest
 
   # OTP-24 production host (plain Rust, no Tauri/Node). Distinct from the `native-bridge`
-  # scaffold job above; its artifacts are native-host-windows / native-host-macos.
+  # scaffold job above; its artifacts are native-host-windows / native-host-macos. It also runs the
+  # OTP-25 standalone installer's format/lint/test checks on all three platforms (checks only: the
+  # unsigned installer inputs are built by release-build.yml's native producers).
   native-host:
     name: native-host
     uses: ./.github/workflows/build-native-host.yml
     with:
       commit-sha: ${{ github.sha }}
+
+  # OTP-25 workflow and supply-chain contracts: the producer/caller graph, the signing boundary and the
+  # supply-chain consumers are enforced as tests, so a workflow edit that weakens them fails here.
+  workflow-contracts:
+    name: workflow-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.8.1'
+      - run: node --test verify/test/workflow-contracts.test.mjs

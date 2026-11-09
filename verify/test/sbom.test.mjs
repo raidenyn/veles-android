@@ -96,7 +96,7 @@ test('production SBOM roots and lockfiles include the OTP-24 host and its vendor
   const { PRODUCTION_SBOM_ROOTS, PRODUCTION_LOCKFILES, deriveLockComponents } = await import('../verify-sboms.mjs');
   assert.equal(PRODUCTION_SBOM_ROOTS['native-host'], 'veles-ble-host@0.1.0');
   assert.deepEqual(PRODUCTION_LOCKFILES['native-host'], { path: ['native-bridge', 'host', 'Cargo.lock'], ecosystem: 'cargo' });
-  assert.deepEqual(Object.keys(PRODUCTION_SBOM_ROOTS).sort(), ['native-bridge', 'native-host', 'protocol', 'rust', 'web-extension']);
+  assert.deepEqual(Object.keys(PRODUCTION_SBOM_ROOTS).sort(), ['native-bridge', 'native-host', 'native-installer', 'protocol', 'rust', 'web-extension']);
   // The patched bluest is a path package in the production lockfile and must be an SBOM obligation.
   const repository = new URL('../../', import.meta.url).pathname;
   const components = await deriveLockComponents(join(repository, ...PRODUCTION_LOCKFILES['native-host'].path), 'cargo');

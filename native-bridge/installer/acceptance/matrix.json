@@ -1,0 +1,246 @@
+{
+    "schema": 1,
+    "acceptance": {
+        "decision": "none",
+        "issue_89": "open",
+        "statement": "No physical acceptance exists. A structurally valid evidence bundle is necessary, never sufficient; the owner separately decides acceptance after independent adjudication. This matrix closes neither #89 nor Gates B/C/D."
+    },
+    "rows": [
+        {
+            "id": "windows.clean-install",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.launch",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.repair",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.upgrade",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.failed-upgrade",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.rollback",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.uninstall",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.fresh-user",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.origin-negative",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.dev-coexistence",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-DEV-BUILD"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.multi-profile",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.compatibility",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.permission-recovery",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.unicode-path",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.hygiene",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "windows.offline-trust",
+            "outcome": "BLOCKED",
+            "blockers": [
+                "B-HOST",
+                "B-ACCOUNT",
+                "B-CANDIDATE",
+                "B-SECOND-RELEASE",
+                "B-TRUST-FIXTURES"
+            ],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.clean-install",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.launch",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.repair",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.upgrade",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.failed-upgrade",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.rollback",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.uninstall",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.fresh-user",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.origin-negative",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.dev-coexistence",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-DEV-BUILD"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.multi-profile",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.compatibility",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-SECOND-RELEASE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.permission-recovery",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE", "B-ATTENDED"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.unicode-path",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.hygiene",
+            "outcome": "BLOCKED",
+            "blockers": ["B-HOST", "B-ACCOUNT", "B-CANDIDATE"],
+            "automated_evidence": [],
+            "attempts": []
+        },
+        {
+            "id": "macos.offline-trust",
+            "outcome": "BLOCKED",
+            "blockers": [
+                "B-HOST",
+                "B-ACCOUNT",
+                "B-CANDIDATE",
+                "B-SECOND-RELEASE",
+                "B-TRUST-FIXTURES"
+            ],
+            "automated_evidence": [],
+            "attempts": []
+        }
+    ]
+}

@@ -1,5 +1,18 @@
 name: build-native-windows
 
+# OTP-25 Task 14/15: the Windows producer of the standalone installer.
+#
+# The caller states the build kind explicitly: `build-kind: release` builds the UNSIGNED
+# production-channel input tree through bridgeInstallerUnsigned (the two-slot A/B build Task 13
+# signs), while `build-kind: debug` builds the finished FIXTURE-channel DEBUG installer through
+# bridgeInstallerDebug (one slot, debug Rust/Swift, setup.exe + metadata + symbols). There is no
+# config-file probe and no silent fixture fallback: an omitted or invalid build kind fails before
+# anything is built.
+#
+# Nothing here signs, notarizes or publishes; no secret, protected environment or artifact from
+# another run is used. The Windows engine's policy carrier is embedded and the NSIS uninstaller
+# generated on this runner; neither step has run anywhere yet (see the Task 14 report).
+
 on:
   workflow_call:
     inputs:
@@ -9,7 +22,10 @@ on:
       artifact-name:
         required: true
         type: string
-        default: native-windows
+        default: native-unsigned-windows
+      build-kind:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -21,37 +37,101 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.commit-sha }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
-          node-version: '26.8.1'
-      # Provision the pinned, hash-verified WiX/NSIS toolset into the isolated
-      # Tauri local-tools cache (bundle.useLocalToolsDir), then export the
-      # absolute NSIS_PATH the packaging build reads. The cache path must be
-      # canonicalized before use: Gradle launches Tauri from native-bridge/, so
-      # NSIS_PATH must point at the resolved cache rather than the relative
-      # workflow argument, and Tauri's NSIS bundler reads NSIS_PATH (not
-      # TAURI_NSIS_PATH). GITHUB_ENV carries it into the packaging step below.
-      - name: Provision pinned Windows installer tools
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Provision the pinned NSIS (hash-verified)
         run: |
-          $cache = [IO.Path]::GetFullPath('native-bridge/src-tauri/target/.tauri')
-          pwsh -NoProfile -File verify/native/provision-windows-tools.ps1 -TauriCachePath $cache
+          pwsh -NoProfile -File native-bridge/installer/scripts/provision-nsis.ps1 -Destination ([IO.Path]::GetFullPath('build/native-bridge/installer/tools/nsis'))
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "NSIS_PATH=$(Join-Path $cache 'NSIS')" >> $env:GITHUB_ENV
-      # Normal packaging on the target runner: the executable, NSIS, and MSI
-      # installers are built and packaged by one Gradle invocation with no
-      # offline/firewall wrapper.
-      - name: Package native bridge
-        run: .\gradlew.bat bridgePackage
-      # Upload the packaged product directly: the outer archive, its sha256
-      # sidecar, and the component SHA256SUMS. The installer payload stays
-      # inside the outer archive, so artifact-upload mode changes cannot
-      # affect it.
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (host)
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Validate the build kind
+        shell: bash
+        env:
+          BUILD_KIND: ${{ inputs.build-kind }}
+        run: |
+          case "$BUILD_KIND" in
+            release|debug) ;;
+            *)
+              echo "build-kind must be release or debug (got '$BUILD_KIND')" >&2
+              exit 1
+              ;;
+          esac
+      # The tool observation requires cl/link on PATH and VCToolsVersion,
+      # WindowsSDKVersion and UCRTVersion in the environment. Enter the selected
+      # Visual Studio developer shell and export every changed variable to the
+      # following steps, so the observation and the Cargo build see the same
+      # native toolchain context instead of relying on Rust's own MSVC discovery.
+      - name: Enter the Visual Studio developer environment
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe is missing from the windows-2025 image' }
+          $install = (& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath -all | Select-Object -First 1)
+          if (-not $install) { throw 'no Visual Studio installation with the MSVC x64 tools was found' }
+          $devShell = Join-Path $install 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          if (-not (Test-Path $devShell)) { throw 'Microsoft.VisualStudio.DevShell.dll is missing from the selected installation' }
+          Import-Module $devShell
+          $before = @{}
+          Get-ChildItem Env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          Enter-VsDevShell -VsInstallPath $install -SkipAutomaticLocation -DevCmdArguments '-arch=x64' | Out-Null
+          Get-ChildItem Env: |
+            Where-Object { $before[$_.Name] -ne $_.Value } |
+            ForEach-Object { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          foreach ($name in 'VCToolsVersion', 'WindowsSDKVersion', 'UCRTVersion') {
+            if (-not (Get-Item -Path "Env:$name" -ErrorAction SilentlyContinue)) {
+              throw "the developer environment did not export $name"
+            }
+          }
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue) -or -not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
+            throw 'the developer environment did not put cl.exe and link.exe on PATH'
+          }
+      # The engine's release carrier is not supplied here: it does not exist until this job's own
+      # assembler has run. The Gradle graph assembles the payload, verifies the carrier against the
+      # exact descriptor and the registered channel, and only then rebuilds the engine with
+      # VELES_EMBEDDED_CARRIER (fail-closed for the production channel). Supplying the variable in
+      # this workflow would point the build at a file nobody assembled from this commit.
+      - name: Build the production-channel unsigned input tree
+        if: inputs.build-kind == 'release'
+        run: .\gradlew.bat bridgeInstallerUnsigned
+      # The debug build compiles Rust without --release and Swift in debug, enables the
+      # compile-time fixture trust adapter (build.rs refuses it for release/production) and packages
+      # the finished setup.exe with metadata and symbols.
+      - name: Build the debug fixture-channel installer
+        if: inputs.build-kind == 'debug'
+        env:
+          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: .\gradlew.bat bridgeInstallerDebug
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: inputs.build-kind == 'release'
         with:
           name: ${{ inputs.artifact-name }}
           path: |
-            build/native-bridge/windows/veles-native-bridge-*.zip
-            build/native-bridge/windows/veles-native-bridge-*.zip.sha256
-            build/native-bridge/windows/SHA256SUMS
+            build/native-bridge/installer/out/production/tree.tar
+            build/native-bridge/installer/out/production/provenance.json
+            build/native-bridge/installer/out/production/report-ab.json
+            build/native-bridge/installer/out/production/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: inputs.build-kind == 'debug'
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            build/native-bridge/installer/out/debug/setup.exe
+            build/native-bridge/installer/out/debug/metadata.json
+            build/native-bridge/installer/out/debug/SHA256SUMS
+            build/native-bridge/installer/out/debug/symbols
           if-no-files-found: error
           retention-days: 14

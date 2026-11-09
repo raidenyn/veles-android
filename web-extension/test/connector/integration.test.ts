@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ConnectorApp, type ConnectorAction, type ConnectorView } from '../../src/connector';
 import { ConnectorController } from '../../src/connector/controller';
+import { HOST_NAME, SUPPORTED_API_VERSIONS } from '../../src/connector/protocol';
 import type { PeerHint } from '../../src/connector/hints';
 import type { ConnectorViewModel } from '../../src/connector/view-model';
 import { assertOutgoingEnvelope } from './contract-oracle';
@@ -298,6 +299,114 @@ describe('OTP-07 integration — host negotiation and visible failures', () => {
                 .currentPort()
                 .posted.filter((message) => (message as { type: string }).type === 'start_scan'),
         ).toEqual([]);
+    });
+});
+
+describe('OTP-25 Task 12 — host compatibility and registration identity', () => {
+    it('reports ready for an API overlap of 1 vs 1 and enables BLE', async () => {
+        const context = setup();
+        const view = new RecordingView();
+        const app = new ConnectorApp({
+            controller: context.controller,
+            view,
+            trustSource: { activePeers: async () => [] },
+            setTimeout: context.clock.setTimeout,
+            clearTimeout: context.clock.clearTimeout,
+        });
+        const started = app.start();
+        const posted = await context.currentPort().nextPosted();
+        await context
+            .currentPort()
+            .emit(readyEvent({ request_id: posted.request_id as string, api_version: 1 }));
+        await started;
+
+        expect(view.last.phase).toBe('ready');
+        expect(view.last.guidance).toBeNull();
+        expect(view.last.host).toMatchObject({ state: 'ready', apiVersion: 1 });
+        expect(view.last.controls.ble).toBe(true);
+        expect(view.last.controls.search.enabled).toBe(true);
+    });
+
+    it('reports incompatible_api for 1 vs a 2-only host and enables no BLE', async () => {
+        const context = setup();
+        const view = new RecordingView();
+        const app = new ConnectorApp({
+            controller: context.controller,
+            view,
+            trustSource: { activePeers: async () => [] },
+            setTimeout: context.clock.setTimeout,
+            clearTimeout: context.clock.clearTimeout,
+        });
+        const started = app.start();
+        const posted = await context.currentPort().nextPosted();
+        // Protocol semantics are unchanged: this build offers exactly API 1.
+        expect(SUPPORTED_API_VERSIONS).toEqual([1]);
+        expect(posted).toMatchObject({ type: 'hello', api_versions: [1] });
+        await context
+            .currentPort()
+            .emit(readyEvent({ request_id: posted.request_id as string, api_version: 2 }));
+        await started;
+
+        expect(view.last.guidance?.kind).toBe('incompatible_api');
+        expect(view.last.phase).not.toBe('ready');
+        expect(view.last.host.state).not.toBe('ready');
+        expect(view.last.controls.ble).toBe(false);
+        expect(view.last.controls.search.enabled).toBe(false);
+        // A search action cannot slip a BLE request past the incompatible host.
+        view.emit({ type: 'search' });
+        await Promise.resolve();
+        const types = context.currentPort().posted.map((m) => (m as { type: string }).type);
+        expect(types).toEqual(['hello']);
+    });
+
+    it('connects only to the production host name and never to the .dev host', async () => {
+        const names: string[] = [];
+        const ports: MockNativePort[] = [];
+        const clock = new FakeClock();
+        const controller = new ConnectorController({
+            connectNative: (name: string) => {
+                names.push(name);
+                const port = new MockNativePort();
+                ports.push(port);
+                return port;
+            },
+            lastError: () => ports.at(-1)?.lastError,
+            now: () => clock.now,
+            setTimeout: clock.setTimeout,
+            clearTimeout: clock.clearTimeout,
+            requestTimeoutMs: 30_000,
+        });
+        controller.open();
+        void controller.hello();
+        await ports[0]?.nextPosted();
+        expect(HOST_NAME).toBe('me.nagaev.veles.bridge');
+        expect(names).toEqual(['me.nagaev.veles.bridge']);
+        for (const name of names) expect(name).not.toMatch(/\.dev$|dev/i);
+    });
+
+    it('retries a missing host with a fresh hello only: no trust reset and no replay', async () => {
+        const context = setup();
+        const view = new RecordingView();
+        const app = new ConnectorApp({
+            controller: context.controller,
+            view,
+            trustSource: { activePeers: async () => [] },
+            setTimeout: context.clock.setTimeout,
+            clearTimeout: context.clock.clearTimeout,
+        });
+        const started = app.start();
+        await context.currentPort().nextPosted();
+        await context.currentPort().disconnect('Specified native messaging host not found.');
+        await started;
+        expect(view.last.guidance?.kind).toBe('missing_host');
+        const portsBefore = context.ports.length;
+
+        // The user installs the bridge and chooses Retry.
+        view.emit({ type: 'retry' });
+        const hello = await context.currentPort().nextPosted();
+        expect(context.ports.length).toBeGreaterThan(portsBefore);
+        expect(hello).toMatchObject({ type: 'hello', api_versions: [1] });
+        expect(context.currentPort().posted).toHaveLength(1);
     });
 });
 

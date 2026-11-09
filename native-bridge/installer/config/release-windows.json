@@ -1,0 +1,18 @@
+{
+    "schema": 1,
+    "channel": "production",
+    "version": "0.1.0",
+    "target": "windows-x86_64",
+    "minimum_os": "10",
+    "extension_id": "production",
+    "host_name": "me.nagaev.veles.bridge",
+    "bundle_id": "me.nagaev.veles.bridge",
+    "api_min": 1,
+    "api_max": 1,
+    "policy": {
+        "publishers": ["sha256:e34913a76c5ac08260e4577862a3b7be6dcd9d95f52d5af9ac4f3d277cf24c26"],
+        "denied_payloads": [],
+        "rollback_payloads": [],
+        "epoch": 1
+    }
+}

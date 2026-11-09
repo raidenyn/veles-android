@@ -1,5 +1,18 @@
 name: build-native-macos
 
+# OTP-25 Task 14/15: the macOS producer of the standalone installer.
+#
+# The caller states the build kind explicitly: `build-kind: release` builds the UNSIGNED
+# production-channel input tree through bridgeInstallerUnsigned (the two-slot A/B build Task 13
+# signs), while `build-kind: debug` builds the finished FIXTURE-channel DEBUG installer through
+# bridgeInstallerDebug (one slot, debug Rust/Swift, ad-hoc-signed DMG + metadata + symbols). There
+# is no config-file probe and no silent fixture fallback: an omitted or invalid build kind fails
+# before anything is built.
+#
+# Nothing here signs, notarizes or publishes; no secret, protected environment or artifact from
+# another run is used. The ad-hoc `codesign --force --sign -` of the debug payload runs inside the
+# Gradle packaging step and is not a release identity.
+
 on:
   workflow_call:
     inputs:
@@ -9,7 +22,10 @@ on:
       artifact-name:
         required: true
         type: string
-        default: native-macos
+        default: native-unsigned-macos
+      build-kind:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -17,37 +33,80 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
-    # Job-level environment so the pinned Xcode actually reaches the build
-    # process: every step below (xcodebuild validation and the Gradle/Tauri
-    # packaging tree) inherits DEVELOPER_DIR.
+    # Job-level environment so the pinned Xcode reaches every step: the xcodebuild validation, cargo's
+    # linker and the SwiftPM frontend build all inherit DEVELOPER_DIR.
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.commit-sha }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
-          node-version: '26.8.1'
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
       - name: Validate pinned Xcode toolchain
         run: |
           test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
           xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
-      # Normal packaging on the target runner: the executable, .app bundle,
-      # and DMG are built and packaged by one Gradle invocation with no
-      # sandbox wrapper.
-      - name: Package native bridge
-        run: ./gradlew bridgePackage
-      # Upload the packaged product directly: the outer archive, its sha256
-      # sidecar, and the component SHA256SUMS. The payload (including the
-      # symlinked .app entries) stays inside the outer archive, so
-      # artifact-upload mode changes cannot affect it.
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (host)
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Validate the build kind
+        shell: bash
+        env:
+          BUILD_KIND: ${{ inputs.build-kind }}
+        run: |
+          case "$BUILD_KIND" in
+            release|debug) ;;
+            *)
+              echo "build-kind must be release or debug (got '$BUILD_KIND')" >&2
+              exit 1
+              ;;
+          esac
+      # The engine's release carrier is not supplied here: it does not exist until this job's own
+      # assembler has run. The Gradle graph assembles the payload, verifies the carrier against the
+      # exact descriptor and the registered channel, and only then rebuilds the engine with
+      # VELES_EMBEDDED_CARRIER (fail-closed for the production channel). Supplying the variable in
+      # this workflow would point the build at a file nobody assembled from this commit.
+      - name: Build the production-channel unsigned input tree
+        if: inputs.build-kind == 'release'
+        run: ./gradlew bridgeInstallerUnsigned
+      # The debug build compiles Rust without --release and Swift in debug, enables the
+      # compile-time fixture trust adapter (build.rs refuses it for release/production), ad-hoc signs
+      # the nested code inside-out and packages the finished DMG with metadata and symbols.
+      - name: Build the debug fixture-channel installer
+        if: inputs.build-kind == 'debug'
+        env:
+          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: ./gradlew bridgeInstallerDebug
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: inputs.build-kind == 'release'
         with:
           name: ${{ inputs.artifact-name }}
           path: |
-            build/native-bridge/macos/veles-native-bridge-*.tar.gz
-            build/native-bridge/macos/veles-native-bridge-*.tar.gz.sha256
-            build/native-bridge/macos/SHA256SUMS
+            build/native-bridge/installer/out/production/tree.tar
+            build/native-bridge/installer/out/production/provenance.json
+            build/native-bridge/installer/out/production/report-ab.json
+            build/native-bridge/installer/out/production/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: inputs.build-kind == 'debug'
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: |
+            build/native-bridge/installer/out/debug/Veles Bridge Installer.dmg
+            build/native-bridge/installer/out/debug/metadata.json
+            build/native-bridge/installer/out/debug/SHA256SUMS
+            build/native-bridge/installer/out/debug/symbols
           if-no-files-found: error
           retention-days: 14

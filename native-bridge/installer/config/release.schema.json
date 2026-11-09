@@ -1,0 +1,168 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://example.invalid/veles/otp25/release-descriptor.schema.json",
+    "title": "Veles native-bridge installer release descriptor",
+    "description": "Schema 1 release identity and policy descriptor embedded in and authenticated with the signed maintenance carrier. Every field is required; unknown fields are rejected. Document limits: descriptor <= 256 KiB, inventory <= 4096 entries and <= 256 MiB, normalized relative paths <= 1024 UTF-8 bytes.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema",
+        "channel",
+        "version",
+        "source_commit",
+        "target",
+        "minimum_os",
+        "extension_id",
+        "host_name",
+        "bundle_id",
+        "api_min",
+        "api_max",
+        "payload_id",
+        "policy"
+    ],
+    "properties": {
+        "schema": {
+            "description": "Descriptor schema generation; only 1 is understood.",
+            "const": 1
+        },
+        "channel": {
+            "description": "Release channel. The channel selects host_name and bundle_id.",
+            "enum": ["production", "development", "fixture"]
+        },
+        "version": {
+            "description": "Three unsigned numeric components compared numerically, never lexicographically. The Rust validator (model.rs parse_version) is authoritative at runtime: it additionally requires every component to fit an unsigned 64-bit integer, which a regular expression cannot state.",
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        },
+        "source_commit": {
+            "description": "Full lowercase Git commit object ID (SHA-1 or SHA-256).",
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+        },
+        "target": {
+            "description": "Release target; named as in config/tools.lock.json.",
+            "enum": ["windows-x86_64", "macos-arm64"]
+        },
+        "minimum_os": {
+            "description": "Lowest supported OS version. Production targets must be at least Windows 10 or macOS 26.0.",
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*)){0,2}$"
+        },
+        "extension_id": {
+            "description": "Exactly one bare Chrome extension ID (32 characters a-p); the packaging allowlist in config/extension-ids.json decides which ids are accepted.",
+            "type": "string",
+            "pattern": "^[a-p]{32}$"
+        },
+        "host_name": {
+            "description": "Native Messaging host name, selected by channel.",
+            "type": "string"
+        },
+        "bundle_id": {
+            "description": "macOS bundle ID, selected by channel.",
+            "type": "string"
+        },
+        "api_min": {
+            "description": "Lowest supported host API generation.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+        },
+        "api_max": {
+            "description": "Highest supported host API generation; must be >= api_min.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+        },
+        "payload_id": {
+            "description": "SHA-256 of the unsigned canonical payload inventory.",
+            "$ref": "#/$defs/digest"
+        },
+        "policy": {
+            "$ref": "#/$defs/policy"
+        }
+    },
+    "allOf": [
+        {
+            "if": {
+                "properties": { "channel": { "const": "production" } },
+                "required": ["channel"]
+            },
+            "then": {
+                "properties": {
+                    "host_name": { "const": "me.nagaev.veles.bridge" },
+                    "bundle_id": { "const": "me.nagaev.veles.bridge" }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": { "channel": { "const": "development" } },
+                "required": ["channel"]
+            },
+            "then": {
+                "properties": {
+                    "host_name": { "const": "me.nagaev.veles.bridge.dev" },
+                    "bundle_id": { "const": "me.nagaev.veles.bridge.dev" }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": { "channel": { "const": "fixture" } },
+                "required": ["channel"]
+            },
+            "then": {
+                "properties": {
+                    "host_name": { "const": "me.nagaev.veles.bridge.fixture" },
+                    "bundle_id": { "const": "me.nagaev.veles.bridge.fixture" }
+                }
+            }
+        }
+    ],
+    "$defs": {
+        "digest": {
+            "description": "A SHA-256 digest rendered as exactly 64 lowercase hex characters.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+        },
+        "publisher": {
+            "description": "A trusted publisher/signer identity. The Rust validator (model.rs is_valid_publisher) is authoritative: 1 to 512 UTF-8 BYTES, no leading or trailing Unicode white space, and no control character (C0, DEL or C1). The schema deliberately states no pattern or character-length limit, because ECMA-262 \\S and JSON Schema's character-counted maxLength disagree with those rules in both directions and a divergent second rule would become a second authority.",
+            "type": "string",
+            "minLength": 1
+        },
+        "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["publishers", "denied_payloads", "rollback_payloads", "epoch"],
+            "properties": {
+                "publishers": {
+                    "description": "Trusted publisher identities; nonempty and unique.",
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "items": { "$ref": "#/$defs/publisher" }
+                },
+                "denied_payloads": {
+                    "description": "Payload digests that may never be activated again; denials accumulate.",
+                    "type": "array",
+                    "maxItems": 4096,
+                    "uniqueItems": true,
+                    "items": { "$ref": "#/$defs/digest" }
+                },
+                "rollback_payloads": {
+                    "description": "Payload digests eligible for an explicit rollback; eligibility is the live/incoming intersection.",
+                    "type": "array",
+                    "maxItems": 4096,
+                    "uniqueItems": true,
+                    "items": { "$ref": "#/$defs/digest" }
+                },
+                "epoch": {
+                    "description": "Monotonic policy generation. Relaxation requires a higher epoch and an authorized forward release.",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        }
+    }
+}
