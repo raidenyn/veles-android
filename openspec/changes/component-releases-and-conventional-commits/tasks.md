@@ -28,7 +28,7 @@
 ## 5. Version injection
 
 - [x] 5.1 Android `android-v` prefix (or fallback)
-- [ ] 5.2 Extension `resolveExtensionVersion` with Chrome validation, zip name from the emitted manifest, smoke/package tests updated, `build-web-extension.yml` `version` input and full-history checkout (+ contract tests)
+- [x] 5.2 Extension `resolveExtensionVersion` with Chrome validation, zip name from the emitted manifest, smoke/package tests updated, `build-web-extension.yml` `version` input and full-history checkout (+ contract tests)
 - [ ] 5.3 Installer effective version through descriptor, macOS `VERSION`, uninstaller and host, declared as task inputs; producers' `version` input (+ contract tests)
 
 ## 6. Unsigned Android producer
