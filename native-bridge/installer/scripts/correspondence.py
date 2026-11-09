@@ -1155,8 +1155,14 @@ def parse_signature(slice_: MachSlice, *, signed: bool = True) -> SignatureInfo:
     magic, length, count = struct.unpack_from(">III", region, 0)
     if magic != CSMAGIC_EMBEDDED_SIGNATURE:
         raise Reject(code, f"SuperBlob magic {magic:#x} is not an embedded signature")
-    if not 12 <= length <= len(region) or region[length:].strip(b"\x00"):
-        raise Reject(code, "SuperBlob length is inconsistent with LC_CODE_SIGNATURE or its padding is not zero")
+    # `length` is authoritative. Real codesign leaves non-zero allocation bytes
+    # between the SuperBlob end and the LC_CODE_SIGNATURE `datasize` when it
+    # replaces an existing signature (verified on macOS 26: the tail is the
+    # previous signature's bytes). That tail is not covered by the CodeDirectory
+    # and the kernel ignores it, so it is neither evidence nor a reason to refuse
+    # an otherwise valid signature.
+    if not 12 <= length <= len(region):
+        raise Reject(code, "SuperBlob length is inconsistent with LC_CODE_SIGNATURE")
     region = region[:length]
     if not 1 <= count <= MAX_SUPERBLOB_BLOBS or 12 + 8 * count > length:
         raise Reject(code, "SuperBlob blob count is implausible")

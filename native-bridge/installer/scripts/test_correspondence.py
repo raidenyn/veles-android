@@ -1681,6 +1681,18 @@ class MachoReviewFindingTests(WorkDir):
                 signed, _ = build_signed_macho(der_entitlements=payload)
                 self.expect_fail(unsigned, signed, "macho-invalid-entitlements")
 
+    def test_real_codesign_allocation_tail_is_not_part_of_the_signature(self):
+        # codesign leaves the previous signature's bytes between the SuperBlob end
+        # and the LC_CODE_SIGNATURE datasize when it replaces a signature; the
+        # kernel ignores them and so must this tool.
+        unsigned, _ = build_macho()
+        signed, meta = build_signed_macho()
+        sig = meta["sig_off"]
+        length = struct.unpack_from(">I", signed, sig + 4)[0]
+        image = bytearray(signed)
+        image[sig + length : sig + length + 32] = b"\x5a" * 32
+        self.passes(unsigned, bytes(image))
+
     def test_f3_der_value_budget_is_slot_wide(self):
         payload = der_entitlements({f"k{index}": True for index in range(2100)})
         with self.assertRaises(correspondence.Reject) as caught:
