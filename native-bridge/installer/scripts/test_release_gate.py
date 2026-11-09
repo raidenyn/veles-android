@@ -79,6 +79,20 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# A DER-shaped root certificate long enough that every common tool wraps its base64 across lines.
+ROOT_DER = b"0\x82\x01\x00fixture self-signed root certificate DER" + bytes(range(150))
+
+
+def wrapped(encoded: str, width: int, newline: str = "\n") -> str:
+    """Line wrapping as emitted by ``base64`` (76 columns) and ``openssl base64``/``certutil -encode`` (64)."""
+    return newline.join(encoded[i : i + width] for i in range(0, len(encoded), width))
+
+
+def pem_certificate(encoded: str, newline: str = "\r\n") -> str:
+    """A complete PEM certificate block as ``certutil -encode`` writes it."""
+    return f"-----BEGIN CERTIFICATE-----{newline}{wrapped(encoded, 64, newline)}{newline}-----END CERTIFICATE-----{newline}"
+
+
 # -- build-tool identity (F8) ----------------------------------------------------------------------
 # The repository lock keeps the Windows MSVC/SDK identities `required_unresolved` on purpose, so a Windows
 # candidate can never be eligible from it. The orchestration tests below need a Windows pipeline that GETS
@@ -663,6 +677,129 @@ class CredentialAndAuthorizationTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Credential encodings
+# ---------------------------------------------------------------------------
+
+
+class CredentialEncodingTests(unittest.TestCase):
+    """Every ``*_BASE64`` secret takes single-line or wrapped base64; the root certificate also takes PEM.
+
+    ``base64`` (76 columns), ``openssl base64`` and ``certutil -encode`` (64 columns) all wrap their
+    output, and ``certutil -encode`` emits a PEM block; a decoder that requires one unwrapped line
+    rejects an owner-supplied secret that looks entirely normal on the console.
+    """
+
+    def root_encodings(self) -> dict[str, str]:
+        encoded = base64.b64encode(ROOT_DER).decode()
+        return {
+            "single line": encoded,
+            "64-column wrapped": wrapped(encoded, 64) + "\n",
+            "76-column wrapped": wrapped(encoded, 76) + "\n",
+            "76-column wrapped CRLF": wrapped(encoded, 76, "\r\n") + "\r\n",
+            "PEM with LF": pem_certificate(encoded, "\n"),
+            "PEM with CRLF": pem_certificate(encoded, "\r\n"),
+            "PEM with CRLF and blank lines": f"-----BEGIN CERTIFICATE-----\r\n\r\n{wrapped(encoded, 64, '\r\n')}\r\n\r\n-----END CERTIFICATE-----\r\n",
+        }
+
+    def self_signed_env(self, value: str) -> dict[str, str]:
+        return {**good_env("windows"), "VELES_WIN_TRUST_SELF_SIGNED": "1", "VELES_WIN_ROOT_CER_BASE64": value}
+
+    def test_the_root_certificate_accepts_wrapped_base64_and_a_pem_block(self) -> None:
+        for label, value in self.root_encodings().items():
+            with self.subTest(label):
+                problems = gate.credential_format_errors("windows", self.self_signed_env(value))
+                self.assertEqual(problems, [], label)
+                self.assertEqual(gate.decode_credential(value, pem=True), ROOT_DER, label)
+
+    def test_malformed_root_values_are_refused_without_echoing_them(self) -> None:
+        encoded = base64.b64encode(ROOT_DER).decode()
+        pem = pem_certificate(encoded)
+        cases = {
+            "not base64 at all": "not base64!topsecret",
+            "garbage before the block": "topsecret\n" + pem,
+            "garbage after the block": pem + "topsecret\n",
+            "two PEM blocks": pem + pem,
+            "another PEM label": pem.replace("CERTIFICATE", "PRIVATE KEY"),
+            "PEM label with trailing text": pem.replace("-----END CERTIFICATE-----", "-----END CERTIFICATE----- trailing"),
+            "empty": "",
+            "whitespace only": " \t\r\n\f\v",
+            "PEM with an empty body": "-----BEGIN CERTIFICATE-----\r\n-----END CERTIFICATE-----\r\n",
+            "non-ASCII whitespace inside the value": "AAAA\u00a0AAAA",
+            "non-ASCII whitespace at the edge": "\u00a0" + encoded + "\u2003",
+            "ASCII field separator at the edge": "\x1c" + encoded,
+            "non-zero trailing pad bits": "AB==",
+            "bad padding": "AAA===",
+            "outside the alphabet": encoded + "$",
+        }
+        for label, value in cases.items():
+            with self.subTest(label):
+                problems = gate.credential_format_errors("windows", self.self_signed_env(value))
+                self.assertTrue(any("VELES_WIN_ROOT_CER_BASE64" in problem for problem in problems), label)
+                for problem in problems:
+                    self.assertNotIn("topsecret", problem, "an error message must never echo the value")
+                with self.assertRaises(gate.CredentialFormatError, msg=label):
+                    gate.decode_credential(value, pem=True)
+
+    def test_an_empty_or_zero_byte_value_is_an_error(self) -> None:
+        for value in ("", "   ", "\n\t\r\n"):
+            with self.subTest(value=value):
+                with self.assertRaises(gate.CredentialFormatError) as caught:
+                    gate.decode_credential(value)
+                self.assertEqual(str(caught.exception), "is empty")
+        self.assertEqual(gate.decode_credential(base64.b64encode(b"x").decode()), b"x")
+
+    def test_pem_framing_is_only_accepted_where_it_is_documented(self) -> None:
+        # The PFX, P12 and notary key are raw file bytes: a PEM block there is not a base64 value.
+        with self.assertRaises(gate.CredentialFormatError):
+            gate.decode_credential(pem_certificate(base64.b64encode(ROOT_DER).decode()))
+
+    def test_write_secret_writes_the_decoded_bytes_for_wrapped_base64_and_pem(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="gate-secret-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        stage = gate.Stage(root, {}, FakeRunner({}))
+        pfx_bytes = b"wrapped-pfx-bytes" * 12
+        pfx = stage.write_secret(root / "release.pfx", wrapped(base64.b64encode(pfx_bytes).decode(), 64) + "\n")
+        self.assertEqual(pfx.read_bytes(), pfx_bytes)
+        self.assertEqual(stat.S_IMODE(pfx.stat().st_mode), 0o600)
+        ker = stage.write_secret(root / "root.cer", pem_certificate(base64.b64encode(ROOT_DER).decode()), pem=True)
+        self.assertEqual(ker.read_bytes(), ROOT_DER)
+        with self.assertRaises(gate.StageFailure) as caught:
+            stage.write_secret(root / "other.pfx", "not base64!topsecret")
+        self.assertEqual(caught.exception.code, "credential-invalid")
+        self.assertNotIn("topsecret", caught.exception.detail)
+
+    def test_a_wrapped_windows_pfx_reaches_the_import_step_byte_identically(self) -> None:
+        payload = b"wrapped-pfx-bytes" * 12
+        seen: dict[str, bytes] = {}
+
+        class Capture(FakeRunner):
+            def tool_certutil(self, args):
+                if "-importPFX" in args:
+                    seen["pfx"] = Path(args[args.index("-importPFX") + 1]).read_bytes()
+                return super().tool_certutil(args)
+
+        case = Case(self, "windows", "nested", VELES_WIN_PFX_BASE64=wrapped(base64.b64encode(payload).decode(), 76) + "\r\n")
+        _, outcome = case.run(Capture(case.env))
+        self.assertTrue(outcome.ok, outcome.detail)
+        self.assertEqual(seen["pfx"], payload)
+
+    def test_a_wrapped_macos_p12_reaches_the_import_step_byte_identically(self) -> None:
+        payload = b"wrapped-p12-bytes" * 12
+        seen: dict[str, bytes] = {}
+
+        class Capture(FakeRunner):
+            def tool_security(self, args):
+                if args[:1] == ["import"]:
+                    seen["p12"] = Path(args[1]).read_bytes()
+                return super().tool_security(args)
+
+        case = Case(self, "macos", "nested", VELES_MAC_P12_BASE64=wrapped(base64.b64encode(payload).decode(), 64) + "\n")
+        _, outcome = case.run(Capture(case.env))
+        self.assertTrue(outcome.ok, outcome.detail)
+        self.assertEqual(seen["p12"], payload)
+
+
+# ---------------------------------------------------------------------------
 # Successful orchestration shape
 # ---------------------------------------------------------------------------
 
@@ -1037,6 +1174,40 @@ class WindowsSignerIdentityTests(unittest.TestCase):
             ),
             "the recorded anchor itself, not only the leaf, must be removed",
         )
+
+    def test_self_signed_mode_records_the_same_anchor_for_wrapped_base64_and_pem(self) -> None:
+        encoded = base64.b64encode(ROOT_DER).decode()
+        forms = {
+            "64-column wrapped base64": wrapped(encoded, 64) + "\n",
+            "76-column wrapped base64": wrapped(encoded, 76, "\r\n") + "\r\n",
+            "PEM certificate": pem_certificate(encoded),
+        }
+        written: dict[str, bytes] = {}
+
+        class CaptureRoot(FakeRunner):
+            def tool_certutil(self, args):
+                if "-addstore" in args:
+                    written["root"] = Path(args[-1]).read_bytes()
+                return super().tool_certutil(args)
+
+        for label, value in forms.items():
+            with self.subTest(label):
+                written.clear()
+                case = Case(
+                    self,
+                    "windows",
+                    "nested",
+                    VELES_WIN_TRUST_SELF_SIGNED="1",
+                    VELES_WIN_ROOT_CER_BASE64=value,
+                )
+                _, outcome = case.run(CaptureRoot(case.env))
+                self.assertTrue(outcome.ok, outcome.detail)
+                for record in outcome.fragment["components"]:
+                    signature = record["signature"]
+                    self.assertIs(signature["public_trust"], False)
+                    self.assertEqual(signature["trust_mode"], "self-signed")
+                    self.assertEqual(signature["trust_anchor_sha256"], hashlib.sha256(ROOT_DER).hexdigest())
+                self.assertEqual(written["root"], ROOT_DER, "root.cer must hold the DER bytes themselves")
 
     def test_self_signed_mode_requires_a_well_formed_root_certificate(self) -> None:
         env = {**good_env("windows"), "VELES_WIN_TRUST_SELF_SIGNED": "1"}
