@@ -7,6 +7,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.withTimeout
@@ -56,8 +57,9 @@ class SessionHostTest {
     private fun TestScope.host(
         transport: SessionTransport = wire,
         repository: InstallationTrustRepository = trust,
+        now: () -> Long = { clock.now },
         factory: (ConnectionGeneration) -> PhoneSessionEngine,
-    ): SessionHost = SessionHost(backgroundScope, transport, factory, repository) { clock.now }
+    ): SessionHost = SessionHost(backgroundScope, transport, factory, repository, now)
 
     private fun engine(
         client: TestClient,
@@ -65,6 +67,18 @@ class SessionHostTest {
         signer: IdentitySigner = phone.signer,
         handler: ApplicationHandler? = null,
     ): PhoneSessionEngine = TestPeers.engine(signer, TestPeers.lookup(TestPeers.record(client, state)), clock, handler)
+
+    /** Engine whose clock is the test scheduler, for tests that advance virtual time. */
+    private fun engineAt(client: TestClient, now: () -> Long, handler: ApplicationHandler? = null): PhoneSessionEngine =
+        PhoneSessionEngine(
+            localInstallationId = TestPeers.phoneInstallationId,
+            signer = phone.signer,
+            lookup = TestPeers.lookup(TestPeers.record(client)),
+            clock = now,
+            ephemeral = { TestPeers.phoneEphemeral },
+            nonce = { TestPeers.phoneNonce },
+            handler = handler,
+        )
 
     private fun clientLike(client: TestClient) =
         TestClient(identity = client.identity, installationId = client.installationId, ephemeral = P256.generate())
@@ -375,6 +389,77 @@ class SessionHostTest {
         release.complete(Unit)
         runCurrent()
         assertEquals("erasure is idempotent", 1, firstAdmission.releases)
+    }
+
+    @Test
+    fun tickProducerKeepsRunningWhileTheEngineIsSuspended() = runTest {
+        val client = TestClient()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+            override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+                entered.complete(Unit)
+                gate.await()
+            }
+        }
+        val host = host(now = { testScheduler.currentTime }) { engineAt(client, { testScheduler.currentTime }, handler) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client)
+        val beforeTicks = wire.sent.size
+
+        host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(9)), admission())
+        runCurrent()
+        assertTrue("the handler holds the worker", entered.isCompleted)
+
+        // A slow handler must not let coalesced ticks fill and stop the producer.
+        advanceTimeBy(60_000L)
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        val afterResume = wire.sent.size
+        assertTrue("the queued tick still emits a heartbeat", afterResume > beforeTicks)
+
+        advanceTimeBy(60_000L)
+        runCurrent()
+        assertTrue("the tick producer survived saturation", wire.sent.size > afterResume)
+    }
+
+    @Test
+    fun shutdownFailsWaitingApplicationSenders() = runTest {
+        val client = TestClient()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+            override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+                entered.complete(Unit)
+                gate.await()
+            }
+        }
+        val host = host { engine(client, handler = handler) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client)
+        host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(9)), admission())
+        runCurrent()
+        assertTrue(entered.isCompleted)
+
+        var result: Boolean? = null
+        val caller = launch { result = host.sendApplication(gen, RecordType.PUSH_EVENT.wire, ByteArray(0)) }
+        runCurrent()
+        assertNull("the worker is still suspended", result)
+
+        host.shutdown()
+        runCurrent()
+
+        assertTrue("shutdown completes the queued caller", caller.isCompleted)
+        assertEquals(false, result)
+        gate.complete(Unit)
+        runCurrent()
     }
 
     @Test

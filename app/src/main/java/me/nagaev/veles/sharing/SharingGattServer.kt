@@ -70,6 +70,14 @@ internal class SharingGattServer(
     private data class Quarantine(val flight: Flight, val at: Long)
     private val quarantine = mutableMapOf<String, Quarantine>()
 
+    /**
+     * A quarantine that expired without the stale acknowledgement. The next callback for the
+     * address is then ambiguous (it may be that delayed ack or the replacement's own ack), so
+     * it fails the current link closed instead of ever completing a record. Only a callback
+     * consumes the marker; it survives unrelated disconnects.
+     */
+    private val ambiguous = mutableSetOf<String>()
+
     /** Idempotent transfer of one GATT ingress slot from the callback to the record's owner. */
     private class BoundedAdmission(
         private val id: String,
@@ -329,6 +337,13 @@ internal class SharingGattServer(
         private fun onNotificationSentOnMain(device: BluetoothDevice, status: Int, flight: Flight?) = post {
             if (BuildConfig.DEBUG) SyntheticTransportFixture.telemetry?.callback(device.address, status)
             val id = device.address
+            // An expired quarantine makes this callback ambiguous: it may be the previous
+            // generation's delayed ack, so it must never acknowledge a record. Fail closed.
+            if (synchronized(stateLock) { ambiguous.remove(id) }) {
+                synchronized(stateLock) { inflight.remove(id) }
+                disconnect(id)
+                return@post
+            }
             if (flight == null) {
                 // No fenced notification owns this address. If a generation just ended with a
                 // fragment in flight, this first callback is that stale acknowledgement: consume
@@ -368,11 +383,15 @@ internal class SharingGattServer(
                     (id !in ready || id !in subscribed) && SystemClock.elapsedRealtime() - at >= 5000
                 }
                     .keys.toList().forEach(::disconnect)
-                // A stale acknowledgement that never arrived must not stall a replacement link.
+                // A stale acknowledgement that never arrived must not stall a replacement link,
+                // but its address must stay fail-closed: the next callback there is ambiguous.
                 val released = synchronized(stateLock) {
                     val now = SystemClock.elapsedRealtime()
                     quarantine.filterValues { now - it.at >= QUARANTINE_MILLIS }.keys.toList().also { ids ->
-                        ids.forEach(quarantine::remove)
+                        ids.forEach {
+                            quarantine.remove(it)
+                            ambiguous.add(it)
+                        }
                     }
                 }
                 released.forEach(::pump)
@@ -742,6 +761,7 @@ internal class SharingGattServer(
             pending.clear()
             inflight.clear()
             quarantine.clear()
+            ambiguous.clear()
         }
         transport.clear()
         try {

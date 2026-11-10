@@ -1,6 +1,11 @@
 package me.nagaev.veles.session
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -211,6 +216,76 @@ class PhoneSessionEngineHandshakeTest {
         val second = engine.onTick().single() as SessionEffect.Send
         assertEquals(RecordType.APP_HEARTBEAT.wire, openedHeartbeat(client, second.bytes, 2uL).type)
         assertTrue(engine.isOpen)
+    }
+
+    @Test
+    fun teardownDuringSuspendedSignerIsFinal() = runBlocking {
+        val client = TestClient()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val signer = IdentitySigner { message ->
+            entered.complete(Unit)
+            gate.await()
+            phone.signer.signDer(message)
+        }
+        val engine = TestPeers.engine(signer, TestPeers.lookup(TestPeers.record(client)), clock)
+
+        val hello = async(Dispatchers.Default) { engine.onInbound(client.helloFrame) }
+        withTimeout(5_000) { entered.await() }
+        engine.teardown()
+        gate.complete(Unit)
+
+        assertTrue(
+            "a signing result that resumes after teardown installs nothing",
+            withTimeout(5_000) { hello.await() }.isEmpty(),
+        )
+        assertFalse(engine.isOpen)
+        assertNull(engine.sessionClass)
+        assertNull(engine.peerId)
+        assertTrue("later input is refused", engine.onInbound(client.helloFrame).isEmpty())
+    }
+
+    @Test
+    fun teardownDuringSuspendedLookupRefusesLateKeyInstall() = runBlocking {
+        val client = TestClient()
+        val record = TestPeers.record(client)
+        var calls = 0
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val lookup = PeerLookup {
+            if (calls++ == 0) {
+                record
+            } else {
+                entered.complete(Unit)
+                gate.await()
+                record
+            }
+        }
+        val engine = TestPeers.engine(phone.signer, lookup, clock)
+        val helloEffects = engine.onInbound(client.helloFrame)
+        clientAccept(helloEffects, client)
+
+        val late = async(Dispatchers.Default) { engine.onInbound(client.signatureFrame()) }
+        withTimeout(5_000) { entered.await() }
+        engine.teardown()
+        gate.complete(Unit)
+
+        assertTrue(
+            "a signature result that resumes after teardown installs no keys",
+            withTimeout(5_000) { late.await() }.isEmpty(),
+        )
+        assertFalse(engine.isOpen)
+        assertNull(engine.sessionClass)
+        assertNull(engine.peerId)
+    }
+
+    private fun clientAccept(helloEffects: List<SessionEffect>, client: TestClient) {
+        val phoneHelloPayload = PreAuthCodec.decode((helloEffects[0] as SessionEffect.Send).bytes).second
+        val phoneSignature = SignatureFrame.decode(
+            PreAuthCodec.decode((helloEffects[1] as SessionEffect.Send).bytes).second,
+            Role.PHONE,
+        ).signature
+        client.acceptPhoneHello(phoneHelloPayload, phoneSignature)
     }
 
     private fun openedHeartbeat(client: TestClient, record: ByteArray, sequence: ULong): OpenedRecord = RecordCodec.open(

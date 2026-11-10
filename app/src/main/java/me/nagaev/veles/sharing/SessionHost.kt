@@ -4,6 +4,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -107,8 +109,14 @@ class SessionHost(
         @Volatile var ended = false
         @Volatile var tick: Job? = null
 
+        /** At most one tick step may be queued, so a saturated worker cannot exhaust the queue. */
+        val tickQueued = java.util.concurrent.atomic.AtomicBoolean(false)
+
         /** Records handed in through [onRecord] and not yet erased; guarded by [registry]. */
         val inbound = LinkedHashSet<OwnedRecord>()
+
+        /** Senders waiting on a queued application step; all of them are failed on teardown. */
+        val applications = LinkedHashSet<Step.Application>()
 
         /** Set once the engine reports authentication; volatile so the probe can query it safely. */
         @Volatile var sessionClass: SessionClass? = null
@@ -182,8 +190,16 @@ class SessionHost(
     suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
         val live = synchronized(registry) { sessions[gen] } ?: return false
         val step = Step.Application(type, body, CompletableDeferred())
-        if (!enqueueSuspending(live, step)) return false
-        return step.result.await()
+        synchronized(registry) { live.applications += step }
+        if (!enqueueSuspending(live, step)) {
+            synchronized(registry) { live.applications -= step }
+            return false
+        }
+        return try {
+            step.result.await()
+        } finally {
+            synchronized(registry) { live.applications -= step }
+        }
     }
 
     /**
@@ -192,7 +208,7 @@ class SessionHost(
      * worker is not required, only the generation mutex. A call that never returns is timed
      * out and the erasure is applied anyway; the generation is ended and cannot admit new work.
      */
-    suspend fun shutdown() {
+    suspend fun shutdown() = withContext(NonCancellable) {
         val lives = synchronized(registry) { all.toList() }
         lives.forEach { live ->
             live.ended = true
@@ -234,8 +250,18 @@ class SessionHost(
             // deadlines decide whether that first tick is already terminal.
             if (now <= last) continue
             last = now
-            if (!enqueue(live, Step.Tick)) return
+            if (live.ended) return
+            enqueueTick(live)
         }
+    }
+
+    /**
+     * Coalesces ticks: at most one tick waits behind a suspended engine step, so a slow handler
+     * can never fill the queue and the producer keeps running for later deadlines.
+     */
+    private fun enqueueTick(live: Live) {
+        if (!live.tickQueued.compareAndSet(false, true)) return
+        if (!enqueue(live, Step.Tick)) live.tickQueued.set(false)
     }
 
     private suspend fun handleStep(live: Live, step: Step) {
@@ -250,8 +276,11 @@ class SessionHost(
             is Step.Completion -> live.mutex.withLock {
                 if (isCurrent(live)) runStep(live) { live.engine.onSendComplete(step.token, step.ok) }
             }
-            Step.Tick -> live.mutex.withLock {
-                if (isCurrent(live)) runStep(live) { live.engine.onTick() }
+            Step.Tick -> {
+                live.tickQueued.set(false)
+                live.mutex.withLock {
+                    if (isCurrent(live)) runStep(live) { live.engine.onTick() }
+                }
             }
             is Step.Application -> {
                 val result = live.mutex.withLock {
@@ -268,6 +297,7 @@ class SessionHost(
                         }
                     }
                 }
+                synchronized(registry) { live.applications -= step }
                 step.result.complete(result)
             }
             Step.Teardown -> live.mutex.withLock { teardownLocked(live) }
@@ -382,6 +412,10 @@ class SessionHost(
         live.queue.close()
         val records = synchronized(registry) { live.inbound.toList().also { live.inbound.clear() } }
         records.forEach(::erase)
+        // Every waiting sendApplication caller gets a deterministic failure, even when the
+        // worker never processes its queued step (shutdown, cancellation).
+        val applications = synchronized(registry) { live.applications.toList().also { live.applications.clear() } }
+        applications.forEach { it.result.complete(false) }
         live.engine.teardown()
         live.sessionClass = null
         live.peerId?.fill(0)

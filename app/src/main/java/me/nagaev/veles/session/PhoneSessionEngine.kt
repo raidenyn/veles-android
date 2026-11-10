@@ -31,7 +31,15 @@ class PhoneSessionEngine(
 ) {
     private val localInstallationId: ByteArray = localInstallationId.copyOf()
 
-    private var state = State.AWAITING_CLIENT_HELLO
+    /**
+     * Guards every post-suspension commit and the final teardown. A host may have to tear the
+     * engine down from another thread while a suspended signer or lookup has not returned yet;
+     * the lock makes teardown a final transition: a resumed operation either commits before
+     * the erasure (and is then erased) or observes CLOSED and installs nothing.
+     */
+    private val finality = Any()
+
+    @Volatile private var state = State.AWAITING_CLIENT_HELLO
     private var peerInstallationId: ByteArray? = null
     private var peerPublicKey: ByteArray? = null
     private var localRecord: PeerRecord? = null
@@ -95,7 +103,7 @@ class PhoneSessionEngine(
     }
 
     @Suppress("ReturnCount") // Expiry first, then a foreign token and a failed send both fail closed.
-    suspend fun onSendComplete(token: Long, ok: Boolean): List<SessionEffect> {
+    suspend fun onSendComplete(token: Long, ok: Boolean): List<SessionEffect> = synchronized(finality) {
         if (state == State.CLOSED) return emptyList()
         expiryFailure()?.let { return terminate(it) }
         if (exhausted()) return terminate(STAGE_SEQUENCE)
@@ -104,11 +112,11 @@ class PhoneSessionEngine(
         if (!ok) return terminate(STAGE_SEND_FAILED)
         confirmSendComplete = true
         if (!peerConfirmVerified) return emptyList()
-        return authenticate()
+        authenticate()
     }
 
     @Suppress("ReturnCount") // Expiry/exhaustion terminate; an early heartbeat and an error both short-circuit.
-    suspend fun sendApplication(type: Int, body: ByteArray): List<SessionEffect> {
+    suspend fun sendApplication(type: Int, body: ByteArray): List<SessionEffect> = synchronized(finality) {
         if (state != State.OPEN) throw SessionReject()
         expiryFailure()?.let { return terminate(it) }
         if (exhausted()) return terminate(STAGE_SEQUENCE)
@@ -117,16 +125,16 @@ class PhoneSessionEngine(
             teardownInternal()
             return listOf(SessionEffect.Send(record), SessionEffect.Terminated(STAGE_APP_ERROR), SessionEffect.Close)
         }
-        return listOf(SessionEffect.Send(record))
+        listOf(SessionEffect.Send(record))
     }
 
     /** Deadlines first, then the 60 s outbound-silence heartbeat (plan heartbeat driver). */
-    suspend fun onTick(): List<SessionEffect> {
+    suspend fun onTick(): List<SessionEffect> = synchronized(finality) {
         val now = clock()
         if (state == State.CLOSED) return emptyList()
         expiryFailure(now)?.let { return terminate(it) }
         if (exhausted()) return terminate(STAGE_SEQUENCE)
-        return when (state) {
+        when (state) {
             State.CLOSED -> emptyList()
             State.AWAITING_CLIENT_HELLO,
             State.AWAITING_CLIENT_SIGNATURE,
@@ -181,17 +189,24 @@ class PhoneSessionEngine(
         }
         // The signer is suspending: it may finish after the deadline or after teardown.
         abandoned(State.AWAITING_CLIENT_HELLO)?.let { return it }
-
-        peerInstallationId = hello.installationId.copyOf()
-        peerPublicKey = record.identityPublicKey.copyOf()
-        localRecord = record
-        ephemeralKeyPair = keyPair
-        localNonce = localNonceValue.copyOf()
-        clientHello = hello
-        rbase = transcript
-        phoneSignature = signature
-        state = State.AWAITING_CLIENT_SIGNATURE
-        handshakeDeadlineAt = clock() + SessionLimits.HANDSHAKE_TIMEOUT_MS
+        val committed = synchronized(finality) {
+            if (state != State.AWAITING_CLIENT_HELLO) {
+                false
+            } else {
+                peerInstallationId = hello.installationId.copyOf()
+                peerPublicKey = record.identityPublicKey.copyOf()
+                localRecord = record
+                ephemeralKeyPair = keyPair
+                localNonce = localNonceValue.copyOf()
+                clientHello = hello
+                rbase = transcript
+                phoneSignature = signature
+                state = State.AWAITING_CLIENT_SIGNATURE
+                handshakeDeadlineAt = clock() + SessionLimits.HANDSHAKE_TIMEOUT_MS
+                true
+            }
+        }
+        if (!committed) return emptyList()
         return listOf(
             sendFrame(FrameType.RECONNECT_HELLO.wire, phoneHelloPayload),
             sendFrame(FrameType.RECONNECT_SIGNATURE.wire, SignatureFrame(Role.PHONE, signature).encode()),
@@ -222,13 +237,34 @@ class PhoneSessionEngine(
         val ownState = if (current.state == LocalRecordState.ACTIVE) PEER_STATE_ACTIVE else PEER_STATE_BELOW_ACTIVE
         val body = ReconnectKeySchedule.confirmation(derived.phoneConfirmKey, input) + byteArrayOf(ownState.toByte())
         val prefix = derived.sessionId.copyOfRange(0, SESSION_PREFIX_BYTES)
+        val effects = installSignatureKeys(derived, prefix, input, signature, current, body)
+        if (effects.isEmpty()) derived.erase()
+        return effects
+    }
+
+    /**
+     * The key install is a final commit: teardown either precedes it (and this refuses) or
+     * follows it (and erases everything it installed).
+     */
+    @Suppress("ReturnCount") // Teardown, sealing failure and success are three distinct outcomes.
+    private fun installSignatureKeys(
+        derived: ReconnectKeys,
+        prefix: ByteArray,
+        input: ByteArray,
+        signature: ByteArray,
+        current: PeerRecord,
+        body: ByteArray,
+    ): List<SessionEffect> = synchronized(finality) {
+        if (state != State.AWAITING_CLIENT_SIGNATURE) return emptyList()
         val record = try {
             sealConfirm(derived, prefix, body)
         } catch (_: SessionReject) {
+            null
+        }
+        if (record == null) {
             derived.erase()
             return rejectPreAuth()
         }
-
         keys = derived
         sessionIdPrefix = prefix
         confirmInput = input
@@ -241,11 +277,12 @@ class PhoneSessionEngine(
         lastOutboundAt = clock()
         state = State.AWAITING_PEER_CONFIRM
         handshakeDeadlineAt = clock() + SessionLimits.HANDSHAKE_TIMEOUT_MS
-        return listOf(SessionEffect.Send(record, confirmToken))
+        listOf(SessionEffect.Send(record, confirmToken))
     }
 
     @Suppress("ReturnCount") // Fail closed on every record, type or confirmation failure.
-    private suspend fun onPeerConfirm(bytes: ByteArray): List<SessionEffect> {
+    private suspend fun onPeerConfirm(bytes: ByteArray): List<SessionEffect> = synchronized(finality) {
+        if (state == State.CLOSED) return emptyList()
         if (isPreAuthFrame(bytes)) return terminate(STAGE_UNEXPECTED_FRAME)
         val open = keys ?: return terminate(STAGE_RECORD_INVALID)
         val prefix = sessionIdPrefix ?: return terminate(STAGE_RECORD_INVALID)
@@ -262,24 +299,30 @@ class PhoneSessionEngine(
         peerConfirmVerified = true
         inboundSequence = CONFIRM_SEQUENCE + 1uL
         if (!confirmSendComplete) return emptyList()
-        return authenticate()
+        authenticate()
     }
 
     @Suppress("ReturnCount") // Every record rejection ends the session without delivering anything.
     private suspend fun onProtectedRecord(bytes: ByteArray): List<SessionEffect> {
-        if (isPreAuthFrame(bytes)) return terminate(STAGE_UNEXPECTED_FRAME)
-        val open = keys ?: return terminate(STAGE_RECORD_INVALID)
-        val prefix = sessionIdPrefix ?: return terminate(STAGE_RECORD_INVALID)
-        val opened = try {
-            RecordCodec.open(open.c2pKey, open.c2pPrefix, prefix, Direction.CLIENT_TO_PHONE, inboundSequence, bytes)
-        } catch (_: SessionReject) {
-            return terminate(STAGE_RECORD_INVALID)
-        }
-        lastActivityAt = clock()
-        if (opened.sequence == SessionLimits.SEQUENCE_MAX) {
-            inboundExhausted = true
-        } else {
-            inboundSequence = opened.sequence + 1uL
+        // The record opening and sequence update are a final commit; the handler (which may
+        // suspend) runs outside the lock.
+        val opened = synchronized(finality) {
+            if (state == State.CLOSED) return emptyList()
+            if (isPreAuthFrame(bytes)) return terminate(STAGE_UNEXPECTED_FRAME)
+            val open = keys ?: return terminate(STAGE_RECORD_INVALID)
+            val prefix = sessionIdPrefix ?: return terminate(STAGE_RECORD_INVALID)
+            val decoded = try {
+                RecordCodec.open(open.c2pKey, open.c2pPrefix, prefix, Direction.CLIENT_TO_PHONE, inboundSequence, bytes)
+            } catch (_: SessionReject) {
+                return terminate(STAGE_RECORD_INVALID)
+            }
+            lastActivityAt = clock()
+            if (decoded.sequence == SessionLimits.SEQUENCE_MAX) {
+                inboundExhausted = true
+            } else {
+                inboundSequence = decoded.sequence + 1uL
+            }
+            decoded
         }
         return deliver(opened)
     }
@@ -353,7 +396,8 @@ class PhoneSessionEngine(
     }
 
     /** OTP2-REC-034: the fifth heartbeat in a rolling 60 s window in one direction ends it. */
-    private fun heartbeatReceived(direction: Direction, now: Long): List<SessionEffect> {
+    private fun heartbeatReceived(direction: Direction, now: Long): List<SessionEffect> = synchronized(finality) {
+        if (state == State.CLOSED) return emptyList()
         val times = receivedHeartbeats.getValue(direction)
         while (times.isNotEmpty() && now - times.first() >= SessionLimits.HEARTBEAT_WINDOW_MS) {
             times.removeFirst()
@@ -396,7 +440,8 @@ class PhoneSessionEngine(
      * reserving a sequence. A null result means "nothing was sent".
      */
     @Suppress("ThrowsCount") // One generic rejection for every §7.3/§11.4 authorization failure.
-    private fun sealApplication(type: Int, body: ByteArray): ByteArray? {
+    private fun sealApplication(type: Int, body: ByteArray): ByteArray? = synchronized(finality) {
+        if (state == State.CLOSED) throw SessionReject()
         if (outboundExhausted) throw SessionReject()
         if (type == RecordType.RECONNECT_CONFIRM.wire) throw SessionReject()
         val cls = fixedClass ?: throw SessionReject()
@@ -435,7 +480,8 @@ class PhoneSessionEngine(
         byteArrayOf(code.wire.toByte(), 0, 0)
 
     @Suppress("ReturnCount") // Both gate halves must be present before the class is fixed.
-    private fun authenticate(): List<SessionEffect> {
+    private fun authenticate(): List<SessionEffect> = synchronized(finality) {
+        if (state == State.CLOSED) return emptyList()
         if (authenticated) return emptyList()
         val record = localRecord ?: return terminate(STAGE_RECORD_INVALID)
         val installationId = peerInstallationId ?: return terminate(STAGE_RECORD_INVALID)
@@ -445,7 +491,7 @@ class PhoneSessionEngine(
         authenticated = true
         state = State.OPEN
         lastActivityAt = clock()
-        return listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf()))
+        listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf()))
     }
 
     private fun selectClass(record: PeerRecord, confirmedPeerState: Int): SessionClass = when (record.state) {
@@ -564,7 +610,21 @@ class PhoneSessionEngine(
         return listOf(SessionEffect.Terminated(reason), SessionEffect.Close)
     }
 
+    /**
+     * Idempotent final transition. A concurrent caller (the host's shutdown path) may reach this
+     * while a suspended operation has not returned; the lock linearizes the erasure against
+     * that operation's post-suspension commit, which re-checks [state] inside the same lock.
+     */
     private fun teardownInternal() {
+        synchronized(finality) {
+            if (state == State.CLOSED) return
+            eraseAll()
+            state = State.CLOSED
+        }
+    }
+
+    /** One explicit erasure list, easier to audit than scattered setters. */
+    private fun eraseAll() {
         keys?.erase()
         keys = null
         // JCA's ECPrivateKey exposes the scalar only as an immutable BigInteger, so the plan-fixed
@@ -603,7 +663,6 @@ class PhoneSessionEngine(
         lastHeartbeatSentAt = null
         receivedHeartbeats.values.forEach { it.clear() }
         handshakeDeadlineAt = 0L
-        state = State.CLOSED
     }
 
     private enum class State { AWAITING_CLIENT_HELLO, AWAITING_CLIENT_SIGNATURE, AWAITING_PEER_CONFIRM, OPEN, CLOSED }

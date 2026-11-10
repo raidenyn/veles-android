@@ -894,6 +894,40 @@ class SharingGattServerTest {
         assertEquals("the new generation completes its own record only", listOf(77L to false, 88L to true), completions)
     }
 
+    @Test fun staleCallbackAfterQuarantineTimeoutFailsTheNewLinkClosed() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+        subscribe(a, 517)
+        val old = connections.last()
+        assertTrue(subject.send(old, ByteArray(1016) { 3 }, 77L))
+        flush()
+        assertEquals(1, sent.size)
+
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+        subscribe(a, 517)
+        val fresh = connections.last()
+        assertEquals(listOf(77L to false), completions)
+        assertTrue(subject.send(fresh, ByteArray(20) { 4 }, 88L))
+        flush()
+        assertEquals("the quarantine holds the replacement", 1, sent.size)
+
+        // No stale ack arrived within the quarantine: the sweep releases the pump but must
+        // leave the address ambiguous for the next callback.
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertEquals("the replacement may send again", 2, sent.size)
+
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(
+            "an ambiguous callback never completes a record",
+            listOf(77L to false, 88L to false),
+            completions,
+        )
+        verify { platform.cancelConnection(a) }
+    }
+
     @Test fun duplicateNotificationCallbackNeverAcknowledgesASecondRecord() {
         val sent = mutableListOf<ByteArray>()
         every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
