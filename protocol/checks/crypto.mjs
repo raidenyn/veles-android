@@ -504,11 +504,11 @@ export function enrollmentTranscript({ ctx, pA, pB, cA, cB, phoneBody, clientBod
 
 // ---------- Reconnect (OTP2-REC-020/020a/020b/020c, OTP2-CRY-019f) ----------
 
-export function helloPayload({ installation_id, identity_pub, nonce, role, caps }) {
+export function helloPayload({ installation_id, ephemeral_pub, nonce, role, caps }) {
   const capsBytes = caps.map(hb);
   return concatBytes(
     hb(installation_id),
-    hb(identity_pub),
+    hb(ephemeral_pub),
     hb(nonce),
     hb(role),
     u16be(1), // protocol_version
@@ -732,27 +732,6 @@ export function deriveReconnect(input) {
   const et = hb(input.et);
   const phonePub = pubFromPriv(input.phone_identity_priv);
   const clientPub = pubFromPriv(input.client_identity_priv);
-  const phoneHello = helloPayload({
-    installation_id: input.phone_installation_id,
-    identity_pub: phonePub,
-    nonce: input.phone_nonce,
-    role: "01",
-    caps: input.phone_caps,
-  });
-  const clientHello = helloPayload({
-    installation_id: input.client_installation_id,
-    identity_pub: clientPub,
-    nonce: input.client_nonce,
-    role: "02",
-    caps: input.client_caps,
-  });
-  // rbase (OTP2-REC-020a): label(29) || phone_hello_payload || client_hello_payload
-  const rbase = concatBytes(label("reconnect_transcript"), phoneHello, clientHello);
-  const rbaseDigest = sha256(rbase);
-  // ECDSA-P256-SHA256 over rbase hashed EXACTLY ONCE (OTP2-REC-020a): the
-  // digest goes in with prehash:false, so no second hash occurs.
-  const phoneSig = signP1363LowS(rbaseDigest, input.phone_identity_priv);
-  const clientSig = signP1363LowS(rbaseDigest, input.client_identity_priv);
   const ephPubOf = (priv) => {
     const pub = mulScalar(POINT.BASE, bnOf(hb(priv)));
     if (pub.equals(POINT.ZERO)) throw new Error("degenerate identity ephemeral point: restart before exposure");
@@ -760,6 +739,34 @@ export function deriveReconnect(input) {
   };
   const phoneEphPub = ephPubOf(input.phone_ephemeral_priv);
   const clientEphPub = ephPubOf(input.client_ephemeral_priv);
+  // OTP2-REC-020: the reconnect hello carries the sender's fresh ephemeral
+  // public key (never the identity key); ECDH later uses the same ephemeral keys.
+  const phoneHello = helloPayload({
+    installation_id: input.phone_installation_id,
+    ephemeral_pub: phoneEphPub,
+    nonce: input.phone_nonce,
+    role: "01",
+    caps: input.phone_caps,
+  });
+  const clientHello = helloPayload({
+    installation_id: input.client_installation_id,
+    ephemeral_pub: clientEphPub,
+    nonce: input.client_nonce,
+    role: "02",
+    caps: input.client_caps,
+  });
+  for (const [name, hello, ephPub] of [["phone", phoneHello, phoneEphPub], ["client", clientHello, clientEphPub]]) {
+    if (bytesToHex(hello.subarray(16, 81)) !== ephPub) {
+      throw new Error(`${name} reconnect hello point is not its ephemeral public key (OTP2-REC-020)`);
+    }
+  }
+  // rbase (OTP2-REC-020a): label(29) || phone_hello_payload || client_hello_payload
+  const rbase = concatBytes(label("reconnect_transcript"), phoneHello, clientHello);
+  const rbaseDigest = sha256(rbase);
+  // ECDSA-P256-SHA256 over rbase hashed EXACTLY ONCE (OTP2-REC-020a): the
+  // digest goes in with prehash:false, so no second hash occurs.
+  const phoneSig = signP1363LowS(rbaseDigest, input.phone_identity_priv);
+  const clientSig = signP1363LowS(rbaseDigest, input.client_identity_priv);
   const ssPhone = ecdhX(input.phone_ephemeral_priv, clientEphPub);
   const ssClient = ecdhX(input.client_ephemeral_priv, phoneEphPub);
   if (Buffer.compare(Buffer.from(ssPhone), Buffer.from(ssClient)) !== 0) {
