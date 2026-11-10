@@ -425,6 +425,20 @@ export class PhoneHarness {
         if (helloEffects.length !== 0) throw new Error('the engine rejected the phone hello');
         const phoneSignature = await this.phone.sign(transcript);
         const effects = await this.deliverPhoneSignature(transcript, phoneSignature);
+        return this.adoptHandshake(started, phoneHelloPayload, phoneSignature, effects);
+    }
+
+    /**
+     * Derives the client's keys and confirm input after the caller already delivered the
+     * phone hello and signature frames step by step (the Task 10 scenario runner).
+     */
+    async adoptHandshake(
+        started: StartedHandshake,
+        phoneHelloPayload: Uint8Array,
+        phoneSignature: Uint8Array,
+        effects: SessionEffect[],
+    ): Promise<HandshakeDrive> {
+        const transcript = reconnectRbase(phoneHelloPayload, started.clientHelloPayload);
         if (effects.length !== 2) {
             throw new Error(`expected signature and confirm, got ${effects.length} effects`);
         }

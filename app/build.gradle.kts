@@ -1,3 +1,5 @@
+import java.util.zip.ZipFile
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.androidgitversion)
@@ -119,6 +121,14 @@ android.sourceSets.getByName("test").resources.srcDir(
 android.sourceSets.getByName("testDebug").resources.srcDir(
     rootProject.layout.projectDirectory.dir("protocol/v1"),
 )
+// OTP-09 Task 10: the scenario inventory is owned by the `protocol` component and
+// read from the shared tree, never copied into the app.
+android.sourceSets.getByName("test").resources.srcDir(
+    rootProject.layout.projectDirectory.dir("protocol/conformance"),
+)
+android.sourceSets.getByName("testDebug").resources.srcDir(
+    rootProject.layout.projectDirectory.dir("protocol/conformance"),
+)
 android.sourceSets.getByName("androidTest").assets.srcDir(
     rootProject.layout.projectDirectory.dir("protocol/v1"),
 )
@@ -137,6 +147,97 @@ afterEvaluate {
         filter {
             includeTestsMatching("me.nagaev.veles.protocol.ProtocolFixturesTest")
         }
+    }
+
+    // OTP-09 Task 10: `sessionLoopbackCheck` runs the TypeScript client against the real
+    // Kotlin phone engine in a child JVM. This task only publishes the unit-test JVM
+    // classpath; it compiles the same source sets `protocolJvmTest` depends on.
+    tasks.register("sessionLoopbackClasspath") {
+        group = "verification"
+        description = "Writes the JVM unit-test classpath used by the cross-endpoint session loopback."
+        dependsOn(unitTest.taskDependencies.getDependencies(unitTest))
+        val output = layout.buildDirectory.file("session-loopback/classpath.txt")
+        outputs.file(output)
+        doLast {
+            val file = output.get().asFile
+            file.parentFile.mkdirs()
+            file.writeText(unitTest.classpath.asPath)
+        }
+    }
+}
+
+// OTP-09 D5 release guard: the minified release APK must not carry any debug
+// hook class, receiver or synthetic probe string. Debug-only sources live under
+// app/src/debug and the debug application handler never enters a release build;
+// this task proves it against the actual R8 output in both UTF-8 and UTF-16LE.
+val releaseHookForbidden = listOf(
+    "me/nagaev/veles/debugprobe",
+    "VelesProbe",
+    "Veles synthetic",
+    "me.nagaev.veles.debug.",
+    "INJECT_PEER",
+    "REVOKE_PEER",
+)
+
+/** First byte offset of [needle] in this array, or -1. */
+fun indexOfBytes(haystack: ByteArray, needle: ByteArray): Int {
+    if (needle.isEmpty() || haystack.size < needle.size) return -1
+    outer@ for (start in 0..(haystack.size - needle.size)) {
+        for (index in needle.indices) {
+            if (haystack[start + index] != needle[index]) continue@outer
+        }
+        return start
+    }
+    return -1
+}
+
+tasks.register("releaseHookGuard") {
+    group = "verification"
+    description = "Fails when the minified release APK contains a debug hook class, receiver or probe string."
+    dependsOn(":app:assembleRelease")
+    doLast {
+        val apkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+        val apks = apkDir.listFiles { file -> file.isFile && file.extension == "apk" }
+            .orEmpty()
+            .sortedBy { it.name }
+        check(apks.isNotEmpty()) {
+            "releaseHookGuard: no release APK under ${apkDir.path}; run :app:assembleRelease"
+        }
+        val encodings = listOf(Charsets.UTF_8, Charsets.UTF_16LE)
+        apks.forEach { apk ->
+            ZipFile(apk).use { zip ->
+                val entries = zip.entries().asSequence()
+                    .filter { entry ->
+                        !entry.isDirectory && (
+                            entry.name == "AndroidManifest.xml" ||
+                                entry.name == "resources.arsc" ||
+                                (entry.name.startsWith("classes") && entry.name.endsWith(".dex"))
+                            )
+                    }
+                    .toList()
+                check(entries.isNotEmpty()) {
+                    "releaseHookGuard: ${apk.name} has no DEX, manifest or resources.arsc entries"
+                }
+                entries.forEach { entry ->
+                    val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                    releaseHookForbidden.forEach { needle ->
+                        encodings.forEach { charset ->
+                            val offset = indexOfBytes(bytes, needle.toByteArray(charset))
+                            if (offset >= 0) {
+                                throw GradleException(
+                                    "releaseHookGuard: ${apk.name}!${entry.name} contains forbidden " +
+                                        "release string '$needle' (${charset.name()}, byte $offset)",
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        logger.lifecycle(
+            "releaseHookGuard: ${apks.joinToString { it.name }} contain no debug hook classes, " +
+                "receivers or probe strings",
+        )
     }
 }
 

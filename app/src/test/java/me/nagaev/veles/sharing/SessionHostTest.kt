@@ -10,10 +10,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import me.nagaev.veles.session.ApplicationHandler
 import me.nagaev.veles.session.FakeClock
 import me.nagaev.veles.session.IdentitySigner
@@ -33,8 +33,8 @@ import me.nagaev.veles.trust.ActivationStep
 import me.nagaev.veles.trust.InstallationIdentity
 import me.nagaev.veles.trust.InstallationTrustRepository
 import me.nagaev.veles.trust.PendingPeer
-import me.nagaev.veles.trust.TrustedPeer
 import me.nagaev.veles.trust.TrustEncoding
+import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -69,19 +69,18 @@ class SessionHostTest {
     ): PhoneSessionEngine = TestPeers.engine(signer, TestPeers.lookup(TestPeers.record(client, state)), clock, handler)
 
     /** Engine whose clock is the test scheduler, for tests that advance virtual time. */
-    private fun engineAt(client: TestClient, now: () -> Long, handler: ApplicationHandler? = null): PhoneSessionEngine =
-        PhoneSessionEngine(
-            localInstallationId = TestPeers.phoneInstallationId,
-            signer = phone.signer,
-            lookup = TestPeers.lookup(TestPeers.record(client)),
-            clock = now,
-            ephemeral = { TestPeers.phoneEphemeral },
-            nonce = { TestPeers.phoneNonce },
-            handler = handler,
-        )
+    private fun engineAt(client: TestClient, now: () -> Long, handler: ApplicationHandler? = null): PhoneSessionEngine = PhoneSessionEngine(
+        localInstallationId = TestPeers.phoneInstallationId,
+        signer = phone.signer,
+        lookup = TestPeers.lookup(TestPeers.record(client)),
+        clock = now,
+        ephemeral = { TestPeers.phoneEphemeral },
+        nonce = { TestPeers.phoneNonce },
+        handler = handler,
+    )
 
-    private fun clientLike(client: TestClient) =
-        TestClient(identity = client.identity, installationId = client.installationId, ephemeral = P256.generate())
+    @Suppress("MaxLineLength") // ktlint keeps this expression body on one line.
+    private fun clientLike(client: TestClient) = TestClient(identity = client.identity, installationId = client.installationId, ephemeral = P256.generate())
 
     private fun admission(): RecordAdmission = RecordAdmission { }
 
@@ -133,7 +132,10 @@ class SessionHostTest {
             phone.signer.signDer(message)
         }
         lateinit var created: PhoneSessionEngine
-        val host = host { created = engine(client, signer = signer); created }
+        val host = host {
+            created = engine(client, signer = signer)
+            created
+        }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         host.onRecord(gen, client.helloFrame.copyOf(), admission())
@@ -223,7 +225,10 @@ class SessionHostTest {
         val client = TestClient()
         lateinit var created: PhoneSessionEngine
         val failing = RecordingTransport(accept = false)
-        val host = host(transport = failing) { created = engine(client); created }
+        val host = host(transport = failing) {
+            created = engine(client)
+            created
+        }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
 
@@ -265,7 +270,10 @@ class SessionHostTest {
     fun confirmCompletionPendingThenPeerConfirm() = runTest {
         val client = TestClient()
         lateinit var created: PhoneSessionEngine
-        val host = host { created = engine(client); created }
+        val host = host {
+            created = engine(client)
+            created
+        }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         host.onRecord(gen, client.helloFrame.copyOf(), admission())
@@ -565,8 +573,7 @@ class SessionHostTest {
         }
     }
 
-    private suspend fun awaitSends(transport: RecordingTransport, count: Int) =
-        awaitCondition { transport.sent.size >= count }
+    private suspend fun awaitSends(transport: RecordingTransport, count: Int) = awaitCondition { transport.sent.size >= count }
 
     private suspend fun awaitCondition(condition: () -> Boolean) {
         kotlinx.coroutines.withTimeout(5_000) {
@@ -578,7 +585,10 @@ class SessionHostTest {
     fun tickFiresIdleTeardownWithoutInbound() = runTest {
         val client = TestClient()
         lateinit var created: PhoneSessionEngine
-        val host = host { created = engine(client); created }
+        val host = host {
+            created = engine(client)
+            created
+        }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
         authenticate(host, gen, client)
@@ -612,7 +622,10 @@ class SessionHostTest {
     fun wakeAfterExpiryTearsDownOnFirstTick() = runTest {
         val client = TestClient()
         lateinit var created: PhoneSessionEngine
-        val host = host { created = engine(client); created }
+        val host = host {
+            created = engine(client)
+            created
+        }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
 

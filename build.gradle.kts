@@ -648,6 +648,34 @@ val protocolWebTest = tasks.register<Exec>("protocolWebTest") {
     commandLine(npmCommand, "exec", "vitest", "run", "test/protocol-fixtures.test.ts")
 }
 
+// OTP-09 Task 10 cross-endpoint loopback: the real Kotlin phone engine runs in a child
+// JVM while the production TypeScript client engine plays the peer over the stdin/stdout
+// protocol. `VELES_LOOPBACK_REQUIRED=1` makes the Vitest suite fail instead of skipping
+// when the classpath is unavailable, so CI can never silently lose the check.
+val sessionLoopbackClasspathFile = layout.projectDirectory.file("app/build/session-loopback/classpath.txt")
+
+val sessionLoopbackCheck = tasks.register<Exec>("sessionLoopbackCheck") {
+    group = "verification"
+    description = "Runs the Kotlin phone / TypeScript client cross-endpoint session loopback."
+    dependsOn(":app:sessionLoopbackClasspath", protocolWebInstall)
+    workingDir(layout.projectDirectory.dir("web-extension"))
+    doFirst {
+        val classpathFile = sessionLoopbackClasspathFile.asFile
+        check(classpathFile.isFile) {
+            "sessionLoopbackCheck: missing ${classpathFile.path}; run :app:sessionLoopbackClasspath"
+        }
+        environment("VELES_LOOPBACK_CLASSPATH", classpathFile.readText().trim())
+        environment("VELES_LOOPBACK_REQUIRED", "1")
+        // The child JVM is the Gradle toolchain JVM (Java 21 per .java-version), not whatever
+        // `java` happens to be first on the PATH of the npm process.
+        environment(
+            "VELES_LOOPBACK_JAVA",
+            File(System.getProperty("java.home"), "bin/java").absolutePath,
+        )
+    }
+    commandLine(npmCommand, "exec", "vitest", "run", "test/session/loopback.test.ts")
+}
+
 val protocolFreshEvidenceCheck = tasks.register<Exec>("protocolFreshEvidenceCheck") {
     group = "verification"
     description = "Regenerates and independently checks fresh OTP-02 crypto evidence only."
@@ -2207,7 +2235,14 @@ tasks.named("check") {
 tasks.register("protocolCheck") {
     group = "verification"
     description = "Runs all host-runnable OTP-02 fixture consumers and contract checks."
-    dependsOn(protocolContractCheck, protocolRustTest, protocolWebTest, protocolBridgeTest, ":app:protocolJvmTest")
+    dependsOn(
+        protocolContractCheck,
+        protocolRustTest,
+        protocolWebTest,
+        protocolBridgeTest,
+        ":app:protocolJvmTest",
+        sessionLoopbackCheck,
+    )
 }
 
 tasks.named<Delete>("clean") {

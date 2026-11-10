@@ -522,6 +522,21 @@ export class ClientSessionEngine {
         state.outboundExhausted = false;
     }
 
+    /** Test-only OTP2-STA-015 erasure observation: final state with no key material left. */
+    get _keysErased(): boolean {
+        return this.#state.phase === 'closed' && this.#state.keys === null;
+    }
+
+    /** Test-only read of the next expected inbound sequence (Task 10 effect observations). */
+    get _inboundSequence(): bigint {
+        return this.#state.inboundSequence;
+    }
+
+    /** Test-only read of the next outbound sequence. */
+    get _outboundSequence(): bigint {
+        return this.#state.outboundSequence;
+    }
+
     async #onPhoneHello(state: EngineState, bytes: Uint8Array): Promise<SessionEffect[]> {
         const frame = this.#decodeFrame(bytes);
         if (frame === null || frame.type !== FrameType.RECONNECT_HELLO) {

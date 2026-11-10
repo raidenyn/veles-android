@@ -5,12 +5,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import me.nagaev.veles.session.PhoneSessionEngine
 import me.nagaev.veles.session.SessionClass
@@ -118,6 +118,7 @@ class SessionHost(
         val queue = Channel<Step>(QUEUE_CAPACITY)
 
         @Volatile var ended = false
+
         @Volatile var tick: Job? = null
 
         /** At most one tick step may be queued, so a saturated worker cannot exhaust the queue. */
@@ -131,7 +132,9 @@ class SessionHost(
 
         /** Set once the engine reports authentication; volatile so the probe can query it safely. */
         @Volatile var sessionClass: SessionClass? = null
+
         @Volatile var peerId: ByteArray? = null
+
         @Volatile var sessionIdPrefix: ByteArray? = null
     }
 
@@ -462,8 +465,7 @@ class SessionHost(
         }
     }
 
-    private fun isCurrent(live: Live): Boolean =
-        !live.ended && synchronized(registry) { sessions[live.gen] === live }
+    private fun isCurrent(live: Live): Boolean = !live.ended && synchronized(registry) { sessions[live.gen] === live }
 
     private companion object {
         const val TICK_MILLIS = 1_000L

@@ -163,6 +163,18 @@ class PhoneSessionEngine(
         outboundExhausted = false
     }
 
+    /** Test-only read of the next expected inbound sequence (Task 10 effect observations). */
+    @VisibleForTesting
+    val inboundSequenceForTest: ULong get() = inboundSequence
+
+    /** Test-only read of the next outbound sequence. */
+    @VisibleForTesting
+    val outboundSequenceForTest: ULong get() = outboundSequence
+
+    /** Test-only OTP2-STA-015 erasure observation: final state with no key material left. */
+    @VisibleForTesting
+    val keysErasedForTest: Boolean get() = state == State.CLOSED && keys == null
+
     @Suppress("ReturnCount") // Each validation failure rejects before any state is applied.
     private suspend fun onClientHello(bytes: ByteArray): List<SessionEffect> {
         val frame = decodeFrame(bytes) ?: return rejectPreAuth()
@@ -479,8 +491,7 @@ class PhoneSessionEngine(
         return now - last < SessionLimits.HEARTBEAT_MIN_INTERVAL_MS
     }
 
-    private fun appErrorBody(code: AppErrorCode): ByteArray =
-        byteArrayOf(code.wire.toByte(), 0, 0)
+    private fun appErrorBody(code: AppErrorCode): ByteArray = byteArrayOf(code.wire.toByte(), 0, 0)
 
     @Suppress("ReturnCount") // Both gate halves must be present before the class is fixed.
     private fun authenticate(): List<SessionEffect> = synchronized(finality) {
@@ -559,8 +570,8 @@ class PhoneSessionEngine(
 
     private fun isPreAuthFrame(bytes: ByteArray): Boolean = bytes.isNotEmpty() && FrameType.fromWire(bytes[0].toInt() and U8_MASK) != null
 
-    private fun isHelloFrame(bytes: ByteArray): Boolean =
-        bytes.isNotEmpty() && (bytes[0].toInt() and U8_MASK) == FrameType.RECONNECT_HELLO.wire
+    @Suppress("MaxLineLength") // ktlint keeps this expression body on one line.
+    private fun isHelloFrame(bytes: ByteArray): Boolean = bytes.isNotEmpty() && (bytes[0].toInt() and U8_MASK) == FrameType.RECONNECT_HELLO.wire
 
     /** Plan "expiry first": evaluated before any inbound event or send completion is processed. */
     private fun expiryFailure(now: Long = clock()): String? = when (state) {

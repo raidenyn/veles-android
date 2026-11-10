@@ -110,7 +110,8 @@ class PhoneSessionEngineTimingTest {
     }
 
     @Test
-    fun outboundOnlyActivityPreventsIdle() = runTest {        val client = TestClient()
+    fun outboundOnlyActivityPreventsIdle() = runTest {
+        val client = TestClient()
         val engine = engine(lookupFor(client))
         open(engine, client)
 

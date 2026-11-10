@@ -436,8 +436,6 @@ class PhoneSessionEngineRecordsTest {
             type: Int,
             body: ByteArray,
             reply: suspend (type: Int, body: ByteArray) -> Unit,
-        ) {
-            throw error
-        }
+        ): Unit = throw error
     }
 }

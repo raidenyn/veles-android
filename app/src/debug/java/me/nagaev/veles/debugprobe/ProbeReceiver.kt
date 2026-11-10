@@ -48,8 +48,7 @@ internal class SessionProbeSessions(private val host: SessionHost) : ProbeSessio
 
     override fun hasOpenSession(peerId: String): Boolean = host.hasOpenSession(peerId)
 
-    override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean =
-        host.sendApplication(gen, type, body)
+    override suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean = host.sendApplication(gen, type, body)
 }
 
 private object NoSessions : ProbeSessions {

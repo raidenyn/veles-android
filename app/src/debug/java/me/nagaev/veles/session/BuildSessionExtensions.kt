@@ -5,8 +5,8 @@ import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.debugprobe.DebugProbeEntryPoint
 import me.nagaev.veles.debugprobe.DebugProbeRuntime
-import me.nagaev.veles.debugprobe.ProbeReceiver
 import me.nagaev.veles.debugprobe.PROBE_TAG
+import me.nagaev.veles.debugprobe.ProbeReceiver
 import me.nagaev.veles.debugprobe.SyntheticProbeHandler
 import me.nagaev.veles.sharing.SessionHost
 import me.nagaev.veles.trust.ActivationVerifier

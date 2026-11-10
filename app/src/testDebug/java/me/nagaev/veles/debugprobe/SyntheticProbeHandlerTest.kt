@@ -453,7 +453,8 @@ class SyntheticProbeHandlerTest {
         assertFalse(
             "the probe never depends on the notification listener or its messages: $names",
             names.any {
-                it.contains("NotificationListener") || it.contains("OtpMessage") ||
+                it.contains("NotificationListener") ||
+                    it.contains("OtpMessage") ||
                     it.contains("StatusBarNotification")
             },
         )

@@ -97,8 +97,8 @@ class SharingGattServerTest {
         subject = start(listener)
     }
 
-    private fun start(listener: ConnectionListener): SharingGattServer =
-        SharingGattServer(context, states::add, listener).also { it.start() }
+    @Suppress("MaxLineLength") // ktlint keeps this expression body on one line.
+    private fun start(listener: ConnectionListener): SharingGattServer = SharingGattServer(context, states::add, listener).also { it.start() }
 
     private fun admission(): RecordAdmission = RecordAdmission { }
 
@@ -754,8 +754,7 @@ class SharingGattServerTest {
             every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
             lateinit var server: SharingGattServer
             val transport = object : SessionTransport {
-                override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean =
-                    server.send(gen, bytes, token)
+                override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean = server.send(gen, bytes, token)
 
                 override fun close(gen: ConnectionGeneration) = server.close(gen)
             }

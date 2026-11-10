@@ -206,8 +206,7 @@ internal class SharingService : Service() {
     private class BoundTransport : SessionTransport {
         lateinit var server: SharingGattServer
 
-        override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean =
-            server.send(gen, bytes, token)
+        override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean = server.send(gen, bytes, token)
 
         override fun close(gen: ConnectionGeneration) = server.close(gen)
     }

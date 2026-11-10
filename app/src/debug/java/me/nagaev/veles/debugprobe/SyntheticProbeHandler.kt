@@ -80,7 +80,8 @@ internal class SyntheticProbeHandler private constructor(
     private val log: (String) -> Unit,
     private val ledger: SyntheticEventLedger,
     private val sessionIdPrefix: ByteArray?,
-) : ApplicationHandler, ProbeEventSource {
+) : ApplicationHandler,
+    ProbeEventSource {
     constructor(
         localInstallationId: ByteArray,
         clock: () -> Long,
@@ -98,8 +99,7 @@ internal class SyntheticProbeHandler private constructor(
         sessionIdPrefix = sessionIdPrefix.copyOf(),
     )
 
-    override fun handles(type: Int): Boolean =
-        type == RecordType.PULL_REQUEST.wire || type == RecordType.EVENT_ACK.wire
+    override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire || type == RecordType.EVENT_ACK.wire
 
     override suspend fun handle(
         type: Int,
