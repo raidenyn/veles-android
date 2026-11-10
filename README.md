@@ -1,5 +1,8 @@
 # Veles
 
+[![CI](https://github.com/raidenyn/veles-android/actions/workflows/ci.yml/badge.svg)](https://github.com/raidenyn/veles-android/actions/workflows/ci.yml)
+[![publish-release](https://github.com/raidenyn/veles-android/actions/workflows/publish-release.yml/badge.svg)](https://github.com/raidenyn/veles-android/actions/workflows/publish-release.yml)
+
 Veles is an Android app that intercepts bank OTP (one-time password) notifications, extracts the OTP code along with the transaction amount and merchant name, and re-presents the OTP as a clean, concise notification with a one-tap **Copy** action.
 
 When a bank pushes a verbose SMS notification, Veles catches it, parses out the useful parts, cancels the original, and posts a simplified notification containing just what you need: the code, the amount, and who charged you. One tap copies the OTP to the clipboard so you can paste it straight into the banking app or website you're authenticating into.
