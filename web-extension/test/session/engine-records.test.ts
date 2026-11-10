@@ -457,6 +457,100 @@ describe('client protected records and timing', () => {
         expect(harness.engine.isOpen).toBe(false);
     });
 
+    it('reply encryption completing after the idle deadline is torn down', async () => {
+        let harness: PhoneHarness | null = null;
+        const handler: ApplicationHandler = {
+            handles: (type) => type === RecordType.PULL_EVENTS,
+            async handle(
+                _type: number,
+                _body: Uint8Array,
+                reply: (type: number, body: Uint8Array) => Promise<void>,
+            ): Promise<void> {
+                // Start the reply just before the 180 s idle deadline.
+                harness?.clock.advance(179_000);
+                await reply(RecordType.EVENT_ACK, Uint8Array.of(0x01));
+            },
+        };
+        harness = await PhoneHarness.create({ handler });
+        await harness.openSession();
+        const inbound = await harness.phoneRecord(RecordType.PULL_EVENTS, 1n);
+
+        let entered = (): void => undefined;
+        const encrypting = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        let release = (): void => undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const original = takeSubtle('encrypt');
+        const restore = patchSubtle('encrypt', async (...args) => {
+            const aad = (args[0] as { additionalData?: Uint8Array }).additionalData;
+            if (aad !== undefined && aad[3] === 0x02 && aad[4] === 0x04) {
+                entered();
+                await gate;
+            }
+            return original(...args);
+        });
+        try {
+            const pending = harness.engine.onInbound(inbound);
+            await encrypting;
+            // The encryption completes only after the deadline has passed.
+            harness.clock.advance(2_000);
+            release();
+
+            const effects = await pending;
+
+            expect(terminatedReason(effects)).toBe('idle');
+            expect(
+                effects.some((effect) => effect.kind === 'deliver' || effect.kind === 'send'),
+            ).toBe(false);
+            expect(harness.engine.isOpen).toBe(false);
+            expect(await harness.engine.onTick()).toEqual([]);
+        } finally {
+            restore();
+        }
+    });
+
+    it('oversize direct send does not consume a sequence', async () => {
+        const harness = await PhoneHarness.create();
+        await harness.openSession();
+
+        await expect(
+            harness.engine.sendApplication(RecordType.PULL_REQUEST, new Uint8Array(4_058)),
+        ).rejects.toBeInstanceOf(SessionReject);
+        expect(harness.engine.isOpen).toBe(true);
+
+        const effects = await harness.engine.sendApplication(RecordType.PULL_REQUEST, EMPTY);
+        expect(await harness.openClientApplication(sendBytes(effects), 1n)).toMatchObject({
+            type: RecordType.PULL_REQUEST,
+        });
+    });
+
+    it('sealing failure after reservation closes the session', async () => {
+        const harness = await PhoneHarness.create();
+        await harness.openSession();
+
+        const original = takeSubtle('encrypt');
+        const restore = patchSubtle('encrypt', async (...args) => {
+            const aad = (args[0] as { additionalData?: Uint8Array }).additionalData;
+            if (aad !== undefined && aad[3] === 0x02 && aad[4] === 0x00) {
+                throw new Error('seal failed');
+            }
+            return original(...args);
+        });
+        try {
+            const effects = await harness.engine.sendApplication(RecordType.PULL_REQUEST, EMPTY);
+            expect(terminatedReason(effects)).toBe('dependency');
+            expect(harness.engine.isOpen).toBe(false);
+            await expect(
+                harness.engine.sendApplication(RecordType.PULL_REQUEST, EMPTY),
+            ).rejects.toBeInstanceOf(SessionReject);
+        } finally {
+            restore();
+        }
+    });
+
     it('early heartbeat ignored', async () => {
         const harness = await PhoneHarness.create();
         await harness.openSession();

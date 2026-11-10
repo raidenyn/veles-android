@@ -12,7 +12,7 @@ import {
 } from './limits';
 import { requireValidPoint } from './p256';
 import { authorized } from './policy';
-import { openRecord, sealRecord, type OpenedRecord } from './record';
+import { RECORD_MAX_CIPHERTEXT_BYTES, openRecord, sealRecord, type OpenedRecord } from './record';
 import { SessionReject } from './reject';
 import {
     confirmation,
@@ -286,6 +286,19 @@ function reject(): never {
     throw new SessionReject();
 }
 
+/**
+ * A send whose sequence (and so its AES-GCM nonce) was already reserved but
+ * whose record never completed — either the seal failed or the deadline
+ * passed while it was sealing. The nonce may have reached the wire, so the
+ * caller must tear the session down instead of reusing or rolling it back.
+ */
+class SealFailure extends Error {
+    constructor() {
+        super('seal failed after sequence reservation');
+        this.name = 'SealFailure';
+    }
+}
+
 function tryOpen(
     keys: ReconnectKeys,
     prefix: Uint8Array,
@@ -416,7 +429,18 @@ export class ClientSessionEngine {
         const expiry = this.#expiryFailure(now);
         if (expiry !== null) return this.#terminate(expiry);
         if (this.#exhausted(state)) return this.#terminate(STAGE_SEQUENCE);
-        const record = await this.#sealApplication(state, type, body);
+        let record: Uint8Array | null;
+        try {
+            record = await this.#sealApplication(state, type, body);
+        } catch (error) {
+            if (this.#state !== state) return [];
+            const lateExpiry = this.#expiryFailure(this.#deps.now());
+            if (lateExpiry !== null) return this.#terminate(lateExpiry);
+            if (error instanceof SealFailure) return this.#terminate(STAGE_DEPENDENCY);
+            // A pre-reservation rejection (for example an oversize body or an
+            // unauthorized type) leaves the session and its sequence intact.
+            throw error;
+        }
         if (this.#state !== state) return [];
         if (record === null) return [];
         if (type === RecordType.APP_ERROR) {
@@ -837,6 +861,9 @@ export class ClientSessionEngine {
                 appErrorBody(AppErrorCode.PROTOCOL_VIOLATION),
             );
         } catch {
+            if (this.#state !== state) return [];
+            const lateExpiry = this.#expiryFailure(this.#deps.now());
+            if (lateExpiry !== null) return this.#terminate(lateExpiry);
             error = null;
         }
         if (this.#state !== state) return [];
@@ -871,18 +898,29 @@ export class ClientSessionEngine {
         type: number,
         body: Uint8Array,
     ): Promise<Uint8Array | null> {
-        const plan = this.#planSeal(state, type);
+        const plan = this.#planSeal(state, type, body);
         if (plan === null) return null;
-        const record = await sealRecord(
-            plan.keys.c2pKey,
-            plan.keys.c2pPrefix,
-            plan.prefix,
-            Direction.CLIENT_TO_PHONE,
-            type,
-            plan.sequence,
-            body,
-        );
-        if (this.#state !== state) reject();
+        let record: Uint8Array;
+        try {
+            record = await sealRecord(
+                plan.keys.c2pKey,
+                plan.keys.c2pPrefix,
+                plan.prefix,
+                Direction.CLIENT_TO_PHONE,
+                type,
+                plan.sequence,
+                body,
+            );
+        } catch {
+            // The sequence and nonce are already reserved; a rejected seal must
+            // end the session rather than continue with a gap.
+            throw new SealFailure();
+        }
+        if (this.#state !== state) throw new SealFailure();
+        // Expiry first: encryption is asynchronous, so the session may have
+        // expired while the record was being sealed. Never let a late seal
+        // refresh activity.
+        if (this.#expiryFailure(this.#deps.now()) !== null) throw new SealFailure();
         this.#commitSeal(state, plan.now);
         return record;
     }
@@ -890,6 +928,7 @@ export class ClientSessionEngine {
     #planSeal(
         state: EngineState,
         type: number,
+        body: Uint8Array,
     ): {
         keys: ReconnectKeys;
         prefix: Uint8Array;
@@ -912,6 +951,9 @@ export class ClientSessionEngine {
         const keys = state.keys;
         const prefix = state.sessionIdPrefix;
         if (keys === null || prefix === null) reject();
+        // Reject data that `sealRecord` would refuse BEFORE reserving anything,
+        // so an invalid direct send cannot consume a sequence.
+        if (body.length > RECORD_MAX_CIPHERTEXT_BYTES) reject();
         // Reserve the sequence — and so the nonce — before the asynchronous
         // sealing step. Concurrent work can never share or rewind a sequence.
         const sequence = state.outboundSequence;
