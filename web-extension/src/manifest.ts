@@ -11,6 +11,13 @@ export const DEVELOPMENT_EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
 // Backwards-compatible alias; still the development placeholder, never a release ID.
 export const VELES_EXTENSION_ID = DEVELOPMENT_EXTENSION_ID;
 
+// Fixed, test-only production identity for the guard bundle (`VELES_GUARD_BUILD=1`).
+// It is one valid 32-character a-p id, so the guard build exercises the production
+// channel without a release config. It is never shipped: the release path still takes
+// its identity only from VELES_RELEASE_CONFIG, and the guard build exists solely to
+// prove the production bundle excludes the development modules.
+export const GUARD_PRODUCTION_EXTENSION_ID = 'ponmlkjihgfedcbaponmlkjihgfedcba';
+
 const PRODUCTION_HOST_NAME = 'me.nagaev.veles.bridge';
 const DEVELOPMENT_HOST_NAME = 'me.nagaev.veles.bridge.dev';
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
@@ -83,6 +90,11 @@ export function resolveReleaseIdentity(
         throw new Error('release identity: host_name does not match the channel');
     }
     return identity(channel, extensionId);
+}
+
+/** The guard build's fixed production identity: a production channel with a test-only id. */
+export function guardProductionIdentity(): ReleaseIdentity {
+    return identity('production', GUARD_PRODUCTION_EXTENSION_ID);
 }
 
 export function buildExtensionManifest(): chrome.runtime.ManifestV3 {

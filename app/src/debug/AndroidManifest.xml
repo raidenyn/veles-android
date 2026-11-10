@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-only adb surface (OTP-09 design D5). The receiver is exported so `adb shell am
+    broadcast` can reach it, but `android.permission.DUMP` restricts callers to the shell;
+    no app, content provider or web content can send these actions.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <receiver
+            android:name="me.nagaev.veles.debugprobe.ProbeReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="me.nagaev.veles.debug.EXPORT_IDENTITY" />
+                <action android:name="me.nagaev.veles.debug.INJECT_PEER" />
+                <action android:name="me.nagaev.veles.debug.PUSH" />
+                <action android:name="me.nagaev.veles.debug.REVOKE_PEER" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

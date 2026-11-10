@@ -491,6 +491,7 @@ class PhoneSessionEngine(
         authenticated = true
         state = State.OPEN
         lastActivityAt = clock()
+        handler?.onSessionEstablished(prefix.copyOf())
         listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf()))
     }
 

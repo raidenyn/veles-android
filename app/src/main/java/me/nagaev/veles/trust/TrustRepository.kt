@@ -102,7 +102,7 @@ class TrustRepository(
         val createdAt = wallMillis()
         val record = TrustedPeer(
             peer.installationId, peer.publicKey, peer.label, peer.deviceType, peer.enrollmentTranscript,
-            fingerprint(snapshot.identity.publicKey, peer.publicKey), TrustState.PENDING,
+            peerFingerprint(snapshot.identity.publicKey, peer.publicKey), TrustState.PENDING,
             createdAt, null, elapsedMillis(), snapshot.continuityToken, createdAt,
         )
         validatePeer(record, snapshot.identity)
@@ -190,16 +190,17 @@ class TrustRepository(
         checkTrust(peer.createdAtMillis >= 0 && (peer.lastSeenMillis == null || peer.lastSeenMillis >= 0))
         checkTrust(peer.stateChangedAtMillis >= 0 && peer.createdElapsedMillis >= 0)
         TrustEncoding.requireHex(peer.bootToken, HASH_BYTES)
-        checkTrust(peer.fingerprint == fingerprint(identity.publicKey, peer.publicKey))
+        checkTrust(peer.fingerprint == peerFingerprint(identity.publicKey, peer.publicKey))
     }
-
-    private fun fingerprint(phone: String, client: String): String = TrustEncoding.hex(
-        MessageDigest.getInstance("SHA-256").digest(
-            "Veles identity fingerprint v1".toByteArray(Charsets.US_ASCII) +
-                TrustEncoding.bytes(phone) + TrustEncoding.bytes(client),
-        ),
-    )
 }
+
+/** The OTP2-REC-011a identity fingerprint; shared with the debug injector so records validate. */
+internal fun peerFingerprint(phone: String, client: String): String = TrustEncoding.hex(
+    MessageDigest.getInstance("SHA-256").digest(
+        "Veles identity fingerprint v1".toByteArray(Charsets.US_ASCII) +
+            TrustEncoding.bytes(phone) + TrustEncoding.bytes(client),
+    ),
+)
 
 internal fun checkTrust(value: Boolean) {
     if (!value) throw TrustException()

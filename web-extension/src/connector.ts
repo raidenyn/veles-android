@@ -45,6 +45,7 @@ import {
     type ReadySummary,
 } from './connector/view-model';
 import type { ClientEngineDeps } from './session/engine';
+import type { DevelopmentProbe } from './debug/probe';
 import { bytes } from './trust/model';
 import { normalizeLowS } from './session/ecdsa';
 import { IndexedDbIdentityStore } from './trust/identity';
@@ -242,7 +243,7 @@ export class ConnectorApp {
     private readonly view: ConnectorView;
     private readonly trustSource: TrustHintSource;
     private readonly repository: ChromeTrustRepository | null;
-    private readonly sessions: SessionManager | null;
+    readonly sessions: SessionManager | null;
     private readonly reconnect: ReconnectPolicy;
     private readonly unsubscribers: (() => void)[] = [];
     private readonly userDisconnectHandles = new Set<string>();
@@ -1369,11 +1370,20 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
         },
         lastError: () => chrome.runtime.lastError,
     });
+    const sessionOptions = productionSessionOptions();
+    let probe: DevelopmentProbe | null = null;
+    if (__VELES_CHANNEL__ === 'development') {
+        const { createDevelopmentProbe } = await import('./debug/probe');
+        probe = createDevelopmentProbe(document);
+    }
     const app = new ConnectorApp({
         controller,
         view: new DocumentConnectorView(document),
-        session: productionSessionOptions(),
+        session: probe === null ? sessionOptions : probe.sessionOptions(sessionOptions),
     });
+    if (probe !== null && app.sessions !== null) {
+        probe.install(app, app.sessions, controller);
+    }
     const copyStatus = document.getElementById('synthetic-copy-status');
     const copyButton = document.getElementById('synthetic-copy-button');
     const armButton = document.getElementById('synthetic-copy-arm');
@@ -1437,6 +1447,7 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
         port?.disconnect();
         stopRecords();
         stopStatus();
+        probe?.dispose();
         app.dispose();
         productionApp = null;
         void chrome.runtime

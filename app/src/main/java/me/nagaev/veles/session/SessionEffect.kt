@@ -32,4 +32,10 @@ sealed interface SessionEffect {
 interface ApplicationHandler {
     fun handles(type: Int): Boolean
     suspend fun handle(type: Int, body: ByteArray, reply: suspend (type: Int, body: ByteArray) -> Unit)
+
+    /**
+     * Optional session context: the engine reports the fixed 8-byte session identifier once,
+     * when the authentication gate opens. A handler that does not need it ignores the default.
+     */
+    fun onSessionEstablished(sessionIdPrefix: ByteArray) = Unit
 }
