@@ -5,7 +5,7 @@ import { createDevelopmentProbe, type DevelopmentProbe } from '../src/debug/prob
 import { injectActivePeer } from '../src/debug/inject';
 import { DEBUG_READOUT_TEST_ID } from '../src/debug/readout';
 import { RecordType } from '../src/session/wire';
-import { bytes, hex } from '../src/trust/model';
+import { bytes, fingerprint, hex } from '../src/trust/model';
 import {
     HANDLE_CONNECTION,
     HANDLE_CONNECTION_2,
@@ -240,15 +240,36 @@ describe('development probe', () => {
             connector.publicKey,
         );
 
+        // A's connector store holds exactly B's exported identity: the same key that signs
+        // the phone half above. The A-side lookup reads this store.
         const peers = await fixture.trust.peers();
-        expect(
-            peers.find((peer) => peer.installationId === phoneIdentity.installationId)?.state,
-        ).toBe('active');
-        expect(
-            (await otherSide.peers()).find(
-                (peer) => peer.installationId === connector.installationId,
-            )?.state,
-        ).toBe('active');
+        const injected = peers.find((peer) => peer.installationId === phoneIdentity.installationId);
+        expect(injected).toBeDefined();
+        expect(injected?.installationId).toBe(otherSide.identity.installationId);
+        expect(injected?.publicKey).toBe(otherSide.identity.publicKey);
+        expect(injected?.publicKey).toBe(hex(otherPhone.publicKey));
+        expect(injected?.state).toBe('active');
+        expect(injected?.fingerprint).toBe(
+            await fingerprint(otherSide.identity.publicKey, connector.publicKey),
+        );
+        // B's store holds exactly A's exported identity.
+        const connectorRecord = (await otherSide.peers()).find(
+            (peer) => peer.installationId === connector.installationId,
+        );
+        expect(connectorRecord?.publicKey).toBe(connector.publicKey);
+        expect(connectorRecord?.state).toBe('active');
+
+        // The production lookup function reads the peers above; assert it returns the
+        // injected record with the signing key.
+        const lookedUp = await sessionEngineDeps(
+            fixture.trust,
+            fixture.clock,
+            bytes(connector.installationId, 16),
+        )(HANDLE_CONNECTION, phoneIdentity.installationId).lookupPhone(
+            phoneIdentity.installationId,
+        );
+        expect(lookedUp?.publicKey).toEqual(bytes(otherSide.identity.publicKey, 65));
+        expect(lookedUp?.state).toBe('active');
 
         const side = await connectAndAuthenticate(fixture, phoneIdentity.installationId);
         // A `full` class is the only class that authorizes pull_request; an

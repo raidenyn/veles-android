@@ -253,6 +253,28 @@ class SyntheticProbeHandlerTest {
     }
 
     @Test
+    fun endedSessionIsNotAProbeDestination() = runTest {
+        val client = TestClient()
+        val host = host(RecordingTrust()) { engine(client) }
+        val gen = connectFull(host, "aa", 1, client)
+        val commands = commands(SessionProbeSessions(host))
+        val before = transport.sent.size
+
+        // The generation is ended but its teardown step is still queued.
+        host.onDisconnected(gen)
+        assertTrue(
+            "an ended generation is never offered as a destination",
+            host.authenticatedSessions().isEmpty(),
+        )
+
+        commands.push()
+
+        assertEquals("no event is generated for an ended destination", before, transport.sent.size)
+        assertTrue("no event is logged for an ended destination", transport.log.isEmpty())
+        runCurrent()
+    }
+
+    @Test
     fun pushBeforeAnyPullIsSent() = runTest {
         val client = TestClient()
         val host = host(RecordingTrust()) { engine(client) }

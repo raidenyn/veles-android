@@ -194,6 +194,9 @@ class SessionHost(
      */
     fun authenticatedSessions(): List<AuthenticatedSession> = synchronized(registry) {
         sessions.values.mapNotNull { live ->
+            // `ended` is set before teardown removes the generation; never offer it as a
+            // destination while shutdown is draining.
+            if (live.ended) return@mapNotNull null
             val sessionClass = live.sessionClass ?: return@mapNotNull null
             val prefix = live.sessionIdPrefix ?: return@mapNotNull null
             AuthenticatedSession(
