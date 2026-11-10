@@ -156,6 +156,14 @@ interface EngineState {
     confirmToken: number | null;
     confirmSendComplete: boolean;
     peerConfirmVerified: boolean;
+    /**
+     * The first phone `reconnect_confirm` record whose AEAD tag, session
+     * sequence and HMAC all verified. It is written once and never replaced, so
+     * a later inbound ciphertext can never become another session's proof.
+     */
+    verifiedPhoneConfirm: Uint8Array | null;
+    /** True only between that verification and the fixed session class. */
+    phoneConfirmFinalizing: boolean;
     authenticated: boolean;
     nextToken: number;
     outboundSequence: bigint;
@@ -189,6 +197,8 @@ function freshState(phase: Phase): EngineState {
         confirmToken: null,
         confirmSendComplete: false,
         peerConfirmVerified: false,
+        verifiedPhoneConfirm: null,
+        phoneConfirmFinalizing: false,
         authenticated: false,
         nextToken: 0,
         outboundSequence: 0n,
@@ -342,6 +352,26 @@ export class ClientSessionEngine {
 
     get isOpen(): boolean {
         return this.#state.phase === 'open';
+    }
+
+    /**
+     * The first fully verified phone `reconnect_confirm` record of this
+     * generation, byte-for-byte, or `null` before verification and after
+     * teardown. The connector's trust verifier binds its stage proof to exactly
+     * these bytes; the engine is the only component that decides they are valid.
+     */
+    get verifiedPhoneConfirm(): Uint8Array | null {
+        const confirm = this.#state.verifiedPhoneConfirm;
+        return confirm === null ? null : confirm.slice();
+    }
+
+    /**
+     * True only while the phone confirm has passed every check and the session
+     * class has not been fixed yet. Nothing outside that finalization window can
+     * satisfy a `phone_active` proof.
+     */
+    get phoneConfirmFinalizing(): boolean {
+        return this.#state.phoneConfirmFinalizing;
     }
 
     /** Sends the client hello. Called once per connection generation. */
@@ -679,6 +709,13 @@ export class ClientSessionEngine {
         state.peerState = confirmed;
         state.peerConfirmVerified = true;
         state.inboundSequence = CONFIRM_SEQUENCE + 1n;
+        // The handshake confirm is written once and never replaced. A second
+        // protected record in the same wait state is rejected by the state
+        // machine below, never treated as a fresh proof.
+        if (state.verifiedPhoneConfirm === null) {
+            state.verifiedPhoneConfirm = bytes.slice();
+            state.phoneConfirmFinalizing = true;
+        }
 
         // OTP2-SID-001: the mirror upgrade is evaluated BEFORE class selection.
         // A teardown after this call does not undo it.
@@ -1007,6 +1044,7 @@ export class ClientSessionEngine {
         }
         const sessionClass = selectSessionClass(record.state, state.peerState);
         state.sessionClass = sessionClass;
+        state.phoneConfirmFinalizing = false;
         state.authenticated = true;
         state.phase = 'open';
         state.lastActivityAt = this.#deps.now();
@@ -1109,6 +1147,9 @@ function eraseState(state: EngineState): void {
     state.confirmToken = null;
     state.confirmSendComplete = false;
     state.peerConfirmVerified = false;
+    state.verifiedPhoneConfirm?.fill(0);
+    state.verifiedPhoneConfirm = null;
+    state.phoneConfirmFinalizing = false;
     state.authenticated = false;
     state.peerState = 0;
     state.nextToken = 0;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { SESSION_QUEUE_LIMIT, QueueOverflow, SerialQueue } from '../../src/session/queue';
-import { SessionManager } from '../../src/connector/sessions';
+import { SESSION_TICK_MS, SessionManager } from '../../src/connector/sessions';
 import { decodeFrame } from '../../src/session/frames';
 import { Direction, FrameType, RecordType } from '../../src/session/wire';
 import type { TrustedPeer } from '../../src/trust/model';
@@ -242,30 +242,12 @@ describe('serialized connector sessions', () => {
     });
 
     it('one phone failing does not affect another', async () => {
-        const secondPhone = await TestPhone.create();
+        const impostorPhone = await TestPhone.create();
         const fixture = await createManagerFixture();
-        await fixture.trust.addPeer(secondPhone, { state: 'active' });
+        await fixture.trust.addPeer(impostorPhone, { state: 'active' });
         const port = fixture.currentPort();
 
-        await connectForSession(fixture, HANDLE_CONNECTION, HANDLE_DEVICE);
-        const failed = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
-        const failedHello = await nextSend(port);
-        await ackSend(port, failedHello);
-        // A phone hello naming another installation id is the generic failure.
-        const impostor = new PhoneSide(secondPhone);
-        await emitRecord(
-            port,
-            HANDLE_CONNECTION,
-            await impostor.acceptClientHello(decodeFrame(failedHello.bytes).payload),
-        );
-        await flush();
-        const reject = await nextSend(port);
-        expect(reject.bytes[0]).toBe(FrameType.PREAUTH_REJECT);
-        await ackSend(port, reject);
-        await expect(failed).resolves.toEqual({ result: 'failed' });
-        await ackDisconnect(port, HANDLE_CONNECTION);
-        expect((await fixture.trust.peers()).length).toBe(2);
-
+        // The healthy phone authenticates first and stays open throughout.
         await connectForSession(fixture, HANDLE_CONNECTION_2, HANDLE_DEVICE_2);
         const healthy = fixture.manager.open(HANDLE_CONNECTION_2, fixture.peerId);
         const side = await answerHandshake(fixture, {
@@ -277,6 +259,32 @@ describe('serialized connector sessions', () => {
             peerId: fixture.peerId,
         });
 
+        // A second link fails with the generic pre-auth rejection while the
+        // first session is open and untouched.
+        await connectForSession(fixture, HANDLE_CONNECTION, HANDLE_DEVICE);
+        const failed = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
+        const failedHello = await nextSend(port);
+        await ackSend(port, failedHello);
+        const impostor = new PhoneSide(impostorPhone);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await impostor.acceptClientHello(decodeFrame(failedHello.bytes).payload),
+        );
+        await flush();
+        const reject = await nextSend(port);
+        expect(reject.bytes[0]).toBe(FrameType.PREAUTH_REJECT);
+        await ackSend(port, reject);
+        await expect(failed).resolves.toEqual({ result: 'failed' });
+        await ackDisconnect(port, HANDLE_CONNECTION);
+
+        const terminations = fixture.controller.state.diagnostics
+            .entries()
+            .filter((entry) => entry.type === 'session_terminated');
+        expect(terminations).toHaveLength(1);
+        expect(terminations[0]?.connection_handle).toBe(HANDLE_CONNECTION);
+
+        // The already-open session still seals and sends application records.
         const send = fixture.manager.sendApplication(
             HANDLE_CONNECTION_2,
             RecordType.EVENT_ACK,
@@ -413,5 +421,246 @@ describe('intended peer selection', () => {
         expect(
             SessionManager.intendedPeer([peer('a', 'active'), peer('b', 'active')]),
         ).toBeUndefined();
+    });
+});
+
+describe('session deadlines, pipeline and verifier negatives', () => {
+    it('client confirm completion frees adjacent inbound records in order', async () => {
+        const delivered: number[] = [];
+        const handler = {
+            handles: (type: number) => type === RecordType.PULL_EVENTS,
+            handle: async (type: number): Promise<void> => {
+                delivered.push(type);
+            },
+        };
+        const fixture = await createManagerFixture({ handler });
+        await connectForSession(fixture);
+        const port = fixture.currentPort();
+        const opened = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(fixture.phone);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await emitRecord(port, HANDLE_CONNECTION, await side.signatureFrame());
+        await flush();
+        const signature = await nextSend(port);
+        await side.acceptClientSignature(decodeFrame(signature.bytes).payload);
+        await ackSend(port, signature);
+        const clientConfirm = await nextSend(port);
+
+        // The phone confirm and its first application record are both buffered
+        // behind the still-pending local confirm send.
+        await emitRecord(port, HANDLE_CONNECTION, await side.confirmFrame());
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.applicationFrame(RecordType.PULL_EVENTS, 1n, Uint8Array.of(1)),
+        );
+        await flush();
+        expect(delivered).toEqual([]);
+
+        await ackSend(port, clientConfirm);
+        await flush();
+        await expect(opened).resolves.toEqual({
+            result: 'authenticated',
+            peerId: fixture.peerId,
+        });
+        expect(delivered).toEqual([RecordType.PULL_EVENTS]);
+        expect(
+            fixture.controller.state.diagnostics
+                .entries()
+                .some((entry) => entry.type === 'session_terminated'),
+        ).toBe(false);
+    });
+
+    it('coarse tick closes a silent handshake and an idle session', async () => {
+        const fixture = await createManagerFixture();
+        await connectForSession(fixture);
+        const port = fixture.currentPort();
+        const opened = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        let settled = false;
+        void opened.then(() => {
+            settled = true;
+        });
+
+        // A coarse tick before the 30 s deadline must not expire the handshake
+        // early: throttling may close a session late, never early.
+        fixture.clock.advance(SESSION_TICK_MS);
+        await flush();
+        expect(settled).toBe(false);
+
+        fixture.clock.advance(SESSION_TICK_MS);
+        await flush();
+        await expect(opened).resolves.toEqual({ result: 'failed' });
+        expect(
+            fixture.controller.state.diagnostics
+                .entries()
+                .some((entry) => entry.code === 'handshake_timeout'),
+        ).toBe(true);
+        await ackDisconnect(port, HANDLE_CONNECTION);
+
+        // An open session with no traffic is closed by the idle deadline.
+        await connectForSession(fixture, HANDLE_CONNECTION_2, HANDLE_DEVICE_2);
+        const idle = fixture.manager.open(HANDLE_CONNECTION_2, fixture.peerId);
+        await answerHandshake(fixture, {
+            phone: fixture.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
+        await expect(idle).resolves.toEqual({
+            result: 'authenticated',
+            peerId: fixture.peerId,
+        });
+        fixture.clock.advance(180_000);
+        await flush();
+        expect(
+            fixture.controller.state.diagnostics
+                .entries()
+                .some(
+                    (entry) =>
+                        entry.code === 'idle' && entry.connection_handle === HANDLE_CONNECTION_2,
+                ),
+        ).toBe(true);
+        await expect(
+            fixture.manager.sendApplication(
+                HANDLE_CONNECTION_2,
+                RecordType.EVENT_ACK,
+                Uint8Array.of(1),
+            ),
+        ).rejects.toBeTruthy();
+    });
+
+    it('phone_active and authenticated refuse unverified, forged and stale proof', async () => {
+        const fixture = await createManagerFixture({ state: 'active_activation_pending' });
+        const manager = fixture.manager;
+        const gate = deferred();
+        let finalizing = false;
+        fixture.trust.bindVerifier(async (peer, stage, proof) => {
+            const accepted = await manager.verifier(peer, stage, proof);
+            if (accepted && stage === 'phone_active') {
+                // Hold the engine inside its verified finalization window so the
+                // negative checks below run exactly there.
+                finalizing = true;
+                await gate.promise;
+            }
+            return accepted;
+        });
+        await connectForSession(fixture);
+        const port = fixture.currentPort();
+        const repository = fixture.trust.repository;
+        const opened = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(fixture.phone);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await emitRecord(port, HANDLE_CONNECTION, await side.signatureFrame());
+        await flush();
+        const signature = await nextSend(port);
+        await side.acceptClientSignature(decodeFrame(signature.bytes).payload);
+        await ackSend(port, signature);
+        const clientConfirm = await nextSend(port);
+        await ackSend(port, clientConfirm);
+
+        // Nothing has verified a phone confirm yet.
+        const peer = { installationId: fixture.peerId } as TrustedPeer;
+        await expect(
+            repository.confirm(fixture.peerId, 'phone_active', Uint8Array.of(1, 2, 3)),
+        ).rejects.toBeTruthy();
+        expect(await manager.verifier(peer, 'phone_active', Uint8Array.of(1))).toBe(false);
+        expect(await manager.verifier(peer, 'authenticated', Uint8Array.of(1))).toBe(false);
+
+        const verifiedConfirm = await side.confirmFrame();
+        await emitRecord(port, HANDLE_CONNECTION, verifiedConfirm);
+        await flush();
+        expect(finalizing).toBe(true);
+        // Inside the verified finalization window a forged byte string is not a
+        // proof, while the immutable verified confirm is.
+        expect(await manager.verifier(peer, 'phone_active', Uint8Array.of(4))).toBe(false);
+        expect(await manager.verifier(peer, 'phone_active', verifiedConfirm)).toBe(true);
+        // The gate is not open yet, so even the real confirm is not an
+        // authenticated-stage proof.
+        expect(await manager.verifier(peer, 'authenticated', verifiedConfirm)).toBe(false);
+
+        gate.resolve();
+        await flush();
+        await expect(opened).resolves.toEqual({
+            result: 'authenticated',
+            peerId: fixture.peerId,
+        });
+        expect((await fixture.trust.peers())[0]?.state).toBe('active');
+        const stored = (await fixture.trust.peers())[0];
+        expect(stored?.lastSeenMillis).toBe(10_000);
+        expect(stored?.platformHint).toBeUndefined();
+
+        // Once the class is fixed, phone_active is no longer finalizing.
+        expect(await manager.verifier(peer, 'phone_active', verifiedConfirm)).toBe(false);
+        // Bytes that never verified this session are never a proof; the same
+        // verified confirm is the open session's authenticated proof.
+        await expect(
+            repository.authenticated(fixture.peerId, 'winrt:leak', Uint8Array.of(5)),
+        ).rejects.toBeTruthy();
+        expect(await manager.verifier(peer, 'authenticated', verifiedConfirm)).toBe(true);
+
+        // Teardown erases the verified confirm: a closed generation proves nothing.
+        await port.disconnect();
+        await flush();
+        expect(await manager.verifier(peer, 'phone_active', verifiedConfirm)).toBe(false);
+        expect(await manager.verifier(peer, 'authenticated', verifiedConfirm)).toBe(false);
+        await expect(
+            repository.authenticated(fixture.peerId, 'winrt:leak', verifiedConfirm),
+        ).rejects.toBeTruthy();
+    });
+
+    it('disconnection during post-verifier validation does not persist metadata', async () => {
+        const fixture = await createManagerFixture({ hint: 'winrt:phone-a' });
+        const gate = deferred();
+        const manager = fixture.manager;
+        fixture.trust.bindVerifier(async (peer, stage, proof) => {
+            const accepted = await manager.verifier(peer, stage, proof);
+            // Pause after the production verifier accepted, inside the
+            // repository's update, before its final validation and write.
+            if (accepted && stage === 'authenticated') await gate.promise;
+            return accepted;
+        });
+        await connectForSession(fixture);
+        const port = fixture.currentPort();
+        const opened = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
+        const hello = await nextSend(port);
+        await ackSend(port, hello);
+        const side = new PhoneSide(fixture.phone);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await side.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await emitRecord(port, HANDLE_CONNECTION, await side.signatureFrame());
+        await flush();
+        const signature = await nextSend(port);
+        await side.acceptClientSignature(decodeFrame(signature.bytes).payload);
+        await ackSend(port, signature);
+        const clientConfirm = await nextSend(port);
+        await ackSend(port, clientConfirm);
+        await emitRecord(port, HANDLE_CONNECTION, await side.confirmFrame());
+        await flush();
+
+        // The metadata write is paused after the verifier accepted; replacing
+        // the port must prevent the durable write at the commit boundary.
+        await port.disconnect();
+        await flush();
+        await expect(opened).resolves.toEqual({ result: 'failed' });
+        gate.resolve();
+        await flush();
+        const peer = (await fixture.trust.peers())[0];
+        expect(peer?.lastSeenMillis).toBeNull();
+        expect(peer?.platformHint).toBe('winrt:phone-a');
     });
 });

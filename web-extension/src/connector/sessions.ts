@@ -7,9 +7,11 @@
 //   - serializes every inbound record and outbound request through one bounded
 //     queue (§11.3, OTP2-REC-034 queue bound),
 //   - drops any completion whose handle or port generation changed,
-//   - answers the trust repository's stage-bound verifier itself, and
+//   - answers the trust repository's stage-bound verifier itself, using the
+//     engine's immutable verified phone confirm,
 //   - records `lastSeen`/the platform hint only after the gate opened for the
-//     current generation.
+//     current generation, fenced through the repository's final write, and
+//   - drives a cancellable coarse deadline tick for silent links.
 //
 // Discovery metadata never supplies the peer id: recovery passes the target's
 // id and manual Connect passes an explicit id or the single active-family
@@ -20,7 +22,6 @@ import type { AuthenticationVerifier, ChromeTrustRepository } from '../trust/rep
 import { ClientSessionEngine, type ClientEngineDeps, type SessionEffect } from '../session/engine';
 import { QueueOverflow, SESSION_QUEUE_LIMIT, SerialQueue } from '../session/queue';
 import { SessionReject } from '../session/reject';
-import { Direction, RecordType } from '../session/wire';
 
 import type { DiagnosticRing } from './diagnostics';
 import type { ConnectorClose, ConnectorResult } from './port';
@@ -61,20 +62,29 @@ interface Session {
     readonly engine: ClientSessionEngine;
     readonly queue: SerialQueue;
     phase: SessionPhase;
-    /** The verified phone `reconnect_confirm` bytes, used as the stage proof. */
-    proof: Uint8Array | null;
     settled: boolean;
+    /** The pending coarse deadline tick, cancelled on every teardown path. */
+    tickTimer: unknown;
     resolve(result: SessionOpenResult): void;
 }
 
-const PROTOCOL_VERSION = 1;
-const SCHEMA_VERSION = 1;
-const RECORD_HEADER_BYTES = 23;
-const RECORD_TAG_BYTES = 16;
-const CONFIRM_BODY_BYTES = 33;
-const SEQUENCE_OFFSET = 5;
-const TYPE_OFFSET = 3;
-const CONFIRM_SEQUENCE_BYTES = 8;
+/**
+ * Coarse deadline driver from the plan: deadlines are additionally evaluated on
+ * a 15 s `setTimeout` that may be throttled. A late tick can only close a
+ * session late because every expiry check compares injected monotonic `now()`;
+ * throttling can never expire a session early.
+ */
+export const SESSION_TICK_MS = 15_000;
+
+export interface SessionTimers {
+    setTimeout(fn: () => void, ms: number): unknown;
+    clearTimeout(handle: unknown): void;
+}
+
+const GLOBAL_TIMERS: SessionTimers = {
+    setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
+    clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
     if (left.length !== right.length) return false;
@@ -83,27 +93,6 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
         difference |= left[index] ^ right[index];
     }
     return difference === 0;
-}
-
-/**
- * True for a protected phone→client `reconnect_confirm` record at sequence 0
- * with the exact confirm body length. The engine is the only component that
- * decides whether such a record is valid; this check only lets the manager
- * retain the exact bytes the engine later authenticated, so the trust
- * repository's stage verifier can compare them.
- */
-function isConfirmRecord(bytes: Uint8Array): boolean {
-    if (bytes.length !== RECORD_HEADER_BYTES + CONFIRM_BODY_BYTES + RECORD_TAG_BYTES) {
-        return false;
-    }
-    if (bytes[0] !== PROTOCOL_VERSION || bytes[1] !== SCHEMA_VERSION) return false;
-    if (bytes[2] !== Direction.PHONE_TO_CLIENT) return false;
-    const type = ((bytes[TYPE_OFFSET] ?? 0) << 8) | (bytes[TYPE_OFFSET + 1] ?? 0);
-    if (type !== RecordType.RECONNECT_CONFIRM) return false;
-    for (let index = 0; index < CONFIRM_SEQUENCE_BYTES; index += 1) {
-        if (bytes[SEQUENCE_OFFSET + index] !== 0) return false;
-    }
-    return true;
 }
 
 function activeFamily(peer: TrustedPeer): boolean {
@@ -115,21 +104,36 @@ export class SessionManager {
     readonly verifier: AuthenticationVerifier;
 
     private readonly byHandle = new Map<string, Session>();
+    private readonly timers: SessionTimers;
 
     constructor(
         private readonly controller: SessionController,
         repository: ChromeTrustRepository,
         private readonly deps: (handle: string, peerId: string) => ClientEngineDeps,
         private readonly portGeneration: () => number,
+        timers: Partial<SessionTimers> = {},
     ) {
         this.repository = repository;
+        this.timers = {
+            setTimeout: timers.setTimeout ?? GLOBAL_TIMERS.setTimeout,
+            clearTimeout: timers.clearTimeout ?? GLOBAL_TIMERS.clearTimeout,
+        };
         this.verifier = async (peer, stage, proof) => {
             if (stage !== 'phone_active' && stage !== 'authenticated') return false;
             for (const session of this.byHandle.values()) {
                 if (session.peerId !== peer.installationId) continue;
                 if (!this.isCurrent(session, session.generation)) continue;
-                if (session.proof === null || !equalBytes(session.proof, proof)) continue;
-                if (stage === 'phone_active' && session.phase === 'handshake') return true;
+                // The proof is the engine's immutable, fully verified phone
+                // confirm; raw inbound bytes are never used as evidence.
+                const confirm = session.engine.verifiedPhoneConfirm;
+                if (confirm === null || !equalBytes(confirm, proof)) continue;
+                if (
+                    stage === 'phone_active' &&
+                    session.phase === 'handshake' &&
+                    session.engine.phoneConfirmFinalizing
+                ) {
+                    return true;
+                }
                 if (stage === 'authenticated' && session.phase === 'open') return true;
             }
             return false;
@@ -184,11 +188,12 @@ export class SessionManager {
             engine,
             queue: new SerialQueue(SESSION_QUEUE_LIMIT),
             phase: 'handshake',
-            proof: null,
             settled: false,
+            tickTimer: undefined,
             resolve: settle,
         };
         this.byHandle.set(handle, session);
+        this.armTick(session);
         this.enqueue(session, () => engine.start());
         return result;
     }
@@ -241,8 +246,15 @@ export class SessionManager {
                     const sent = await this.controller.send(session.handle, effect.bytes);
                     if (!this.isCurrent(session, generation)) return;
                     if (effect.completionToken !== undefined) {
+                        // Completion belongs to this serialized step: applying it
+                        // inline opens the gate before any buffered inbound record
+                        // (e.g. the phone confirm and its first application record)
+                        // is dequeued, so nothing is rejected merely because the
+                        // local confirm acknowledgement was still pending.
                         const token = effect.completionToken;
-                        this.enqueue(session, () => session.engine.onSendComplete(token, sent.ok));
+                        const completion = await session.engine.onSendComplete(token, sent.ok);
+                        if (!this.isCurrent(session, generation)) return;
+                        await this.apply(session, generation, completion);
                     } else if (!sent.ok) {
                         this.terminate(session, 'send_failed', true);
                         return;
@@ -274,14 +286,22 @@ export class SessionManager {
         // The class is fixed at this point; the verifier's `authenticated`
         // stage is only valid for an open session of the current generation.
         session.phase = 'open';
-        const proof = session.proof;
-        if (proof === null || !this.isCurrent(session, session.generation)) {
+        if (!this.isCurrent(session, session.generation)) {
+            this.terminate(session, 'authentication', true);
+            return;
+        }
+        const proof = session.engine.verifiedPhoneConfirm;
+        if (proof === null) {
             this.terminate(session, 'authentication', true);
             return;
         }
         const hint = this.connectionHint(session.handle);
         try {
-            await this.repository.authenticated(peerId, hint, proof);
+            // The repository re-checks this synchronous fence immediately before
+            // its durable write, after its own post-verifier validation.
+            await this.repository.authenticated(peerId, hint, proof, () =>
+                this.isCurrent(session, session.generation),
+            );
         } catch {
             this.terminate(session, 'authentication', true);
             return;
@@ -314,10 +334,9 @@ export class SessionManager {
     private terminate(session: Session, reason: string, closeLink: boolean): void {
         if (session.phase === 'closed') return;
         session.phase = 'closed';
+        this.cancelTick(session);
         session.engine.teardown();
         if (this.byHandle.get(session.handle) === session) this.byHandle.delete(session.handle);
-        session.proof?.fill(0);
-        session.proof = null;
         this.controller.state.diagnostics.push({
             direction: 'local',
             type: 'session_terminated',
@@ -333,9 +352,28 @@ export class SessionManager {
     private handleRecord(record: SessionRecord): void {
         const session = this.byHandle.get(record.connectionHandle);
         if (session === undefined || session.phase === 'closed') return;
-        if (isConfirmRecord(record.bytes)) session.proof = record.bytes.slice();
         const bytes = record.bytes.slice();
         this.enqueue(session, () => session.engine.onInbound(bytes));
+    }
+
+    /**
+     * Arms the next coarse deadline check. It runs outside the queue but its
+     * work is enqueued, so it cannot interleave with a record or send.
+     */
+    private armTick(session: Session): void {
+        if (session.phase === 'closed') return;
+        session.tickTimer = this.timers.setTimeout(() => {
+            session.tickTimer = undefined;
+            if (session.phase === 'closed') return;
+            this.enqueue(session, () => session.engine.onTick());
+            this.armTick(session);
+        }, SESSION_TICK_MS);
+    }
+
+    private cancelTick(session: Session): void {
+        if (session.tickTimer === undefined) return;
+        this.timers.clearTimeout(session.tickTimer);
+        session.tickTimer = undefined;
     }
 
     /**

@@ -282,6 +282,15 @@ export class ConnectorApp {
             const repository = session.createRepository((peer, stage, proof) =>
                 holder.verify(peer, stage, proof),
             );
+            const timers =
+                deps.setTimeout === undefined && deps.clearTimeout === undefined
+                    ? undefined
+                    : {
+                          ...(deps.setTimeout === undefined ? {} : { setTimeout: deps.setTimeout }),
+                          ...(deps.clearTimeout === undefined
+                              ? {}
+                              : { clearTimeout: deps.clearTimeout }),
+                      };
             const manager = new SessionManager(
                 deps.controller,
                 repository,
@@ -291,6 +300,7 @@ export class ConnectorApp {
                     return session.createEngineDeps(handle, peerId, identity, repository);
                 },
                 () => deps.controller.portGeneration,
+                timers,
             );
             holder.verify = manager.verifier;
             this.repository = repository;
@@ -486,13 +496,25 @@ export class ConnectorApp {
 
         if (attempt.target.kind === 'hint') {
             await this.loadInstallationIdentity();
+            // Cancellation or port replacement during the identity read must be
+            // observed before any transport connect is issued.
+            if (!this.isAttemptLive(attempt, epoch, token)) return false;
             // A host restart is always negotiated first, then the hint is used
             // only as an opaque OS search candidate. It never authenticates:
             // the attempt succeeds, and renews the peer's allowance, only after
             // the authentication gate opens and the class is fixed.
             const target = attempt.target;
             const result = await this.controller.connect({ platformHint: target.hint });
-            if (!this.isAttemptLive(attempt, epoch, token)) return false;
+            if (!this.isAttemptLive(attempt, epoch, token)) {
+                if (result.ok) {
+                    // A successful transport connect that no longer belongs to
+                    // this attempt must not outlive it unowned.
+                    await this.controller
+                        .disconnect(result.event.connection_handle)
+                        .catch(() => undefined);
+                }
+                return false;
+            }
             if (!result.ok) {
                 this.applyFailure(result.error);
                 return false;
@@ -635,6 +657,7 @@ export class ConnectorApp {
         if (!this.canRunBleAction()) return;
         const token = this.session;
         await this.loadInstallationIdentity();
+        if (token !== this.session || this.disposed) return;
         const intended = await this.intendedPeer(peerId);
         if (token !== this.session || this.disposed) return;
         if (intended === undefined) {
@@ -644,7 +667,16 @@ export class ConnectorApp {
             return;
         }
         const result = await this.controller.connect({ deviceHandle });
-        if (token !== this.session || this.disposed) return;
+        if (token !== this.session || this.disposed) {
+            // The connect succeeded for an attempt this connector no longer
+            // owns; close it instead of leaving an unauthenticated link open.
+            if (result.ok) {
+                void this.controller
+                    .disconnect(result.event.connection_handle)
+                    .catch(() => undefined);
+            }
+            return;
+        }
         if (!result.ok) {
             this.applyFailure(result.error);
             return;

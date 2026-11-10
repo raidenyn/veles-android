@@ -521,6 +521,10 @@ export async function createManagerFixture(
         trust.repository,
         (handle, peer) => deps(handle, peer),
         () => context.controller.portGeneration,
+        {
+            setTimeout: context.clock.setTimeout,
+            clearTimeout: context.clock.clearTimeout,
+        },
     );
     managerRef.current = manager;
     await negotiateHost(context);

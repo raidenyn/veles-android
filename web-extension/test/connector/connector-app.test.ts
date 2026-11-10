@@ -22,6 +22,7 @@ import {
     answerHandshake,
     createTestController,
     createTestTrust,
+    deferred,
     flush as sessionFlush,
     sessionEngineDeps,
 } from './session-harness';
@@ -1207,5 +1208,47 @@ describe('connector app automatic recovery regressions', () => {
         await next;
         await flush();
         expect(context.view.last.controls.stopScan.enabled).toBe(true);
+    });
+
+    it('rechecks liveness after the installation identity read before a recovery connect', async () => {
+        const context = await setup();
+        context.activePeers.mockResolvedValue([
+            { peerId: context.peerId, label: 'Phone A', hint: 'winrt:phone-a' },
+        ]);
+        const originalIdentity = context.trust.repository.identity.bind(context.trust.repository);
+        const gate = deferred();
+        context.trust.repository.identity = async () => {
+            await gate.promise;
+            return originalIdentity();
+        };
+        await startReady(context);
+
+        // Host loss starts the hint-recovery attempt on a replacement port.
+        await context.currentPort().disconnect();
+        await flush();
+        context.clock.advance(1_000);
+        await flush();
+        const hello = await context.currentPort().nextPosted();
+        await context.currentPort().emit(readyEvent({ request_id: hello.request_id }));
+        await flush();
+        expect(
+            context
+                .currentPort()
+                .posted.some((message) => (message as { type?: string }).type === 'connect'),
+        ).toBe(false);
+
+        // The port is replaced while the attempt is paused in the identity read.
+        await context.currentPort().disconnect();
+        await flush();
+        gate.resolve();
+        await flush();
+
+        // The stale attempt must observe liveness before any transport connect.
+        expect(
+            context
+                .currentPort()
+                .posted.some((message) => (message as { type?: string }).type === 'connect'),
+        ).toBe(false);
+        expect(context.ports).toHaveLength(2);
     });
 });
