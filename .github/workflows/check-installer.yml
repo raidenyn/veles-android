@@ -1,0 +1,125 @@
+name: check-installer
+
+# Installer node of the CI component tree (ci.yml -> `installer / <job>`): the OTP-25 standalone installer
+# crate's format, lint and tests on Linux, Windows and macOS, and its Python script suites (contracts,
+# release gate, correspondence, assembler). Checks only: the unsigned installer inputs are built by
+# build-native-{windows,macos}.yml, and nothing here builds, signs or publishes an installer.
+#
+# The Windows and macOS unit-tests jobs also run format and lint, because the platform frontends are only
+# compiled on their native runners. Both pinned toolchains are activated, as before the component split.
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeInstallerFormat bridgeInstallerLint
+
+  unit-tests-linux:
+    name: unit-tests (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeInstallerTest
+
+  unit-tests-windows:
+    name: unit-tests (windows)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - run: .\gradlew.bat bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
+
+  unit-tests-macos:
+    name: unit-tests (macos)
+    runs-on: macos-26
+    # Job-level so the pinned Xcode reaches every step, including the cargo child processes.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - name: Validate pinned Xcode toolchain
+        run: |
+          test "$(xcodebuild -version | awk '/Build version/ { print $3 }')" = '17F113'
+          xcrun --sdk macosx26.5 --show-sdk-path >/dev/null
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest
+
+  scripts-tests:
+    name: scripts-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/host
+        run: rustup show active-toolchain
+      - name: Activate pinned Rust toolchain (installer)
+        working-directory: native-bridge/installer
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeInstallerScriptsTest

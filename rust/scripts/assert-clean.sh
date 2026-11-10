@@ -34,6 +34,8 @@ generated_paths=(
   # Rust build cache and auxiliary CLI install cache (local, gitignored).
   build/rust
   build/rust-tools
+  # Pinned release tooling (installGitCliff: git-cliff install root and download cache).
+  build/release-tools
   # Web-extension source-tree build output exceptions.
   web-extension/dist
   web-extension/rust-wasm/pkg

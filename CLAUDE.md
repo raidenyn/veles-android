@@ -11,8 +11,8 @@ being submitted and confirm that every command succeeds:
 ./gradlew spotlessCheck detekt lintDebug
 ```
 
-Also run the raw `android.util.Log` guard from the `lint-check` job in
-`.github/workflows/ci.yml`. These are all parts of the CI lint gate;
+Also run the raw `android.util.Log` guard from the `android / lint` job in
+`.github/workflows/check-android.yml`. These are all parts of the CI lint gate;
 `detekt` and `lintDebug` alone are not sufficient because they do not check
 Spotless formatting.
 
@@ -141,10 +141,19 @@ verify/aggregate-checksums.sh <commit>               # build/verification/SHA256
 ./gradlew bridgeInstallerPackageFixture       # FIXTURE channel from the tracked fixture-<platform>.json
 ./gradlew bridgeInstallerSupplyChain          # verify/verify-supply-chain.sh incl. native-installer.cdx.json
 # Output lands under build/native-bridge/installer/{target,slots,out,tools}. Producers never sign; signing,
-# notarization and the release gate are the protected release-native-installers.yml (Task 13).
+# notarization and the release gate run only in the owner-only publish-release.yml (sign-windows/sign-macos, gate-installer).
 
 # Assert every declared generated output was removed by `./gradlew clean`.
 rust/scripts/assert-clean.sh
+
+# Release tooling and Conventional Commits (see docs/releasing.md, docs/ci.md)
+./gradlew installGitCliff      # pinned, SHA-256-verified git-cliff 2.14.2 (scripts/release-tools.toml) -> build/release-tools/git-cliff
+./gradlew scriptsTest          # stdlib-Python suites in scripts/tests (commitlint, component map, release planner/assets/readiness); depends on installGitCliff
+./gradlew installGitHooks      # sets git core.hooksPath=.githooks (commit-msg runs scripts/commitlint.py); also wired into :app:preBuild;
+                               # only when core.hooksPath is unset (otherwise warns); skipped when CI=true
+python3 -I scripts/commitlint.py --message "feat(app): add thing"      # validate a message (or --file PATH); exit 0 valid, 1 invalid
+python3 -I scripts/components.py check                                  # every tracked file is owned by a node in .github/components.json
+python3 -I scripts/components.py changed --base <sha>                   # <node>=true|false per component for a diff
 ```
 
 Clean APK assembly now requires rustup/cargo and NDK r29 (`rustJni` is a dependency of
@@ -161,25 +170,29 @@ exact pin. `verify/package.json` pins `@cyclonedx/cyclonedx-npm` 6.0.1 and
 lockfile is authoritative; this is a documented upstream discrepancy).
 
 **Reusable workflow ownership (OTP-01 1d, single-build pipelines).** Each
-component is built exactly once per invocation in its own reusable workflow;
-none of them invokes a reproducibility verifier, creates A/B run transports,
-or requires a Docker reference build:
+component is built exactly once per invocation in its own reusable workflow:
 
-| Workflow | Builds (neutral artifact name) |
+| Workflow | Role |
 |---|---|
-| `build-android.yml` | one signed-or-unsigned release APK + mapping + `SHA256SUMS` (`android-release`); JNI allow-list runs against the APK actually built |
+| `ci.yml` | PR/master orchestrator: a `changes` job (`scripts/components.py`) selects component nodes, each calls its `check-<node>.yml`; `commit-guard` on master pushes; required aggregate `ci-ok` (see `docs/ci.md`) |
+| `pr-title.yml` | required check: the PR title + body (the future squash commit) must be a Conventional Commit |
+| `check-android.yml`, `check-web-extension.yml`, `check-rust.yml`, `check-protocol.yml`, `check-installer.yml`, `check-bridge-scaffold.yml`, `check-tooling.yml` | per-node lint/test checks; never upload release products |
+| `check-native-host.yml` | OTP-24 production host, the `native-host` node: Linux `lint`/`unit-tests`/`build-contract`, `windows-2025`/`macos-26` `unit-tests` (format + lint + test) and `compile` (`bridgeHostBuild`); CI artifacts `native-host-windows` (exe + `SHA256SUMS`) / `native-host-macos` (mode-preserving tar + `SHA256SUMS`, plus archive sidecar). No installer, no Tauri |
+| `build-android.yml` | one **unsigned** release APK + mapping + `SHA256SUMS` (`android-release`); JNI allow-list runs against the APK actually built. Accepts no signing secrets; signing is `sign-android` in `publish-release.yml` |
 | `build-web-extension.yml` | extension ZIP + sidecar + `SHA256SUMS` (`web-extension`); bundle tests |
 | `build-rust.yml` | `rust-jni-wasm` package |
 | `build-native-windows.yml` | OTP-25 Windows installer inputs (UNSIGNED): `bridgeInstallerUnsigned` (approved `release-windows.json`) or `bridgeInstallerPackageFixture`; each builds the tree twice (slots a/b) and publishes `tree.tar` + `provenance.json` + `report-ab.json` + `SHA256SUMS` as `native-unsigned-windows` / `native-fixture-windows`; provisions the pinned NSIS under `build/native-bridge/installer/tools/nsis`. No Tauri, no signing |
 | `build-native-macos.yml` | OTP-25 macOS installer inputs (UNSIGNED), same shape under the pinned Xcode: `native-unsigned-macos` / `native-fixture-macos`. No Tauri, no signing |
-| `build-supply-chain.yml` | SBOM/license/audit reports (`supply-chain-reports`); report validation + policy enforcement (six SBOMs incl. `native-host.cdx.json` and `native-installer.cdx.json`; vendored `bluest` patch provenance via `verify/check-vendored-patches.mjs`) |
-| `build-native-host.yml` | OTP-24 production host (called from `ci.yml`, not `release-build.yml`): Linux portable checks, `windows-2025`/`macos-26` compile + test + `bridgeHostBuild`; artifacts `native-host-windows` (exe + `SHA256SUMS`) / `native-host-macos` (mode-preserving tar of the executable + `SHA256SUMS`, plus archive sidecar; upload drops bare exec bits) (no installer, no Tauri). Not the scaffold's `native-windows`/`native-macos` archives |
+| `build-supply-chain.yml` | SBOM/license/audit reports (`supply-chain-reports`); report validation + policy enforcement (six SBOMs incl. `native-host.cdx.json` and `native-installer.cdx.json`; vendored `bluest` patch provenance via `verify/check-vendored-patches.mjs`). Used by the `supply-chain` node of `ci.yml` and by `publish-release.yml` |
+| `release-build.yml` | label-driven PR component builds (`build-android`, `build-web-extension`), changed-only master builds, and the release **preview** job summary. Signs, tags and publishes nothing; no `workflow_dispatch` |
+| `build-pr-installers.yml` | PR DEBUG installers via labels `build-windows-installer` / `build-macos-installer` after `raidenyn` approves the secret-free `native-installer-debug` environment |
+| `publish-release.yml` | the only workflow that signs, tags or publishes: owner-only `workflow_dispatch` on `master` (see Versioning & Releases) |
 
-`release-build.yml` composes these with the neutral names, and its manual
-prerelease publisher depends on the guard plus every producer/policy job;
-`release.yml` (tag releases) builds once, publishes the draft's assets after a
-digest check, and attests provenance — no rebuild gate. The former
-`build-toolchain-manifest.yml` aggregate workflow is retired.
+`publish-release.yml` builds each RELEASE component exactly once and carries the rest; none of
+these workflows invokes a reproducibility verifier, creates A/B run transports (other than the
+installer producers' same-run slot A/B), or requires a Docker reference build. The former
+`release.yml`, `release-native-installers.yml`, `build-native-host.yml` and
+`build-toolchain-manifest.yml` workflows are retired.
 
 Windows runs on `windows-2025`; macOS runs on `macos-26` with job-level
 `DEVELOPER_DIR=/Applications/Xcode_26.6.app` (Xcode build `17F113`, SDK
@@ -282,14 +295,31 @@ Insert a row into the `bank_handler_configs` Room database with the three regexe
 
 ## Versioning & Releases
 
-`versionCode`/`versionName` are derived from git tags by the `com.gladed.androidgitversion`
-plugin (`codeFormat = "MMNNPP"`; tag `0.0.1` → code 1). Tags are plain semver with no `v`
-prefix. Pushing a `X.Y.Z` tag triggers `.github/workflows/release.yml`, which builds the
-release APK and creates a GitHub Release — signed if the `KEYSTORE_BASE64`,
-`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` secrets exist, unsigned otherwise.
-`release-build.yml` runs `assembleRelease` automatically on master pushes and as an opt-in
-on PRs (add the `release-build` label); it can also be triggered manually via
-`workflow_dispatch`, which additionally publishes a prerelease GitHub Release (tagged with
-the derived version, titled "(manual build)") — re-dispatching at the same commit replaces
-the previous manual release, but the job aborts rather than overwriting a real tag-triggered
-release.
+Three release components are versioned independently with SemVer computed from Conventional Commits
+by git-cliff 2.14.2 (pinned with SHA-256 digests in `scripts/release-tools.toml`; `cliff.toml`).
+State is the tags `android-v<semver>`, `web-extension-v<semver>` and `installer-v<semver>`; only
+commits touching a component's paths (`.github/components.json`: `paths`, `global`, `ci-global`,
+`ci-paths`, `unowned`) count, and a never-tagged component starts at `0.1.0`. Bumps: `feat` minor,
+`fix`/`perf` patch, `!` or a `BREAKING CHANGE:` footer major; other types do not bump. Plain semver
+tags (`1.2.3`) and `release.yml` are retired and trigger nothing.
+
+Versions are injected at build time, not read from a checked-in file: Android uses
+`androidGitVersion` with `prefix = "android-v"` (`codeFormat = "MMNNPP"`), the extension reads
+`VELES_EXTENSION_VERSION`, the installer and host read `VELES_INSTALLER_VERSION` /
+`VELES_HOST_VERSION`.
+
+Commits must be Conventional Commits (PRs are squash-merged, so the PR title and body count):
+`scripts/commitlint.py` backs the `.githooks/commit-msg` hook (`./gradlew installGitHooks`), the
+required `pr-title` check, and `commit-guard` on master pushes. See `docs/ci.md`.
+
+Releases are owner-only. `.github/workflows/publish-release.yml` (`workflow_dispatch` on `master`,
+actor and triggering actor `raidenyn`) plans RELEASE vs CARRY per component, builds and signs only
+changed components (environments `android-release`, which holds the keystore secrets and the variable
+`VELES_ANDROID_CERT_SHA256`, and `native-release`), creates a draft combined GitHub Release tagged
+`YYYY.MM.DD[.N]` with seven assets (APK, mapping, extension zip, Windows installer, macOS DMG,
+`release-manifest.json`, `SHA256SUMS`; unchanged components are carried byte-for-byte), and after
+`release-publish` approval pushes the component tags atomically and publishes. Only this workflow
+creates releases, pushes tags or reads signing credentials. `release-build.yml` never signs or
+publishes: it builds by PR label (`build-android`, `build-web-extension`; `build-watch` is reserved),
+builds only changed components on master, and writes the release preview to the job summary.
+Runbook, recovery, rollback and one-time owner settings: `docs/releasing.md`.

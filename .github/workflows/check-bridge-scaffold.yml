@@ -1,0 +1,60 @@
+name: check-bridge-scaffold
+
+# Native-bridge Tauri scaffold node of the CI component tree (ci.yml -> `bridge-scaffold / <job>`). This is
+# the OTP-01 1c tooling scaffold, not the production host (check-native-host.yml) or the installer
+# (check-installer.yml).
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: native-bridge/package-lock.json
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/src-tauri
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeFormat bridgeLint bridgeTypecheck bridgeRustFormat bridgeRustLint
+
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: native-bridge/package-lock.json
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Activate pinned Rust toolchain
+        working-directory: native-bridge/src-tauri
+        run: rustup show active-toolchain
+      - run: ./gradlew bridgeNpmTest bridgeRustTest

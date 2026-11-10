@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 function failure(path, reason) {
@@ -92,27 +92,52 @@ async function filesUnder(root, directory) {
   return output;
 }
 
+// Every scope must exist: a renamed or deleted file must be retargeted here, never silently skipped.
+export const REMOTE_CODE_SCOPES = [
+  'web-extension/src', 'web-extension/scripts', 'web-extension/vite.config.ts',
+  'native-bridge/src-tauri', 'native-bridge/scripts', 'native-bridge/package.json',
+  'native-bridge/host/src', 'native-bridge/host/scripts', 'native-bridge/host/Cargo.toml',
+  // OTP-25 standalone installers: engine, scripts, NSIS and Swift frontends, producer workflows and the publisher.
+  'native-bridge/installer/src', 'native-bridge/installer/scripts', 'native-bridge/installer/windows',
+  'native-bridge/installer/macos/Package.swift', 'native-bridge/installer/macos/Sources', 'native-bridge/installer/Cargo.toml',
+  '.github/workflows/build-native-windows.yml', '.github/workflows/build-native-macos.yml',
+  '.github/workflows/publish-release.yml',
+  // Component-tree CI, the PR title check, the release/commit tooling and the commit hook.
+  '.github/workflows/ci.yml', '.github/workflows/pr-title.yml',
+  '.github/workflows/check-native-host.yml', '.github/workflows/check-installer.yml',
+  'scripts', '.githooks',
+  'build.gradle.kts', 'verify',
+];
+
+export async function missingScopes(repository, scopes = REMOTE_CODE_SCOPES) {
+  const missing = [];
+  for (const scope of scopes) {
+    try {
+      await stat(join(repository, scope));
+    } catch {
+      missing.push(scope);
+    }
+  }
+  return missing;
+}
+
 async function main() {
   const repository = process.cwd();
-  const scopes = [
-    'web-extension/src', 'web-extension/scripts', 'web-extension/manifest.json',
-    'native-bridge/src-tauri', 'native-bridge/scripts', 'native-bridge/package.json',
-    'native-bridge/host/src', 'native-bridge/host/scripts', 'native-bridge/host/Cargo.toml',
-    '.github/workflows/build-native-host.yml',
-    // OTP-25 standalone installers: engine, scripts, NSIS and Swift frontends, producer and release workflows.
-    'native-bridge/installer/src', 'native-bridge/installer/scripts', 'native-bridge/installer/windows',
-    'native-bridge/installer/macos/Package.swift', 'native-bridge/installer/macos/Sources', 'native-bridge/installer/Cargo.toml',
-    '.github/workflows/build-native-windows.yml', '.github/workflows/build-native-macos.yml',
-    '.github/workflows/release-native-installers.yml',
-    'build.gradle.kts', 'verify',
-  ];
+  const missing = await missingScopes(repository);
+  if (missing.length > 0) {
+    const error = new Error(`remote-code scan scopes do not exist: ${missing.join(', ')}`);
+    error.exitCode = 1;
+    throw error;
+  }
+  const scopes = REMOTE_CODE_SCOPES;
   const paths = [];
   for (const scope of scopes) {
     try {
       const entries = await filesUnder(repository, scope);
       paths.push(...entries.filter((path) => !path.includes('node_modules/') && !path.includes('verify/test/') && !path.includes('installer/scripts/fixtures/') && !path.includes('__pycache__/') && !/installer\/scripts\/test_[^/]*\.py$/.test(path) && !path.endsWith('package-lock.json') && !['verify/check-cargo-build-scripts.mjs', 'verify/check-remote-code.mjs'].includes(path)));
     } catch {
-      try { await readFile(join(repository, scope)); paths.push(scope); } catch { /* absent optional scope */ }
+      await readFile(join(repository, scope));
+      paths.push(scope);
     }
   }
   const findings = await scanRemoteCode(repository, paths);

@@ -10,6 +10,7 @@ plugins {
 }
 
 androidGitVersion {
+    prefix = "android-v"
     codeFormat = "MMNNPP"
 }
 
@@ -218,4 +219,8 @@ protobuf {
             }
         }
     }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(":installGitHooks")
 }

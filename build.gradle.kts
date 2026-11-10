@@ -7,6 +7,17 @@ import java.util.Properties
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Sync
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ArchiveOperations
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
 
 plugins {
     base
@@ -124,6 +135,207 @@ fun cargoRegistryRemapRustFlags(): String {
     }
     val registrySrc = File(cargoHome, "registry/src").absolutePath
     return "--remap-path-prefix=$registrySrc=/cargo-registry/src"
+}
+
+// Enables the repo's Conventional Commits commit-msg hook (.githooks) for local clones.
+// Never overrides a hooksPath the developer already configured; skipped on CI.
+abstract class InstallGitHooksTask @Inject constructor(
+    private val execOps: ExecOperations,
+) : DefaultTask() {
+    @get:Internal
+    abstract val repoDir: DirectoryProperty
+
+    @get:Input
+    abstract val onCi: Property<Boolean>
+
+    @TaskAction
+    fun install() {
+        if (onCi.get()) {
+            logger.info("CI=true: skipping git hook installation")
+            return
+        }
+        try {
+            configureHooks(repoDir.get().asFile)
+        } catch (e: Exception) {
+            logger.warn("Could not configure git hooks (${e.message}); skipping.")
+        }
+    }
+
+    private fun configureHooks(dir: File) {
+        val probe = ByteArrayOutputStream()
+        val inside = execOps.exec {
+            workingDir = dir
+            commandLine("git", "rev-parse", "--is-inside-work-tree")
+            standardOutput = probe
+            errorOutput = ByteArrayOutputStream()
+            isIgnoreExitValue = true
+        }
+        if (inside.exitValue != 0 || probe.toString(Charsets.UTF_8).trim() != "true") {
+            logger.info("Not inside a git work tree: skipping git hook installation")
+            return
+        }
+        val out = ByteArrayOutputStream()
+        val read = execOps.exec {
+            workingDir = dir
+            commandLine("git", "config", "--get", "core.hooksPath")
+            standardOutput = out
+            isIgnoreExitValue = true
+        }
+        val current = out.toString(Charsets.UTF_8).trim()
+        when {
+            read.exitValue != 0 || current.isEmpty() -> {
+                val write = execOps.exec {
+                    workingDir = dir
+                    commandLine("git", "config", "core.hooksPath", ".githooks")
+                    isIgnoreExitValue = true
+                }
+                if (write.exitValue != 0) {
+                    logger.warn("git config core.hooksPath failed (exit ${write.exitValue}); hook not installed.")
+                }
+            }
+            current == ".githooks" -> Unit
+            else -> logger.warn(
+                "git core.hooksPath is already set to '$current'; leaving it unchanged, " +
+                    "so the Conventional Commits commit-msg hook in .githooks is not active.",
+            )
+        }
+    }
+}
+
+tasks.register<InstallGitHooksTask>("installGitHooks") {
+    group = "build setup"
+    description = "Points git core.hooksPath at .githooks unless already configured (skipped on CI)."
+    repoDir.set(layout.projectDirectory)
+    onCi.set(providers.environmentVariable("CI").map { it == "true" }.orElse(false))
+}
+
+// ---- Release tooling: pinned git-cliff (scripts/release-tools.toml) and the scripts/ test suite ----
+val releaseToolsFile = layout.projectDirectory.file("scripts/release-tools.toml")
+val releaseToolsDir = layout.buildDirectory.dir("release-tools")
+
+fun pinnedReleaseTool(name: String): String {
+    val pattern = Regex("(?m)^${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"\\s*$")
+    return requireNotNull(pattern.find(releaseToolsFile.asFile.readText())) {
+        "Missing '$name' pin in ${releaseToolsFile.asFile}"
+    }.groupValues[1]
+}
+
+val gitCliffTarget: String? = run {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = when (System.getProperty("os.arch").lowercase()) {
+        "amd64", "x86_64" -> "x86_64"
+        "aarch64", "arm64" -> "aarch64"
+        else -> null
+    }
+    when {
+        arch == null -> null
+        os.startsWith("linux") -> "$arch-unknown-linux-gnu"
+        os.startsWith("mac") -> "$arch-apple-darwin"
+        os.startsWith("windows") && arch == "x86_64" -> "x86_64-pc-windows-msvc"
+        else -> null
+    }
+}
+
+// Downloads the pinned git-cliff archive, verifies its SHA-256 BEFORE extracting anything, then
+// extracts only the executable to build/release-tools/git-cliff/ and checks `--version`.
+abstract class InstallGitCliffTask @Inject constructor(
+    private val execOps: ExecOperations,
+    private val archiveOps: ArchiveOperations,
+    private val fsOps: FileSystemOperations,
+) : DefaultTask() {
+    @get:Input
+    abstract val version: Property<String>
+
+    @get:Input
+    abstract val target: Property<String>
+
+    @get:Input
+    abstract val sha256: Property<String>
+
+    @get:OutputDirectory
+    abstract val installDir: DirectoryProperty
+
+    @get:Internal
+    abstract val downloadDir: DirectoryProperty
+
+    @TaskAction
+    fun install() {
+        val windows = target.get().contains("windows")
+        val extension = if (windows) "zip" else "tar.gz"
+        val archiveName = "git-cliff-${version.get()}-${target.get()}.$extension"
+        val url = "https://github.com/orhun/git-cliff/releases/download/v${version.get()}/$archiveName"
+        val download = downloadDir.get().asFile.apply { mkdirs() }.resolve(archiveName)
+        val client = java.net.http.HttpClient.newBuilder()
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+            .build()
+        val response = client.send(
+            java.net.http.HttpRequest.newBuilder(java.net.URI(url)).GET().build(),
+            java.net.http.HttpResponse.BodyHandlers.ofFile(download.toPath()),
+        )
+        check(response.statusCode() == 200) { "Downloading $url failed with HTTP ${response.statusCode()}" }
+        val actual = MessageDigest.getInstance("SHA-256").digest(download.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        if (actual != sha256.get()) {
+            download.delete()
+            error("SHA-256 mismatch for $archiveName: expected ${sha256.get()}, got $actual")
+        }
+        val binaryName = if (windows) "git-cliff.exe" else "git-cliff"
+        val out = installDir.get().asFile
+        fsOps.delete { delete(out) }
+        fsOps.copy {
+            from(if (windows) archiveOps.zipTree(download) else archiveOps.tarTree(download)) {
+                include("git-cliff-${version.get()}/$binaryName")
+                eachFile { path = name }
+            }
+            includeEmptyDirs = false
+            into(out)
+        }
+        val binary = out.resolve(binaryName)
+        check(binary.isFile) { "$archiveName does not contain git-cliff-${version.get()}/$binaryName" }
+        binary.setExecutable(true)
+        val stdout = ByteArrayOutputStream()
+        execOps.exec {
+            commandLine(binary.absolutePath, "--version")
+            standardOutput = stdout
+        }
+        val reported = stdout.toString(Charsets.UTF_8).trim()
+        check(reported == "git-cliff ${version.get()}") {
+            "Expected git-cliff ${version.get()} at $binary, got: $reported"
+        }
+    }
+}
+
+val installGitCliff = tasks.register<InstallGitCliffTask>("installGitCliff") {
+    group = "build setup"
+    description = "Installs the pinned, SHA-256-verified git-cliff into build/release-tools/git-cliff."
+    val pinnedVersion = pinnedReleaseTool("git-cliff")
+    version.set(pinnedVersion)
+    target.set(
+        providers.provider {
+            requireNotNull(gitCliffTarget) {
+                "No pinned git-cliff archive for ${System.getProperty("os.name")}/${System.getProperty("os.arch")}"
+            }
+        },
+    )
+    sha256.set(target.map { pinnedReleaseTool("git-cliff-$it") })
+    installDir.set(releaseToolsDir.map { it.dir("git-cliff") })
+    downloadDir.set(releaseToolsDir.map { it.dir("downloads") })
+}
+
+// Python tooling tests (scripts/tests: commitlint, component map, release planner/assets/readiness).
+val scriptsTest = tasks.register<Exec>("scriptsTest") {
+    group = "verification"
+    description = "Runs the scripts/ unit tests (stdlib Python) against the pinned git-cliff."
+    dependsOn(installGitCliff)
+    workingDir(layout.projectDirectory)
+    environment(
+        "VELES_GIT_CLIFF",
+        releaseToolsDir.get().file("git-cliff/git-cliff$windowsExecutableSuffix").asFile.absolutePath,
+    )
+    commandLine(
+        if (windowsExecutableSuffix.isNotEmpty()) "python" else "python3",
+        "-I", "-m", "unittest", "discover", "-s", "scripts/tests", "-v",
+    )
 }
 
 val rustToolchainCheck = tasks.register("rustToolchainCheck") {
@@ -1243,6 +1455,8 @@ val installerPlatform = when {
 val installerRustTriple = if (installerPlatform == "windows") "x86_64-pc-windows-msvc" else "aarch64-apple-darwin"
 val installerPython = if (installerPlatform == "windows") "python" else "python3"
 val installerExecutableSuffix = if (installerPlatform == "windows") ".exe" else ""
+// MAJOR.MINOR.PATCH, unsigned numeric components without leading zeros (the release-config rule).
+val installerVersionPattern = Regex("""(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)""")
 val installerSources = fileTree(installerDir) {
     include("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/**", "tests/**", "config/**", "macos/**", "windows/**", "scripts/**")
     exclude("target/**", "macos/.build/**", "scripts/__pycache__/**")
@@ -1493,9 +1707,25 @@ fun registerInstallerProducer(
     val allowedOrigin = providers.exec {
         commandLine(installerPython, "-I", installerAssembler.asFile, "origin", "--config", config.get().asFile)
     }.standardOutput.asText.map { it.trim() }
-    val releaseVersion = providers.provider {
+    val configVersion = providers.provider {
         @Suppress("UNCHECKED_CAST")
         (groovy.json.JsonSlurper().parse(config.get().asFile) as Map<String, Any?>)["version"] as String
+    }
+    // The one installer version of this producer: the descriptor (both assembly passes), the macOS
+    // bundle VERSION, the NSIS uninstaller and the host's user agent all receive it. Only the
+    // production channel may take the planned version from VELES_INSTALLER_VERSION (an empty value
+    // keeps the config's); a fixture build always carries its tracked config's version.
+    val installerVersion = (
+        if (channel == "production") {
+            providers.environmentVariable("VELES_INSTALLER_VERSION").filter { it.isNotEmpty() }.orElse(configVersion)
+        } else {
+            configVersion
+        }
+    ).map { version ->
+        require(installerVersionPattern.matches(version)) {
+            "installer version must be MAJOR.MINOR.PATCH without leading zeros (got '$version')"
+        }
+        version
     }
     val slotFinishers = mutableListOf<TaskProvider<*>>()
     // One Swift argument list for the frontend build and the bin-path query, so the second can
@@ -1552,7 +1782,7 @@ fun registerInstallerProducer(
                 installerPython, "-I", installerAssembler.asFile.absolutePath, "assemble",
                 "--platform", installerPlatform, "--channel", channel, "--config", config.get().asFile.absolutePath,
                 "--commit", installerSourceCommit(), "--binaries", binaries.asFile.absolutePath,
-                "--output", output.asFile.absolutePath,
+                "--output", output.asFile.absolutePath, "--version", installerVersion.get(),
             )
             if (installerPlatform == "macos") {
                 val binPath = providers.exec {
@@ -1603,6 +1833,8 @@ fun registerInstallerProducer(
             inputs.files(config)
             // The allowlist is compiled in through option_env!, so the exact origin is a tracked build input.
             inputs.property("VELES_ALLOWED_ORIGINS", allowedOrigin)
+            // The user-agent version is compiled in through option_env!("VELES_HOST_VERSION").
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(hostTargetDir)
             workingDir(productionHostDir)
             doFirst {
@@ -1610,6 +1842,7 @@ fun registerInstallerProducer(
                 delete(hostTargetDir)
                 environment("CARGO_TARGET_DIR", hostTargetDir.get().asFile)
                 environment("VELES_ALLOWED_ORIGINS", allowedOrigin.get())
+                environment("VELES_HOST_VERSION", installerVersion.get())
                 installerCargoEnvironment()
             }
             commandLine(
@@ -1637,13 +1870,14 @@ fun registerInstallerProducer(
             enabled = installerPlatform == "windows"
             dependsOn(configCheck)
             inputs.files(installerSources)
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(uninstallerDir)
             doFirst {
                 delete(uninstallerDir)
                 uninstallerDir.get().asFile.mkdirs()
                 commandLine(
                     "pwsh", "-NoProfile", "-File", installerDir.file("scripts/generate-uninstaller.ps1").asFile,
-                    "-Makensis", installerMakensis.get(), "-Version", releaseVersion.get(),
+                    "-Makensis", installerMakensis.get(), "-Version", installerVersion.get(),
                     "-Channel", channel,
                     "-Output", uninstallerDir.get().file("uninstall.exe").asFile,
                 )
@@ -1669,6 +1903,7 @@ fun registerInstallerProducer(
             dependsOn(stage, frontend)
             inputs.files(config)
             inputs.files(installerSources)
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(assembledDir)
             doFirst {
                 delete(assembledDir)
@@ -1746,6 +1981,7 @@ fun registerInstallerProducer(
             dependsOn(stageEmbedded, frontend)
             inputs.files(config)
             inputs.files(installerSources)
+            inputs.property("installerVersion", installerVersion)
             outputs.dir(assembledFinalDir)
             doFirst {
                 delete(assembledFinalDir)
@@ -1900,6 +2136,10 @@ fun registerInstallerProducer(
         description = summary
         dependsOn(slotFinishers)
         inputs.files(config)
+        // The published tree.tar/provenance.json are made from both slots' final assemblies and carry
+        // the installer version: a changed version or slot tree must re-run the finalizer.
+        inputs.property("installerVersion", installerVersion)
+        inputs.files(slotOutputs.values)
         outputs.dir(outDir)
         doFirst {
             requireInstallerHost()
@@ -2005,5 +2245,7 @@ tasks.named<Delete>("clean") {
         layout.buildDirectory.dir("rust"),
         layout.buildDirectory.dir("rust-tools"),
         layout.buildDirectory.dir("protocol"),
+        // Pinned release tooling (git-cliff install root and verified download cache).
+        releaseToolsDir,
     )
 }

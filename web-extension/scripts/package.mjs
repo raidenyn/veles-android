@@ -95,11 +95,11 @@ async function main() {
         fail(`expected ${DIST_DIR} to exist (run "npm run build" first).`);
     }
 
-    const pkg = readJson(join(WEB_EXT_DIR, 'package.json'));
-    if (typeof pkg.version !== 'string' || pkg.version.length === 0) {
-        fail('web-extension/package.json missing a string "version".');
+    const builtManifest = readJson(join(DIST_DIR, 'manifest.json'));
+    if (typeof builtManifest.version !== 'string' || builtManifest.version.length === 0) {
+        fail('dist/manifest.json missing a string "version".');
     }
-    const version = pkg.version;
+    const version = builtManifest.version;
 
     // Collect entries (files + non-empty directories) and sort them
     // lexicographically by relative path, so each directory entry precedes

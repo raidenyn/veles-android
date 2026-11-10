@@ -22,3 +22,7 @@ local.properties
 /verify/node_modules/
 # Local Android fixture signing material, never commit keys or passwords.
 /config/android_keys/
+
+# Python bytecode
+__pycache__/
+*.pyc

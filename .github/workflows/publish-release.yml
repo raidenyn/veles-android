@@ -1,0 +1,1095 @@
+name: publish-release
+
+# The only release-producing workflow (design D4): owner-only master dispatch of one combined,
+# date-tagged GitHub Release over the release components (android, web-extension, installer).
+#
+# Authorization model: owner-only master dispatch.
+# - The only trigger is a manual workflow_dispatch on `refs/heads/master`, with no inputs. There is no
+#   caller-supplied commit, version, descriptor digest, tag or producer run ID.
+# - `guard` rejects anything that is not an owner master dispatch before any checkout or build:
+#   event workflow_dispatch, ref refs/heads/master, github.actor and github.triggering_actor both
+#   `raidenyn`, and a full 40-hex github.sha. Every other job repeats the same guard in its own `if:`
+#   and needs `guard`, so a rerun re-evaluates it with the rerunner as `github.triggering_actor`.
+#   release_gate.py `authorize` re-checks the same facts in every installer job that reads a descriptor.
+# - `plan` (scripts/release_plan.py over full history, the pinned git-cliff and the previous combined
+#   release's release-manifest.json) classifies every component as RELEASE or CARRY. It fails on a
+#   shallow checkout, on orphaned component tags, and when nothing is RELEASE.
+# - Only RELEASE components are built, from `github.sha`, in THIS run. Nothing here downloads another
+#   run's artifacts and nothing compiles source after the builds. CARRY components are downloaded from
+#   the previous combined release and verified against its manifest by `carry`.
+# - Credentials exist only in the signing jobs: `sign-android` (protected environment
+#   `android-release`) and the per-platform `sign-windows` / `sign-macos` (protected environment
+#   `native-release`). They are mapped through the step-level `env:` of the signer steps; no credential
+#   expression appears in a script body, and neither a job-level env block nor a non-signing step
+#   carries a secret.
+# - Installer RELEASE always builds, verifies and signs BOTH Windows and macOS (one shared version, two
+#   required assets), and `gate-installer` (release_gate.py bundle + validate) checks both.
+# - `ready` (scripts/release_ready.py over toJSON(needs) and plan.json) requires every ALWAYS job to
+#   succeed and every component job to have succeeded (RELEASE) or been skipped (CARRY).
+# - `draft` stages the seven release assets, attests the new ones and creates a DRAFT release; it pushes
+#   nothing. No tag reaches the remote before the owner approves `publish` in the protected environment
+#   `release-publish`, which re-verifies the draft's assets, pushes the RELEASE components' tags
+#   atomically at github.sha, and publishes the draft with its date tag. Re-running `publish` is safe.
+# - Job graph: guard -> plan -> {supply-chain, build-android -> sign-android, build-web-extension,
+#   build-<os> -> verify-<os> -> sign-<os> -> gate-installer, carry} -> ready -> draft -> publish.
+#
+# Owner settings (docs/releasing.md): environments `android-release` (KEYSTORE_BASE64,
+# KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD and the variable VELES_ANDROID_CERT_SHA256),
+# `native-release` (unchanged, see docs/native-installer-owner-setup.md) and `release-publish`.
+# Not exercised by any local test: the real apksigner / signtool / codesign / notarytool / stapler /
+# spctl / hdiutil / makensis behavior, the GitHub release API and the hosted-runner tool identities.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EVENT: ${{ github.event_name }}
+      REF: ${{ github.ref }}
+      ACTOR: ${{ github.actor }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      SHA: ${{ github.sha }}
+    steps:
+      - name: Require an owner master dispatch before any build
+        run: |
+          set -euo pipefail
+          [ "$EVENT" = workflow_dispatch ] || { echo "::error::only a manual workflow_dispatch may release"; exit 1; }
+          [ "$REF" = refs/heads/master ] || { echo "::error::release must be dispatched from master; got $REF"; exit 1; }
+          [ "$ACTOR" = raidenyn ] || { echo "::error::only the release owner may trigger a release"; exit 1; }
+          [ "$TRIGGERING_ACTOR" = raidenyn ] || { echo "::error::only the release owner may rerun a release"; exit 1; }
+          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::the release commit is not a full 40-hex id"; exit 1; }
+
+  # Bootstrap: with no combined release yet, `latest` prints nothing and every component starts at its
+  # initial version. A combined release without its release-manifest.json fails here (fail closed).
+  plan:
+    needs: [guard]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      android: ${{ steps.plan.outputs.android }}
+      android-version: ${{ steps.plan.outputs.android-version }}
+      web-extension: ${{ steps.plan.outputs.web-extension }}
+      web-extension-version: ${{ steps.plan.outputs.web-extension-version }}
+      installer: ${{ steps.plan.outputs.installer }}
+      installer-version: ${{ steps.plan.outputs.installer-version }}
+      release-tag: ${{ steps.plan.outputs.release-tag }}
+      previous-release: ${{ steps.previous.outputs.previous-release }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Install the pinned git-cliff
+        run: ./gradlew installGitCliff
+      - name: Resolve the previous combined release and its manifest
+        id: previous
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/release-plan"
+          mkdir -p "$out/previous"
+          gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt > "$out/releases.json"
+          prev="$(python3 -I scripts/release_plan.py latest --releases-json "$out/releases.json")"
+          if [ -n "$prev" ]; then
+            gh release download "$prev" --pattern release-manifest.json --pattern SHA256SUMS --dir "$out/previous"
+            cp "$out/previous/release-manifest.json" "$out/manifest.json"
+            echo "previous combined release: $prev"
+          else
+            echo '{}' > "$out/manifest.json"
+            echo "previous combined release: none (bootstrap)"
+          fi
+          echo "previous-release=$prev" >> "$GITHUB_OUTPUT"
+      - name: Plan the release (fails on nothing to release, orphaned tags or a shallow checkout)
+        id: plan
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/release-plan"
+          python3 -I scripts/release_plan.py plan --releases-json "$out/releases.json" \
+            --manifest-json "$out/manifest.json" --out "$out/plan.json" --notes "$out/notes.md" \
+            --summary "$GITHUB_STEP_SUMMARY" --require-release
+          python3 -I scripts/release_plan.py tags --plan-json "$out/plan.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+          if-no-files-found: error
+          retention-days: 14
+
+  supply-chain:
+    needs: [guard]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' }}
+    uses: ./.github/workflows/build-supply-chain.yml
+    with:
+      commit-sha: ${{ github.sha }}
+      artifact-name: supply-chain-reports
+
+  build-android:
+    needs: [guard, plan]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.android == 'RELEASE' }}
+    uses: ./.github/workflows/build-android.yml
+    with:
+      commit-sha: ${{ github.sha }}
+      artifact-name: android-release
+      version-tag: android-v${{ needs.plan.outputs.android-version }}
+
+  # Signs the unsigned APK that build-android produced in this run, without rebuilding it.
+  sign-android:
+    needs: [guard, plan, build-android]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.android == 'RELEASE' && needs.build-android.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: android-release
+    permissions:
+      contents: read
+    env:
+      BUILD_TOOLS_VERSION: 36.0.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: android-release
+          path: ${{ runner.temp }}/unsigned
+      - name: Check the unsigned artifact and install the pinned apksigner (no credential)
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/unsigned" && sha256sum -c SHA256SUMS)
+          test -f "$RUNNER_TEMP/unsigned/app-release-unsigned.apk"
+          test -f "$RUNNER_TEMP/unsigned/mapping.txt"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "build-tools;$BUILD_TOOLS_VERSION"
+          test -x "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+          test -x "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/zipalign"
+          echo "APKSIGNER=$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/apksigner" >> "$GITHUB_ENV"
+          echo "ZIPALIGN=$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/zipalign" >> "$GITHUB_ENV"
+      - name: Sign the APK with apksigner (v2 + v3, no v1)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [ -n "${!name}" ] || { echo "::error::$name is not set in the android-release environment"; exit 1; }
+          done
+          keys="$RUNNER_TEMP/android-keys"
+          mkdir -m 700 -p "$keys"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keys/release.jks"
+          mkdir -p "$RUNNER_TEMP/signed"
+          "$APKSIGNER" sign --ks "$keys/release.jks" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+            --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true \
+            --v4-signing-enabled false \
+            --out "$RUNNER_TEMP/signed/app-release.apk" "$RUNNER_TEMP/unsigned/app-release-unsigned.apk"
+          rm -f "$keys/release.jks"
+      - name: Remove the keystore if the job was interrupted
+        if: ${{ always() }}
+        run: rm -rf "$RUNNER_TEMP/android-keys"
+      - name: Check the signed APK's alignment (no credential)
+        run: |
+          set -euo pipefail
+          "$ZIPALIGN" -c -P 16 -v 4 "$RUNNER_TEMP/signed/app-release.apk" || { echo "::error::the signed APK is not aligned"; exit 1; }
+      - name: Verify the signature and the signing certificate fingerprint (no credential)
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.VELES_ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk="$RUNNER_TEMP/signed/app-release.apk"
+          report="$("$APKSIGNER" verify --verbose --print-certs "$apk")"
+          printf '%s\n' "$report"
+          printf '%s\n' "$report" | grep -qx 'Verified using v1 scheme (JAR signing): false' || { echo "::error::v1 signing must be off"; exit 1; }
+          printf '%s\n' "$report" | grep -qx 'Verified using v2 scheme (APK Signature Scheme v2): true' || { echo "::error::v2 signature missing"; exit 1; }
+          printf '%s\n' "$report" | grep -qx 'Verified using v3 scheme (APK Signature Scheme v3): true' || { echo "::error::v3 signature missing"; exit 1; }
+          printf '%s\n' "$report" | grep -qx 'Number of signers: 1' || { echo "::error::exactly one signer is required"; exit 1; }
+          actual="$(printf '%s\n' "$report" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d ':[:space:]' | tr 'A-F' 'a-f')"
+          expected="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':[:space:]' | tr 'A-F' 'a-f')"
+          printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$' || { echo "::error::vars.VELES_ANDROID_CERT_SHA256 is not a SHA-256 fingerprint"; exit 1; }
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::signing certificate SHA-256 $actual differs from VELES_ANDROID_CERT_SHA256 $expected"
+            exit 1
+          fi
+          echo "signing certificate SHA-256 matches: $actual"
+      - name: Check the signed APK's JNI allow-list and write its checksums
+        run: |
+          set -euo pipefail
+          rust/scripts/verify-apk-jni.sh "$RUNNER_TEMP/signed/app-release.apk"
+          cp "$RUNNER_TEMP/unsigned/mapping.txt" "$RUNNER_TEMP/signed/mapping.txt"
+          (cd "$RUNNER_TEMP/signed" && sha256sum app-release.apk mapping.txt > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-signed
+          path: ${{ runner.temp }}/signed
+          if-no-files-found: error
+          retention-days: 14
+
+  build-web-extension:
+    needs: [guard, plan]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.web-extension == 'RELEASE' }}
+    uses: ./.github/workflows/build-web-extension.yml
+    with:
+      commit-sha: ${{ github.sha }}
+      artifact-name: web-extension
+      version: ${{ needs.plan.outputs.web-extension-version }}
+
+  # Installer: moved from the retired release-native-installers.yml. Installer RELEASE selects both
+  # platforms; every job below runs only when the installer is RELEASE.
+  build-windows:
+    needs: [guard, plan]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.installer == 'RELEASE' }}
+    uses: ./.github/workflows/build-native-windows.yml
+    with:
+      build-kind: release
+      commit-sha: ${{ github.sha }}
+      artifact-name: native-release-windows-${{ github.run_id }}-${{ github.run_attempt }}
+      version: ${{ needs.plan.outputs.installer-version }}
+
+  build-macos:
+    needs: [guard, plan]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.installer == 'RELEASE' }}
+    uses: ./.github/workflows/build-native-macos.yml
+    with:
+      build-kind: release
+      commit-sha: ${{ github.sha }}
+      artifact-name: native-release-macos-${{ github.run_id }}-${{ github.run_attempt }}
+      version: ${{ needs.plan.outputs.installer-version }}
+
+  verify-windows:
+    needs: [guard, plan, build-windows]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.installer == 'RELEASE' && needs.build-windows.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      descriptor-sha256: ${{ steps.verify.outputs.descriptor-sha256 }}
+    env:
+      COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-release-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/producer
+      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)
+        id: verify
+        run: |
+          set -euo pipefail
+          gate=native-bridge/installer/scripts/release_gate.py
+          work="$RUNNER_TEMP/verify"
+          (cd "$RUNNER_TEMP/producer" && sha256sum -c SHA256SUMS)
+          mkdir -p "$work/tree" "$work/chosen" "$work/verified"
+          tar -xpf "$RUNNER_TEMP/producer/tree.tar" -C "$work/tree"
+          descriptor="$work/tree/package/descriptor.json"
+          digest="$(sha256sum "$descriptor" | awk '{print $1}')"
+          echo "descriptor-sha256=$digest" >> "$GITHUB_OUTPUT"
+          recipe="$(python3 -I "$gate" recipe-digest --platform windows)"
+          VELES_DESCRIPTOR_SHA256="$digest" python3 -I "$gate" verify-inputs --platform windows \
+            --tree "$work/tree" --provenance "$RUNNER_TEMP/producer/provenance.json" \
+            --ab-report "$RUNNER_TEMP/producer/report-ab.json" --descriptor "$descriptor" \
+            --output "$work/chosen/tree" --reports "$work/verified/reports" \
+            --commit "$COMMIT" --recipe-digest "$recipe"
+          tar -cpf "$work/verified/tree.tar" -C "$work/chosen/tree" .
+          cp "$descriptor" "$work/verified/descriptor.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: verified-windows
+          path: ${{ runner.temp }}/verify/verified
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-verify-windows
+          path: ${{ runner.temp }}/verify/verified/reports
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-macos:
+    needs: [guard, plan, build-macos]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.installer == 'RELEASE' && needs.build-macos.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      descriptor-sha256: ${{ steps.verify.outputs.descriptor-sha256 }}
+    env:
+      COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-release-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/producer
+      - name: Verify the same-run A/B provenance, report, payload and descriptor (no credential)
+        id: verify
+        run: |
+          set -euo pipefail
+          gate=native-bridge/installer/scripts/release_gate.py
+          work="$RUNNER_TEMP/verify"
+          (cd "$RUNNER_TEMP/producer" && sha256sum -c SHA256SUMS)
+          mkdir -p "$work/tree" "$work/chosen" "$work/verified"
+          tar -xpf "$RUNNER_TEMP/producer/tree.tar" -C "$work/tree"
+          descriptor="$work/tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json"
+          digest="$(sha256sum "$descriptor" | awk '{print $1}')"
+          echo "descriptor-sha256=$digest" >> "$GITHUB_OUTPUT"
+          recipe="$(python3 -I "$gate" recipe-digest --platform macos)"
+          VELES_DESCRIPTOR_SHA256="$digest" python3 -I "$gate" verify-inputs --platform macos \
+            --tree "$work/tree" --provenance "$RUNNER_TEMP/producer/provenance.json" \
+            --ab-report "$RUNNER_TEMP/producer/report-ab.json" --descriptor "$descriptor" \
+            --output "$work/chosen/tree" --reports "$work/verified/reports" \
+            --commit "$COMMIT" --recipe-digest "$recipe"
+          tar -cpf "$work/verified/tree.tar" -C "$work/chosen/tree" .
+          cp "$descriptor" "$work/verified/descriptor.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: verified-macos
+          path: ${{ runner.temp }}/verify/verified
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-verify-macos
+          path: ${{ runner.temp }}/verify/verified/reports
+          if-no-files-found: error
+          retention-days: 7
+
+  sign-windows:
+    needs: [guard, plan, verify-windows]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.installer == 'RELEASE' && needs.verify-windows.result == 'success' }}
+    runs-on: windows-2025
+    environment: native-release
+    permissions:
+      contents: read
+    env:
+      COMMIT: ${{ github.sha }}
+      VELES_SIGNING_ENVIRONMENT: native-release
+      VELES_DESCRIPTOR_SHA256: ${{ needs.verify-windows.outputs.descriptor-sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: verified-windows
+          path: ${{ runner.temp }}/verified
+      - name: Unpack the verified inputs (no credential in this step)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tree = Join-Path $env:RUNNER_TEMP 'in'
+          New-Item -ItemType Directory -Path $tree | Out-Null
+          tar -xpf (Join-Path $env:RUNNER_TEMP 'verified/tree.tar') -C $tree
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+          $recipe = python -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'recipe-digest failed' }
+          "RECIPE_DIGEST=$recipe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Sign the nested Windows components
+        env:
+          VELES_WIN_PFX_BASE64: ${{ secrets.VELES_WIN_PFX_BASE64 }}
+          VELES_WIN_PFX_PASSWORD: ${{ secrets.VELES_WIN_PFX_PASSWORD }}
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+          VELES_WIN_PUBLISHER: ${{ vars.VELES_WIN_PUBLISHER }}
+          VELES_WIN_TIMESTAMP_URL: ${{ vars.VELES_WIN_TIMESTAMP_URL }}
+          VELES_WIN_ROOT_CER_BASE64: ${{ secrets.VELES_WIN_ROOT_CER_BASE64 }}
+          VELES_WIN_TRUST_SELF_SIGNED: ${{ vars.VELES_WIN_TRUST_SELF_SIGNED }}
+        run: |
+          $in = Join-Path $env:RUNNER_TEMP 'in'
+          $s = Join-Path $env:RUNNER_TEMP 'sign-nested'
+          ./native-bridge/installer/scripts/sign-windows.ps1 -Stage nested `
+            -Inputs $in -Output (Join-Path $s 'tree') `
+            -Scratch (Join-Path $s 'scratch') -Reports (Join-Path $s 'reports') `
+            -Descriptor (Join-Path $in 'package/descriptor.json') `
+            -Boundary (Join-Path $env:RUNNER_TEMP 'verified/reports/windows-verify-inputs.json') `
+            -Commit $env:COMMIT -RecipeDigest $env:RECIPE_DIGEST
+      - name: Remove nested key material if the job was interrupted
+        if: ${{ always() }}
+        env:
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+        run: |
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'sign-nested/scratch') -Recurse -Force -ErrorAction Ignore
+          certutil -user -delstore My $env:VELES_WIN_CERT_SHA1 2>$null | Out-Null
+          $global:LASTEXITCODE = 0
+      - name: Assemble the setup executable with the pinned makensis (no credential, no rebuild)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gate = 'native-bridge/installer/scripts/release_gate.py'
+          $recipe = python -I $gate recipe-digest --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'recipe-digest failed' }
+          $in = Join-Path $env:RUNNER_TEMP 'sign-nested/tree'
+          $nsis = Join-Path $PWD 'build/native-bridge/installer/tools/nsis'
+          ./native-bridge/installer/scripts/provision-nsis.ps1 -Destination $nsis
+          $env:NSIS_PATH = Join-Path $nsis 'nsis-3.08/makensis.exe'
+          $out = Join-Path $env:RUNNER_TEMP 'assemble'
+          python -I $gate assemble --platform windows --inputs $in --output (Join-Path $out 'tree') `
+            --scratch (Join-Path $out 'scratch') --reports (Join-Path $out 'reports') `
+            --descriptor (Join-Path $in 'package/descriptor.json') `
+            --boundary (Join-Path $env:RUNNER_TEMP 'sign-nested/reports/windows-nested.json') `
+            --commit $env:COMMIT --recipe-digest $recipe
+          if ($LASTEXITCODE -ne 0) { throw 'assemble failed' }
+      - name: Sign and verify the setup executable
+        env:
+          VELES_WIN_PFX_BASE64: ${{ secrets.VELES_WIN_PFX_BASE64 }}
+          VELES_WIN_PFX_PASSWORD: ${{ secrets.VELES_WIN_PFX_PASSWORD }}
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+          VELES_WIN_PUBLISHER: ${{ vars.VELES_WIN_PUBLISHER }}
+          VELES_WIN_TIMESTAMP_URL: ${{ vars.VELES_WIN_TIMESTAMP_URL }}
+          VELES_WIN_ROOT_CER_BASE64: ${{ secrets.VELES_WIN_ROOT_CER_BASE64 }}
+          VELES_WIN_TRUST_SELF_SIGNED: ${{ vars.VELES_WIN_TRUST_SELF_SIGNED }}
+        run: |
+          $in = Join-Path $env:RUNNER_TEMP 'assemble/tree'
+          $s = Join-Path $env:RUNNER_TEMP 'sign-outer'
+          ./native-bridge/installer/scripts/sign-windows.ps1 -Stage outer `
+            -Inputs $in -Output (Join-Path $s 'tree') `
+            -Scratch (Join-Path $s 'scratch') -Reports (Join-Path $s 'reports') `
+            -Descriptor (Join-Path $in 'package/descriptor.json') `
+            -Boundary (Join-Path $env:RUNNER_TEMP 'assemble/reports/windows-assemble.json') `
+            -Commit $env:COMMIT -RecipeDigest $env:RECIPE_DIGEST
+      - name: Remove outer key material if the job was interrupted
+        if: ${{ always() }}
+        env:
+          VELES_WIN_CERT_SHA1: ${{ vars.VELES_WIN_CERT_SHA1 }}
+        run: |
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'sign-outer/scratch') -Recurse -Force -ErrorAction Ignore
+          certutil -user -delstore My $env:VELES_WIN_CERT_SHA1 2>$null | Out-Null
+          $global:LASTEXITCODE = 0
+      - name: Pack the signed tree
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $s = Join-Path $env:RUNNER_TEMP 'sign-outer'
+          tar -cpf (Join-Path $s 'tree.tar') -C (Join-Path $s 'tree') .
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-windows
+          path: ${{ runner.temp }}/sign-outer/tree.tar
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-windows-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-windows-assemble
+          path: ${{ runner.temp }}/assemble/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-windows-outer
+          path: ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ failure() }}
+        with:
+          name: blocked-sign-windows
+          path: |
+            ${{ runner.temp }}/sign-nested/reports
+            ${{ runner.temp }}/assemble/reports
+            ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: ignore
+          retention-days: 7
+
+  sign-macos:
+    needs: [guard, plan, verify-macos]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.installer == 'RELEASE' && needs.verify-macos.result == 'success' }}
+    runs-on: macos-26
+    environment: native-release
+    permissions:
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+      COMMIT: ${{ github.sha }}
+      VELES_SIGNING_ENVIRONMENT: native-release
+      VELES_DESCRIPTOR_SHA256: ${{ needs.verify-macos.outputs.descriptor-sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: verified-macos
+          path: ${{ runner.temp }}/verified
+      - name: Unpack the verified inputs (no credential in this step)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/in"
+          tar -xpf "$RUNNER_TEMP/verified/tree.tar" -C "$RUNNER_TEMP/in"
+          echo "RECIPE_DIGEST=$(python3 -I native-bridge/installer/scripts/release_gate.py recipe-digest --platform macos)" >> "$GITHUB_ENV"
+      - name: Sign the nested macOS code and seal the carrier
+        env:
+          VELES_MAC_P12_BASE64: ${{ secrets.VELES_MAC_P12_BASE64 }}
+          VELES_MAC_P12_PASSWORD: ${{ secrets.VELES_MAC_P12_PASSWORD }}
+          VELES_NOTARY_KEY_BASE64: ${{ secrets.VELES_NOTARY_KEY_BASE64 }}
+          VELES_MAC_IDENTITY: ${{ vars.VELES_MAC_IDENTITY }}
+          VELES_MAC_TEAM_ID: ${{ vars.VELES_MAC_TEAM_ID }}
+          VELES_MAC_PUBLISHER: ${{ vars.VELES_MAC_PUBLISHER }}
+          VELES_MAC_TRUST_SELF_SIGNED: ${{ vars.VELES_MAC_TRUST_SELF_SIGNED }}
+          VELES_NOTARY_KEY_ID: ${{ vars.VELES_NOTARY_KEY_ID }}
+          VELES_NOTARY_ISSUER: ${{ vars.VELES_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          s="$RUNNER_TEMP/sign-nested"
+          native-bridge/installer/scripts/sign-macos.sh --stage nested \
+            --inputs "$RUNNER_TEMP/in" --output "$s/tree" --scratch "$s/scratch" --reports "$s/reports" \
+            --descriptor "$RUNNER_TEMP/in/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/verified/reports/macos-verify-inputs.json" \
+            --commit "$COMMIT" --recipe-digest "$RECIPE_DIGEST"
+      - name: Remove nested key material if the job was interrupted
+        if: ${{ always() }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/sign-nested/scratch/keys/veles-signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/sign-nested/scratch"
+      - name: Assemble the disk image from the signed app (no credential, no rebuild)
+        run: |
+          set -euo pipefail
+          gate=native-bridge/installer/scripts/release_gate.py
+          recipe="$(python3 -I "$gate" recipe-digest --platform macos)"
+          out="$RUNNER_TEMP/assemble"
+          python3 -I "$gate" assemble --platform macos --inputs "$RUNNER_TEMP/sign-nested/tree" --output "$out/tree" \
+            --scratch "$out/scratch" --reports "$out/reports" \
+            --descriptor "$RUNNER_TEMP/sign-nested/tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/sign-nested/reports/macos-nested.json" \
+            --commit "$COMMIT" --recipe-digest "$recipe"
+      - name: Sign, notarize, staple and assess the disk image
+        env:
+          VELES_MAC_P12_BASE64: ${{ secrets.VELES_MAC_P12_BASE64 }}
+          VELES_MAC_P12_PASSWORD: ${{ secrets.VELES_MAC_P12_PASSWORD }}
+          VELES_NOTARY_KEY_BASE64: ${{ secrets.VELES_NOTARY_KEY_BASE64 }}
+          VELES_MAC_IDENTITY: ${{ vars.VELES_MAC_IDENTITY }}
+          VELES_MAC_TEAM_ID: ${{ vars.VELES_MAC_TEAM_ID }}
+          VELES_MAC_PUBLISHER: ${{ vars.VELES_MAC_PUBLISHER }}
+          VELES_MAC_TRUST_SELF_SIGNED: ${{ vars.VELES_MAC_TRUST_SELF_SIGNED }}
+          VELES_NOTARY_KEY_ID: ${{ vars.VELES_NOTARY_KEY_ID }}
+          VELES_NOTARY_ISSUER: ${{ vars.VELES_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          s="$RUNNER_TEMP/sign-outer"
+          native-bridge/installer/scripts/sign-macos.sh --stage outer \
+            --inputs "$RUNNER_TEMP/assemble/tree" --output "$s/tree" --scratch "$s/scratch" --reports "$s/reports" \
+            --descriptor "$RUNNER_TEMP/assemble/tree/Veles Bridge Installer.app/Contents/Resources/package/descriptor.json" \
+            --boundary "$RUNNER_TEMP/assemble/reports/macos-assemble.json" \
+            --commit "$COMMIT" --recipe-digest "$RECIPE_DIGEST"
+      - name: Detach images and remove outer key material if the job was interrupted
+        if: ${{ always() }}
+        run: |
+          for mount in "$RUNNER_TEMP"/sign-outer/scratch/mnt-* "$RUNNER_TEMP"/assemble/scratch/mnt-*; do hdiutil detach "$mount" -force 2>/dev/null || true; done
+          security delete-keychain "$RUNNER_TEMP/sign-outer/scratch/keys/veles-signing.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/sign-outer/scratch"
+      - name: Pack the signed tree
+        run: |
+          set -euo pipefail
+          tar -cpf "$RUNNER_TEMP/sign-outer/tree.tar" -C "$RUNNER_TEMP/sign-outer/tree" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-macos
+          path: ${{ runner.temp }}/sign-outer/tree.tar
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-macos-nested
+          path: ${{ runner.temp }}/sign-nested/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-macos-assemble
+          path: ${{ runner.temp }}/assemble/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reports-sign-macos-outer
+          path: ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ failure() }}
+        with:
+          name: blocked-sign-macos
+          path: |
+            ${{ runner.temp }}/sign-nested/reports
+            ${{ runner.temp }}/assemble/reports
+            ${{ runner.temp }}/sign-outer/reports
+          if-no-files-found: ignore
+          retention-days: 7
+
+  gate-installer:
+    needs: [guard, plan, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]
+    # Run even when a job failed or was skipped (but only for an installer RELEASE), so the verdict is a
+    # recorded failure of THIS job rather than a skipped one. Both platforms are always required.
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.plan.outputs.installer == 'RELEASE' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PLATFORM: both
+      COMMIT: ${{ github.sha }}
+      RESULT_GUARD: ${{ needs.guard.result }}
+      RESULT_BUILD_WINDOWS: ${{ needs.build-windows.result }}
+      RESULT_BUILD_MACOS: ${{ needs.build-macos.result }}
+      RESULT_VERIFY_WINDOWS: ${{ needs.verify-windows.result }}
+      RESULT_VERIFY_MACOS: ${{ needs.verify-macos.result }}
+      RESULT_SIGN_WINDOWS: ${{ needs.sign-windows.result }}
+      RESULT_SIGN_MACOS: ${{ needs.sign-macos.result }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Report the selected platform build/sign status
+        run: |
+          set -euo pipefail
+          if [ "$RESULT_GUARD" != success ]; then
+            echo "BLOCKED: the owner master-dispatch guard did not pass" >&2
+            exit 1
+          fi
+          case "$PLATFORM" in
+            both) selected="windows macos" ;;
+            windows|macos) selected="$PLATFORM" ;;
+            *) echo "BLOCKED: platform must be windows, macos or both (got '$PLATFORM')" >&2; exit 1 ;;
+          esac
+          echo "Platform build/sign status (not acceptance-matrix completion):"
+          failed=""
+          for os in $selected; do
+            if [ "$os" = windows ]; then
+              results="$RESULT_BUILD_WINDOWS $RESULT_VERIFY_WINDOWS $RESULT_SIGN_WINDOWS"
+            else
+              results="$RESULT_BUILD_MACOS $RESULT_VERIFY_MACOS $RESULT_SIGN_MACOS"
+            fi
+            ok=true
+            for result in $results; do
+              [ "$result" = success ] || ok=false
+            done
+            if [ "$ok" = true ]; then
+              echo "$os: PASS"
+            else
+              echo "$os: BLOCKED"
+              failed="$failed $os"
+            fi
+          done
+          echo "PASS here means the selected platform built and signed in this run."
+          echo "It is not acceptance completion: every physical acceptance case remains BLOCKED until independently adjudicated."
+          if [ -n "$failed" ]; then
+            echo "BLOCKED: selected platform(s) failed:$failed; no candidate is eligible" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: reports-*
+          path: ${{ runner.temp }}/reports-in
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: verified-windows
+          path: ${{ runner.temp }}/verified-windows
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: verified-macos
+          path: ${{ runner.temp }}/verified-macos
+      - name: Apply the release gate to the selected platforms
+        run: |
+          set -euo pipefail
+          case "$PLATFORM" in
+            both) selected="windows macos" ;;
+            windows|macos) selected="$PLATFORM" ;;
+            *) echo "BLOCKED: platform must be windows, macos or both (got '$PLATFORM')" >&2; exit 1 ;;
+          esac
+          gate=native-bridge/installer/scripts/release_gate.py
+          root="$RUNNER_TEMP/reports-root"
+          bundle="$RUNNER_TEMP/candidate-evidence"
+          mkdir -p "$root"
+          find "$RUNNER_TEMP/reports-in" -type f -name '*.json' -exec cp -n {} "$root"/ \;
+          descriptors=()
+          if [ "$PLATFORM" = windows ] || [ "$PLATFORM" = both ]; then
+            descriptors+=(--descriptor-windows "$RUNNER_TEMP/verified-windows/descriptor.json")
+          fi
+          if [ "$PLATFORM" = macos ] || [ "$PLATFORM" = both ]; then
+            descriptors+=(--descriptor-macos "$RUNNER_TEMP/verified-macos/descriptor.json")
+          fi
+          python3 -I "$gate" bundle --reports-root "$root" --bundle "$bundle" --commit "$COMMIT" \
+            --platform "$PLATFORM" "${descriptors[@]}"
+          python3 -I "$gate" validate --bundle "$bundle" --commit "$COMMIT" --platform "$PLATFORM"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ always() }}
+        with:
+          name: candidate-evidence
+          path: ${{ runner.temp }}/candidate-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # CARRY components: download exactly the assets the previous release-manifest.json lists and verify
+  # each digest (and its previous SHA256SUMS line) before they are reused byte-for-byte.
+  carry:
+    needs: [guard, plan]
+    if: ${{ needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PREVIOUS_RELEASE: ${{ needs.plan.outputs.previous-release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+      - name: Download and verify the carried assets
+        run: |
+          set -euo pipefail
+          plan="$RUNNER_TEMP/release-plan"
+          out="$RUNNER_TEMP/carried"
+          mkdir -p "$out/assets" "$out/by-component"
+          echo "# CARRY components verified against the previous release-manifest.json" > "$out/components.txt"
+          carried="$(jq -r '.components | to_entries[] | select(.value.action == "CARRY") | .key' "$plan/plan.json")"
+          for component in $carried; do
+            [ -n "$PREVIOUS_RELEASE" ] || { echo "::error::$component is CARRY but there is no previous combined release"; exit 1; }
+            dir="$out/by-component/$component"
+            mkdir -p "$dir"
+            names="$(jq -r --arg c "$component" '.components[$c].assets // {} | keys[]' "$plan/manifest.json")"
+            [ -n "$names" ] || { echo "::error::$component is not listed in the previous release-manifest.json"; exit 1; }
+            for asset in $names; do
+              case "$asset" in
+                */*|.*|*..*) echo "::error::refusing the asset name $asset"; exit 1 ;;
+              esac
+              gh release download "$PREVIOUS_RELEASE" --pattern "$asset" --dir "$dir"
+            done
+            python3 -I scripts/release_assets.py verify-carry --manifest-json "$plan/manifest.json" \
+              --component "$component" --dir "$dir" --sha256sums "$plan/previous/SHA256SUMS"
+            cp "$dir"/* "$out/assets/"
+            echo "$component" >> "$out/components.txt"
+          done
+          echo "carried components: $(tr '\n' ' ' < "$out/components.txt")"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carried
+          path: ${{ runner.temp }}/carried
+          if-no-files-found: error
+          retention-days: 14
+
+  ready:
+    needs: [guard, plan, supply-chain, build-android, sign-android, build-web-extension, build-windows, verify-windows, sign-windows, build-macos, verify-macos, sign-macos, gate-installer, carry]
+    # Always runs (unless the guard facts fail), so readiness is decided by release_ready.py over the
+    # recorded results of every job instead of by long expressions.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      NEEDS_JSON: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+      - name: Decide readiness from every job result and the plan
+        run: |
+          set -euo pipefail
+          printf '%s' "$NEEDS_JSON" > "$RUNNER_TEMP/needs.json"
+          python3 -I scripts/release_ready.py ready --needs-json "$RUNNER_TEMP/needs.json" \
+            --plan-json "$RUNNER_TEMP/release-plan/plan.json"
+
+  # Stages and drafts the release. It creates no tag and pushes nothing: a draft has no git tag.
+  # `!cancelled()` replaces the implicit success() over ALL ancestors: in a partial release the CARRY
+  # components' jobs are skipped, and readiness is decided by `ready` alone.
+  draft:
+    needs: [guard, plan, ready]
+    if: ${{ !cancelled() && needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.ready.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    outputs:
+      release-id: ${{ steps.create.outputs.release-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.release-tag }}
+      ANDROID: ${{ needs.plan.outputs.android }}
+      WEB_EXTENSION: ${{ needs.plan.outputs.web-extension }}
+      INSTALLER: ${{ needs.plan.outputs.installer }}
+      WEB_EXTENSION_VERSION: ${{ needs.plan.outputs.web-extension-version }}
+      INSTALLER_VERSION: ${{ needs.plan.outputs.installer-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: carried
+          path: ${{ runner.temp }}/carried
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ needs.plan.outputs.android == 'RELEASE' }}
+        with:
+          name: android-signed
+          path: ${{ runner.temp }}/in/android
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ needs.plan.outputs.web-extension == 'RELEASE' }}
+        with:
+          name: web-extension
+          path: ${{ runner.temp }}/in/web-extension
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ needs.plan.outputs.installer == 'RELEASE' }}
+        with:
+          name: signed-windows
+          path: ${{ runner.temp }}/signed-windows
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ needs.plan.outputs.installer == 'RELEASE' }}
+        with:
+          name: signed-macos
+          path: ${{ runner.temp }}/signed-macos
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ needs.plan.outputs.installer == 'RELEASE' }}
+        with:
+          name: verified-windows
+          path: ${{ runner.temp }}/verified-windows
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: ${{ needs.plan.outputs.installer == 'RELEASE' }}
+        with:
+          name: verified-macos
+          path: ${{ runner.temp }}/verified-macos
+      - name: Check the built artifacts and their embedded versions against the plan
+        run: |
+          set -euo pipefail
+          inputs=()
+          if [ "$ANDROID" = RELEASE ]; then
+            (cd "$RUNNER_TEMP/in/android" && sha256sum -c SHA256SUMS)
+            inputs+=(--input "android=$RUNNER_TEMP/in/android")
+          fi
+          if [ "$WEB_EXTENSION" = RELEASE ]; then
+            (cd "$RUNNER_TEMP/in/web-extension" && sha256sum -c SHA256SUMS)
+            zips=("$RUNNER_TEMP"/in/web-extension/*.zip)
+            [ "${#zips[@]}" = 1 ] || { echo "::error::expected exactly one extension zip"; exit 1; }
+            embedded="$(unzip -p "${zips[0]}" manifest.json | jq -r .version)"
+            if [ "$embedded" != "$WEB_EXTENSION_VERSION" ]; then
+              echo "::error::extension manifest version $embedded differs from the planned $WEB_EXTENSION_VERSION"
+              exit 1
+            fi
+            inputs+=(--input "web-extension=$RUNNER_TEMP/in/web-extension")
+          fi
+          if [ "$INSTALLER" = RELEASE ]; then
+            for os in windows macos; do
+              embedded="$(jq -r .version "$RUNNER_TEMP/verified-$os/descriptor.json")"
+              if [ "$embedded" != "$INSTALLER_VERSION" ]; then
+                echo "::error::$os installer descriptor version $embedded differs from the planned $INSTALLER_VERSION"
+                exit 1
+              fi
+            done
+            mkdir -p "$RUNNER_TEMP/tree-windows" "$RUNNER_TEMP/tree-macos" "$RUNNER_TEMP/in/installer"
+            tar -xpf "$RUNNER_TEMP/signed-windows/tree.tar" -C "$RUNNER_TEMP/tree-windows"
+            tar -xpf "$RUNNER_TEMP/signed-macos/tree.tar" -C "$RUNNER_TEMP/tree-macos"
+            cp "$RUNNER_TEMP/tree-windows/setup.exe" "$RUNNER_TEMP/in/installer/setup.exe"
+            cp "$RUNNER_TEMP/tree-macos/Veles Bridge Installer.dmg" "$RUNNER_TEMP/in/installer/Veles Bridge Installer.dmg"
+            inputs+=(--input "installer=$RUNNER_TEMP/in/installer")
+          fi
+          plan="$RUNNER_TEMP/release-plan"
+          mkdir -p "$RUNNER_TEMP/expected"
+          python3 -I scripts/release_assets.py stage --plan-json "$plan/plan.json" "${inputs[@]}" \
+            --carried "$RUNNER_TEMP/carried/assets" --manifest-json "$plan/manifest.json" \
+            --out "$RUNNER_TEMP/assets" --digests-out "$RUNNER_TEMP/expected/expected-digests.json"
+          # The new assets of this release (everything not carried) are attested below.
+          mkdir -p "$RUNNER_TEMP/new"
+          for path in "$RUNNER_TEMP"/assets/*; do
+            name="$(basename "$path")"
+            [ -e "$RUNNER_TEMP/carried/assets/$name" ] || cp "$path" "$RUNNER_TEMP/new/$name"
+          done
+          ls -l "$RUNNER_TEMP/assets" "$RUNNER_TEMP/new"
+          cat "$RUNNER_TEMP/assets/SHA256SUMS"
+      - name: Attest build provenance of the new assets
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: ${{ runner.temp }}/new/*
+      - name: Create the draft release (no tag is created or pushed)
+        id: create
+        run: |
+          set -euo pipefail
+          # A stale draft for this tag (an earlier attempt of this run) is replaced; a published release
+          # for the tag aborts.
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == env.TAG) | [.id, .draft] | @tsv')"
+          while IFS="$(printf '\t')" read -r id is_draft; do
+            [ -n "$id" ] || continue
+            if [ "$is_draft" = true ]; then
+              echo "Deleting stale draft release $id for $TAG"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            else
+              echo "::error::A published release for tag $TAG already exists. Aborting to avoid a duplicate release."
+              exit 1
+            fi
+          done <<< "$existing"
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "Veles $TAG" \
+            --notes-file "$RUNNER_TEMP/release-plan/notes.md" "$RUNNER_TEMP"/assets/*
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == env.TAG and .draft) | .id')"
+          [ "$(printf '%s\n' "$id" | grep -c .)" = 1 ] || { echo "::error::could not resolve exactly one draft for $TAG"; exit 1; }
+          echo "release-id=$id" >> "$GITHUB_OUTPUT"
+          echo "Created draft release $id for $TAG at $GITHUB_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: expected-digests
+          path: ${{ runner.temp }}/expected/expected-digests.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Owner approval point (environment release-publish). Re-verifies the draft, pushes the RELEASE
+  # components' tags atomically at github.sha, then publishes the draft. Safe to re-run.
+  publish:
+    needs: [guard, plan, draft]
+    if: ${{ !cancelled() && needs.guard.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'raidenyn' && github.triggering_actor == 'raidenyn' && needs.draft.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: release-publish
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.release-tag }}
+      RELEASE_ID: ${{ needs.draft.outputs.release-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-plan
+          path: ${{ runner.temp }}/release-plan
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: expected-digests
+          path: ${{ runner.temp }}/expected
+      - name: Re-verify the draft assets against the recorded digests
+        run: |
+          set -euo pipefail
+          # Resolve the release by tag, drafts included, and require it to be the one `draft` created.
+          found="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == env.TAG) | .id')"
+          [ "$(printf '%s\n' "$found" | grep -c .)" = 1 ] || { echo "::error::expected exactly one release for $TAG, found: $found"; exit 1; }
+          [ "$found" = "$RELEASE_ID" ] || { echo "::error::release $found for $TAG is not the draft $RELEASE_ID this run created"; exit 1; }
+          dir="$RUNNER_TEMP/draft-check"
+          mkdir -p "$dir"
+          assets="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[] | [.id, .name] | @tsv')"
+          while IFS="$(printf '\t')" read -r asset_id name; do
+            [ -n "$asset_id" ] || continue
+            case "$name" in
+              */*|.*|*..*) echo "::error::refusing the draft asset name $name"; exit 1 ;;
+            esac
+            gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H "Accept: application/octet-stream" > "$dir/$name"
+          done <<< "$assets"
+          python3 -I scripts/release_assets.py verify-draft --expected-json "$RUNNER_TEMP/expected/expected-digests.json" --dir "$dir"
+      - name: Push the RELEASE components' tags atomically at the release commit
+        run: |
+          set -euo pipefail
+          # The commit a remote tag resolves to (peeled for an annotated tag), or nothing when absent.
+          remote_commit() {
+            git ls-remote --tags origin | awk -v r="$1" '$2 == r "^{}" {peeled=$1} $2 == r {plain=$1} END {print (peeled != "" ? peeled : plain)}'
+          }
+          # The combined date tag must be absent or already at the release commit before any push.
+          date_ref="refs/tags/$TAG"
+          remote="$(remote_commit "$date_ref")"
+          if [ -n "$remote" ] && [ "$remote" != "$GITHUB_SHA" ]; then
+            echo "::error::the release tag $TAG already exists at $remote, not at $GITHUB_SHA"
+            exit 1
+          fi
+          # Only RELEASE components' tags; every CARRY component's tag stays where it is.
+          refs="$(python3 -I scripts/release_plan.py tags --plan-json "$RUNNER_TEMP/release-plan/plan.json")"
+          push=()
+          for ref in $refs; do
+            case "$ref" in
+              refs/tags/android-v*|refs/tags/web-extension-v*|refs/tags/installer-v*) ;;
+              *) echo "::error::unexpected component ref $ref"; exit 1 ;;
+            esac
+            remote="$(remote_commit "$ref")"
+            if [ -z "$remote" ]; then
+              git tag "${ref#refs/tags/}" "$GITHUB_SHA"
+              push+=("$ref")
+            elif [ "$remote" = "$GITHUB_SHA" ]; then
+              echo "${ref#refs/tags/} already at $GITHUB_SHA (re-run)"
+            else
+              echo "::error::${ref#refs/tags/} already exists at $remote, not at $GITHUB_SHA"
+              exit 1
+            fi
+          done
+          if [ "${#push[@]}" -gt 0 ]; then
+            git push --atomic origin "${push[@]}"
+          else
+            echo "No component tag to push (all already at $GITHUB_SHA)"
+          fi
+      - name: Publish the draft with its date tag
+        run: |
+          set -euo pipefail
+          # The commit a remote tag resolves to (peeled for an annotated tag), or nothing when absent.
+          remote_commit() {
+            git ls-remote --tags origin | awk -v r="$1" '$2 == r "^{}" {peeled=$1} $2 == r {plain=$1} END {print (peeled != "" ? peeled : plain)}'
+          }
+          date_ref="refs/tags/$TAG"
+          remote="$(remote_commit "$date_ref")"
+          if [ -n "$remote" ] && [ "$remote" != "$GITHUB_SHA" ]; then
+            echo "::error::the release tag $TAG already exists at $remote, not at $GITHUB_SHA"
+            exit 1
+          fi
+          state="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '[.draft, .tag_name] | @tsv')"
+          if [ "$state" = "$(printf 'false\t%s' "$TAG")" ]; then
+            echo "Release $TAG ($RELEASE_ID) is already published (re-run)"
+          else
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=false
+          fi
+          published="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '[.draft, .tag_name] | @tsv')"
+          if [ "$published" != "$(printf 'false\t%s' "$TAG")" ]; then
+            echo "::error::release $RELEASE_ID is not published on $TAG ($published)"
+            exit 1
+          fi
+          remote="$(remote_commit "$date_ref")"
+          if [ "$remote" != "$GITHUB_SHA" ]; then
+            echo "::error::the release tag $TAG resolves to '$remote', not $GITHUB_SHA"
+            exit 1
+          fi
+          echo "Published $TAG at $GITHUB_SHA (release $RELEASE_ID)"

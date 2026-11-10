@@ -26,6 +26,13 @@ on:
       build-kind:
         required: true
         type: string
+      # The planned installer version (MAJOR.MINOR.PATCH). It reaches only the release build, as
+      # VELES_INSTALLER_VERSION; empty keeps the approved config's version. The debug fixture
+      # build always uses its tracked config's version.
+      version:
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -104,6 +111,8 @@ jobs:
       # this workflow would point the build at a file nobody assembled from this commit.
       - name: Build the production-channel unsigned input tree
         if: inputs.build-kind == 'release'
+        env:
+          VELES_INSTALLER_VERSION: ${{ inputs.version }}
         run: .\gradlew.bat bridgeInstallerUnsigned
       # The debug build compiles Rust without --release and Swift in debug, enables the
       # compile-time fixture trust adapter (build.rs refuses it for release/production) and packages

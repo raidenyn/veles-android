@@ -37,31 +37,6 @@ ONE_PUBLIC_TASKS = (
 )
 SHA_PINNED_USE = re.compile(r"uses:\s*(?:\./|[\w.-]+/[\w./-]+@[0-9a-f]{40}\b)")
 
-# The unchanged Android publication conditions (native installers are not built by this caller).
-PUBLISH_NEEDS = "needs: [guard, android, web-extension, rust, supply-chain]"
-PUBLISH_IF = (
-    "if: |\n"
-    "      always() &&\n"
-    "      github.event_name == 'workflow_dispatch' &&\n"
-    "      github.ref == 'refs/heads/master' &&\n"
-    "      needs.guard.result == 'success' &&\n"
-    "      needs.android.result == 'success' &&\n"
-    "      needs.web-extension.result == 'success' &&\n"
-    "      needs.rust.result == 'success' &&\n"
-    "      needs.supply-chain.result == 'success'"
-)
-ANDROID_IF = (
-    "    if: |\n"
-    "      always() &&\n"
-    "      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||\n"
-    "      (github.event_name == 'pull_request' && (\n"
-    "        (github.event.action == 'labeled' && github.event.label.name == 'release-build') ||\n"
-    "        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'release-build'))\n"
-    "      ))) &&\n"
-    "      (github.event_name != 'workflow_dispatch' || needs.guard.result == 'success')"
-)
-
-
 def read(relative):
     return (ROOT / relative).read_text(encoding="utf-8")
 
@@ -275,6 +250,55 @@ def check_gradle(gradle, clean_script):
         errors.append("the origin is not derived from the tracked config via assemble_unsigned.py origin")
     if not re.search(r"inputs\.files?\(config\)", code):
         errors.append("the release config is not declared as a task input")
+
+    # 5a. One installer version: the production channel may take VELES_INSTALLER_VERSION (validated,
+    # otherwise the config's version); the fixture channel always uses its config. The host, the
+    # uninstaller and both assembly passes declare it as an input and receive it.
+    if 'providers.environmentVariable("VELES_INSTALLER_VERSION")' not in code:
+        errors.append("installerVersion is not read from VELES_INSTALLER_VERSION")
+    elif code.count('environmentVariable("VELES_INSTALLER_VERSION")') != 1:
+        errors.append("VELES_INSTALLER_VERSION must be read exactly once")
+    version_decl = re.search(r"val installerVersion\s*=\s*(.*?)\n    val ", code, re.S)
+    if version_decl is None:
+        errors.append("no installerVersion provider is declared")
+    else:
+        decl = version_decl.group(1)
+        if not re.search(r'if \(channel == "production"\)\s*\{?\s*providers\.environmentVariable\("VELES_INSTALLER_VERSION"\)', decl):
+            errors.append("only the production channel may take VELES_INSTALLER_VERSION")
+        if "orElse(configVersion)" not in decl or not re.search(r"\}\s*else\s*\{\s*configVersion\s*\}", decl):
+            errors.append("installerVersion does not fall back to the config version")
+        if "installerVersionPattern.matches(version)" not in decl or "require(" not in decl:
+            errors.append("installerVersion is not validated as MAJOR.MINOR.PATCH")
+    if "releaseVersion" in code:
+        errors.append("a task still reads the config version directly instead of installerVersion")
+    declaration = 'inputs.property("installerVersion", installerVersion)'
+    for marker, label, passes in (
+        ('"${taskName}Host$suffix"', "host", 'environment("VELES_HOST_VERSION", installerVersion.get())'),
+        ('"${taskName}Uninstaller$suffix"', "uninstaller", '"-Version", installerVersion.get()'),
+        ('"${taskName}Assemble$suffix"', "bootstrap assembly", "assemblerArguments("),
+        ('"${taskName}AssembleFinal$suffix"', "final assembly", "assemblerArguments("),
+    ):
+        task = object_block(code, marker)
+        if task is None or declaration not in task:
+            errors.append("the %s task does not declare inputs.property(\"installerVersion\", installerVersion)" % label)
+        elif passes not in task:
+            errors.append("the %s task does not receive installerVersion" % label)
+    if '"--version", installerVersion.get()' not in code:
+        errors.append("the assembler arguments do not pass --version installerVersion")
+    # The release finalizer publishes tree.tar/provenance.json from both slots: it must re-run when
+    # the version or either slot's final assembly changes, never stay UP-TO-DATE on a stale tree.
+    finalizer = None
+    position = code.find("tasks.register<Exec>(taskName)")
+    while position >= 0:
+        candidate = object_block(code[position:], "tasks.register<Exec>(taskName)")
+        if candidate is not None and '"finalize"' in candidate:
+            finalizer = candidate
+            break
+        position = code.find("tasks.register<Exec>(taskName)", position + 1)
+    if finalizer is None or declaration not in finalizer:
+        errors.append("the release finalize task does not declare inputs.property(\"installerVersion\", installerVersion)")
+    elif "inputs.files(slotOutputs.values)" not in finalizer:
+        errors.append("the release finalize task does not declare the slot trees it publishes as inputs")
 
     # 5b. The authenticated carrier is assembled FIRST, verified against the exact descriptor and
     # channel, and only then compiled into the engine that is published. A production build cannot
@@ -588,6 +612,22 @@ def check_producer_workflow(source, platform):
     # only coherent supply point. The workflow must not point the engine at a file it did not assemble.
     if "VELES_EMBEDDED_CARRIER" in body or "VELES_BUILD_CHANNEL" in body:
         errors.append("the producer workflow must not set the carrier channel itself; the Gradle producer supplies the assembled carrier")
+    # The planned installer version is an optional caller input that reaches ONLY the release build,
+    # through the step environment (never interpolated into a shell line); the debug build keeps its
+    # fixture config's version.
+    if not re.search(r"\n      version:\s*\n\s*required:\s*false\s*\n\s*type:\s*string\s*\n\s*default:\s*''\s*\n", body):
+        errors.append("the version input must be an optional string defaulting to ''")
+    version_steps = [step for step in re.split(r"\n(?=      - )", body) if "VELES_INSTALLER_VERSION" in step]
+    if body.count("VELES_INSTALLER_VERSION") != 1 or body.count("inputs.version") != 1 or len(version_steps) != 1:
+        errors.append("VELES_INSTALLER_VERSION must be exported exactly once, from inputs.version")
+    else:
+        step = version_steps[0]
+        if not re.search(r"\n        env:\n          VELES_INSTALLER_VERSION: \$\{\{ inputs\.version \}\}\n", step):
+            errors.append("VELES_INSTALLER_VERSION must be a step env entry set from ${{ inputs.version }}")
+        if "if: inputs.build-kind == 'release'" not in step or "bridgeInstallerUnsigned" not in step:
+            errors.append("VELES_INSTALLER_VERSION must be exported only to the build-kind release bridgeInstallerUnsigned step")
+        if "bridgeInstallerDebug" in step or "build-kind == 'debug'" in step:
+            errors.append("the debug build must not receive VELES_INSTALLER_VERSION")
     if not re.search(r"permissions:\n  contents: read\n", body) or body.count("permissions:") != 1:
         errors.append("permissions must be a single workflow-level contents: read")
     # Uploads: exactly the release input tree or the finished debug installer, exact files,
@@ -634,38 +674,60 @@ def job_block(source, job):
 
 def check_release_build(source):
     errors = []
-    # Native installers are released only by release-native-installers.yml. This caller
-    # must neither define native jobs nor select a native build kind.
-    for job in ("native-windows", "native-macos"):
+    executable = strip_yaml_comments(source)
+    # Native installers are built only by build-pr-installers.yml (debug) and the release
+    # publisher. This label/change-driven build caller must neither define native jobs nor
+    # select a native build kind.
+    for job in ("native-windows", "native-macos", "windows", "macos"):
         if job_block(source, job):
             errors.append("release-build must not define the %s job" % job)
-    executable = strip_yaml_comments(source)
     for token in (
         "build-native-windows.yml", "build-native-macos.yml",
         "native-unsigned-windows", "native-unsigned-macos", "build-kind:",
-        "bridgeInstallerUnsigned", "bridgeInstallerDebug",
+        "bridgeInstallerUnsigned", "bridgeInstallerDebug", "bridgeInstallerPackageFixture",
+        "publish-release.yml", "native-release", "native-installer-debug",
     ):
         if token in executable:
             errors.append("release-build must not produce native installers (%s)" % token)
-    # The component publication conditions are untouched.
-    publish = source.split("\n  publish:", 1)[-1]
-    if PUBLISH_NEEDS not in publish:
-        errors.append("the publish job's needs changed")
-    if PUBLISH_IF not in publish:
-        errors.append("the publish job's if condition changed")
-    if ANDROID_IF not in job_block(source, "android"):
-        errors.append("the android job's condition changed")
-    if source.count("contents: write") != 1 or "contents: write" not in publish:
-        errors.append("contents: write must appear only in the publish job")
-    if "native-release" in executable or "native-unsigned" in publish or "gh release create \"$VERSION\" \\\n            \"$APK\" \\\n            \"android-release/mapping.txt\" \\\n            \"android-release/SHA256SUMS\" \\" not in publish:
-        errors.append("the publish job must keep publishing only the Android artifacts")
+    # No publication: no dispatch, no write token, no secrets, no release mutation.
+    if "workflow_dispatch" in executable:
+        errors.append("release-build must not be manually dispatchable")
+    if "contents: write" in executable or "write-all" in executable:
+        errors.append("release-build must not grant a write token")
+    if re.search(r"(?m)^\s*secrets:", executable) or "${{ secrets." in executable:
+        errors.append("release-build must not pass or reference secrets")
+    if re.search(r"(?m)^\s*environment:", executable):
+        errors.append("release-build must not enter a protected environment")
+    if re.search(r"gh release (?:create|delete|upload|edit)|git push|git tag ", executable):
+        errors.append("release-build must not publish, tag or push")
     return errors
 
 
+PUBLISH_WORKFLOW = "publish-release.yml"
+# The only credentialed jobs of the publisher, and the protected environment each one runs in.
+SIGNING_JOBS = {"sign-windows": "native-release", "sign-macos": "native-release", "sign-android": "android-release"}
+INSTALLER_JOBS = ("build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos", "gate-installer")
+
+
+def workflow_jobs(source):
+    """Top-level job key -> job body (including its key line)."""
+    jobs = {}
+    body = source.split("\njobs:\n", 1)[-1]
+    for match in re.finditer(r"(?m)^  ([\w-]+):\s*$", body):
+        jobs[match.group(1)] = job_block("\n" + body, match.group(1))
+    return jobs
+
+
 def check_gate_boundary(workflows):
-    """The release caller authorizes one owner master dispatch and builds the same run's inputs."""
+    """The publisher authorizes one owner master dispatch, builds the same run's inputs, and maps
+    credentials only in sign-windows / sign-macos (native-release) and sign-android (android-release)."""
     errors = []
-    gate = workflows["release-native-installers.yml"]
+    gate = workflows.get(PUBLISH_WORKFLOW, "")
+    if not gate:
+        return ["%s is missing" % PUBLISH_WORKFLOW]
+    for retired in ("release-native-installers.yml", "release.yml"):
+        if retired in workflows:
+            errors.append("the retired %s is back" % retired)
     body = strip_yaml_comments(gate)
     if 'github.event_name == \'workflow_dispatch\'' not in body or "github.ref == 'refs/heads/master'" not in body:
         errors.append("the release caller no longer requires a manual dispatch on master")
@@ -702,48 +764,104 @@ def check_gate_boundary(workflows):
         errors.append("the obsolete manual descriptor approval variable is back")
     if "pull_request" in body:
         errors.append("the release workflow must not accept pull-request context")
-    # One protected signing/packaging job per selected platform, and no debug packaging.
+    # One protected signing/packaging job per platform, and no debug packaging.
     for platform in ("windows", "macos"):
         if not job_block(gate, "sign-%s" % platform):
             errors.append("the release path is missing sign-%s" % platform)
-    for legacy in ("sign-windows-nested", "sign-windows-outer", "assemble-windows", "assemble-macos"):
+    for legacy in ("sign-windows-nested", "sign-windows-outer", "assemble-windows", "assemble-macos", "gate"):
         if re.search(r"(?m)^  %s:\s*$" % re.escape(legacy), gate):
             errors.append("the release path still has a separate %s job" % legacy)
     for token in ("build-kind: debug", "bridgeInstallerDebug", "build-pr-installers"):
         if token in body:
             errors.append("the release path can invoke debug packaging (%s)" % token)
+    # Credentials: exactly the three signing jobs map secrets, each in its own protected environment.
+    jobs = workflow_jobs(gate)
+    credentialed = sorted(name for name, job in jobs.items() if "secrets." in strip_yaml_comments(job))
+    if credentialed != sorted(SIGNING_JOBS):
+        errors.append("credentialed jobs are %s, not exactly %s" % (credentialed, sorted(SIGNING_JOBS)))
+    for name, job in jobs.items():
+        environment = re.findall(r"(?m)^    environment:\s*(\S+)\s*$", job)
+        expected = [SIGNING_JOBS[name]] if name in SIGNING_JOBS else (["release-publish"] if name == "publish" else [])
+        if environment != expected:
+            errors.append("job %s runs in environment %s, expected %s" % (name, environment, expected))
+        executable = strip_yaml_comments(job)
+        if re.search(r"KEYSTORE_|KEY_ALIAS|KEY_PASSWORD", executable) and name != "sign-android":
+            errors.append("job %s references the Android keystore" % name)
+        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_", executable) and name not in ("sign-windows", "sign-macos"):
+            errors.append("job %s references native signing credentials" % name)
+        if name in SIGNING_JOBS and re.search(r"(?m)^    uses:", job):
+            errors.append("signing job %s must be an ordinary job, not a reusable-workflow caller" % name)
+    # Installer RELEASE runs both platforms: no platform input, every installer job gated on the plan.
+    if re.search(r"(?<![\w-])inputs\.[A-Za-z_]", body):
+        errors.append("the publisher reads a dispatch input (inputs.platform is retired)")
+    for name in INSTALLER_JOBS:
+        condition = re.search(r"(?m)^    if:\s*(.+)$", jobs.get(name, ""))
+        if not condition or "needs.plan.outputs.installer == 'RELEASE'" not in condition.group(1):
+            errors.append("%s does not gate on needs.plan.outputs.installer == 'RELEASE'" % name)
+    if not re.search(r"(?m)^      PLATFORM: both\s*$", jobs.get("gate-installer", "")):
+        errors.append("gate-installer does not check both platforms")
     # Every result the gate reads has a direct needs entry.
-    gate_job = job_block(gate, "gate")
+    gate_job = jobs.get("gate-installer", "")
     needs = re.search(r"(?m)^    needs:\s*\[(.*?)\]\s*$", gate_job)
     required = {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos"}
     declared = {value.strip() for value in needs.group(1).split(",")} if needs else set()
     if not required <= declared:
         errors.append("the gate does not directly depend on every job whose result it reads: %s" % sorted(required - declared))
     for name, source in workflows.items():
-        if name == "release-native-installers.yml":
+        if name == PUBLISH_WORKFLOW:
             continue
         other = strip_yaml_comments(source)
-        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_|native-release|VELES_APPROVED_", other):
+        if re.search(r"VELES_WIN_|VELES_MAC_|VELES_NOTARY_|native-release|VELES_APPROVED_|KEYSTORE_|apksigner", other):
             errors.append("%s references signing credentials or the protected environment" % name)
+        if re.search(r"(?m)^\s*environment:\s*(?:android-release|release-publish)\s*$", other):
+            errors.append("%s enters a release environment" % name)
+        if re.search(r"gh release (?:create|edit|upload|delete)|git push[^\n]*(?:--tags|refs/tags)|git push --atomic", other):
+            errors.append("%s creates releases or pushes tags" % name)
     return errors
 
 
+def installer_check_jobs(body):
+    """check-installer.yml top-level job key -> job body."""
+    jobs = {}
+    current = None
+    for line in body.split("\njobs:\n", 1)[-1].splitlines():
+        if line.strip() and not line.startswith(" "):
+            break
+        match = re.match(r"^  ([\w-]+):\s*$", line)
+        if match:
+            current = match.group(1)
+            jobs[current] = ""
+        elif current:
+            jobs[current] += line + "\n"
+    return jobs
+
+
 def check_host_workflow_installer(source):
+    """check-installer.yml: the `installer` CI node (lint, unit-tests per OS, scripts-tests)."""
     errors = []
     body = strip_yaml_comments(source)
+    jobs = installer_check_jobs(body)
+
+    def runner(job_body):
+        match = re.search(r"^    runs-on:\s*(\S+)\s*$", job_body, re.M)
+        return match.group(1) if match else None
+
     for task in ("bridgeInstallerFormat", "bridgeInstallerLint", "bridgeInstallerTest"):
-        if body.count(task) < 3:
-            errors.append("%s must run on all three platforms" % task)
+        runners = sorted(runner(job) for job in jobs.values() if re.search(r"\b%s\b" % task, job))
+        if runners != ["macos-26", "ubuntu-latest", "windows-2025"]:
+            errors.append("%s must run once on each of the three platforms (found %s)" % (task, runners))
     if body.count("bridgeInstallerScriptsTest") != 1:
-        errors.append("bridgeInstallerScriptsTest must run exactly once (the portable job)")
-    portable = body.split("  windows:", 1)[0]
-    if "bridgeInstallerScriptsTest" not in portable:
-        errors.append("bridgeInstallerScriptsTest must run in the portable job")
+        errors.append("bridgeInstallerScriptsTest must run exactly once (installer / scripts-tests)")
+    if "bridgeInstallerScriptsTest" not in jobs.get("scripts-tests", ""):
+        errors.append("bridgeInstallerScriptsTest must run in the scripts-tests job")
     for task in ("bridgeInstallerUnsigned", "bridgeInstallerPackageFixture", "bridgeInstallerDebug"):
         if task in body:
-            errors.append("the host check workflow must not build installer inputs (%s)" % task)
-    if len(re.findall(r"working-directory:\s*native-bridge/installer\s*\n\s*run:\s*rustup show active-toolchain", body)) < 3:
-        errors.append("the installer toolchain is not activated in each of the three host check jobs")
+            errors.append("the installer check workflow must not build installer inputs (%s)" % task)
+    for name, job in jobs.items():
+        if not re.search(r"working-directory:\s*native-bridge/installer\s*\n\s*run:\s*rustup show active-toolchain", job):
+            errors.append("the installer toolchain is not activated in %s" % name)
+    if len(jobs) < 3:
+        errors.append("the installer check workflow must have its lint, unit-tests and scripts-tests jobs")
     return errors
 
 
@@ -766,7 +884,7 @@ def check_supply_chain(files):
     for scope in ("native-bridge/installer/src", "native-bridge/installer/scripts", "native-bridge/installer/windows",
                   "native-bridge/installer/macos/Package.swift", "native-bridge/installer/macos/Sources",
                   ".github/workflows/build-native-windows.yml", ".github/workflows/build-native-macos.yml",
-                  ".github/workflows/release-native-installers.yml"):
+                  ".github/workflows/publish-release.yml"):
         if scope not in files["remote-code"]:
             errors.append("the remote-code scan omits %s" % scope)
     if "build/sbom/native-installer.cdx.json" not in files["supply-chain-workflow"]:
@@ -903,6 +1021,35 @@ class GradleGraph(unittest.TestCase):
         self.assertTrue(any("VELES_ALLOWED_ORIGINS" in e for e in found), found)
         found = self.violations(self.mutate('environment("VELES_ALLOWED_ORIGINS"', 'environment("OTHER"'))
         self.assertTrue(any("VELES_ALLOWED_ORIGINS" in e for e in found), found)
+
+    def test_the_installer_version_must_be_a_declared_input_of_every_consumer(self):
+        declaration = 'inputs.property("installerVersion", installerVersion)'
+        block = producer_block(self.gradle)
+        self.assertEqual(5, block.count(declaration))
+        # Dropping any one declaration (host, uninstaller, bootstrap or final assembly, finalize) is named.
+        for index in range(5):
+            start = -1
+            for _ in range(index + 1):
+                start = block.index(declaration, start + 1)
+            mutated = self.gradle.replace(block, block[:start] + block[start + len(declaration):])
+            found = self.violations(mutated)
+            self.assertTrue(any("installerVersion" in e for e in found), (index, found))
+        for old, new in (
+            ('environment("VELES_HOST_VERSION", installerVersion.get())', 'environment("VELES_HOST_VERSION", "0.0.0")'),
+            ('"-Version", installerVersion.get()', '"-Version", "0.0.0"'),
+            ('"--version", installerVersion.get()', '"--version", "0.0.0"'),
+            ('providers.environmentVariable("VELES_INSTALLER_VERSION")', 'providers.gradleProperty("installerVersion")'),
+            ('orElse(configVersion)', 'orElse("0.0.0")'),
+            ('if (channel == "production") {', 'if (true) {'),
+            ('require(installerVersionPattern.matches(version))', 'check(true)'),
+            ('} else {\n            configVersion\n        }', '} else {\n            providers.environmentVariable("X").orElse(configVersion)\n        }'),
+        ):
+            found = self.violations(self.mutate(old, new))
+            self.assertTrue(any("installerVersion" in e or "VELES_INSTALLER_VERSION" in e or "version" in e for e in found), (old, found))
+
+    def test_the_finalizer_must_track_the_slot_trees_it_publishes(self):
+        found = self.violations(self.mutate("inputs.files(slotOutputs.values)", "inputs.files()"))
+        self.assertTrue(any("slot trees it publishes" in e for e in found), found)
 
     def test_the_engine_must_compile_in_the_assembled_and_verified_carrier(self):
         for old, new in (
@@ -1178,6 +1325,15 @@ class ProducerWorkflows(unittest.TestCase):
                 "      - name: Build the debug fixture-channel installer\n        env:\n          VELES_EMBEDDED_CARRIER: unverified.bin",
                 1,
             ),
+            "version-dropped": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1),
+            "version-to-debug": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1).replace(
+                "          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}\n",
+                "          VELES_WORKFLOW_RUN_ID: ${{ github.run_id }}\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", 1),
+            "version-job-env": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1).replace(
+                "    steps:", "    env:\n      VELES_INSTALLER_VERSION: ${{ inputs.version }}\n    steps:", 1),
+            "version-inline": source.replace("        env:\n          VELES_INSTALLER_VERSION: ${{ inputs.version }}\n", "", 1).replace(
+                "bridgeInstallerUnsigned\n", "bridgeInstallerUnsigned -PinstallerVersion=${{ inputs.version }}\n", 1),
+            "version-required": source.replace("      version:\n        required: false", "      version:\n        required: true", 1),
             "silent-upload": source.replace("if-no-files-found: error", "if-no-files-found: ignore"),
             "write-permission": source.replace("contents: read", "contents: write", 1),
         }
@@ -1228,45 +1384,48 @@ class ProducerWorkflows(unittest.TestCase):
 
 
 class Callers(unittest.TestCase):
-    def test_release_build_passes_the_component_names_and_keeps_android_publication(self):
+    def test_release_build_calls_no_native_producer_and_publishes_nothing(self):
         self.assertEqual(check_release_build(read(".github/workflows/release-build.yml")), [])
 
-    def test_changed_publication_conditions_are_rejected(self):
+    def test_publication_paths_are_rejected(self):
         source = read(".github/workflows/release-build.yml")
-        for old, new in (
-            (PUBLISH_NEEDS, PUBLISH_NEEDS.replace("supply-chain]", "supply-chain, native-windows]")),
-            ("needs.supply-chain.result == 'success'", "needs.supply-chain.result != 'failure'"),
-            ("github.ref == 'refs/heads/master' &&", "github.ref != '' &&"),
-            ('"android-release/SHA256SUMS" \\', '"android-release/SHA256SUMS" "native-unsigned.tar" \\'),
+        self.assertIn("permissions:\n  contents: read", source)
+        self.assertIn("  pull_request:\n", source)
+        for label, mutated in (
+            ("write token", source.replace("permissions:\n  contents: read", "permissions:\n  contents: write", 1)),
+            ("dispatch", source.replace("  pull_request:\n", "  workflow_dispatch:\n  pull_request:\n", 1)),
+            ("secrets", source + "\n  publish:\n    uses: ./.github/workflows/build-android.yml\n    secrets: inherit\n"),
+            ("secret expression", source + "\n  publish:\n    env:\n      KEY: ${{ secrets.KEY }}\n"),
+            ("environment", source + "\n  publish:\n    runs-on: ubuntu-latest\n    environment: release-publish\n"),
+            ("release create", source + "\n  publish:\n    steps:\n      - run: gh release create \"$TAG\"\n"),
+            ("release upload", source + "\n  publish:\n    steps:\n      - run: gh release upload \"$TAG\" a.apk\n"),
         ):
-            self.assertIn(old, source, old)
-            self.assertNotEqual(check_release_build(source.replace(old, new, 1)), [], old)
-        self.assertNotEqual(check_release_build(source.replace("contents: read", "contents: write", 1)), [])
+            self.assertNotEqual(mutated, source, label)
+            self.assertNotEqual(check_release_build(mutated), [], label)
 
     def test_native_installers_are_absent_and_reintroduction_is_rejected(self):
         source = read(".github/workflows/release-build.yml")
         executable = strip_yaml_comments(source)
         for token in (
-            "  native-windows:", "  native-macos:",
+            "  native-windows:", "  native-macos:", "  windows:", "  macos:",
             "build-native-windows.yml", "build-native-macos.yml",
             "native-unsigned-windows", "native-unsigned-macos", "build-kind:",
         ):
             self.assertNotIn(token, executable, token)
-        reintroduced = source + (
-            "\n  native-windows:\n"
-            "    needs: guard\n"
-            "    uses: ./.github/workflows/build-native-windows.yml\n"
-            "    with:\n"
-            "      commit-sha: ${{ github.sha }}\n"
-            "      artifact-name: native-unsigned-windows\n"
-            "      build-kind: release\n"
-        )
-        self.assertNotEqual(check_release_build(reintroduced), [])
-        self.assertNotEqual(
-            check_release_build(source.replace(PUBLISH_NEEDS, PUBLISH_NEEDS.replace("supply-chain]", "supply-chain, native-macos]"), 1)),
-            [],
-            "publish must not regain a native dependency",
-        )
+        for job, builder, kind in (
+            ("native-windows", "build-native-windows.yml", "release"),
+            ("windows", "build-native-windows.yml", "debug"),
+            ("macos", "build-native-macos.yml", "debug"),
+        ):
+            reintroduced = source + (
+                "\n  %s:\n"
+                "    needs: [changes]\n"
+                "    uses: ./.github/workflows/%s\n"
+                "    with:\n"
+                "      commit-sha: ${{ github.sha }}\n"
+                "      build-kind: %s\n" % (job, builder, kind)
+            )
+            self.assertNotEqual(check_release_build(reintroduced), [], job)
 
     def workflows(self):
         directory = ROOT / ".github" / "workflows"
@@ -1275,52 +1434,84 @@ class Callers(unittest.TestCase):
     def test_signed_candidates_never_come_from_pull_request_artifacts(self):
         self.assertEqual(check_gate_boundary(self.workflows()), [])
 
-    def test_platform_selection_does_not_require_the_unselected_target(self) -> None:
-        gate = read(".github/workflows/release-native-installers.yml")
-        self.assertIn("      platform:\n", gate)
-        self.assertIn("options: [windows, macos, both]", gate)
-        self.assertIn("default: windows", gate)
+    def test_installer_release_selects_both_platforms_without_a_platform_input(self) -> None:
+        gate = read(".github/workflows/publish-release.yml")
+        body = strip_yaml_comments(gate)
+        self.assertNotRegex(body, r"(?<![\w-])inputs\.[A-Za-z_]", "no job reads a dispatch input (inputs.platform is retired)")
         self.assertNotIn("windows_only:", gate)
-        for platform in ("windows", "macos"):
-            self.assertIn("inputs.platform == '%s' || inputs.platform == 'both'" % platform, gate)
+        self.assertNotIn("      platform:\n", gate)
+        jobs = workflow_jobs(gate)
+        for name in INSTALLER_JOBS:
+            condition = re.search(r"(?m)^    if:\s*(.+)$", jobs[name]).group(1)
+            self.assertIn("needs.plan.outputs.installer == 'RELEASE'", condition, name)
+            self.assertNotIn("'windows'", condition, name)
+            self.assertNotIn("'macos'", condition, name)
+        self.assertRegex(jobs["gate-installer"], r"(?m)^      PLATFORM: both$")
         self.assertIn("RESULT_SIGN_WINDOWS: ${{ needs.sign-windows.result }}", gate)
         self.assertIn("RESULT_SIGN_MACOS: ${{ needs.sign-macos.result }}", gate)
-        self.assertIn('for os in $selected', gate, "only the selected platforms are required")
+        self.assertIn('for os in $selected', gate, "both platforms are required")
+        # Both descriptor downloads of the gate are unconditional.
+        for platform in ("windows", "macos"):
+            step = re.search(r"(?ms)^      - uses: actions/download-artifact@[^\n]*\n((?:        [^\n]*\n)*?)          name: verified-%s\n" % platform, jobs["gate-installer"])
+            self.assertIsNotNone(step, platform)
+            self.assertNotIn("if:", step.group(1), platform)
         self.assertNotIn('or .event == "pull_request"', gate, "PR producer runs stay rejected")
 
     def test_gate_boundary_mutations_are_rejected(self):
         workflows = self.workflows()
-        gate = workflows["release-native-installers.yml"]
+        gate = workflows["publish-release.yml"]
         for old, new in (
             ("[ \"$ACTOR\" = raidenyn ]", "[ \"$ACTOR\" = someone-else ]"),
             ("[ \"$TRIGGERING_ACTOR\" = raidenyn ]", "[ \"$TRIGGERING_ACTOR\" = someone-else ]"),
             ("[ \"$REF\" = refs/heads/master ]", "[ \"$REF\" = refs/heads/feature ]"),
-            ("commit-sha: ${{ github.sha }}", "commit-sha: ${{ inputs.commit }}"),
             ("build-kind: release", "build-kind: debug"),
             ("github.actor == 'raidenyn'", "github.actor != ''"),
             (
-                "    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n",
-                "    needs: [guard, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n",
+                "    needs: [guard, plan, build-windows, build-macos, verify-windows, verify-macos, sign-windows, sign-macos]\n",
+                "    needs: [guard, plan, build-windows, build-macos, verify-windows, verify-macos, sign-windows]\n",
             ),
+            ("    environment: android-release\n", ""),
+            ("    environment: release-publish\n", ""),
+            ("    environment: native-release\n", "    environment: release-publish\n"),
+            ("      PLATFORM: both\n", "      PLATFORM: windows\n"),
+            ("needs.plan.outputs.installer == 'RELEASE'", "inputs.platform == 'windows'"),
+            ("      TAG: ${{ needs.plan.outputs.release-tag }}\n      ANDROID:", "      TAG: ${{ needs.plan.outputs.release-tag }}\n      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}\n      ANDROID:"),
+            ("    runs-on: ubuntu-latest\n    environment: android-release\n", "    uses: ./.github/workflows/build-android.yml\n    environment: android-release\n"),
         ):
             self.assertIn(old, gate, old)
-            self.assertNotEqual(check_gate_boundary({**workflows, "release-native-installers.yml": gate.replace(old, new, 1)}), [], old)
+            self.assertNotEqual(check_gate_boundary({**workflows, "publish-release.yml": gate.replace(old, new, 1)}), [], old)
+        self.assertNotEqual(
+            check_gate_boundary({**workflows, "publish-release.yml": gate.replace("commit-sha: ${{ github.sha }}", "commit-sha: ${{ inputs.commit }}")}),
+            [],
+        )
         leaked = {**workflows, "build-native-windows.yml": workflows["build-native-windows.yml"] + "\n      env:\n        VELES_WIN_PFX_BASE64: x\n"}
         self.assertNotEqual(check_gate_boundary(leaked), [])
-        approved = {**workflows, "release-native-installers.yml": gate + "\n      VELES_APPROVED_DESCRIPTOR_SHA256: x\n"}
+        keystore = {**workflows, "build-android.yml": workflows["build-android.yml"] + "\n      env:\n        KEYSTORE_PASSWORD: x\n"}
+        self.assertNotEqual(check_gate_boundary(keystore), [])
+        tagging = {**workflows, "release-build.yml": workflows["release-build.yml"] + "\n      - run: git push origin --tags\n"}
+        self.assertNotEqual(check_gate_boundary(tagging), [])
+        releasing = {**workflows, "ci.yml": workflows["ci.yml"] + "\n      - run: gh release create x\n"}
+        self.assertNotEqual(check_gate_boundary(releasing), [])
+        retired = {**workflows, "release-native-installers.yml": "name: release-native-installers\n"}
+        self.assertNotEqual(check_gate_boundary(retired), [])
+        approved = {**workflows, "publish-release.yml": gate + "\n      VELES_APPROVED_DESCRIPTOR_SHA256: x\n"}
         self.assertNotEqual(check_gate_boundary(approved), [])
-        external = {**workflows, "release-native-installers.yml": gate + "\n      - run: gh run view 1\n"}
+        external = {**workflows, "publish-release.yml": gate + "\n      - run: gh run view 1\n"}
         self.assertNotEqual(check_gate_boundary(external), [])
 
     def test_host_check_workflow_runs_the_installer_checks_on_every_platform(self):
-        source = read(".github/workflows/build-native-host.yml")
+        source = read(".github/workflows/check-installer.yml")
         self.assertEqual(check_host_workflow_installer(source), [])
         for mutated in (
             source.replace("bridgeInstallerLint", "bridgeInstallerLynt"),
             source.replace("bridgeInstallerScriptsTest", "bridgeInstallerTest", 1),
             source + "\n      - run: ./gradlew bridgeInstallerUnsigned\n",
             source.replace("working-directory: native-bridge/installer", "working-directory: native-bridge/host", 1),
+            source.replace(".\\gradlew.bat bridgeInstallerFormat bridgeInstallerLint bridgeInstallerTest",
+                           ".\\gradlew.bat bridgeInstallerFormat bridgeInstallerTest"),
+            source.replace("  scripts-tests:", "  scripts:"),
         ):
+            self.assertNotEqual(mutated, source)
             self.assertNotEqual(check_host_workflow_installer(mutated), [])
 
 
@@ -1348,7 +1539,7 @@ class SupplyChain(unittest.TestCase):
             ("build-scripts", "native-bridge/installer/Cargo.toml"),
             ("licenses", "native-bridge/installer/Cargo.toml"),
             ("remote-code", "native-bridge/installer/scripts"),
-            ("remote-code", ".github/workflows/release-native-installers.yml"),
+            ("remote-code", ".github/workflows/publish-release.yml"),
             ("supply-chain-workflow", "build/sbom/native-installer.cdx.json"),
         ):
             files = self.files()

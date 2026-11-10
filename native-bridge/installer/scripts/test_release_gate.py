@@ -69,7 +69,8 @@ SECRET_VALUES = ("hunter2-pfx-password", "p12-secret-password", "notary-key-secr
 # The user keychain search list a signing stage starts from; the gate must add its ephemeral
 # keychain to it and put exactly this list back.
 DEFAULT_KEYCHAIN_LIST = ("/Users/fake/Library/Keychains/login.keychain-db", "/Library/Keychains/System.keychain")
-WORKFLOW = REPO / ".github" / "workflows" / "release-native-installers.yml"
+# The installer release jobs live in the combined publisher (release-native-installers.yml is retired).
+WORKFLOW = REPO / ".github" / "workflows" / "publish-release.yml"
 TARGET = {"windows": "windows-x86_64", "macos": "macos-arm64"}
 PLATFORM_OTHER = {"windows": "macos", "macos": "windows"}
 PACKAGE = {"windows": gate.WIN_PACKAGE, "macos": gate.MAC_PACKAGE}
@@ -2887,6 +2888,13 @@ def run_blocks(job: str) -> str:
 
 
 SIGN_JOBS = ("sign-windows", "sign-macos")
+ANDROID_SIGN_JOB = "sign-android"
+INSTALLER_JOBS = ("build-windows", "build-macos", "verify-windows", "verify-macos", *SIGN_JOBS, "gate-installer")
+PUBLISH_JOBS = {
+    "guard", "plan", "supply-chain", "build-android", ANDROID_SIGN_JOB, "build-web-extension",
+    *INSTALLER_JOBS, "carry", "ready", "draft", "publish",
+}
+WRITE_JOBS = ("draft", "publish")
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -2896,19 +2904,21 @@ class WorkflowContractTests(unittest.TestCase):
         cls.jobs = split_jobs(cls.text)
         cls.head = cls.jobs.pop("__head__")
 
-    def test_only_the_platform_input_selects_the_target(self) -> None:
+    def test_only_a_manual_dispatch_without_inputs_starts_a_release(self) -> None:
         on = self.head.split("on:", 1)[1].split("\npermissions:", 1)[0]
         self.assertIn("workflow_dispatch", on)
         for forbidden in ("pull_request", "pull_request_target", "push", "schedule", "workflow_run", "issue_comment"):
             self.assertNotRegex(on, rf"(?m)^\s*{forbidden}\s*:", forbidden)
-        self.assertRegex(on, r"(?m)^\s{6}platform:\s*$")
-        self.assertRegex(on, r"(?m)^\s{8}type:\s*choice\s*$")
-        self.assertRegex(on, r"(?m)^\s{8}options:\s*\[windows, macos, both\]\s*$")
-        self.assertRegex(on, r"(?m)^\s{8}default:\s*windows\s*$")
-        for obsolete in ("commit:", "descriptor_sha256", "unsigned_run", "windows_only"):
+        # The platform selection is retired: installer RELEASE always builds both platforms.
+        self.assertEqual(on.strip(), "workflow_dispatch:")
+        for obsolete in ("platform:", "commit:", "descriptor_sha256", "unsigned_run", "windows_only"):
             self.assertNotIn(obsolete, on, obsolete)
+        self.assertNotRegex(self.text, r"(?<![\w-])inputs\.[A-Za-z_]")
         self.assertRegex(self.head, r"(?m)^permissions:\s*\n\s+contents:\s*read\s*$")
-        self.assertNotRegex(self.text, r"(?m)^\s*(contents|id-token|attestations|actions|packages|pull-requests):\s*write")
+        self.assertNotRegex(self.head, r"(?m)^\s*(contents|id-token|attestations|actions|packages|pull-requests):\s*write")
+        for name, body in self.jobs.items():
+            if name not in WRITE_JOBS:
+                self.assertNotRegex(body, r"(?m)^\s*(contents|id-token|attestations|actions|packages|pull-requests):\s*write", name)
 
     def test_every_job_is_guarded_by_the_owner_master_dispatch(self) -> None:
         guard = self.jobs["guard"]
@@ -2920,7 +2930,6 @@ class WorkflowContractTests(unittest.TestCase):
             '"$ACTOR" = raidenyn',
             '"$TRIGGERING_ACTOR" = raidenyn',
             "^[0-9a-f]{40}$",
-            "windows|macos|both",
         ):
             self.assertIn(check, guard, check)
         # Every other job repeats the guard in its own `if:`, so a rerun re-evaluates it.
@@ -2961,22 +2970,29 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_credentials_exist_only_in_protected_environment_jobs(self) -> None:
         credentialed = {name for name, body in self.jobs.items() if "secrets." in body}
-        self.assertEqual(credentialed, set(SIGN_JOBS))
+        self.assertEqual(credentialed, {*SIGN_JOBS, ANDROID_SIGN_JOB})
         for name, body in self.jobs.items():
             has_env = re.search(r"(?m)^    environment:\s*native-release\s*$", body) is not None
             self.assertEqual(has_env, name in SIGN_JOBS, name)
+            has_android_env = re.search(r"(?m)^    environment:\s*android-release\s*$", body) is not None
+            self.assertEqual(has_android_env, name == ANDROID_SIGN_JOB, name)
+            for token in ("VELES_WIN_", "VELES_MAC_", "VELES_NOTARY_"):
+                if name not in SIGN_JOBS:
+                    self.assertNotIn(token, body, name)
+            if name != ANDROID_SIGN_JOB:
+                self.assertNotIn("KEYSTORE_", body, name)
         self.assertNotIn("secrets.", self.head)
         # Secrets are mapped by a step-level env: on the signing steps only, nowhere else.
-        # Each protected platform job has two signing steps: nested and outer.
-        expected_holders = {"sign-windows": 2, "sign-macos": 2}
+        # Each protected platform job has two signing steps (nested and outer); sign-android has one.
+        expected_holders = {"sign-windows": 2, "sign-macos": 2, ANDROID_SIGN_JOB: 1}
         for name, body in self.jobs.items():
             steps = re.split(r"(?m)^      - ", body)
             holders = [s for s in steps if "secrets." in s]
-            if name in SIGN_JOBS:
+            if name in expected_holders:
                 self.assertEqual(len(holders), expected_holders[name], name)
                 for holder in holders:
                     self.assertRegex(holder, r"name: Sign")
-                    self.assertIn("sign-", holder)
+                    self.assertIn('"$APKSIGNER" sign ' if name == ANDROID_SIGN_JOB else "sign-", holder)
             else:
                 self.assertEqual(holders, [], name)
         # The env-level (job-level) block never carries a secret.
@@ -2998,7 +3014,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotRegex(self.text, r"(?i)secrets:\s*inherit")
 
     def test_signing_jobs_never_compile_or_build_and_assembly_holds_no_credentials(self) -> None:
-        for name in (*SIGN_JOBS, "verify-windows", "verify-macos", "gate"):
+        for name in (*SIGN_JOBS, ANDROID_SIGN_JOB, "verify-windows", "verify-macos", "gate-installer"):
             body = run_blocks(self.jobs[name])
             for token in ("cargo", "gradlew", "npm ", "swift build", "swift test", "xcodebuild", "hdiutil create", "rustup", "tauri", "pip install"):
                 self.assertNotIn(token, body, f"{name} must not compile source ({token})")
@@ -3017,28 +3033,32 @@ class WorkflowContractTests(unittest.TestCase):
         match = re.search(r"(?m)^    needs:\s*(\[.*?\]|\S+)\s*$", self.jobs[name])
         return set(re.findall(r"[A-Za-z0-9_-]+", match.group(1))) if match else set()
 
-    def test_job_graph_is_guard_build_verify_sign_gate(self) -> None:
+    def test_job_graph_is_guard_plan_build_verify_sign_gate(self) -> None:
         self.assertEqual(self._needs("guard"), set())
+        self.assertEqual(self._needs("plan"), {"guard"})
         for platform in ("windows", "macos"):
-            self.assertEqual(self._needs(f"build-{platform}"), {"guard"})
-            self.assertEqual(self._needs(f"verify-{platform}"), {"guard", f"build-{platform}"})
-            self.assertEqual(self._needs(f"sign-{platform}"), {"guard", f"verify-{platform}"})
+            self.assertEqual(self._needs(f"build-{platform}"), {"guard", "plan"})
+            self.assertEqual(self._needs(f"verify-{platform}"), {"guard", "plan", f"build-{platform}"})
+            self.assertEqual(self._needs(f"sign-{platform}"), {"guard", "plan", f"verify-{platform}"})
         self.assertEqual(
-            self._needs("gate"),
-            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos"},
+            self._needs("gate-installer"),
+            {"guard", "plan", "build-windows", "build-macos", "verify-windows", "verify-macos", "sign-windows", "sign-macos"},
         )
-        self.assertEqual(
-            set(self.jobs),
-            {"guard", "build-windows", "build-macos", "verify-windows", "verify-macos", *SIGN_JOBS, "gate"},
-        )
-        self.assertNotIn("environment:", self.jobs["gate"])
-        self.assertNotIn("secrets.", self.jobs["gate"])
+        self.assertEqual(set(self.jobs), PUBLISH_JOBS)
+        self.assertNotIn("environment:", self.jobs["gate-installer"])
+        self.assertNotIn("secrets.", self.jobs["gate-installer"])
+        # Drafting waits for readiness, which waits for the gate; publishing waits for the draft.
+        self.assertIn("gate-installer", self._needs("ready"))
+        self.assertIn("ready", self._needs("draft"))
+        self.assertIn("draft", self._needs("publish"))
 
-    def test_each_selected_platform_is_independent(self) -> None:
+    def test_installer_release_runs_both_platforms_independently(self) -> None:
         for platform, other in (("windows", "macos"), ("macos", "windows")):
             for job in (f"build-{platform}", f"verify-{platform}", f"sign-{platform}"):
                 condition = re.search(r"(?m)^    if:\s*(.+)$", self.jobs[job]).group(1)
-                self.assertIn(f"inputs.platform == '{platform}' || inputs.platform == 'both'", condition, job)
+                self.assertIn("needs.plan.outputs.installer == 'RELEASE'", condition, job)
+                self.assertNotIn("inputs.platform", condition, job)
+                self.assertNotIn(f"'{platform}'", condition, job)
                 self.assertNotIn(f"'{other}'", condition, job)
                 self.assertNotIn(other, self._needs(job), job)
         # A Windows-only run never names the macOS artifact or its jobs.
@@ -3046,25 +3066,35 @@ class WorkflowContractTests(unittest.TestCase):
             body = self.jobs[f"verify-{platform}"] + self.jobs[f"sign-{platform}"]
             self.assertNotIn(f"native-release-{PLATFORM_OTHER[platform]}", body)
             self.assertNotIn(f"--descriptor-{PLATFORM_OTHER[platform]}", body)
-        # The gate reports per-platform status and has no platform condition of its own.
-        gate_body = self.jobs["gate"]
+        # The gate checks both platforms whenever the installer is RELEASE.
+        gate_body = self.jobs["gate-installer"]
         condition = re.search(r"(?m)^    if:\s*(.+)$", gate_body).group(1)
         self.assertNotIn("inputs.platform", condition)
+        self.assertIn("needs.plan.outputs.installer == 'RELEASE'", condition)
+        self.assertRegex(gate_body, r"(?m)^      PLATFORM: both$")
         blocks = run_blocks(gate_body)
         self.assertIn("selected=", blocks)
         self.assertIn("RESULT_SIGN_WINDOWS", blocks)
         self.assertIn("RESULT_SIGN_MACOS", blocks)
 
     def test_gate_decides_with_validate_and_publishes_nothing(self) -> None:
-        gate_job = run_blocks(self.jobs["gate"])
+        gate_job = run_blocks(self.jobs["gate-installer"])
         for command in (" validate ", " bundle ", "--platform"):
             self.assertTrue(command in gate_job, command)
         self.assertNotIn("--descriptor-digest", gate_job)
         self.assertNotIn("descriptor-set-digest", gate_job)
         # A blocked candidate fails the job: the gate may not swallow a failure of an earlier job.
-        self.assertRegex(self.jobs["gate"], r"needs\.[A-Za-z-]+\.result")
-        for token in ("gh release", "action-gh-release", "attest-build-provenance", "gh api", "git push", "git tag"):
-            self.assertNotIn(token, self.text, token)
+        self.assertRegex(self.jobs["gate-installer"], r"needs\.[A-Za-z-]+\.result")
+        # Only `draft` (creates the draft, attests) and `publish` (pushes tags, publishes) publish anything;
+        # no installer or signing job does.
+        def code(text: str) -> str:
+            return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+        for token in ("gh release create", "gh release edit", "gh release upload", "action-gh-release", "attest-build-provenance", "gh api", "git push", "git tag"):
+            self.assertNotIn(token, code(self.head), token)
+            for name, body in self.jobs.items():
+                if name not in WRITE_JOBS:
+                    self.assertNotIn(token, code(body), f"{name}: {token}")
         # Best-effort `|| true` exists only in the always-run key-material cleanup steps, never on a signing path.
         for step in re.split(r"(?m)^      - ", self.text):
             if "|| true" in step:

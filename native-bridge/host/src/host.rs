@@ -257,7 +257,7 @@ fn platform_entry() -> i32 {
         crate::winrt::WinrtBackend::new,
         stdio,
         crate::runtime::Config::production(
-            format!("veles-native-host/{}", env!("CARGO_PKG_VERSION")),
+            format!("veles-native-host/{}", crate::version::HOST_VERSION),
             HOST_PLATFORM,
         ),
     )
@@ -280,7 +280,7 @@ fn platform_entry() -> i32 {
         crate::macos::MacosBackend::new,
         stdio,
         crate::runtime::Config::production(
-            format!("veles-native-host/{}", env!("CARGO_PKG_VERSION")),
+            format!("veles-native-host/{}", crate::version::HOST_VERSION),
             HOST_PLATFORM,
         ),
     )

@@ -1,0 +1,37 @@
+name: check-tooling
+
+# Tooling node of the CI component tree (ci.yml -> `tooling / unit-tests`): the workflow contracts (Node) and
+# the scripts/ tests (commit validator, component map, release planner) against the pinned git-cliff. The
+# Python build-contract suites are owned by `native-host / build-contract` and `installer / scripts-tests`;
+# any workflow edit is a global path, so those nodes run too.
+
+on:
+  workflow_call:
+    inputs:
+      commit-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.commit-sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.8.1'
+      - run: node --test verify/test/workflow-contracts.test.mjs
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+      - uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+      - name: Assert system Python version
+        run: python3 --version && python3 -c 'import sys; assert sys.version_info >= (3, 8), sys.version'
+      - run: ./gradlew scriptsTest

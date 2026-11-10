@@ -1,0 +1,11 @@
+# Pinned release tooling, installed by `./gradlew installGitCliff` into build/release-tools/.
+# Archives come from https://github.com/orhun/git-cliff/releases/download/v<version>/ and are
+# verified against these SHA-256 digests before extraction. Each digest was cross-checked
+# (2026-11-09) against the GitHub release asset digest API and, where upstream publishes one,
+# the archive's .sha512 sidecar (the Windows zip has no sidecar).
+git-cliff = "2.14.2"
+git-cliff-x86_64-unknown-linux-gnu = "24f397c733add5390fdceee3a2088588ab0d5f944ce00d34cb7029b888cf2db4"
+git-cliff-aarch64-unknown-linux-gnu = "69e208f6e4baef3a0f9b759d5f44223aa9336b86c691072a3d0c98d35a816e69"
+git-cliff-aarch64-apple-darwin = "a0be97e237d440d34c5e508ec21d070b2c85cbb8be48a46a56f9a4e8bd247f05"
+git-cliff-x86_64-apple-darwin = "4e647d2deb152aca1e987f225cf42b080b991dd98f3bce4027ef95446d982ac3"
+git-cliff-x86_64-pc-windows-msvc = "6ece2112b3f4af462190ecbea4aeb1315fff6af415629b597f84319073c31131"
