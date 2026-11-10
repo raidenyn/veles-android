@@ -14,13 +14,13 @@
 
 ## 1. Correct the OTP-02 reconnect vector (labelled first commit; design D0; spec "Reconnect vectors conform to the protocol")
 
-- [ ] 1.1 Add a failing check in `protocol/checks/crypto.mjs` (and the matching contract
+- [x] 1.1 Add a failing check in `protocol/checks/crypto.mjs` (and the matching contract
   test) that each hello point equals the public key of the ephemeral private key used for
   ECDH. Confirm it fails on the committed `veles-reconnect-authentication`.
-- [ ] 1.2 Fix `deriveReconnect`/`helloPayload` in `protocol/checks/crypto.mjs` and
+- [x] 1.2 Fix `deriveReconnect`/`helloPayload` in `protocol/checks/crypto.mjs` and
   `protocol/tools/crosscheck-vectors/oracle.py` so both hellos encode the ephemeral public
   key.
-- [ ] 1.3 Regenerate `protocol/v1/fixtures/crypto.json` with the pinned generator
+- [x] 1.3 Regenerate `protocol/v1/fixtures/crypto.json` with the pinned generator
   (`protocol/tools/generate-vectors.mjs`) and audit the diff.
   - **May change:** the hello payloads, `rbase`, `rbase_digest`,
     `phone_sig`/`phone_sig_r`/`phone_sig_s`, `client_sig`, `reconnect_confirm_input`,
@@ -30,9 +30,9 @@
   - **Must not change:** `ss`, `reconnect_salt`, `reconnect_prk`, every directional key and
     prefix, `session_id`, and every non-reconnect fixture. Assert this explicitly in the
     audit.
-- [ ] 1.4 Run `./gradlew protocolCheck` (OpenSSL cross-check, Kotlin, Rust and both
+- [x] 1.4 Run `./gradlew protocolCheck` (OpenSSL cross-check, Kotlin, Rust and both
   TypeScript consumers) and fix any consumer that encoded the old hello.
-- [ ] 1.5 Commit alone as
+- [x] 1.5 Commit alone as
   `fix(protocol): hello carries ephemeral key in reconnect vectors (OTP2-REC-020)`. The
   body lists the changed expected values and states that `veles-v1.md` is unchanged.
 
