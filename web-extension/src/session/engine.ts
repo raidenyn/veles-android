@@ -344,6 +344,9 @@ export class ClientSessionEngine {
     readonly #deps: ClientEngineDeps;
     readonly #localInstallationId: Uint8Array;
     #state: EngineState = freshState('idle');
+    /** Pre-teardown counter snapshot, test-only (Task 10 counter observations). */
+    #inboundAtTeardown = 0n;
+    #outboundAtTeardown = 0n;
 
     constructor(deps: ClientEngineDeps) {
         this.#deps = deps;
@@ -535,6 +538,16 @@ export class ClientSessionEngine {
     /** Test-only read of the next outbound sequence. */
     get _outboundSequence(): bigint {
         return this.#state.outboundSequence;
+    }
+
+    /** Test-only read of the inbound sequence at the final teardown, before it is zeroed. */
+    get _inboundSequenceAtTeardown(): bigint {
+        return this.#inboundAtTeardown;
+    }
+
+    /** Test-only read of the outbound sequence at the final teardown, before it is zeroed. */
+    get _outboundSequenceAtTeardown(): bigint {
+        return this.#outboundAtTeardown;
     }
 
     async #onPhoneHello(state: EngineState, bytes: Uint8Array): Promise<SessionEffect[]> {
@@ -1137,6 +1150,8 @@ export class ClientSessionEngine {
     #teardownInternal(): void {
         const state = this.#state;
         if (state.phase === 'closed') return;
+        this.#inboundAtTeardown = state.inboundSequence;
+        this.#outboundAtTeardown = state.outboundSequence;
         eraseState(state);
         this.#state = freshState('closed');
     }

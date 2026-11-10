@@ -30,9 +30,11 @@ import javax.crypto.spec.SecretKeySpec
  * The harness follows the plan's step mapping: [ScenarioPeer] is a scripted client built from
  * the same codec, [ScenarioHandler] is passive (it records deliveries, acks and buffer state
  * but never replies on its own), and every `send_protected_record` step is exactly one
- * `sendApplication` call. One deliberate adaptation: a phone-role `app_heartbeat` send step is
- * injected as a peer record, because OTP2-REC-034's terminating rule is the receive direction
- * while the outbound gate only ignores early heartbeats (design D4).
+ * `sendApplication` call. One deliberate, inventory-recorded adaptation:
+ * `st-rec-heartbeat-rate-terminates` is an `engine-effect` scenario for OTP2-REC-034's *receive*
+ * direction, because design D4 makes early outbound heartbeats non-fatal; its five heartbeat
+ * steps are therefore injected as peer records and the scenario asserts termination, erasure and
+ * no delivery instead of claiming sends the engine never makes.
  */
 class ScenarioConformanceTest {
     private val inventory = ScenarioFixtures.inventory
@@ -57,7 +59,7 @@ class ScenarioConformanceTest {
                 else -> throw AssertionError("$id has an unsupported classification")
             }
         }
-        assertEquals("execute scenarios", 22, inventory.values.count { it == "execute" })
+        assertEquals("execute scenarios", 21, inventory.values.count { it == "execute" })
         assertTrue(
             "the OTP-09 inventory must defer explicit work",
             inventory.values.any { it is String && it.startsWith("deferred:") },
@@ -96,12 +98,29 @@ class ScenarioConformanceTest {
             assertEquals("$id terminate", expected.bool("terminate"), run.terminated)
             assertEquals("$id erase", expected.bool("erase"), run.keysErased)
             assertEquals("$id deliver", expected.bool("deliver"), run.delivered)
-            assertEquals(
-                "$id is a trace-validation negative",
-                "false",
-                fixture.expected["accepted"]?.toString(),
-            )
+            if (fixture.expected["stage"] != null) {
+                assertEquals(
+                    "$id is a trace-validation negative",
+                    "false",
+                    fixture.expected["accepted"]?.toString(),
+                )
+            }
         }
+    }
+
+    @Test
+    fun heartbeatRateScenarioIsClassifiedAsReceiveSideEngineEffect() {
+        val entry = inventory["st-rec-heartbeat-rate-terminates"]
+        assertTrue("heartbeat rate must carry an explicit endpoint", entry is JsonObject)
+        val effect = (entry as JsonObject)["engine-effect"] as JsonObject
+        assertTrue("heartbeat rate terminates", effect.bool("terminate"))
+        assertTrue("heartbeat rate erases keys", effect.bool("erase"))
+        assertTrue("heartbeat rate delivers nothing", !effect.bool("deliver"))
+        println(
+            "st-rec-heartbeat-rate-terminates -> engine-effect on the OTP2-REC-034 receive " +
+                "direction: D4 makes early outbound heartbeats non-fatal, so the five heartbeats " +
+                "are injected as peer records",
+        )
     }
 
     @Test
@@ -252,13 +271,19 @@ private data class StepOutcome(
     val deliveredTypes: List<Int>,
     val preAuthReject: Boolean,
     val unauthorized: Boolean,
+    val unknownType: Boolean,
+    val oversize: Boolean,
     val sequenceMismatch: Boolean,
     val recordOpened: Boolean,
     val heartbeatCrossed: Boolean,
     val eventCount: Int?,
     val authenticatedBefore: Boolean,
+    val expectedRxBefore: ULong,
     val inboundBefore: ULong,
     val inboundAfter: ULong,
+    val outboundBefore: ULong,
+    val inboundAtTeardown: ULong,
+    val outboundAtTeardown: ULong,
     val stateSnapshot: Map<String, String>,
 ) {
     val accepted: Boolean get() = terminated == null && !closed
@@ -431,7 +456,6 @@ private class ScenarioPeer {
         sequence: ULong,
         body: ByteArray,
         tagOk: Boolean,
-        lengthDelta: Int,
         sessionIdOk: Boolean,
     ): ByteArray {
         val header = ByteArray(RecordCodec.HEADER)
@@ -441,9 +465,8 @@ private class ScenarioPeer {
         header[3] = (type ushr BITS_PER_BYTE).toByte()
         header[4] = type.toByte()
         ByteBuffer.wrap(header).putLong(SEQUENCE_OFFSET, sequence.toLong())
-        val length = body.size + lengthDelta
-        header[LENGTH_OFFSET] = (length ushr BITS_PER_BYTE).toByte()
-        header[LENGTH_OFFSET + 1] = length.toByte()
+        header[LENGTH_OFFSET] = (body.size ushr BITS_PER_BYTE).toByte()
+        header[LENGTH_OFFSET + 1] = body.size.toByte()
         val sessionPrefix = if (sessionIdOk) {
             prefix()
         } else {
@@ -549,6 +572,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
     private val clock = FakeClock(0)
     private val phoneIdentity = TestIdentity.generate()
     private val run = ScenarioRun()
+    private var oversizeBuilt = false
 
     suspend fun executeScenario(): ScenarioRun {
         fixture.persisted.forEach { (key, value) ->
@@ -574,8 +598,10 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             throw AssertionError("unmapped simulate keys $unmapped in an executed id (${fixture.id})")
         }
         clock.now = step.tMs
+        oversizeBuilt = false
         val peer = session(step.peer)
         val inboundBefore = peer.engine?.inboundSequenceForTest ?: 0uL
+        val outboundBefore = peer.engine?.outboundSequenceForTest ?: 0uL
         val expectedRxBefore = peer.expectedRx
         val authenticatedBefore = peer.authenticated
         val effects = when (step.event) {
@@ -583,7 +609,14 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             "reconnect_signature" -> signature(peer, step)
             "reconnect_confirm" -> confirm(peer, step)
             "protected_record" -> protectedRecord(peer, step)
-            "send_protected_record" -> sendProtectedRecord(peer, step)
+            "send_protected_record" -> {
+                val type = parseWire(step.simulate["record_type"] ?: error("send_protected_record without record_type"))
+                if (type == ScenarioHandler.TYPE_APP_HEARTBEAT) {
+                    heartbeatReceiveStep(peer)
+                } else {
+                    sendProtectedRecord(peer, step)
+                }
+            }
             "counter_seek" -> seek(peer, step)
             "close_connection" -> {
                 peer.engine?.teardown()
@@ -594,19 +627,30 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             "pairing_confirm_a" -> pairingConfirm(peer)
             else -> throw AssertionError("unmapped scenario event '${step.event}' in ${fixture.id}")
         }
-        record(index, step, peer, inboundBefore, expectedRxBefore, authenticatedBefore, effects)
+        record(
+            StepStart(index, step, inboundBefore, outboundBefore, expectedRxBefore, authenticatedBefore),
+            peer,
+            effects,
+        )
     }
 
+    private data class StepStart(
+        val index: Int,
+        val step: ScenarioStep,
+        val inboundBefore: ULong,
+        val outboundBefore: ULong,
+        val expectedRxBefore: ULong,
+        val authenticatedBefore: Boolean,
+    )
+
     @Suppress("CyclomaticComplexMethod") // One explicit observation per mapped step key.
-    private fun record(
-        index: Int,
-        step: ScenarioStep,
-        peer: PhoneSession,
-        inboundBefore: ULong,
-        expectedRxBefore: ULong,
-        authenticatedBefore: Boolean,
-        effects: List<SessionEffect>,
-    ) {
+    private fun record(start: StepStart, peer: PhoneSession, effects: List<SessionEffect>) {
+        val index = start.index
+        val step = start.step
+        val inboundBefore = start.inboundBefore
+        val outboundBefore = start.outboundBefore
+        val expectedRxBefore = start.expectedRxBefore
+        val authenticatedBefore = start.authenticatedBefore
         val terminated = effects.filterIsInstance<SessionEffect.Terminated>().firstOrNull()?.reason
         val close = effects.any { it is SessionEffect.Close }
         val sent = effects.filterIsInstance<SessionEffect.Send>().mapNotNull { wireType(it.bytes) }
@@ -621,6 +665,7 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
                 RecordType.fromWire(type)?.allows(Direction.CLIENT_TO_PHONE) != true ||
                     (peer.sessionClass != null && !RecordPolicy.authorized(type, Direction.CLIENT_TO_PHONE, peer.sessionClass!!))
                 )
+        val unknownType = type != null && RecordType.fromWire(type) == null
         val sequenceMismatch = step.event == "protected_record" &&
             step.simulate.containsKey("sequence") &&
             sequence != null &&
@@ -655,6 +700,8 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             preAuthReject = effects.filterIsInstance<SessionEffect.Send>()
                 .any { it.bytes.firstOrNull() == FrameType.PREAUTH_REJECT.wire.toByte() },
             unauthorized = unauthorized,
+            unknownType = unknownType,
+            oversize = oversizeBuilt,
             sequenceMismatch = sequenceMismatch,
             recordOpened = opened,
             heartbeatCrossed = heartbeat,
@@ -664,8 +711,12 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
                 step.simulate["event_count"]?.toIntOrNull()
             },
             authenticatedBefore = authenticatedBefore,
+            expectedRxBefore = expectedRxBefore,
             inboundBefore = inboundBefore,
             inboundAfter = peer.engine?.inboundSequenceForTest ?: 0uL,
+            outboundBefore = outboundBefore,
+            inboundAtTeardown = peer.engine?.inboundSequenceAtTeardownForTest ?: 0uL,
+            outboundAtTeardown = peer.engine?.outboundSequenceAtTeardownForTest ?: 0uL,
             stateSnapshot = snapshot,
         )
     }
@@ -726,36 +777,30 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             RecordType.APP_ERROR.wire -> appErrorBody(AppErrorCode.PROTOCOL_VIOLATION)
             else -> ByteArray(0)
         }
+        val oversize = step.simulate["length_ok"] == "false"
+        val recordBody = if (oversize) ByteArray(OVERSIZE_RECORD_BYTES - RecordCodec.HEADER - RecordCodec.TAG) else body
         val record = peer.peer.record(
             type = type,
             sequence = sequence,
-            body = body,
+            body = recordBody,
             tagOk = step.simulate["tag_ok"] != "false",
-            lengthDelta = if (step.simulate["length_ok"] == "false") 1 else 0,
             sessionIdOk = step.simulate["session_id_ok"] != "false",
         )
+        oversizeBuilt = record.size > RecordCodec.MAX_RECORD
+        check(!oversize || oversizeBuilt) {
+            "${fixture.id}: the oversize fixture must build a record above RecordCodec.MAX_RECORD"
+        }
         return engine(peer).onInbound(record)
     }
 
     private suspend fun sendProtectedRecord(peer: PhoneSession, step: ScenarioStep): List<SessionEffect> {
         val type = parseWire(step.simulate["record_type"] ?: error("send_protected_record without record_type"))
         val engine = engine(peer)
-        if (type == ScenarioHandler.TYPE_APP_HEARTBEAT) {
-            // OTP2-REC-034 terminates on the receive direction; see the class KDoc.
-            val record = peer.peer.record(
-                type = type,
-                sequence = peer.expectedRx,
-                body = ByteArray(0),
-                tagOk = true,
-                lengthDelta = 0,
-                sessionIdOk = true,
-            )
-            return engine.onInbound(record)
-        }
         val body = when (type) {
             ScenarioHandler.TYPE_PULL_EVENTS -> pullEventsBody(peer, step.simulate["event_count"]?.toInt() ?: 0)
             ScenarioHandler.TYPE_PUSH_EVENT -> pushEventBody(peer)
             ScenarioHandler.TYPE_EVENT_ACK -> ackBody(peer, true)
+            ScenarioHandler.TYPE_PHONE_POLICY_STATE -> policyBody(step.simulate["pull_response"] == "true")
             else -> ByteArray(0)
         }
         return try {
@@ -764,6 +809,32 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
             emptyList()
         }
     }
+
+    /**
+     * OTP2-REC-034's terminating rule is the receive direction, while the outbound gate only
+     * ignores early heartbeats (design D4). Only `st-rec-heartbeat-rate-terminates` uses
+     * `send_protected_record` with `app_heartbeat`; its inventory entry is an explicit
+     * receive-side `engine-effect` assertion, so this step injects the peer heartbeat instead
+     * of claiming a send the engine never makes.
+     */
+    private suspend fun heartbeatReceiveStep(peer: PhoneSession): List<SessionEffect> {
+        check(fixture.id == "st-rec-heartbeat-rate-terminates") {
+            "${fixture.id}: app_heartbeat send steps are outbound in this scenario"
+        }
+        val record = peer.peer.record(
+            type = ScenarioHandler.TYPE_APP_HEARTBEAT,
+            sequence = peer.expectedRx,
+            body = ByteArray(0),
+            tagOk = true,
+            sessionIdOk = true,
+        )
+        return engine(peer).onInbound(record)
+    }
+
+    private fun policyBody(responseToPull: Boolean): ByteArray = byteArrayOf(
+        POLICY_UNLOCKED_ONLY.toByte(),
+        (if (responseToPull) RESPONSE_TO_PULL_FLAG else 0).toByte(),
+    )
 
     private fun seek(peer: PhoneSession, step: ScenarioStep): List<SessionEffect> {
         val engine = engine(peer)
@@ -903,6 +974,9 @@ private class PhoneScenario(private val fixture: ScenarioFixture) {
 
     private companion object {
         const val RECORD_PREFIX = "durable_phone_record:"
+        const val OVERSIZE_RECORD_BYTES = RecordCodec.MAX_RECORD + 1
+        const val POLICY_UNLOCKED_ONLY = 0
+        const val RESPONSE_TO_PULL_FLAG = 0x08
         const val MAX_EVENTS = 5
         const val CODE = "123456"
         const val MERCHANT = "Test merchant"
@@ -996,29 +1070,41 @@ private object Effects {
             "erase_session_keys" -> sessions.any {
                 it.terminations.isNotEmpty() && it.engine?.keysErasedForTest == true
             }
-            "counter_not_advanced" -> sessions.filter { it.terminations.isNotEmpty() }.all { peer ->
-                peer.engine?.inboundSequenceForTest == 0uL &&
-                    peer.engine?.outboundSequenceForTest == 0uL &&
-                    noDeliveryAfterRejection(steps.filter { it.peer == peer.name })
-            }
+            "counter_not_advanced" -> counterNotAdvanced(steps)
             "advance_rx_sequence" -> steps.any { it.event == "protected_record" && it.accepted && it.inboundAdvanced }
-            "reject_sequence_violation" -> steps.any { it.terminated != null && it.sequenceMismatch } ||
-                terminations.contains("sequence")
-            "reject_bad_tag" -> steps.any { it.terminated != null && it.simulate["tag_ok"] == "false" }
-            "reject_oversize_record" -> steps.any { it.terminated != null && it.simulate["length_ok"] == "false" }
+            // The bounded engine reasons are the observation: rejections at the record-open
+            // stage are `record_invalid`, counter exhaustion is `sequence`, class refusals are
+            // `authorization`, and an invalid reconnect-context frame is `record_invalid`.
+            "reject_sequence_violation" ->
+                steps.any {
+                    it.sequenceMismatch && it.terminated in setOf("record_invalid", "sequence")
+                } ||
+                    terminations.contains("sequence")
+            "reject_bad_tag" ->
+                steps.any { it.terminated == "record_invalid" && it.simulate["tag_ok"] == "false" }
+            "reject_oversize_record" -> steps.any { it.terminated == "record_invalid" && it.oversize }
             "reject_replayed_or_foreign_session_record" ->
-                steps.any { it.terminated != null && it.simulate["session_id_ok"] == "false" }
-            "reject_unauthorized_record" -> steps.any { it.terminated != null && it.unauthorized }
+                steps.any { it.terminated == "record_invalid" && it.simulate["session_id_ok"] == "false" }
+            "reject_unauthorized_record" ->
+                steps.any {
+                    it.terminated == "authorization" ||
+                        (it.terminated == "record_invalid" && it.unknownType)
+                }
             "reject_unauthenticated_record" ->
-                steps.any { it.event == "protected_record" && it.terminated != null && !it.authenticatedBefore }
-            "reject_direction_violation" -> steps.any { it.event == "pairing_confirm_a" && it.terminated != null }
+                steps.any {
+                    it.event == "protected_record" &&
+                        it.terminated == "record_invalid" &&
+                        !it.authenticatedBefore
+                }
+            "reject_direction_violation" ->
+                steps.any { it.event == "pairing_confirm_a" && it.terminated == "record_invalid" }
             "preauth_reject" -> steps.any { it.preAuthReject }
             "reject_unknown_installation" ->
                 steps.any { it.event == "reconnect_hello" && it.simulate["record_exists"] == "false" && it.preAuthReject }
             "test_probe_counter_seek" -> sessions.any { it.seekCount > 0 }
             "heartbeat_processed" ->
                 steps.any { it.event == "protected_record" && it.accepted && it.heartbeatCrossed }
-            "heartbeat_sent" -> steps.any { it.heartbeatCrossed }
+            "heartbeat_sent" -> steps.any { it.sentTypes.contains(TYPE_APP_HEARTBEAT) }
             "heartbeat_rate_violation" -> terminations.contains("heartbeat")
             "pull_request_processed" -> steps.any {
                 it.accepted && (it.sentTypes.contains(TYPE_PULL_REQUEST) || it.deliveredTypes.contains(TYPE_PULL_REQUEST))
@@ -1051,15 +1137,28 @@ private object Effects {
         }
     }
 
-    private fun noDeliveryAfterRejection(steps: List<StepOutcome>): Boolean {
-        var rejected = false
-        for (step in steps) {
-            if (rejected && step.deliveredTypes.isNotEmpty()) return false
-            if (step.terminated != null) rejected = true
+    /**
+     * OTP2-STA-015 counter observation against the pre-teardown snapshot:
+     * - a record rejected while opening (tag, length, session, sequence, unauthenticated) must
+     *   leave both counters untouched;
+     * - a record that opened and was then refused by its authorization class consumes exactly
+     *   its own sequence (`expected + 1`) and never advances the outbound counter.
+     */
+    private fun counterNotAdvanced(steps: List<StepOutcome>): Boolean {
+        val rejected = steps.filter { it.event == "protected_record" && it.terminated != null }
+        if (rejected.isEmpty()) return false
+        return rejected.all { step ->
+            val expectedInbound = if (step.terminated == "authorization") {
+                step.expectedRxBefore + 1uL
+            } else {
+                step.expectedRxBefore
+            }
+            step.inboundAtTeardown == expectedInbound &&
+                step.outboundAtTeardown == step.outboundBefore
         }
-        return true
     }
 
+    private const val TYPE_APP_HEARTBEAT = 0x0002
     private const val TYPE_PULL_REQUEST = 0x0200
     private const val TYPE_PULL_EVENTS = 0x0202
     private const val TYPE_PUSH_EVENT = 0x0203

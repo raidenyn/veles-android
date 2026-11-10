@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { normalizeLowS, signRbase, verifyP1363 } from '../../src/session/ecdsa';
 import { decodeFrame, decodeSignatureFrame } from '../../src/session/frames';
 import { ClientSessionEngine, type SessionEffect } from '../../src/session/engine';
-import { openRecord } from '../../src/session/record';
+import { openRecord, sealRecord } from '../../src/session/record';
 import {
     confirmInput as confirmInputBytes,
     deriveKeyMaterial,
@@ -169,6 +169,7 @@ interface LoopbackProcess {
     child: ChildProcessWithoutNullStreams;
     send(kind: number, payload: Uint8Array): void;
     next(match: (message: Message) => boolean): Promise<Message>;
+    waitForStderr(fragment: string): Promise<void>;
     stop(): void;
 }
 
@@ -179,9 +180,11 @@ function startPhone(seed: string): LoopbackProcess {
     let buffered = Buffer.alloc(0);
     const messages: Message[] = [];
     const waiters: (() => void)[] = [];
+    const stderrWaiters: (() => void)[] = [];
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => {
         stderr += chunk.toString();
+        stderrWaiters.splice(0).forEach((resolve) => resolve());
     });
     child.stdout.on('data', (chunk: Buffer) => {
         buffered = Buffer.concat([buffered, chunk]);
@@ -218,6 +221,25 @@ function startPhone(seed: string): LoopbackProcess {
                 }
                 await new Promise<void>((resolve) => {
                     waiters.push(resolve);
+                    setTimeout(resolve, 20);
+                });
+            }
+        },
+        async waitForStderr(fragment: string): Promise<void> {
+            const deadline = Date.now() + TIMEOUT_MS;
+            while (!stderr.includes(fragment)) {
+                if (child.exitCode !== null) {
+                    throw new Error(
+                        `loopback exited before stderr '${fragment}'; stderr: ${stderr}`,
+                    );
+                }
+                if (Date.now() > deadline) {
+                    throw new Error(
+                        `loopback timed out waiting for stderr '${fragment}'; stderr: ${stderr}`,
+                    );
+                }
+                await new Promise<void>((resolve) => {
+                    stderrWaiters.push(resolve);
                     setTimeout(resolve, 20);
                 });
             }
@@ -542,6 +564,7 @@ if (CLASSPATH === '' && REQUIRED) {
                         RecordType.EVENT_ACK,
                         eventAckBody(client.phone.installationId, pulledEvent),
                     );
+                    await phone.waitForStderr('loopback: settled');
 
                     // Push: the phone sends one push event on the command channel; the client acks it.
                     phone.send(1, encoder.encode('push'));
@@ -583,22 +606,154 @@ if (CLASSPATH === '' && REQUIRED) {
                     const first = await handshake(phone, seed);
                     const firstPrefix = first.prefix.slice();
                     const firstKeys = first.sessionKeys;
-                    const firstC2p = new Uint8Array(firstKeys.c2pPrefix);
-                    const firstP2c = new Uint8Array(firstKeys.p2cPrefix);
+                    const firstC2pPrefix = new Uint8Array(firstKeys.c2pPrefix);
+                    const firstP2cPrefix = new Uint8Array(firstKeys.p2cPrefix);
+                    const firstSessionId = new Uint8Array(firstKeys.sessionId);
+                    const firstClientConfirm = new Uint8Array(firstKeys.clientConfirmKey);
+                    const firstPhoneConfirm = new Uint8Array(firstKeys.phoneConfirmKey);
 
                     phone.send(1, encoder.encode('reset'));
                     await phone.next(
                         (message) => message.kind === 2 && message.payload[0] === 0x02,
                     );
                     const second = await handshake(phone, seed);
+                    const secondKeys = second.sessionKeys;
 
                     expect(Array.from(second.prefix)).not.toEqual(Array.from(firstPrefix));
-                    expect(Array.from(second.sessionKeys.c2pPrefix)).not.toEqual(
-                        Array.from(firstC2p),
+                    expect(Array.from(secondKeys.sessionId)).not.toEqual(
+                        Array.from(firstSessionId),
                     );
-                    expect(Array.from(second.sessionKeys.p2cPrefix)).not.toEqual(
-                        Array.from(firstP2c),
+                    expect(Array.from(secondKeys.c2pPrefix)).not.toEqual(
+                        Array.from(firstC2pPrefix),
                     );
+                    expect(Array.from(secondKeys.p2cPrefix)).not.toEqual(
+                        Array.from(firstP2cPrefix),
+                    );
+                    expect(Array.from(secondKeys.clientConfirmKey)).not.toEqual(
+                        Array.from(firstClientConfirm),
+                    );
+                    expect(Array.from(secondKeys.phoneConfirmKey)).not.toEqual(
+                        Array.from(firstPhoneConfirm),
+                    );
+
+                    // The AES keys are non-extractable, so key freshness is proved by a
+                    // cross-generation decrypt failure in both directions.
+                    const firstP2cRecord = await sealRecord(
+                        firstKeys.p2cKey,
+                        firstKeys.p2cPrefix,
+                        first.prefix,
+                        Direction.PHONE_TO_CLIENT,
+                        RecordType.PUSH_EVENT,
+                        1n,
+                        new Uint8Array(0),
+                    );
+                    await expect(
+                        openRecord(
+                            firstKeys.p2cKey,
+                            firstKeys.p2cPrefix,
+                            first.prefix,
+                            Direction.PHONE_TO_CLIENT,
+                            1n,
+                            firstP2cRecord,
+                        ),
+                    ).resolves.toMatchObject({ type: RecordType.PUSH_EVENT });
+                    await expect(
+                        openRecord(
+                            secondKeys.p2cKey,
+                            secondKeys.p2cPrefix,
+                            second.prefix,
+                            Direction.PHONE_TO_CLIENT,
+                            1n,
+                            firstP2cRecord,
+                        ),
+                    ).rejects.toThrow();
+                    const secondP2cRecord = await sealRecord(
+                        secondKeys.p2cKey,
+                        secondKeys.p2cPrefix,
+                        second.prefix,
+                        Direction.PHONE_TO_CLIENT,
+                        RecordType.PUSH_EVENT,
+                        1n,
+                        new Uint8Array(0),
+                    );
+                    await expect(
+                        openRecord(
+                            secondKeys.p2cKey,
+                            secondKeys.p2cPrefix,
+                            second.prefix,
+                            Direction.PHONE_TO_CLIENT,
+                            1n,
+                            secondP2cRecord,
+                        ),
+                    ).resolves.toMatchObject({ type: RecordType.PUSH_EVENT });
+                    await expect(
+                        openRecord(
+                            firstKeys.p2cKey,
+                            firstKeys.p2cPrefix,
+                            first.prefix,
+                            Direction.PHONE_TO_CLIENT,
+                            1n,
+                            secondP2cRecord,
+                        ),
+                    ).rejects.toThrow();
+                    const firstC2pRecord = await sealRecord(
+                        firstKeys.c2pKey,
+                        firstKeys.c2pPrefix,
+                        first.prefix,
+                        Direction.CLIENT_TO_PHONE,
+                        RecordType.PULL_REQUEST,
+                        1n,
+                        new Uint8Array(0),
+                    );
+                    await expect(
+                        openRecord(
+                            firstKeys.c2pKey,
+                            firstKeys.c2pPrefix,
+                            first.prefix,
+                            Direction.CLIENT_TO_PHONE,
+                            1n,
+                            firstC2pRecord,
+                        ),
+                    ).resolves.toMatchObject({ type: RecordType.PULL_REQUEST });
+                    await expect(
+                        openRecord(
+                            secondKeys.c2pKey,
+                            secondKeys.c2pPrefix,
+                            second.prefix,
+                            Direction.CLIENT_TO_PHONE,
+                            1n,
+                            firstC2pRecord,
+                        ),
+                    ).rejects.toThrow();
+                    const secondC2pRecord = await sealRecord(
+                        secondKeys.c2pKey,
+                        secondKeys.c2pPrefix,
+                        second.prefix,
+                        Direction.CLIENT_TO_PHONE,
+                        RecordType.PULL_REQUEST,
+                        1n,
+                        new Uint8Array(0),
+                    );
+                    await expect(
+                        openRecord(
+                            secondKeys.c2pKey,
+                            secondKeys.c2pPrefix,
+                            second.prefix,
+                            Direction.CLIENT_TO_PHONE,
+                            1n,
+                            secondC2pRecord,
+                        ),
+                    ).resolves.toMatchObject({ type: RecordType.PULL_REQUEST });
+                    await expect(
+                        openRecord(
+                            firstKeys.c2pKey,
+                            firstKeys.c2pPrefix,
+                            first.prefix,
+                            Direction.CLIENT_TO_PHONE,
+                            1n,
+                            secondC2pRecord,
+                        ),
+                    ).rejects.toThrow();
                 } finally {
                     phone.stop();
                 }

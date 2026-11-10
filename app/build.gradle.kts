@@ -157,6 +157,7 @@ afterEvaluate {
         description = "Writes the JVM unit-test classpath used by the cross-endpoint session loopback."
         dependsOn(unitTest.taskDependencies.getDependencies(unitTest))
         val output = layout.buildDirectory.file("session-loopback/classpath.txt")
+        inputs.files(unitTest.classpath).withPropertyName("unitTestClasspath")
         outputs.file(output)
         doLast {
             val file = output.get().asFile

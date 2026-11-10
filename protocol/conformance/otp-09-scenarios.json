@@ -36,7 +36,13 @@
     }
   },
   "st-rec-session-role-mismatch-terminates": "execute",
-  "st-rec-heartbeat-rate-terminates": "execute",
+  "st-rec-heartbeat-rate-terminates": {
+    "engine-effect": {
+      "terminate": true,
+      "erase": true,
+      "deliver": false
+    }
+  },
   "st-rec-push-retransmit-drops-after-max": "deferred:OTP-15",
   "st-rec-policy-response-flag-settles-pull": "deferred:OTP-13/14",
   "st-neg-policy-notice-does-not-settle-pull": "deferred:OTP-13/14",

@@ -66,6 +66,10 @@ class PhoneSessionEngine(
     private var inboundSequence: ULong = 0uL
     private var outboundExhausted = false
     private var inboundExhausted = false
+
+    /** Pre-teardown counter snapshot, test-only (Task 10 counter observations). */
+    private var inboundSequenceAtTeardown: ULong = 0uL
+    private var outboundSequenceAtTeardown: ULong = 0uL
     private var lastActivityAt = 0L
     private var lastOutboundAt = 0L
     private var lastHeartbeatSentAt: Long? = null
@@ -170,6 +174,14 @@ class PhoneSessionEngine(
     /** Test-only read of the next outbound sequence. */
     @VisibleForTesting
     val outboundSequenceForTest: ULong get() = outboundSequence
+
+    /** Test-only read of the inbound sequence at the final teardown, before it is zeroed. */
+    @VisibleForTesting
+    val inboundSequenceAtTeardownForTest: ULong get() = inboundSequenceAtTeardown
+
+    /** Test-only read of the outbound sequence at the final teardown, before it is zeroed. */
+    @VisibleForTesting
+    val outboundSequenceAtTeardownForTest: ULong get() = outboundSequenceAtTeardown
 
     /** Test-only OTP2-STA-015 erasure observation: final state with no key material left. */
     @VisibleForTesting
@@ -633,6 +645,8 @@ class PhoneSessionEngine(
     private fun teardownInternal() {
         synchronized(finality) {
             if (state == State.CLOSED) return
+            inboundSequenceAtTeardown = inboundSequence
+            outboundSequenceAtTeardown = outboundSequence
             eraseAll()
             state = State.CLOSED
         }

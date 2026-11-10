@@ -196,7 +196,12 @@ private class LoopbackHandler(
                     val id = body.copyOfRange(INSTALLATION_BYTES, ACK_BYTES).joinToString("") {
                         it.toUByte().toString(16).padStart(2, '0')
                     }
-                    if (id in known) settled = true else System.err.println("loopback: unknown event ack")
+                    if (id in known) {
+                        settled = true
+                        System.err.println("loopback: settled $id")
+                    } else {
+                        System.err.println("loopback: unknown event ack")
+                    }
                 }
             }
         }
