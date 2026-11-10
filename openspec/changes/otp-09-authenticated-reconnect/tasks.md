@@ -78,13 +78,13 @@
   - the authentication gate: both signatures verified, own confirm sent, peer confirm
     verified
   - class selection over every §11.3 row, with no later upgrade
-- [ ] 3.4 Implement:
+- [x] 3.4 Implement:
   - exact per-direction sequences
   - the u64 ceiling (2^64−1 accepted once, then terminate)
   - class, type and direction authorization
   - the fail-closed unhandled-record path (`app_error` `protocol_violation`), which also
     covers activation records
-- [ ] 3.5 Implement:
+- [x] 3.5 Implement:
   - the heartbeat rules: spacing from `limits.json`, the OTP2-REC-034 threshold of 5 in
     60 s as a named constant, and separate counting per direction
   - the 180 s idle timeout across both directions
@@ -92,7 +92,7 @@
   - terminal `app_error`
   - teardown erasure
 - [x] 3.6 Update `lastSeen` only after `session_open`, for the current generation.
-- [ ] 3.7 Engine unit tests:
+- [x] 3.7 Engine unit tests:
   - table-driven class selection, including `full_pending_peer`
   - the authentication-gate scenario where only the peer's confirm has arrived
   - a correctly decrypted confirm with the **wrong HMAC** (ends the session, erases keys)
