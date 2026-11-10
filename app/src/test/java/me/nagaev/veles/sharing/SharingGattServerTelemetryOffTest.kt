@@ -43,10 +43,20 @@ class SharingGattServerTelemetryOffTest {
         every { manager.openGattServer(context, capture(callback)) } returns platform
         every { platform.addService(capture(service)) } returns true
         SyntheticTransportFixture.telemetry = null
-        subject = SharingGattServer(context, {}) { _, _ ->
-            records++
-            byteArrayOf(7)
-        }
+        subject = SharingGattServer(
+            context,
+            {},
+            object : ConnectionListener {
+                override fun onConnected(gen: ConnectionGeneration) = Unit
+                override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
+                    records++
+                    bytes.fill(0)
+                    subject.send(gen, byteArrayOf(7), null)
+                }
+                override fun onDisconnected(gen: ConnectionGeneration) = Unit
+                override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) = Unit
+            },
+        )
         subject.start()
     }
 

@@ -79,6 +79,33 @@ internal object SyntheticTransportFixture {
 }
 
 /**
+ * OTP-06 plaintext echo listener (design D4 "the plaintext echo is isolated"). It is installed only
+ * while [TransportMode.instrumentationEcho] is true and never beside a [SessionHost]; with the mode
+ * off it produces no reply at all.
+ */
+internal class InstrumentationEchoListener(private val transport: SessionTransport) : ConnectionListener {
+    override fun onConnected(gen: ConnectionGeneration) = Unit
+
+    override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
+        try {
+            if (!TransportMode.instrumentationEcho) return
+            val response = SyntheticTransportFixture.reply(bytes) ?: return
+            try {
+                transport.send(gen, response, null)
+            } finally {
+                response.fill(0)
+            }
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
+    override fun onDisconnected(gen: ConnectionGeneration) = Unit
+
+    override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) = Unit
+}
+
+/**
  * Bounded, opt-in, debug-only record of what the Bluetooth stack actually returned for each notification, per
  * peer. Peers are identified by a SHA-256 prefix only (never a MAC); events carry sizes, never bytes. Counters
  * are exact; the event list is capped, and any dropped event sets `truncated`, which forbids a "complete" claim.

@@ -75,6 +75,14 @@ interface InstallationTrustRepository {
     suspend fun addPending(peer: PendingPeer)
     suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray)
     suspend fun revoke(peerId: String)
+
+    /**
+     * Records a successful authenticated reconnect (veles-v1.md §11.3). Applies to any existing,
+     * validated record that can authenticate — `ACTIVE`, `PENDING` or `COMMITTED_WAITING_ACK` —
+     * and never changes the state, its transition time or a pending record's lifetime. An
+     * unknown, expired or deleted id throws [TrustException].
+     */
+    suspend fun markAuthenticated(peerId: String)
 }
 
 class TrustRepository(
@@ -115,6 +123,17 @@ class TrustRepository(
 
     override suspend fun revoke(peerId: String) = update { snapshot ->
         snapshot.copy(peers = snapshot.peers.filterNot { it.installationId == peerId }) to Unit
+    }
+
+    /**
+     * The write is metadata only: one transaction, `lastSeenMillis` replaced, every state and
+     * pending-lifetime field kept byte-identical, so a pending record expires on its original
+     * deadline (veles-v1.md §11.3).
+     */
+    override suspend fun markAuthenticated(peerId: String) = update { snapshot ->
+        val peer = snapshot.peers.singleOrNull { it.installationId == peerId } ?: throw TrustException()
+        val now = wallMillis()
+        snapshot.copy(peers = snapshot.peers.map { if (it == peer) it.copy(lastSeenMillis = now) else it }) to Unit
     }
 
     private suspend fun <T> update(block: (TrustSnapshot) -> Pair<TrustSnapshot, T>): T = storage.transaction { stored ->

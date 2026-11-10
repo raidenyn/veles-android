@@ -16,6 +16,18 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import me.nagaev.veles.session.IdentitySigner
+import me.nagaev.veles.session.PeerLookup
+import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.trust.ActivationStep
+import me.nagaev.veles.trust.InstallationIdentity
+import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.PendingPeer
+import me.nagaev.veles.trust.TrustedPeer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,6 +41,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.time.Duration
 
+@Suppress("LargeClass") // One GATT server harness: transport, admission, fragmentation and session adapter.
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class SharingGattServerTest {
@@ -43,7 +57,31 @@ class SharingGattServerTest {
     private var records = 0
     private var response = byteArrayOf(7)
     private var suppressReply = false
+    private val connections = mutableListOf<ConnectionGeneration>()
+    private val disconnections = mutableListOf<ConnectionGeneration>()
     private lateinit var subject: SharingGattServer
+
+    /** Stand-in for the session host: consumes records and answers through the transport. */
+    private val listener = object : ConnectionListener {
+        override fun onConnected(gen: ConnectionGeneration) {
+            connections += gen
+        }
+
+        override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
+            records++
+            try {
+                if (!suppressReply) subject.send(gen, response.copyOf(), null)
+            } finally {
+                bytes.fill(0)
+            }
+        }
+
+        override fun onDisconnected(gen: ConnectionGeneration) {
+            disconnections += gen
+        }
+
+        override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) = Unit
+    }
 
     @Before fun setup() {
         every { context.getSystemService(BluetoothManager::class.java) } returns manager
@@ -51,12 +89,11 @@ class SharingGattServerTest {
         every { adapter.bluetoothLeAdvertiser } returns advertiser
         every { manager.openGattServer(context, capture(callback)) } returns platform
         every { platform.addService(capture(service)) } returns true
-        subject = SharingGattServer(context, states::add) { _, _ ->
-            records++
-            if (suppressReply) null else response.copyOf()
-        }
-        subject.start()
+        subject = start(listener)
     }
+
+    private fun start(listener: ConnectionListener): SharingGattServer =
+        SharingGattServer(context, states::add, listener).also { it.start() }
 
     private fun device(id: String): BluetoothDevice = mockk<BluetoothDevice>().also { every { it.address } returns id }
     private fun flush() = shadowOf(Looper.getMainLooper()).idle()
@@ -140,7 +177,7 @@ class SharingGattServerTest {
             callback.captured.onCharacteristicWriteRequest(peer, 1, write, true, false, 0, frame)
             flush()
             val events = telemetry.snapshot().peers.single().events
-            assertTrue(events.any { it.kind == "reply_generated" && it.label == "none" })
+            assertTrue("the record reaches the listener exactly once", events.count { it.kind == "record_delegated" } == 1)
             assertTrue(events.none { it.kind == "reply_queue" })
             assertTrue(events.any { it.kind == "fragment_rejected" && it.label == "invalid_operation_or_not_ready" })
         } finally {
@@ -683,4 +720,81 @@ class SharingGattServerTest {
             telemetry.events().none { it.kind == "notify_callback" },
         )
     }
+
+    @Test fun echoBytesOnNormalPathGetNoPlaintextReply() {
+        TransportMode.instrumentationEcho = false
+        val scope = CoroutineScope(UnconfinedTestDispatcher())
+        try {
+            val vel = byteArrayOf(0x56, 0x45, 0x4c, 1)
+
+            // The instrumentation echo is inert unless its mode is explicitly enabled.
+            val echoed = mutableListOf<ByteArray>()
+            val echo = InstrumentationEchoListener(
+                object : SessionTransport {
+                    override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean {
+                        echoed += bytes.copyOf()
+                        return true
+                    }
+
+                    override fun close(gen: ConnectionGeneration) = Unit
+                },
+            )
+            echo.onRecord(ConnectionGeneration("a", 9), vel.copyOf())
+            assertTrue("the echo listener must never answer beside the session engine", echoed.isEmpty())
+
+            subject.close()
+            val sent = mutableListOf<ByteArray>()
+            every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+            lateinit var server: SharingGattServer
+            val transport = object : SessionTransport {
+                override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean =
+                    server.send(gen, bytes, token)
+
+                override fun close(gen: ConnectionGeneration) = server.close(gen)
+            }
+            val host = SessionHost(
+                scope,
+                transport,
+                {
+                    PhoneSessionEngine(
+                        localInstallationId = ByteArray(16),
+                        signer = IdentitySigner { error("an unknown peer is never signed for") },
+                        lookup = PeerLookup { null },
+                        clock = { 0L },
+                        nonce = { ByteArray(16) },
+                    )
+                },
+                NoTrust,
+                { 0L },
+            )
+            server = start(host)
+            subject = server
+            val peer = device("a")
+            subscribe(peer)
+            val write = service.captured.getCharacteristic(SharingGattServer.WRITE_UUID)
+            callback.captured.onCharacteristicWriteRequest(peer, 0, write, false, false, 0, byteArrayOf(0x80.toByte(), 1, 0, 4) + vel)
+            flush()
+
+            val reply = sent.single().copyOfRange(4, sent.single().size)
+            assertTrue("no plaintext echo is ever queued", reply.contentEquals(byteArrayOf(0x0F, 0, 0)))
+            assertFalse("the plaintext VEL bytes never reach the wire", reply.contentEquals(vel))
+            callback.captured.onNotificationSent(peer, BluetoothGatt.GATT_SUCCESS)
+            flush()
+            verify { platform.cancelConnection(peer) }
+        } finally {
+            TransportMode.instrumentationEcho = false
+            scope.cancel()
+            subject.close()
+        }
+    }
+}
+
+private object NoTrust : InstallationTrustRepository {
+    override suspend fun identity(): InstallationIdentity = error("no trust in this fixture")
+    override suspend fun peers(): List<TrustedPeer> = emptyList()
+    override suspend fun activePeers(): List<TrustedPeer> = emptyList()
+    override suspend fun addPending(peer: PendingPeer) = error("no trust in this fixture")
+    override suspend fun confirm(peerId: String, step: ActivationStep, proof: ByteArray) = error("no trust in this fixture")
+    override suspend fun revoke(peerId: String) = error("no trust in this fixture")
+    override suspend fun markAuthenticated(peerId: String) = Unit
 }

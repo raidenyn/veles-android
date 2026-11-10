@@ -80,6 +80,31 @@ class SharingInteropPhysicalTest {
         listOf(readyFile, stop, command, ack).forEach { it.delete() }
         check(SyntheticTransportFixture.telemetry == null) { "Another fixture is running" }
         SyntheticTransportFixture.telemetry = TransportTelemetry(id)
+        TransportMode.instrumentationEcho = true
+        val echoListener = object : ConnectionListener {
+            override fun onConnected(gen: ConnectionGeneration) = Unit
+
+            override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
+                records.put(
+                    JSONObject().put("epoch_ms", System.currentTimeMillis())
+                        .put("elapsed_ms", SystemClock.elapsedRealtime()).put("bytes", bytes.size)
+                        .put("sha256", SyntheticTransportFixture.sha256Hex(bytes)),
+                )
+                val response = SyntheticTransportFixture.reply(bytes)
+                bytes.fill(0)
+                if (response != null) {
+                    try {
+                        server?.send(gen, response, null)
+                    } finally {
+                        response.fill(0)
+                    }
+                }
+            }
+
+            override fun onDisconnected(gen: ConnectionGeneration) = Unit
+
+            override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) = Unit
+        }
 
         fun snapshot(): JSONObject {
             val own = requireNotNull(server)
@@ -98,14 +123,7 @@ class SharingInteropPhysicalTest {
                 instrumentation.runOnMainSync {
                     server = SharingGattServer(context, { state ->
                         if (state == SharingAvailability.Advertising) connected.countDown()
-                    }, { _, record ->
-                        records.put(
-                            JSONObject().put("epoch_ms", System.currentTimeMillis())
-                                .put("elapsed_ms", SystemClock.elapsedRealtime()).put("bytes", record.size)
-                                .put("sha256", SyntheticTransportFixture.sha256Hex(record)),
-                        )
-                        SyntheticTransportFixture.reply(record)
-                    }).also { it.start() }
+                    }, echoListener).also { it.start() }
                 }
                 assertTrue("Advertising did not start", connected.await(10, TimeUnit.SECONDS))
                 readyFile.writeText(id)
@@ -179,6 +197,7 @@ class SharingInteropPhysicalTest {
                 ),
             )
             SyntheticTransportFixture.telemetry = null
+            TransportMode.instrumentationEcho = false
             readyFile.delete()
         }
     }

@@ -13,13 +13,34 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import me.nagaev.veles.BuildConfig
 import me.nagaev.veles.R
 import me.nagaev.veles.permissions.PermissionsActivity
+import me.nagaev.veles.session.BuildSessionExtensions
+import me.nagaev.veles.session.IdentitySigner
+import me.nagaev.veles.session.LocalRecordState
+import me.nagaev.veles.session.PeerLookup
+import me.nagaev.veles.session.PeerRecord
+import me.nagaev.veles.session.PhoneSessionEngine
+import me.nagaev.veles.trust.ActivationVerifier
+import me.nagaev.veles.trust.AndroidIdentityKeyStore
+import me.nagaev.veles.trust.InstallationTrustRepository
+import me.nagaev.veles.trust.TrustEncoding
+import me.nagaev.veles.trust.TrustState
+import me.nagaev.veles.trust.createAndroidTrustRepository
+import java.security.SecureRandom
 
 internal class SharingService : Service() {
     private var gatt: SharingGattServer? = null
+    private var host: SessionHost? = null
+    private var sessionScope: CoroutineScope? = null
     private var registered = false
     private val preferences get() = getSharedPreferences("sharing", MODE_PRIVATE)
     private val bluetoothChanges = object : BroadcastReceiver() {
@@ -69,13 +90,20 @@ internal class SharingService : Service() {
                 SharingState.update(SharingAvailability.Starting)
                 registerReceiver(bluetoothChanges, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), RECEIVER_EXPORTED)
                 registered = true
+                val transport = BoundTransport()
+                // Exactly one listener: the OTP-06 plaintext echo is instrumentation-only and can
+                // never run beside the session engine (design D4 "the plaintext echo is isolated").
+                val listener: ConnectionListener = if (BuildConfig.DEBUG && TransportMode.instrumentationEcho) {
+                    InstrumentationEchoListener(transport)
+                } else {
+                    sessionHost(transport)
+                }
                 gatt = SharingGattServer(this, { state ->
                     if (state == SharingAvailability.Advertising) SharingState.update(state) else fail(state)
-                }, { _, record ->
-                    // Fixed debug fixture only; no production message handler or OTP data dependency.
-                    if (BuildConfig.DEBUG) SyntheticTransportFixture.reply(record) else null
-                })
-                gatt?.start()
+                }, listener).also {
+                    transport.server = it
+                    it.start()
+                }
             }
         } catch (_: SecurityException) {
             fail(SharingAvailability.PermissionRequired)
@@ -87,9 +115,46 @@ internal class SharingService : Service() {
         return START_STICKY
     }
 
+    /**
+     * The production session path. No activation implementation exists in OTP-09, and no
+     * activation step is performed, so the verifier is an explicit reject-all: OTP-10 replaces
+     * it with the transcript verifier. The installation id is read once, before the first link
+     * is admitted, because the engine factory is not suspending.
+     */
+    private fun sessionHost(transport: SessionTransport): SessionHost {
+        val repository = createAndroidTrustRepository(this, ActivationVerifier { _, _, _ -> false })
+        val localInstallationId = runBlocking { TrustEncoding.bytes(repository.identity().installationId) }
+        val keyStore = AndroidIdentityKeyStore()
+        val handler = BuildSessionExtensions.applicationHandler(this)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        sessionScope = scope
+        val host = SessionHost(
+            scope,
+            transport,
+            { _ ->
+                PhoneSessionEngine(
+                    localInstallationId = localInstallationId,
+                    signer = IdentitySigner { message -> keyStore.sign(message) },
+                    lookup = repository.peerLookup(),
+                    clock = SystemClock::elapsedRealtime,
+                    nonce = { ByteArray(NONCE_BYTES).also(SecureRandom()::nextBytes) },
+                    handler = handler,
+                )
+            },
+            repository,
+            SystemClock::elapsedRealtime,
+        )
+        this.host = host
+        BuildSessionExtensions.attach(host)
+        return host
+    }
+
     private fun fail(state: SharingAvailability) {
         gatt?.close()
         gatt = null
+        host = null
+        sessionScope?.cancel()
+        sessionScope = null
         SharingState.update(state)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -98,6 +163,9 @@ internal class SharingService : Service() {
     override fun onDestroy() {
         gatt?.close()
         gatt = null
+        host = null
+        sessionScope?.cancel()
+        sessionScope = null
         if (registered) unregisterReceiver(bluetoothChanges)
         if (SharingState.availability.value in listOf(SharingAvailability.Starting, SharingAvailability.Advertising)) {
             SharingState.update(SharingAvailability.Disabled)
@@ -108,5 +176,31 @@ internal class SharingService : Service() {
     companion object {
         const val STOP = "me.nagaev.veles.sharing.STOP"
         private const val CHANNEL = "VelesSharing"
+        private const val NONCE_BYTES = 16
+
+        /** The engine reads trust records; it never writes them (the host owns `lastSeen`). */
+        private fun InstallationTrustRepository.peerLookup(): PeerLookup = PeerLookup { installationId ->
+            peers().firstOrNull { TrustEncoding.bytes(it.installationId).contentEquals(installationId) }?.let { peer ->
+                PeerRecord(
+                    installationId = TrustEncoding.bytes(peer.installationId),
+                    identityPublicKey = TrustEncoding.bytes(peer.publicKey),
+                    state = when (peer.state) {
+                        TrustState.ACTIVE -> LocalRecordState.ACTIVE
+                        TrustState.PENDING -> LocalRecordState.PENDING
+                        TrustState.COMMITTED_WAITING_ACK -> LocalRecordState.COMMITTED_WAITING_ACK
+                    },
+                )
+            }
+        }
+    }
+
+    /** Breaks the server→listener→transport cycle; assigned before the server starts. */
+    private class BoundTransport : SessionTransport {
+        lateinit var server: SharingGattServer
+
+        override fun send(gen: ConnectionGeneration, bytes: ByteArray, token: Long?): Boolean =
+            server.send(gen, bytes, token)
+
+        override fun close(gen: ConnectionGeneration) = server.close(gen)
     }
 }

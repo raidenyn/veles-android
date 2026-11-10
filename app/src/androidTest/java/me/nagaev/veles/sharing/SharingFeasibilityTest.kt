@@ -59,6 +59,9 @@ class SharingFeasibilityTest {
             SyntheticTransportFixture.telemetry = if (telemetryOn) TransportTelemetry(runId!!) else null
             SyntheticTransportFixture.unsolicitedAfterMillis = args.getString("otp23_unsolicited_after_s")?.toLong()?.times(1000)
             assertNull("Requires Bluetooth advertising and nearby-device grants", SharingState.prerequisite(context))
+            // OTP-06 echo fixture: the plaintext echo is instrumentation-only and must be opted into
+            // before the service selects its listener (design D4).
+            TransportMode.instrumentationEcho = true
             ActivityScenario.launch(PermissionsActivity::class.java).use { scenario ->
                 scenario.onActivity { it.startService(Intent(it, SharingService::class.java)) }
                 withTimeout(10000) { SharingState.availability.first { it == SharingAvailability.Advertising } }
@@ -82,6 +85,7 @@ class SharingFeasibilityTest {
             }
         } finally {
             val telemetry = SyntheticTransportFixture.telemetry
+            TransportMode.instrumentationEcho = false
             SyntheticTransportFixture.unsolicitedAfterMillis = null
             var stopped = false
             try {
