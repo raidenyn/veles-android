@@ -38,26 +38,26 @@
 
 ## 2. Android codec and crypto primitives (Kotlin, JCA; design D1; spec reconnect-authentication codec requirements, protected-record-session "Protected record format", "Record rejection")
 
-- [ ] 2.1 Create the session package (e.g. `app/src/main/java/me/nagaev/veles/session/`)
+- [x] 2.1 Create the session package (e.g. `app/src/main/java/me/nagaev/veles/session/`)
   with the §4 pre-auth frame codec: exact `payload_len`, a 4096-byte cap, no trailing bytes.
   Add unit tests.
-- [ ] 2.2 Implement `reconnect_hello` encode and strict decode (OTP2-REC-020), covering
+- [x] 2.2 Implement `reconnect_hello` encode and strict decode (OTP2-REC-020), covering
   capability rules, version, role, and P-256 point validation that rejects off-curve, zero,
   infinity, compressed and wrong-length points. Test with the adapted `veles-neg-point-*`
   values at their malformed lengths.
-- [ ] 2.3 Implement the signature frame codec (`role u8 || 64-byte P1363`, exactly 65
+- [x] 2.3 Implement the signature frame codec (`role u8 || 64-byte P1363`, exactly 65
   bytes), strict DER→P1363 conversion with exact 32-byte `r` and `s`, low-S normalization,
   and strict low-S verification over a single-hashed `rbase`.
   - Fixture signatures are verified, not reproduced.
   - Test `veles-neg-sig-*` rejection.
   - Test that a **double-hashed** signature fails verification.
-- [ ] 2.4 Implement ephemeral key generation, ECDH (X coordinate; reject an identity or
+- [x] 2.4 Implement ephemeral key generation, ECDH (X coordinate; reject an identity or
   zero result), HKDF-SHA256 extract/expand, and the seven OTP2-REC-020b labels. Test
   byte-for-byte against the corrected `veles-reconnect-authentication`.
-- [ ] 2.5 Implement `reconnect_confirm_input` (64-byte signatures without the role bytes),
+- [x] 2.5 Implement `reconnect_confirm_input` (64-byte signatures without the role bytes),
   `conf_A`/`conf_B`, and the `reconnect_confirm` body with `peer_state`. Test against the
   corrected `veles-record-reconnect-confirm`.
-- [ ] 2.6 Implement the §7.1 header/AAD, the prefix‖u64be nonce, AES-256-GCM seal/open, the
+- [x] 2.6 Implement the §7.1 header/AAD, the prefix‖u64be nonce, AES-256-GCM seal/open, the
   size and `ciphertext_length` checks, the §7.3 type/direction table, and the OTP2-ENC-021
   error codes.
   - Test `veles-record-push-event` byte-for-byte.
