@@ -122,18 +122,18 @@
 
 ## 5. Chrome codec and crypto primitives (TypeScript, Web Crypto; mirrors group 2)
 
-- [ ] 5.1 Create the session module (e.g. `web-extension/src/session/`) with the §4 frame
+- [x] 5.1 Create the session module (e.g. `web-extension/src/session/`) with the §4 frame
   codec and `reconnect_hello` encode and strict decode, including point validation. Test
   with the adapted `veles-neg-point-*` values, and register the tests.
-- [ ] 5.2 Implement the signature frame codec, `crypto.subtle` ECDSA P-256 signing with
+- [x] 5.2 Implement the signature frame codec, `crypto.subtle` ECDSA P-256 signing with
   low-S normalization, and strict low-S P1363 verification.
   - Test fixture signature verification.
   - Test `veles-neg-sig-*` rejection.
   - Test the double-hash failure.
-- [ ] 5.3 Implement ECDH, HKDF and the seven labels, plus `reconnect_confirm_input`,
+- [x] 5.3 Implement ECDH, HKDF and the seven labels, plus `reconnect_confirm_input`,
   `conf_A`/`conf_B` and the confirm body. Test byte-for-byte against the corrected
   `veles-reconnect-authentication` and `veles-record-reconnect-confirm`.
-- [ ] 5.4 Implement the §7.1 record seal/open, size checks, the §7.3 table and the
+- [x] 5.4 Implement the §7.1 record seal/open, size checks, the §7.3 table and the
   OTP2-ENC-021 codes.
   - Test `veles-record-push-event`.
   - Test `veles-neg-record-*`.
