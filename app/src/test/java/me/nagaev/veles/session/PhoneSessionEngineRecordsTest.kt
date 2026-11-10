@@ -1,6 +1,10 @@
 package me.nagaev.veles.session
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -377,6 +381,38 @@ class PhoneSessionEngineRecordsTest {
         assertTrue(effects.none { it is SessionEffect.Deliver })
         assertClosed(engine)
         assertTrue(engine.onInbound(client.record(RecordType.APP_HEARTBEAT.wire, 2uL)).isEmpty())
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun bufferedErrorReplyAfterTeardownIsNotEmitted() = runTest {
+        val client = TestClient()
+        val gate = CompletableDeferred<Unit>()
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+            override suspend fun handle(
+                type: Int,
+                body: ByteArray,
+                reply: suspend (type: Int, body: ByteArray) -> Unit,
+            ) {
+                reply(RecordType.APP_ERROR.wire, appErrorBody(AppErrorCode.PROTOCOL_VIOLATION))
+                gate.await()
+                error("handler failed after teardown")
+            }
+        }
+        val engine = engine(lookupFor(client), handler)
+        open(engine, client)
+
+        val pending = async { engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, 1uL)) }
+        runCurrent()
+        engine.teardown()
+        gate.complete(Unit)
+
+        val effects = pending.await()
+        assertTrue(effects.isEmpty())
+        assertFalse(engine.isOpen)
+        assertNull(engine.sessionClass)
     }
 
     private class ErrorThenHeartbeatHandler : ApplicationHandler {

@@ -323,12 +323,16 @@ class PhoneSessionEngine(
         return listOf(SessionEffect.Deliver(opened.type, opened.body)) + replies
     }
 
-    /** Keeps an already-sealed terminal `app_error` when the handler also fails afterwards. */
+    /**
+     * Keeps an already-sealed terminal `app_error` when the handler also fails afterwards.
+     * A handler that throws after an external teardown must not resurrect buffered records.
+     */
     private fun terminalReplyOrTerminate(
         replies: List<SessionEffect>,
         terminalError: Boolean,
         fallback: String,
     ): List<SessionEffect> {
+        if (state == State.CLOSED) return emptyList()
         if (!terminalError) return terminate(fallback)
         teardownInternal()
         return replies + listOf(SessionEffect.Terminated(STAGE_APP_ERROR), SessionEffect.Close)
