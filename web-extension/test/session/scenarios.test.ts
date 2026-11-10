@@ -510,7 +510,7 @@ class ClientRepository {
         return new ClientRepository(durable, peerId, processToken);
     }
 
-    /** Persists the session's record state back to the durable store. */
+    /** Persists the session's record state under the current process boot token. */
     persist(bootToken: string): void {
         const record = this.store.get(this.peerId);
         if (record === undefined) return;
@@ -890,7 +890,9 @@ class ClientScenario {
 
     private persistRepository(): void {
         if (this.repository === null || this.durable === null || this.peerId === null) return;
-        this.repository.persist(this.persistedToken);
+        // The record is written under the boot token of the process that owns the session, so
+        // a later restart with the same token matches and a different token still mismatches.
+        this.repository.persist(this.processToken);
         this.observations.durableState = this.durable.read(this.peerId)?.state ?? 'deleted';
     }
 
@@ -1318,6 +1320,76 @@ describe('client conformance scenarios', () => {
         expect(sameBoot.continuityMatched).toBe(true);
         expect(sameBoot.deletedIncomplete).toBe(false);
         expect(sameBoot.store.get('main')?.state).toBe('active_activation_pending');
+    });
+
+    it('restart lifecycle persists through the repository and recreates both', async () => {
+        // Build a real durable record and a real first engine, let the mirror upgrade write the
+        // record state through the repository API, tear the engine down, then reload a new
+        // repository and engine over the same durable store under a changed boot token.
+        const identity = await crypto.subtle.generateKey(
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['sign', 'verify'],
+        );
+        const rawPublic = new Uint8Array(await crypto.subtle.exportKey('raw', identity.publicKey));
+        const peerId = hexOf(rawPublic.subarray(0, 16));
+        const durable = new DurableClientStore();
+        durable.seed(peerId, {
+            publicKey: rawPublic,
+            state: 'active_activation_pending',
+            continuityToken: 'boot1',
+        });
+
+        const repo1 = ClientRepository.open(durable, peerId, 'boot1');
+        expect(repo1.continuityMatched).toBe(true);
+        const harness1 = await PhoneHarness.create({
+            state: 'active_activation_pending',
+            store: repo1.store,
+            phoneIdentity: identity,
+            phoneId: peerId,
+        });
+        const { authenticated } = await harness1.openSession({ peerState: 1 });
+        expect(authenticated.kind).toBe('authenticated');
+        // The mirror upgrade is the session's write; persist it through the repository API.
+        expect(repo1.store.get(peerId)?.state).toBe('active');
+        repo1.persist('boot1');
+        expect(durable.read(peerId)?.state).toBe('active');
+        expect(durable.read(peerId)?.continuityToken).toBe('boot1');
+        const firstPrefix = harness1.engine.sessionIdPrefix?.slice();
+
+        harness1.engine.teardown();
+        expect(harness1.engine.isOpen).toBe(false);
+        expect(harness1.engine._keysErased).toBe(true);
+
+        const repo2 = ClientRepository.open(durable, peerId, 'boot2');
+        expect(repo2.store).not.toBe(repo1.store);
+        expect(repo2.continuityMatched).toBe(false);
+        expect(repo2.deletedIncomplete).toBe(false);
+        expect(repo2.store.get(peerId)?.state).toBe('active');
+        const state = repo2.store.get(peerId)?.state;
+        if (state === undefined) throw new Error('the reloaded repository lost the mirror');
+        const harness2 = await PhoneHarness.create({
+            state,
+            store: repo2.store,
+            phoneIdentity: identity,
+            phoneId: peerId,
+        });
+        const reopened = await harness2.openSession({ peerState: 1 });
+        expect(reopened.authenticated.kind).toBe('authenticated');
+        if (reopened.authenticated.kind !== 'authenticated') {
+            throw new Error('the reloaded engine did not authenticate');
+        }
+        expect(reopened.authenticated.sessionClass).toBe(SessionClass.FULL);
+        expect(harness2.engine).not.toBe(harness1.engine);
+        expect(harness2.engine.isOpen).toBe(true);
+        expect(harness2.engine.sessionIdPrefix).not.toEqual(firstPrefix);
+
+        // Persisting under the new token makes a later restart match.
+        repo2.persist('boot2');
+        expect(durable.read(peerId)?.continuityToken).toBe('boot2');
+        const repo3 = ClientRepository.open(durable, peerId, 'boot2');
+        expect(repo3.continuityMatched).toBe(true);
+        expect(repo3.store.get(peerId)?.state).toBe('active');
     });
 
     it('client signatures are low-S P1363 and the handshake verifies them', async () => {
