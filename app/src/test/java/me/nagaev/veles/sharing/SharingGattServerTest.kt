@@ -928,6 +928,50 @@ class SharingGattServerTest {
         verify { platform.cancelConnection(a) }
     }
 
+    @Test fun secondReconnectKeepsFencingForTheDisconnectedReplacement() {
+        val sent = mutableListOf<ByteArray>()
+        every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0
+        val a = device("a")
+        subscribe(a, 517)
+        val first = connections.last()
+        assertTrue(subject.send(first, ByteArray(1016) { 3 }, 77L))
+        flush()
+        assertEquals(1, sent.size)
+        callback.captured.onConnectionStateChange(a, 0, BluetoothProfile.STATE_DISCONNECTED)
+        flush()
+
+        // Second generation: blocked by the first generation's quarantine.
+        subscribe(a, 517)
+        val second = connections.last()
+        assertTrue(subject.send(second, ByteArray(20) { 4 }, 88L))
+        flush()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertEquals("the expired quarantine releases the second generation once", 2, sent.size)
+
+        // The delayed first-generation ack is ambiguous: it closes the second generation without
+        // completing anything, but the second generation's own flight must stay fenced.
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(77L to false, 88L to false), completions)
+
+        // Third generation: it may not send until the second generation's ack is consumed, and
+        // that ack must never complete the third generation's record.
+        subscribe(a, 517)
+        val third = connections.last()
+        assertTrue(subject.send(third, ByteArray(20) { 6 }, 99L))
+        flush()
+        assertEquals("the second generation's outstanding ack fences the third", 2, sent.size)
+
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals("a delayed replacement ack completes nothing", listOf(77L to false, 88L to false), completions)
+        assertEquals("consuming it releases the third generation", 3, sent.size)
+
+        callback.captured.onNotificationSent(a, BluetoothGatt.GATT_SUCCESS)
+        flush()
+        assertEquals(listOf(77L to false, 88L to false, 99L to true), completions)
+    }
+
     @Test fun duplicateNotificationCallbackNeverAcknowledgesASecondRecord() {
         val sent = mutableListOf<ByteArray>()
         every { platform.notifyCharacteristicChanged(any(), any(), any(), capture(sent)) } returns 0

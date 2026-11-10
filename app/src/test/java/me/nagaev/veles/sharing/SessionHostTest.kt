@@ -463,6 +463,48 @@ class SessionHostTest {
     }
 
     @Test
+    fun saturatedQueueFailsAdditionalApplicationSendersWithoutStranding() = runTest {
+        val client = TestClient()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+            override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+                entered.complete(Unit)
+                gate.await()
+            }
+        }
+        val host = host { engine(client, handler = handler) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+        authenticate(host, gen, client)
+        // Occupy the worker so nothing drains the queue.
+        host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(9)), admission())
+        runCurrent()
+        assertTrue(entered.isCompleted)
+
+        // The queue holds 32 steps: the first 32 callers are accepted and suspended on their own
+        // deferred, every further caller must fail immediately instead of suspending on admission.
+        val results = mutableListOf<Boolean>()
+        val callers = List(SATURATION_ATTEMPTS) {
+            launch { results += host.sendApplication(gen, RecordType.PUSH_EVENT.wire, ByteArray(0)) }
+        }
+        runCurrent()
+        assertEquals("only the refused caller returned before shutdown", 1, results.size)
+        assertEquals(false, results.single())
+
+        host.shutdown()
+        runCurrent()
+
+        assertTrue("no accepted caller is stranded", callers.all { it.isCompleted })
+        assertEquals(SATURATION_ATTEMPTS, results.size)
+        assertTrue("every caller fails deterministically", results.all { !it })
+        gate.complete(Unit)
+        runCurrent()
+    }
+
+    @Test
     fun concurrentSubmissionKeepsRecordOrderWhileTheEngineIsSuspended() = runBlocking {
         val client = TestClient()
         val entered = CompletableDeferred<Unit>()
@@ -632,6 +674,11 @@ class SessionHostTest {
         assertTrue(host.hasOpenSession(TrustEncoding.hex(full.installationId)))
         assertTrue(host.hasOpenSession(TrustEncoding.hex(recovery.installationId)))
         assertFalse(host.hasOpenSession("00".repeat(16)))
+    }
+
+    private companion object {
+        /** One more than the worker queue capacity: the last attempt must be refused at admission. */
+        const val SATURATION_ATTEMPTS = 33
     }
 
     private object SessionEffectBytes {

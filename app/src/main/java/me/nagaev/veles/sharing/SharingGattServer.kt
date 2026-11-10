@@ -340,7 +340,9 @@ internal class SharingGattServer(
             // An expired quarantine makes this callback ambiguous: it may be the previous
             // generation's delayed ack, so it must never acknowledge a record. Fail closed.
             if (synchronized(stateLock) { ambiguous.remove(id) }) {
-                synchronized(stateLock) { inflight.remove(id) }
+                // Keep this link's flight: remove() then quarantines its outstanding callback, so
+                // a delayed ack for the closed replacement can never acknowledge the next
+                // generation's fragment.
                 disconnect(id)
                 return@post
             }

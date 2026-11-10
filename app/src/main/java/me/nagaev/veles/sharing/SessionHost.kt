@@ -190,11 +190,23 @@ class SessionHost(
     suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
         val live = synchronized(registry) { sessions[gen] } ?: return false
         val step = Step.Application(type, body, CompletableDeferred())
-        synchronized(registry) { live.applications += step }
-        if (!enqueueSuspending(live, step)) {
-            synchronized(registry) { live.applications -= step }
-            return false
+        // Non-suspending admission and registration are one critical section: a full or ended
+        // queue fails the caller immediately (never suspends on admission), and every accepted
+        // caller is registered before the worker can run, so teardown always completes it.
+        val accepted = synchronized(registry) {
+            if (live.ended) {
+                false
+            } else {
+                live.applications += step
+                if (live.queue.trySend(step).isSuccess) {
+                    true
+                } else {
+                    live.applications -= step
+                    false
+                }
+            }
         }
+        if (!accepted) return false
         return try {
             step.result.await()
         } finally {
@@ -228,18 +240,6 @@ class SessionHost(
     }
 
     private fun enqueue(live: Live, step: Step): Boolean = !live.ended && live.queue.trySend(step).isSuccess
-
-    private suspend fun enqueueSuspending(live: Live, step: Step): Boolean {
-        if (live.ended) return false
-        return try {
-            live.queue.send(step)
-            true
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (_: Exception) {
-            false
-        }
-    }
 
     private suspend fun runTicks(live: Live) {
         var last = clock()
