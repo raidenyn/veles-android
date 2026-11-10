@@ -190,14 +190,14 @@
 
 ## 8. Debug-only probe, trust injection and channel gating (design D5; spec synthetic-session-probe)
 
-- [ ] 8.1 Android debug: a trust-injection entry point (export identity, install a peer as
+- [x] 8.1 Android debug: a trust-injection entry point (export identity, install a peer as
   `ACTIVE`), reachable through adb only in debug builds (debug source set or
   `BuildConfig.DEBUG`).
-- [ ] 8.2 Android debug: a synthetic application handler (`pull_request` → one §8.1 event:
+- [x] 8.2 Android debug: a synthetic application handler (`pull_request` → one §8.1 event:
   marker, `Veles synthetic`, 100 at scale 2, `XTS`, lifetime ≤ 600) and an adb push command
   that does nothing without an open `full` session. Log the marker and event id to logcat,
   in debug only.
-- [ ] 8.3 Extension build-time channel gating:
+- [x] 8.3 Extension build-time channel gating:
   - a build-time constant selects the development or production channel
   - development-only modules (injection hook, probe, readout) are excluded from the
     production build at compile time
@@ -205,12 +205,12 @@
     test-only production identity input kept separate from the publishable
     `VELES_RELEASE_CONFIG`
   - the development build stays the one used for physical verification
-- [ ] 8.4 Chrome development channel: a trust-injection hook reachable only from trusted
+- [x] 8.4 Chrome development channel: a trust-injection hook reachable only from trusted
   extension contexts, rejecting web-page and content-script calls.
-- [ ] 8.5 Chrome development channel: send `pull_request`, parse the event strictly, send
+- [x] 8.5 Chrome development channel: send `pull_request`, parse the event strictly, send
   `event_ack`, and show a debug readout with the marker and session id prefix. A malformed
   event ends the session.
-- [ ] 8.6 Tests:
+- [x] 8.6 Tests:
   - cross-install trust gives class `full`
   - hook rejection for web content
   - pull and push round trips
