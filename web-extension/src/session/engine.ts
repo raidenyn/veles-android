@@ -354,6 +354,17 @@ export class ClientSessionEngine {
         return this.#state.phase === 'open';
     }
 
+    /** The class fixed at the authentication gate, or null before it and after teardown. */
+    get sessionClass(): SessionClass | null {
+        return this.#state.sessionClass;
+    }
+
+    /** A copy of the fixed 8-byte session id prefix, or null before the gate and after teardown. */
+    get sessionIdPrefix(): Uint8Array | null {
+        const prefix = this.#state.sessionIdPrefix;
+        return prefix === null ? null : prefix.slice();
+    }
+
     /**
      * The first fully verified phone `reconnect_confirm` record of this
      * generation, byte-for-byte, or `null` before verification and after

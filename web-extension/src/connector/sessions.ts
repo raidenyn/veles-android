@@ -22,6 +22,7 @@ import type { AuthenticationVerifier, ChromeTrustRepository } from '../trust/rep
 import { ClientSessionEngine, type ClientEngineDeps, type SessionEffect } from '../session/engine';
 import { QueueOverflow, SESSION_QUEUE_LIMIT, SerialQueue } from '../session/queue';
 import { SessionReject } from '../session/reject';
+import type { SessionClass } from '../session/wire';
 
 import type { DiagnosticRing } from './diagnostics';
 import type { ConnectorClose, ConnectorResult } from './port';
@@ -51,6 +52,14 @@ export interface SessionController {
 }
 
 export type SessionOpenResult = { result: 'authenticated'; peerId: string } | { result: 'failed' };
+
+/** One authenticated session with its fixed class and copied 8-byte session id prefix. */
+export interface AuthenticatedSession {
+    readonly handle: string;
+    readonly peerId: string;
+    readonly sessionClass: SessionClass;
+    readonly sessionIdPrefix: Uint8Array;
+}
 
 type SessionPhase = 'handshake' | 'open' | 'closed';
 
@@ -208,6 +217,28 @@ export class SessionManager {
         return this.enqueue(session, () => session.engine.sendApplication(type, copy)).then(
             () => undefined,
         );
+    }
+
+    /**
+     * Sessions whose authentication gate opened (the class is fixed). Handshaking, failed and
+     * closed sessions are never listed. Exposed for the development-only probe's narrow
+     * `full`-session selection.
+     */
+    authenticatedSessions(): AuthenticatedSession[] {
+        const result: AuthenticatedSession[] = [];
+        for (const session of this.byHandle.values()) {
+            if (session.phase !== 'open') continue;
+            const sessionClass = session.engine.sessionClass;
+            const prefix = session.engine.sessionIdPrefix;
+            if (sessionClass === null || prefix === null || prefix.length !== 8) continue;
+            result.push({
+                handle: session.handle,
+                peerId: session.peerId,
+                sessionClass,
+                sessionIdPrefix: prefix,
+            });
+        }
+        return result;
     }
 
     /** Ends one phone's session and, when its link is still live, only that link. */

@@ -58,8 +58,6 @@ const PROBE_TYPE = {
     EVENT_ACK: 0x0204,
 } as const;
 
-const SESSION_PREFIX_START = 15;
-const SESSION_PREFIX_END = 23;
 const EVENT_ID_BYTES = 16;
 const INSTALLATION_ID_BYTES = 16;
 const MAX_LIFETIME_SECONDS = 600;
@@ -206,8 +204,6 @@ export function createDevelopmentProbe(
     options: DevelopmentProbeOptions = {},
 ): DevelopmentProbe {
     const readout: DebugReadout = createDebugReadout(document);
-    const handles = new Map<string, string>();
-    const prefixes = new Map<string, string>();
     const pending = new Map<string, PendingPull>();
     const unsubscribers: (() => void)[] = [];
     let makeRepository: ConnectorSessionOptions['createRepository'] | null = null;
@@ -223,19 +219,22 @@ export function createDevelopmentProbe(
         waiter.reject(new Error(`debug probe: ${reason}`));
     }
 
-    function forget(handle: string): void {
-        handles.delete(handle);
-        prefixes.delete(handle);
-        rejectPull(handle, 'session ended');
-    }
-
     function probeHandler(handle: string, peerId: string): ApplicationHandler {
         return {
             handles: (type) => type === PROBE_TYPE.PULL_EVENTS || type === PROBE_TYPE.PUSH_EVENT,
             handle: async (type, body, reply) => {
                 let event: ProbeEvent;
                 try {
-                    event = decodeProbeEvent(type, body, peerId, prefixes.get(handle) ?? '');
+                    // The authenticated session owns the prefix; the record is already open.
+                    const session = requireSessions()
+                        .authenticatedSessions()
+                        .find((candidate) => candidate.handle === handle);
+                    event = decodeProbeEvent(
+                        type,
+                        body,
+                        peerId,
+                        session === undefined ? '' : hex(session.sessionIdPrefix),
+                    );
                 } catch (error) {
                     readout.clear();
                     throw error;
@@ -270,18 +269,26 @@ export function createDevelopmentProbe(
         return requireValue(sessions, 'session manager');
     }
 
+    function fullSessions(): { handle: string }[] {
+        return requireSessions()
+            .authenticatedSessions()
+            .filter((session) => session.sessionClass === 'FULL');
+    }
+
     function targetHandle(handle: string | undefined): string {
+        const full = fullSessions();
         if (handle !== undefined) {
-            if (!handles.has(handle)) throw new Error(`debug probe: unknown session ${handle}`);
+            if (!full.some((session) => session.handle === handle)) {
+                throw new Error(`debug probe: session ${handle} is not an open full session`);
+            }
             return handle;
         }
-        const open = [...handles.keys()];
-        if (open.length !== 1) {
+        if (full.length !== 1) {
             throw new Error(
-                `debug probe: expected exactly one open full session, found ${open.length}`,
+                `debug probe: expected exactly one open full session, found ${full.length}`,
             );
         }
-        return open[0];
+        return full[0].handle;
     }
 
     const hook: VelesDebug = {
@@ -324,7 +331,6 @@ export function createDevelopmentProbe(
                     return base.createRepository(verifier);
                 },
                 createEngineDeps(handle, peerId, localInstallationId, repository) {
-                    handles.set(handle, peerId);
                     return {
                         ...base.createEngineDeps(handle, peerId, localInstallationId, repository),
                         handler: probeHandler(handle, peerId),
@@ -339,22 +345,14 @@ export function createDevelopmentProbe(
             app = application;
             sessions = manager;
             unsubscribers.push(
-                source.onRecord((record) => {
-                    if (record.bytes.length < SESSION_PREFIX_END) return;
-                    prefixes.set(
-                        record.connectionHandle,
-                        hex(record.bytes.slice(SESSION_PREFIX_START, SESSION_PREFIX_END)),
-                    );
-                }),
-            );
-            unsubscribers.push(
                 source.onChange((snapshot) => {
-                    for (const handle of [...handles.keys()]) {
+                    const open = new Set(fullSessions().map((session) => session.handle));
+                    for (const handle of [...pending.keys()]) {
                         const connection = snapshot.connections.find(
                             (candidate) => candidate.handle === handle,
                         );
-                        if (connection === undefined || connection.status !== 'connected') {
-                            forget(handle);
+                        if (!open.has(handle) || connection?.status !== 'connected') {
+                            rejectPull(handle, 'session ended');
                         }
                     }
                 }),
@@ -362,8 +360,6 @@ export function createDevelopmentProbe(
             unsubscribers.push(
                 source.onClose(() => {
                     for (const handle of [...pending.keys()]) rejectPull(handle, 'port closed');
-                    handles.clear();
-                    prefixes.clear();
                 }),
             );
             globalThis.velesDebug = hook;
@@ -373,8 +369,6 @@ export function createDevelopmentProbe(
             for (const unsubscribe of unsubscribers) unsubscribe();
             unsubscribers.length = 0;
             for (const handle of [...pending.keys()]) rejectPull(handle, 'probe disposed');
-            handles.clear();
-            prefixes.clear();
             app = null;
             sessions = null;
             if (globalThis.velesDebug === hook) delete globalThis.velesDebug;

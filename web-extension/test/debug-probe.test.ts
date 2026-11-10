@@ -5,9 +5,10 @@ import { createDevelopmentProbe, type DevelopmentProbe } from '../src/debug/prob
 import { injectActivePeer } from '../src/debug/inject';
 import { DEBUG_READOUT_TEST_ID } from '../src/debug/readout';
 import { RecordType } from '../src/session/wire';
-import { hex } from '../src/trust/model';
+import { bytes, hex } from '../src/trust/model';
 import {
     HANDLE_CONNECTION,
+    HANDLE_CONNECTION_2,
     HANDLE_DEVICE,
     connectedEvent,
     disconnectedEvent,
@@ -27,7 +28,7 @@ import {
     type TestController,
     type TestTrust,
 } from './connector/session-harness';
-import { TestPhone } from './session/client-harness';
+import { PEER_STATE_BELOW_ACTIVE, TestPhone } from './session/client-harness';
 
 // ---------------------------------------------------------------------------
 // Minimal document surface: the readout is the only DOM the probe touches.
@@ -71,10 +72,10 @@ interface ProbeFixture extends TestController {
     phone: TestPhone;
 }
 
-async function createProbeFixture(): Promise<ProbeFixture> {
+async function createProbeFixture(phoneOverride?: TestPhone): Promise<ProbeFixture> {
     const context = createTestController();
     const trust = await createTestTrust(context.clock);
-    const phone = await TestPhone.create();
+    const phone = phoneOverride ?? (await TestPhone.create());
     const document = new FakeDocument();
     const probe = createDevelopmentProbe(document as unknown as Document, {
         createDebugRepository: () => {
@@ -114,7 +115,13 @@ function debugHook() {
     return hook;
 }
 
-async function connectAndAuthenticate(fixture: ProbeFixture, peerId: string) {
+async function connectAndAuthenticate(
+    fixture: ProbeFixture,
+    peerId: string,
+    connectionHandle: string = HANDLE_CONNECTION,
+    phone: TestPhone = fixture.phone,
+    peerState?: number,
+) {
     const port = fixture.currentPort();
     const connecting = debugHook().connect(HANDLE_DEVICE, peerId);
     const posted = await port.nextPosted();
@@ -122,10 +129,14 @@ async function connectAndAuthenticate(fixture: ProbeFixture, peerId: string) {
     await port.emit(
         connectedEvent({
             request_id: posted.request_id as string,
-            connection_handle: HANDLE_CONNECTION,
+            connection_handle: connectionHandle,
         }),
     );
-    const side = await answerHandshake(fixture, { phone: fixture.phone });
+    const side = await answerHandshake(fixture, {
+        phone,
+        connectionHandle,
+        ...(peerState === undefined ? {} : { peerState }),
+    });
     await connecting;
     return side;
 }
@@ -190,7 +201,24 @@ afterEach(() => {
 
 describe('development probe', () => {
     it('cross-installed peers authenticate as full', async () => {
-        const fixture = await createProbeFixture();
+        // Side B is a separate trust store. Its own identity key signs the phone half of the
+        // handshake, so this test cannot pass unless B's exported identity is the one used.
+        const otherSide = await createTestTrust();
+        const otherPublicKey = await crypto.subtle.importKey(
+            'raw',
+            bytes(otherSide.identity.publicKey, 65),
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['verify'],
+        );
+        const otherPhone = await TestPhone.create({
+            identity: { privateKey: otherSide.identity.privateKey, publicKey: otherPublicKey },
+            installationId: bytes(otherSide.identity.installationId, 16),
+        });
+        expect(hex(otherPhone.installationId)).toBe(otherSide.identity.installationId);
+        expect(hex(otherPhone.publicKey)).toBe(otherSide.identity.publicKey);
+
+        const fixture = await createProbeFixture(otherPhone);
         const hook = debugHook();
 
         // Each side exports its installation id and identity key.
@@ -198,13 +226,12 @@ describe('development probe', () => {
         expect(connector.installationId).toMatch(/^[0-9a-f]{32}$/);
         expect(connector.publicKey).toMatch(/^04[0-9a-f]{128}$/);
         const phoneIdentity = {
-            installationId: hex(fixture.phone.installationId),
-            publicKey: hex(fixture.phone.publicKey),
+            installationId: hex(otherPhone.installationId),
+            publicKey: hex(otherPhone.publicKey),
         };
 
         // Inject each side's exported identity into the other side's trust store.
         await hook.injectPeer(phoneIdentity.installationId, phoneIdentity.publicKey);
-        const otherSide = await createTestTrust(fixture.clock);
         const otherDebug = otherSide.clone();
         otherDebug.bindVerifier(async () => true);
         await injectActivePeer(
@@ -238,6 +265,76 @@ describe('development probe', () => {
         await ackSend(port, request);
         await expect(pull).resolves.toBeUndefined();
         expect(side.prefix).toHaveLength(8);
+    });
+
+    it('pull selects the single full session, not recovery or handshaking', async () => {
+        const fixture = await createProbeFixture();
+        const pendingPhone = await TestPhone.create();
+        const recoveryPeer = await fixture.trust.addPeer(pendingPhone, {
+            state: 'active_activation_pending',
+        });
+        // The recovery session is opened first and stays open while the full one connects.
+        await connectAndAuthenticate(
+            fixture,
+            recoveryPeer,
+            HANDLE_CONNECTION_2,
+            pendingPhone,
+            PEER_STATE_BELOW_ACTIVE,
+        );
+        await debugHook().injectPeer(
+            hex(fixture.phone.installationId),
+            hex(fixture.phone.publicKey),
+        );
+        const fullSide = await connectAndAuthenticate(
+            fixture,
+            hex(fixture.phone.installationId),
+            HANDLE_CONNECTION,
+        );
+        const port = fixture.currentPort();
+
+        const pulled = debugHook().pull();
+        const request = await nextSend(port);
+        expect(request.handle).toBe(HANDLE_CONNECTION);
+        expect(decodeRecordHeader(request.bytes)?.type).toBe(RecordType.PULL_REQUEST);
+        await ackSend(port, request);
+
+        const body = Uint8Array.from([
+            1,
+            ...encodeEvent({
+                phoneInstallationId: hex(fixture.phone.installationId),
+                eventId: EVENT_ID,
+                receiptEpochSeconds: 1_700_000_000n,
+                remainingLifetime: 600,
+                code: 'VAB12C',
+                merchant: 'Veles synthetic',
+                amountMagnitude: 100n,
+                amountScale: 2,
+                currency: 'XTS',
+            }),
+        ]);
+        await emitRecord(
+            port,
+            HANDLE_CONNECTION,
+            await fullSide.applicationFrame(RecordType.PULL_EVENTS, 1n, body),
+        );
+        await expect(pulled).resolves.toMatchObject({ code: 'VAB12C' });
+    });
+
+    it('pull throws when only a non-full session is open', async () => {
+        const fixture = await createProbeFixture();
+        const pendingPhone = await TestPhone.create();
+        const recoveryPeer = await fixture.trust.addPeer(pendingPhone, {
+            state: 'active_activation_pending',
+        });
+        await connectAndAuthenticate(
+            fixture,
+            recoveryPeer,
+            HANDLE_CONNECTION_2,
+            pendingPhone,
+            PEER_STATE_BELOW_ACTIVE,
+        );
+
+        await expect(debugHook().pull()).rejects.toThrow(/exactly one open full session/);
     });
 
     it('runtime message from content script has no handler', async () => {

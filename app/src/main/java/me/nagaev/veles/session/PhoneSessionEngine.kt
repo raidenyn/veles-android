@@ -39,6 +39,9 @@ class PhoneSessionEngine(
      */
     private val finality = Any()
 
+    /** The session-scoped handler, derived once the session id prefix is fixed. */
+    @Volatile private var sessionHandler: ApplicationHandler? = handler
+
     @Volatile private var state = State.AWAITING_CLIENT_HELLO
     private var peerInstallationId: ByteArray? = null
     private var peerPublicKey: ByteArray? = null
@@ -338,7 +341,7 @@ class PhoneSessionEngine(
         if (!RecordPolicy.authorized(opened.type, Direction.CLIENT_TO_PHONE, cls)) {
             return terminate(STAGE_AUTHORIZATION)
         }
-        val applicationHandler = handler ?: return terminateUnhandled()
+        val applicationHandler = sessionHandler ?: return terminateUnhandled()
         if (!applicationHandler.handles(opened.type)) return terminateUnhandled()
         val replies = mutableListOf<SessionEffect>()
         var terminalError = false
@@ -491,7 +494,7 @@ class PhoneSessionEngine(
         authenticated = true
         state = State.OPEN
         lastActivityAt = clock()
-        handler?.onSessionEstablished(prefix.copyOf())
+        sessionHandler = handler?.forSession(prefix.copyOf())
         listOf(SessionEffect.Authenticated(cls, installationId.copyOf(), prefix.copyOf()))
     }
 
@@ -664,6 +667,7 @@ class PhoneSessionEngine(
         lastHeartbeatSentAt = null
         receivedHeartbeats.values.forEach { it.clear() }
         handshakeDeadlineAt = 0L
+        sessionHandler = null
     }
 
     private enum class State { AWAITING_CLIENT_HELLO, AWAITING_CLIENT_SIGNATURE, AWAITING_PEER_CONFIRM, OPEN, CLOSED }

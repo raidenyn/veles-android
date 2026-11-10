@@ -15,6 +15,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import me.nagaev.veles.common.VelesLog
 import me.nagaev.veles.session.RecordType
+import me.nagaev.veles.session.SessionClass
 import me.nagaev.veles.sharing.ConnectionGeneration
 import me.nagaev.veles.sharing.SessionHost
 import me.nagaev.veles.trust.ActivationVerifier
@@ -25,9 +26,15 @@ import me.nagaev.veles.trust.TrustException
 import me.nagaev.veles.trust.createAndroidTrustRepository
 import java.security.SecureRandom
 
+/** One authenticated destination: its generation and its own 8-byte session id prefix. */
+internal class ProbeSession(
+    val generation: ConnectionGeneration,
+    val sessionIdPrefix: ByteArray,
+)
+
 /** Session surface the debug commands need, kept free of the transport adapter. */
 internal interface ProbeSessions {
-    fun openFullSessions(): List<ConnectionGeneration>
+    fun openFullSessions(): List<ProbeSession>
 
     fun hasOpenSession(peerId: String): Boolean
 
@@ -35,7 +42,9 @@ internal interface ProbeSessions {
 }
 
 internal class SessionProbeSessions(private val host: SessionHost) : ProbeSessions {
-    override fun openFullSessions(): List<ConnectionGeneration> = host.openFullSessions()
+    override fun openFullSessions(): List<ProbeSession> = host.authenticatedSessions()
+        .filter { it.sessionClass == SessionClass.FULL }
+        .map { ProbeSession(it.generation, it.sessionIdPrefix) }
 
     override fun hasOpenSession(peerId: String): Boolean = host.hasOpenSession(peerId)
 
@@ -44,7 +53,7 @@ internal class SessionProbeSessions(private val host: SessionHost) : ProbeSessio
 }
 
 private object NoSessions : ProbeSessions {
-    override fun openFullSessions(): List<ConnectionGeneration> = emptyList()
+    override fun openFullSessions(): List<ProbeSession> = emptyList()
 
     override fun hasOpenSession(peerId: String): Boolean = false
 
@@ -94,10 +103,11 @@ internal class ProbeCommands(
     suspend fun push() {
         val open = sessions.openFullSessions()
         if (open.isEmpty()) return
-        val event = handler.next()
-        open.forEach { gen ->
-            if (!sessions.sendApplication(gen, RecordType.PUSH_EVENT.wire, event.body)) {
-                log("push refused gen=${gen.serial}")
+        // One fresh event per destination, logged with that destination's own session prefix.
+        open.forEach { session ->
+            val event = handler.next(session.sessionIdPrefix)
+            if (!sessions.sendApplication(session.generation, RecordType.PUSH_EVENT.wire, event.body)) {
+                log("push refused gen=${session.generation.serial}")
             }
         }
     }
@@ -172,7 +182,7 @@ class ProbeReceiver : BroadcastReceiver() {
         const val EXTRA_ID = "id"
         const val EXTRA_PUB = "pub"
 
-        private val EMPTY_EVENT_SOURCE = ProbeEventSource {
+        private val EMPTY_EVENT_SOURCE = ProbeEventSource { _ ->
             SyntheticEvent(code = "", eventId = ByteArray(0), body = ByteArray(0))
         }
 

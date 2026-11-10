@@ -34,8 +34,9 @@ interface ApplicationHandler {
     suspend fun handle(type: Int, body: ByteArray, reply: suspend (type: Int, body: ByteArray) -> Unit)
 
     /**
-     * Optional session context: the engine reports the fixed 8-byte session identifier once,
-     * when the authentication gate opens. A handler that does not need it ignores the default.
+     * Optional per-session context: the engine asks for the handler instance of one
+     * authenticated session once, when the class is fixed, and uses only that instance for
+     * the session's records. The default keeps this same instance.
      */
-    fun onSessionEstablished(sessionIdPrefix: ByteArray) = Unit
+    fun forSession(sessionIdPrefix: ByteArray): ApplicationHandler = this
 }

@@ -2,6 +2,7 @@ package me.nagaev.veles.debugprobe
 
 import me.nagaev.veles.session.ApplicationHandler
 import me.nagaev.veles.session.RecordType
+import me.nagaev.veles.session.SessionReject
 
 internal const val PROBE_TAG = "VelesProbe"
 internal const val SYNTHETIC_MERCHANT = "Veles synthetic"
@@ -12,6 +13,7 @@ internal const val SYNTHETIC_REMAINING_LIFETIME = 600L
 
 private const val INSTALLATION_ID_BYTES = 16
 private const val EVENT_ID_BYTES = 16
+private const val EVENT_ACK_BYTES = INSTALLATION_ID_BYTES + EVENT_ID_BYTES
 private const val MARKER_BODY_BYTES = 5
 private const val CODE_PREFIX = 'V'
 private const val MARKER_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -19,6 +21,8 @@ private const val MAX_CODE_BYTES = 16
 private const val U8_MASK = 0xFF
 private const val BITS_PER_BYTE = 8
 private const val BYTE_MASK = 0xFFL
+private const val LEDGER_MAX_EVENTS = 256
+private const val SESSION_PREFIX_BYTES = 8
 
 /** One §8.1 synthetic event: the decoded marker, the event id and the exact record body. */
 internal data class SyntheticEvent(
@@ -27,45 +31,98 @@ internal data class SyntheticEvent(
     val body: ByteArray,
 )
 
-/** Produces a fresh synthetic event (never a real notification or `OtpMessage`). */
+/** Produces a fresh synthetic event for one destination session (never real OTP data). */
 internal fun interface ProbeEventSource {
-    fun next(): SyntheticEvent
+    fun next(sessionIdPrefix: ByteArray?): SyntheticEvent
+}
+
+/**
+ * Bounded memory of synthetic events this debug process issued. An acknowledgement settles
+ * exactly one issued event; duplicates are idempotent and an unknown event fails closed.
+ */
+internal class SyntheticEventLedger {
+    private val issued = LinkedHashSet<String>()
+    private val delivered = LinkedHashSet<String>()
+
+    @Synchronized
+    fun issue(eventId: ByteArray) {
+        val key = hex(eventId)
+        if (issued.size >= LEDGER_MAX_EVENTS) issued.remove(issued.first())
+        issued += key
+    }
+
+    @Synchronized
+    fun acknowledge(eventId: ByteArray): Boolean {
+        val key = hex(eventId)
+        if (issued.remove(key)) {
+            if (delivered.size >= LEDGER_MAX_EVENTS) delivered.remove(delivered.first())
+            delivered += key
+            return true
+        }
+        return delivered.contains(key)
+    }
 }
 
 /**
  * Debug application handler: answers `pull_request` with `pull_events` carrying exactly one
- * synthetic §8.1 event. It reads no notification listener, no `OtpMessage` and no clipboard.
+ * synthetic §8.1 event, and accepts the matching `event_ack`. It reads no notification
+ * listener, no `OtpMessage` and no clipboard.
+ *
+ * A handler instance is created per authenticated session through [forSession]: its log lines
+ * carry that session's own id prefix, and its issued events are settled by that session's
+ * acknowledgements. [SyntheticEventLedger] is shared across the instances so a pushed event is
+ * settled by the acknowledgement of the session that received it.
  */
-internal class SyntheticProbeHandler(
+internal class SyntheticProbeHandler private constructor(
     private val localInstallationId: ByteArray,
     private val clock: () -> Long,
     private val random: (Int) -> ByteArray,
     private val log: (String) -> Unit,
+    private val ledger: SyntheticEventLedger,
+    private val sessionIdPrefix: ByteArray?,
 ) : ApplicationHandler, ProbeEventSource {
-    private var sessionIdPrefix: ByteArray? = null
+    constructor(
+        localInstallationId: ByteArray,
+        clock: () -> Long,
+        random: (Int) -> ByteArray,
+        log: (String) -> Unit,
+        ledger: SyntheticEventLedger = SyntheticEventLedger(),
+    ) : this(localInstallationId, clock, random, log, ledger, null)
 
-    override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+    override fun forSession(sessionIdPrefix: ByteArray): ApplicationHandler = SyntheticProbeHandler(
+        localInstallationId = localInstallationId,
+        clock = clock,
+        random = random,
+        log = log,
+        ledger = ledger,
+        sessionIdPrefix = sessionIdPrefix.copyOf(),
+    )
+
+    override fun handles(type: Int): Boolean =
+        type == RecordType.PULL_REQUEST.wire || type == RecordType.EVENT_ACK.wire
 
     override suspend fun handle(
         type: Int,
         body: ByteArray,
         reply: suspend (type: Int, body: ByteArray) -> Unit,
     ) {
-        if (!handles(type)) return
-        // The handler owns the event; the copy is sealed into `pull_events` by the engine.
-        reply(RecordType.PULL_EVENTS.wire, byteArrayOf(1) + next().body)
+        when (type) {
+            // The handler owns the event; the copy is sealed into `pull_events` by the engine.
+            RecordType.PULL_REQUEST.wire -> reply(
+                RecordType.PULL_EVENTS.wire,
+                byteArrayOf(1) + next(sessionIdPrefix).body,
+            )
+            RecordType.EVENT_ACK.wire -> acknowledge(body)
+        }
     }
 
-    override fun onSessionEstablished(sessionIdPrefix: ByteArray) {
-        this.sessionIdPrefix = sessionIdPrefix.copyOf()
-    }
-
-    override fun next(): SyntheticEvent {
+    override fun next(sessionIdPrefix: ByteArray?): SyntheticEvent {
         val event = createSyntheticEvent(
             localInstallationId = localInstallationId,
             receiptEpochSeconds = clock() / MILLIS_PER_SECOND,
             random = random,
         )
+        ledger.issue(event.eventId)
         log(
             "marker=${event.code} event=${hex(event.eventId)} " +
                 "sid=${hex(sessionIdPrefix ?: ByteArray(SESSION_PREFIX_BYTES))}",
@@ -73,9 +130,19 @@ internal class SyntheticProbeHandler(
         return event
     }
 
-    companion object {
+    /** §8.1/event_ack: `phone_installation_id || event_id`; unknown events fail closed. */
+    private fun acknowledge(body: ByteArray) {
+        if (body.size != EVENT_ACK_BYTES) throw SessionReject()
+        if (!body.copyOfRange(0, INSTALLATION_ID_BYTES).contentEquals(localInstallationId)) {
+            throw SessionReject()
+        }
+        if (!ledger.acknowledge(body.copyOfRange(INSTALLATION_ID_BYTES, EVENT_ACK_BYTES))) {
+            throw SessionReject()
+        }
+    }
+
+    private companion object {
         private const val MILLIS_PER_SECOND = 1_000L
-        private const val SESSION_PREFIX_BYTES = 8
     }
 }
 
@@ -128,14 +195,16 @@ private fun writeU16(body: ByteArray, offset: Int, value: Int): Int {
 
 private fun writeU32(body: ByteArray, offset: Int, value: Long): Int {
     for (index in 0 until Int.SIZE_BYTES) {
-        body[offset + index] = (value ushr (BITS_PER_BYTE * (Int.SIZE_BYTES - 1 - index)) and BYTE_MASK).toByte()
+        body[offset + index] =
+            (value ushr (BITS_PER_BYTE * (Int.SIZE_BYTES - 1 - index)) and BYTE_MASK).toByte()
     }
     return offset + Int.SIZE_BYTES
 }
 
 private fun writeU64(body: ByteArray, offset: Int, value: Long): Int {
     for (index in 0 until Long.SIZE_BYTES) {
-        body[offset + index] = (value ushr (BITS_PER_BYTE * (Long.SIZE_BYTES - 1 - index)) and BYTE_MASK).toByte()
+        body[offset + index] =
+            (value ushr (BITS_PER_BYTE * (Long.SIZE_BYTES - 1 - index)) and BYTE_MASK).toByte()
     }
     return offset + Long.SIZE_BYTES
 }

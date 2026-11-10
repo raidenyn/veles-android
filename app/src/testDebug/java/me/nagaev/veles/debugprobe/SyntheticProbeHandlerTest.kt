@@ -6,13 +6,16 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import me.nagaev.veles.session.FakeClock
 import me.nagaev.veles.session.LocalRecordState
+import me.nagaev.veles.session.PhoneSessionEngine
 import me.nagaev.veles.session.PreAuthCodec
 import me.nagaev.veles.session.RecordType
 import me.nagaev.veles.session.Role
+import me.nagaev.veles.session.SessionEffect
 import me.nagaev.veles.session.SignatureFrame
 import me.nagaev.veles.session.TestClient
 import me.nagaev.veles.session.TestIdentity
 import me.nagaev.veles.session.TestPeers
+import me.nagaev.veles.session.completeHandshake
 import me.nagaev.veles.session.openPhoneRecord
 import me.nagaev.veles.sharing.ConnectionGeneration
 import me.nagaev.veles.sharing.RecordAdmission
@@ -38,8 +41,9 @@ import org.junit.Test
 
 /**
  * Debug-only synthetic probe (OTP-09 design D5). The handler answers `pull_request` with one
- * §8.1 event, the adb command pushes one event over every open `full` session, and revocation
- * stays impossible while a session is live. Nothing here reads real notifications.
+ * §8.1 event and accepts the matching `event_ack`; the adb command pushes one event per open
+ * `full` session, and revocation stays impossible while a session is live. Nothing here reads
+ * real notifications.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SyntheticProbeHandlerTest {
@@ -59,7 +63,7 @@ class SyntheticProbeHandlerTest {
     private fun TestScope.host(
         repository: InstallationTrustRepository = RecordingTrust(),
         sessionTransport: SessionTransport = transport,
-        factory: (ConnectionGeneration) -> me.nagaev.veles.session.PhoneSessionEngine,
+        factory: (ConnectionGeneration) -> PhoneSessionEngine,
     ): SessionHost = SessionHost(backgroundScope, sessionTransport, factory, repository, { clock.now })
 
     private fun TestScope.commands(
@@ -118,11 +122,12 @@ class SyntheticProbeHandlerTest {
 
     @Test
     fun pullReturnsOneSection81Event() = runTest {
-        val handler = handler()
-        handler.onSessionEstablished(ByteArray(8) { (0x40 + it).toByte() })
+        // The engine gives every handler a session-scoped instance; the prefix is only for
+        // the log line and never enters the event body.
+        val session = handler().forSession(ByteArray(8) { (0x40 + it).toByte() })
         var type = -1
         var body = ByteArray(0)
-        handler.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { replyType, replyBody ->
+        session.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { replyType, replyBody ->
             type = replyType
             body = replyBody
         }
@@ -146,15 +151,94 @@ class SyntheticProbeHandlerTest {
     @Test
     fun pullLogsMarkerEventAndSessionPrefix() = runTest {
         val lines = mutableListOf<String>()
-        val handler = handler { lines += it }
-        handler.onSessionEstablished(ByteArray(8) { (0x40 + it).toByte() })
-        handler.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { _, _ -> }
+        val session = handler { lines += it }.forSession(ByteArray(8) { (0x40 + it).toByte() })
+        session.handle(RecordType.PULL_REQUEST.wire, ByteArray(0)) { _, _ -> }
 
         assertEquals(1, lines.size)
         assertEquals(
             "marker=VAAAAA event=${"00".repeat(16)} sid=4041424344454647",
             lines.single(),
         )
+    }
+
+    @Test
+    fun encryptedPullResponseAcknowledgementAndSecondPull() = runTest {
+        val client = TestClient()
+        val lines = mutableListOf<String>()
+        var seed = 0
+        val sequenceRandom: (Int) -> ByteArray = { size ->
+            ByteArray(size) { ((seed + it) and 0xFF).toByte() }
+                .also { seed += 1 }
+        }
+        val handler = SyntheticProbeHandler(
+            localInstallationId = TestPeers.phoneInstallationId,
+            clock = { epochMillis },
+            random = sequenceRandom,
+            log = { lines += it },
+        )
+        val engine = TestPeers.engine(
+            TestIdentity.generate().signer,
+            TestPeers.lookup(TestPeers.record(client)),
+            clock,
+            handler,
+        )
+        engine.completeHandshake(client)
+        assertTrue(engine.isOpen)
+        val sessionPrefix = TrustEncoding.hex(client.keys.sessionId.copyOfRange(0, 8))
+
+        val first = engine.pull(client, requestSequence = 1uL, responseSequence = 1uL)
+        assertTrue("a pull response leaves the session open", engine.isOpen)
+        assertEquals("the pull is logged with this session's prefix", 1, lines.size)
+        assertTrue(lines[0].endsWith("sid=$sessionPrefix"))
+
+        val ack = engine.onInbound(
+            client.record(
+                RecordType.EVENT_ACK.wire,
+                2uL,
+                TestPeers.phoneInstallationId.copyOf() + first.eventId,
+            ),
+        )
+        assertTrue("Chrome's acknowledgement is handled, not unhandled", engine.isOpen)
+        assertFalse(
+            "the acknowledgement does not terminate the session",
+            ack.any { it is SessionEffect.Terminated || it is SessionEffect.Close },
+        )
+
+        val second = engine.pull(client, requestSequence = 3uL, responseSequence = 2uL)
+        assertTrue("a second pull after the acknowledgement succeeds", engine.isOpen)
+        assertNotEquals("every pull carries a fresh marker", first.code, second.code)
+        assertNotEquals(hex(first.eventId), hex(second.eventId))
+        assertEquals(2, lines.size)
+        assertTrue(lines[1].endsWith("sid=$sessionPrefix"))
+    }
+
+    @Test
+    fun unknownAcknowledgementEndsSession() = runTest {
+        val client = TestClient()
+        val handler = SyntheticProbeHandler(
+            localInstallationId = TestPeers.phoneInstallationId,
+            clock = { epochMillis },
+            random = random,
+            log = {},
+        )
+        val engine = TestPeers.engine(
+            TestIdentity.generate().signer,
+            TestPeers.lookup(TestPeers.record(client)),
+            clock,
+            handler,
+        )
+        engine.completeHandshake(client)
+        engine.pull(client, requestSequence = 1uL, responseSequence = 1uL)
+
+        val effects = engine.onInbound(
+            client.record(
+                RecordType.EVENT_ACK.wire,
+                2uL,
+                TestPeers.phoneInstallationId.copyOf() + ByteArray(16) { 0x7F },
+            ),
+        )
+        assertFalse("an unknown synthetic event id fails closed", engine.isOpen)
+        assertTrue(effects.any { it is SessionEffect.Terminated })
     }
 
     @Test
@@ -188,6 +272,8 @@ class SyntheticProbeHandlerTest {
         assertEquals("XTS", event.currency)
         assertEquals("VAAAAA", event.code)
         assertEquals(1, transport.log.size)
+        val prefix = TrustEncoding.hex(client.keys.sessionId.copyOfRange(0, 8))
+        assertTrue("the push is logged against its destination", transport.log.single().endsWith("sid=$prefix"))
     }
 
     @Test
@@ -204,7 +290,7 @@ class SyntheticProbeHandlerTest {
             val full = connectFull(host, "aa", 1, fullClient)
             val recovery = connectFull(host, "bb", 2, recoveryClient)
             assertEquals(
-                "the recovery session is open but not full",
+                "the recovery session is authenticated but not full",
                 listOf(full),
                 host.openFullSessions(),
             )
@@ -235,8 +321,44 @@ class SyntheticProbeHandlerTest {
 
         val pushed = transport.sent.drop(before)
         assertEquals(listOf(a, b), pushed.map { it.gen })
-        val bodies = pushed.map { it.bytes.toList() }
-        assertEquals("one synthetic event per generation", 1, bodies.distinct().size)
+        val events = listOf(
+            EventReader(first.openPhoneRecord(pushed[0].bytes, 1uL).body).event(),
+            EventReader(second.openPhoneRecord(pushed[1].bytes, 1uL).body).event(),
+        )
+        assertTrue(events.all { it.currency == "XTS" && it.remainingLifetime == 600L })
+    }
+
+    @Test
+    fun pushLogsEachDestinationSessionPrefix() = runTest {
+        val first = TestClient()
+        val second = TestClient()
+        val host = host(RecordingTrust()) { gen ->
+            engine(if (gen.address == "aa") first else second)
+        }
+        connectFull(host, "aa", 1, first)
+        connectFull(host, "bb", 2, second)
+        val sessions = SessionProbeSessions(host).openFullSessions()
+        assertEquals(2, sessions.size)
+        val commands = commands(SessionProbeSessions(host))
+        val before = transport.sent.size
+
+        commands.push()
+
+        assertEquals("one log line per destination", 2, transport.log.size)
+        val expectedSids = sessions.map { TrustEncoding.hex(it.sessionIdPrefix) }
+        assertEquals(expectedSids.toSet(), transport.log.map { it.substringAfter("sid=") }.toSet())
+        val pushed = transport.sent.drop(before)
+        assertEquals(2, pushed.size)
+        val events = listOf(
+            EventReader(first.openPhoneRecord(pushed[0].bytes, 1uL).body).event(),
+            EventReader(second.openPhoneRecord(pushed[1].bytes, 1uL).body).event(),
+        )
+        events.forEachIndexed { index, event ->
+            assertTrue(
+                "the pushed event id is logged against its destination",
+                transport.log[index].contains("event=${hex(event.eventId)}"),
+            )
+        }
     }
 
     @Test
@@ -319,6 +441,21 @@ class SyntheticProbeHandlerTest {
         assertEquals(peerPublicKey, stored.publicKey)
         assertEquals(TrustState.ACTIVE, stored.state)
         assertNotEquals(localIdentity.installationId, stored.installationId)
+    }
+
+    /** Drives one encrypted pull_request and returns the single decoded pull_events event. */
+    private suspend fun PhoneSessionEngine.pull(
+        client: TestClient,
+        requestSequence: ULong,
+        responseSequence: ULong,
+    ): DecodedEvent {
+        val effects = onInbound(client.record(RecordType.PULL_REQUEST.wire, requestSequence))
+        val send = effects.single { it is SessionEffect.Send } as SessionEffect.Send
+        val opened = client.openPhoneRecord(send.bytes, responseSequence)
+        assertEquals(RecordType.PULL_EVENTS.wire, opened.type)
+        val reader = EventReader(opened.body)
+        assertEquals("exactly one synthetic event", 1, reader.u8())
+        return reader.event().also { assertEquals("no trailing bytes", 0, reader.remaining()) }
     }
 
     private fun engine(

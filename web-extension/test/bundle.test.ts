@@ -26,7 +26,7 @@ describe('dist/ contents (post-build artifact)', () => {
             'chunks/clipboard-DE1lG-x_.js',
             'chunks/modulepreload-polyfill-DaKOjhqt.js',
             'chunks/ownership-BOcJ26Iv.js',
-            'chunks/probe-ZLRnIVAl.js',
+            'chunks/probe-D1NtVc0m.js',
             'chunks/repository-FtdCOb-V.js',
             'chunks/storage-DOMCF8BZ.js',
             'connector.html',

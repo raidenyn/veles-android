@@ -27,6 +27,17 @@ import me.nagaev.veles.trust.TrustException
 data class ConnectionGeneration(val address: String, val serial: Long)
 
 /**
+ * One authenticated generation with its fixed class and 8-byte session id prefix. The prefix
+ * is a copy owned by the caller; the host erases its own copy on teardown.
+ */
+class AuthenticatedSession(
+    val generation: ConnectionGeneration,
+    val sessionClass: SessionClass,
+    val peerId: String,
+    val sessionIdPrefix: ByteArray,
+)
+
+/**
  * Bounded admission of exactly one inbound record. The callee owns it until it erases the
  * record ([ConnectionListener.onRecord]); releasing earlier would let the GATT ingress budget
  * stop bounding queued records while a signer or handler is suspended.
@@ -121,6 +132,7 @@ class SessionHost(
         /** Set once the engine reports authentication; volatile so the probe can query it safely. */
         @Volatile var sessionClass: SessionClass? = null
         @Volatile var peerId: ByteArray? = null
+        @Volatile var sessionIdPrefix: ByteArray? = null
     }
 
     private val registry = Any()
@@ -173,6 +185,24 @@ class SessionHost(
         sessions.values
             .filter { !it.ended && it.sessionClass == SessionClass.FULL }
             .map { it.gen }
+    }
+
+    /**
+     * Authenticated sessions with their fixed class and a copied session id prefix. A
+     * generation is listed only after the authentication gate opened, never during its
+     * handshake.
+     */
+    fun authenticatedSessions(): List<AuthenticatedSession> = synchronized(registry) {
+        sessions.values.mapNotNull { live ->
+            val sessionClass = live.sessionClass ?: return@mapNotNull null
+            val prefix = live.sessionIdPrefix ?: return@mapNotNull null
+            AuthenticatedSession(
+                generation = live.gen,
+                sessionClass = sessionClass,
+                peerId = live.peerId?.let(TrustEncoding::hex) ?: "",
+                sessionIdPrefix = prefix.copyOf(),
+            )
+        }
     }
 
     /** True when an open session of [peerId] (the trust installation id, hex) is live. */
@@ -371,6 +401,7 @@ class SessionHost(
             if (!isCurrent(live) || !live.engine.isOpen) return false
             live.sessionClass = effect.sessionClass
             live.peerId = effect.peerId.copyOf()
+            live.sessionIdPrefix = effect.sessionIdPrefix.copyOf()
             trust.markAuthenticated(TrustEncoding.hex(effect.peerId))
             return true
         } catch (_: TrustException) {
@@ -420,6 +451,8 @@ class SessionHost(
         live.sessionClass = null
         live.peerId?.fill(0)
         live.peerId = null
+        live.sessionIdPrefix?.fill(0)
+        live.sessionIdPrefix = null
         synchronized(registry) {
             if (sessions[live.gen] === live) sessions.remove(live.gen)
             all.remove(live)
