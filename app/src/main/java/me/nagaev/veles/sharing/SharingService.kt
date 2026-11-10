@@ -152,20 +152,28 @@ internal class SharingService : Service() {
     private fun fail(state: SharingAvailability) {
         gatt?.close()
         gatt = null
-        host = null
-        sessionScope?.cancel()
-        sessionScope = null
+        shutdownSessions()
         SharingState.update(state)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    override fun onDestroy() {
-        gatt?.close()
-        gatt = null
+    /**
+     * The engine and every owned record are erased before the scope is cancelled. `shutdown`
+     * does not depend on a coroutine being scheduled: it waits for each generation's mutex and
+     * falls back to a forced erasure, so a suspended Keystore call cannot leave keys behind.
+     */
+    private fun shutdownSessions() {
+        host?.let { runBlocking { it.shutdown() } }
         host = null
         sessionScope?.cancel()
         sessionScope = null
+    }
+
+    override fun onDestroy() {
+        gatt?.close()
+        gatt = null
+        shutdownSessions()
         if (registered) unregisterReceiver(bluetoothChanges)
         if (SharingState.availability.value in listOf(SharingAvailability.Starting, SharingAvailability.Advertising)) {
             SharingState.update(SharingAvailability.Disabled)

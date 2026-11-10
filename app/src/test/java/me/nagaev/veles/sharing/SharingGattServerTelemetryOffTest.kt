@@ -48,10 +48,14 @@ class SharingGattServerTelemetryOffTest {
             {},
             object : ConnectionListener {
                 override fun onConnected(gen: ConnectionGeneration) = Unit
-                override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
+                override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
                     records++
-                    bytes.fill(0)
-                    subject.send(gen, byteArrayOf(7), null)
+                    try {
+                        subject.send(gen, byteArrayOf(7), null)
+                    } finally {
+                        bytes.fill(0)
+                        admission.release()
+                    }
                 }
                 override fun onDisconnected(gen: ConnectionGeneration) = Unit
                 override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) = Unit

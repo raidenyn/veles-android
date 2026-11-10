@@ -1,8 +1,15 @@
 package me.nagaev.veles.sharing
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -32,6 +39,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Android transport adapter (design D4): one engine and one mutex per connection generation,
@@ -61,6 +69,17 @@ class SessionHostTest {
     private fun clientLike(client: TestClient) =
         TestClient(identity = client.identity, installationId = client.installationId, ephemeral = P256.generate())
 
+    private fun admission(): RecordAdmission = RecordAdmission { }
+
+    private class RecordingAdmission : RecordAdmission {
+        var releases = 0
+            private set
+
+        override fun release() {
+            releases++
+        }
+    }
+
     private suspend fun TestScope.connect(host: SessionHost, gen: ConnectionGeneration) {
         host.onConnected(gen)
         runCurrent()
@@ -72,7 +91,7 @@ class SessionHostTest {
         client: TestClient,
         transport: RecordingTransport = wire,
     ) {
-        host.onRecord(gen, client.helloFrame.copyOf())
+        host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
         val handshake = transport.sent.filter { it.gen == gen }
         assertEquals("phone hello and signature", 2, handshake.size)
@@ -82,10 +101,10 @@ class SessionHostTest {
             Role.PHONE,
         ).signature
         client.acceptPhoneHello(phoneHelloPayload, phoneSignature)
-        host.onRecord(gen, client.signatureFrame())
+        host.onRecord(gen, client.signatureFrame(), admission())
         runCurrent()
         val token = requireNotNull(transport.sent.last().token) { "the phone reconnect_confirm must be tokened" }
-        host.onRecord(gen, client.confirmRecord())
+        host.onRecord(gen, client.confirmRecord(), admission())
         runCurrent()
         host.onSendComplete(gen, token, true)
         runCurrent()
@@ -103,7 +122,7 @@ class SessionHostTest {
         val host = host { created = engine(client, signer = signer); created }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
-        host.onRecord(gen, client.helloFrame.copyOf())
+        host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
         assertTrue("the signer is still pending", wire.sent.isEmpty())
 
@@ -124,7 +143,7 @@ class SessionHostTest {
 
         val old = ConnectionGeneration("aa", 1)
         connect(host, old)
-        host.onRecord(old, first.helloFrame.copyOf())
+        host.onRecord(old, first.helloFrame.copyOf(), admission())
         runCurrent()
         host.onDisconnected(old)
         runCurrent()
@@ -160,7 +179,7 @@ class SessionHostTest {
             trust.marked,
         )
 
-        host.onRecord(b, byteArrayOf(1, 2, 3))
+        host.onRecord(b, byteArrayOf(1, 2, 3), admission())
         runCurrent()
         assertFalse("the failed generation ends", engines.getValue("bb").isOpen)
         assertTrue("the other generation is unaffected", engines.getValue("aa").isOpen)
@@ -173,7 +192,7 @@ class SessionHostTest {
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
 
-        host.onRecord(gen, unknown.helloFrame.copyOf())
+        host.onRecord(gen, unknown.helloFrame.copyOf(), admission())
         runCurrent()
 
         assertEquals(2, wire.calls.size)
@@ -194,7 +213,7 @@ class SessionHostTest {
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
 
-        host.onRecord(gen, client.helloFrame.copyOf())
+        host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
 
         assertEquals("the first refused send stops the handshake", 1, failing.sent.size)
@@ -221,7 +240,7 @@ class SessionHostTest {
         val body = ByteArray(4057) { (it and 0xff).toByte() }
         val record = client.record(RecordType.PULL_REQUEST.wire, 1uL, body)
         assertEquals(4096, record.size)
-        host.onRecord(gen, record.copyOf())
+        host.onRecord(gen, record.copyOf(), admission())
         runCurrent()
 
         assertTrue("the maximum-size record is delivered intact", delivered?.contentEquals(body) == true)
@@ -235,17 +254,17 @@ class SessionHostTest {
         val host = host { created = engine(client); created }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
-        host.onRecord(gen, client.helloFrame.copyOf())
+        host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
         val handshake = wire.sent.filter { it.gen == gen }
         client.acceptPhoneHello(
             PreAuthCodec.decode(handshake[0].bytes).second,
             SignatureFrame.decode(PreAuthCodec.decode(handshake[1].bytes).second, Role.PHONE).signature,
         )
-        host.onRecord(gen, client.signatureFrame())
+        host.onRecord(gen, client.signatureFrame(), admission())
         runCurrent()
         val token = requireNotNull(wire.sent.last().token)
-        host.onRecord(gen, client.confirmRecord())
+        host.onRecord(gen, client.confirmRecord(), admission())
         runCurrent()
         assertTrue("the peer confirm alone must not authenticate", trust.marked.isEmpty())
 
@@ -260,17 +279,17 @@ class SessionHostTest {
         val failingHost = host(transport = failingTransport, repository = failingTrust) { engine(failingClient) }
         val failingGen = ConnectionGeneration("bb", 2)
         connect(failingHost, failingGen)
-        failingHost.onRecord(failingGen, failingClient.helloFrame.copyOf())
+        failingHost.onRecord(failingGen, failingClient.helloFrame.copyOf(), admission())
         runCurrent()
         val failingHandshake = failingTransport.sent.filter { it.gen == failingGen }
         failingClient.acceptPhoneHello(
             PreAuthCodec.decode(failingHandshake[0].bytes).second,
             SignatureFrame.decode(PreAuthCodec.decode(failingHandshake[1].bytes).second, Role.PHONE).signature,
         )
-        failingHost.onRecord(failingGen, failingClient.signatureFrame())
+        failingHost.onRecord(failingGen, failingClient.signatureFrame(), admission())
         runCurrent()
         val failingToken = requireNotNull(failingTransport.sent.last().token)
-        failingHost.onRecord(failingGen, failingClient.confirmRecord())
+        failingHost.onRecord(failingGen, failingClient.confirmRecord(), admission())
         runCurrent()
         failingHost.onSendComplete(failingGen, failingToken, false)
         runCurrent()
@@ -289,12 +308,143 @@ class SessionHostTest {
         val transportBuffer = client.helloFrame.copyOf()
         val owned = transportBuffer.copyOf()
         transportBuffer.fill(0)
-        host.onRecord(gen, owned)
+        val admission = RecordingAdmission()
+        host.onRecord(gen, owned, admission)
         assertTrue("engine execution waits for the callback to return", wire.sent.isEmpty())
 
         runCurrent()
         assertEquals(2, wire.sent.size)
         assertTrue("the host zeroes its owned copy after processing", owned.all { it == 0.toByte() })
+        assertEquals("the ingress admission is released after the record is erased", 1, admission.releases)
+    }
+
+    @Test
+    fun inboundAdmissionIsHeldUntilTheEngineErasesTheRecord() = runTest {
+        val client = TestClient()
+        val release = CompletableDeferred<Unit>()
+        val signer = IdentitySigner { message ->
+            release.await()
+            phone.signer.signDer(message)
+        }
+        val host = host { engine(client, signer = signer) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+
+        val bytes = client.helloFrame.copyOf()
+        val admission = RecordingAdmission()
+        host.onRecord(gen, bytes, admission)
+        runCurrent()
+        assertEquals("a suspended engine still owns the admission", 0, admission.releases)
+        assertTrue("the record is intact while the engine processes it", bytes.any { it != 0.toByte() })
+
+        release.complete(Unit)
+        runCurrent()
+        assertEquals("the admission is released exactly once after processing", 1, admission.releases)
+        assertTrue(bytes.all { it == 0.toByte() })
+    }
+
+    @Test
+    fun shutdownErasesHeldRecordsEvenWithASuspendedEngine() = runTest {
+        val client = TestClient()
+        val release = CompletableDeferred<Unit>()
+        val signer = IdentitySigner { message ->
+            release.await()
+            phone.signer.signDer(message)
+        }
+        val host = host { engine(client, signer = signer) }
+        val gen = ConnectionGeneration("aa", 1)
+        connect(host, gen)
+
+        val first = client.helloFrame.copyOf()
+        val second = client.helloFrame.copyOf()
+        val firstAdmission = RecordingAdmission()
+        val secondAdmission = RecordingAdmission()
+        host.onRecord(gen, first, firstAdmission)
+        runCurrent()
+        host.onRecord(gen, second, secondAdmission)
+        runCurrent()
+        assertEquals("the in-flight engine step holds both", 0, firstAdmission.releases)
+
+        host.shutdown()
+
+        assertEquals("the in-flight record is erased despite the suspended engine", 1, firstAdmission.releases)
+        assertEquals("the queued record is erased too", 1, secondAdmission.releases)
+        assertTrue(first.all { it == 0.toByte() })
+        assertTrue(second.all { it == 0.toByte() })
+
+        release.complete(Unit)
+        runCurrent()
+        assertEquals("erasure is idempotent", 1, firstAdmission.releases)
+    }
+
+    @Test
+    fun concurrentSubmissionKeepsRecordOrderWhileTheEngineIsSuspended() = runBlocking {
+        val client = TestClient()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val seen = mutableListOf<Int>()
+        val active = AtomicInteger()
+        val handler = object : ApplicationHandler {
+            override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+            override suspend fun handle(type: Int, body: ByteArray, reply: suspend (Int, ByteArray) -> Unit) {
+                check(active.incrementAndGet() == 1) { "engine calls must never overlap" }
+                val marker = body[0].toInt()
+                synchronized(seen) { seen += marker }
+                if (marker == 0) {
+                    entered.complete(Unit)
+                    gate.await()
+                }
+                active.decrementAndGet()
+            }
+        }
+        val transport = RecordingTransport()
+        val repository = RecordingTrust()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val host = SessionHost(scope, transport, { engine(client, handler = handler) }, repository) { clock.now }
+        val gen = ConnectionGeneration("aa", 1)
+        try {
+            host.onConnected(gen)
+            host.onRecord(gen, client.helloFrame.copyOf(), admission())
+            awaitSends(transport, 2)
+            val handshake = transport.sent.filter { it.gen == gen }
+            client.acceptPhoneHello(
+                PreAuthCodec.decode(handshake[0].bytes).second,
+                SignatureFrame.decode(PreAuthCodec.decode(handshake[1].bytes).second, Role.PHONE).signature,
+            )
+            host.onRecord(gen, client.signatureFrame(), admission())
+            awaitSends(transport, 3)
+            val token = requireNotNull(transport.sent.last().token)
+            host.onRecord(gen, client.confirmRecord(), admission())
+            host.onSendComplete(gen, token, true)
+            awaitCondition { repository.marked.isNotEmpty() }
+
+            // Record 0 reaches the engine and suspends there; the rest arrive while it is in
+            // flight, from a real multi-threaded dispatcher.
+            host.onRecord(gen, client.record(RecordType.PULL_REQUEST.wire, 1uL, byteArrayOf(0)), admission())
+            withTimeout(5_000) { entered.await() }
+            for (marker in 1..8) {
+                host.onRecord(
+                    gen,
+                    client.record(RecordType.PULL_REQUEST.wire, (marker + 1).toULong(), byteArrayOf(marker.toByte())),
+                    admission(),
+                )
+            }
+            gate.complete(Unit)
+            awaitCondition { synchronized(seen) { seen.size } == 9 }
+            assertEquals((0..8).toList(), synchronized(seen) { seen.toList() })
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    private suspend fun awaitSends(transport: RecordingTransport, count: Int) =
+        awaitCondition { transport.sent.size >= count }
+
+    private suspend fun awaitCondition(condition: () -> Boolean) {
+        kotlinx.coroutines.withTimeout(5_000) {
+            while (!condition()) delay(5)
+        }
     }
 
     @Test
@@ -354,17 +504,17 @@ class SessionHostTest {
         val host = host { engine(client) }
         val gen = ConnectionGeneration("aa", 1)
         connect(host, gen)
-        host.onRecord(gen, client.helloFrame.copyOf())
+        host.onRecord(gen, client.helloFrame.copyOf(), admission())
         runCurrent()
         val handshake = wire.sent.filter { it.gen == gen }
         client.acceptPhoneHello(
             PreAuthCodec.decode(handshake[0].bytes).second,
             SignatureFrame.decode(PreAuthCodec.decode(handshake[1].bytes).second, Role.PHONE).signature,
         )
-        host.onRecord(gen, client.signatureFrame())
+        host.onRecord(gen, client.signatureFrame(), admission())
         runCurrent()
         val token = requireNotNull(wire.sent.last().token)
-        host.onRecord(gen, client.confirmRecord())
+        host.onRecord(gen, client.confirmRecord(), admission())
         runCurrent()
 
         host.onSendComplete(gen, token, true)

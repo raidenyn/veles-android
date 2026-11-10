@@ -1,12 +1,15 @@
 package me.nagaev.veles.sharing
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import me.nagaev.veles.session.PhoneSessionEngine
 import me.nagaev.veles.session.SessionClass
 import me.nagaev.veles.session.SessionEffect
@@ -21,12 +24,24 @@ import me.nagaev.veles.trust.TrustException
  */
 data class ConnectionGeneration(val address: String, val serial: Long)
 
+/**
+ * Bounded admission of exactly one inbound record. The callee owns it until it erases the
+ * record ([ConnectionListener.onRecord]); releasing earlier would let the GATT ingress budget
+ * stop bounding queued records while a signer or handler is suspended.
+ */
+fun interface RecordAdmission {
+    fun release()
+}
+
 /** Lifecycle and record callbacks, scoped to a connection generation. */
 interface ConnectionListener {
     fun onConnected(gen: ConnectionGeneration)
 
-    /** The callee owns [bytes] and must zero it when it is done. */
-    fun onRecord(gen: ConnectionGeneration, bytes: ByteArray)
+    /**
+     * The callee owns [bytes] and [admission] and must zero and release them when the record
+     * has been processed (or when the generation ends).
+     */
+    fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission)
 
     fun onDisconnected(gen: ConnectionGeneration)
 
@@ -52,16 +67,20 @@ internal object TransportMode {
 }
 
 /**
- * Android transport adapter (design D4): one engine and one [Mutex] per generation. Every
- * engine call for a generation runs under that mutex, effects are applied in emission order,
- * and a result that arrives after the generation ended is dropped without touching the
- * transport. Inbound copies are zeroed after processing, or when the generation ends.
+ * Android transport adapter (design D4): one engine, one [Mutex] and one bounded FIFO worker
+ * queue per generation. Engine work is enqueued synchronously at callback ingress, so records
+ * reach the engine in arrival order even on a multi-threaded dispatcher, and every engine call
+ * for a generation runs under that generation's mutex.
+ *
+ * A result that arrives after the generation ended is dropped without touching the transport.
+ * Inbound copies and their GATT admissions are erased after processing, or by [shutdown] (and
+ * link loss) even when an engine call is still suspended.
  *
  * The host never writes trust except [InstallationTrustRepository.markAuthenticated] on an
  * [SessionEffect.Authenticated] effect, still under the mutex, after re-checking that the
  * generation is current and the engine is open.
  */
-@Suppress("TooManyFunctions") // Lifecycle callbacks, three public queries and the effect applier.
+@Suppress("TooManyFunctions") // Lifecycle callbacks, three public queries, worker and effect applier.
 class SessionHost(
     private val scope: CoroutineScope,
     private val transport: SessionTransport,
@@ -69,13 +88,27 @@ class SessionHost(
     private val trust: InstallationTrustRepository,
     private val clock: () -> Long,
 ) : ConnectionListener {
+    private class OwnedRecord(val bytes: ByteArray, val admission: RecordAdmission)
+
+    private sealed interface Step {
+        class Inbound(val record: OwnedRecord) : Step
+        class Completion(val token: Long, val ok: Boolean) : Step
+        data object Tick : Step
+        class Application(val type: Int, val body: ByteArray, val result: CompletableDeferred<Boolean>) : Step
+        data object Teardown : Step
+    }
+
     private class Live(val gen: ConnectionGeneration, val engine: PhoneSessionEngine) {
         val mutex = Mutex()
+
+        /** Bounded FIFO: inbound is capped by the GATT ingress budget; the rest is slack. */
+        val queue = Channel<Step>(QUEUE_CAPACITY)
+
         @Volatile var ended = false
         @Volatile var tick: Job? = null
 
-        /** Copies handed to [onRecord] and not yet zeroed; guarded by [registry]. */
-        val inbound = mutableSetOf<ByteArray>()
+        /** Records handed in through [onRecord] and not yet erased; guarded by [registry]. */
+        val inbound = LinkedHashSet<OwnedRecord>()
 
         /** Set once the engine reports authentication; volatile so the probe can query it safely. */
         @Volatile var sessionClass: SessionClass? = null
@@ -84,59 +117,47 @@ class SessionHost(
 
     private val registry = Any()
     private val sessions = LinkedHashMap<ConnectionGeneration, Live>()
+    private val all = LinkedHashSet<Live>()
 
     override fun onConnected(gen: ConnectionGeneration) {
         val live = Live(gen, engineFactory(gen))
-        synchronized(registry) { sessions[gen] = live }
+        synchronized(registry) {
+            sessions[gen] = live
+            all += live
+        }
         live.tick = scope.launch { runTicks(live) }
+        scope.launch { for (step in live.queue) handleStep(live, step) }
     }
 
-    override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
-        val live = synchronized(registry) {
-            sessions[gen]?.also { it.inbound += bytes }
-        }
+    override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
+        val record = OwnedRecord(bytes, admission)
+        val live = synchronized(registry) { sessions[gen]?.also { it.inbound += record } }
         if (live == null) {
-            bytes.fill(0)
+            erase(record)
             return
         }
-        scope.launch {
-            try {
-                live.mutex.withLock {
-                    if (!isCurrent(live)) return@withLock
-                    step(live) { live.engine.onInbound(bytes) }
-                }
-            } finally {
-                synchronized(registry) { live.inbound -= bytes }
-                bytes.fill(0)
-            }
+        if (!enqueue(live, Step.Inbound(record))) {
+            synchronized(registry) { live.inbound -= record }
+            erase(record)
+            onDisconnected(gen)
         }
     }
 
     override fun onSendComplete(gen: ConnectionGeneration, token: Long, ok: Boolean) {
         val live = synchronized(registry) { sessions[gen] } ?: return
-        scope.launch {
-            live.mutex.withLock {
-                if (!isCurrent(live)) return@withLock
-                step(live) { live.engine.onSendComplete(token, ok) }
-            }
-        }
+        enqueue(live, Step.Completion(token, ok))
     }
 
     override fun onDisconnected(gen: ConnectionGeneration) {
         val live = synchronized(registry) { sessions.remove(gen) } ?: return
         live.ended = true
         live.tick?.cancel()
-        // Erase immediately when no engine call is in flight; otherwise queue the erasure and
-        // teardown behind the suspended call so a late result can never be applied first.
-        if (live.mutex.tryLock()) {
-            try {
-                teardown(live)
-            } finally {
-                live.mutex.unlock()
-            }
-        } else {
-            scope.launch { live.mutex.withLock { teardown(live) } }
+        // Teardown is just another FIFO step so it runs after the in-flight engine call and
+        // before any later one. shutdown() is the fallback when the worker cannot run at all.
+        if (!live.queue.trySend(Step.Teardown).isSuccess) {
+            scope.launch { live.mutex.withLock { teardownLocked(live) } }
         }
+        live.queue.close()
     }
 
     /** Generations that fixed the FULL class and are still open. */
@@ -160,19 +181,47 @@ class SessionHost(
      */
     suspend fun sendApplication(gen: ConnectionGeneration, type: Int, body: ByteArray): Boolean {
         val live = synchronized(registry) { sessions[gen] } ?: return false
-        return live.mutex.withLock {
-            if (!isCurrent(live) || !live.engine.isOpen) return@withLock false
-            try {
-                apply(live, live.engine.sendApplication(type, body))
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (_: SessionReject) {
-                failedLocked(live)
-                false
-            } catch (_: Exception) {
-                failedLocked(live)
-                false
+        val step = Step.Application(type, body, CompletableDeferred())
+        if (!enqueueSuspending(live, step)) return false
+        return step.result.await()
+    }
+
+    /**
+     * Erases every engine and every record that is still owned by the host, including records
+     * queued behind a suspended engine call. Safe to call before cancelling [scope]: the
+     * worker is not required, only the generation mutex. A call that never returns is timed
+     * out and the erasure is applied anyway; the generation is ended and cannot admit new work.
+     */
+    suspend fun shutdown() {
+        val lives = synchronized(registry) { all.toList() }
+        lives.forEach { live ->
+            live.ended = true
+            live.tick?.cancel()
+            live.queue.close()
+        }
+        val remaining = LinkedHashSet(lives)
+        withTimeoutOrNull(SHUTDOWN_TIMEOUT_MS) {
+            lives.forEach { live ->
+                live.mutex.withLock { teardownLocked(live) }
+                remaining.remove(live)
             }
+        }
+        // The engine call never returned: the generation is ended and cannot admit new work,
+        // so this last-resort erasure is the only remaining option.
+        remaining.forEach { teardownLocked(it) }
+    }
+
+    private fun enqueue(live: Live, step: Step): Boolean = !live.ended && live.queue.trySend(step).isSuccess
+
+    private suspend fun enqueueSuspending(live: Live, step: Step): Boolean {
+        if (live.ended) return false
+        return try {
+            live.queue.send(step)
+            true
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -185,15 +234,47 @@ class SessionHost(
             // deadlines decide whether that first tick is already terminal.
             if (now <= last) continue
             last = now
-            live.mutex.withLock {
-                if (!isCurrent(live)) return
-                step(live) { live.engine.onTick() }
-            }
-            if (!isCurrent(live)) return
+            if (!enqueue(live, Step.Tick)) return
         }
     }
 
-    private suspend fun step(live: Live, call: suspend () -> List<SessionEffect>) {
+    private suspend fun handleStep(live: Live, step: Step) {
+        when (step) {
+            is Step.Inbound -> live.mutex.withLock {
+                try {
+                    if (isCurrent(live)) runStep(live) { live.engine.onInbound(step.record.bytes) }
+                } finally {
+                    eraseStep(live, step.record)
+                }
+            }
+            is Step.Completion -> live.mutex.withLock {
+                if (isCurrent(live)) runStep(live) { live.engine.onSendComplete(step.token, step.ok) }
+            }
+            Step.Tick -> live.mutex.withLock {
+                if (isCurrent(live)) runStep(live) { live.engine.onTick() }
+            }
+            is Step.Application -> {
+                val result = live.mutex.withLock {
+                    if (!isCurrent(live) || !live.engine.isOpen) {
+                        false
+                    } else {
+                        try {
+                            apply(live, live.engine.sendApplication(step.type, step.body))
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (_: Exception) {
+                            failedLocked(live)
+                            false
+                        }
+                    }
+                }
+                step.result.complete(result)
+            }
+            Step.Teardown -> live.mutex.withLock { teardownLocked(live) }
+        }
+    }
+
+    private suspend fun runStep(live: Live, call: suspend () -> List<SessionEffect>) {
         try {
             apply(live, call())
         } catch (cancellation: CancellationException) {
@@ -230,7 +311,7 @@ class SessionHost(
                 is SessionEffect.Terminated -> Unit
                 is SessionEffect.Deliver -> Unit // OTP-09 has no application consumer; OTP-10 adds one.
                 SessionEffect.Close -> {
-                    end(live)
+                    teardownLocked(live)
                     transport.close(live.gen)
                 }
             }
@@ -274,25 +355,40 @@ class SessionHost(
 
     /** Terminal failure; the caller already holds [Live.mutex]. */
     private fun failedLocked(live: Live) {
-        live.engine.teardown()
-        end(live)
+        teardownLocked(live)
         transport.close(live.gen)
     }
 
-    /** Erases inbound copies and the engine; the caller already holds [Live.mutex]. */
-    private fun teardown(live: Live) {
-        synchronized(registry) { live.inbound.toList().also { live.inbound.clear() } }.forEach { it.fill(0) }
-        live.engine.teardown()
+    private fun erase(record: OwnedRecord) {
+        record.bytes.fill(0)
+        record.admission.release()
     }
 
-    private fun end(live: Live) {
+    /** Erases one processed record; the caller already holds [Live.mutex]. */
+    private fun eraseStep(live: Live, record: OwnedRecord) {
+        // Teardown may have erased it already; the admission is released exactly once, by whoever
+        // removes the record from the owned set.
+        if (synchronized(registry) { live.inbound.remove(record) }) erase(record)
+    }
+
+    /**
+     * Erases the engine, every registered record and all host state; the caller holds
+     * [Live.mutex] and the operation is idempotent. Buffered worker steps reference the same
+     * records, so their later erase is a no-op.
+     */
+    private fun teardownLocked(live: Live) {
         live.ended = true
         live.tick?.cancel()
+        live.queue.close()
+        val records = synchronized(registry) { live.inbound.toList().also { live.inbound.clear() } }
+        records.forEach(::erase)
+        live.engine.teardown()
         live.sessionClass = null
         live.peerId?.fill(0)
         live.peerId = null
         synchronized(registry) {
             if (sessions[live.gen] === live) sessions.remove(live.gen)
+            all.remove(live)
         }
     }
 
@@ -301,5 +397,7 @@ class SessionHost(
 
     private companion object {
         const val TICK_MILLIS = 1_000L
+        const val QUEUE_CAPACITY = 32
+        const val SHUTDOWN_TIMEOUT_MS = 2_000L
     }
 }

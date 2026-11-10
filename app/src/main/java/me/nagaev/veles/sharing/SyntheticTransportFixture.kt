@@ -86,17 +86,22 @@ internal object SyntheticTransportFixture {
 internal class InstrumentationEchoListener(private val transport: SessionTransport) : ConnectionListener {
     override fun onConnected(gen: ConnectionGeneration) = Unit
 
-    override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
+    override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
         try {
-            if (!TransportMode.instrumentationEcho) return
-            val response = SyntheticTransportFixture.reply(bytes) ?: return
-            try {
-                transport.send(gen, response, null)
-            } finally {
-                response.fill(0)
-            }
+            echo(gen, bytes)
         } finally {
             bytes.fill(0)
+            admission.release()
+        }
+    }
+
+    private fun echo(gen: ConnectionGeneration, bytes: ByteArray) {
+        if (!TransportMode.instrumentationEcho) return
+        val response = SyntheticTransportFixture.reply(bytes) ?: return
+        try {
+            transport.send(gen, response, null)
+        } finally {
+            response.fill(0)
         }
     }
 

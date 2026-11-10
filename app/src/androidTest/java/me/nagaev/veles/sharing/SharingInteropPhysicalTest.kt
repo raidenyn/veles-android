@@ -84,20 +84,24 @@ class SharingInteropPhysicalTest {
         val echoListener = object : ConnectionListener {
             override fun onConnected(gen: ConnectionGeneration) = Unit
 
-            override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray) {
-                records.put(
-                    JSONObject().put("epoch_ms", System.currentTimeMillis())
-                        .put("elapsed_ms", SystemClock.elapsedRealtime()).put("bytes", bytes.size)
-                        .put("sha256", SyntheticTransportFixture.sha256Hex(bytes)),
-                )
-                val response = SyntheticTransportFixture.reply(bytes)
-                bytes.fill(0)
-                if (response != null) {
-                    try {
-                        server?.send(gen, response, null)
-                    } finally {
-                        response.fill(0)
+            override fun onRecord(gen: ConnectionGeneration, bytes: ByteArray, admission: RecordAdmission) {
+                try {
+                    records.put(
+                        JSONObject().put("epoch_ms", System.currentTimeMillis())
+                            .put("elapsed_ms", SystemClock.elapsedRealtime()).put("bytes", bytes.size)
+                            .put("sha256", SyntheticTransportFixture.sha256Hex(bytes)),
+                    )
+                    val response = SyntheticTransportFixture.reply(bytes)
+                    if (response != null) {
+                        try {
+                            server?.send(gen, response, null)
+                        } finally {
+                            response.fill(0)
+                        }
                     }
+                } finally {
+                    bytes.fill(0)
+                    admission.release()
                 }
             }
 
