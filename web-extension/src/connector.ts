@@ -5,14 +5,17 @@
 // state. It answers the launcher ping without opening a port on ping, then
 // opens the host and negotiates `hello` on startup.
 //
-// No cryptographic authentication, OTP handling, copy action, record send or
-// production simulated transport exists here. Trust integration is limited to
-// read-only active-peer hints and hints never establish identity.
+// A transport connect is not success. Every connection the connector opens is
+// handed to the session manager with one intended trust-record id and only
+// counts (and only marks the UI ready) after the §11.3 authentication gate has
+// opened. Trust reads never establish identity; only the session manager's
+// stage-bound verifier can write successful-authentication metadata.
 
 import { ConnectorController } from './connector/controller';
 import { gateNativePort } from './connector/lifecycle';
 import { BootstrapLifecycle, activateGeneration } from './connector/bootstrap-lifecycle';
 import {
+    synthesizeAuthenticationFailed,
     synthesizeMissingHost,
     synthesizePortClosed,
     synthesizeProtocolViolation,
@@ -32,6 +35,7 @@ import {
 import type { ConnectorClose, ConnectorResult, NativePortLike } from './connector/port';
 import type { WireEvent } from './connector/protocol';
 import { ReconnectPolicy, type ReconnectAttempt } from './connector/reconnect';
+import { SessionManager, type SessionController } from './connector/sessions';
 import type { ConnectorSnapshot } from './connector/state';
 import {
     buildViewModel,
@@ -40,6 +44,12 @@ import {
     type FailureLike,
     type ReadySummary,
 } from './connector/view-model';
+import type { ClientEngineDeps } from './session/engine';
+import { bytes } from './trust/model';
+import { normalizeLowS } from './session/ecdsa';
+import { IndexedDbIdentityStore } from './trust/identity';
+import { ChromeLocalStore, trustLock } from './trust/storage';
+import { ChromeTrustRepository, type AuthenticationVerifier } from './trust/repository';
 
 export const CONNECTOR_PING_TYPE = 'veles.connector.ping';
 export const CONNECTOR_PONG_TYPE = 'veles.connector.pong';
@@ -145,7 +155,7 @@ export function registerConnectorPing(api: ConnectorPingApi): void {
 export type ConnectorAction =
     | { type: 'search' }
     | { type: 'stop_scan'; handle: string }
-    | { type: 'connect'; deviceHandle: string }
+    | { type: 'connect'; deviceHandle: string; peerId?: string }
     | { type: 'disconnect'; connectionHandle: string }
     | { type: 'retry' }
     | { type: 'shutdown' };
@@ -159,10 +169,9 @@ export interface ConnectorView {
 type ReadyEvent = Extract<WireEvent, { type: 'ready' }>;
 type ScanStateEvent = Extract<WireEvent, { type: 'scan_state' }>;
 type ConnectedEvent = Extract<WireEvent, { type: 'connected' }>;
-type DisconnectedEvent = Extract<WireEvent, { type: 'disconnected' }>;
 type ShutdownCompleteEvent = Extract<WireEvent, { type: 'shutdown_complete' }>;
 
-export interface ConnectorControllerLike {
+export interface ConnectorControllerLike extends SessionController {
     open(): void;
     hello(): Promise<ConnectorResult<ReadyEvent>>;
     startScan(): Promise<ConnectorResult<ScanStateEvent>>;
@@ -170,21 +179,31 @@ export interface ConnectorControllerLike {
     connect(
         target: { deviceHandle: string } | { platformHint: string },
     ): Promise<ConnectorResult<ConnectedEvent>>;
-    disconnect(connectionHandle: string): Promise<ConnectorResult<DisconnectedEvent>>;
     shutdown(): Promise<ConnectorResult<ShutdownCompleteEvent>>;
     close(intent?: 'user' | 'shutdown' | 'protocol'): Promise<void>;
-    isOpen(): boolean;
-    snapshot(): ConnectorSnapshot;
-    onChange(listener: (snapshot: ConnectorSnapshot) => void): () => void;
     onFailure(listener: (failure: ConnectorFailure) => void): () => void;
     onWireError(listener: (event: Extract<WireEvent, { type: 'error' }>) => void): () => void;
-    onClose(listener: (close: ConnectorClose) => void): () => void;
+}
+
+/**
+ * The session wiring the connector needs. The repository is created here so its
+ * verifier can delegate to the manager's stage-bound verifier.
+ */
+export interface ConnectorSessionOptions {
+    createRepository(verifier: AuthenticationVerifier): ChromeTrustRepository;
+    createEngineDeps(
+        handle: string,
+        peerId: string,
+        localInstallationId: Uint8Array,
+        repository: ChromeTrustRepository,
+    ): ClientEngineDeps;
 }
 
 export interface ConnectorAppDeps {
     controller: ConnectorControllerLike;
     view: ConnectorView;
     trustSource?: TrustHintSource;
+    session?: ConnectorSessionOptions;
     setTimeout?: (fn: () => void, ms: number) => unknown;
     clearTimeout?: (handle: unknown) => void;
 }
@@ -222,14 +241,18 @@ export class ConnectorApp {
     private readonly controller: ConnectorControllerLike;
     private readonly view: ConnectorView;
     private readonly trustSource: TrustHintSource;
+    private readonly repository: ChromeTrustRepository | null;
+    private readonly sessions: SessionManager | null;
     private readonly reconnect: ReconnectPolicy;
     private readonly unsubscribers: (() => void)[] = [];
     private readonly userDisconnectHandles = new Set<string>();
+    private readonly sessionFailedHandles = new Set<string>();
     private readonly connectionPeerTargets = new Map<string, PeerTarget>();
     private readonly suppressedPeerIds = new Set<string>();
     private readonly recoveryEpochs = new Map<string, number>();
     private trackedConnections = new Map<string, TrackedConnection>();
     private userDisconnectSeen = false;
+    private localInstallationId: Uint8Array | null = null;
 
     private phase: ConnectorPhase = 'starting';
     private ready: ReadySummary | null = null;
@@ -246,7 +269,34 @@ export class ConnectorApp {
     constructor(deps: ConnectorAppDeps) {
         this.controller = deps.controller;
         this.view = deps.view;
-        this.trustSource = deps.trustSource ?? createChromeTrustHintSource();
+        const session = deps.session;
+        if (session === undefined) {
+            this.repository = null;
+            this.sessions = null;
+            this.trustSource = deps.trustSource ?? createChromeTrustHintSource();
+        } else {
+            // One repository per connector lifetime. Its verifier forwards to the
+            // manager's stage-bound verifier; until the manager exists every
+            // authentication is refused.
+            const holder: { verify: AuthenticationVerifier } = { verify: async () => false };
+            const repository = session.createRepository((peer, stage, proof) =>
+                holder.verify(peer, stage, proof),
+            );
+            const manager = new SessionManager(
+                deps.controller,
+                repository,
+                (handle, peerId) => {
+                    const identity = this.localInstallationId;
+                    if (identity === null) throw new Error('installation identity unavailable');
+                    return session.createEngineDeps(handle, peerId, identity, repository);
+                },
+                () => deps.controller.portGeneration,
+            );
+            holder.verify = manager.verifier;
+            this.repository = repository;
+            this.sessions = manager;
+            this.trustSource = deps.trustSource ?? createChromeTrustHintSource(repository);
+        }
         this.reconnect = new ReconnectPolicy({
             setTimeout: deps.setTimeout,
             clearTimeout: deps.clearTimeout,
@@ -273,7 +323,23 @@ export class ConnectorApp {
                 void this.handleAction(action);
             }),
         );
+        // The installation identity is loaded lazily on the first connect (and
+        // before every recovery attempt), so startup never creates trust
+        // material for a user who never connects.
         await this.restartHost(false);
+    }
+
+    private async loadInstallationIdentity(): Promise<void> {
+        const repository = this.repository;
+        if (repository === null || this.localInstallationId !== null) return;
+        try {
+            const identity = await repository.identity();
+            this.localInstallationId = bytes(identity.installationId, 16);
+        } catch {
+            // Trust storage unavailable: every connect fails closed with the
+            // generic authentication failure instead of signing with an
+            // unknown identity.
+        }
     }
 
     async handleAction(action: ConnectorAction): Promise<void> {
@@ -286,7 +352,7 @@ export class ConnectorApp {
                 await this.runStopScan(action.handle);
                 return;
             case 'connect':
-                await this.runConnect(action.deviceHandle);
+                await this.runConnect(action.deviceHandle, action.peerId);
                 return;
             case 'disconnect':
                 await this.runDisconnect(action.connectionHandle);
@@ -419,24 +485,34 @@ export class ConnectorApp {
         if (!this.isAttemptLive(attempt, epoch, token)) return false;
 
         if (attempt.target.kind === 'hint') {
+            await this.loadInstallationIdentity();
             // A host restart is always negotiated first, then the hint is used
-            // only as an opaque OS search candidate. It never authenticates.
-            const result = await this.controller.connect({ platformHint: attempt.target.hint });
+            // only as an opaque OS search candidate. It never authenticates:
+            // the attempt succeeds, and renews the peer's allowance, only after
+            // the authentication gate opens and the class is fixed.
+            const target = attempt.target;
+            const result = await this.controller.connect({ platformHint: target.hint });
             if (!this.isAttemptLive(attempt, epoch, token)) return false;
             if (!result.ok) {
                 this.applyFailure(result.error);
                 return false;
             }
-            this.connectionPeerTargets.set(result.event.connection_handle, {
-                peerId: attempt.target.peerId,
-                hint: attempt.target.hint,
-            });
+            const authenticated = await this.authenticateConnection(
+                result.event,
+                target.peerId,
+                token,
+                target.hint,
+            );
+            if (!this.isAttemptLive(attempt, epoch, token)) return false;
+            // A failed authentication is a consumed attempt: the policy arms
+            // the next try or stops at its bound.
+            if (!authenticated) return false;
             this.recoveryEpochs.delete(attempt.key);
             // A confirmed reconnect renews this peer's future allowance even
             // if an obsolete cycle from an older port generation still
             // existed; no user-disconnect suppression is created.
-            this.reconnect.discard(`peer:${attempt.target.peerId}`);
-            this.recoveryEpochs.delete(`peer:${attempt.target.peerId}`);
+            this.reconnect.discard(`peer:${target.peerId}`);
+            this.recoveryEpochs.delete(`peer:${target.peerId}`);
             this.markReady();
             return true;
         }
@@ -555,17 +631,67 @@ export class ConnectorApp {
         this.render();
     }
 
-    private async runConnect(deviceHandle: string): Promise<void> {
+    private async runConnect(deviceHandle: string, peerId?: string): Promise<void> {
         if (!this.canRunBleAction()) return;
         const token = this.session;
-        const result = await this.controller.connect({ deviceHandle });
+        await this.loadInstallationIdentity();
+        const intended = await this.intendedPeer(peerId);
         if (token !== this.session || this.disposed) return;
-        if (result.ok) {
-            this.markReady();
+        if (intended === undefined) {
+            // Zero or several active-family phones and no explicit id: fail
+            // closed before any transport connect.
+            this.applyFailure(synthesizeAuthenticationFailed());
             return;
         }
-        this.applyFailure(result.error);
-        this.render();
+        const result = await this.controller.connect({ deviceHandle });
+        if (token !== this.session || this.disposed) return;
+        if (!result.ok) {
+            this.applyFailure(result.error);
+            return;
+        }
+        if (!(await this.authenticateConnection(result.event, intended, token))) return;
+        this.markReady();
+    }
+
+    private async intendedPeer(explicit?: string): Promise<string | undefined> {
+        if (explicit !== undefined && explicit.length > 0) return explicit;
+        const repository = this.repository;
+        if (repository === null) return undefined;
+        try {
+            return SessionManager.intendedPeer(await repository.peers());
+        } catch {
+            // A denied/unavailable trust read never selects a peer.
+            return undefined;
+        }
+    }
+
+    /**
+     * Runs the authenticated session for one transport connect. Only an open
+     * gate fixes the connection's peer target; a transport success or a failed
+     * authentication leaves it unset and reports the generic failure.
+     */
+    private async authenticateConnection(
+        event: ConnectedEvent,
+        peerId: string,
+        token: number,
+        fallbackHint?: string,
+    ): Promise<boolean> {
+        const handle = event.connection_handle;
+        const sessions = this.sessions;
+        const opened =
+            sessions === null ? { result: 'failed' as const } : await sessions.open(handle, peerId);
+        if (token !== this.session || this.disposed) return false;
+        if (opened.result !== 'authenticated') {
+            this.sessionFailedHandles.add(handle);
+            this.applyFailure(synthesizeAuthenticationFailed());
+            return false;
+        }
+        this.connectionPeerTargets.set(handle, {
+            peerId: opened.peerId,
+            hint: event.platform_hint ?? fallbackHint ?? '',
+        });
+        this.sessionFailedHandles.delete(handle);
+        return true;
     }
 
     private async runDisconnect(connectionHandle: string): Promise<void> {
@@ -669,6 +795,7 @@ export class ConnectorApp {
         this.portGeneration += 1;
         this.readiness = null;
         this.connectionPeerTargets.clear();
+        this.sessionFailedHandles.clear();
         for (const key of this.reconnect.keys()) {
             if (key === 'host') continue;
             this.reconnect.discard(key);
@@ -751,6 +878,7 @@ export class ConnectorApp {
 
                 const peer = this.connectionPeerTargets.get(handle);
                 if (peer !== undefined && this.suppressedPeerIds.has(peer.peerId)) continue;
+                if (this.sessionFailedHandles.delete(handle)) continue;
                 const key = peer === undefined ? `connection:${handle}` : `peer:${peer.peerId}`;
                 if (this.reconnect.isSuppressed(key)) continue;
                 if (previous.status !== 'connected' && previous.status !== 'ambiguous') continue;
@@ -762,6 +890,9 @@ export class ConnectorApp {
         }
         for (const handle of [...this.userDisconnectHandles]) {
             if (!next.has(handle)) this.userDisconnectHandles.delete(handle);
+        }
+        for (const handle of [...this.sessionFailedHandles]) {
+            if (!next.has(handle)) this.sessionFailedHandles.delete(handle);
         }
         for (const handle of [...this.connectionPeerTargets.keys()]) {
             if (!next.has(handle)) this.connectionPeerTargets.delete(handle);
@@ -1049,6 +1180,54 @@ function createChromeConnectorOwnership(): ConnectorOwnership {
     });
 }
 
+/**
+ * The connector's single trust repository, identity and session engine wiring.
+ * The repository's verifier is supplied by the app and forwards to the session
+ * manager's stage-bound verifier; lookup and mirror upgrade use the same store,
+ * so there is no second, permissive verifier anywhere.
+ */
+function productionSessionOptions(): ConnectorSessionOptions {
+    const keys = new IndexedDbIdentityStore();
+    return {
+        createRepository(verifier: AuthenticationVerifier): ChromeTrustRepository {
+            return new ChromeTrustRepository(keys, new ChromeLocalStore(), trustLock, verifier);
+        },
+        createEngineDeps(
+            _handle: string,
+            peerId: string,
+            localInstallationId: Uint8Array,
+            repository: ChromeTrustRepository,
+        ): ClientEngineDeps {
+            return {
+                localInstallationId,
+                expectedPeerId: peerId,
+                isCurrent: () => false,
+                lookupPhone: async (id) => {
+                    const peers = await repository.peers();
+                    const peer = peers.find((candidate) => candidate.installationId === id);
+                    if (peer === undefined) return undefined;
+                    return { publicKey: bytes(peer.publicKey, 65), state: peer.state };
+                },
+                upgradeMirror: (id, proof) => repository.confirm(id, 'phone_active', proof),
+                now: () => performance.now(),
+                sign: async (message) => {
+                    const identity = await keys.read();
+                    if (identity === undefined) throw new Error('identity unavailable');
+                    return normalizeLowS(
+                        new Uint8Array(
+                            await crypto.subtle.sign(
+                                { name: 'ECDSA', hash: 'SHA-256' },
+                                identity.privateKey,
+                                message,
+                            ),
+                        ),
+                    );
+                },
+            };
+        },
+    };
+}
+
 function renderSecondaryPage(
     document: Document,
     outcome: Extract<OwnershipClaimOutcome, { owner: false }>,
@@ -1161,7 +1340,7 @@ async function bootstrapOwnedConnector(): Promise<ConnectorApp | null> {
     const app = new ConnectorApp({
         controller,
         view: new DocumentConnectorView(document),
-        trustSource: createChromeTrustHintSource(),
+        session: productionSessionOptions(),
     });
     const copyStatus = document.getElementById('synthetic-copy-status');
     const copyButton = document.getElementById('synthetic-copy-button');

@@ -4,11 +4,12 @@
 // The only production source is the existing ChromeTrustRepository read path:
 // `activePeers()` enforces the storage restriction and validates every peer
 // record before returning it. This module deliberately exposes only that read;
-// it never calls `authenticated()` or constructs proof bytes, and the connector
-// never mutates trust or persists a connected hint. The repository's own read
-// path may perform maintenance writes (identity initialization or pending
-// pruning) while enforcing its restriction/validation; that is not a connector
-// hint write.
+// it never calls `authenticated()`, constructs proof bytes, or persists a
+// connected hint. The connector's session manager is the only writer, and it
+// calls the same repository only after the authentication gate opens. The
+// repository's own read path may perform maintenance writes (identity
+// initialization or pending pruning) while enforcing its
+// restriction/validation; that is not a connector hint write.
 //
 // The trust model stores one opaque `platformHint` per peer and has no OS
 // platform field, so a hint can be scoped to a peer but not to Windows/macOS.
@@ -134,11 +135,14 @@ export function repositoryHintSource(repository: TrustRepositoryReader): TrustHi
 }
 
 /**
- * Production source. `ChromeTrustRepository`'s authentication verifier is not
- * supplied or invoked on this read-only path; its default refuses authentication
- * if some future call attempted it. The connector's trust integration is
- * intentionally limited to the validated `activePeers()` read.
+ * Production source. The connector passes its single `ChromeTrustRepository`
+ * (whose verifier is the session manager's stage-bound verifier) so trust reads,
+ * mirror upgrades and successful-authentication metadata all share one store.
+ * Only `activePeers()` is called on this read path. With no argument the
+ * repository's default reject-all verifier stands.
  */
-export function createChromeTrustHintSource(): TrustHintSource {
-    return repositoryHintSource(new ChromeTrustRepository());
+export function createChromeTrustHintSource(
+    repository: TrustRepositoryReader = new ChromeTrustRepository(),
+): TrustHintSource {
+    return repositoryHintSource(repository);
 }

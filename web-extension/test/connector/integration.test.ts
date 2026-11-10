@@ -5,6 +5,8 @@ import { ConnectorController } from '../../src/connector/controller';
 import { HOST_NAME, SUPPORTED_API_VERSIONS } from '../../src/connector/protocol';
 import type { PeerHint } from '../../src/connector/hints';
 import type { ConnectorViewModel } from '../../src/connector/view-model';
+import { decodeFrame } from '../../src/session/frames';
+import { FrameType, RecordType } from '../../src/session/wire';
 import { assertOutgoingEnvelope } from './contract-oracle';
 import { MockNativePort } from './mock-port';
 import {
@@ -24,6 +26,23 @@ import {
     shutdownCompleteEvent,
     wireErrorEvent,
 } from './fixtures';
+import {
+    PhoneSide,
+    ackDisconnect,
+    ackSend,
+    answerHandshake,
+    connectForSession,
+    createAppFixture,
+    createManagerFixture,
+    createTestTrust,
+    deferred,
+    emitRecord,
+    flush,
+    manualConnect,
+    nextSend,
+    startApp,
+} from './session-harness';
+import { PEER_STATE_ACTIVE, TestPhone, patchSubtle, takeSubtle } from '../session/client-harness';
 
 class FakeClock {
     now = 0;
@@ -957,5 +976,254 @@ describe('OTP-07 integration — independent outgoing envelope oracle', () => {
         for (const message of posted) {
             assertOutgoingEnvelope(message, { postReady: message.type !== 'hello' });
         }
+    });
+});
+
+describe('OTP-09 integration — serialized authenticated sessions', () => {
+    it('mirror upgrade survives connector restart', async () => {
+        const first = await createAppFixture({
+            state: 'active_activation_pending',
+            hint: 'winrt:phone-a',
+        });
+        await startApp(first);
+        const { action } = await manualConnect(first);
+        await answerHandshake(first, { phone: first.phone });
+        await action;
+        await flush();
+        const upgraded = (await first.trust.peers())[0];
+        expect(upgraded?.state).toBe('active');
+
+        first.app.dispose();
+        await first.currentPort().disconnect();
+
+        // A fresh connector over the same durable trust storage must keep the
+        // upgraded mirror and open a full session (the handler is only reached
+        // by an authorized push-class record).
+        const deliveries: number[] = [];
+        const handler = {
+            handles: (type: number) => type === RecordType.PULL_EVENTS,
+            handle: async (type: number): Promise<void> => {
+                deliveries.push(type);
+            },
+        };
+        const second = await createAppFixture({
+            trust: first.trust.clone(),
+            phone: first.phone,
+            handler,
+        });
+        await startApp(second);
+        const { action: secondConnect } = await manualConnect(second, {
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
+        const side = await answerHandshake(second, {
+            phone: second.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
+        await secondConnect;
+        await flush();
+        expect((await second.trust.peers())[0]?.state).toBe('active');
+        expect(deliveries).toEqual([]);
+
+        await emitRecord(
+            second.currentPort(),
+            HANDLE_CONNECTION_2,
+            await side.applicationFrame(RecordType.PULL_EVENTS, 1n, Uint8Array.of(1)),
+        );
+        await flush();
+        expect(deliveries).toEqual([RecordType.PULL_EVENTS]);
+    });
+
+    it('fresh injected peer without a hint authenticates on manual connect', async () => {
+        const fixture = await createAppFixture();
+        await startApp(fixture);
+        const { action } = await manualConnect(fixture);
+        let settled = false;
+        void action.then(() => {
+            settled = true;
+        });
+        await flush();
+        // The connect action does not complete on the transport connect alone.
+        expect(settled).toBe(false);
+        const hello = await nextSend(fixture.currentPort());
+        expect(hello.bytes[0]).toBe(FrameType.RECONNECT_HELLO);
+
+        await answerHandshake(fixture, { phone: fixture.phone, hello });
+        await action;
+        await flush();
+        expect(fixture.view.last.phase).toBe('ready');
+        expect(fixture.view.last.error).toBeNull();
+        const peer = (await fixture.trust.peers())[0];
+        expect(peer?.lastSeenMillis).toBe(10_000);
+        expect(peer?.platformHint).toBeUndefined();
+    });
+
+    it('manual connect with no trusted phone fails before connect', async () => {
+        const empty = await createTestTrust();
+        const phone = await TestPhone.create();
+        const fixture = await createAppFixture({ trust: empty, phone });
+        await startApp(fixture);
+        await fixture.app.handleAction({ type: 'connect', deviceHandle: HANDLE_DEVICE });
+        await flush();
+        expect(fixture.view.last.error?.code).toBe('authentication_failed');
+        expect(fixture.view.last.guidance?.message).toContain('could not complete a verified');
+        expect(
+            fixture
+                .currentPort()
+                .posted.some((message) => (message as { type?: string }).type === 'connect'),
+        ).toBe(false);
+    });
+
+    it('manual connect with two trusted phones and no explicit id fails before connect', async () => {
+        const fixture = await createAppFixture({ extraPhones: 1 });
+        await startApp(fixture);
+        await fixture.app.handleAction({ type: 'connect', deviceHandle: HANDLE_DEVICE });
+        await flush();
+        expect(fixture.view.last.error?.code).toBe('authentication_failed');
+        expect(fixture.view.last.guidance?.bleControlsEnabled).toBe(true);
+        expect(
+            fixture
+                .currentPort()
+                .posted.some((message) => (message as { type?: string }).type === 'connect'),
+        ).toBe(false);
+
+        // An explicit intended peer id proceeds past the ambiguity check.
+        const { action: explicit } = await manualConnect(fixture, {
+            peerId: fixture.peerId,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
+        await answerHandshake(fixture, {
+            phone: fixture.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
+        await explicit;
+        await flush();
+        expect(fixture.view.last.error).toBeNull();
+        expect(fixture.view.last.phase).toBe('ready');
+    });
+
+    it('mirror upgrade through the production verifier wiring (phone_active stage) then authenticated stage', async () => {
+        const fixture = await createAppFixture({ state: 'active_activation_pending' });
+        await startApp(fixture);
+        const { action } = await manualConnect(fixture, { hint: 'winrt:phone-a' });
+        await answerHandshake(fixture, { phone: fixture.phone, peerState: PEER_STATE_ACTIVE });
+        await action;
+        await flush();
+
+        const peer = (await fixture.trust.peers())[0];
+        // phone_active stage accepted the exact verified confirm.
+        expect(peer?.state).toBe('active');
+        // authenticated stage accepted the same proof and persisted metadata.
+        expect(peer?.lastSeenMillis).toBe(10_000);
+        expect(peer?.platformHint).toBe('winrt:phone-a');
+    });
+
+    it('persisted lastSeen and hint updated only after authentication; unchanged after failure and stale completion', async () => {
+        const fixture = await createAppFixture();
+        await startApp(fixture);
+
+        // A phone hello naming another installation id is the generic failure.
+        const { action: failed } = await manualConnect(fixture, { hint: 'winrt:new' });
+        const hello = await nextSend(fixture.currentPort());
+        await ackSend(fixture.currentPort(), hello);
+        const impostor = await TestPhone.create();
+        const impostorSide = new PhoneSide(impostor);
+        await emitRecord(
+            fixture.currentPort(),
+            HANDLE_CONNECTION,
+            await impostorSide.acceptClientHello(decodeFrame(hello.bytes).payload),
+        );
+        await flush();
+        const reject = await nextSend(fixture.currentPort());
+        expect(reject.bytes[0]).toBe(FrameType.PREAUTH_REJECT);
+        await ackSend(fixture.currentPort(), reject);
+        await failed;
+        await ackDisconnect(fixture.currentPort(), HANDLE_CONNECTION);
+        await flush();
+        expect(fixture.view.last.error?.code).toBe('authentication_failed');
+        const unchanged = (await fixture.trust.peers())[0];
+        expect(unchanged?.lastSeenMillis).toBeNull();
+        expect(unchanged?.platformHint).toBeUndefined();
+
+        const { action: success } = await manualConnect(fixture, {
+            connectionHandle: HANDLE_CONNECTION_2,
+            hint: 'winrt:new',
+        });
+        await answerHandshake(fixture, {
+            phone: fixture.phone,
+            connectionHandle: HANDLE_CONNECTION_2,
+        });
+        await success;
+        await flush();
+        const updated = (await fixture.trust.peers())[0];
+        expect(updated?.lastSeenMillis).toBe(10_000);
+        expect(updated?.platformHint).toBe('winrt:new');
+
+        // A stale generation's late completion must not write metadata either.
+        const stale = await createManagerFixture({ hint: 'winrt:phone-a' });
+        await connectForSession(stale);
+        const staleOpened = stale.manager.open(HANDLE_CONNECTION, stale.peerId);
+        const staleHello = await nextSend(stale.currentPort());
+        const side = new PhoneSide(stale.phone);
+        const phoneHello = await side.acceptClientHello(decodeFrame(staleHello.bytes).payload);
+        const phoneSignature = await side.signatureFrame();
+        await ackSend(stale.currentPort(), staleHello);
+        const gate = deferred();
+        const original = takeSubtle('verify');
+        const restore = patchSubtle('verify', async (...args: unknown[]) => {
+            await gate.promise;
+            return original(...args);
+        });
+        try {
+            await emitRecord(stale.currentPort(), HANDLE_CONNECTION, phoneHello);
+            await emitRecord(stale.currentPort(), HANDLE_CONNECTION, phoneSignature);
+            await flush();
+            await stale.currentPort().disconnect();
+            await flush();
+            await expect(staleOpened).resolves.toEqual({ result: 'failed' });
+            gate.resolve();
+            await flush();
+            const afterStale = (await stale.trust.peers())[0];
+            expect(afterStale?.lastSeenMillis).toBeNull();
+            expect(afterStale?.platformHint).toBe('winrt:phone-a');
+        } finally {
+            restore();
+        }
+    });
+
+    it('confirm send completion pending blocks authentication', async () => {
+        const fixture = await createManagerFixture();
+        await connectForSession(fixture);
+        const port = fixture.currentPort();
+        const opened = fixture.manager.open(HANDLE_CONNECTION, fixture.peerId);
+        let settled = false;
+        void opened.then(() => {
+            settled = true;
+        });
+
+        const hello = await nextSend(port);
+        const side = new PhoneSide(fixture.phone);
+        const phoneHello = await side.acceptClientHello(decodeFrame(hello.bytes).payload);
+        const phoneSignature = await side.signatureFrame();
+        await ackSend(port, hello);
+        await emitRecord(port, HANDLE_CONNECTION, phoneHello);
+        await emitRecord(port, HANDLE_CONNECTION, phoneSignature);
+        await flush();
+
+        const clientSignature = await nextSend(port);
+        await side.acceptClientSignature(decodeFrame(clientSignature.bytes).payload);
+        await ackSend(port, clientSignature);
+        const clientConfirm = await nextSend(port);
+        await emitRecord(port, HANDLE_CONNECTION, await side.confirmFrame());
+        await flush();
+        // The peer confirm arrived but the connector's own confirm send has not
+        // completed, so the authentication gate stays shut.
+        expect(settled).toBe(false);
+
+        await ackSend(port, clientConfirm);
+        await flush();
+        await expect(opened).resolves.toEqual({
+            result: 'authenticated',
+            peerId: fixture.peerId,
+        });
     });
 });

@@ -12,7 +12,8 @@ export type ConnectorFailureCode =
     | WireErrorCode
     | 'missing_host'
     | 'port_closed'
-    | 'protocol_violation';
+    | 'protocol_violation'
+    | 'authentication_failed';
 
 export interface ConnectorFailure {
     type: 'error';
@@ -117,6 +118,22 @@ export function synthesizeUnknownHandle(stage = 'connection_handle'): ConnectorF
         code: 'unknown_handle',
         recoverability: 'fatal',
         stage,
+        synthesized: true,
+    };
+}
+
+/**
+ * The single reason-free client failure for every unsuccessful reconnect
+ * authentication (bad signature, bad confirmation, rejected or revoked peer,
+ * or no unambiguous intended peer). It deliberately distinguishes none of
+ * them: the OTP2-REV-001 path must look identical to any other failure.
+ */
+export function synthesizeAuthenticationFailed(): ConnectorFailure {
+    return {
+        type: 'error',
+        code: 'authentication_failed',
+        recoverability: 'retryable',
+        stage: 'authentication',
         synthesized: true,
     };
 }

@@ -56,13 +56,13 @@ export function hexOf(value: Uint8Array): string {
 type SubtleMethod = (...args: unknown[]) => Promise<unknown>;
 
 /** Captures a bound `crypto.subtle` method so a test can delegate to it. */
-export function takeSubtle(name: 'encrypt' | 'decrypt' | 'importKey'): SubtleMethod {
+export function takeSubtle(name: 'encrypt' | 'decrypt' | 'importKey' | 'verify'): SubtleMethod {
     return (crypto.subtle[name] as unknown as SubtleMethod).bind(crypto.subtle);
 }
 
 /** Replaces one `crypto.subtle` method; the returned function restores it. */
 export function patchSubtle(
-    name: 'encrypt' | 'decrypt' | 'importKey',
+    name: 'encrypt' | 'decrypt' | 'importKey' | 'verify',
     replacement: SubtleMethod,
 ): () => void {
     Object.defineProperty(crypto.subtle, name, { value: replacement, configurable: true });
