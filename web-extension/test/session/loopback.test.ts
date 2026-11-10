@@ -636,8 +636,10 @@ if (CLASSPATH === '' && REQUIRED) {
                         Array.from(firstPhoneConfirm),
                     );
 
-                    // The AES keys are non-extractable, so key freshness is proved by a
-                    // cross-generation decrypt failure in both directions.
+                    // The AES keys are non-extractable, so key freshness is proved by swapping
+                    // only the key while holding the originating record's own nonce prefix and
+                    // session prefix constant: the header/session checks pass and GCM must fail.
+                    // A reused key would decrypt and the test would fail.
                     const firstP2cRecord = await sealRecord(
                         firstKeys.p2cKey,
                         firstKeys.p2cPrefix,
@@ -660,8 +662,8 @@ if (CLASSPATH === '' && REQUIRED) {
                     await expect(
                         openRecord(
                             secondKeys.p2cKey,
-                            secondKeys.p2cPrefix,
-                            second.prefix,
+                            firstKeys.p2cPrefix,
+                            first.prefix,
                             Direction.PHONE_TO_CLIENT,
                             1n,
                             firstP2cRecord,
@@ -689,8 +691,8 @@ if (CLASSPATH === '' && REQUIRED) {
                     await expect(
                         openRecord(
                             firstKeys.p2cKey,
-                            firstKeys.p2cPrefix,
-                            first.prefix,
+                            secondKeys.p2cPrefix,
+                            second.prefix,
                             Direction.PHONE_TO_CLIENT,
                             1n,
                             secondP2cRecord,
@@ -718,8 +720,8 @@ if (CLASSPATH === '' && REQUIRED) {
                     await expect(
                         openRecord(
                             secondKeys.c2pKey,
-                            secondKeys.c2pPrefix,
-                            second.prefix,
+                            firstKeys.c2pPrefix,
+                            first.prefix,
                             Direction.CLIENT_TO_PHONE,
                             1n,
                             firstC2pRecord,
@@ -747,8 +749,8 @@ if (CLASSPATH === '' && REQUIRED) {
                     await expect(
                         openRecord(
                             firstKeys.c2pKey,
-                            firstKeys.c2pPrefix,
-                            first.prefix,
+                            secondKeys.c2pPrefix,
+                            second.prefix,
                             Direction.CLIENT_TO_PHONE,
                             1n,
                             secondC2pRecord,

@@ -387,11 +387,17 @@ interface RunObservations {
     keysErased: boolean;
     sessionOpen: boolean;
     generations: number;
+    /** Repository instances opened from durable storage (initial load + reloads). */
+    loads: number;
     reloads: number;
+    continuityMatched: boolean;
     continuityLost: boolean;
     deletedIncomplete: boolean;
     upgrades: number;
     storeState: string;
+    /** State the repository loaded from durable storage before any session upgrade. */
+    reloadedState: string;
+    durableState: string;
 }
 
 function wireType(bytes: Uint8Array): number | null {
@@ -428,6 +434,99 @@ function classify(effects: SessionEffect[]): {
 
 type PersistedState = 'active' | 'active_activation_pending' | 'pending' | 'deleted';
 
+type DurableState = 'pending' | 'active_activation_pending' | 'active';
+
+interface DurableRecord {
+    publicKey: Uint8Array;
+    state: DurableState;
+    /** Boot continuity token recorded when the record was written. */
+    continuityToken: string;
+}
+
+/** Persistent browser-profile storage that survives a process restart. */
+class DurableClientStore {
+    readonly records = new Map<string, DurableRecord>();
+
+    seed(key: string, record: DurableRecord): void {
+        this.records.set(key, {
+            publicKey: new Uint8Array(record.publicKey),
+            state: record.state,
+            continuityToken: record.continuityToken,
+        });
+    }
+
+    read(key: string): DurableRecord | undefined {
+        const record = this.records.get(key);
+        return record === undefined
+            ? undefined
+            : {
+                  publicKey: new Uint8Array(record.publicKey),
+                  state: record.state,
+                  continuityToken: record.continuityToken,
+              };
+    }
+
+    write(key: string, record: DurableRecord): void {
+        this.seed(key, record);
+    }
+
+    delete(key: string): void {
+        this.records.delete(key);
+    }
+}
+
+/**
+ * One in-memory repository instance loaded from the durable store by a process with its own
+ * boot continuity token. Opening it applies OTP2-STA-010d: a token mismatch deletes incomplete
+ * `pending` records and leaves durable active mirrors untouched. A restart always constructs a
+ * new instance, so a regression that reuses the previous repository cannot pass the scenario.
+ */
+class ClientRepository {
+    readonly store = new Map<string, PhoneRecord>();
+    readonly continuityMatched: boolean;
+    readonly deletedIncomplete: boolean;
+
+    private constructor(
+        private readonly durable: DurableClientStore,
+        private readonly peerId: string,
+        processToken: string,
+    ) {
+        const record = durable.read(peerId);
+        this.continuityMatched = record === undefined || record.continuityToken === processToken;
+        this.deletedIncomplete =
+            record !== undefined && !this.continuityMatched && record.state === 'pending';
+        if (this.deletedIncomplete) {
+            durable.delete(peerId);
+        } else if (record !== undefined) {
+            this.store.set(peerId, { publicKey: record.publicKey, state: record.state });
+        }
+    }
+
+    static open(
+        durable: DurableClientStore,
+        peerId: string,
+        processToken: string,
+    ): ClientRepository {
+        return new ClientRepository(durable, peerId, processToken);
+    }
+
+    /** Persists the session's record state back to the durable store. */
+    persist(bootToken: string): void {
+        const record = this.store.get(this.peerId);
+        if (record === undefined) return;
+        this.durable.write(this.peerId, {
+            publicKey: record.publicKey,
+            state: record.state as DurableState,
+            continuityToken: bootToken,
+        });
+    }
+
+    delete(): void {
+        this.store.delete(this.peerId);
+        this.durable.delete(this.peerId);
+    }
+}
+
 class ClientScenario {
     private readonly fixture: Fixture;
     private readonly clock = new FakeClock();
@@ -441,20 +540,27 @@ class ClientScenario {
         keysErased: false,
         sessionOpen: false,
         generations: 0,
+        loads: 0,
         reloads: 0,
+        continuityMatched: true,
         continuityLost: false,
         deletedIncomplete: false,
         upgrades: 0,
         storeState: '',
+        reloadedState: '',
+        durableState: '',
     };
 
     private generation: { harness: PhoneHarness; handler: ScenarioHandler } | null = null;
-    private store: Map<string, PhoneRecord> | null = null;
+    private durable: DurableClientStore | null = null;
+    private repository: ClientRepository | null = null;
     private phoneIdentityPair: CryptoKeyPair | null = null;
     private peerId: string | null = null;
     private started: StartedHandshake | null = null;
     private expectedRx = 0n;
     private persistedState: PersistedState = 'active';
+    private persistedToken = 'boot1';
+    private processToken = 'boot1';
     private repositoryStale = false;
     private oversizeBuilt = false;
 
@@ -463,9 +569,16 @@ class ClientScenario {
     }
 
     async run(): Promise<RunObservations> {
-        const persisted = persistedOf(this.fixture)[`${RECORD_PREFIX}main`] ?? 'active';
-        this.persistedState = persisted as PersistedState;
-        this.observations.storeState = this.persistedState;
+        const persistedState = persistedOf(this.fixture);
+        this.persistedState = (persistedState[`${RECORD_PREFIX}main`] ??
+            'active') as PersistedState;
+        this.persistedToken = persistedState.continuity_token ?? 'boot1';
+        this.processToken = this.persistedToken;
+        // The running process already has the repository loaded before the fixture's first
+        // event; a `process_load` step must drop it and load a *new* instance from durable
+        // storage. A regression that keeps the loaded instance fails the reload assertions.
+        await this.ensureDurable();
+        this.loadRepository();
         for (const [index, step] of stepsOf(this.fixture).entries()) {
             await this.execute(index, step);
         }
@@ -485,28 +598,67 @@ class ClientScenario {
         return this.phoneIdentityPair;
     }
 
+    /** Creates the durable store and the software phone identity on first use. */
+    private async ensureDurable(): Promise<void> {
+        if (this.durable !== null) return;
+        const identity = await this.phoneIdentity();
+        const rawPublic = new Uint8Array(await crypto.subtle.exportKey('raw', identity.publicKey));
+        this.peerId ??= hexOf(rawPublic.subarray(0, 16));
+        this.durable = new DurableClientStore();
+        this.durable.seed(this.peerId, {
+            publicKey: rawPublic,
+            state: this.persistedState as DurableState,
+            continuityToken: this.persistedToken,
+        });
+    }
+
+    /** Loads a new repository from the durable store and records what it observed. */
+    private loadRepository(): ClientRepository {
+        if (this.durable === null || this.peerId === null) {
+            throw new Error(`${this.fixture.id}: no durable store to load`);
+        }
+        const repository = ClientRepository.open(this.durable, this.peerId, this.processToken);
+        this.repository = repository;
+        this.repositoryStale = false;
+        this.observations.loads += 1;
+        this.observations.reloads = this.observations.loads - 1;
+        this.observations.continuityMatched = repository.continuityMatched;
+        this.observations.deletedIncomplete = repository.deletedIncomplete;
+        this.observations.reloadedState = repository.store.get(this.peerId)?.state ?? 'deleted';
+        this.observations.storeState = this.observations.reloadedState;
+        this.observations.durableState = this.durable.read(this.peerId)?.state ?? 'deleted';
+        return repository;
+    }
+
     private async open(): Promise<{ harness: PhoneHarness; handler: ScenarioHandler }> {
         if (this.persistedState === 'deleted') {
             throw new Error(`${this.fixture.id}: no durable record to reconnect to`);
         }
+        await this.ensureDurable();
         const identity = await this.phoneIdentity();
-        const rawPublic = new Uint8Array(await crypto.subtle.exportKey('raw', identity.publicKey));
-        this.peerId ??= hexOf(rawPublic.subarray(0, 16));
-        if (this.store === null || this.repositoryStale) {
-            // A real restart reloads the durable repository; nothing survives in memory.
-            this.store = new Map();
-            this.repositoryStale = false;
+        if (this.repository === null || this.repositoryStale) {
+            // Nothing in memory survives a restart: load a new repository instance and let it
+            // apply the boot continuity token against the durable record.
+            this.loadRepository();
+        }
+        if (this.peerId === null || this.repository === null) {
+            throw new Error(`${this.fixture.id}: no repository loaded`);
+        }
+        const durableRecord = this.repository.store.get(this.peerId);
+        if (durableRecord === undefined) {
+            throw new Error(
+                `${this.fixture.id}: the repository has no durable record after the reload`,
+            );
         }
         const handler = new ScenarioHandler();
         const harness = await PhoneHarness.create({
-            state: this.persistedState,
+            state: durableRecord.state,
             clock: this.clock,
             handler,
-            store: this.store,
+            store: this.repository.store,
             phoneIdentity: identity,
             phoneId: this.peerId,
         });
-        this.store = harness.store;
         this.observations.generations += 1;
         this.observations.authenticated = false;
         this.observations.sessionClass = null;
@@ -544,22 +696,26 @@ class ClientScenario {
 
         switch (step.event) {
             case 'process_load': {
-                // OTP2-STA-010d: process death reloads the durable repository. The client
-                // mirror survives a continuity-token change; only an incomplete `pending`
-                // record is deleted.
+                // OTP2-STA-010d: process death tears the engine down and drops the repository.
+                // The next connection loads a new repository over the durable store; the
+                // repository itself compares the boot continuity token and deletes incomplete
+                // `pending` records, leaving a durable active mirror untouched.
                 this.generation?.harness.engine.teardown();
                 this.generation = null;
+                this.repository = null;
                 this.started = null;
-                this.observations.reloads += 1;
                 this.repositoryStale = true;
                 if (step.simulate.continuity_token_matches === 'false') {
                     this.observations.continuityLost = true;
-                    if (this.persistedState === 'pending') {
-                        this.persistedState = 'deleted';
-                        this.observations.deletedIncomplete = true;
-                    }
+                    this.processToken = `${this.processToken}-restart`;
+                } else {
+                    this.processToken = this.persistedToken;
                 }
-                this.observations.storeState = this.persistedState;
+                // The restarted process loads a fresh repository instance now; the next
+                // connection reuses it. The continuity comparison happens inside the
+                // repository against the durable record, not from a copied fixture flag.
+                await this.ensureDurable();
+                this.loadRepository();
                 break;
             }
             case 'send_hello': {
@@ -572,6 +728,7 @@ class ClientScenario {
             case 'reconnect_hello': {
                 const generation = this.live();
                 if (step.simulate.record_exists === 'false') {
+                    this.repository?.delete();
                     this.persistedState = 'deleted';
                     this.observations.storeState = 'deleted';
                 }
@@ -702,6 +859,7 @@ class ClientScenario {
         ) {
             this.expectedRx = expectedBefore + 1n;
         }
+        this.persistRepository();
         this.observations.steps.push({
             index,
             event: step.event,
@@ -728,6 +886,12 @@ class ClientScenario {
             snapshot: this.snapshot(),
             accepted: classified.terminated === null && !classified.closed,
         });
+    }
+
+    private persistRepository(): void {
+        if (this.repository === null || this.durable === null || this.peerId === null) return;
+        this.repository.persist(this.persistedToken);
+        this.observations.durableState = this.durable.read(this.peerId)?.state ?? 'deleted';
     }
 
     private async send(type: number, step: Step): Promise<SessionEffect[]> {
@@ -783,11 +947,9 @@ class ClientScenario {
         const open = this.generation?.harness.engine.isOpen ?? false;
         const terminated = this.observations.terminations.some((reason) => reason !== 'app_error');
         const session = terminated ? 'terminated' : open ? 'session_open' : 'closed';
-        const record =
-            this.generation === null
-                ? undefined
-                : this.generation.harness.store.get(this.generation.harness.peerId);
-        const store = record?.state ?? this.persistedState;
+        const live = this.repository?.store.get(this.peerId ?? '');
+        const store =
+            live?.state ?? this.durable?.read(this.peerId ?? '')?.state ?? this.persistedState;
         this.persistedState = store as PersistedState;
         this.observations.storeState = store;
         return new Map([
@@ -1027,10 +1189,21 @@ describe('client conformance scenarios', () => {
                     }
                 }
                 if (id === 'st-rec-client-mirror-durable-across-restart') {
-                    expect(run.reloads, 'the restart must reload the repository').toBe(1);
+                    expect(run.loads, 'initial load plus the restart reload').toBe(2);
+                    expect(run.reloads, 'the restart must drop and reload the repository').toBe(1);
                     expect(run.continuityLost, 'the continuity token must change').toBe(true);
+                    expect(run.continuityMatched, 'the repository must observe the mismatch').toBe(
+                        false,
+                    );
                     expect(run.deletedIncomplete, 'an active mirror must survive the restart').toBe(
                         false,
+                    );
+                    expect(run.reloadedState, 'the mirror must load as activation-pending').toBe(
+                        'active_activation_pending',
+                    );
+                    expect(run.storeState, 'the handshake must upgrade the mirror').toBe('active');
+                    expect(run.durableState, 'the upgrade must be persisted durably').toBe(
+                        'active',
                     );
                     expect(run.generations, 'the reloaded engine must handshake again').toBe(1);
                 }
@@ -1116,6 +1289,35 @@ describe('client conformance scenarios', () => {
             expect(recordStep.terminated, flag).toBe(expectedReason);
             expect(recordStep.oversize, flag).toBe(flag === 'length_ok');
         }
+    });
+
+    it('the repository applies a continuity-token change to incomplete records only', () => {
+        const pending = new DurableClientStore();
+        pending.seed('main', {
+            publicKey: Uint8Array.of(1),
+            state: 'pending',
+            continuityToken: 'boot1',
+        });
+        const reopenedPending = ClientRepository.open(pending, 'main', 'boot2');
+        expect(reopenedPending.continuityMatched).toBe(false);
+        expect(reopenedPending.deletedIncomplete).toBe(true);
+        expect(reopenedPending.store.size).toBe(0);
+
+        const mirror = new DurableClientStore();
+        mirror.seed('main', {
+            publicKey: Uint8Array.of(2),
+            state: 'active_activation_pending',
+            continuityToken: 'boot1',
+        });
+        const reopenedMirror = ClientRepository.open(mirror, 'main', 'boot2');
+        expect(reopenedMirror.continuityMatched).toBe(false);
+        expect(reopenedMirror.deletedIncomplete).toBe(false);
+        expect(reopenedMirror.store.get('main')?.state).toBe('active_activation_pending');
+
+        const sameBoot = ClientRepository.open(mirror, 'main', 'boot1');
+        expect(sameBoot.continuityMatched).toBe(true);
+        expect(sameBoot.deletedIncomplete).toBe(false);
+        expect(sameBoot.store.get('main')?.state).toBe('active_activation_pending');
     });
 
     it('client signatures are low-S P1363 and the handshake verifies them', async () => {
