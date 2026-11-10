@@ -142,20 +142,20 @@
 
 ## 6. Chrome client-role session engine (design D1–D3; mirrors group 3)
 
-- [ ] 6.1 Build the client state machine following the §11.3 client rows:
+- [x] 6.1 Build the client state machine following the §11.3 client rows:
   - send the hello first
   - verify the phone's signature against the stored key for the hello's id and the
     selected peer
   - the authentication gate
   - class selection
   - the generic reason-free failure state
-- [ ] 6.2 Implement the `active_activation_pending → active` upgrade before class
+- [x] 6.2 Implement the `active_activation_pending → active` upgrade before class
   selection, through `ChromeTrustRepository.confirm(peerId, 'phone_active', proof)` with a
   verifier bound to the session. Send `peer_state = 0x01` for the active family.
-- [ ] 6.3 Implement sequences, the u64 ceiling, authorization (including fail-closed for
+- [x] 6.3 Implement sequences, the u64 ceiling, authorization (including fail-closed for
   unhandled records), heartbeat, idle, the handshake deadline, terminal errors and teardown,
   matching the Android engine.
-- [ ] 6.4 Engine tests:
+- [x] 6.4 Engine tests:
   - table-driven class selection
   - the mirror-upgrade and no-upgrade scenarios, with persistence across a recreated
     trust repository and engine (connector restart integration is covered in 7.5)
