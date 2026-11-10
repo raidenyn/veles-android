@@ -9,6 +9,7 @@ object PreAuthCodec {
 
     fun encode(type: Int, payload: ByteArray): ByteArray {
         if (FrameType.fromWire(type) == null) reject()
+        if (type == FrameType.PREAUTH_REJECT.wire && payload.isNotEmpty()) reject()
         if (payload.size > MAX_FRAME - HEADER_BYTES) reject()
         val frame = ByteArray(HEADER_BYTES + payload.size)
         frame[0] = type.toByte()
@@ -24,6 +25,7 @@ object PreAuthCodec {
         if (FrameType.fromWire(type) == null) reject()
         val payloadLength = ((frame[1].toInt() and U8_MASK) shl BITS_PER_BYTE) or (frame[2].toInt() and U8_MASK)
         if (payloadLength != frame.size - HEADER_BYTES) reject()
+        if (type == FrameType.PREAUTH_REJECT.wire && payloadLength != 0) reject()
         return type to frame.copyOfRange(HEADER_BYTES, frame.size)
     }
 

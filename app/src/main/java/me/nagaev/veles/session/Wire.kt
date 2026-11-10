@@ -22,13 +22,8 @@ enum class Direction(val wire: Int) {
     }
 }
 
-/** Pre-auth plaintext frame types (OTP2-ENC-010). */
+/** Pre-auth plaintext frame types accepted by the reconnect session (OTP2-ENC-010). */
 enum class FrameType(val wire: Int) {
-    PAIRING_REQUEST(0x01),
-    PAIRING_OFFER(0x02),
-    PAIRING_CLIENT_POINT(0x03),
-    PAIRING_CONFIRM_A(0x04),
-    PAIRING_CONFIRM_B(0x05),
     RECONNECT_HELLO(0x06),
     RECONNECT_SIGNATURE(0x07),
     PREAUTH_REJECT(0x0F),

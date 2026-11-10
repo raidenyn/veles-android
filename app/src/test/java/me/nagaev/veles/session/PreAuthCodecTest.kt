@@ -33,4 +33,28 @@ class PreAuthCodecTest {
             }
         }
     }
+
+    @Test fun rejectsPairingFrameTypes() {
+        for (type in 0x01..0x05) {
+            assertThrows("encode $type", SessionReject::class.java) {
+                PreAuthCodec.encode(type, byteArrayOf())
+            }
+            assertThrows("decode $type", SessionReject::class.java) {
+                PreAuthCodec.decode(byteArrayOf(type.toByte(), 0x00, 0x00))
+            }
+        }
+    }
+
+    @Test fun rejectsNonemptyPreauthReject() {
+        val emptyReject = PreAuthCodec.encode(FrameType.PREAUTH_REJECT.wire, ByteArray(0))
+        assertEquals(FrameType.PREAUTH_REJECT.wire, PreAuthCodec.decode(emptyReject).first)
+        assertEquals(0, PreAuthCodec.decode(emptyReject).second.size)
+
+        assertThrows(SessionReject::class.java) {
+            PreAuthCodec.encode(FrameType.PREAUTH_REJECT.wire, byteArrayOf(0x00))
+        }
+        assertThrows(SessionReject::class.java) {
+            PreAuthCodec.decode(byteArrayOf(FrameType.PREAUTH_REJECT.wire.toByte(), 0x00, 0x01, 0x00))
+        }
+    }
 }
