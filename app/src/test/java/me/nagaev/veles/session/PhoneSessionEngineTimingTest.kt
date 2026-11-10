@@ -1,5 +1,9 @@
 package me.nagaev.veles.session
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -187,6 +191,111 @@ class PhoneSessionEngineTimingTest {
         assertTerminated(effects)
         assertTrue(effects.none { it is SessionEffect.Authenticated })
         assertClosed(engine)
+    }
+
+    @Test
+    fun handlerHeartbeatReplySpacingEnforced() = runTest {
+        val client = TestClient()
+        val engine = engine(lookupFor(client), HeartbeatReplyHandler())
+        open(engine, client)
+
+        var effects = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, 1uL))
+        assertEquals(2, effects.size)
+        assertTrue(effects[0] is SessionEffect.Deliver)
+        val first = effects[1] as SessionEffect.Send
+        assertEquals(RecordType.APP_HEARTBEAT.wire, client.openPhoneRecord(first.bytes, 1uL).type)
+
+        clock.advance(10_000L)
+        effects = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, 2uL))
+        assertEquals(1, effects.size)
+        assertTrue(effects[0] is SessionEffect.Deliver)
+
+        clock.advance(20_000L)
+        effects = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, 3uL))
+        assertEquals(2, effects.size)
+        assertTrue(effects[0] is SessionEffect.Deliver)
+        val second = effects[1] as SessionEffect.Send
+        assertEquals(RecordType.APP_HEARTBEAT.wire, client.openPhoneRecord(second.bytes, 2uL).type)
+    }
+
+    @Test
+    fun mixedPathHeartbeatSpacingEnforced() = runTest {
+        val client = TestClient()
+        val engine = engine(lookupFor(client), HeartbeatReplyHandler())
+        open(engine, client)
+
+        val direct = engine.sendApplication(RecordType.APP_HEARTBEAT.wire, ByteArray(0)).single()
+            as SessionEffect.Send
+        assertEquals(RecordType.APP_HEARTBEAT.wire, client.openPhoneRecord(direct.bytes, 1uL).type)
+
+        clock.advance(10_000L)
+        val early = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, 1uL))
+        assertEquals(1, early.size)
+        assertTrue(early[0] is SessionEffect.Deliver)
+
+        clock.advance(20_000L)
+        val spaced = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, 2uL))
+        assertEquals(2, spaced.size)
+        assertTrue(spaced[0] is SessionEffect.Deliver)
+        val heartbeat = spaced[1] as SessionEffect.Send
+        assertEquals(RecordType.APP_HEARTBEAT.wire, client.openPhoneRecord(heartbeat.bytes, 2uL).type)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun signerCompletingAfterDeadlineTerminates() = runTest {
+        val client = TestClient()
+        val gate = CompletableDeferred<Unit>()
+        val signer = IdentitySigner { message ->
+            gate.await()
+            phone.signer.signDer(message)
+        }
+        val engine = TestPeers.engine(signer, lookupFor(client), clock)
+
+        val pending = async { engine.onInbound(client.helloFrame) }
+        runCurrent()
+        clock.advance(SessionLimits.HANDSHAKE_TIMEOUT_MS)
+        gate.complete(Unit)
+
+        val effects = pending.await()
+        assertTerminated(effects)
+        assertTrue(effects.none { it is SessionEffect.Send })
+        assertClosed(engine)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun signerCompletingAfterTeardownIgnored() = runTest {
+        val client = TestClient()
+        val gate = CompletableDeferred<Unit>()
+        val signer = IdentitySigner { message ->
+            gate.await()
+            phone.signer.signDer(message)
+        }
+        val engine = TestPeers.engine(signer, lookupFor(client), clock)
+
+        val pending = async { engine.onInbound(client.helloFrame) }
+        runCurrent()
+        engine.teardown()
+        gate.complete(Unit)
+
+        val effects = pending.await()
+        assertTrue(effects.isEmpty())
+        assertClosed(engine)
+        assertTrue(engine.onInbound(client.helloFrame).isEmpty())
+    }
+
+    private class HeartbeatReplyHandler : ApplicationHandler {
+        override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+        override suspend fun handle(
+            type: Int,
+            body: ByteArray,
+            reply: suspend (type: Int, body: ByteArray) -> Unit,
+        ) {
+            reply(RecordType.APP_HEARTBEAT.wire, ByteArray(0))
+            reply(RecordType.APP_HEARTBEAT.wire, ByteArray(0))
+        }
     }
 
     @Test

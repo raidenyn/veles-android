@@ -107,12 +107,17 @@ class PhoneSessionEngine(
         return authenticate()
     }
 
+    @Suppress("ReturnCount") // Expiry/exhaustion terminate; an early heartbeat and an error both short-circuit.
     suspend fun sendApplication(type: Int, body: ByteArray): List<SessionEffect> {
         if (state != State.OPEN) throw SessionReject()
         expiryFailure()?.let { return terminate(it) }
         if (exhausted()) return terminate(STAGE_SEQUENCE)
-        if (type == RecordType.APP_HEARTBEAT.wire && heartbeatSendTooEarly(clock())) return emptyList()
-        return listOf(SessionEffect.Send(sealApplication(type, body)))
+        val record = sealApplication(type, body) ?: return emptyList()
+        if (type == RecordType.APP_ERROR.wire) {
+            teardownInternal()
+            return listOf(SessionEffect.Send(record), SessionEffect.Terminated(STAGE_APP_ERROR), SessionEffect.Close)
+        }
+        return listOf(SessionEffect.Send(record))
     }
 
     /** Deadlines first, then the 60 s outbound-silence heartbeat (plan heartbeat driver). */
@@ -152,7 +157,9 @@ class PhoneSessionEngine(
         val frame = decodeFrame(bytes) ?: return rejectPreAuth()
         if (frame.first != FrameType.RECONNECT_HELLO.wire) return rejectPreAuth()
         val hello = decodeClientHello(frame.second) ?: return rejectPreAuth()
-        val record = lookup.find(hello.installationId) ?: return rejectPreAuth()
+        val found = lookup.find(hello.installationId)
+        abandoned(State.AWAITING_CLIENT_HELLO)?.let { return it }
+        val record = found ?: return rejectPreAuth()
         val keyPair = ephemeral()
         val localNonceValue = nonce()
         val phoneHelloPayload = try {
@@ -172,6 +179,8 @@ class PhoneSessionEngine(
         } catch (_: SessionReject) {
             return rejectPreAuth()
         }
+        // The signer is suspending: it may finish after the deadline or after teardown.
+        abandoned(State.AWAITING_CLIENT_HELLO)?.let { return it }
 
         peerInstallationId = hello.installationId.copyOf()
         peerPublicKey = record.identityPublicKey.copyOf()
@@ -199,7 +208,9 @@ class PhoneSessionEngine(
         if (!verifySignature(peerKey, transcript, signature)) return rejectPreAuth()
 
         val installationId = peerInstallationId ?: return rejectPreAuth()
-        val current = lookup.find(installationId) ?: return rejectPreAuth()
+        val current = lookup.find(installationId)
+        abandoned(State.AWAITING_CLIENT_SIGNATURE)?.let { return it }
+        if (current == null) return rejectPreAuth()
         if (!current.identityPublicKey.contentEquals(peerKey)) return rejectPreAuth()
         val hello = clientHello ?: return rejectPreAuth()
         val keyPair = ephemeralKeyPair ?: return rejectPreAuth()
@@ -273,7 +284,7 @@ class PhoneSessionEngine(
         return deliver(opened)
     }
 
-    @Suppress("ReturnCount") // Framework records and unhandled authorized records fail closed or end.
+    @Suppress("ReturnCount", "TooGenericExceptionCaught") // Terminal errors, teardown and handler failures all end.
     private suspend fun deliver(opened: OpenedRecord): List<SessionEffect> {
         if (opened.type == RecordType.APP_ERROR.wire) return terminate(STAGE_APP_ERROR)
         if (opened.type == RecordType.APP_HEARTBEAT.wire) {
@@ -287,30 +298,54 @@ class PhoneSessionEngine(
         val applicationHandler = handler ?: return terminateUnhandled()
         if (!applicationHandler.handles(opened.type)) return terminateUnhandled()
         val replies = mutableListOf<SessionEffect>()
+        var terminalError = false
         try {
             applicationHandler.handle(opened.type, opened.body) { replyType, replyBody ->
-                replies += SessionEffect.Send(sealApplication(replyType, replyBody))
+                if (terminalError) return@handle
+                val record = sealApplication(replyType, replyBody) ?: return@handle
+                replies += SessionEffect.Send(record)
+                terminalError = replyType == RecordType.APP_ERROR.wire
             }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: SessionReject) {
-            return terminate(STAGE_AUTHORIZATION)
+            return terminalReplyOrTerminate(replies, terminalError, STAGE_AUTHORIZATION)
+        } catch (_: Exception) {
+            return terminalReplyOrTerminate(replies, terminalError, STAGE_DEPENDENCY)
         }
+        // A handler is suspending: it may return after teardown or after the idle deadline.
+        if (state == State.CLOSED) return emptyList()
+        if (terminalError) {
+            teardownInternal()
+            return replies + listOf(SessionEffect.Terminated(STAGE_APP_ERROR), SessionEffect.Close)
+        }
+        expiryFailure()?.let { return terminate(it) }
         return listOf(SessionEffect.Deliver(opened.type, opened.body)) + replies
+    }
+
+    /** Keeps an already-sealed terminal `app_error` when the handler also fails afterwards. */
+    private fun terminalReplyOrTerminate(
+        replies: List<SessionEffect>,
+        terminalError: Boolean,
+        fallback: String,
+    ): List<SessionEffect> {
+        if (!terminalError) return terminate(fallback)
+        teardownInternal()
+        return replies + listOf(SessionEffect.Terminated(STAGE_APP_ERROR), SessionEffect.Close)
     }
 
     /** §11.4 unhandled authorized record: a sealed `app_error` `protocol_violation`, then close. */
     private fun terminateUnhandled(): List<SessionEffect> {
         val error = try {
-            SessionEffect.Send(
-                sealApplication(
-                    RecordType.APP_ERROR.wire,
-                    appErrorBody(AppErrorCode.PROTOCOL_VIOLATION),
-                ),
+            sealApplication(
+                RecordType.APP_ERROR.wire,
+                appErrorBody(AppErrorCode.PROTOCOL_VIOLATION),
             )
         } catch (_: SessionReject) {
             return terminate(STAGE_UNHANDLED)
-        }
+        } ?: return terminate(STAGE_UNHANDLED)
         teardownInternal()
-        return listOf(error, SessionEffect.Terminated(STAGE_UNHANDLED), SessionEffect.Close)
+        return listOf(SessionEffect.Send(error), SessionEffect.Terminated(STAGE_UNHANDLED), SessionEffect.Close)
     }
 
     /** OTP2-REC-034: the fifth heartbeat in a rolling 60 s window in one direction ends it. */
@@ -328,12 +363,11 @@ class PhoneSessionEngine(
     private fun openTick(now: Long): List<SessionEffect> {
         if (now - lastActivityAt >= SessionLimits.IDLE_TIMEOUT_MS) return terminate(STAGE_IDLE)
         if (now - lastOutboundAt < HEARTBEAT_SILENCE_MS) return emptyList()
-        if (heartbeatSendTooEarly(now)) return emptyList()
         val record = try {
             sealApplication(RecordType.APP_HEARTBEAT.wire, ByteArray(0))
         } catch (_: SessionReject) {
             return terminate(STAGE_HEARTBEAT)
-        }
+        } ?: return emptyList()
         return listOf(SessionEffect.Send(record))
     }
 
@@ -352,12 +386,19 @@ class PhoneSessionEngine(
         body,
     )
 
+    /**
+     * Seals one outbound application record. The single heartbeat-spacing gate lives here so
+     * every path — direct sends, ticks and handler replies — ignores an early heartbeat without
+     * reserving a sequence. A null result means "nothing was sent".
+     */
     @Suppress("ThrowsCount") // One generic rejection for every §7.3/§11.4 authorization failure.
-    private fun sealApplication(type: Int, body: ByteArray): ByteArray {
+    private fun sealApplication(type: Int, body: ByteArray): ByteArray? {
         if (outboundExhausted) throw SessionReject()
         if (type == RecordType.RECONNECT_CONFIRM.wire) throw SessionReject()
         val cls = fixedClass ?: throw SessionReject()
         if (!RecordPolicy.authorized(type, Direction.PHONE_TO_CLIENT, cls)) throw SessionReject()
+        val now = clock()
+        if (type == RecordType.APP_HEARTBEAT.wire && heartbeatSendTooEarly(now)) return null
         val open = keys ?: throw SessionReject()
         val prefix = sessionIdPrefix ?: throw SessionReject()
         val sequence = outboundSequence
@@ -375,7 +416,6 @@ class PhoneSessionEngine(
         } else {
             outboundSequence = sequence + 1uL
         }
-        val now = clock()
         lastOutboundAt = now
         if (type == RecordType.APP_HEARTBEAT.wire) lastHeartbeatSentAt = now
         if (state == State.OPEN) lastActivityAt = now
@@ -480,6 +520,17 @@ class PhoneSessionEngine(
 
     private fun exhausted(): Boolean = inboundExhausted || outboundExhausted
 
+    /**
+     * Post-suspension guard for the handshake: a suspended lookup or signer may return after the
+     * wait state expired or after teardown. Closed input is ignored; a changed state fails closed
+     * and an expired deadline terminates. Returns null while the original wait state is live.
+     */
+    private fun abandoned(expected: State): List<SessionEffect>? = when {
+        state == State.CLOSED -> emptyList()
+        state != expected -> terminate(STAGE_UNEXPECTED_FRAME)
+        else -> expiryFailure()?.let { terminate(it) }
+    }
+
     private fun point(keyPair: KeyPair): ByteArray {
         val publicKey = keyPair.public as? ECPublicKey ?: throw SessionReject()
         val point = ByteArray(POINT_BYTES)
@@ -512,6 +563,9 @@ class PhoneSessionEngine(
     private fun teardownInternal() {
         keys?.erase()
         keys = null
+        // JCA's ECPrivateKey exposes the scalar only as an immutable BigInteger, so the plan-fixed
+        // `ephemeral: () -> KeyPair` injection cannot be zeroed in place; dropping the reference is
+        // the erasure available here. Every engine-owned byte array below is zeroed explicitly.
         ephemeralKeyPair = null
         localNonce?.fill(0)
         localNonce = null

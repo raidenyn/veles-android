@@ -339,6 +339,60 @@ class PhoneSessionEngineRecordsTest {
         assertNotNull("CancellationException must not be swallowed", caught)
     }
 
+    @Test
+    fun applicationErrorSendIsTerminal() = runTest {
+        val client = TestClient()
+        val engine = engine(lookupFor(client))
+        open(engine, client)
+
+        val effects = engine.sendApplication(
+            RecordType.APP_ERROR.wire,
+            appErrorBody(AppErrorCode.SESSION_EXPIRED),
+        )
+
+        assertEquals(3, effects.size)
+        val error = client.openPhoneRecord((effects[0] as SessionEffect.Send).bytes, 1uL)
+        assertEquals(RecordType.APP_ERROR.wire, error.type)
+        assertEquals(AppErrorCode.SESSION_EXPIRED.wire, error.body[0].toInt() and 0xFF)
+        assertTrue(effects[1] is SessionEffect.Terminated)
+        assertEquals(SessionEffect.Close, effects[2])
+        assertClosed(engine)
+        assertTrue(engine.onInbound(client.record(RecordType.APP_HEARTBEAT.wire, 1uL)).isEmpty())
+    }
+
+    @Test
+    fun handlerErrorReplyIsTerminalAndStopsFurtherReplies() = runTest {
+        val client = TestClient()
+        val engine = engine(lookupFor(client), ErrorThenHeartbeatHandler())
+        open(engine, client)
+
+        val effects = engine.onInbound(client.record(RecordType.PULL_REQUEST.wire, 1uL))
+
+        assertEquals(3, effects.size)
+        val error = client.openPhoneRecord((effects[0] as SessionEffect.Send).bytes, 1uL)
+        assertEquals(RecordType.APP_ERROR.wire, error.type)
+        assertEquals(AppErrorCode.PROTOCOL_VIOLATION.wire, error.body[0].toInt() and 0xFF)
+        assertTrue(effects[1] is SessionEffect.Terminated)
+        assertEquals(SessionEffect.Close, effects[2])
+        assertTrue(effects.none { it is SessionEffect.Deliver })
+        assertClosed(engine)
+        assertTrue(engine.onInbound(client.record(RecordType.APP_HEARTBEAT.wire, 2uL)).isEmpty())
+    }
+
+    private class ErrorThenHeartbeatHandler : ApplicationHandler {
+        override fun handles(type: Int): Boolean = type == RecordType.PULL_REQUEST.wire
+
+        override suspend fun handle(
+            type: Int,
+            body: ByteArray,
+            reply: suspend (type: Int, body: ByteArray) -> Unit,
+        ) {
+            reply(RecordType.APP_ERROR.wire, appErrorBody(AppErrorCode.PROTOCOL_VIOLATION))
+            reply(RecordType.APP_HEARTBEAT.wire, ByteArray(0))
+            reply(RecordType.PULL_EVENTS.wire, ByteArray(0))
+        }
+    }
+
     private class ThrowingHandler(private val error: Exception) : ApplicationHandler {
         override fun handles(type: Int): Boolean = true
 
